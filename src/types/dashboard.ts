@@ -1,4 +1,3 @@
-
 import { Json } from "@/integrations/supabase/types";
 
 export interface PromptResponse {
@@ -18,6 +17,8 @@ export interface PromptResponse {
     prompt_category: string;
     prompt_type?: string;
   };
+  first_mention_position?: number;
+  total_words?: number;
 }
 
 export interface Citation {
@@ -50,6 +51,11 @@ export interface PromptData {
   responses: number;
   avgSentiment: number;
   sentimentLabel: string;
+  mentionRanking?: number;
+  competitivePosition?: number;
+  competitorMentions?: string[];
+  totalWords?: number;
+  firstMentionPosition?: number;
 }
 
 export interface DashboardMetrics {
@@ -58,9 +64,7 @@ export interface DashboardMetrics {
   totalCitations: number;
   uniqueDomains: number;
   totalResponses: number;
-  positiveCount: number;
-  neutralCount: number;
-  negativeCount: number;
+  averageVisibility: number;
 }
 
 export interface VisibilityMetrics {

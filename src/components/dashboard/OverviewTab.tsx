@@ -1,9 +1,8 @@
-
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { MetricCard } from "./MetricCard";
 import { DashboardMetrics, SentimentTrendData, CitationCount } from "@/types/dashboard";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { TrendingUp, FileText, MessageSquare, BarChart3 } from 'lucide-react';
+import { TrendingUp, FileText, MessageSquare, BarChart3, Target } from 'lucide-react';
 
 interface OverviewTabProps {
   metrics: DashboardMetrics;
@@ -42,11 +41,11 @@ export const OverviewTab = ({ metrics, sentimentTrend, topCitations }: OverviewT
           iconColor="text-purple-500"
         />
         <MetricCard
-          title="Sentiment Distribution"
-          value={`${metrics.positiveCount}/${metrics.neutralCount}/${metrics.negativeCount}`}
-          subtitle="Positive/Neutral/Negative"
-          icon={BarChart3}
-          iconColor="text-orange-500"
+          title="Average Visibility"
+          value={`${metrics.averageVisibility.toFixed(1)}%`}
+          subtitle="Company mention prominence"
+          icon={Target}
+          iconColor="text-blue-500"
         />
       </div>
 

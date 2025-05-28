@@ -109,20 +109,27 @@ export const useDashboardData = () => {
       responses.flatMap(r => parseCitations(r.citations).map((c: Citation) => c.domain).filter(Boolean))
     ).size;
 
+    // Calculate average visibility
+    const visibilityResponses = responses.filter(r => r.company_mentioned && r.first_mention_position !== undefined && r.total_words);
+    const averageVisibility = visibilityResponses.length > 0
+      ? visibilityResponses.reduce((sum, r) => {
+          const score = (1 - (r.first_mention_position! / r.total_words!)) * 100;
+          return sum + Math.min(100, Math.max(0, score));
+        }, 0) / visibilityResponses.length
+      : 0;
+
     return {
       averageSentiment,
       sentimentLabel,
       totalCitations,
       uniqueDomains,
       totalResponses: responses.length,
-      positiveCount: responses.filter(r => (r.sentiment_score || 0) > 0.1).length,
-      neutralCount: responses.filter(r => Math.abs(r.sentiment_score || 0) <= 0.1).length,
-      negativeCount: responses.filter(r => (r.sentiment_score || 0) < -0.1).length,
+      averageVisibility
     };
   }, [responses]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
-    return responses.reduce((acc: SentimentTrendData[], response) => {
+    const trend = responses.reduce((acc: SentimentTrendData[], response) => {
       const date = new Date(response.tested_at).toLocaleDateString();
       const existing = acc.find(item => item.date === date);
       
@@ -138,7 +145,10 @@ export const useDashboardData = () => {
       }
       
       return acc;
-    }, []).slice(0, 7);
+    }, []);
+    // Sort by date ascending
+    trend.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return trend.slice(-7); // get the last 7 days (latest at the end)
   }, [responses]);
 
   const topCitations: CitationCount[] = useMemo(() => {
@@ -157,6 +167,63 @@ export const useDashboardData = () => {
       .slice(0, 8);
   }, [responses]);
 
+  const getMostCommonValue = (arr: string[]): string | null => {
+    if (!arr.length) return null;
+    const counts: Record<string, number> = arr.reduce((acc, val) => {
+      acc[val] = (acc[val] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+  };
+
+  const preparePromptData = (prompts: any[], responses: any[]): PromptData[] => {
+    return prompts.map(prompt => {
+      const promptResponses = responses.filter(r => r.confirmed_prompt_id === prompt.id);
+      const totalResponses = promptResponses.length;
+      
+      // Calculate average sentiment
+      const totalSentiment = promptResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0);
+      const avgSentiment = totalResponses > 0 ? totalSentiment / totalResponses : 0;
+      
+      // Get the most common sentiment label
+      const sentimentLabels = promptResponses
+        .map(r => r.sentiment_label)
+        .filter(Boolean);
+      const sentimentLabel = getMostCommonValue(sentimentLabels) || 'neutral';
+      
+      // For visibility prompts, calculate total words and first mention position
+      let totalWords: number | undefined;
+      let firstMentionPosition: number | undefined;
+      
+      if (prompt.prompt_type === 'visibility') {
+        // Get the response with the earliest mention
+        const responsesWithMentions = promptResponses
+          .filter(r => r.company_mentioned && r.first_mention_position !== undefined)
+          .sort((a, b) => (a.first_mention_position || Infinity) - (b.first_mention_position || Infinity));
+        
+        if (responsesWithMentions.length > 0) {
+          const bestResponse = responsesWithMentions[0];
+          totalWords = bestResponse.total_words;
+          firstMentionPosition = bestResponse.first_mention_position;
+        }
+      }
+      
+      return {
+        prompt: prompt.prompt_text,
+        category: prompt.prompt_category,
+        type: prompt.prompt_type,
+        responses: totalResponses,
+        avgSentiment,
+        sentimentLabel,
+        mentionRanking: promptResponses[0]?.mention_ranking,
+        competitivePosition: promptResponses[0]?.competitive_position,
+        competitorMentions: promptResponses[0]?.competitor_mentions,
+        totalWords,
+        firstMentionPosition
+      };
+    });
+  };
+
   const promptsData: PromptData[] = useMemo(() => {
     return responses.reduce((acc: PromptData[], response) => {
       const existing = acc.find(item => 
@@ -166,6 +233,29 @@ export const useDashboardData = () => {
       if (existing) {
         existing.responses += 1;
         existing.avgSentiment = (existing.avgSentiment + (response.sentiment_score || 0)) / 2;
+        
+        // Update visibility metrics
+        if (response.confirmed_prompts?.prompt_type === 'visibility') {
+          if (response.mention_ranking) {
+            existing.mentionRanking = existing.mentionRanking 
+              ? (existing.mentionRanking + response.mention_ranking) / 2 
+              : response.mention_ranking;
+          }
+        }
+        
+        // Update competitive metrics
+        if (response.confirmed_prompts?.prompt_type === 'competitive') {
+          if (response.competitor_mentions) {
+            const mentions = response.competitor_mentions as string[];
+            existing.competitorMentions = [...new Set([...(existing.competitorMentions || []), ...mentions])];
+          }
+          // Calculate competitive position based on mention order
+          if (response.mention_ranking) {
+            existing.competitivePosition = existing.competitivePosition 
+              ? (existing.competitivePosition + response.mention_ranking) / 2 
+              : response.mention_ranking;
+          }
+        }
       } else {
         acc.push({
           prompt: response.confirmed_prompts?.prompt_text || '',
@@ -173,7 +263,10 @@ export const useDashboardData = () => {
           type: response.confirmed_prompts?.prompt_type || 'sentiment',
           responses: 1,
           avgSentiment: response.sentiment_score || 0,
-          sentimentLabel: response.sentiment_label || 'neutral'
+          sentimentLabel: response.sentiment_label || 'neutral',
+          mentionRanking: response.mention_ranking || undefined,
+          competitivePosition: response.mention_ranking || undefined,
+          competitorMentions: response.competitor_mentions as string[] || undefined
         });
       }
       

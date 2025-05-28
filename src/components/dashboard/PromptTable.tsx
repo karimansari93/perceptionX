@@ -1,9 +1,8 @@
-
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PromptData } from "@/types/dashboard";
-import { MessageSquare, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { MessageSquare, TrendingUp, TrendingDown, Minus, Target } from "lucide-react";
 
 interface PromptTableProps {
   prompts: PromptData[];
@@ -25,6 +24,60 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
     return 'text-gray-600';
   };
 
+  const getVisibilityScore = (prompt: PromptData) => {
+    // If company is not mentioned (no mention position), visibility score is 0
+    if (!prompt.firstMentionPosition || !prompt.totalWords) {
+      return 0;
+    }
+    
+    // Calculate visibility score based on mention position
+    const score = (1 - (prompt.firstMentionPosition / prompt.totalWords)) * 100;
+    return Math.min(100, Math.max(0, score));
+  };
+
+  const getCompetitiveScore = (prompt: PromptData) => {
+    // Calculate competitive score based on relative positioning and mentions
+    const baseScore = prompt.competitivePosition ? (1 / prompt.competitivePosition) * 100 : 0;
+    const mentionBonus = prompt.competitorMentions ? prompt.competitorMentions.length * 10 : 0;
+    return Math.min(100, baseScore + mentionBonus);
+  };
+
+  const getMetricColumn = (prompt: PromptData) => {
+    switch (prompt.type) {
+      case 'sentiment':
+        return (
+          <div className="flex items-center justify-center space-x-2">
+            {getSentimentIcon(prompt.avgSentiment)}
+            <span className={`font-semibold ${getSentimentColor(prompt.avgSentiment)}`}>
+              {prompt.avgSentiment.toFixed(2)}
+            </span>
+          </div>
+        );
+      case 'visibility':
+        const visibilityScore = getVisibilityScore(prompt);
+        return (
+          <div className="flex items-center justify-center space-x-2">
+            <Target className="w-4 h-4 text-blue-600" />
+            <span className="font-semibold text-blue-600">
+              {visibilityScore.toFixed(0)}%
+            </span>
+          </div>
+        );
+      case 'competitive':
+        const competitiveScore = getCompetitiveScore(prompt);
+        return (
+          <div className="flex items-center justify-center space-x-2">
+            <TrendingUp className="w-4 h-4 text-purple-600" />
+            <span className="font-semibold text-purple-600">
+              {competitiveScore.toFixed(0)}%
+            </span>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -39,7 +92,11 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
                 <TableHead>Prompt</TableHead>
                 <TableHead>Category</TableHead>
                 <TableHead className="text-center">Responses</TableHead>
-                <TableHead className="text-center">Avg Sentiment</TableHead>
+                <TableHead className="text-center">
+                  {prompts[0]?.type === 'sentiment' ? 'Avg Sentiment' :
+                   prompts[0]?.type === 'visibility' ? 'Visibility Score' :
+                   'Competitive Score'}
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -61,12 +118,7 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
                     <Badge variant="secondary">{prompt.responses}</Badge>
                   </TableCell>
                   <TableCell className="text-center">
-                    <div className="flex items-center justify-center space-x-2">
-                      {getSentimentIcon(prompt.avgSentiment)}
-                      <span className={`font-semibold ${getSentimentColor(prompt.avgSentiment)}`}>
-                        {prompt.avgSentiment.toFixed(2)}
-                      </span>
-                    </div>
+                    {getMetricColumn(prompt)}
                   </TableCell>
                 </TableRow>
               ))}

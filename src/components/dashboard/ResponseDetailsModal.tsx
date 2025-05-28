@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
@@ -75,8 +74,12 @@ export const ResponseDetailsModal = ({
   };
 
   const getVisibilityScore = (response: PromptResponse) => {
-    // Mock visibility score for demo - in real app this would come from your data
-    return response.company_mentioned ? "45%" : "0%";
+    // If company is not mentioned or missing data, score is 0
+    if (!response.company_mentioned || !response.first_mention_position || !response.total_words) {
+      return "0%";
+    }
+    const score = (1 - (response.first_mention_position / response.total_words)) * 100;
+    return `${Math.min(100, Math.max(0, score)).toFixed(0)}%`;
   };
 
   const getBrandPerception = (response: PromptResponse) => {

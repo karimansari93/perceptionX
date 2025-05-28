@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
 const corsHeaders = {
@@ -130,6 +129,10 @@ serve(async (req) => {
           console.log('Enhanced detection found company mention:', enhancedCompanyMention.count, 'times')
           result.company_mentioned = true
           result.company_mentions = Math.max(result.company_mentions, enhancedCompanyMention.count)
+          
+          // Add total words and first mention position for visibility score calculation
+          result.total_words = response.split(/\s+/).length
+          result.first_mention_position = enhancedCompanyMention.firstPosition
         }
 
         // Enhanced ranking detection
@@ -218,9 +221,18 @@ function inferSourceType(source: string): string {
   return 'general-knowledge'
 }
 
-function detectEnhancedCompanyMention(responseText: string, companyName: string): { mentioned: boolean, count: number } {
+function stripMarkdownAndPunctuation(text: string): string {
+  // Remove markdown bold/italic/code and punctuation
+  return text
+    .replace(/[*_`~]/g, '') // Remove markdown symbols
+    .replace(/[.,!?;:()\[\]{}<>"'\-]/g, ' ') // Replace punctuation with space
+    .replace(/\s+/g, ' ') // Collapse whitespace
+    .trim();
+}
+
+function detectEnhancedCompanyMention(responseText: string, companyName: string): { mentioned: boolean, count: number, firstPosition?: number } {
   console.log('Enhanced company detection for:', companyName)
-  
+
   // Create variations of the company name
   const variations = [
     companyName,
@@ -234,22 +246,56 @@ function detectEnhancedCompanyMention(responseText: string, companyName: string)
     `${companyName} Ltd`,
     `${companyName} Limited`
   ]
-  
+
   let totalCount = 0
   let mentioned = false
-  
+  let firstPosition: number | undefined
+
+  // Preprocess response text
+  const cleanText = stripMarkdownAndPunctuation(responseText)
+
   variations.forEach(variation => {
-    // Fixed: Use word boundaries to avoid partial matches
+    // Strict: Use word boundaries to avoid partial matches
     const regex = new RegExp(`\\b${variation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
-    const matches = responseText.match(regex)
+    const matches = cleanText.match(regex)
     if (matches) {
       totalCount += matches.length
       mentioned = true
-      console.log(`Found ${matches.length} mentions of "${variation}"`)
+      console.log(`Found ${matches.length} mentions of "${variation}" (strict)`)
+      // Find the position of the first mention
+      if (firstPosition === undefined) {
+        const firstMatch = cleanText.match(regex)
+        if (firstMatch) {
+          const matchIndex = cleanText.indexOf(firstMatch[0])
+          const wordsBeforeMatch = cleanText.substring(0, matchIndex).split(/\s+/).length
+          firstPosition = wordsBeforeMatch
+        }
+      }
     }
   })
-  
-  return { mentioned, count: totalCount }
+
+  // Fallback: If not found, try loose match (no word boundaries)
+  if (!mentioned) {
+    variations.forEach(variation => {
+      const looseRegex = new RegExp(`${variation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi')
+      const matches = cleanText.match(looseRegex)
+      if (matches) {
+        totalCount += matches.length
+        mentioned = true
+        console.log(`Found ${matches.length} mentions of "${variation}" (loose)`)
+        if (firstPosition === undefined) {
+          const firstMatch = cleanText.match(looseRegex)
+          if (firstMatch) {
+            const matchIndex = cleanText.indexOf(firstMatch[0])
+            const wordsBeforeMatch = cleanText.substring(0, matchIndex).split(/\s+/).length
+            firstPosition = wordsBeforeMatch
+          }
+        }
+      }
+    })
+  }
+
+  return { mentioned, count: totalCount, firstPosition }
 }
 
 function detectEnhancedRanking(responseText: string, companyName: string): number | null {
