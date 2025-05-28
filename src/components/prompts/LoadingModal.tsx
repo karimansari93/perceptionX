@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
@@ -16,7 +15,8 @@ interface LoadingModalProps {
 const llmModels = [
   { name: "OpenAI", model: "openai" },
   { name: "Claude", model: "claude" },
-  { name: "Perplexity", model: "perplexity" }
+  { name: "Perplexity", model: "perplexity" },
+  { name: "Gemini", model: "gemini" }
 ];
 
 export const LoadingModal = ({ 

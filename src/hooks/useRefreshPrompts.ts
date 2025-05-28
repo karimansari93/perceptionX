@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -64,10 +63,13 @@ export const useRefreshPrompts = () => {
         modelsToTest.push({ name: 'OpenAI', function: 'test-prompt-openai', model: 'gpt-4o-mini' });
       }
       if (!modelType || modelType === 'claude') {
-        modelsToTest.push({ name: 'Claude', function: 'test-prompt-claude', model: 'claude-3-sonnet' });
+        modelsToTest.push({ name: 'Claude', function: 'test-prompt-claude', model: 'claude-3-5-haiku-20241022' });
       }
       if (!modelType || modelType === 'perplexity') {
         modelsToTest.push({ name: 'Perplexity', function: 'test-prompt-perplexity', model: 'llama-3.1-sonar-small-128k-online' });
+      }
+      if (!modelType || modelType === 'gemini') {
+        modelsToTest.push({ name: 'Gemini', function: 'test-prompt-gemini', model: 'gemini-1.5-flash' });
       }
 
       const totalOperations = confirmedPrompts.length * modelsToTest.length;
