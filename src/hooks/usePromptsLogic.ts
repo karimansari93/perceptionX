@@ -20,7 +20,7 @@ interface GeneratedPrompt {
   type: 'sentiment' | 'visibility' | 'competitive';
 }
 
-interface ProgressInfo {
+export interface ProgressInfo {
   currentModel?: string;
   currentPrompt?: string;
   completed: number;
@@ -156,77 +156,99 @@ export const usePromptsLogic = (onboardingData: OnboardingData | undefined) => {
   const generatePrompts = () => {
     if (!onboardingData) return;
     
-    const { companyName, industry, targetRoles, talentCompetitors } = onboardingData;
+    const { companyName, industry, targetRoles, talentCompetitors, hiringChallenges } = onboardingData;
     
     console.log('=== GENERATING PROMPTS ===');
     console.log('Company:', companyName);
     console.log('Industry:', industry);
     console.log('Target Roles:', targetRoles);
     console.log('Competitors:', talentCompetitors);
+    console.log('Hiring Challenges:', hiringChallenges);
     
-    const generatedPrompts: GeneratedPrompt[] = [
-      // Sentiment prompts - company-specific with balanced perspective
-      {
-        id: '1',
-        text: `What are the pros and cons of working at ${companyName} compared to other ${industry} companies?`,
+    let generatedPrompts: GeneratedPrompt[] = [];
+
+    // Sentiment prompts for each target role
+    targetRoles.forEach((role, idx) => {
+      generatedPrompts.push({
+        id: `sentiment-role-${idx}`,
+        text: `What are the pros and cons of working as a ${role} at ${companyName} compared to other ${industry} companies?`,
         category: 'Work Environment',
         type: 'sentiment'
-      },
-      {
-        id: '2',
-        text: `How does ${companyName}'s approach to ${targetRoles.join(' and ')} career development compare to industry standards?`,
+      });
+      generatedPrompts.push({
+        id: `sentiment-career-${idx}`,
+        text: `How does ${companyName}'s approach to ${role} career development compare to industry standards?`,
         category: 'Career Development',
         type: 'sentiment'
-      },
-      {
-        id: '3',
-        text: `What are the main advantages and challenges of ${companyName}'s company culture for technical professionals?`,
-        category: 'Company Culture',
+      });
+    });
+
+    // Sentiment prompts for each hiring challenge
+    hiringChallenges.forEach((challenge, idx) => {
+      generatedPrompts.push({
+        id: `sentiment-challenge-${idx}`,
+        text: `How does ${companyName} address the challenge of ${challenge}?`,
+        category: 'Hiring Challenge',
         type: 'sentiment'
-      },
-      
-      // Visibility prompts - broader industry questions designed to surface company mentions
-      {
-        id: '4',
-        text: `Which ${industry} companies offer the best career opportunities for ${targetRoles.join(' and ')} professionals?`,
+      });
+    });
+
+    // Visibility prompts for each target role
+    targetRoles.forEach((role, idx) => {
+      generatedPrompts.push({
+        id: `visibility-role-${idx}`,
+        text: `Which ${industry} companies offer the best career opportunities for ${role} professionals?`,
         category: 'Industry Leaders',
         type: 'visibility'
-      },
-      {
-        id: '5',
-        text: `What are the top companies for ${targetRoles.join(' and ')} career growth and development in 2024?`,
+      });
+      generatedPrompts.push({
+        id: `visibility-growth-${idx}`,
+        text: `What are the top companies for ${role} career growth and development?`,
         category: 'Career Growth',
         type: 'visibility'
-      },
-      {
-        id: '6',
-        text: `Which tech companies have the most innovative work environments for ${targetRoles.join(' and ')} roles?`,
+      });
+      generatedPrompts.push({
+        id: `visibility-innovation-${idx}`,
+        text: `Which tech companies have the most innovative work environments for ${role} roles?`,
         category: 'Innovation',
         type: 'visibility'
-      },
-      {
-        id: '7',
-        text: `What companies in the ${industry} sector offer the best work-life balance for technical professionals?`,
-        category: 'Work-Life Balance',
-        type: 'visibility'
-      },
-      
-      // Competitive prompts - direct comparisons
-      {
-        id: '8',
-        text: `Compare career opportunities for ${targetRoles.join(' and ')} professionals at ${companyName}, ${talentCompetitors.slice(0, 2).join(', and ')}.`,
-        category: 'Competitive Analysis',
-        type: 'competitive'
-      },
-      {
-        id: '9',
-        text: `How do compensation and benefits for ${targetRoles.join(' and ')} roles compare between ${companyName} and ${talentCompetitors.slice(0, 3).join(', ')}?`,
-        category: 'Compensation',
-        type: 'competitive'
-      }
-    ];
+      });
+    });
 
-    console.log('Generated prompts:', generatedPrompts.length);
+    // Visibility prompt for work-life balance (general)
+    generatedPrompts.push({
+      id: 'visibility-worklife',
+      text: `What companies in the ${industry} sector offer the best work-life balance for technical professionals?`,
+      category: 'Work-Life Balance',
+      type: 'visibility'
+    });
+
+    // Competitive prompts for each target role and competitor
+    targetRoles.forEach((role, rIdx) => {
+      talentCompetitors.forEach((competitor, cIdx) => {
+        generatedPrompts.push({
+          id: `competitive-${rIdx}-${cIdx}`,
+          text: `Compare career opportunities for ${role} professionals at ${companyName} and ${competitor}.`,
+          category: 'Competitive Analysis',
+          type: 'competitive'
+        });
+        generatedPrompts.push({
+          id: `competitive-compensation-${rIdx}-${cIdx}`,
+          text: `How do compensation and benefits for ${role} roles compare between ${companyName} and ${competitor}?`,
+          category: 'Compensation',
+          type: 'competitive'
+        });
+      });
+    });
+
+    // Company culture prompt (general)
+    generatedPrompts.push({
+      id: 'sentiment-culture',
+      text: `What are the main advantages and challenges of ${companyName}'s company culture for technical professionals?`,
+      category: 'Company Culture',
+      type: 'sentiment'
+    });
+
     setPrompts(generatedPrompts);
   };
 
@@ -313,7 +335,13 @@ export const usePromptsLogic = (onboardingData: OnboardingData | undefined) => {
       
       // Wait a moment for the user to see completion, then navigate
       setTimeout(() => {
-        navigate('/dashboard');
+        navigate('/auth', {
+          state: {
+            onboardingData,
+            redirectTo: '/dashboard',
+            loadingPrompts: true
+          }
+        });
       }, 1500);
 
     } catch (error) {
@@ -409,4 +437,246 @@ export const usePromptsLogic = (onboardingData: OnboardingData | undefined) => {
     progress,
     confirmAndStartMonitoring
   };
+};
+
+// New utility function to generate and insert prompts
+export const generateAndInsertPrompts = async (user: any, onboardingRecord: any, onboardingData: OnboardingData, setProgress: (progress: ProgressInfo) => void) => {
+  if (!user || !onboardingRecord) {
+    throw new Error('Missing user or onboarding data');
+  }
+  
+  console.log('=== STARTING MONITORING PROCESS ===');
+  console.log('Using onboarding record:', onboardingRecord.id);
+  console.log('Company:', onboardingRecord.company_name);
+  console.log('Competitors:', onboardingRecord.talent_competitors);
+
+  // Generate prompts based on onboarding data
+  const promptsToInsert = generatePromptsFromData(onboardingData).map(prompt => ({
+    onboarding_id: onboardingRecord.id,
+    user_id: user.id,
+    prompt_text: prompt.text,
+    prompt_category: prompt.category,
+    prompt_type: prompt.type,
+    is_active: true
+  }));
+
+  const { data: confirmedPrompts, error: insertError } = await supabase
+    .from('confirmed_prompts')
+    .insert(promptsToInsert)
+    .select();
+
+  if (insertError) {
+    console.error('Failed to insert prompts:', insertError);
+    throw insertError;
+  }
+
+  console.log('Confirmed prompts inserted:', confirmedPrompts?.length);
+
+  // Calculate total operations for progress tracking
+  const totalOperations = (confirmedPrompts?.length || 0) * 3; // 3 models per prompt
+  setProgress({ completed: 0, total: totalOperations });
+
+  let completedOperations = 0;
+
+  // Define testWithModel inside this function to avoid scope issues
+  const testWithModel = async (confirmedPrompt: any, functionName: string, modelName: string) => {
+    try {
+      console.log(`=== CALLING ${functionName.toUpperCase()} ===`);
+      console.log('Prompt:', confirmedPrompt.prompt_text);
+      
+      const { data: responseData, error: functionError } = await supabase.functions
+        .invoke(functionName, {
+          body: { prompt: confirmedPrompt.prompt_text }
+        });
+
+      if (functionError) {
+        console.error(`${functionName} edge function error:`, functionError);
+      } else if (responseData?.response) {
+        console.log(`${functionName} response received, analyzing...`);
+        
+        // Handle citations from Perplexity responses
+        const perplexityCitations = functionName === 'test-prompt-perplexity' ? responseData.citations : null;
+        
+        console.log('=== CALLING ANALYZE-RESPONSE ===');
+        console.log('Company Name:', onboardingData?.companyName);
+        console.log('Prompt Type:', confirmedPrompt.prompt_type);
+        console.log('Competitors:', onboardingData?.talentCompetitors);
+        
+        // Analyze sentiment and extract citations with enhanced visibility support
+        const { data: sentimentData, error: sentimentError } = await supabase.functions
+          .invoke('analyze-response', {
+            body: { 
+              response: responseData.response,
+              companyName: onboardingData?.companyName,
+              promptType: confirmedPrompt.prompt_type,
+              competitors: onboardingData?.talentCompetitors || [],
+              perplexityCitations: perplexityCitations
+            }
+          });
+
+        if (sentimentError) {
+          console.error('Sentiment analysis error:', sentimentError);
+        }
+
+        console.log('=== ANALYSIS COMPLETE ===');
+        console.log('Sentiment data:', sentimentData);
+
+        // Combine Perplexity citations with analyzed citations
+        let finalCitations = sentimentData?.citations || [];
+        if (perplexityCitations && perplexityCitations.length > 0) {
+          finalCitations = [...perplexityCitations, ...finalCitations];
+        }
+      }
+    } catch (error) {
+      console.error(`Error testing with ${modelName}:`, error);
+    }
+  };
+
+  // Test each prompt with all models
+  for (const confirmedPrompt of confirmedPrompts || []) {
+    console.log('=== TESTING PROMPT ===');
+    console.log('Prompt:', confirmedPrompt.prompt_text);
+    console.log('Type:', confirmedPrompt.prompt_type);
+    
+    // Test with OpenAI
+    setProgress({ 
+      currentModel: 'OpenAI GPT-4o-mini',
+      currentPrompt: confirmedPrompt.prompt_text,
+      completed: completedOperations,
+      total: totalOperations
+    });
+    await testWithModel(confirmedPrompt, 'test-prompt-openai', 'gpt-4o-mini');
+    completedOperations++;
+    setProgress({ 
+      currentModel: 'OpenAI GPT-4o-mini',
+      currentPrompt: confirmedPrompt.prompt_text,
+      completed: completedOperations,
+      total: totalOperations
+    });
+    
+    // Test with Claude
+    setProgress({ 
+      currentModel: 'Claude 3 Sonnet',
+      currentPrompt: confirmedPrompt.prompt_text,
+      completed: completedOperations,
+      total: totalOperations
+    });
+    await testWithModel(confirmedPrompt, 'test-prompt-claude', 'claude-3-sonnet');
+    completedOperations++;
+    setProgress({ 
+      currentModel: 'Claude 3 Sonnet',
+      currentPrompt: confirmedPrompt.prompt_text,
+      completed: completedOperations,
+      total: totalOperations
+    });
+    
+    // Test with Perplexity
+    setProgress({ 
+      currentModel: 'Perplexity Llama 3.1',
+      currentPrompt: confirmedPrompt.prompt_text,
+      completed: completedOperations,
+      total: totalOperations
+    });
+    await testWithModel(confirmedPrompt, 'test-prompt-perplexity', 'llama-3.1-sonar-small-128k-online');
+    completedOperations++;
+    setProgress({ 
+      currentModel: 'Perplexity Llama 3.1',
+      currentPrompt: confirmedPrompt.prompt_text,
+      completed: completedOperations,
+      total: totalOperations
+    });
+  }
+
+  console.log('All prompts tested.');
+  return confirmedPrompts;
+};
+
+// Helper function to generate prompts from onboarding data
+const generatePromptsFromData = (onboardingData: OnboardingData): GeneratedPrompt[] => {
+  const { companyName, industry, targetRoles, talentCompetitors, hiringChallenges } = onboardingData;
+  let generatedPrompts: GeneratedPrompt[] = [];
+
+  // Sentiment prompts for each target role
+  targetRoles.forEach((role, idx) => {
+    generatedPrompts.push({
+      id: `sentiment-role-${idx}`,
+      text: `What are the pros and cons of working as a ${role} at ${companyName} compared to other ${industry} companies?`,
+      category: 'Work Environment',
+      type: 'sentiment'
+    });
+    generatedPrompts.push({
+      id: `sentiment-career-${idx}`,
+      text: `How does ${companyName}'s approach to ${role} career development compare to industry standards?`,
+      category: 'Career Development',
+      type: 'sentiment'
+    });
+  });
+
+  // Sentiment prompts for each hiring challenge
+  hiringChallenges.forEach((challenge, idx) => {
+    generatedPrompts.push({
+      id: `sentiment-challenge-${idx}`,
+      text: `How does ${companyName} address the challenge of ${challenge}?`,
+      category: 'Hiring Challenge',
+      type: 'sentiment'
+    });
+  });
+
+  // Visibility prompts for each target role
+  targetRoles.forEach((role, idx) => {
+    generatedPrompts.push({
+      id: `visibility-role-${idx}`,
+      text: `Which ${industry} companies offer the best career opportunities for ${role} professionals?`,
+      category: 'Industry Leaders',
+      type: 'visibility'
+    });
+    generatedPrompts.push({
+      id: `visibility-growth-${idx}`,
+      text: `What are the top companies for ${role} career growth and development?`,
+      category: 'Career Growth',
+      type: 'visibility'
+    });
+    generatedPrompts.push({
+      id: `visibility-innovation-${idx}`,
+      text: `Which tech companies have the most innovative work environments for ${role} roles?`,
+      category: 'Innovation',
+      type: 'visibility'
+    });
+  });
+
+  // Visibility prompt for work-life balance (general)
+  generatedPrompts.push({
+    id: 'visibility-worklife',
+    text: `What companies in the ${industry} sector offer the best work-life balance for technical professionals?`,
+    category: 'Work-Life Balance',
+    type: 'visibility'
+  });
+
+  // Competitive prompts for each target role and competitor
+  targetRoles.forEach((role, rIdx) => {
+    talentCompetitors.forEach((competitor, cIdx) => {
+      generatedPrompts.push({
+        id: `competitive-${rIdx}-${cIdx}`,
+        text: `Compare career opportunities for ${role} professionals at ${companyName} and ${competitor}.`,
+        category: 'Competitive Analysis',
+        type: 'competitive'
+      });
+      generatedPrompts.push({
+        id: `competitive-compensation-${rIdx}-${cIdx}`,
+        text: `How do compensation and benefits for ${role} roles compare between ${companyName} and ${competitor}?`,
+        category: 'Compensation',
+        type: 'competitive'
+      });
+    });
+  });
+
+  // Company culture prompt (general)
+  generatedPrompts.push({
+    id: 'sentiment-culture',
+    text: `What are the main advantages and challenges of ${companyName}'s company culture for technical professionals?`,
+    category: 'Company Culture',
+    type: 'sentiment'
+  });
+
+  return generatedPrompts;
 };

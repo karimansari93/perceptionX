@@ -1,4 +1,3 @@
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -37,6 +36,9 @@ export const PromptsTable = ({ prompts }: PromptsTableProps) => {
     <Card className="bg-white shadow-lg">
       <CardHeader>
         <CardTitle className="text-lg">Enhanced Prompt Strategy</CardTitle>
+        <p className="text-gray-600 mt-2 text-base">
+          These prompts were generated based on your company, roles, hiring challenges, and competitors to provide a comprehensive view of your employer brand in AI models.
+        </p>
       </CardHeader>
       <CardContent>
         <Table>

@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -9,6 +8,8 @@ import { X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { LoadingModal } from '@/components/prompts/LoadingModal';
+import { generateAndInsertPrompts, ProgressInfo } from '@/hooks/usePromptsLogic';
 
 const Auth = () => {
   const navigate = useNavigate();
@@ -21,6 +22,8 @@ const Auth = () => {
     password: '',
     companyName: ''
   });
+  const [showLoadingModal, setShowLoadingModal] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState({ currentModel: '', currentPrompt: '', completed: 0, total: 0 });
 
   // Get onboarding data and redirect destination from location state
   const onboardingData = location.state?.onboardingData;
@@ -29,16 +32,7 @@ const Auth = () => {
   // Redirect if already authenticated
   useEffect(() => {
     if (user) {
-      if (onboardingData && redirectTo === '/prompts') {
-        navigate('/prompts', { 
-          state: { 
-            onboardingData,
-            userId: user.id 
-          } 
-        });
-      } else {
-        navigate('/dashboard');
-      }
+      navigate('/dashboard');
     }
   }, [user, navigate, onboardingData, redirectTo]);
 
@@ -130,17 +124,7 @@ const Auth = () => {
           await linkOnboardingToUser(data.user.id);
         }
         
-        // Redirect with onboarding data if available
-        if (onboardingData && redirectTo === '/prompts') {
-          navigate('/prompts', { 
-            state: { 
-              onboardingData,
-              userId: data.user?.id 
-            } 
-          });
-        } else {
-          navigate('/dashboard');
-        }
+        navigate('/dashboard');
       } else {
         const { data, error } = await supabase.auth.signUp({
           email: formData.email,
@@ -170,16 +154,45 @@ const Auth = () => {
 
         toast.success('Account created successfully!');
         
-        // If we have onboarding data, go to prompts, otherwise go to onboarding
-        if (onboardingData) {
-          navigate('/prompts', { 
-            state: { 
+        // Show loading modal and generate prompts
+        setShowLoadingModal(true);
+        setLoadingProgress({ currentModel: '', currentPrompt: '', completed: 0, total: 0 });
+        
+        try {
+          // Fetch the onboarding record for the user
+          const { data: onboardingRecord, error: onboardingError } = await supabase
+            .from('user_onboarding')
+            .select('*')
+            .eq('user_id', data.user.id)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (onboardingError) {
+            throw onboardingError;
+          }
+
+          if (onboardingRecord && onboardingRecord.length > 0) {
+            // Generate and insert prompts
+            await generateAndInsertPrompts(
+              data.user,
+              onboardingRecord[0],
               onboardingData,
-              userId: data.user?.id 
-            } 
-          });
-        } else {
-          navigate('/onboarding');
+              (progress: ProgressInfo) => {
+                setLoadingProgress({
+                  currentModel: progress.currentModel || '',
+                  currentPrompt: progress.currentPrompt || '',
+                  completed: progress.completed ?? 0,
+                  total: progress.total ?? 0
+                });
+              }
+            );
+          }
+        } catch (error) {
+          console.error('Error generating prompts:', error);
+          toast.error('Failed to generate prompts. Please try again.');
+        } finally {
+          setShowLoadingModal(false);
+          navigate('/dashboard');
         }
       }
     } catch (error: any) {
@@ -214,7 +227,7 @@ const Auth = () => {
         <div className="absolute top-4 left-4">
           <Button
             variant="ghost"
-            onClick={() => navigate('/')}
+            onClick={() => window.location.href = 'https://www.perceptionx.co'}
             className="flex items-center"
           >
             <X className="w-4 h-4 mr-2" />
@@ -306,6 +319,15 @@ const Auth = () => {
           </CardContent>
         </Card>
       </div>
+      {showLoadingModal && (
+        <LoadingModal
+          isOpen={showLoadingModal}
+          currentModel={loadingProgress.currentModel}
+          currentPrompt={loadingProgress.currentPrompt}
+          completed={loadingProgress.completed}
+          total={loadingProgress.total}
+        />
+      )}
     </div>
   );
 };

@@ -4,19 +4,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { ArrowLeft, Bot, Send, ArrowRight, CheckCircle, AlertCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle, AlertCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import UserMenu from "@/components/UserMenu";
-
-interface Message {
-  id: string;
-  type: 'bot' | 'user';
-  content: string;
-  timestamp: Date;
-}
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 interface OnboardingData {
   companyName: string;
@@ -30,28 +25,171 @@ interface OnboardingData {
 const Onboarding = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [currentInput, setCurrentInput] = useState("");
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [onboardingData, setOnboardingData] = useState<OnboardingData>({
     companyName: "",
     industry: "",
-    hiringChallenges: [],
-    targetRoles: [],
+    hiringChallenges: ["", "", ""],
+    targetRoles: ["", "", ""],
     currentStrategy: "",
-    talentCompetitors: []
+    talentCompetitors: ["", "", ""]
   });
   const [isLoading, setIsLoading] = useState(true);
   const [onboardingId, setOnboardingId] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState(false);
+  const [tempInput, setTempInput] = useState("");
 
-  const onboardingQuestions = [
-    "What's your company name?",
-    "What industry are you in? (e.g., Oil & Gas, Tech, Finance, Healthcare)",
-    "What are your main hiring challenges? (e.g., attracting tech talent, diversity hiring, employer branding)",
-    "What types of roles are you primarily recruiting for?",
-    "Who are your main talent competitors? (companies you compete with for the same talent)",
-    "Briefly describe your current recruitment strategy or what you're trying to improve."
+  const onboardingSteps = [
+    {
+      title: "Company Information",
+      description: "Let's start with some basic information about your company.",
+      fields: [
+        {
+          label: "Company Name",
+          type: "text",
+          placeholder: "Enter your company name",
+          value: onboardingData.companyName,
+          onChange: (value: string) => setOnboardingData(prev => ({ ...prev, companyName: value }))
+        },
+        {
+          label: "Industry",
+          type: "text",
+          placeholder: "e.g., Oil & Gas, Tech, Finance, Healthcare",
+          value: onboardingData.industry,
+          onChange: (value: string) => setOnboardingData(prev => ({ ...prev, industry: value }))
+        }
+      ]
+    },
+    {
+      title: "What are your main hiring challenges?",
+      description: "List three main hiring challenges (one per field).",
+      fields: [
+        {
+          label: "Hiring Challenge #1",
+          type: "text",
+          placeholder: "e.g., Attracting tech talent",
+          value: onboardingData.hiringChallenges[0],
+          onChange: (value: string) => setOnboardingData(prev => {
+            const arr = [...prev.hiringChallenges];
+            arr[0] = value;
+            return { ...prev, hiringChallenges: arr };
+          })
+        },
+        {
+          label: "Hiring Challenge #2",
+          type: "text",
+          placeholder: "e.g., Diversity hiring",
+          value: onboardingData.hiringChallenges[1],
+          onChange: (value: string) => setOnboardingData(prev => {
+            const arr = [...prev.hiringChallenges];
+            arr[1] = value;
+            return { ...prev, hiringChallenges: arr };
+          })
+        },
+        {
+          label: "Hiring Challenge #3",
+          type: "text",
+          placeholder: "e.g., Employer branding",
+          value: onboardingData.hiringChallenges[2],
+          onChange: (value: string) => setOnboardingData(prev => {
+            const arr = [...prev.hiringChallenges];
+            arr[2] = value;
+            return { ...prev, hiringChallenges: arr };
+          })
+        }
+      ]
+    },
+    {
+      title: "What roles are you hiring for?",
+      description: "List three primary roles you are recruiting for (one per field).",
+      fields: [
+        {
+          label: "Target Role #1",
+          type: "text",
+          placeholder: "e.g., Software Engineer",
+          value: onboardingData.targetRoles[0],
+          onChange: (value: string) => setOnboardingData(prev => {
+            const arr = [...prev.targetRoles];
+            arr[0] = value;
+            return { ...prev, targetRoles: arr };
+          })
+        },
+        {
+          label: "Target Role #2",
+          type: "text",
+          placeholder: "e.g., Data Analyst",
+          value: onboardingData.targetRoles[1],
+          onChange: (value: string) => setOnboardingData(prev => {
+            const arr = [...prev.targetRoles];
+            arr[1] = value;
+            return { ...prev, targetRoles: arr };
+          })
+        },
+        {
+          label: "Target Role #3",
+          type: "text",
+          placeholder: "e.g., Product Manager",
+          value: onboardingData.targetRoles[2],
+          onChange: (value: string) => setOnboardingData(prev => {
+            const arr = [...prev.targetRoles];
+            arr[2] = value;
+            return { ...prev, targetRoles: arr };
+          })
+        }
+      ]
+    },
+    {
+      title: "Who are your talent competitors?",
+      description: "List three main competitors for talent (one per field).",
+      fields: [
+        {
+          label: "Competitor #1",
+          type: "text",
+          placeholder: "e.g., Google",
+          value: onboardingData.talentCompetitors[0],
+          onChange: (value: string) => setOnboardingData(prev => {
+            const arr = [...prev.talentCompetitors];
+            arr[0] = value;
+            return { ...prev, talentCompetitors: arr };
+          })
+        },
+        {
+          label: "Competitor #2",
+          type: "text",
+          placeholder: "e.g., Amazon",
+          value: onboardingData.talentCompetitors[1],
+          onChange: (value: string) => setOnboardingData(prev => {
+            const arr = [...prev.talentCompetitors];
+            arr[1] = value;
+            return { ...prev, talentCompetitors: arr };
+          })
+        },
+        {
+          label: "Competitor #3",
+          type: "text",
+          placeholder: "e.g., Facebook",
+          value: onboardingData.talentCompetitors[2],
+          onChange: (value: string) => setOnboardingData(prev => {
+            const arr = [...prev.talentCompetitors];
+            arr[2] = value;
+            return { ...prev, talentCompetitors: arr };
+          })
+        }
+      ]
+    },
+    {
+      title: "What are your goals?",
+      description: "Tell us about your goals so we can generate prompts that are highly personalized to your needs.",
+      fields: [
+        {
+          label: "Goals",
+          type: "textarea",
+          placeholder: "Briefly describe your main recruitment goals or what you're trying to improve",
+          value: onboardingData.currentStrategy,
+          onChange: (value: string) => setOnboardingData(prev => ({ ...prev, currentStrategy: value }))
+        }
+      ]
+    }
   ];
 
   // Load existing onboarding data and resume from correct step
@@ -71,15 +209,6 @@ const Onboarding = () => {
           console.error('Connection test failed:', connectionTest);
           setConnectionError(true);
           setIsLoading(false);
-          // Start with fresh onboarding if connection fails
-          setMessages([
-            {
-              id: '1',
-              type: 'bot',
-              content: "Hello! I'm your AI recruitment strategy assistant. I'll help you understand how AI models perceive your employer brand and recommend the best prompts to track. Let's start with your company name.",
-              timestamp: new Date()
-            }
-          ]);
           return;
         }
 
@@ -103,26 +232,6 @@ const Onboarding = () => {
           }
         }
 
-        // If no user record found, check for session-based record
-        if (!onboardingRecord) {
-          const sessionId = localStorage.getItem('onboarding_session_id');
-          if (sessionId) {
-            console.log('Checking for session-based onboarding:', sessionId);
-            const { data: sessionRecord, error: sessionError } = await supabase
-              .from('user_onboarding')
-              .select('*')
-              .eq('session_id', sessionId)
-              .limit(1);
-
-            if (sessionError) {
-              console.error('Error loading session onboarding:', sessionError);
-            } else if (sessionRecord && sessionRecord.length > 0) {
-              onboardingRecord = sessionRecord[0];
-              console.log('Found existing session onboarding record:', onboardingRecord);
-            }
-          }
-        }
-
         if (onboardingRecord) {
           // Resume from existing data
           setOnboardingId(onboardingRecord.id);
@@ -138,182 +247,18 @@ const Onboarding = () => {
 
           // Determine what step we should be on based on completed data
           let stepToResume = 0;
-          if (data.companyName) stepToResume = 1;
-          if (data.industry) stepToResume = 2;
-          if (data.hiringChallenges.length > 0) stepToResume = 3;
-          if (data.targetRoles.length > 0) stepToResume = 4;
-          if (data.talentCompetitors.length > 0) stepToResume = 5;
-          if (data.currentStrategy) stepToResume = 6;
+          if (data.companyName && data.industry) stepToResume = 1;
+          if (data.hiringChallenges.length > 0) stepToResume = 2;
+          if (data.targetRoles.length > 0) stepToResume = 3;
+          if (data.talentCompetitors.length > 0) stepToResume = 4;
+          if (data.currentStrategy) stepToResume = 5;
 
           setOnboardingStep(stepToResume);
-
-          // Rebuild conversation history
-          const conversationMessages: Message[] = [
-            {
-              id: '1',
-              type: 'bot',
-              content: "Hello! I'm your AI recruitment strategy assistant. I'll help you understand how AI models perceive your employer brand and recommend the best prompts to track. Let's start with your company name.",
-              timestamp: new Date()
-            }
-          ];
-
-          // Add completed Q&A pairs
-          if (data.companyName) {
-            conversationMessages.push(
-              {
-                id: `user-0`,
-                type: 'user',
-                content: data.companyName,
-                timestamp: new Date()
-              },
-              {
-                id: `bot-0`,
-                type: 'bot',
-                content: stepToResume < 6 ? `Great! ${onboardingQuestions[1]}` : "Perfect! Based on your responses, I've identified some key prompts to track your AI perception. Let me generate your personalized monitoring strategy...",
-                timestamp: new Date()
-              }
-            );
-          }
-
-          if (data.industry) {
-            conversationMessages.push(
-              {
-                id: `user-1`,
-                type: 'user',
-                content: data.industry,
-                timestamp: new Date()
-              },
-              {
-                id: `bot-1`,
-                type: 'bot',
-                content: stepToResume < 6 ? `Great! ${onboardingQuestions[2]}` : "Perfect! Based on your responses, I've identified some key prompts to track your AI perception. Let me generate your personalized monitoring strategy...",
-                timestamp: new Date()
-              }
-            );
-          }
-
-          if (data.hiringChallenges.length > 0) {
-            conversationMessages.push(
-              {
-                id: `user-2`,
-                type: 'user',
-                content: data.hiringChallenges.join(', '),
-                timestamp: new Date()
-              },
-              {
-                id: `bot-2`,
-                type: 'bot',
-                content: stepToResume < 6 ? `Great! ${onboardingQuestions[3]}` : "Perfect! Based on your responses, I've identified some key prompts to track your AI perception. Let me generate your personalized monitoring strategy...",
-                timestamp: new Date()
-              }
-            );
-          }
-
-          if (data.targetRoles.length > 0) {
-            conversationMessages.push(
-              {
-                id: `user-3`,
-                type: 'user',
-                content: data.targetRoles.join(', '),
-                timestamp: new Date()
-              },
-              {
-                id: `bot-3`,
-                type: 'bot',
-                content: stepToResume < 6 ? `Great! ${onboardingQuestions[4]}` : "Perfect! Based on your responses, I've identified some key prompts to track your AI perception. Let me generate your personalized monitoring strategy...",
-                timestamp: new Date()
-              }
-            );
-          }
-
-          if (data.talentCompetitors.length > 0) {
-            conversationMessages.push(
-              {
-                id: `user-4`,
-                type: 'user',
-                content: data.talentCompetitors.join(', '),
-                timestamp: new Date()
-              },
-              {
-                id: `bot-4`,
-                type: 'bot',
-                content: stepToResume < 6 ? `Great! ${onboardingQuestions[5]}` : "Perfect! Based on your responses, I've identified some key prompts to track your AI perception. Let me generate your personalized monitoring strategy...",
-                timestamp: new Date()
-              }
-            );
-          }
-
-          if (data.currentStrategy) {
-            conversationMessages.push(
-              {
-                id: `user-5`,
-                type: 'user',
-                content: data.currentStrategy,
-                timestamp: new Date()
-              },
-              {
-                id: `bot-5`,
-                type: 'bot',
-                content: "Perfect! Based on your responses, I've identified some key prompts to track your AI perception. Let me generate your personalized monitoring strategy...",
-                timestamp: new Date()
-              }
-            );
-
-            // Add completion message if fully complete
-            if (stepToResume >= 6) {
-              setTimeout(() => {
-                conversationMessages.push({
-                  id: 'completion',
-                  type: 'bot',
-                  content: `🎉 Your data is ready for analysis! I'll now process your information through our AI network to generate personalized prompts. Click below to continue.`,
-                  timestamp: new Date()
-                });
-                setMessages([...conversationMessages]);
-              }, 1000);
-            }
-          }
-
-          setMessages(conversationMessages);
-
-          if (stepToResume < 6) {
-            // Show next question
-            setTimeout(() => {
-              const nextMessage: Message = {
-                id: `bot-next`,
-                type: 'bot',
-                content: onboardingQuestions[stepToResume],
-                timestamp: new Date()
-              };
-              setMessages(prev => [...prev, nextMessage]);
-            }, 500);
-          }
-
-          console.log('Resumed onboarding at step:', stepToResume);
-        } else {
-          // Start fresh onboarding
-          console.log('Starting fresh onboarding');
-          setMessages([
-            {
-              id: '1',
-              type: 'bot',
-              content: "Hello! I'm your AI recruitment strategy assistant. I'll help you understand how AI models perceive your employer brand and recommend the best prompts to track. Let's start with your company name.",
-              timestamp: new Date()
-            }
-          ]);
         }
       } catch (error) {
         console.error('Error loading onboarding progress:', error);
         setConnectionError(true);
         toast.error('Failed to load onboarding progress');
-        // Start fresh on error
-        setMessages([
-          {
-            id: '1',
-            type: 'bot',
-            content: "Hello! I'm your AI recruitment strategy assistant. I'll help you understand how AI models perceive your employer brand and recommend the best prompts to track. Let's start with your company name.",
-            timestamp: new Date()
-          }
-        ]);
       } finally {
         setIsLoading(false);
       }
@@ -322,151 +267,83 @@ const Onboarding = () => {
     loadOnboardingProgress();
   }, [user]);
 
-  const saveOnboardingProgress = async (updatedData: OnboardingData, step: number) => {
-    // Skip saving if there's a connection error
-    if (connectionError) {
-      console.log('Skipping save due to connection error');
-      return;
-    }
+  const saveOnboardingProgress = async (data: OnboardingData, step: number) => {
+    if (!user) return;
 
     try {
-      const sessionId = localStorage.getItem('onboarding_session_id') || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      localStorage.setItem('onboarding_session_id', sessionId);
-
-      const record = {
-        company_name: updatedData.companyName,
-        industry: updatedData.industry,
-        hiring_challenges: updatedData.hiringChallenges,
-        target_roles: updatedData.targetRoles,
-        current_strategy: updatedData.currentStrategy,
-        talent_competitors: updatedData.talentCompetitors,
-        session_id: sessionId,
-        user_id: user?.id || null
+      const onboardingRecord = {
+        user_id: user.id,
+        company_name: data.companyName,
+        industry: data.industry,
+        hiring_challenges: data.hiringChallenges,
+        target_roles: data.targetRoles,
+        current_strategy: data.currentStrategy,
+        talent_competitors: data.talentCompetitors,
+        current_step: step,
+        session_id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       };
 
       if (onboardingId) {
-        // Update existing record
         const { error } = await supabase
           .from('user_onboarding')
-          .update(record)
+          .update(onboardingRecord)
           .eq('id', onboardingId);
 
-        if (error) {
-          console.error('Error updating onboarding:', error);
-          setConnectionError(true);
-        } else {
-          console.log('Onboarding progress saved');
-        }
+        if (error) throw error;
       } else {
-        // Create new record
-        const { data, error } = await supabase
+        const { data: newRecord, error } = await supabase
           .from('user_onboarding')
-          .insert(record)
-          .select()
-          .single();
+          .insert([onboardingRecord])
+          .select();
 
-        if (error) {
-          console.error('Error creating onboarding:', error);
-          setConnectionError(true);
-        } else {
-          setOnboardingId(data.id);
-          console.log('New onboarding record created:', data.id);
-        }
+        if (error) throw error;
+        if (newRecord) setOnboardingId(newRecord[0].id);
       }
     } catch (error) {
       console.error('Error saving onboarding progress:', error);
       setConnectionError(true);
+      toast.error('Failed to save progress');
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!currentInput.trim()) return;
+  const handleNext = async () => {
+    const currentStep = onboardingSteps[onboardingStep];
+    const isValid = currentStep.fields.every(field => {
+      if (Array.isArray(field)) return field.every(f => f.value.trim());
+      if (field.type === "textarea") return field.value.trim();
+      return field.value.trim();
+    }) && (
+      // For steps with 3 required fields, ensure all are filled
+      (onboardingStep !== 1 || onboardingData.hiringChallenges.every(v => v.trim())) &&
+      (onboardingStep !== 2 || onboardingData.targetRoles.every(v => v.trim())) &&
+      (onboardingStep !== 3 || onboardingData.talentCompetitors.every(v => v.trim()))
+    );
 
-    // Add user message
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      type: 'user',
-      content: currentInput,
-      timestamp: new Date()
-    };
-
-    setMessages(prev => [...prev, userMessage]);
-
-    // Update onboarding data based on step
-    const newData = { ...onboardingData };
-    switch (onboardingStep) {
-      case 0:
-        newData.companyName = currentInput;
-        break;
-      case 1:
-        newData.industry = currentInput;
-        break;
-      case 2:
-        newData.hiringChallenges = currentInput.split(',').map(item => item.trim());
-        break;
-      case 3:
-        newData.targetRoles = currentInput.split(',').map(item => item.trim());
-        break;
-      case 4:
-        newData.talentCompetitors = currentInput.split(',').map(item => item.trim());
-        break;
-      case 5:
-        newData.currentStrategy = currentInput;
-        break;
+    if (!isValid) {
+      toast.error("Please fill in all required fields");
+      return;
     }
-    setOnboardingData(newData);
 
-    const nextStep = onboardingStep + 1;
-
-    // Save progress after each step
-    await saveOnboardingProgress(newData, nextStep);
-
-    // Generate bot response
-    setTimeout(() => {
-      let botResponse = "";
-
-      if (nextStep < onboardingQuestions.length) {
-        botResponse = `Great! ${onboardingQuestions[nextStep]}`;
-      } else {
-        botResponse = `Perfect! Based on your responses, I've identified some key prompts to track your AI perception. Let me generate your personalized monitoring strategy...`;
-      }
-
-      const botMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        type: 'bot',
-        content: botResponse,
-        timestamp: new Date()
-      };
-
-      setMessages(prev => [...prev, botMessage]);
-      
-      if (nextStep >= onboardingQuestions.length) {
-        // Show completion after a delay
-        setTimeout(() => {
-          const completionMessage: Message = {
-            id: (Date.now() + 2).toString(),
-            type: 'bot',
-            content: `🎉 Your data is ready for analysis! I'll now process your information through our AI network to generate personalized prompts. Click below to continue.`,
-            timestamp: new Date()
-          };
-          setMessages(prev => [...prev, completionMessage]);
-        }, 2000);
-      }
-      
-      setOnboardingStep(nextStep);
-    }, 1000);
-
-    setCurrentInput("");
+    await saveOnboardingProgress(onboardingData, onboardingStep + 1);
+    setOnboardingStep(prev => prev + 1);
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleSendMessage();
-    }
+  const handleBack = () => {
+    setOnboardingStep(prev => prev - 1);
   };
 
-  const progress = Math.min((onboardingStep / onboardingQuestions.length) * 100, 100);
-  const isComplete = onboardingStep >= onboardingQuestions.length;
+  const handleComplete = async () => {
+    await saveOnboardingProgress(onboardingData, onboardingSteps.length);
+    navigate('/auth', { 
+      state: { 
+        onboardingData,
+        redirectTo: '/dashboard'
+      } 
+    });
+  };
+
+  const progress = Math.min((onboardingStep / onboardingSteps.length) * 100, 100);
+  const isComplete = onboardingStep >= onboardingSteps.length;
 
   if (isLoading) {
     return (
@@ -481,35 +358,8 @@ const Onboarding = () => {
 
   return (
     <div className="min-h-screen" style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
-      {/* Header */}
-      <header className="border-b bg-white/80 backdrop-blur-sm">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <Button 
-            variant="ghost" 
-            onClick={() => navigate('/')}
-            className="flex items-center"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Home
-          </Button>
-          <div className="flex items-center space-x-4">
-            <Progress value={progress} className="w-32" />
-            <span className="text-sm text-gray-600">{Math.round(progress)}% Complete</span>
-          </div>
-          {user ? <UserMenu /> : (
-            <Button 
-              onClick={() => navigate('/auth')}
-              variant="outline"
-              size="sm"
-            >
-              Sign In
-            </Button>
-          )}
-        </div>
-      </header>
-
       <div className="container mx-auto px-6 py-8">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-3xl mx-auto">
           {connectionError && (
             <Card className="mb-6 bg-yellow-50 border-yellow-200">
               <CardContent className="p-4">
@@ -526,122 +376,102 @@ const Onboarding = () => {
 
           <Card className="bg-white shadow-lg">
             <CardHeader className="border-b bg-gradient-to-r from-blue-50 to-indigo-50">
-              <CardTitle className="flex items-center">
-                <div className="w-6 h-6 mr-2 rounded-full overflow-hidden flex-shrink-0">
-                  <img 
-                    src="/lovable-uploads/4e28aa28-e0f0-4c44-ba78-9965207a284e.png" 
-                    alt="PerceptionX Logo" 
-                    className="w-full h-full object-cover"
-                  />
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center">
+                  <div className="w-6 h-6 mr-2 rounded-full overflow-hidden flex-shrink-0">
+                    <img 
+                      src="/lovable-uploads/4e28aa28-e0f0-4c44-ba78-9965207a284e.png" 
+                      alt="PerceptionX Logo" 
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  PerceptionX Setup
+                </CardTitle>
+                <div className="flex items-center space-x-2">
+                  <Badge variant="secondary">Step {onboardingStep + 1} of {onboardingSteps.length}</Badge>
                 </div>
-                PerceptionX LLM Assistant
-              </CardTitle>
+              </div>
+              <Progress value={progress} className="mt-4" />
             </CardHeader>
             
-            <CardContent className="p-0">
-              {/* Chat Messages */}
-              <div className="h-96 overflow-y-auto p-6 space-y-4">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                        message.type === 'user'
-                          ? 'text-white'
-                          : 'bg-gray-100 text-gray-900'
-                      }`}
-                      style={message.type === 'user' ? { backgroundColor: '#db5f89' } : {}}
-                    >
-                      <p className="text-sm">{message.content}</p>
-                      <span className="text-xs opacity-70 mt-1 block">
-                        {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
+            <CardContent className="p-6">
+              {!isComplete ? (
+                <>
+                  <div className="mb-6">
+                    <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+                      {onboardingSteps[onboardingStep].title}
+                    </h2>
+                    <p className="text-gray-600">
+                      {onboardingSteps[onboardingStep].description}
+                    </p>
                   </div>
-                ))}
-              </div>
 
-              {/* Input Area */}
-              <div className="border-t bg-gray-50 p-4">
-                {!isComplete ? (
-                  <div className="flex space-x-2">
-                    <Input
-                      value={currentInput}
-                      onChange={(e) => setCurrentInput(e.target.value)}
-                      onKeyPress={handleKeyPress}
-                      placeholder="Type your response..."
-                      className="flex-1"
-                    />
-                    <Button 
-                      onClick={handleSendMessage}
-                      disabled={!currentInput.trim()}
-                      size="sm"
-                      style={{ backgroundColor: '#db5f89' }}
-                      className="hover:opacity-90 text-white"
-                    >
-                      <Send className="w-4 h-4" />
-                    </Button>
+                  <div className="space-y-6">
+                    {onboardingSteps[onboardingStep].fields.map((field, index) => (
+                      <div key={index} className="space-y-2">
+                        <Label htmlFor={field.label}>{field.label}</Label>
+                        {field.type === "textarea" ? (
+                          <Textarea
+                            id={field.label}
+                            placeholder={field.placeholder}
+                            value={field.value}
+                            onChange={(e) => field.onChange(e.target.value)}
+                            className="min-h-[100px]"
+                          />
+                        ) : (
+                          <Input
+                            id={field.label}
+                            type={field.type}
+                            placeholder={field.placeholder}
+                            value={field.value}
+                            onChange={(e) => field.onChange(e.target.value)}
+                          />
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ) : (
-                  <div className="text-center space-y-4">
-                    <div className="flex items-center justify-center space-x-2 text-green-600">
-                      <CheckCircle className="w-5 h-5" />
-                      <span className="font-medium">Onboarding Complete!</span>
-                    </div>
-                    <Button 
-                      onClick={() => navigate('/analysis', { 
-                        state: { 
-                          onboardingData
-                        } 
-                      })}
+
+                  <div className="flex justify-between mt-8">
+                    <Button
+                      variant="outline"
+                      onClick={handleBack}
+                      disabled={onboardingStep === 0}
+                    >
+                      <ArrowLeft className="w-4 h-4 mr-2" />
+                      Back
+                    </Button>
+                    <Button
+                      onClick={handleNext}
                       style={{ backgroundColor: '#db5f89' }}
                       className="hover:opacity-90 text-white"
                     >
-                      Start AI Analysis
+                      {onboardingStep === onboardingSteps.length - 1 ? 'Complete' : 'Next'}
                       <ArrowRight className="w-4 h-4 ml-2" />
                     </Button>
                   </div>
-                )}
-              </div>
+                </>
+              ) : (
+                <div className="text-center py-8">
+                  <div className="flex items-center justify-center space-x-2 text-green-600 mb-4">
+                    <CheckCircle className="w-8 h-8" />
+                    <span className="text-xl font-medium">Setup Complete!</span>
+                  </div>
+                  <p className="text-gray-600 mb-8">
+                    Your information has been saved. We'll now analyze your data to generate personalized prompts for your recruitment strategy.
+                  </p>
+                  <Button
+                    onClick={handleComplete}
+                    size="lg"
+                    style={{ backgroundColor: '#db5f89' }}
+                    className="hover:opacity-90 text-white"
+                  >
+                    Create an Account
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
-
-          {/* Progress Summary */}
-          {onboardingStep > 0 && (
-            <Card className="mt-6 bg-blue-50 border-blue-200">
-              <CardContent className="p-4">
-                <h3 className="font-medium text-blue-900 mb-2">Your Information So Far:</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                  {onboardingData.companyName && (
-                    <div>
-                      <Badge variant="secondary" className="mr-2">Company:</Badge>
-                      {onboardingData.companyName}
-                    </div>
-                  )}
-                  {onboardingData.industry && (
-                    <div>
-                      <Badge variant="secondary" className="mr-2">Industry:</Badge>
-                      {onboardingData.industry}
-                    </div>
-                  )}
-                  {onboardingData.hiringChallenges.length > 0 && (
-                    <div className="md:col-span-2">
-                      <Badge variant="secondary" className="mr-2">Challenges:</Badge>
-                      {onboardingData.hiringChallenges.join(', ')}
-                    </div>
-                  )}
-                  {onboardingData.talentCompetitors.length > 0 && (
-                    <div className="md:col-span-2">
-                      <Badge variant="secondary" className="mr-2">Talent Competitors:</Badge>
-                      {onboardingData.talentCompetitors.join(', ')}
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </div>
       </div>
     </div>

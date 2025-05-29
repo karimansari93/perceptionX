@@ -1,10 +1,11 @@
+// This page is no longer shown after onboarding. All onboarding redirects go directly to /auth for account creation.
+
 import { useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import UserMenu from "@/components/UserMenu";
-import { OnboardingDataSummary } from "@/components/prompts/OnboardingDataSummary";
 import { PromptsTable } from "@/components/prompts/PromptsTable";
 import { PromptStrategyExplanation } from "@/components/prompts/PromptStrategyExplanation";
 import { ConfirmationCard } from "@/components/prompts/ConfirmationCard";
@@ -89,32 +90,32 @@ const Prompts = () => {
       {/* Header */}
       <header className="border-b bg-white/80 backdrop-blur-sm">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <Button 
-            variant="ghost" 
-            onClick={() => navigate('/onboarding')}
-            className="flex items-center"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Onboarding
-          </Button>
-          <h1 className="text-xl font-semibold">Recommended Prompts</h1>
-          <UserMenu />
+          <div className="flex items-center gap-4">
+            <Button 
+              variant="ghost" 
+              onClick={() => navigate('/onboarding')}
+              className="flex items-center"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Onboarding
+            </Button>
+            <h1 className="text-xl font-semibold">Recommended Prompts</h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <ConfirmationCard 
+              isConfirming={isConfirming}
+              onConfirm={confirmAndStartMonitoring}
+              disabled={!onboardingRecord}
+            />
+          </div>
         </div>
       </header>
 
       <div className="container mx-auto px-6 py-8">
         <div className="max-w-6xl mx-auto">
-          {onboardingData && <OnboardingDataSummary onboardingData={onboardingData} />}
-          
           <PromptsTable prompts={prompts} />
           
           <PromptStrategyExplanation />
-
-          <ConfirmationCard 
-            isConfirming={isConfirming}
-            onConfirm={confirmAndStartMonitoring}
-            disabled={!onboardingRecord}
-          />
         </div>
       </div>
 
