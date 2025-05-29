@@ -212,23 +212,23 @@ const Auth = () => {
 
   if (user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center" style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Redirecting...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+          <p className="text-white">Redirecting...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center" style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
       <div className="w-full max-w-md mx-6">
         <div className="absolute top-4 left-4">
           <Button
             variant="ghost"
             onClick={() => window.location.href = 'https://www.perceptionx.co'}
-            className="flex items-center"
+            className="flex items-center text-white hover:text-white/80"
           >
             <X className="w-4 h-4 mr-2" />
             Back to Home
