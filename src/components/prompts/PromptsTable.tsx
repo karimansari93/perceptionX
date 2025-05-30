@@ -35,8 +35,8 @@ export const PromptsTable = ({ prompts }: PromptsTableProps) => {
   return (
     <Card className="bg-white shadow-lg">
       <CardHeader>
-        <CardTitle className="text-lg">Your Company Through AI's Eyes</CardTitle>
-        <p className="text-gray-600 mt-2 text-base">
+        <CardTitle className="text-2xl font-semibold text-gray-900 mb-2">Your Company Through AI's Eyes</CardTitle>
+        <p className="text-gray-600">
           Millions of job seekers are asking AI about employers. We'll show you exactly what they're discovering about National Grid.
         </p>
       </CardHeader>

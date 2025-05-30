@@ -7,10 +7,8 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import OnboardingGuard from "@/components/OnboardingGuard";
 import Dashboard from "./pages/Dashboard";
-import Onboarding from "./pages/Onboarding";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
-import Prompts from "./pages/Prompts";
 
 const queryClient = new QueryClient();
 
@@ -24,18 +22,10 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Auth />} />
             <Route path="/auth" element={<Auth />} />
-            <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/dashboard" element={
               <ProtectedRoute>
                 <OnboardingGuard requireOnboarding={true}>
                   <Dashboard />
-                </OnboardingGuard>
-              </ProtectedRoute>
-            } />
-            <Route path="/prompts" element={
-              <ProtectedRoute>
-                <OnboardingGuard requireOnboarding={true}>
-                  <Prompts />
                 </OnboardingGuard>
               </ProtectedRoute>
             } />

@@ -14,7 +14,7 @@ import { generateAndInsertPrompts, ProgressInfo } from '@/hooks/usePromptsLogic'
 const Auth = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [showAuthForm, setShowAuthForm] = useState(false);
@@ -32,19 +32,15 @@ const Auth = () => {
 
   // Redirect if already authenticated
   useEffect(() => {
-    if (user) {
-      if (!onboardingData) {
-        navigate('/onboarding');
-      } else {
-        navigate('/prompts', { 
-          state: { 
-            onboardingData,
-            userId: user.id 
-          } 
-        });
-      }
+    if (user && !authLoading) {
+      navigate('/dashboard', { 
+        state: { 
+          onboardingData,
+          userId: user.id 
+        } 
+      });
     }
-  }, [user, navigate, onboardingData, redirectTo]);
+  }, [user, authLoading, navigate, onboardingData, redirectTo]);
 
   const linkOnboardingToUser = async (userId: string) => {
     if (!onboardingData) return;
@@ -203,7 +199,8 @@ const Auth = () => {
           toast.error('Failed to generate prompts. Please try again.');
         } finally {
           setShowLoadingModal(false);
-          navigate('/dashboard');
+          // Navigate to dashboard - the onboarding modal will show automatically if needed
+          navigate('/dashboard', { replace: true });
         }
       }
     } catch (error: any) {
@@ -220,6 +217,18 @@ const Auth = () => {
       [e.target.name]: e.target.value
     });
   };
+
+  // Show loading state while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+          <p className="text-white">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (user) {
     return (

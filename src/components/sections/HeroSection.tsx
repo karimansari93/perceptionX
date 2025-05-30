@@ -1,4 +1,3 @@
-
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight } from "lucide-react";
@@ -11,9 +10,14 @@ const HeroSection = () => {
   
   const handleGetStarted = () => {
     if (user) {
-      navigate('/dashboard');
+      navigate('/dashboard', { 
+        state: { 
+          showOnboarding: true 
+        },
+        replace: true 
+      });
     } else {
-      navigate('/onboarding');
+      navigate('/auth');
     }
   };
 

@@ -27,134 +27,89 @@ export interface ProgressInfo {
   total: number;
 }
 
-export const usePromptsLogic = (onboardingData: OnboardingData | undefined) => {
+export const usePromptsLogic = (onboardingData?: OnboardingData) => {
+  console.log('usePromptsLogic onboardingData:', onboardingData);
   const navigate = useNavigate();
   const { user } = useAuth();
   const [prompts, setPrompts] = useState<GeneratedPrompt[]>([]);
   const [isConfirming, setIsConfirming] = useState(false);
   const [onboardingRecord, setOnboardingRecord] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<ProgressInfo>({ completed: 0, total: 0 });
+  const [progress, setProgress] = useState<ProgressInfo>({
+    currentModel: '',
+    currentPrompt: '',
+    completed: 0,
+    total: 0
+  });
 
   useEffect(() => {
-    if (!user) {
-      console.log('No user found, redirecting to auth');
-      navigate('/auth');
-      return;
-    }
+    if (onboardingData && (onboardingData as any).id) {
+      setOnboardingRecord(onboardingData);
+    } else {
+      const checkOnboarding = async () => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session?.user) {
+            setError('Please sign in to continue');
+            return;
+          }
 
-    if (!onboardingData) {
-      console.log('No onboarding data found, redirecting to onboarding');
-      navigate('/onboarding');
-      return;
-    }
+          const { data, error } = await supabase
+            .from('user_onboarding')
+            .select('*')
+            .eq('user_id', session.user.id)
+            .order('created_at', { ascending: false })
+            .limit(1);
 
-    checkOnboardingRecord();
-    generatePrompts();
-  }, [onboardingData, user, navigate]);
+          if (error) throw error;
 
-  const checkOnboardingRecord = async () => {
-    if (!user) return;
+          if (!data || data.length === 0) {
+            setError('Please complete onboarding first');
+            return;
+          }
 
-    try {
-      console.log('Checking for existing onboarding record for user:', user.id);
-      
-      const { data: userOnboarding, error: userError } = await supabase
-        .from('user_onboarding')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (userError) {
-        console.error('Error fetching user onboarding:', userError);
-      }
-
-      if (userOnboarding && userOnboarding.length > 0) {
-        console.log('Found existing onboarding record for user:', userOnboarding[0]);
-        setOnboardingRecord(userOnboarding[0]);
-        return;
-      }
-
-      console.log('No user-linked onboarding found, checking for unlinked records');
-      
-      const { data: unlinkedOnboarding, error: unlinkedError } = await supabase
-        .from('user_onboarding')
-        .select('*')
-        .is('user_id', null)
-        .eq('company_name', onboardingData?.companyName)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (unlinkedError) {
-        console.error('Error fetching unlinked onboarding:', unlinkedError);
-      }
-
-      if (unlinkedOnboarding && unlinkedOnboarding.length > 0) {
-        console.log('Found unlinked onboarding record, linking to user:', unlinkedOnboarding[0]);
-        
-        const { data: updatedRecord, error: updateError } = await supabase
-          .from('user_onboarding')
-          .update({ user_id: user.id })
-          .eq('id', unlinkedOnboarding[0].id)
-          .select()
-          .single();
-
-        if (updateError) {
-          console.error('Error linking onboarding record:', updateError);
-          throw updateError;
+          setOnboardingRecord(data[0]);
+        } catch (error) {
+          console.error('Error checking onboarding:', error);
+          setError('Failed to check onboarding status');
         }
-
-        console.log('Successfully linked onboarding record:', updatedRecord);
-        setOnboardingRecord(updatedRecord);
-        return;
-      }
-
-      console.log('No existing onboarding found, creating new record');
-      await createOnboardingRecord();
-
-    } catch (error) {
-      console.error('Error in checkOnboardingRecord:', error);
-      setError('Failed to find or create onboarding record. Please try going through onboarding again.');
-    }
-  };
-
-  const createOnboardingRecord = async () => {
-    if (!user || !onboardingData) return;
-
-    try {
-      const newRecord = {
-        user_id: user.id,
-        company_name: onboardingData.companyName,
-        industry: onboardingData.industry,
-        hiring_challenges: onboardingData.hiringChallenges,
-        target_roles: onboardingData.targetRoles,
-        current_strategy: onboardingData.currentStrategy,
-        talent_competitors: onboardingData.talentCompetitors,
-        session_id: `session_${user.id}_${Date.now()}`
       };
-
-      const { data: createdRecord, error } = await supabase
-        .from('user_onboarding')
-        .insert(newRecord)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error creating onboarding record:', error);
-        throw error;
-      }
-
-      console.log('Created new onboarding record:', createdRecord);
-      setOnboardingRecord(createdRecord);
-    } catch (error) {
-      console.error('Error creating onboarding record:', error);
-      throw error;
+      checkOnboarding();
     }
-  };
+  }, [onboardingData]);
+
+  useEffect(() => {
+    // Fetch prompts from confirmed_prompts if onboardingData.id is present
+    const fetchPrompts = async () => {
+      if (onboardingData && (onboardingData as any).id) {
+        const { data, error } = await (supabase as any)
+          .from('confirmed_prompts')
+          .select('*')
+          .eq('onboarding_id', (onboardingData as any).id);
+        if (error) {
+          console.error('Error fetching prompts:', error);
+          return;
+        }
+        if (data && data.length > 0) {
+          setPrompts(
+            data.map((p: any) => ({
+              id: p.id,
+              text: p.prompt_text,
+              category: p.prompt_category,
+              type: p.prompt_type
+            }))
+          );
+        }
+      }
+    };
+    fetchPrompts();
+  }, [onboardingData]);
 
   const generatePrompts = () => {
-    if (!onboardingData) return;
+    if (!onboardingData) {
+      console.log('No onboardingData, cannot generate prompts');
+      return;
+    }
     const { companyName, industry } = onboardingData;
     let generatedPrompts: GeneratedPrompt[] = [
       {
@@ -176,17 +131,18 @@ export const usePromptsLogic = (onboardingData: OnboardingData | undefined) => {
         type: 'competitive'
       }
     ];
+    console.log('Generated prompts:', generatedPrompts);
     setPrompts(generatedPrompts);
   };
 
   const confirmAndStartMonitoring = async () => {
+    console.log('Confirm clicked');
     if (!user || !onboardingRecord) {
+      console.error('Missing user or onboardingRecord', { user, onboardingRecord });
       toast.error('Missing user or onboarding data. Please try again.');
       return;
     }
-    
     setIsConfirming(true);
-    
     try {
       console.log('=== STARTING MONITORING PROCESS ===');
       console.log('Using onboarding record:', onboardingRecord.id);
@@ -201,17 +157,15 @@ export const usePromptsLogic = (onboardingData: OnboardingData | undefined) => {
         prompt_type: prompt.type,
         is_active: true
       }));
-
+      console.log('Prompts to insert:', promptsToInsert);
       const { data: confirmedPrompts, error: insertError } = await supabase
         .from('confirmed_prompts')
         .insert(promptsToInsert)
         .select();
-
       if (insertError) {
         console.error('Failed to insert prompts:', insertError);
         throw insertError;
       }
-
       console.log('Confirmed prompts inserted:', confirmedPrompts?.length);
 
       // Calculate total operations for progress tracking
@@ -257,12 +211,12 @@ export const usePromptsLogic = (onboardingData: OnboardingData | undefined) => {
         setProgress(prev => ({ ...prev, completed: completedOperations }));
       }
 
-      console.log('All prompts tested, navigating to prompts...');
+      console.log('All prompts tested, navigating to dashboard...');
       toast.success('Prompts confirmed and monitoring started!');
       
-      // Wait a moment for the user to see completion, then navigate
+      // Wait a moment for the user to see completion, then navigate to dashboard
       setTimeout(() => {
-        navigate('/dashboard');
+        navigate('/dashboard', { replace: true });
       }, 1500);
 
     } catch (error) {

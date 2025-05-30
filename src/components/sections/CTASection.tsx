@@ -1,4 +1,3 @@
-
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -10,9 +9,14 @@ const CTASection = () => {
   
   const handleGetStarted = () => {
     if (user) {
-      navigate('/dashboard');
+      navigate('/dashboard', { 
+        state: { 
+          showOnboarding: true 
+        },
+        replace: true 
+      });
     } else {
-      navigate('/onboarding');
+      navigate('/auth');
     }
   };
 

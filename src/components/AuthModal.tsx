@@ -27,6 +27,8 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
     password: '',
     companyName: ''
   });
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Close modal and redirect if already authenticated
   useEffect(() => {
@@ -135,17 +137,20 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
         
         onOpenChange(false);
         
-        // Redirect with onboarding data if available
-        if (onboardingData && redirectTo === '/prompts') {
-          navigate('/prompts', { 
-            state: { 
-              onboardingData,
-              userId: data.user?.id 
-            } 
-          });
-        } else {
-          navigate('/dashboard');
-        }
+        // Always navigate to prompts page with onboarding data
+        navigate('/prompts', { 
+          state: { 
+            onboardingData: onboardingData || {
+              companyName: formData.companyName,
+              industry: '',
+              hiringChallenges: [],
+              targetRoles: [],
+              currentStrategy: '',
+              talentCompetitors: []
+            },
+            userId: data.user?.id 
+          } 
+        });
       } else {
         const { data, error } = await supabase.auth.signUp({
           email: formData.email,
@@ -176,8 +181,20 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
         toast.success('Account created successfully!');
         onOpenChange(false);
         
-        // Always redirect to dashboard after account creation
-        navigate('/dashboard');
+        // Navigate to prompts page with onboarding data
+        navigate('/prompts', { 
+          state: { 
+            onboardingData: onboardingData || {
+              companyName: formData.companyName,
+              industry: '',
+              hiringChallenges: [],
+              targetRoles: [],
+              currentStrategy: '',
+              talentCompetitors: []
+            },
+            userId: data.user?.id 
+          } 
+        });
       }
     } catch (error: any) {
       console.error('Auth error:', error);
@@ -192,6 +209,35 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
       ...formData,
       [e.target.name]: e.target.value
     });
+  };
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+      });
+
+      if (error) throw error;
+
+      if (data?.user) {
+        navigate('/dashboard', { 
+          state: { 
+            showOnboarding: true,
+            isNewUser: true 
+          },
+          replace: true 
+        });
+      }
+    } catch (error: any) {
+      setError(error.message);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   if (user) {

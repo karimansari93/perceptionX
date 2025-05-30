@@ -16,7 +16,6 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [hasOnboarding, setHasOnboarding] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(false);
 
   useEffect(() => {
@@ -25,12 +24,10 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
         if (!authLoading) {
           navigate('/auth');
         }
-        setLoading(false);
         return;
       }
 
       if (!requireOnboarding) {
-        setLoading(false);
         return;
       }
 
@@ -46,7 +43,6 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
         if (connectionTest) {
           console.error('Connection test failed:', connectionTest);
           setConnectionError(true);
-          setLoading(false);
           return;
         }
 
@@ -72,8 +68,6 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
       } catch (error) {
         console.error('Error in onboarding check:', error);
         setConnectionError(true);
-      } finally {
-        setLoading(false);
       }
     };
 
@@ -82,28 +76,10 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
     }
   }, [user, requireOnboarding, authLoading, navigate]);
 
-  useEffect(() => {
-    if (!authLoading && !loading && requireOnboarding && hasOnboarding === false && !connectionError) {
-      console.log('Onboarding not complete, redirecting to onboarding');
-      navigate('/onboarding');
-    }
-  }, [authLoading, loading, requireOnboarding, hasOnboarding, navigate, connectionError]);
-
   // Redirect to auth if not logged in
   if (!authLoading && !user) {
     navigate('/');
     return null;
-  }
-
-  if (authLoading || loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Checking authentication status...</p>
-        </div>
-      </div>
-    );
   }
 
   // Show connection error with bypass options
@@ -128,13 +104,6 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
               Retry Connection
             </Button>
             <Button 
-              onClick={() => navigate('/onboarding')} 
-              variant="outline"
-              className="w-full"
-            >
-              Go to Onboarding
-            </Button>
-            <Button 
               onClick={() => navigate('/')} 
               variant="ghost"
               className="w-full"
@@ -147,8 +116,9 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
     );
   }
 
+  // If onboarding is required and not complete, show the children (which will show the onboarding modal)
   if (requireOnboarding && hasOnboarding === false) {
-    return null; // Will redirect via useEffect
+    return <>{children}</>;
   }
 
   return <>{children}</>;
