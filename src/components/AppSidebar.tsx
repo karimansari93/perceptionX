@@ -13,19 +13,21 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import UserMenu from "@/components/UserMenu";
+import { Badge } from '@/components/ui/badge';
 
 interface NavigationItem {
   title: string;
   icon: any;
   section: string;
+  comingSoon?: boolean;
 }
 
 const navigationItems: NavigationItem[] = [
   { title: "Overview", icon: BarChart3, section: "overview" },
   { title: "Prompts", icon: MessageSquare, section: "prompts" },
   { title: "Responses", icon: FileText, section: "responses" },
-  { title: "Answer Gaps", icon: Search, section: "answer-gaps" },
-  { title: "Reports", icon: TrendingUp, section: "reports" },
+  { title: "Answer Gaps", icon: Search, section: "answer-gaps", comingSoon: true },
+  { title: "Reports", icon: TrendingUp, section: "reports", comingSoon: true },
 ];
 
 interface AppSidebarProps {
@@ -55,10 +57,13 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
               key={item.section}
               isActive={activeSection === item.section}
               onClick={() => onSectionChange(item.section)}
-              className="w-10 h-10 flex items-center justify-center rounded-lg p-0"
+              className="w-10 h-10 flex items-center justify-center rounded-lg p-0 relative"
               title={item.title}
             >
               <item.icon className="h-5 w-5" />
+              {item.comingSoon && (
+                <span className="absolute top-1 right-1 block w-2 h-2 rounded-full bg-gray-400" title="Coming Soon"></span>
+              )}
             </SidebarMenuButton>
           ))}
         </nav>
@@ -86,10 +91,13 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
                   <SidebarMenuButton
                     isActive={activeSection === item.section}
                     onClick={() => onSectionChange(item.section)}
-                    className="w-full justify-start"
+                    className="w-full justify-start relative"
                   >
                     <item.icon className="h-4 w-4" />
                     <span>{item.title}</span>
+                    {item.comingSoon && (
+                      <Badge className="ml-2 bg-gray-200 text-gray-700 px-2 py-0.5 text-xs font-semibold">Coming Soon</Badge>
+                    )}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}

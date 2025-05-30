@@ -35,9 +35,9 @@ export const PromptsTable = ({ prompts }: PromptsTableProps) => {
   return (
     <Card className="bg-white shadow-lg">
       <CardHeader>
-        <CardTitle className="text-lg">Enhanced Prompt Strategy</CardTitle>
+        <CardTitle className="text-lg">Your Company Through AI's Eyes</CardTitle>
         <p className="text-gray-600 mt-2 text-base">
-          These prompts were generated based on your company, roles, hiring challenges, and competitors to provide a comprehensive view of your employer brand in AI models.
+          Millions of job seekers are asking AI about employers. We'll show you exactly what they're discovering about National Grid.
         </p>
       </CardHeader>
       <CardContent>

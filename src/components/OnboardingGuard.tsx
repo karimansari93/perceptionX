@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -51,17 +50,13 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
           return;
         }
 
-        // Check for completed onboarding (all required fields filled) for the current user only
+        // Check for completed onboarding (only company_name and industry required)
         const { data, error } = await supabase
           .from('user_onboarding')
           .select('*')
           .eq('user_id', user.id)
           .not('company_name', 'is', null)
           .not('industry', 'is', null)
-          .gte('hiring_challenges', '{}')
-          .gte('target_roles', '{}')
-          .gte('talent_competitors', '{}')
-          .not('current_strategy', 'is', null)
           .order('created_at', { ascending: false })
           .limit(1);
 
@@ -96,7 +91,7 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
 
   // Redirect to auth if not logged in
   if (!authLoading && !user) {
-    navigate('/auth');
+    navigate('/');
     return null;
   }
 

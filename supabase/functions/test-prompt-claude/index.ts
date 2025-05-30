@@ -31,7 +31,7 @@ serve(async (req) => {
         'anthropic-beta': 'messages-2023-12-15'
       },
       body: JSON.stringify({
-        model: 'claude-3-sonnet-20240229',
+        model: 'claude-3-haiku-20240307',
         max_tokens: 500,
         messages: [
           {

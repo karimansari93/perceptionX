@@ -52,7 +52,7 @@ export const LoadingModal = ({
           {/* Header */}
           <div className="space-y-2">
             <h3 className="text-lg font-semibold text-blue-900">
-              Collecting AI Insights
+              Getting Your Results
             </h3>
             <p className="text-sm text-gray-600">
               Testing your prompts across multiple AI models...

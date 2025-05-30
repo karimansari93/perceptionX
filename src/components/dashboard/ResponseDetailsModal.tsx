@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink, X } from "lucide-react";
+import { ExternalLink, X, Lightbulb } from "lucide-react";
 import LLMLogo from "@/components/LLMLogo";
 import { PromptResponse } from "@/types/dashboard";
 
@@ -74,16 +74,62 @@ export const ResponseDetailsModal = ({
   };
 
   const getVisibilityScore = (response: PromptResponse) => {
-    // If company is not mentioned or missing data, score is 0
-    if (!response.company_mentioned || !response.first_mention_position || !response.total_words) {
-      return "0%";
-    }
-    const score = (1 - (response.first_mention_position / response.total_words)) * 100;
-    return `${Math.min(100, Math.max(0, score)).toFixed(0)}%`;
+    return response.company_mentioned ? "100%" : "0%";
   };
 
   const getBrandPerception = (response: PromptResponse) => {
     return response.company_mentioned ? "Mentioned" : "Not Mentioned";
+  };
+
+  const analyzeResponses = () => {
+    if (responses.length === 0) return [];
+
+    const insights = [];
+
+    // Analyze sentiment consistency
+    const sentimentScores = responses.map(r => r.sentiment_score).filter(Boolean);
+    if (sentimentScores.length > 0) {
+      const avgSentiment = sentimentScores.reduce((a, b) => a + b!, 0) / sentimentScores.length;
+      const sentimentRange = Math.max(...sentimentScores) - Math.min(...sentimentScores);
+      
+      if (sentimentRange > 0.3) {
+        insights.push("High sentiment variation across models - consider standardizing messaging");
+      } else if (avgSentiment > 0.1) {
+        insights.push("Consistently positive sentiment across all models");
+      } else if (avgSentiment < -0.1) {
+        insights.push("Consistently negative sentiment across all models - may need attention");
+      }
+    }
+
+    // Analyze company visibility
+    const visibilityScores = responses.map(r => {
+      if (!r.company_mentioned || !r.first_mention_position || !r.total_words) return 0;
+      return (1 - (r.first_mention_position / r.total_words)) * 100;
+    });
+    
+    const avgVisibility = visibilityScores.reduce((a, b) => a + b, 0) / visibilityScores.length;
+    if (avgVisibility < 30) {
+      insights.push("Low company visibility in responses - consider improving brand positioning");
+    } else if (avgVisibility > 70) {
+      insights.push("Strong company visibility across all models");
+    }
+
+    // Analyze response consistency
+    const responseLengths = responses.map(r => r.response_text.length);
+    const avgLength = responseLengths.reduce((a, b) => a + b, 0) / responseLengths.length;
+    const lengthVariation = Math.max(...responseLengths) - Math.min(...responseLengths);
+    
+    if (lengthVariation > avgLength * 0.5) {
+      insights.push("High variation in response lengths - consider standardizing content depth");
+    }
+
+    // Analyze competitor mentions
+    const competitorMentions = responses.filter(r => r.competitor_mentions).length;
+    if (competitorMentions > 0) {
+      insights.push(`${competitorMentions} models mentioned competitors - review competitive positioning`);
+    }
+
+    return insights;
   };
 
   return (
@@ -169,6 +215,25 @@ export const ResponseDetailsModal = ({
                         </span>
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                {/* Key Insights Summary */}
+                <div className="bg-blue-50 rounded-lg p-4">
+                  <div className="flex items-center space-x-2 mb-3">
+                    <Lightbulb className="w-4 h-4 text-blue-600" />
+                    <h3 className="text-sm font-medium text-blue-900">Key Insights Summary</h3>
+                  </div>
+                  <div className="space-y-2">
+                    {analyzeResponses().map((insight, index) => (
+                      <div key={index} className="flex items-start space-x-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 mt-1.5"></div>
+                        <p className="text-sm text-blue-800">{insight}</p>
+                      </div>
+                    ))}
+                    {analyzeResponses().length === 0 && (
+                      <p className="text-sm text-blue-800">No significant insights to report</p>
+                    )}
                   </div>
                 </div>
 

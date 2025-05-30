@@ -54,6 +54,7 @@ export interface PromptData {
   mentionRanking?: number;
   competitivePosition?: number;
   competitorMentions?: string[];
+  averageVisibility?: number;
   totalWords?: number;
   firstMentionPosition?: number;
 }

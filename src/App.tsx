@@ -17,12 +17,13 @@ const queryClient = new QueryClient();
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <AuthProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
+      <BrowserRouter>
+        <AuthProvider>
+          <Toaster />
+          <Sonner />
           <Routes>
             <Route path="/" element={<Auth />} />
+            <Route path="/auth" element={<Auth />} />
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/dashboard" element={
               <ProtectedRoute>
@@ -33,13 +34,15 @@ const App = () => (
             } />
             <Route path="/prompts" element={
               <ProtectedRoute>
-                <Prompts />
+                <OnboardingGuard requireOnboarding={true}>
+                  <Prompts />
+                </OnboardingGuard>
               </ProtectedRoute>
             } />
             <Route path="*" element={<NotFound />} />
           </Routes>
-        </BrowserRouter>
-      </AuthProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
 );

@@ -38,7 +38,7 @@ const Prompts = () => {
   // Show error state if there's an error
   if (error) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
+      <div className="min-h-screen ..." style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
         <header className="border-b bg-white/80 backdrop-blur-sm">
           <div className="container mx-auto px-6 py-4 flex items-center justify-between">
             <Button 
@@ -76,7 +76,7 @@ const Prompts = () => {
   // Show loading state while checking onboarding
   if (!onboardingRecord && !error) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
+      <div className="min-h-screen ..." style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Setting up your prompts...</p>
@@ -86,10 +86,10 @@ const Prompts = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
+    <div className="min-h-screen ..." style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
       {/* Header */}
       <header className="border-b bg-white/80 backdrop-blur-sm">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="container mx-auto px-6 py-4 flex items-center justify-between max-w-6xl">
           <div className="flex items-center gap-4">
             <Button 
               variant="ghost" 
@@ -99,7 +99,6 @@ const Prompts = () => {
               <ArrowLeft className="w-4 h-4 mr-2" />
               Back to Onboarding
             </Button>
-            <h1 className="text-xl font-semibold">Recommended Prompts</h1>
           </div>
           <div className="flex items-center gap-4">
             <ConfirmationCard 

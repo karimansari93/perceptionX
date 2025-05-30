@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { X } from 'lucide-react';
+import { X, ArrowRight, Sparkles, BarChart3, Target, Users } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,8 +15,9 @@ const Auth = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
-  const [isLogin, setIsLogin] = useState(false); // Changed default to false (create account)
+  const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [showAuthForm, setShowAuthForm] = useState(false);
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -32,7 +33,16 @@ const Auth = () => {
   // Redirect if already authenticated
   useEffect(() => {
     if (user) {
-      navigate('/dashboard');
+      if (!onboardingData) {
+        navigate('/onboarding');
+      } else {
+        navigate('/prompts', { 
+          state: { 
+            onboardingData,
+            userId: user.id 
+          } 
+        });
+      }
     }
   }, [user, navigate, onboardingData, redirectTo]);
 
@@ -126,6 +136,7 @@ const Auth = () => {
         
         navigate('/dashboard');
       } else {
+        // Create the account directly
         const { data, error } = await supabase.auth.signUp({
           email: formData.email,
           password: formData.password,
@@ -223,7 +234,7 @@ const Auth = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center" style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
-      <div className="w-full max-w-md mx-6">
+      <div className="w-full max-w-5xl mx-6">
         <div className="absolute top-4 left-4">
           <Button
             variant="ghost"
@@ -235,89 +246,168 @@ const Auth = () => {
           </Button>
         </div>
 
-        <Card className="bg-white shadow-xl">
-          <CardHeader className="text-center pb-4">
-            <CardTitle className="text-2xl">
-              {isLogin ? 'Sign In' : 'Create Account'}
-            </CardTitle>
-            <p className="text-gray-600 text-sm">
-              {onboardingData ? 
-                'Create an account to save your personalized prompts and start monitoring' :
-                (isLogin ? 'Welcome back!' : 'Start monitoring your AI perception')
-              }
-            </p>
-          </CardHeader>
-          
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="Enter your email"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="Enter your password"
-                  minLength={6}
-                />
-              </div>
-
-              {!isLogin && (
-                <div>
-                  <Label htmlFor="companyName">Company Name</Label>
-                  <Input
-                    id="companyName"
-                    name="companyName"
-                    type="text"
-                    value={formData.companyName || onboardingData?.companyName || ''}
-                    onChange={handleInputChange}
-                    required
-                    placeholder="Enter your company name"
-                  />
-                </div>
-              )}
-
-              <Button
-                type="submit"
-                className="w-full bg-primary hover:bg-primary/90"
-                disabled={loading}
-              >
-                {loading ? 'Loading...' : (isLogin ? 'Sign In' : 'Create Account')}
-              </Button>
-            </form>
-
-            <div className="text-center mt-4">
-              <button
-                type="button"
-                onClick={() => setIsLogin(!isLogin)}
-                className="text-primary hover:text-primary/80 underline text-sm"
-              >
-                {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-              </button>
+        <div className="grid md:grid-cols-2 gap-8 items-center">
+          {/* Left side - Value Proposition */}
+          <div className="text-white space-y-6">
+            <div className="space-y-4">
+              <h1 className="text-4xl md:text-5xl font-bold leading-tight">
+                Understand Your Employer Brand's
+                <span className="block text-blue-200">AI Perception</span>
+              </h1>
+              <p className="text-lg text-blue-100">
+                Get data-driven insights into how AI models perceive your company's employer brand and talent acquisition strategy.
+              </p>
             </div>
 
-            {onboardingData && (
-              <div className="mt-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-                <strong>Your analysis is ready!</strong> Create an account to view your personalized prompts for {onboardingData.companyName}.
+            <div className="space-y-4">
+              <div className="flex items-start space-x-3">
+                <Sparkles className="w-6 h-6 text-blue-200 flex-shrink-0 mt-1" />
+                <div>
+                  <h3 className="font-semibold">AI-Powered Insights</h3>
+                  <p className="text-blue-100">Track how leading AI models like ChatGPT, Claude, and Gemini perceive your company</p>
+                </div>
               </div>
-            )}
-          </CardContent>
-        </Card>
+              <div className="flex items-start space-x-3">
+                <BarChart3 className="w-6 h-6 text-blue-200 flex-shrink-0 mt-1" />
+                <div>
+                  <h3 className="font-semibold">Data-Driven Strategy</h3>
+                  <p className="text-blue-100">Make informed decisions to improve your talent acquisition and employer branding</p>
+                </div>
+              </div>
+              <div className="flex items-start space-x-3">
+                <Target className="w-6 h-6 text-blue-200 flex-shrink-0 mt-1" />
+                <div>
+                  <h3 className="font-semibold">Competitive Analysis</h3>
+                  <p className="text-blue-100">Compare your employer brand perception against industry competitors</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right side - Auth Card */}
+          <Card className="bg-white/95 backdrop-blur-sm shadow-xl">
+            <CardHeader className="text-center pb-4">
+              {/* Removed 'Welcome to PerceptionX' title and subtitle */}
+            </CardHeader>
+            
+            <CardContent className="space-y-6">
+              {!showAuthForm ? (
+                <>
+                  {/* Primary CTA */}
+                  <Button
+                    onClick={() => {
+                      setIsLogin(false);
+                      setShowAuthForm(true);
+                    }}
+                    className="w-full bg-primary hover:bg-primary/90 h-14 text-lg group"
+                  >
+                    Create Free Account
+                    <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                  </Button>
+
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-gray-200"></div>
+                    </div>
+                    <div className="relative flex justify-center text-sm">
+                      <span className="px-2 bg-white text-gray-500">or</span>
+                    </div>
+                  </div>
+
+                  {/* Secondary CTA */}
+                  <Button
+                    onClick={() => {
+                      setIsLogin(true);
+                      setShowAuthForm(true);
+                    }}
+                    variant="outline"
+                    className="w-full h-14 text-lg"
+                  >
+                    Sign In to Your Account
+                  </Button>
+
+                  {onboardingData && (
+                    <div className="mt-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
+                      <strong>Your analysis is ready!</strong> Create an account to view your personalized prompts for {onboardingData.companyName}.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="text-center mb-4">
+                    <h3 className="text-lg font-semibold">
+                      {isLogin ? 'Welcome Back!' : 'Create Your Free Account'}
+                    </h3>
+                    <p className="text-sm text-gray-600 mt-1">
+                      {isLogin 
+                        ? 'Sign in to access your dashboard and prompts'
+                        : 'Create an account to start your free analysis'
+                      }
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                      <Label htmlFor="email">Email</Label>
+                      <Input
+                        id="email"
+                        name="email"
+                        type="email"
+                        value={formData.email}
+                        onChange={handleInputChange}
+                        required
+                        placeholder="Enter your email"
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="password">Password</Label>
+                      <Input
+                        id="password"
+                        name="password"
+                        type="password"
+                        value={formData.password}
+                        onChange={handleInputChange}
+                        required
+                        placeholder="Enter your password"
+                        minLength={6}
+                      />
+                    </div>
+
+                    <Button
+                      type="submit"
+                      className="w-full bg-primary hover:bg-primary/90"
+                      disabled={loading}
+                    >
+                      {loading ? 'Loading...' : (isLogin ? 'Sign In' : 'Continue to Analysis')}
+                    </Button>
+                  </form>
+
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsLogin(!isLogin);
+                        setFormData({ email: '', password: '', companyName: '' });
+                      }}
+                      className="text-primary hover:text-primary/80 underline text-sm"
+                    >
+                      {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+                    </button>
+                  </div>
+
+                  <Button
+                    variant="ghost"
+                    onClick={() => setShowAuthForm(false)}
+                    className="w-full"
+                  >
+                    Back to Options
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
       {showLoadingModal && (
         <LoadingModal

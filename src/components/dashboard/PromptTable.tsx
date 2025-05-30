@@ -25,14 +25,7 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
   };
 
   const getVisibilityScore = (prompt: PromptData) => {
-    // If company is not mentioned (no mention position), visibility score is 0
-    if (!prompt.firstMentionPosition || !prompt.totalWords) {
-      return 0;
-    }
-    
-    // Calculate visibility score based on mention position
-    const score = (1 - (prompt.firstMentionPosition / prompt.totalWords)) * 100;
-    return Math.min(100, Math.max(0, score));
+    return typeof prompt.averageVisibility === 'number' ? prompt.averageVisibility : 0;
   };
 
   const getCompetitiveScore = (prompt: PromptData) => {

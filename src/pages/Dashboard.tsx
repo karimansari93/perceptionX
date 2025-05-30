@@ -135,7 +135,8 @@ const DashboardContent = () => {
               <h1 className="text-3xl font-bold text-gray-900 mb-2">
                 {activeSection === "responses" ? "AI Responses" : 
                  activeSection === "prompts" ? "Prompt Library" :
-                 activeSection === "answer-gaps" ? "Answer Gaps Analysis" : "Dashboard"}
+                 activeSection === "answer-gaps" ? "Answer Gaps Analysis" :
+                 activeSection === "reports" ? "Reports" : "Dashboard"}
               </h1>
               <p className="text-gray-600">
                 {activeSection === "responses" 
@@ -144,6 +145,8 @@ const DashboardContent = () => {
                   ? "Manage and monitor your AI prompts across different categories."
                   : activeSection === "answer-gaps"
                   ? "Analyze and identify gaps in AI responses about your company."
+                  : activeSection === "reports"
+                  ? "Generate comprehensive reports about your AI perception and performance."
                   : `Overview of your project's performance and AI interactions for ${companyName}.`
                 }
               </p>

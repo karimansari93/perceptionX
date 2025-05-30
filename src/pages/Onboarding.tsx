@@ -16,10 +16,10 @@ import { Textarea } from "@/components/ui/textarea";
 interface OnboardingData {
   companyName: string;
   industry: string;
-  hiringChallenges: string[];
-  targetRoles: string[];
-  currentStrategy: string;
-  talentCompetitors: string[];
+  hiringChallenges?: string[];
+  targetRoles?: string[];
+  currentStrategy?: string;
+  talentCompetitors?: string[];
 }
 
 const Onboarding = () => {
@@ -29,10 +29,6 @@ const Onboarding = () => {
   const [onboardingData, setOnboardingData] = useState<OnboardingData>({
     companyName: "",
     industry: "",
-    hiringChallenges: ["", "", ""],
-    targetRoles: ["", "", ""],
-    currentStrategy: "",
-    talentCompetitors: ["", "", ""]
   });
   const [isLoading, setIsLoading] = useState(true);
   const [onboardingId, setOnboardingId] = useState<string | null>(null);
@@ -54,139 +50,9 @@ const Onboarding = () => {
         {
           label: "Industry",
           type: "text",
-          placeholder: "e.g., Oil & Gas, Tech, Finance, Healthcare",
+          placeholder: "e.g., Tech, Finance, Healthcare",
           value: onboardingData.industry,
           onChange: (value: string) => setOnboardingData(prev => ({ ...prev, industry: value }))
-        }
-      ]
-    },
-    {
-      title: "What are your main hiring challenges?",
-      description: "List three main hiring challenges (one per field).",
-      fields: [
-        {
-          label: "Hiring Challenge #1",
-          type: "text",
-          placeholder: "e.g., Attracting tech talent",
-          value: onboardingData.hiringChallenges[0],
-          onChange: (value: string) => setOnboardingData(prev => {
-            const arr = [...prev.hiringChallenges];
-            arr[0] = value;
-            return { ...prev, hiringChallenges: arr };
-          })
-        },
-        {
-          label: "Hiring Challenge #2",
-          type: "text",
-          placeholder: "e.g., Diversity hiring",
-          value: onboardingData.hiringChallenges[1],
-          onChange: (value: string) => setOnboardingData(prev => {
-            const arr = [...prev.hiringChallenges];
-            arr[1] = value;
-            return { ...prev, hiringChallenges: arr };
-          })
-        },
-        {
-          label: "Hiring Challenge #3",
-          type: "text",
-          placeholder: "e.g., Employer branding",
-          value: onboardingData.hiringChallenges[2],
-          onChange: (value: string) => setOnboardingData(prev => {
-            const arr = [...prev.hiringChallenges];
-            arr[2] = value;
-            return { ...prev, hiringChallenges: arr };
-          })
-        }
-      ]
-    },
-    {
-      title: "What roles are you hiring for?",
-      description: "List three primary roles you are recruiting for (one per field).",
-      fields: [
-        {
-          label: "Target Role #1",
-          type: "text",
-          placeholder: "e.g., Software Engineer",
-          value: onboardingData.targetRoles[0],
-          onChange: (value: string) => setOnboardingData(prev => {
-            const arr = [...prev.targetRoles];
-            arr[0] = value;
-            return { ...prev, targetRoles: arr };
-          })
-        },
-        {
-          label: "Target Role #2",
-          type: "text",
-          placeholder: "e.g., Data Analyst",
-          value: onboardingData.targetRoles[1],
-          onChange: (value: string) => setOnboardingData(prev => {
-            const arr = [...prev.targetRoles];
-            arr[1] = value;
-            return { ...prev, targetRoles: arr };
-          })
-        },
-        {
-          label: "Target Role #3",
-          type: "text",
-          placeholder: "e.g., Product Manager",
-          value: onboardingData.targetRoles[2],
-          onChange: (value: string) => setOnboardingData(prev => {
-            const arr = [...prev.targetRoles];
-            arr[2] = value;
-            return { ...prev, targetRoles: arr };
-          })
-        }
-      ]
-    },
-    {
-      title: "Who are your talent competitors?",
-      description: "List three main competitors for talent (one per field).",
-      fields: [
-        {
-          label: "Competitor #1",
-          type: "text",
-          placeholder: "e.g., Google",
-          value: onboardingData.talentCompetitors[0],
-          onChange: (value: string) => setOnboardingData(prev => {
-            const arr = [...prev.talentCompetitors];
-            arr[0] = value;
-            return { ...prev, talentCompetitors: arr };
-          })
-        },
-        {
-          label: "Competitor #2",
-          type: "text",
-          placeholder: "e.g., Amazon",
-          value: onboardingData.talentCompetitors[1],
-          onChange: (value: string) => setOnboardingData(prev => {
-            const arr = [...prev.talentCompetitors];
-            arr[1] = value;
-            return { ...prev, talentCompetitors: arr };
-          })
-        },
-        {
-          label: "Competitor #3",
-          type: "text",
-          placeholder: "e.g., Facebook",
-          value: onboardingData.talentCompetitors[2],
-          onChange: (value: string) => setOnboardingData(prev => {
-            const arr = [...prev.talentCompetitors];
-            arr[2] = value;
-            return { ...prev, talentCompetitors: arr };
-          })
-        }
-      ]
-    },
-    {
-      title: "What are your goals?",
-      description: "Tell us about your goals so we can generate prompts that are highly personalized to your needs.",
-      fields: [
-        {
-          label: "Goals",
-          type: "textarea",
-          placeholder: "Briefly describe your main recruitment goals or what you're trying to improve",
-          value: onboardingData.currentStrategy,
-          onChange: (value: string) => setOnboardingData(prev => ({ ...prev, currentStrategy: value }))
         }
       ]
     }
@@ -228,32 +94,17 @@ const Onboarding = () => {
             console.error('Error loading user onboarding:', userError);
           } else if (userRecord && userRecord.length > 0) {
             onboardingRecord = userRecord[0];
-            console.log('Found existing user onboarding record:', onboardingRecord);
           }
         }
 
         if (onboardingRecord) {
-          // Resume from existing data
           setOnboardingId(onboardingRecord.id);
           const data = {
             companyName: onboardingRecord.company_name || "",
             industry: onboardingRecord.industry || "",
-            hiringChallenges: onboardingRecord.hiring_challenges || [],
-            targetRoles: onboardingRecord.target_roles || [],
-            currentStrategy: onboardingRecord.current_strategy || "",
-            talentCompetitors: onboardingRecord.talent_competitors || []
           };
           setOnboardingData(data);
-
-          // Determine what step we should be on based on completed data
-          let stepToResume = 0;
-          if (data.companyName && data.industry) stepToResume = 1;
-          if (data.hiringChallenges.length > 0) stepToResume = 2;
-          if (data.targetRoles.length > 0) stepToResume = 3;
-          if (data.talentCompetitors.length > 0) stepToResume = 4;
-          if (data.currentStrategy) stepToResume = 5;
-
-          setOnboardingStep(stepToResume);
+          setOnboardingStep(0); // Always 0 for single-step onboarding
         }
       } catch (error) {
         console.error('Error loading onboarding progress:', error);
@@ -275,10 +126,6 @@ const Onboarding = () => {
         user_id: user.id,
         company_name: data.companyName,
         industry: data.industry,
-        hiring_challenges: data.hiringChallenges,
-        target_roles: data.targetRoles,
-        current_strategy: data.currentStrategy,
-        talent_competitors: data.talentCompetitors,
         current_step: step,
         session_id: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       };
@@ -308,24 +155,20 @@ const Onboarding = () => {
 
   const handleNext = async () => {
     const currentStep = onboardingSteps[onboardingStep];
-    const isValid = currentStep.fields.every(field => {
-      if (Array.isArray(field)) return field.every(f => f.value.trim());
-      if (field.type === "textarea") return field.value.trim();
-      return field.value.trim();
-    }) && (
-      // For steps with 3 required fields, ensure all are filled
-      (onboardingStep !== 1 || onboardingData.hiringChallenges.every(v => v.trim())) &&
-      (onboardingStep !== 2 || onboardingData.targetRoles.every(v => v.trim())) &&
-      (onboardingStep !== 3 || onboardingData.talentCompetitors.every(v => v.trim()))
-    );
+    const isValid = currentStep.fields.every(field => field.value.trim());
 
     if (!isValid) {
       toast.error("Please fill in all required fields");
       return;
     }
 
-    await saveOnboardingProgress(onboardingData, onboardingStep + 1);
-    setOnboardingStep(prev => prev + 1);
+    await saveOnboardingProgress(onboardingData, 1);
+    navigate('/auth', { 
+      state: { 
+        onboardingData,
+        redirectTo: '/dashboard'
+      } 
+    });
   };
 
   const handleBack = () => {
@@ -342,8 +185,8 @@ const Onboarding = () => {
     });
   };
 
-  const progress = Math.min((onboardingStep / onboardingSteps.length) * 100, 100);
-  const isComplete = onboardingStep >= onboardingSteps.length;
+  const progress = 100; // Only one step, always 100%
+  const isComplete = false; // Never show the complete state
 
   if (isLoading) {
     return (
@@ -388,88 +231,56 @@ const Onboarding = () => {
                   PerceptionX Setup
                 </CardTitle>
                 <div className="flex items-center space-x-2">
-                  <Badge variant="secondary">Step {onboardingStep + 1} of {onboardingSteps.length}</Badge>
+                  <Badge variant="secondary">Step 1 of 1</Badge>
                 </div>
               </div>
               <Progress value={progress} className="mt-4" />
             </CardHeader>
-            
             <CardContent className="p-6">
-              {!isComplete ? (
-                <>
-                  <div className="mb-6">
-                    <h2 className="text-2xl font-semibold text-gray-900 mb-2">
-                      {onboardingSteps[onboardingStep].title}
-                    </h2>
-                    <p className="text-gray-600">
-                      {onboardingSteps[onboardingStep].description}
-                    </p>
-                  </div>
+              <div className="mb-6">
+                <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+                  {onboardingSteps[onboardingStep].title}
+                </h2>
+                <p className="text-gray-600">
+                  {onboardingSteps[onboardingStep].description}
+                </p>
+              </div>
 
-                  <div className="space-y-6">
-                    {onboardingSteps[onboardingStep].fields.map((field, index) => (
-                      <div key={index} className="space-y-2">
-                        <Label htmlFor={field.label}>{field.label}</Label>
-                        {field.type === "textarea" ? (
-                          <Textarea
-                            id={field.label}
-                            placeholder={field.placeholder}
-                            value={field.value}
-                            onChange={(e) => field.onChange(e.target.value)}
-                            className="min-h-[100px]"
-                          />
-                        ) : (
-                          <Input
-                            id={field.label}
-                            type={field.type}
-                            placeholder={field.placeholder}
-                            value={field.value}
-                            onChange={(e) => field.onChange(e.target.value)}
-                          />
-                        )}
-                      </div>
-                    ))}
+              <div className="space-y-6">
+                {onboardingSteps[onboardingStep].fields.map((field, index) => (
+                  <div key={index} className="space-y-2">
+                    <Label htmlFor={field.label}>{field.label}</Label>
+                    {field.type === "textarea" ? (
+                      <Textarea
+                        id={field.label}
+                        placeholder={field.placeholder}
+                        value={field.value}
+                        onChange={(e) => field.onChange(e.target.value)}
+                        className="min-h-[100px]"
+                      />
+                    ) : (
+                      <Input
+                        id={field.label}
+                        type={field.type}
+                        placeholder={field.placeholder}
+                        value={field.value}
+                        onChange={(e) => field.onChange(e.target.value)}
+                      />
+                    )}
                   </div>
+                ))}
+              </div>
 
-                  <div className="flex justify-between mt-8">
-                    <Button
-                      variant="outline"
-                      onClick={handleBack}
-                      disabled={onboardingStep === 0}
-                    >
-                      <ArrowLeft className="w-4 h-4 mr-2" />
-                      Back
-                    </Button>
-                    <Button
-                      onClick={handleNext}
-                      style={{ backgroundColor: '#db5f89' }}
-                      className="hover:opacity-90 text-white"
-                    >
-                      {onboardingStep === onboardingSteps.length - 1 ? 'Complete' : 'Next'}
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-8">
-                  <div className="flex items-center justify-center space-x-2 text-green-600 mb-4">
-                    <CheckCircle className="w-8 h-8" />
-                    <span className="text-xl font-medium">Setup Complete!</span>
-                  </div>
-                  <p className="text-gray-600 mb-8">
-                    Your information has been saved. We'll now analyze your data to generate personalized prompts for your recruitment strategy.
-                  </p>
-                  <Button
-                    onClick={handleComplete}
-                    size="lg"
-                    style={{ backgroundColor: '#db5f89' }}
-                    className="hover:opacity-90 text-white"
-                  >
-                    Create an Account
-                    <ArrowRight className="w-4 h-4 ml-2" />
-                  </Button>
-                </div>
-              )}
+              <div className="flex justify-end mt-8">
+                <Button
+                  onClick={handleNext}
+                  style={{ backgroundColor: '#db5f89' }}
+                  className="hover:opacity-90 text-white"
+                >
+                  Continue
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>

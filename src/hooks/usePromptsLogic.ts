@@ -155,100 +155,27 @@ export const usePromptsLogic = (onboardingData: OnboardingData | undefined) => {
 
   const generatePrompts = () => {
     if (!onboardingData) return;
-    
-    const { companyName, industry, targetRoles, talentCompetitors, hiringChallenges } = onboardingData;
-    
-    console.log('=== GENERATING PROMPTS ===');
-    console.log('Company:', companyName);
-    console.log('Industry:', industry);
-    console.log('Target Roles:', targetRoles);
-    console.log('Competitors:', talentCompetitors);
-    console.log('Hiring Challenges:', hiringChallenges);
-    
-    let generatedPrompts: GeneratedPrompt[] = [];
-
-    // Sentiment prompts for each target role
-    targetRoles.forEach((role, idx) => {
-      generatedPrompts.push({
-        id: `sentiment-role-${idx}`,
-        text: `What are the pros and cons of working as a ${role} at ${companyName} compared to other ${industry} companies?`,
-        category: 'Work Environment',
+    const { companyName, industry } = onboardingData;
+    let generatedPrompts: GeneratedPrompt[] = [
+      {
+        id: 'sentiment-1',
+        text: `How is ${companyName} as an employer?`,
+        category: 'Employer Reputation',
         type: 'sentiment'
-      });
-      generatedPrompts.push({
-        id: `sentiment-career-${idx}`,
-        text: `How does ${companyName}'s approach to ${role} career development compare to industry standards?`,
-        category: 'Career Development',
-        type: 'sentiment'
-      });
-    });
-
-    // Sentiment prompts for each hiring challenge
-    hiringChallenges.forEach((challenge, idx) => {
-      generatedPrompts.push({
-        id: `sentiment-challenge-${idx}`,
-        text: `How does ${companyName} address the challenge of ${challenge}?`,
-        category: 'Hiring Challenge',
-        type: 'sentiment'
-      });
-    });
-
-    // Visibility prompts for each target role
-    targetRoles.forEach((role, idx) => {
-      generatedPrompts.push({
-        id: `visibility-role-${idx}`,
-        text: `Which ${industry} companies offer the best career opportunities for ${role} professionals?`,
+      },
+      {
+        id: 'visibility-1',
+        text: `What companies offer the best career opportunities in the ${industry} industry?`,
         category: 'Industry Leaders',
         type: 'visibility'
-      });
-      generatedPrompts.push({
-        id: `visibility-growth-${idx}`,
-        text: `What are the top companies for ${role} career growth and development?`,
-        category: 'Career Growth',
-        type: 'visibility'
-      });
-      generatedPrompts.push({
-        id: `visibility-innovation-${idx}`,
-        text: `Which tech companies have the most innovative work environments for ${role} roles?`,
-        category: 'Innovation',
-        type: 'visibility'
-      });
-    });
-
-    // Visibility prompt for work-life balance (general)
-    generatedPrompts.push({
-      id: 'visibility-worklife',
-      text: `What companies in the ${industry} sector offer the best work-life balance for technical professionals?`,
-      category: 'Work-Life Balance',
-      type: 'visibility'
-    });
-
-    // Competitive prompts for each target role and competitor
-    targetRoles.forEach((role, rIdx) => {
-      talentCompetitors.forEach((competitor, cIdx) => {
-        generatedPrompts.push({
-          id: `competitive-${rIdx}-${cIdx}`,
-          text: `Compare career opportunities for ${role} professionals at ${companyName} and ${competitor}.`,
-          category: 'Competitive Analysis',
-          type: 'competitive'
-        });
-        generatedPrompts.push({
-          id: `competitive-compensation-${rIdx}-${cIdx}`,
-          text: `How do compensation and benefits for ${role} roles compare between ${companyName} and ${competitor}?`,
-          category: 'Compensation',
-          type: 'competitive'
-        });
-      });
-    });
-
-    // Company culture prompt (general)
-    generatedPrompts.push({
-      id: 'sentiment-culture',
-      text: `What are the main advantages and challenges of ${companyName}'s company culture for technical professionals?`,
-      category: 'Company Culture',
-      type: 'sentiment'
-    });
-
+      },
+      {
+        id: 'competitive-1',
+        text: `How does working at ${companyName} compare to other companies in the ${industry} industry?`,
+        category: 'Competitive Analysis',
+        type: 'competitive'
+      }
+    ];
     setPrompts(generatedPrompts);
   };
 
@@ -330,18 +257,12 @@ export const usePromptsLogic = (onboardingData: OnboardingData | undefined) => {
         setProgress(prev => ({ ...prev, completed: completedOperations }));
       }
 
-      console.log('All prompts tested, navigating to dashboard...');
+      console.log('All prompts tested, navigating to prompts...');
       toast.success('Prompts confirmed and monitoring started!');
       
       // Wait a moment for the user to see completion, then navigate
       setTimeout(() => {
-        navigate('/auth', {
-          state: {
-            onboardingData,
-            redirectTo: '/dashboard',
-            loadingPrompts: true
-          }
-        });
+        navigate('/dashboard');
       }, 1500);
 
     } catch (error) {
@@ -593,90 +514,25 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
 
 // Helper function to generate prompts from onboarding data
 const generatePromptsFromData = (onboardingData: OnboardingData): GeneratedPrompt[] => {
-  const { companyName, industry, targetRoles, talentCompetitors, hiringChallenges } = onboardingData;
-  let generatedPrompts: GeneratedPrompt[] = [];
-
-  // Sentiment prompts for each target role
-  targetRoles.forEach((role, idx) => {
-    generatedPrompts.push({
-      id: `sentiment-role-${idx}`,
-      text: `What are the pros and cons of working as a ${role} at ${companyName} compared to other ${industry} companies?`,
-      category: 'Work Environment',
+  const { companyName, industry } = onboardingData;
+  return [
+    {
+      id: 'sentiment-1',
+      text: `How is ${companyName} as an employer?`,
+      category: 'Employer Reputation',
       type: 'sentiment'
-    });
-    generatedPrompts.push({
-      id: `sentiment-career-${idx}`,
-      text: `How does ${companyName}'s approach to ${role} career development compare to industry standards?`,
-      category: 'Career Development',
-      type: 'sentiment'
-    });
-  });
-
-  // Sentiment prompts for each hiring challenge
-  hiringChallenges.forEach((challenge, idx) => {
-    generatedPrompts.push({
-      id: `sentiment-challenge-${idx}`,
-      text: `How does ${companyName} address the challenge of ${challenge}?`,
-      category: 'Hiring Challenge',
-      type: 'sentiment'
-    });
-  });
-
-  // Visibility prompts for each target role
-  targetRoles.forEach((role, idx) => {
-    generatedPrompts.push({
-      id: `visibility-role-${idx}`,
-      text: `Which ${industry} companies offer the best career opportunities for ${role} professionals?`,
+    },
+    {
+      id: 'visibility-1',
+      text: `What companies offer the best career opportunities in the ${industry} industry?`,
       category: 'Industry Leaders',
       type: 'visibility'
-    });
-    generatedPrompts.push({
-      id: `visibility-growth-${idx}`,
-      text: `What are the top companies for ${role} career growth and development?`,
-      category: 'Career Growth',
-      type: 'visibility'
-    });
-    generatedPrompts.push({
-      id: `visibility-innovation-${idx}`,
-      text: `Which tech companies have the most innovative work environments for ${role} roles?`,
-      category: 'Innovation',
-      type: 'visibility'
-    });
-  });
-
-  // Visibility prompt for work-life balance (general)
-  generatedPrompts.push({
-    id: 'visibility-worklife',
-    text: `What companies in the ${industry} sector offer the best work-life balance for technical professionals?`,
-    category: 'Work-Life Balance',
-    type: 'visibility'
-  });
-
-  // Competitive prompts for each target role and competitor
-  targetRoles.forEach((role, rIdx) => {
-    talentCompetitors.forEach((competitor, cIdx) => {
-      generatedPrompts.push({
-        id: `competitive-${rIdx}-${cIdx}`,
-        text: `Compare career opportunities for ${role} professionals at ${companyName} and ${competitor}.`,
-        category: 'Competitive Analysis',
-        type: 'competitive'
-      });
-      generatedPrompts.push({
-        id: `competitive-compensation-${rIdx}-${cIdx}`,
-        text: `How do compensation and benefits for ${role} roles compare between ${companyName} and ${competitor}?`,
-        category: 'Compensation',
-        type: 'competitive'
-      });
-    });
-  });
-
-  // Company culture prompt (general)
-  generatedPrompts.push({
-    id: 'sentiment-culture',
-    text: `What are the main advantages and challenges of ${companyName}'s company culture for technical professionals?`,
-    category: 'Company Culture',
-    type: 'sentiment'
-  });
-
-  return generatedPrompts;
+    },
+    {
+      id: 'competitive-1',
+      text: `How does working at ${companyName} compare to other companies in the ${industry} industry?`,
+      category: 'Competitive Analysis',
+      type: 'competitive'
+    }
+  ];
 };

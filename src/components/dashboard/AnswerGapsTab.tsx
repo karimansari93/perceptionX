@@ -184,131 +184,146 @@ export const AnswerGapsTab = () => {
   };
 
   return (
-    <div className="space-y-6">
-      {/* URL Input Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Search className="w-5 h-5" />
-            Website Analysis
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="website-url">Career Website URL</Label>
-            <Input
-              id="website-url"
-              type="url"
-              placeholder="https://www.company.com/careers"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              disabled={isAnalyzing}
-            />
-          </div>
-          
-          <Button 
-            onClick={handleAnalyze} 
-            disabled={isAnalyzing || !url.trim()}
-            className="w-full sm:w-auto"
-          >
-            {isAnalyzing ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Analyzing Website...
-              </>
-            ) : (
-              <>
-                <Search className="w-4 h-4 mr-2" />
-                Analyze Website
-              </>
-            )}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Results Section */}
-      {analysisResult && (
-        <>
-          {/* Content Score Overview */}
+    <div className="relative">
+      {/* Overlay for Coming Soon */}
+      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm" style={{ pointerEvents: 'all' }}>
+        <div className="text-center p-8">
+          <h2 className="text-2xl font-bold mb-2 text-gray-800">Answer Gaps (Coming Soon)</h2>
+          <p className="text-gray-600 max-w-md mx-auto mb-4">
+            This feature will analyze your career site and AI responses to identify missing content, critical gaps, and actionable recommendations to improve your company's visibility in AI-driven search and discovery.
+          </p>
+          <span className="inline-block bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full font-semibold text-sm">Coming Soon</span>
+        </div>
+      </div>
+      {/* Blurred/disabled content underneath */}
+      <div className="blur-sm pointer-events-none select-none opacity-60">
+        <div className="space-y-6">
+          {/* URL Input Section */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5" />
-                Content Analysis Score
+                <Search className="w-5 h-5" />
+                Website Analysis
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className={`text-center p-6 rounded-lg border ${getScoreColor(analysisResult.contentScore)}`}>
-                <div className="text-3xl font-bold mb-2">{analysisResult.contentScore}%</div>
-                <p className="text-sm">
-                  {websiteMetadata?.title && `Analysis of ${websiteMetadata.title}`}
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="website-url">Career Website URL</Label>
+                <Input
+                  id="website-url"
+                  type="url"
+                  placeholder="https://www.company.com/careers"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  disabled={isAnalyzing}
+                />
+              </div>
+              
+              <Button 
+                onClick={handleAnalyze} 
+                disabled={isAnalyzing || !url.trim()}
+                className="w-full sm:w-auto"
+              >
+                {isAnalyzing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Analyzing Website...
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4 mr-2" />
+                    Analyze Website
+                  </>
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Results Section */}
+          {analysisResult && (
+            <>
+              {/* Content Score Overview */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5" />
+                    Content Analysis Score
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className={`text-center p-6 rounded-lg border ${getScoreColor(analysisResult.contentScore)}`}>
+                    <div className="text-3xl font-bold mb-2">{analysisResult.contentScore}%</div>
+                    <p className="text-sm">
+                      {websiteMetadata?.title && `Analysis of ${websiteMetadata.title}`}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Actionable Tasks Table */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5" />
+                    Actionable Tasks ({actionableTasks.length} remaining)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="border-b border-gray-200">
+                          <th className="text-left py-3 px-4 font-medium text-gray-600 text-sm">Status</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-600 text-sm">Priority</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-600 text-sm">Fix Type</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-600 text-sm">Evidence / Insight</th>
+                          <th className="text-left py-3 px-4 font-medium text-gray-600 text-sm">Suggested Action / Playbook</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {actionableTasks.map((task, index) => (
+                          <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
+                            <td className="py-4 px-4">
+                              <div className="flex items-center">
+                                <input type="checkbox" className="w-4 h-4 rounded border-gray-300" />
+                              </div>
+                            </td>
+                            <td className="py-4 px-4">
+                              {getPriorityBadge(task.priority)}
+                            </td>
+                            <td className="py-4 px-4">
+                              <span className="font-medium text-gray-900 text-sm">{task.fixType}</span>
+                            </td>
+                            <td className="py-4 px-4 max-w-md">
+                              <span className="text-sm text-gray-700">{task.evidence}</span>
+                            </td>
+                            <td className="py-4 px-4 max-w-lg">
+                              <span className="text-sm text-gray-700">{task.suggestedAction}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
+
+          {/* Empty State */}
+          {!analysisResult && !isAnalyzing && (
+            <Card>
+              <CardContent className="text-center py-12">
+                <Search className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Ready to Analyze</h3>
+                <p className="text-gray-600">
+                  Enter your career website URL above to start the gap analysis
                 </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Actionable Tasks Table */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CheckCircle className="w-5 h-5" />
-                Actionable Tasks ({actionableTasks.length} remaining)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="text-left py-3 px-4 font-medium text-gray-600 text-sm">Status</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-600 text-sm">Priority</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-600 text-sm">Fix Type</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-600 text-sm">Evidence / Insight</th>
-                      <th className="text-left py-3 px-4 font-medium text-gray-600 text-sm">Suggested Action / Playbook</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {actionableTasks.map((task, index) => (
-                      <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="py-4 px-4">
-                          <div className="flex items-center">
-                            <input type="checkbox" className="w-4 h-4 rounded border-gray-300" />
-                          </div>
-                        </td>
-                        <td className="py-4 px-4">
-                          {getPriorityBadge(task.priority)}
-                        </td>
-                        <td className="py-4 px-4">
-                          <span className="font-medium text-gray-900 text-sm">{task.fixType}</span>
-                        </td>
-                        <td className="py-4 px-4 max-w-md">
-                          <span className="text-sm text-gray-700">{task.evidence}</span>
-                        </td>
-                        <td className="py-4 px-4 max-w-lg">
-                          <span className="text-sm text-gray-700">{task.suggestedAction}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </>
-      )}
-
-      {/* Empty State */}
-      {!analysisResult && !isAnalyzing && (
-        <Card>
-          <CardContent className="text-center py-12">
-            <Search className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Ready to Analyze</h3>
-            <p className="text-gray-600">
-              Enter your career website URL above to start the gap analysis
-            </p>
-          </CardContent>
-        </Card>
-      )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

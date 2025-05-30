@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -33,7 +32,7 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
   useEffect(() => {
     if (user) {
       onOpenChange(false);
-      if (onboardingData && redirectTo === '/prompts') {
+      if (onboardingData) {
         navigate('/prompts', { 
           state: { 
             onboardingData,
@@ -41,7 +40,7 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
           } 
         });
       } else {
-        navigate('/dashboard');
+        navigate('/onboarding');
       }
     }
   }, [user, navigate, onboardingData, redirectTo, onOpenChange]);
@@ -177,17 +176,8 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
         toast.success('Account created successfully!');
         onOpenChange(false);
         
-        // If we have onboarding data, go to prompts, otherwise go to onboarding
-        if (onboardingData) {
-          navigate('/prompts', { 
-            state: { 
-              onboardingData,
-              userId: data.user?.id 
-            } 
-          });
-        } else {
-          navigate('/onboarding');
-        }
+        // Always redirect to dashboard after account creation
+        navigate('/dashboard');
       }
     } catch (error: any) {
       console.error('Auth error:', error);

@@ -98,6 +98,55 @@ export const useDashboardData = () => {
     return [];
   };
 
+  const promptsData: PromptData[] = useMemo(() => {
+    return responses.reduce((acc: PromptData[], response) => {
+      const existing = acc.find(item => 
+        item.prompt === response.confirmed_prompts?.prompt_text
+      );
+      
+      if (existing) {
+        existing.responses += 1;
+        existing.avgSentiment = (existing.avgSentiment + (response.sentiment_score || 0)) / 2;
+        // Update visibility metrics
+        if (response.confirmed_prompts?.prompt_type === 'visibility') {
+          if (typeof existing.averageVisibility === 'number') {
+            existing.averageVisibility = (existing.averageVisibility * (existing.responses - 1) + (response.company_mentioned ? 100 : 0)) / existing.responses;
+          } else {
+            existing.averageVisibility = response.company_mentioned ? 100 : 0;
+          }
+        }
+        // Update competitive metrics
+        if (response.confirmed_prompts?.prompt_type === 'competitive') {
+          if (response.competitor_mentions) {
+            const mentions = response.competitor_mentions as string[];
+            existing.competitorMentions = [...new Set([...(existing.competitorMentions || []), ...mentions])];
+          }
+          // Calculate competitive position based on mention order
+          if (response.mention_ranking) {
+            existing.competitivePosition = existing.competitivePosition 
+              ? (existing.competitivePosition + response.mention_ranking) / 2 
+              : response.mention_ranking;
+          }
+        }
+      } else {
+        acc.push({
+          prompt: response.confirmed_prompts?.prompt_text || '',
+          category: response.confirmed_prompts?.prompt_category || '',
+          type: response.confirmed_prompts?.prompt_type || 'sentiment',
+          responses: 1,
+          avgSentiment: response.sentiment_score || 0,
+          sentimentLabel: response.sentiment_label || 'neutral',
+          mentionRanking: response.mention_ranking || undefined,
+          competitivePosition: response.mention_ranking || undefined,
+          competitorMentions: response.competitor_mentions as string[] || undefined,
+          averageVisibility: response.confirmed_prompts?.prompt_type === 'visibility' ? (response.company_mentioned ? 100 : 0) : undefined
+        });
+      }
+      
+      return acc;
+    }, []);
+  }, [responses]);
+
   const metrics: DashboardMetrics = useMemo(() => {
     const averageSentiment = responses.length > 0 
       ? responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length 
@@ -109,13 +158,10 @@ export const useDashboardData = () => {
       responses.flatMap(r => parseCitations(r.citations).map((c: Citation) => c.domain).filter(Boolean))
     ).size;
 
-    // Calculate average visibility
-    const visibilityResponses = responses.filter(r => r.company_mentioned && r.first_mention_position !== undefined && r.total_words);
-    const averageVisibility = visibilityResponses.length > 0
-      ? visibilityResponses.reduce((sum, r) => {
-          const score = (1 - (r.first_mention_position! / r.total_words!)) * 100;
-          return sum + Math.min(100, Math.max(0, score));
-        }, 0) / visibilityResponses.length
+    // Calculate average visibility from promptsData
+    const visibilityPrompts = promptsData.filter(p => p.type === 'visibility' && typeof p.averageVisibility === 'number');
+    const averageVisibility = visibilityPrompts.length > 0
+      ? visibilityPrompts.reduce((sum, p) => sum + (p.averageVisibility || 0), 0) / visibilityPrompts.length
       : 0;
 
     return {
@@ -126,7 +172,7 @@ export const useDashboardData = () => {
       totalResponses: responses.length,
       averageVisibility
     };
-  }, [responses]);
+  }, [responses, promptsData]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
     const trend = responses.reduce((acc: SentimentTrendData[], response) => {
@@ -191,20 +237,14 @@ export const useDashboardData = () => {
         .filter(Boolean);
       const sentimentLabel = getMostCommonValue(sentimentLabels) || 'neutral';
       
-      // For visibility prompts, calculate total words and first mention position
-      let totalWords: number | undefined;
-      let firstMentionPosition: number | undefined;
-      
+      // For visibility prompts, calculate average visibility
+      let averageVisibility: number | undefined = undefined;
       if (prompt.prompt_type === 'visibility') {
-        // Get the response with the earliest mention
-        const responsesWithMentions = promptResponses
-          .filter(r => r.company_mentioned && r.first_mention_position !== undefined)
-          .sort((a, b) => (a.first_mention_position || Infinity) - (b.first_mention_position || Infinity));
-        
-        if (responsesWithMentions.length > 0) {
-          const bestResponse = responsesWithMentions[0];
-          totalWords = bestResponse.total_words;
-          firstMentionPosition = bestResponse.first_mention_position;
+        if (totalResponses > 0) {
+          const mentionedCount = promptResponses.filter(r => r.company_mentioned).length;
+          averageVisibility = (mentionedCount / totalResponses) * 100;
+        } else {
+          averageVisibility = 0;
         }
       }
       
@@ -218,61 +258,10 @@ export const useDashboardData = () => {
         mentionRanking: promptResponses[0]?.mention_ranking,
         competitivePosition: promptResponses[0]?.competitive_position,
         competitorMentions: promptResponses[0]?.competitor_mentions,
-        totalWords,
-        firstMentionPosition
+        averageVisibility
       };
     });
   };
-
-  const promptsData: PromptData[] = useMemo(() => {
-    return responses.reduce((acc: PromptData[], response) => {
-      const existing = acc.find(item => 
-        item.prompt === response.confirmed_prompts?.prompt_text
-      );
-      
-      if (existing) {
-        existing.responses += 1;
-        existing.avgSentiment = (existing.avgSentiment + (response.sentiment_score || 0)) / 2;
-        
-        // Update visibility metrics
-        if (response.confirmed_prompts?.prompt_type === 'visibility') {
-          if (response.mention_ranking) {
-            existing.mentionRanking = existing.mentionRanking 
-              ? (existing.mentionRanking + response.mention_ranking) / 2 
-              : response.mention_ranking;
-          }
-        }
-        
-        // Update competitive metrics
-        if (response.confirmed_prompts?.prompt_type === 'competitive') {
-          if (response.competitor_mentions) {
-            const mentions = response.competitor_mentions as string[];
-            existing.competitorMentions = [...new Set([...(existing.competitorMentions || []), ...mentions])];
-          }
-          // Calculate competitive position based on mention order
-          if (response.mention_ranking) {
-            existing.competitivePosition = existing.competitivePosition 
-              ? (existing.competitivePosition + response.mention_ranking) / 2 
-              : response.mention_ranking;
-          }
-        }
-      } else {
-        acc.push({
-          prompt: response.confirmed_prompts?.prompt_text || '',
-          category: response.confirmed_prompts?.prompt_category || '',
-          type: response.confirmed_prompts?.prompt_type || 'sentiment',
-          responses: 1,
-          avgSentiment: response.sentiment_score || 0,
-          sentimentLabel: response.sentiment_label || 'neutral',
-          mentionRanking: response.mention_ranking || undefined,
-          competitivePosition: response.mention_ranking || undefined,
-          competitorMentions: response.competitor_mentions as string[] || undefined
-        });
-      }
-      
-      return acc;
-    }, []);
-  }, [responses]);
 
   return {
     responses,
