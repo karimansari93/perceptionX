@@ -21,10 +21,6 @@ import { Button } from "@/components/ui/button";
 interface DatabaseOnboardingData {
   company_name: string;
   industry: string;
-  hiring_challenges?: string[];
-  target_roles?: string[];
-  current_strategy?: string;
-  talent_competitors?: string[];
   user_id?: string;
   session_id?: string;
   created_at?: string;
@@ -34,20 +30,13 @@ interface DatabaseOnboardingData {
 interface PromptsModalOnboardingData {
   companyName: string;
   industry: string;
-  hiringChallenges: string[];
-  targetRoles: string[];
-  currentStrategy: string;
-  talentCompetitors: string[];
   id?: string;
 }
 
 const transformOnboardingData = (data: DatabaseOnboardingData): PromptsModalOnboardingData => ({
   companyName: data.company_name,
   industry: data.industry,
-  hiringChallenges: data.hiring_challenges || [],
-  targetRoles: data.target_roles || [],
-  currentStrategy: data.current_strategy || '',
-  talentCompetitors: data.talent_competitors || []
+  id: data.id
 });
 
 const DashboardContent = () => {
@@ -219,10 +208,6 @@ const DashboardContent = () => {
           setOnboardingData({
             companyName: data[0].company_name,
             industry: data[0].industry,
-            hiringChallenges: data[0].hiring_challenges || [],
-            targetRoles: data[0].target_roles || [],
-            currentStrategy: data[0].current_strategy || '',
-            talentCompetitors: data[0].talent_competitors || [],
             id: data[0].id
           });
         }

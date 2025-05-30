@@ -12,10 +12,6 @@ import { usePromptsLogic } from "@/hooks/usePromptsLogic";
 interface OnboardingData {
   companyName: string;
   industry: string;
-  hiringChallenges: string[];
-  targetRoles: string[];
-  currentStrategy: string;
-  talentCompetitors: string[];
 }
 
 interface PromptsModalProps {

@@ -7,10 +7,6 @@ import { useAuth } from "@/contexts/AuthContext";
 interface OnboardingData {
   companyName: string;
   industry: string;
-  hiringChallenges: string[];
-  targetRoles: string[];
-  currentStrategy: string;
-  talentCompetitors: string[];
 }
 
 interface GeneratedPrompt {
@@ -147,7 +143,6 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       console.log('=== STARTING MONITORING PROCESS ===');
       console.log('Using onboarding record:', onboardingRecord.id);
       console.log('Company:', onboardingRecord.company_name);
-      console.log('Competitors:', onboardingRecord.talent_competitors);
 
       const promptsToInsert = prompts.map(prompt => ({
         onboarding_id: onboardingRecord.id,
@@ -248,7 +243,6 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         console.log('=== CALLING ANALYZE-RESPONSE ===');
         console.log('Company Name:', onboardingData?.companyName);
         console.log('Prompt Type:', confirmedPrompt.prompt_type);
-        console.log('Competitors:', onboardingData?.talentCompetitors);
         
         // Analyze sentiment and extract citations with enhanced visibility support
         const { data: sentimentData, error: sentimentError } = await supabase.functions
@@ -257,7 +251,6 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
               response: responseData.response,
               companyName: onboardingData?.companyName,
               promptType: confirmedPrompt.prompt_type,
-              competitors: onboardingData?.talentCompetitors || [],
               perplexityCitations: perplexityCitations
             }
           });
@@ -323,7 +316,6 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
   console.log('=== STARTING MONITORING PROCESS ===');
   console.log('Using onboarding record:', onboardingRecord.id);
   console.log('Company:', onboardingRecord.company_name);
-  console.log('Competitors:', onboardingRecord.talent_competitors);
 
   // Generate prompts based on onboarding data
   const promptsToInsert = generatePromptsFromData(onboardingData).map(prompt => ({
@@ -375,7 +367,6 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
         console.log('=== CALLING ANALYZE-RESPONSE ===');
         console.log('Company Name:', onboardingData?.companyName);
         console.log('Prompt Type:', confirmedPrompt.prompt_type);
-        console.log('Competitors:', onboardingData?.talentCompetitors);
         
         // Analyze sentiment and extract citations with enhanced visibility support
         const { data: sentimentData, error: sentimentError } = await supabase.functions
@@ -384,7 +375,6 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
               response: responseData.response,
               companyName: onboardingData?.companyName,
               promptType: confirmedPrompt.prompt_type,
-              competitors: onboardingData?.talentCompetitors || [],
               perplexityCitations: perplexityCitations
             }
           });

@@ -16,10 +16,6 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 interface OnboardingData {
   company_name: string;
   industry: string;
-  hiring_challenges?: string[];
-  target_roles?: string[];
-  current_strategy?: string;
-  talent_competitors?: string[];
 }
 
 interface OnboardingModalProps {
@@ -69,10 +65,6 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
           user_id: user?.id,
           company_name: onboardingData.company_name,
           industry: onboardingData.industry,
-          hiring_challenges: onboardingData.hiring_challenges || [],
-          target_roles: onboardingData.target_roles || [],
-          current_strategy: onboardingData.current_strategy || '',
-          talent_competitors: onboardingData.talent_competitors || [],
           session_id: `session_${user?.id}_${Date.now()}`
         };
 
@@ -131,10 +123,6 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
             onboardingData: {
               companyName: data.company_name,
               industry: data.industry,
-              hiringChallenges: data.hiring_challenges || [],
-              targetRoles: data.target_roles || [],
-              currentStrategy: data.current_strategy || '',
-              talentCompetitors: data.talent_competitors || [],
               id: data.id
             },
             userId: user?.id,

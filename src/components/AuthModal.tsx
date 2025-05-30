@@ -92,10 +92,6 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
           user_id: userId,
           company_name: onboardingData.companyName,
           industry: onboardingData.industry,
-          hiring_challenges: onboardingData.hiringChallenges,
-          target_roles: onboardingData.targetRoles,
-          current_strategy: onboardingData.currentStrategy,
-          talent_competitors: onboardingData.talentCompetitors,
           session_id: `session_${userId}_${Date.now()}`
         };
 

@@ -172,37 +172,25 @@ export type Database = {
         Row: {
           company_name: string
           created_at: string
-          current_strategy: string | null
-          hiring_challenges: string[]
           id: string
           industry: string
           session_id: string
-          talent_competitors: string[]
-          target_roles: string[]
           user_id: string | null
         }
         Insert: {
           company_name: string
           created_at?: string
-          current_strategy?: string | null
-          hiring_challenges?: string[]
           id?: string
           industry: string
           session_id: string
-          talent_competitors?: string[]
-          target_roles?: string[]
           user_id?: string | null
         }
         Update: {
           company_name?: string
           created_at?: string
-          current_strategy?: string | null
-          hiring_challenges?: string[]
           id?: string
           industry?: string
           session_id?: string
-          talent_competitors?: string[]
-          target_roles?: string[]
           user_id?: string | null
         }
         Relationships: []

@@ -18,10 +18,6 @@ import { supabase } from "@/integrations/supabase/client";
 interface OnboardingData {
   companyName: string;
   industry: string;
-  hiringChallenges: string[];
-  targetRoles: string[];
-  currentStrategy: string;
-  talentCompetitors: string[];
 }
 
 const Prompts = () => {
@@ -45,10 +41,6 @@ const Prompts = () => {
             setOnboardingData({
               companyName: data[0].company_name,
               industry: data[0].industry,
-              hiringChallenges: data[0].hiring_challenges,
-              targetRoles: data[0].target_roles,
-              currentStrategy: data[0].current_strategy,
-              talentCompetitors: data[0].talent_competitors,
             });
           }
           setLoading(false);

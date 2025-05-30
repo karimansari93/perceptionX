@@ -1,14 +1,9 @@
-
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 interface OnboardingData {
   companyName: string;
   industry: string;
-  hiringChallenges: string[];
-  targetRoles: string[];
-  currentStrategy: string;
-  talentCompetitors: string[];
 }
 
 interface OnboardingDataSummaryProps {
@@ -29,14 +24,6 @@ export const OnboardingDataSummary = ({ onboardingData }: OnboardingDataSummaryP
           <div>
             <Badge variant="secondary" className="mr-2">Industry:</Badge>
             {onboardingData.industry}
-          </div>
-          <div>
-            <Badge variant="secondary" className="mr-2">Target Roles:</Badge>
-            {onboardingData.targetRoles?.join(', ')}
-          </div>
-          <div>
-            <Badge variant="secondary" className="mr-2">Competitors:</Badge>
-            {onboardingData.talentCompetitors?.join(', ')}
           </div>
         </div>
       </CardContent>

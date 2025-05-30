@@ -30,7 +30,7 @@ export const useRefreshPrompts = () => {
       // Get user's onboarding data for competitor analysis
       const { data: onboardingData, error: onboardingError } = await supabase
         .from('user_onboarding')
-        .select('talent_competitors')
+        .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(1)
@@ -109,7 +109,6 @@ export const useRefreshPrompts = () => {
                     response: responseData.response,
                     companyName: companyName,
                     promptType: confirmedPrompt.prompt_type,
-                    competitors: onboardingData?.talent_competitors || [],
                     perplexityCitations: perplexityCitations
                   }
                 });
