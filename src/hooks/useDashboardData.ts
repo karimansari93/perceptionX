@@ -65,7 +65,10 @@ export const useDashboardData = () => {
 
       if (error) throw error;
       
-      setResponses(data || []);
+      setResponses((data || []).map((r: any) => ({
+        ...r,
+        workplace_themes: r.workplace_themes ?? []
+      })));
     } catch (error) {
       console.error('Error fetching responses:', error);
     } finally {
@@ -263,6 +266,29 @@ export const useDashboardData = () => {
     });
   };
 
+  const popularThemes = useMemo(() => {
+    const themeCounts: Record<string, { count: number, sentiment: Record<string, number> }> = {};
+    responses.forEach(r => {
+      if (r.workplace_themes && Array.isArray(r.workplace_themes)) {
+        r.workplace_themes.forEach(theme => {
+          if (!themeCounts[theme.name]) {
+            themeCounts[theme.name] = { count: 0, sentiment: { positive: 0, neutral: 0, negative: 0 } };
+          }
+          themeCounts[theme.name].count++;
+          themeCounts[theme.name].sentiment[theme.sentiment]++;
+        });
+      }
+    });
+    return Object.entries(themeCounts)
+      .map(([name, data]) => ({
+        name,
+        count: data.count,
+        sentiment: Object.entries(data.sentiment).sort((a, b) => b[1] - a[1])[0][0] as 'positive' | 'neutral' | 'negative'
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6); // top 6 themes
+  }, [responses]);
+
   return {
     responses,
     loading,
@@ -272,6 +298,7 @@ export const useDashboardData = () => {
     topCitations,
     promptsData,
     refreshData,
-    parseCitations
+    parseCitations,
+    popularThemes
   };
 };

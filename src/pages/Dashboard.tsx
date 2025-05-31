@@ -49,7 +49,8 @@ const DashboardContent = () => {
     topCitations,
     promptsData,
     refreshData,
-    parseCitations
+    parseCitations,
+    popularThemes
   } = useDashboardData();
 
   const [answerGapsData, setAnswerGapsData] = useState<any>(null);
@@ -254,6 +255,7 @@ const DashboardContent = () => {
             metrics={metrics}
             sentimentTrend={sentimentTrend}
             topCitations={topCitations}
+            popularThemes={popularThemes}
           />
         );
       case "prompts":
@@ -290,6 +292,7 @@ const DashboardContent = () => {
             metrics={metrics}
             sentimentTrend={sentimentTrend}
             topCitations={topCitations}
+            popularThemes={popularThemes}
           />
         );
     }

@@ -12,6 +12,7 @@ export interface PromptResponse {
   company_mentioned: boolean | null;
   mention_ranking: number | null;
   competitor_mentions: Json | null;
+  workplace_themes: WorkplaceTheme[] | null;
   confirmed_prompts: {
     prompt_text: string;
     prompt_category: string;
@@ -19,6 +20,13 @@ export interface PromptResponse {
   };
   first_mention_position?: number;
   total_words?: number;
+}
+
+export interface WorkplaceTheme {
+  name: string;
+  confidence: 'high' | 'medium' | 'low';
+  context: string;
+  sentiment: 'positive' | 'neutral' | 'negative';
 }
 
 export interface Citation {

@@ -8,9 +8,10 @@ interface OverviewTabProps {
   metrics: DashboardMetrics;
   sentimentTrend: SentimentTrendData[];
   topCitations: CitationCount[];
+  popularThemes: { name: string; count: number; sentiment: 'positive' | 'neutral' | 'negative' }[];
 }
 
-export const OverviewTab = ({ metrics, sentimentTrend, topCitations }: OverviewTabProps) => {
+export const OverviewTab = ({ metrics, sentimentTrend, topCitations, popularThemes }: OverviewTabProps) => {
   const getFavicon = (domain: string): string => {
     return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
   };
@@ -50,7 +51,7 @@ export const OverviewTab = ({ metrics, sentimentTrend, topCitations }: OverviewT
       </div>
 
       {/* Charts Grid */}
-      <div className="grid gap-8 lg:grid-cols-2">
+      <div className="grid gap-8 lg:grid-cols-3">
         <Card className="shadow-sm border border-gray-200">
           <CardHeader className="pb-4">
             <CardTitle className="text-lg font-semibold">Sentiment Trend</CardTitle>
@@ -143,6 +144,43 @@ export const OverviewTab = ({ metrics, sentimentTrend, topCitations }: OverviewT
                 <div className="text-center py-12 text-gray-500">
                   <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
                   <p className="text-sm">No citations found yet.</p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm border border-gray-200">
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg font-semibold">Popular Workplace Themes</CardTitle>
+            <CardDescription className="text-sm text-gray-600">
+              Most frequently mentioned workplace themes in AI responses
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3 max-h-[300px] overflow-y-auto">
+              {popularThemes.length > 0 ? (
+                popularThemes.map((theme, idx) => (
+                  <div key={theme.name} className="flex items-center justify-between p-3 rounded-lg border border-gray-100 bg-green-50/50 hover:bg-green-100/80 transition-colors">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-base font-medium text-green-900 capitalize">{theme.name}</span>
+                      <span className={`text-xs px-2 py-1 rounded-full font-semibold ${
+                        theme.sentiment === 'positive' ? 'bg-green-100 text-green-800' :
+                        theme.sentiment === 'negative' ? 'bg-red-100 text-red-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {theme.sentiment}
+                      </span>
+                    </div>
+                    <span className="text-sm font-semibold text-gray-600 bg-white px-3 py-1 rounded-full border border-gray-200 flex-shrink-0">
+                      {theme.count}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-12 text-gray-500">
+                  <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                  <p className="text-sm">No workplace themes found yet.</p>
                 </div>
               )}
             </div>

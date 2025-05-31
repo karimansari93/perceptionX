@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink, X, Lightbulb } from "lucide-react";
+import { ExternalLink, X, Lightbulb, Building2 } from "lucide-react";
 import LLMLogo from "@/components/LLMLogo";
 import { PromptResponse } from "@/types/dashboard";
 
@@ -139,7 +139,7 @@ export const ResponseDetailsModal = ({
           <div className="flex items-start justify-between">
             <div className="flex-1">
               <DialogTitle className="text-lg font-semibold mb-2">
-                Response Details
+                {promptText}
               </DialogTitle>
               <p className="text-sm text-gray-500">
                 Generated {responses.length > 0 ? new Date(responses[0].tested_at).toLocaleDateString() : 'recently'}
@@ -236,6 +236,40 @@ export const ResponseDetailsModal = ({
                     )}
                   </div>
                 </div>
+
+                {/* Workplace Themes */}
+                {selectedResponse.workplace_themes && selectedResponse.workplace_themes.length > 0 && (
+                  <div className="bg-green-50 rounded-lg p-4">
+                    <div className="flex items-center space-x-2 mb-3">
+                      <Building2 className="w-4 h-4 text-green-600" />
+                      <h3 className="text-sm font-medium text-green-900">Workplace Themes</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {selectedResponse.workplace_themes.map((theme, index) => (
+                        <div key={index} className="bg-white rounded-lg p-3 border border-green-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium text-green-800">{theme.name}</span>
+                            <Badge variant="outline" className={`text-xs ${
+                              theme.confidence === 'high' ? 'bg-green-100 text-green-800' :
+                              theme.confidence === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {theme.confidence}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-gray-600 mb-2">{theme.context}</p>
+                          <div className={`text-xs px-2 py-1 rounded-full inline-block ${
+                            theme.sentiment === 'positive' ? 'bg-green-100 text-green-800' :
+                            theme.sentiment === 'negative' ? 'bg-red-100 text-red-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {theme.sentiment}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>

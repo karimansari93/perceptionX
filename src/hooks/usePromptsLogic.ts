@@ -280,7 +280,8 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
             citations: finalCitations,
             company_mentioned: sentimentData?.company_mentioned || false,
             mention_ranking: sentimentData?.mention_ranking || null,
-            competitor_mentions: sentimentData?.competitor_mentions || []
+            competitor_mentions: sentimentData?.competitor_mentions || [],
+            workplace_themes: sentimentData?.workplace_themes || []
           });
 
         if (storeError) {
