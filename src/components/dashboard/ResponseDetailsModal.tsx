@@ -7,6 +7,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ExternalLink, X, Lightbulb, Building2 } from "lucide-react";
 import LLMLogo from "@/components/LLMLogo";
 import { PromptResponse } from "@/types/dashboard";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { enhanceCitations } from "@/utils/citationUtils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface ResponseDetailsModalProps {
   isOpen: boolean;
@@ -24,6 +28,10 @@ export const ResponseDetailsModal = ({
   const [selectedResponse, setSelectedResponse] = useState<PromptResponse | null>(
     responses.length > 0 ? responses[0] : null
   );
+  const [summary, setSummary] = useState<string>("");
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryCache, setSummaryCache] = useState<{ [prompt: string]: string }>({});
 
   // Add debugging and validation
   useEffect(() => {
@@ -59,6 +67,61 @@ export const ResponseDetailsModal = ({
       setSelectedResponse(null);
     }
   }, [responses]);
+
+  // Compute averages and sources
+  const avgSentiment = responses.length > 0 ? responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length : 0;
+  const avgSentimentLabel = avgSentiment > 0.1 ? "Positive" : avgSentiment < -0.1 ? "Negative" : "Neutral";
+  const avgVisibility = responses.length > 0 ? responses.reduce((sum, r) => sum + (r.company_mentioned ? 100 : 0), 0) / responses.length : 0;
+  const brandMentionedPct = responses.length > 0 ? Math.round(responses.filter(r => r.company_mentioned).length / responses.length * 100) : 0;
+
+  // Extract real sources (with URLs)
+  const allCitations = responses.flatMap(r => enhanceCitations(Array.isArray(r.citations) ? r.citations : (typeof r.citations === 'string' ? (() => { try { return JSON.parse(r.citations); } catch { return []; } })() : [])));
+  const realSources = allCitations.filter(c => c.type === 'website' && c.url);
+  const uniqueSources = Array.from(new Map(realSources.map(s => [s.url, s])).values()).slice(0, 5); // up to 5 unique sources
+
+  // Fetch summary from OpenAI API when modal opens or responses change
+  useEffect(() => {
+    if (!isOpen || responses.length === 0) return;
+
+    // Check cache first
+    if (summaryCache[promptText]) {
+      setSummary(summaryCache[promptText]);
+      setLoadingSummary(false);
+      setSummaryError(null);
+      return;
+    }
+
+    setLoadingSummary(true);
+    setSummaryError(null);
+    // Group by ai_model and pick the latest response for each
+    const latestByModel = Object.values(
+      responses.reduce((acc, r) => {
+        const model = r.ai_model;
+        if (!acc[model] || new Date(r.tested_at) > new Date(acc[model].tested_at)) {
+          acc[model] = r;
+        }
+        return acc;
+      }, {} as Record<string, typeof responses[0]>)
+    );
+    // Build the prompt with only the latest response per model
+    const prompt = `Summarize the following AI model responses to the question: "${promptText}" in one concise paragraph, highlighting key themes, sentiment, and any notable mentions.\n\nResponses:\n${latestByModel.map(r => r.response_text.slice(0, 1000)).join('\n---\n')}`;
+    fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-openai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.response) {
+          setSummary(data.response.trim());
+          setSummaryCache(prev => ({ ...prev, [promptText]: data.response.trim() }));
+        } else {
+          setSummaryError(data.error || "No summary generated.");
+        }
+      })
+      .catch(err => setSummaryError("Failed to fetch summary."))
+      .finally(() => setLoadingSummary(false));
+  }, [isOpen, promptText, responses, summaryCache]);
 
   const getSentimentColor = (score: number | null) => {
     if (!score) return "text-gray-500";
@@ -150,6 +213,45 @@ export const ResponseDetailsModal = ({
             </Button>
           </div>
         </DialogHeader>
+
+        {/* SUMMARY CARD */}
+        <div className="mb-6">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base font-semibold">Summary</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loadingSummary ? (
+                <div className="w-full">
+                  <Skeleton className="h-6 w-3/4 mb-2" />
+                  <Skeleton className="h-6 w-5/6 mb-2" />
+                  <Skeleton className="h-6 w-2/3 mb-2" />
+                  <Skeleton className="h-6 w-1/2 mb-2" />
+                </div>
+              ) : summaryError ? (
+                <div className="text-red-600 text-sm py-2">{summaryError}</div>
+              ) : (
+                <p className="text-gray-800 text-base mb-3 whitespace-pre-line">{summary}</p>
+              )}
+              <div className="flex flex-wrap gap-4 items-center mt-2">
+                <Badge variant="outline">Avg. Sentiment: <span className="ml-1 font-semibold">{Math.round(avgSentiment * 100)}% {avgSentimentLabel}</span></Badge>
+                <Badge variant="outline">Avg. Visibility: <span className="ml-1 font-semibold">{Math.round(avgVisibility)}%</span></Badge>
+                <Badge variant="outline">Brand Mentioned: <span className="ml-1 font-semibold">{brandMentionedPct}%</span></Badge>
+                {uniqueSources.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-gray-500">Sources:</span>
+                    {uniqueSources.map((src, i) => (
+                      <a key={src.url} href={src.url} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline text-xs font-medium hover:text-blue-900">
+                        {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+        {/* END SUMMARY CARD */}
 
         <div className="grid grid-cols-3 gap-6 flex-1 min-h-0">
           {/* Left Panel - Response List */}
