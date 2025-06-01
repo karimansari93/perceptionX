@@ -112,11 +112,11 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({ analysis }) =>
             <div className="text-sm space-y-2">
               <p>
                 <span className="font-medium">LLM Sentiment Score:</span>{' '}
-                {analysis.detailedAnalysis.sentimentDetails.llmSentiment.toFixed(2)}
+                {Math.round(analysis.detailedAnalysis.sentimentDetails.llmSentiment * 100)}%
               </p>
               <p>
                 <span className="font-medium">Search Results Sentiment Score:</span>{' '}
-                {analysis.detailedAnalysis.sentimentDetails.searchSentiment.toFixed(2)}
+                {Math.round(analysis.detailedAnalysis.sentimentDetails.searchSentiment * 100)}%
               </p>
               <p>
                 <span className="font-medium">Total Common Topics:</span>{' '}

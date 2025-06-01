@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PromptResponse, DashboardMetrics, SentimentTrendData, CitationCount, PromptData, Citation } from "@/types/dashboard";
+import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 
 export const useDashboardData = () => {
   const { user } = useAuth();
@@ -201,8 +202,12 @@ export const useDashboardData = () => {
   }, [responses]);
 
   const topCitations: CitationCount[] = useMemo(() => {
-    const allCitations = responses.flatMap(r => parseCitations(r.citations));
-    const citationCounts = allCitations.reduce((acc: any, citation: Citation) => {
+    // Use enhanceCitations to get EnhancedCitation objects
+    const allCitations = responses.flatMap(r => enhanceCitations(parseCitations(r.citations)));
+    // Only keep citations that are real websites
+    const websiteCitations = allCitations.filter(citation => citation.type === 'website' && citation.url);
+
+    const citationCounts = websiteCitations.reduce((acc: any, citation: EnhancedCitation) => {
       const domain = citation.domain;
       if (domain) {
         acc[domain] = (acc[domain] || 0) + 1;

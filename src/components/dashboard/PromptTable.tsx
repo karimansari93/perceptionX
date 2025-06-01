@@ -42,7 +42,7 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
           <div className="flex items-center justify-center space-x-2">
             {getSentimentIcon(prompt.avgSentiment)}
             <span className={`font-semibold ${getSentimentColor(prompt.avgSentiment)}`}>
-              {prompt.avgSentiment.toFixed(2)}
+              {Math.round(prompt.avgSentiment * 100)}%
             </span>
           </div>
         );
@@ -52,7 +52,7 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
           <div className="flex items-center justify-center space-x-2">
             <Target className="w-4 h-4 text-blue-600" />
             <span className="font-semibold text-blue-600">
-              {visibilityScore.toFixed(0)}%
+              {Math.round(visibilityScore)}%
             </span>
           </div>
         );

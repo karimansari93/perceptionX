@@ -45,7 +45,7 @@ export const ResponseItem = ({
           <div className={`px-2 py-1 rounded-full text-xs font-medium ${getSentimentBgColor(response.sentiment_score)}`}>
             <span className={getSentimentColor(response.sentiment_score)}>
               {response.sentiment_score ? 
-                `${(response.sentiment_score * 100).toFixed(1)}% ${response.sentiment_label}` :
+                `${Math.round(response.sentiment_score * 100)}% ${response.sentiment_label}` :
                 'No sentiment'
               }
             </span>

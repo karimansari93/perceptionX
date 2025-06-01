@@ -22,7 +22,7 @@ export const OverviewTab = ({ metrics, sentimentTrend, topCitations, popularThem
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           title="Average Sentiment"
-          value={metrics.averageSentiment.toFixed(2)}
+          value={`${Math.round(metrics.averageSentiment * 100)}%`}
           subtitle={metrics.sentimentLabel}
           icon={TrendingUp}
           iconColor={metrics.averageSentiment > 0 ? "text-green-500" : metrics.averageSentiment < 0 ? "text-red-500" : "text-gray-500"}
@@ -43,7 +43,7 @@ export const OverviewTab = ({ metrics, sentimentTrend, topCitations, popularThem
         />
         <MetricCard
           title="Average Visibility"
-          value={`${metrics.averageVisibility.toFixed(1)}%`}
+          value={`${Math.round(metrics.averageVisibility)}%`}
           subtitle="Company mention prominence"
           icon={Target}
           iconColor="text-blue-500"
@@ -102,51 +102,78 @@ export const OverviewTab = ({ metrics, sentimentTrend, topCitations, popularThem
 
         <Card className="shadow-sm border border-gray-200">
           <CardHeader className="pb-4">
-            <CardTitle className="text-lg font-semibold">Top Cited Domains</CardTitle>
+            <CardTitle className="text-lg font-semibold">Information Sources</CardTitle>
             <CardDescription className="text-sm text-gray-600">
-              The domains that are most frequently cited in your responses
+              The sources most frequently influencing AI responses about your workplace and culture
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3 max-h-[300px] overflow-y-auto">
-              {topCitations.length > 0 ? (
-                topCitations.map((citation, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 rounded-lg border border-gray-100 bg-gray-50/50 hover:bg-gray-100/80 transition-colors">
-                    <div className="flex items-center space-x-3">
-                      <img 
-                        src={getFavicon(citation.domain)} 
-                        alt={`${citation.domain} favicon`}
-                        className="w-5 h-5 flex-shrink-0 rounded"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none';
-                          const fallback = e.currentTarget.nextElementSibling as HTMLElement;
-                          if (fallback) fallback.style.display = 'flex';
-                        }}
-                      />
-                      <div 
-                        className="w-5 h-5 bg-blue-100 rounded flex items-center justify-center flex-shrink-0"
-                        style={{ display: 'none' }}
-                      >
-                        <span className="text-xs font-medium text-blue-600">
-                          {citation.domain?.charAt(0)?.toUpperCase() || 'U'}
-                        </span>
-                      </div>
-                      <span className="text-sm font-medium text-gray-900 truncate">
-                        {citation.domain}
-                      </span>
+            {/* Find the max count for scaling bars */}
+            {(() => {
+              const maxCount = topCitations.length > 0 ? topCitations[0].count : 1;
+              return (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto relative">
+                  {topCitations.length > 0 ? (
+                    topCitations.map((citation, index) => {
+                      const isTop = index === 0;
+                      const barWidth = Math.max(20, (citation.count / maxCount) * 100); // min 20% width for visibility
+                      return (
+                        <div
+                          key={index}
+                          className={`relative flex items-center justify-between px-2 py-1 rounded-xl transition-colors cursor-default overflow-hidden`}
+                          style={{ minHeight: '44px' }}
+                        >
+                          {/* Bar background */}
+                          <div
+                            className="absolute left-0 top-0 h-full z-0 rounded-xl"
+                            style={{
+                              width: `calc(${barWidth}% - 48px)`, // leave space for the number
+                              maxWidth: `calc(100% - 48px)`,
+                              minWidth: 0,
+                              background: isTop ? 'rgba(59,130,246,0.18)' : 'rgba(59,130,246,0.10)',
+                              transition: 'width 0.3s',
+                              right: '48px',
+                            }}
+                          />
+                          {/* Row content */}
+                          <div className="flex items-center space-x-3 z-10">
+                            <div className={`w-8 h-8 flex items-center justify-center rounded-lg ${isTop ? 'bg-white border-2 border-blue-300' : 'bg-white border border-blue-100'}`}> 
+                              <img
+                                src={getFavicon(citation.domain)}
+                                alt={`${citation.domain} favicon`}
+                                className="w-5 h-5 flex-shrink-0 rounded"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                  const fallback = e.currentTarget.nextElementSibling as HTMLElement;
+                                  if (fallback) fallback.style.display = 'flex';
+                                }}
+                              />
+                              <div
+                                className="w-5 h-5 bg-blue-100 rounded flex items-center justify-center flex-shrink-0"
+                                style={{ display: 'none' }}
+                              >
+                                <span className="text-xs font-medium text-blue-600">
+                                  {citation.domain?.charAt(0)?.toUpperCase() || 'U'}
+                                </span>
+                              </div>
+                            </div>
+                            <span className={`text-base font-medium truncate ${isTop ? 'text-blue-900' : 'text-gray-900'}`}>{citation.domain}</span>
+                          </div>
+                          <span className={`text-base font-semibold ml-2 z-10`}>
+                            {citation.count}
+                          </span>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-center py-12 text-gray-500">
+                      <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                      <p className="text-sm">No citations found yet.</p>
                     </div>
-                    <span className="text-sm font-semibold text-gray-600 bg-white px-3 py-1 rounded-full border border-gray-200 flex-shrink-0">
-                      {citation.count}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center py-12 text-gray-500">
-                  <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                  <p className="text-sm">No citations found yet.</p>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
           </CardContent>
         </Card>
 
