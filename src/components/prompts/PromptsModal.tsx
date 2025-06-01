@@ -82,7 +82,7 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
           </div>
 
           <div className="space-y-8">
-            <PromptsTable prompts={prompts} />
+            <PromptsTable prompts={prompts} companyName={onboardingData.companyName} />
             <PromptStrategyExplanation />
           </div>
         </div>

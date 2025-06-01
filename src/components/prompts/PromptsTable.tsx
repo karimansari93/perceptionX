@@ -11,9 +11,10 @@ interface GeneratedPrompt {
 
 interface PromptsTableProps {
   prompts: GeneratedPrompt[];
+  companyName?: string;
 }
 
-export const PromptsTable = ({ prompts }: PromptsTableProps) => {
+export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
   const getCategoryColor = (type: string) => {
     const colors: Record<string, string> = {
       'sentiment': 'bg-blue-100 text-blue-800',
@@ -37,7 +38,7 @@ export const PromptsTable = ({ prompts }: PromptsTableProps) => {
       <CardHeader>
         <CardTitle className="text-2xl font-semibold text-gray-900 mb-2">Your Company Through AI's Eyes</CardTitle>
         <p className="text-gray-600">
-          Millions of job seekers are asking AI about employers. We'll show you exactly what they're discovering about National Grid.
+          Millions of job seekers are asking AI about employers. We'll show you exactly what they're discovering about {companyName || '(Company name)'}.
         </p>
       </CardHeader>
       <CardContent>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import LLMLogo from "@/components/LLMLogo";
 import { ResponseDetailsModal } from "./ResponseDetailsModal";
+import { getLLMDisplayName } from '@/config/llmLogos';
 
 interface ResponsesTabProps {
   responses: any[];
@@ -99,7 +100,7 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
               <td className="px-4 py-2">
                 <div className="inline-flex items-center bg-gray-100/80 px-2 py-1 rounded-lg w-fit">
                   <LLMLogo modelName={response.ai_model} size="sm" className="mr-1" />
-                  <span className="text-sm text-gray-700">{response.ai_model}</span>
+                  <span className="text-sm text-gray-700">{getLLMDisplayName(response.ai_model)}</span>
                 </div>
               </td>
               <td className="px-4 py-2">

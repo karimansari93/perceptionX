@@ -128,7 +128,7 @@ const Prompts = () => {
       </header>
       <div className="container mx-auto px-6 py-8">
         <div className="max-w-6xl mx-auto">
-          <PromptsTable prompts={prompts} />
+          <PromptsTable prompts={prompts} companyName={onboardingData?.companyName} />
           <PromptStrategyExplanation />
         </div>
       </div>

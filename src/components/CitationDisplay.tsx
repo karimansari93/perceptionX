@@ -1,6 +1,11 @@
-
 import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { EnhancedCitation } from "@/utils/citationUtils";
 
 interface CitationDisplayProps {
@@ -11,6 +16,46 @@ interface CitationDisplayProps {
 
 export const CitationDisplay = ({ citation, showType = false, size = 'md' }: CitationDisplayProps) => {
   const isSmall = size === 'sm';
+  
+  const renderSourceType = () => {
+    if (!citation.sourceType) return null;
+    
+    const typeColors = {
+      'review-platform': 'bg-purple-100 text-purple-800',
+      'job-board': 'bg-blue-100 text-blue-800',
+      'employer-branding': 'bg-green-100 text-green-800',
+      'salary-data': 'bg-yellow-100 text-yellow-800',
+      'professional-network': 'bg-pink-100 text-pink-800'
+    };
+    
+    return (
+      <Badge 
+        variant="outline" 
+        className={`text-xs ${typeColors[citation.sourceType] || ''}`}
+      >
+        {citation.sourceType.replace('-', ' ')}
+      </Badge>
+    );
+  };
+  
+  const renderCategories = () => {
+    if (!citation.categories?.length) return null;
+    
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge variant="outline" className="text-xs">
+              {citation.categories.length} categories
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{citation.categories.join(', ')}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  };
   
   const content = (
     <div className={`flex items-center space-x-2 ${isSmall ? 'text-xs' : 'text-sm'}`}>
@@ -35,7 +80,7 @@ export const CitationDisplay = ({ citation, showType = false, size = 'md' }: Cit
       </div>
       
       <span className={`font-medium ${isSmall ? 'max-w-[120px]' : 'max-w-[200px]'} truncate`}>
-        {citation.title || citation.domain}
+        {citation.displayName || citation.title || citation.domain}
       </span>
       
       {citation.url && (
@@ -56,9 +101,10 @@ export const CitationDisplay = ({ citation, showType = false, size = 'md' }: Cit
           {content}
         </a>
         {showType && (
-          <Badge variant="outline" className="text-xs">
-            Website
-          </Badge>
+          <div className="flex space-x-1">
+            {renderSourceType()}
+            {renderCategories()}
+          </div>
         )}
       </div>
     );
@@ -70,9 +116,10 @@ export const CitationDisplay = ({ citation, showType = false, size = 'md' }: Cit
         {content}
       </div>
       {showType && (
-        <Badge variant="outline" className="text-xs">
-          Inferred
-        </Badge>
+        <div className="flex space-x-1">
+          {renderSourceType()}
+          {renderCategories()}
+        </div>
       )}
     </div>
   );

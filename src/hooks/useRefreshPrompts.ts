@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { getLLMDisplayName } from '@/config/llmLogos';
 
 interface RefreshProgress {
   currentPrompt: string;
@@ -62,9 +63,6 @@ export const useRefreshPrompts = () => {
       if (!modelType || modelType === 'openai') {
         modelsToTest.push({ name: 'OpenAI', function: 'test-prompt-openai', model: 'gpt-4o-mini' });
       }
-      if (!modelType || modelType === 'claude') {
-        modelsToTest.push({ name: 'Claude', function: 'test-prompt-claude', model: 'claude-3-5-haiku-20241022' });
-      }
       if (!modelType || modelType === 'perplexity') {
         modelsToTest.push({ name: 'Perplexity', function: 'test-prompt-perplexity', model: 'llama-3.1-sonar-small-128k-online' });
       }
@@ -91,7 +89,7 @@ export const useRefreshPrompts = () => {
 
         for (const model of modelsToTest) {
           try {
-            setProgress(prev => prev ? { ...prev, currentModel: model.name } : null);
+            setProgress(prev => prev ? { ...prev, currentModel: getLLMDisplayName(model.model) } : null);
             
             const { data: responseData, error: responseError } = await supabase.functions
               .invoke(model.function, {

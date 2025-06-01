@@ -12,6 +12,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { enhanceCitations } from "@/utils/citationUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import ReactMarkdown from 'react-markdown';
+import { getLLMDisplayName } from '@/config/llmLogos';
 
 interface ResponseDetailsModalProps {
   isOpen: boolean;
@@ -284,7 +285,7 @@ export const ResponseDetailsModal = ({
               <CardHeader className="pb-2 flex flex-row items-center gap-4">
                 <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
                   <LLMLogo modelName={selectedResponse?.ai_model} size="sm" className="mr-1" />
-                  <span className="text-sm text-gray-700">{selectedResponse?.ai_model}</span>
+                  <span className="text-sm text-gray-700">{getLLMDisplayName(selectedResponse?.ai_model)}</span>
                 </div>
                 <Badge variant="outline" className="capitalize">
                   {selectedResponse?.sentiment_label || 'No sentiment'}

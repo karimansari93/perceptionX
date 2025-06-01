@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { getLLMDisplayName } from '@/config/llmLogos';
 
 interface OnboardingData {
   companyName: string;
@@ -178,7 +179,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         // Test with OpenAI
         setProgress(prev => ({ 
           ...prev, 
-          currentModel: 'OpenAI GPT-4o-mini',
+          currentModel: getLLMDisplayName('gpt-4o-mini'),
           currentPrompt: confirmedPrompt.prompt_text
         }));
         await testWithModel(confirmedPrompt, 'test-prompt-openai', 'gpt-4o-mini');
@@ -406,7 +407,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
     
     // Test with OpenAI
     setProgress({ 
-      currentModel: 'OpenAI GPT-4o-mini',
+      currentModel: getLLMDisplayName('gpt-4o-mini'),
       currentPrompt: confirmedPrompt.prompt_text,
       completed: completedOperations,
       total: totalOperations
@@ -414,7 +415,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
     await testWithModel(confirmedPrompt, 'test-prompt-openai', 'gpt-4o-mini');
     completedOperations++;
     setProgress({ 
-      currentModel: 'OpenAI GPT-4o-mini',
+      currentModel: getLLMDisplayName('gpt-4o-mini'),
       currentPrompt: confirmedPrompt.prompt_text,
       completed: completedOperations,
       total: totalOperations

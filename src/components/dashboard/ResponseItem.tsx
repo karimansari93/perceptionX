@@ -6,6 +6,7 @@ import LLMLogo from "@/components/LLMLogo";
 import { PromptResponse } from "@/types/dashboard";
 import { CitationDisplay } from "@/components/CitationDisplay";
 import { EnhancedCitation, groupCitationsByDomain } from "@/utils/citationUtils";
+import { getLLMDisplayName } from '@/config/llmLogos';
 
 interface ResponseItemProps {
   response: PromptResponse;
@@ -37,7 +38,7 @@ export const ResponseItem = ({
         <div className="flex items-center space-x-3">
           <div className="flex items-center bg-blue-50 px-2 py-1 rounded-lg border">
             <LLMLogo modelName={response.ai_model} size="sm" className="mr-1" />
-            <span className="text-sm text-blue-700">{response.ai_model}</span>
+            <span className="text-sm text-blue-700">{getLLMDisplayName(response.ai_model)}</span>
           </div>
           <Badge variant="outline">
             {response.confirmed_prompts?.prompt_category}

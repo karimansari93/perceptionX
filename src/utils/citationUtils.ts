@@ -1,9 +1,14 @@
+import { EMPLOYMENT_SOURCES, SourceConfig } from './sourceConfig';
 
 export interface EnhancedCitation {
   domain: string;
   title?: string;
   url?: string;
   type: 'website' | 'inferred';
+  sourceType?: string;
+  confidence: 'high' | 'medium' | 'low';
+  categories?: string[];
+  displayName?: string;
   favicon?: string;
 }
 
@@ -27,7 +32,7 @@ export const extractDomain = (url: string): string => {
 };
 
 export const getFavicon = (domain: string): string => {
-  return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
+  return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
 };
 
 export const enhanceCitations = (citations: any[]): EnhancedCitation[] => {
@@ -48,13 +53,19 @@ export const enhanceCitations = (citations: any[]): EnhancedCitation[] => {
       title = citation.title || '';
     }
     
+    // Check if it's a known employment source
+    const sourceConfig = EMPLOYMENT_SOURCES[domain];
     const type: 'website' | 'inferred' = url ? 'website' : 'inferred';
     
     return {
       domain,
-      title,
+      title: title || sourceConfig?.displayName,
       url,
       type,
+      sourceType: sourceConfig?.type,
+      confidence: sourceConfig?.confidence || 'low',
+      categories: sourceConfig?.categories,
+      displayName: sourceConfig?.displayName,
       favicon: getFavicon(domain)
     };
   }).filter(citation => citation.domain); // Remove empty domains

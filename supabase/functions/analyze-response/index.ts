@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { EMPLOYMENT_SOURCES, SourceConfig } from '../../src/utils/sourceConfig';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -13,11 +14,12 @@ interface WorkplaceTheme {
 }
 
 interface InformationSource {
-  url: string | null;
   domain: string;
-  title: string;
   type: string;
   confidence: string;
+  title: string;
+  categories: string[];
+  url?: string | null;
 }
 
 interface CompetitorMention {
@@ -148,16 +150,7 @@ function performEnhancedBasicAnalysis(responseText: string, companyName: string,
   const competitorMentions: CompetitorMention[] = detectEnhancedCompetitors(responseText, competitors, companyName)
   
   // Enhanced source inference
-  const inferredSources: InformationSource[] = []
-  if (lowerResponse.includes('according to') || lowerResponse.includes('reports indicate') || lowerResponse.includes('studies show')) {
-    inferredSources.push({
-      url: null,
-      domain: 'industry-report',
-      title: 'Industry Report or Analysis',
-      type: 'industry-knowledge',
-      confidence: 'medium'
-    })
-  }
+  const inferredSources: InformationSource[] = detectSources(responseText)
 
   // Workplace theme detection
   const workplaceThemes: WorkplaceTheme[] = detectWorkplaceThemes(responseText)
@@ -376,4 +369,38 @@ function extractCompetitorContext(text: string, competitor: string): string {
   const start = Math.max(0, index - 50)
   const end = Math.min(text.length, index + competitor.length + 50)
   return text.substring(start, end).trim()
+}
+
+function detectSources(text: string): InformationSource[] {
+  const sources: InformationSource[] = [];
+  const lowerText = text.toLowerCase();
+  
+  // Check for mentions of known employment sources
+  Object.values(EMPLOYMENT_SOURCES).forEach((source: SourceConfig) => {
+    if (lowerText.includes(source.displayName.toLowerCase()) || 
+        lowerText.includes(source.domain)) {
+      sources.push({
+        domain: source.domain,
+        type: source.type,
+        confidence: 'medium',
+        title: source.displayName,
+        categories: source.categories,
+        url: source.baseUrl
+      });
+    }
+  });
+  
+  // Add general source detection
+  if (lowerText.includes('according to') || lowerText.includes('reports indicate') || lowerText.includes('studies show')) {
+    sources.push({
+      domain: 'industry-report',
+      type: 'industry-knowledge',
+      confidence: 'medium',
+      title: 'Industry Report or Analysis',
+      categories: ['general-knowledge'],
+      url: null
+    });
+  }
+  
+  return sources;
 }

@@ -38,10 +38,6 @@ export const DashboardHeader = ({
               <span className="text-sm text-gray-700">OpenAI</span>
             </div>
             <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
-              <LLMLogo modelName="claude" size="sm" className="mr-1" />
-              <span className="text-sm text-gray-700">Claude</span>
-            </div>
-            <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
               <LLMLogo modelName="perplexity" size="sm" className="mr-1" />
               <span className="text-sm text-gray-700">Perplexity</span>
             </div>
@@ -70,10 +66,6 @@ export const DashboardHeader = ({
                 <DropdownMenuItem onClick={() => handleRefresh('openai')}>
                   <LLMLogo modelName="openai" size="sm" className="mr-2" />
                   Refresh OpenAI Only
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleRefresh('claude')}>
-                  <LLMLogo modelName="claude" size="sm" className="mr-2" />
-                  Refresh Claude Only
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleRefresh('perplexity')}>
                   <LLMLogo modelName="perplexity" size="sm" className="mr-2" />

@@ -3,6 +3,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import LLMLogo from "@/components/LLMLogo";
 import { CheckCircle } from "lucide-react";
+import { getLLMDisplayName } from '@/config/llmLogos';
 
 interface LoadingModalProps {
   isOpen: boolean;
@@ -14,7 +15,6 @@ interface LoadingModalProps {
 
 const llmModels = [
   { name: "OpenAI", model: "openai" },
-  { name: "Claude", model: "claude" },
   { name: "Perplexity", model: "perplexity" },
   { name: "Gemini", model: "gemini" },
   { name: "DeepSeek", model: "deepseek" }
@@ -99,7 +99,7 @@ export const LoadingModal = ({
             
             {currentModel && (
               <div className="text-xs text-gray-500 space-y-1">
-                <div>Testing: {currentModel}</div>
+                <div>Testing: {getLLMDisplayName(currentModel)}</div>
                 {currentPrompt && (
                   <div className="truncate max-w-full">
                     Prompt: {currentPrompt.substring(0, 50)}...
