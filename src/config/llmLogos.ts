@@ -1,4 +1,3 @@
-
 import { getFavicon } from '@/utils/citationUtils';
 
 // Domain mapping for LLM models to their company domains
@@ -18,6 +17,8 @@ export const LLM_DOMAINS = {
   'gemini-1.5': 'gemini.google.com',
   'deepseek': 'deepseek.com',
   'deepseek-chat': 'deepseek.com',
+  'deepseek-coder': 'deepseek.com',
+  'deepseek-llm': 'deepseek.com',
   'grok': 'grok.com',
   'grok-1': 'grok.com',
   'meta': 'meta.ai',

@@ -11,19 +11,22 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { enhanceCitations } from "@/utils/citationUtils";
 import { Skeleton } from "@/components/ui/skeleton";
+import ReactMarkdown from 'react-markdown';
 
 interface ResponseDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
   promptText: string;
   responses: PromptResponse[];
+  showMarkdownCheatSheet?: boolean;
 }
 
 export const ResponseDetailsModal = ({ 
   isOpen, 
   onClose, 
   promptText, 
-  responses 
+  responses,
+  showMarkdownCheatSheet = false
 }: ResponseDetailsModalProps) => {
   const [selectedResponse, setSelectedResponse] = useState<PromptResponse | null>(
     responses.length > 0 ? responses[0] : null
@@ -232,7 +235,9 @@ export const ResponseDetailsModal = ({
                 ) : summaryError ? (
                   <div className="text-red-600 text-sm py-2">{summaryError}</div>
                 ) : (
-                  <p className="text-gray-800 text-base mb-3 whitespace-pre-line">{summary}</p>
+                  <div className="text-gray-800 text-base mb-3 whitespace-pre-line">
+                    <ReactMarkdown>{summary}</ReactMarkdown>
+                  </div>
                 )}
                 <div className="flex flex-wrap gap-4 items-center mt-2">
                   <Badge variant="outline">Avg. Sentiment: <span className="ml-1 font-semibold">{Math.round(avgSentiment * 100)}% {avgSentimentLabel}</span></Badge>
@@ -295,7 +300,9 @@ export const ResponseDetailsModal = ({
                 <div className="mb-2">
                   <div className="text-xs text-gray-500 mb-1">AI Response</div>
                   <div className="text-gray-800 whitespace-pre-line max-h-72 overflow-auto rounded border border-gray-100 p-2 bg-gray-50">
-                    {selectedResponse?.response_text}
+                    {selectedResponse?.response_text && (
+                      <ReactMarkdown>{selectedResponse.response_text}</ReactMarkdown>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -319,6 +326,88 @@ export const ResponseDetailsModal = ({
             )}
           </ScrollArea>
         </div>
+
+        {showMarkdownCheatSheet && (
+          <div className="mt-8 p-4 border-t border-gray-200">
+            <h2 className="text-lg font-bold mb-2">Markdown Cheat Sheet</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <h3 className="font-semibold mb-1">Markdown Syntax</h3>
+                <pre className="bg-gray-100 p-2 rounded text-xs overflow-x-auto">
+{`
+# Heading 1
+## Heading 2
+### Heading 3
+
+*Italic* or _Italic_
+**Bold** or __Bold__
+***Bold and Italic***
+
+- Item 1
+- Item 2
+  - Subitem
+
+1. First
+2. Second
+
+[OpenAI](https://openai.com)
+
+![Alt text](https://placehold.co/40x40)
+
+> This is a quote.
+
+\`code\`
+
+| Name  | Age |
+|-------|-----|
+| John  |  30 |
+| Alice |  25 |
+
+- [x] Done
+- [ ] Not done
+`}
+                </pre>
+              </div>
+              <div>
+                <h3 className="font-semibold mb-1">Rendered Output</h3>
+                <div className="bg-white p-2 rounded border">
+                  <ReactMarkdown>
+{`
+# Heading 1
+## Heading 2
+### Heading 3
+
+*Italic* or _Italic_
+**Bold** or __Bold__
+***Bold and Italic***
+
+- Item 1
+- Item 2
+  - Subitem
+
+1. First
+2. Second
+
+[OpenAI](https://openai.com)
+
+![Alt text](https://placehold.co/40x40)
+
+> This is a quote.
+
+| Name  | Age |
+|-------|-----|
+| John  |  30 |
+| Alice |  25 |
+
+- [x] Done
+- [ ] Not done
+`}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

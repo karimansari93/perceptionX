@@ -49,6 +49,10 @@ export const DashboardHeader = ({
               <LLMLogo modelName="gemini" size="sm" className="mr-1" />
               <span className="text-sm text-gray-700">Gemini</span>
             </div>
+            <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
+              <LLMLogo modelName="deepseek" size="sm" className="mr-1" />
+              <span className="text-sm text-gray-700">DeepSeek</span>
+            </div>
             
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -78,6 +82,10 @@ export const DashboardHeader = ({
                 <DropdownMenuItem onClick={() => handleRefresh('gemini')}>
                   <LLMLogo modelName="gemini" size="sm" className="mr-2" />
                   Refresh Gemini Only
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleRefresh('deepseek')}>
+                  <LLMLogo modelName="deepseek" size="sm" className="mr-2" />
+                  Refresh DeepSeek Only
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

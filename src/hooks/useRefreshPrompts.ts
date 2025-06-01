@@ -71,6 +71,9 @@ export const useRefreshPrompts = () => {
       if (!modelType || modelType === 'gemini') {
         modelsToTest.push({ name: 'Gemini', function: 'test-prompt-gemini', model: 'gemini-1.5-flash' });
       }
+      if (!modelType || modelType === 'deepseek') {
+        modelsToTest.push({ name: 'DeepSeek', function: 'test-prompt-deepseek', model: 'deepseek-chat' });
+      }
 
       const totalOperations = confirmedPrompts.length * modelsToTest.length;
       let completed = 0;
