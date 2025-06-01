@@ -214,198 +214,107 @@ export const ResponseDetailsModal = ({
           </div>
         </DialogHeader>
 
-        {/* SUMMARY CARD */}
-        <div className="mb-6">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base font-semibold">Summary</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loadingSummary ? (
-                <div className="w-full">
-                  <Skeleton className="h-6 w-3/4 mb-2" />
-                  <Skeleton className="h-6 w-5/6 mb-2" />
-                  <Skeleton className="h-6 w-2/3 mb-2" />
-                  <Skeleton className="h-6 w-1/2 mb-2" />
-                </div>
-              ) : summaryError ? (
-                <div className="text-red-600 text-sm py-2">{summaryError}</div>
-              ) : (
-                <p className="text-gray-800 text-base mb-3 whitespace-pre-line">{summary}</p>
-              )}
-              <div className="flex flex-wrap gap-4 items-center mt-2">
-                <Badge variant="outline">Avg. Sentiment: <span className="ml-1 font-semibold">{Math.round(avgSentiment * 100)}% {avgSentimentLabel}</span></Badge>
-                <Badge variant="outline">Avg. Visibility: <span className="ml-1 font-semibold">{Math.round(avgVisibility)}%</span></Badge>
-                <Badge variant="outline">Brand Mentioned: <span className="ml-1 font-semibold">{brandMentionedPct}%</span></Badge>
-                {uniqueSources.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-gray-500">Sources:</span>
-                    {uniqueSources.map((src, i) => (
-                      <a key={src.url} href={src.url} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline text-xs font-medium hover:text-blue-900">
-                        {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
-                      </a>
-                    ))}
+        {/* Show summary card only if multiple responses (prompt view), otherwise show just the response details */}
+        {responses.length > 1 ? (
+          <div className="mb-6">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-semibold">Summary</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loadingSummary ? (
+                  <div className="w-full">
+                    <Skeleton className="h-6 w-3/4 mb-2" />
+                    <Skeleton className="h-6 w-5/6 mb-2" />
+                    <Skeleton className="h-6 w-2/3 mb-2" />
+                    <Skeleton className="h-6 w-1/2 mb-2" />
                   </div>
+                ) : summaryError ? (
+                  <div className="text-red-600 text-sm py-2">{summaryError}</div>
+                ) : (
+                  <p className="text-gray-800 text-base mb-3 whitespace-pre-line">{summary}</p>
                 )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-        {/* END SUMMARY CARD */}
-
-        <div className="grid grid-cols-3 gap-6 flex-1 min-h-0">
-          {/* Left Panel - Response List */}
-          <ScrollArea className="h-full">
-            <div className="space-y-3 pr-4">
-              <h3 className="font-medium text-sm text-gray-700 mb-3">Responses ({responses.length})</h3>
-              {responses.map((response) => (
-                <div
-                  key={response.id}
-                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                    selectedResponse?.id === response.id 
-                      ? 'bg-blue-50 border-blue-200' 
-                      : 'bg-gray-50 hover:bg-gray-100'
-                  }`}
-                  onClick={() => setSelectedResponse(response)}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center space-x-2">
-                      <LLMLogo modelName={response.ai_model} size="sm" />
-                      <span className="text-sm font-medium">{response.ai_model}</span>
-                    </div>
-                    <span className={`text-xs font-medium ${getSentimentColor(response.sentiment_score)}`}>
-                      {getSentimentBadge(response.sentiment_score, response.sentiment_label)}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-600 line-clamp-2">
-                    {response.response_text.substring(0, 100)}...
-                  </p>
-                </div>
-              ))}
-            </div>
-          </ScrollArea>
-
-          {/* Right Panel - Selected Response Details */}
-          <ScrollArea className="col-span-2 h-full">
-            {selectedResponse && (
-              <div className="space-y-6 pr-4">
-                {/* Metrics Row */}
-                <div className="grid grid-cols-4 gap-4">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Provider</p>
-                    <div className="flex items-center space-x-2">
-                      <LLMLogo modelName={selectedResponse.ai_model} size="sm" />
-                      <span className="text-sm font-medium">{selectedResponse.ai_model.split('-')[0]}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Model</p>
-                    <p className="text-sm font-medium">{selectedResponse.ai_model}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Sentiment</p>
-                    <p className={`text-sm font-medium ${getSentimentColor(selectedResponse.sentiment_score)}`}>
-                      {selectedResponse.sentiment_label || 'Neutral'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Visibility Score</p>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center">
-                        <span className="text-xs font-medium text-orange-600">
-                          {getVisibilityScore(selectedResponse)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Key Insights Summary */}
-                <div className="bg-blue-50 rounded-lg p-4">
-                  <div className="flex items-center space-x-2 mb-3">
-                    <Lightbulb className="w-4 h-4 text-blue-600" />
-                    <h3 className="text-sm font-medium text-blue-900">Key Insights Summary</h3>
-                  </div>
-                  <div className="space-y-2">
-                    {analyzeResponses().map((insight, index) => (
-                      <div key={index} className="flex items-start space-x-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-600 mt-1.5"></div>
-                        <p className="text-sm text-blue-800">{insight}</p>
-                      </div>
-                    ))}
-                    {analyzeResponses().length === 0 && (
-                      <p className="text-sm text-blue-800">No significant insights to report</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Workplace Themes */}
-                {selectedResponse.workplace_themes && selectedResponse.workplace_themes.length > 0 && (
-                  <div className="bg-green-50 rounded-lg p-4">
-                    <div className="flex items-center space-x-2 mb-3">
-                      <Building2 className="w-4 h-4 text-green-600" />
-                      <h3 className="text-sm font-medium text-green-900">Workplace Themes</h3>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      {selectedResponse.workplace_themes.map((theme, index) => (
-                        <div key={index} className="bg-white rounded-lg p-3 border border-green-100">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-sm font-medium text-green-800">{theme.name}</span>
-                            <Badge variant="outline" className={`text-xs ${
-                              theme.confidence === 'high' ? 'bg-green-100 text-green-800' :
-                              theme.confidence === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {theme.confidence}
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-gray-600 mb-2">{theme.context}</p>
-                          <div className={`text-xs px-2 py-1 rounded-full inline-block ${
-                            theme.sentiment === 'positive' ? 'bg-green-100 text-green-800' :
-                            theme.sentiment === 'negative' ? 'bg-red-100 text-red-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>
-                            {theme.sentiment}
-                          </div>
-                        </div>
+                <div className="flex flex-wrap gap-4 items-center mt-2">
+                  <Badge variant="outline">Avg. Sentiment: <span className="ml-1 font-semibold">{Math.round(avgSentiment * 100)}% {avgSentimentLabel}</span></Badge>
+                  <Badge variant="outline">Avg. Visibility: <span className="ml-1 font-semibold">{Math.round(avgVisibility)}%</span></Badge>
+                  <Badge variant="outline">Brand Mentioned: <span className="ml-1 font-semibold">{brandMentionedPct}%</span></Badge>
+                  {/* Workplace Themes Row */}
+                  {selectedResponse && selectedResponse.workplace_themes && selectedResponse.workplace_themes.length > 0 && (
+                    <div className="flex flex-wrap gap-2 w-full mb-2">
+                      <span className="text-xs text-gray-500 mr-2">Workplace Themes:</span>
+                      {selectedResponse.workplace_themes
+                        .filter(theme => theme.confidence === 'high' || theme.confidence === 'medium')
+                        .map((theme, idx) => (
+                          <span
+                            key={idx}
+                            className={`px-2 py-1 rounded text-xs font-medium
+                              ${theme.sentiment === 'positive' ? 'bg-green-100 text-green-800' :
+                                theme.sentiment === 'neutral' ? 'bg-orange-100 text-orange-800' :
+                                'bg-red-100 text-red-800'}
+                            `}
+                          >
+                            {theme.name}
+                          </span>
                       ))}
                     </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Brand Perception</p>
-                    <p className="text-sm font-medium">{getBrandPerception(selectedResponse)}</p>
+                  )}
+                  {uniqueSources.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-gray-500">Sources:</span>
+                      {uniqueSources.map((src, i) => (
+                        <a key={src.url} href={src.url} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline text-xs font-medium hover:text-blue-900">
+                          {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
+          // Single response: show prompt, model, sentiment, and full response
+          <div className="mb-6">
+            <Card>
+              <CardHeader className="pb-2 flex flex-row items-center gap-4">
+                <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
+                  <LLMLogo modelName={selectedResponse?.ai_model} size="sm" className="mr-1" />
+                  <span className="text-sm text-gray-700">{selectedResponse?.ai_model}</span>
+                </div>
+                <Badge variant="outline" className="capitalize">
+                  {selectedResponse?.sentiment_label || 'No sentiment'}
+                </Badge>
+              </CardHeader>
+              <CardContent>
+                <div className="mb-4">
+                  <div className="text-xs text-gray-500 mb-1">Prompt</div>
+                  <div className="text-base text-gray-900 mb-2 font-medium">
+                    {selectedResponse?.confirmed_prompts?.prompt_text}
                   </div>
                 </div>
-
-                <Separator />
-
-                {/* User Prompt */}
-                <div>
-                  <div className="flex items-center space-x-2 mb-3">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                    <p className="text-sm font-medium text-blue-600">User prompt</p>
-                    <ExternalLink className="w-3 h-3 text-blue-600" />
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-4">
-                    <p className="text-sm text-gray-800">{promptText}</p>
+                <div className="mb-2">
+                  <div className="text-xs text-gray-500 mb-1">AI Response</div>
+                  <div className="text-gray-800 whitespace-pre-line max-h-72 overflow-auto rounded border border-gray-100 p-2 bg-gray-50">
+                    {selectedResponse?.response_text}
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
-                {/* AI Response */}
-                <div>
-                  <div className="flex items-center space-x-2 mb-3">
-                    <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                    <p className="text-sm font-medium text-purple-600">AI Response</p>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-4">
-                    <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">
-                      {selectedResponse.response_text}
-                    </p>
-                  </div>
-                </div>
+        <div className="grid grid-cols-3 gap-6 flex-1 min-h-0">
+          {/* REMOVED: Responses list panel */}
+
+          {/* Right Panel - Selected Response Details */}
+          <ScrollArea className="col-span-3 h-full"> {/* Changed to span all columns */}
+            {selectedResponse && (
+              <div className="space-y-6 pr-4">
+                {/* REMOVED: Metrics Row */}
+                {/* REMOVED: Workplace Themes */}
+                {/* REMOVED: Brand Perception */}
+                {/* REMOVED: User Prompt */}
+                {/* REMOVED: AI Response */}
               </div>
             )}
           </ScrollArea>

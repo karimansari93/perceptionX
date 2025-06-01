@@ -6,7 +6,6 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { OverviewTab } from "@/components/dashboard/OverviewTab";
 import { PromptsTab } from "@/components/dashboard/PromptsTab";
 import { ResponsesTab } from "@/components/dashboard/ResponsesTab";
-import { CitationsTab } from "@/components/dashboard/CitationsTab";
 import { AnswerGapsTab } from "@/components/dashboard/AnswerGapsTab";
 import { ReportGenerator } from "@/components/dashboard/ReportGenerator";
 import { AppSidebar } from "@/components/AppSidebar";
