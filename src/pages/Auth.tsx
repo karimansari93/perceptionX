@@ -238,180 +238,118 @@ const Auth = () => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
-      <div className="w-full max-w-5xl mx-6">
-        <div className="absolute top-4 left-4">
-          <Button
-            variant="ghost"
-            onClick={() => window.location.href = 'https://www.perceptionx.co'}
-            className="flex items-center text-white hover:text-white/80"
-          >
-            <X className="w-4 h-4 mr-2" />
-            Back to Home
-          </Button>
+    <div className="min-h-screen flex flex-col md:flex-row" style={{ background: 'linear-gradient(to right bottom, rgb(4, 89, 98), rgb(1, 157, 173))' }}>
+      {/* Left side - Illustration and Marketing Copy */}
+      <div className="flex-1 flex flex-col justify-center items-center px-8 py-12 relative">
+        {/* Logo in top left */}
+        <div className="absolute top-8 left-8 z-10">
+          <img src="/lovable-uploads/f1e89523-319d-4c42-bf67-03c76342a128.png" alt="PerceptionX Logo" className="h-8" />
         </div>
-
-        <div className="grid md:grid-cols-2 gap-8 items-center">
-          {/* Left side - Value Proposition */}
-          <div className="text-white space-y-6">
-            <div className="space-y-4">
-              <h1 className="text-4xl md:text-5xl font-bold leading-tight">
-                Understand Your Employer Brand's
-                <span className="block text-blue-200">AI Perception</span>
-              </h1>
-              <p className="text-lg text-blue-100">
-                Get data-driven insights into how AI models perceive your company's employer brand and talent acquisition strategy.
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-start space-x-3">
-                <Sparkles className="w-6 h-6 text-blue-200 flex-shrink-0 mt-1" />
-                <div>
-                  <h3 className="font-semibold">AI-Powered Insights</h3>
-                  <p className="text-blue-100">Track how leading AI models like ChatGPT, Claude, and Gemini perceive your company</p>
-                </div>
-              </div>
-              <div className="flex items-start space-x-3">
-                <BarChart3 className="w-6 h-6 text-blue-200 flex-shrink-0 mt-1" />
-                <div>
-                  <h3 className="font-semibold">Data-Driven Strategy</h3>
-                  <p className="text-blue-100">Make informed decisions to improve your talent acquisition and employer branding</p>
-                </div>
-              </div>
-              <div className="flex items-start space-x-3">
-                <Target className="w-6 h-6 text-blue-200 flex-shrink-0 mt-1" />
-                <div>
-                  <h3 className="font-semibold">Competitive Analysis</h3>
-                  <p className="text-blue-100">Compare your employer brand perception against industry competitors</p>
-                </div>
-              </div>
+        <h1 className="text-4xl md:text-5xl font-bold text-white mb-4 text-center">Take control of your talent perception</h1>
+        <p className="text-lg text-white mb-8 text-center max-w-lg">Track how leading AI models like ChatGPT, Claude, and Gemini perceive your company. Make informed decisions to improve your talent acquisition and employer branding.</p>
+        <div className="space-y-6 mt-8 max-w-md w-full">
+          <div className="flex items-start space-x-3">
+            <Sparkles className="w-6 h-6 text-pink-600 flex-shrink-0 mt-1" />
+            <div>
+              <h3 className="font-semibold text-white">AI-Powered Insights</h3>
+              <p className="text-white text-sm">Track how leading AI models like ChatGPT, Claude, and Gemini perceive your company</p>
             </div>
           </div>
-
-          {/* Right side - Auth Card */}
-          <Card className="bg-white/95 backdrop-blur-sm shadow-xl">
-            <CardHeader className="text-center pb-4">
-              {/* Removed 'Welcome to PerceptionX' title and subtitle */}
-            </CardHeader>
-            
-            <CardContent className="space-y-6">
-              {!showAuthForm ? (
-                <>
-                  {/* Primary CTA */}
-                  <Button
-                    onClick={() => {
-                      setIsLogin(false);
-                      setShowAuthForm(true);
-                    }}
-                    className="w-full bg-primary hover:bg-primary/90 h-14 text-lg group"
-                  >
-                    Create Free Account
-                    <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                  </Button>
-
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-gray-200"></div>
-                    </div>
-                    <div className="relative flex justify-center text-sm">
-                      <span className="px-2 bg-white text-gray-500">or</span>
-                    </div>
-                  </div>
-
-                  {/* Secondary CTA */}
-                  <Button
-                    onClick={() => {
-                      setIsLogin(true);
-                      setShowAuthForm(true);
-                    }}
-                    variant="outline"
-                    className="w-full h-14 text-lg"
-                  >
-                    Sign In to Your Account
-                  </Button>
-
-                  {onboardingData && (
-                    <div className="mt-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-                      <strong>Your analysis is ready!</strong> Create an account to view your personalized prompts for {onboardingData.companyName}.
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="text-center mb-4">
-                    <h3 className="text-lg font-semibold">
-                      {isLogin ? 'Welcome Back!' : 'Create Your Free Account'}
-                    </h3>
-                    <p className="text-sm text-gray-600 mt-1">
-                      {isLogin 
-                        ? 'Sign in to access your dashboard and prompts'
-                        : 'Create an account to start your free analysis'
-                      }
-                    </p>
-                  </div>
-
-                  <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                      <Label htmlFor="email">Email</Label>
-                      <Input
-                        id="email"
-                        name="email"
-                        type="email"
-                        value={formData.email}
-                        onChange={handleInputChange}
-                        required
-                        placeholder="Enter your email"
-                      />
-                    </div>
-
-                    <div>
-                      <Label htmlFor="password">Password</Label>
-                      <Input
-                        id="password"
-                        name="password"
-                        type="password"
-                        value={formData.password}
-                        onChange={handleInputChange}
-                        required
-                        placeholder="Enter your password"
-                        minLength={6}
-                      />
-                    </div>
-
-                    <Button
-                      type="submit"
-                      className="w-full bg-primary hover:bg-primary/90"
-                      disabled={loading}
-                    >
-                      {loading ? 'Loading...' : (isLogin ? 'Sign In' : 'Continue to Analysis')}
-                    </Button>
-                  </form>
-
-                  <div className="text-center">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsLogin(!isLogin);
-                        setFormData({ email: '', password: '', companyName: '' });
-                      }}
-                      className="text-primary hover:text-primary/80 underline text-sm"
-                    >
-                      {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-                    </button>
-                  </div>
-
-                  <Button
-                    variant="ghost"
-                    onClick={() => setShowAuthForm(false)}
-                    className="w-full"
-                  >
-                    Back to Options
-                  </Button>
-                </>
-              )}
-            </CardContent>
-          </Card>
+          <div className="flex items-start space-x-3">
+            <BarChart3 className="w-6 h-6 text-pink-600 flex-shrink-0 mt-1" />
+            <div>
+              <h3 className="font-semibold text-white">Data-Driven Strategy</h3>
+              <p className="text-white text-sm">Make informed decisions to improve your talent acquisition and employer branding</p>
+            </div>
+          </div>
+          <div className="flex items-start space-x-3">
+            <Target className="w-6 h-6 text-pink-600 flex-shrink-0 mt-1" />
+            <div>
+              <h3 className="font-semibold text-white">Competitive Analysis</h3>
+              <p className="text-white text-sm">Compare your employer brand perception against industry competitors</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      {/* Right side - Auth Card */}
+      <div className="flex-1 flex items-center justify-center px-4 py-12 bg-transparent">
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8">
+          <div className="mb-8 text-center">
+            {isLogin ? (
+              <>
+                <h3 className="text-2xl font-bold text-gray-900 mb-1">Sign in to your account</h3>
+                <p className="text-gray-500 text-sm">Access your dashboard and AI perception insights</p>
+              </>
+            ) : (
+              <>
+                <h3 className="text-2xl font-bold text-gray-900 mb-1">Get started</h3>
+                <p className="text-gray-500 text-sm">Use PerceptionX to track how leading AI models perceive your company</p>
+              </>
+            )}
+          </div>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                name="email"
+                type="email"
+                value={formData.email}
+                onChange={handleInputChange}
+                required
+                placeholder="Enter your email"
+                className="rounded-lg border-gray-200"
+              />
+            </div>
+            <div>
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                name="password"
+                type="password"
+                value={formData.password}
+                onChange={handleInputChange}
+                required
+                placeholder="Enter your password"
+                minLength={6}
+                className="rounded-lg border-gray-200"
+              />
+            </div>
+            {!isLogin && (
+              <div>
+                <Label htmlFor="companyName">Company Name</Label>
+                <Input
+                  id="companyName"
+                  name="companyName"
+                  type="text"
+                  value={formData.companyName}
+                  onChange={handleInputChange}
+                  required
+                  placeholder="Enter your company name"
+                  className="rounded-lg border-gray-200"
+                />
+              </div>
+            )}
+            <Button
+              type="submit"
+              className="w-full bg-pink-600 hover:bg-pink-700 text-white font-semibold h-12 text-base rounded-lg mt-2 shadow-none border border-pink-600"
+              disabled={loading}
+            >
+              {loading ? 'Loading...' : (isLogin ? 'Sign In' : 'Create My Account')}
+            </Button>
+          </form>
+          <div className="flex justify-center items-center mt-4">
+            <button
+              type="button"
+              onClick={() => {
+                setIsLogin(!isLogin);
+                setFormData({ email: '', password: '', companyName: '' });
+              }}
+              className="text-primary hover:text-primary/80 underline text-sm"
+            >
+              {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+            </button>
+          </div>
         </div>
       </div>
       {showLoadingModal && (
