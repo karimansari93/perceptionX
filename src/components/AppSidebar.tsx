@@ -105,7 +105,11 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="border-t border-gray-200/50 p-4">
+      <SidebarFooter className="p-4 flex flex-col gap-3">
+        <div className="w-full rounded-lg border border-pink-600 bg-pink-100/60 text-pink-800 text-xs px-4 py-3 mb-1">
+          <span className="font-semibold block mb-1">Dashboard is in Alpha</span>
+          Please reach out to <a href="mailto:karim@perceptionx.co" className="underline font-medium">karim@perceptionx.co</a> if you have any feedback.
+        </div>
         <UserMenu />
       </SidebarFooter>
     </Sidebar>
