@@ -1,6 +1,5 @@
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { LucideIcon } from "lucide-react";
+import { LucideIcon, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { ReactNode } from "react";
 
 interface MetricCardProps {
@@ -9,6 +8,10 @@ interface MetricCardProps {
   subtitle: string;
   icon: LucideIcon;
   iconColor: string;
+  trend?: {
+    value: number;
+    direction: 'up' | 'down' | 'neutral';
+  };
   children?: ReactNode;
 }
 
@@ -17,9 +20,34 @@ export const MetricCard = ({
   value, 
   subtitle, 
   icon: Icon, 
-  iconColor, 
+  iconColor,
+  trend,
   children 
 }: MetricCardProps) => {
+  const getTrendIcon = () => {
+    if (!trend) return null;
+    switch (trend.direction) {
+      case 'up':
+        return <TrendingUp className="w-4 h-4 text-green-500" />;
+      case 'down':
+        return <TrendingDown className="w-4 h-4 text-red-500" />;
+      default:
+        return <Minus className="w-4 h-4 text-gray-500" />;
+    }
+  };
+
+  const getTrendColor = () => {
+    if (!trend) return '';
+    switch (trend.direction) {
+      case 'up':
+        return 'text-green-500';
+      case 'down':
+        return 'text-red-500';
+      default:
+        return 'text-gray-500';
+    }
+  };
+
   return (
     <Card className="shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
@@ -36,7 +64,15 @@ export const MetricCard = ({
         }}>
           {value}
         </div>
-        <p className="text-xs text-gray-500">{subtitle}</p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-gray-500">{subtitle}</p>
+          {trend && (
+            <div className={`flex items-center space-x-1 text-xs font-medium ${getTrendColor()}`}>
+              {getTrendIcon()}
+              <span>{trend.value}% vs last week</span>
+            </div>
+          )}
+        </div>
         {children}
       </CardContent>
     </Card>

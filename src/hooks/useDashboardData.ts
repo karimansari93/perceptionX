@@ -157,6 +157,41 @@ export const useDashboardData = () => {
       : 0;
 
     const sentimentLabel = averageSentiment > 0.1 ? 'Positive' : averageSentiment < -0.1 ? 'Negative' : 'Neutral';
+    
+    // Calculate sentiment trend comparison
+    const lastWeekResponses = responses.filter(r => {
+      const responseDate = new Date(r.tested_at);
+      const oneWeekAgo = new Date();
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+      return responseDate >= oneWeekAgo;
+    });
+    
+    const previousWeekResponses = responses.filter(r => {
+      const responseDate = new Date(r.tested_at);
+      const twoWeeksAgo = new Date();
+      twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+      const oneWeekAgo = new Date();
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+      return responseDate >= twoWeeksAgo && responseDate < oneWeekAgo;
+    });
+
+    const lastWeekSentiment = lastWeekResponses.length > 0
+      ? lastWeekResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / lastWeekResponses.length
+      : 0;
+    
+    const previousWeekSentiment = previousWeekResponses.length > 0
+      ? previousWeekResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / previousWeekResponses.length
+      : 0;
+
+    const sentimentChange = previousWeekSentiment !== 0
+      ? ((lastWeekSentiment - previousWeekSentiment) / Math.abs(previousWeekSentiment)) * 100
+      : 0;
+
+    const sentimentTrendComparison = {
+      value: Math.abs(Math.round(sentimentChange)),
+      direction: sentimentChange > 0 ? 'up' as const : sentimentChange < 0 ? 'down' as const : 'neutral' as const
+    };
+
     const totalCitations = responses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
     const uniqueDomains = new Set(
       responses.flatMap(r => parseCitations(r.citations).map((c: Citation) => c.domain).filter(Boolean))
@@ -171,6 +206,7 @@ export const useDashboardData = () => {
     return {
       averageSentiment,
       sentimentLabel,
+      sentimentTrendComparison,
       totalCitations,
       uniqueDomains,
       totalResponses: responses.length,
@@ -294,6 +330,26 @@ export const useDashboardData = () => {
       .slice(0, 6); // top 6 themes
   }, [responses]);
 
+  const topCompetitors = useMemo(() => {
+    if (!companyName) return [];
+    const competitorCounts: Record<string, number> = {};
+    responses.forEach(r => {
+      if (r.competitor_mentions && Array.isArray(r.competitor_mentions)) {
+        r.competitor_mentions.forEach((mention: any) => {
+          // mention can be a string or object with company property
+          const name = typeof mention === 'string' ? mention : mention.company;
+          if (name && name !== companyName) {
+            competitorCounts[name] = (competitorCounts[name] || 0) + 1;
+          }
+        });
+      }
+    });
+    return Object.entries(competitorCounts)
+      .map(([company, count]) => ({ company, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8); // top 8 competitors
+  }, [responses, companyName]);
+
   return {
     responses,
     loading,
@@ -304,6 +360,7 @@ export const useDashboardData = () => {
     promptsData,
     refreshData,
     parseCitations,
-    popularThemes
+    popularThemes,
+    topCompetitors
   };
 };
