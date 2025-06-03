@@ -20,6 +20,18 @@ export interface PromptResponse {
   };
   first_mention_position?: number;
   total_words?: number;
+  model_characteristics?: {
+    response_style: string;
+    information_depth: string;
+    citation_approach: string;
+    bias_indicators: string[];
+    factual_accuracy: string;
+    response_structure: string;
+    unique_perspectives: string[];
+    confidence_level: string;
+    temporal_relevance: string;
+    comparative_analysis: string;
+  };
 }
 
 export interface WorkplaceTheme {

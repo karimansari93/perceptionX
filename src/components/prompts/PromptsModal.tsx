@@ -8,6 +8,7 @@ import { PromptStrategyExplanation } from "@/components/prompts/PromptStrategyEx
 import { ConfirmationCard } from "@/components/prompts/ConfirmationCard";
 import { LoadingModal } from "@/components/prompts/LoadingModal";
 import { usePromptsLogic } from "@/hooks/usePromptsLogic";
+import { useState } from "react";
 
 interface OnboardingData {
   companyName: string;
@@ -24,6 +25,7 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
   console.log('PromptsModal onboardingData:', onboardingData);
   const navigate = useNavigate();
   const location = useLocation();
+  const [promptsConfirmed, setPromptsConfirmed] = useState(false);
 
   const {
     prompts,
@@ -33,6 +35,12 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
     progress,
     confirmAndStartMonitoring
   } = usePromptsLogic(onboardingData);
+
+  // Wrap the confirm function to update local state
+  const handleConfirmAndStartMonitoring = async () => {
+    await confirmAndStartMonitoring();
+    setPromptsConfirmed(true); // Hide PromptsTable after confirmation
+  };
 
   // If onboardingRecord or onboardingData is missing, don't show the modal
   if (!onboardingRecord || !onboardingData) {
@@ -76,13 +84,15 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
             </Button>
             <ConfirmationCard 
               isConfirming={isConfirming}
-              onConfirm={confirmAndStartMonitoring}
+              onConfirm={handleConfirmAndStartMonitoring}
               disabled={!onboardingRecord}
             />
           </div>
 
           <div className="space-y-8">
-            <PromptsTable prompts={prompts} companyName={onboardingData.companyName} />
+            {!promptsConfirmed && (
+              <PromptsTable prompts={prompts} companyName={onboardingData.companyName} />
+            )}
             <PromptStrategyExplanation />
           </div>
         </div>

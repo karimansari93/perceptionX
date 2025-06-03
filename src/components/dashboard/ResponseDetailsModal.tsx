@@ -306,6 +306,69 @@ export const ResponseDetailsModal = ({
                     )}
                   </div>
                 </div>
+                {selectedResponse?.model_characteristics && (
+                  <div className="mt-4">
+                    <div className="text-xs text-gray-500 mb-2">Model Analysis</div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <div>
+                          <span className="text-sm font-medium">Response Style:</span>
+                          <span className="text-sm ml-2">{selectedResponse.model_characteristics.response_style}</span>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium">Information Depth:</span>
+                          <span className="text-sm ml-2">{selectedResponse.model_characteristics.information_depth}</span>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium">Citation Approach:</span>
+                          <span className="text-sm ml-2">{selectedResponse.model_characteristics.citation_approach}</span>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium">Factual Accuracy:</span>
+                          <span className="text-sm ml-2">{selectedResponse.model_characteristics.factual_accuracy}</span>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium">Response Structure:</span>
+                          <span className="text-sm ml-2">{selectedResponse.model_characteristics.response_structure}</span>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <div>
+                          <span className="text-sm font-medium">Confidence Level:</span>
+                          <span className="text-sm ml-2">{selectedResponse.model_characteristics.confidence_level}</span>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium">Temporal Relevance:</span>
+                          <span className="text-sm ml-2">{selectedResponse.model_characteristics.temporal_relevance}</span>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium">Comparative Analysis:</span>
+                          <span className="text-sm ml-2">{selectedResponse.model_characteristics.comparative_analysis}</span>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium">Unique Perspectives:</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {selectedResponse.model_characteristics.unique_perspectives.map((perspective, index) => (
+                              <Badge key={index} variant="secondary" className="text-xs">
+                                {perspective}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium">Bias Indicators:</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {selectedResponse.model_characteristics.bias_indicators.map((bias, index) => (
+                              <Badge key={index} variant="outline" className="text-xs">
+                                {bias}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

@@ -88,6 +88,7 @@ export type Database = {
           sentiment_label: string | null
           sentiment_score: number | null
           tested_at: string
+          model_characteristics: Json | null
         }
         Insert: {
           ai_model: string
@@ -102,6 +103,7 @@ export type Database = {
           sentiment_label?: string | null
           sentiment_score?: number | null
           tested_at?: string
+          model_characteristics?: Json | null
         }
         Update: {
           ai_model?: string
@@ -116,6 +118,7 @@ export type Database = {
           sentiment_label?: string | null
           sentiment_score?: number | null
           tested_at?: string
+          model_characteristics?: Json | null
         }
         Relationships: [
           {

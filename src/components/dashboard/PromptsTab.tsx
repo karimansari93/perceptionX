@@ -42,34 +42,16 @@ export const PromptsTab = ({ promptsData, responses }: PromptsTabProps) => {
     return matchingResponses;
   };
 
-  const sentimentPrompts = promptsData.filter(p => p.type === 'sentiment');
-  const visibilityPrompts = promptsData.filter(p => p.type === 'visibility');
-  const competitivePrompts = promptsData.filter(p => p.type === 'competitive');
-
   return (
     <div className="space-y-6">
       {/* Summary Cards */}
       <PromptSummaryCards promptsData={promptsData} />
 
-      {/* Detailed Tables */}
+      {/* Single Combined Table */}
       <PromptTable
-        prompts={sentimentPrompts}
-        title="Sentiment Tracking Prompts"
-        description="Monitor how AI models perceive your company with balanced, nuanced questions"
-        onPromptClick={handlePromptClick}
-      />
-
-      <PromptTable
-        prompts={visibilityPrompts}
-        title="Visibility Monitoring Prompts"
-        description="Track how often your company appears in industry-wide AI responses"
-        onPromptClick={handlePromptClick}
-      />
-
-      <PromptTable
-        prompts={competitivePrompts}
-        title="Competitive Analysis Prompts"
-        description="Compare your company directly against specific competitors"
+        prompts={promptsData}
+        title="All Prompts"
+        description="Monitor your company's perception across different types of prompts"
         onPromptClick={handlePromptClick}
       />
 

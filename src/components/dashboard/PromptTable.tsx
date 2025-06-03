@@ -35,6 +35,19 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
     return Math.min(100, baseScore + mentionBonus);
   };
 
+  const getTypeBadge = (type: string) => {
+    const colors: Record<string, string> = {
+      'sentiment': 'bg-blue-100 text-blue-800',
+      'visibility': 'bg-green-100 text-green-800',
+      'competitive': 'bg-purple-100 text-purple-800'
+    };
+    return (
+      <Badge className={colors[type] || 'bg-gray-100 text-gray-800'}>
+        {type.charAt(0).toUpperCase() + type.slice(1)}
+      </Badge>
+    );
+  };
+
   const getMetricColumn = (prompt: PromptData) => {
     switch (prompt.type) {
       case 'sentiment':
@@ -82,14 +95,11 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Type</TableHead>
                 <TableHead>Prompt</TableHead>
                 <TableHead>Category</TableHead>
                 <TableHead className="text-center">Responses</TableHead>
-                <TableHead className="text-center">
-                  {prompts[0]?.type === 'sentiment' ? 'Avg Sentiment' :
-                   prompts[0]?.type === 'visibility' ? 'Visibility Score' :
-                   'Competitive Score'}
-                </TableHead>
+                <TableHead className="text-center">Score</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -99,6 +109,9 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
                   className="cursor-pointer hover:bg-gray-50"
                   onClick={() => onPromptClick(prompt.prompt)}
                 >
+                  <TableCell>
+                    {getTypeBadge(prompt.type)}
+                  </TableCell>
                   <TableCell className="font-medium max-w-md">
                     <div className="truncate" title={prompt.prompt}>
                       {prompt.prompt}

@@ -100,6 +100,8 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       }
     };
     fetchPrompts();
+    // Expose fetchPrompts for use elsewhere
+    (usePromptsLogic as any).fetchPrompts = fetchPrompts;
   }, [onboardingData]);
 
   const generatePrompts = () => {
@@ -163,6 +165,11 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         throw insertError;
       }
       console.log('Confirmed prompts inserted:', confirmedPrompts?.length);
+
+      // After inserting, fetch only the prompts from the database to avoid duplicates
+      if ((usePromptsLogic as any).fetchPrompts) {
+        await (usePromptsLogic as any).fetchPrompts();
+      }
 
       // Calculate total operations for progress tracking
       const totalOperations = (confirmedPrompts?.length || 0) * 3; // 3 models per prompt

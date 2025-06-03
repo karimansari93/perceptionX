@@ -4,6 +4,28 @@
 
 **URL**: https://lovable.dev/projects/7ac943ef-f258-452b-b8f5-61b256c682a4
 
+## Prompt Types
+
+The project uses three types of prompts to analyze company perception:
+
+### Sentiment Prompts
+- **Type**: Sentiment
+- **Purpose**: Company-specific prompts that measure how AI models perceive your organization
+- **Example**: "How is [Company] as an employer?"
+- **Metrics**: Sentiment score (-1.0 to 1.0), sentiment label (positive/neutral/negative)
+
+### Visibility Prompts
+- **Type**: Visibility
+- **Purpose**: Industry-wide prompts that track how often your company is mentioned compared to competitors
+- **Example**: "What companies offer the best career opportunities in the [Industry] industry?"
+- **Metrics**: Company mention rate, ranking position, visibility score
+
+### Competitive Prompts
+- **Type**: Competitive
+- **Purpose**: Direct comparison prompts that analyze your position relative to specific competitors
+- **Example**: "How does working at [Company] compare to other companies in the [Industry] industry?"
+- **Metrics**: Competitive position, competitor mentions, relative ranking
+
 ## Environment Setup
 
 Before running the project, you need to set up your environment variables:
