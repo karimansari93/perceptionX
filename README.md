@@ -37,7 +37,7 @@ cp .env.example .env
 
 2. Update the `.env` file with your Supabase credentials:
 - `VITE_SUPABASE_URL`: Your Supabase project URL
-- `VITE_SUPABASE_PUBLISHABLE_KEY`: Your Supabase publishable key
+- `VITE_SUPABASE_ANON_KEY`: Your Supabase anon (public) key
 
 You can find these values in your Supabase project dashboard under Project Settings > API.
 
