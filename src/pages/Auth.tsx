@@ -241,10 +241,6 @@ const Auth = () => {
     <div className="min-h-screen flex flex-col md:flex-row" style={{ background: 'linear-gradient(to right bottom, rgb(4, 89, 98), rgb(1, 157, 173))' }}>
       {/* Left side - Illustration and Marketing Copy */}
       <div className="flex-1 flex flex-col justify-center items-center px-8 py-12 relative">
-        {/* Logo in top left */}
-        <div className="absolute top-8 left-8 z-10">
-          <img src="/lovable-uploads/f1e89523-319d-4c42-bf67-03c76342a128.png" alt="PerceptionX Logo" className="h-8" />
-        </div>
         <h1 className="text-4xl md:text-5xl font-bold text-white mb-4 text-center">Take control of your talent perception</h1>
         <p className="text-lg text-white mb-8 text-center max-w-lg">Track how leading AI models like ChatGPT, Claude, and Gemini perceive your company. Make informed decisions to improve your talent acquisition and employer branding.</p>
         <div className="space-y-6 mt-8 max-w-md w-full">
