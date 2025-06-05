@@ -244,37 +244,17 @@ export const ResponseDetailsModal = ({
                   <Badge variant="outline">Avg. Sentiment: <span className="ml-1 font-semibold">{Math.round(avgSentiment * 100)}% {avgSentimentLabel}</span></Badge>
                   <Badge variant="outline">Avg. Visibility: <span className="ml-1 font-semibold">{Math.round(avgVisibility)}%</span></Badge>
                   <Badge variant="outline">Brand Mentioned: <span className="ml-1 font-semibold">{brandMentionedPct}%</span></Badge>
-                  {/* Workplace Themes Row */}
-                  {selectedResponse && selectedResponse.workplace_themes && selectedResponse.workplace_themes.length > 0 && (
-                    <div className="flex flex-wrap gap-2 w-full mb-2">
-                      <span className="text-xs text-gray-500 mr-2">Workplace Themes:</span>
-                      {selectedResponse.workplace_themes
-                        .filter(theme => theme.confidence === 'high' || theme.confidence === 'medium')
-                        .map((theme, idx) => (
-                          <span
-                            key={idx}
-                            className={`px-2 py-1 rounded text-xs font-medium
-                              ${theme.sentiment === 'positive' ? 'bg-green-100 text-green-800' :
-                                theme.sentiment === 'neutral' ? 'bg-orange-100 text-orange-800' :
-                                'bg-red-100 text-red-800'}
-                            `}
-                          >
-                            {theme.name}
-                          </span>
-                      ))}
-                    </div>
-                  )}
-                  {uniqueSources.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-gray-500">Sources:</span>
-                      {uniqueSources.map((src, i) => (
-                        <a key={src.url} href={src.url} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline text-xs font-medium hover:text-blue-900">
-                          {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
-                        </a>
-                      ))}
-                    </div>
-                  )}
                 </div>
+                {uniqueSources.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-gray-500">Sources:</span>
+                    {uniqueSources.map((src, i) => (
+                      <a key={src.url} href={src.url} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline text-xs font-medium hover:text-blue-900">
+                        {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
+                      </a>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

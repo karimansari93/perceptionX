@@ -8,6 +8,7 @@ import { PromptStrategyExplanation } from "@/components/prompts/PromptStrategyEx
 import { ConfirmationCard } from "@/components/prompts/ConfirmationCard";
 import { LoadingModal } from "@/components/prompts/LoadingModal";
 import { usePromptsLogic } from "@/hooks/usePromptsLogic";
+import { useEffect } from "react";
 
 interface OnboardingData {
   companyName: string;
@@ -21,7 +22,6 @@ interface PromptsModalProps {
 }
 
 export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModalProps) => {
-  console.log('PromptsModal onboardingData:', onboardingData);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -33,6 +33,21 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
     progress,
     confirmAndStartMonitoring
   } = usePromptsLogic(onboardingData);
+
+  // Navigate to dashboard when loading completes
+  useEffect(() => {
+    if (isConfirming && progress.completed === progress.total && progress.total > 0) {
+      // Add a small delay to ensure the loading modal shows completion
+      setTimeout(() => {
+        navigate('/dashboard', { 
+          state: { 
+            shouldRefresh: true,
+            onboardingData 
+          }
+        });
+      }, 1000);
+    }
+  }, [isConfirming, progress.completed, progress.total, navigate, onboardingData]);
 
   // If onboardingRecord or onboardingData is missing, don't show the modal
   if (!onboardingRecord || !onboardingData) {
@@ -58,44 +73,46 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
-        <DialogTitle className="sr-only">Prompts Setup</DialogTitle>
-        <DialogDescription className="sr-only">
-          Review and confirm your AI prompts for monitoring
-        </DialogDescription>
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <Button 
-              variant="ghost" 
-              onClick={() => onOpenChange(false)}
-              className="flex items-center"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Dashboard
-            </Button>
-            <ConfirmationCard 
-              isConfirming={isConfirming}
-              onConfirm={confirmAndStartMonitoring}
-              disabled={!onboardingRecord}
-            />
-          </div>
+    <>
+      <Dialog open={open && !isConfirming} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogTitle className="sr-only">Prompts Setup</DialogTitle>
+          <DialogDescription className="sr-only">
+            Review and confirm your AI prompts for monitoring
+          </DialogDescription>
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <Button 
+                variant="ghost" 
+                onClick={() => onOpenChange(false)}
+                className="flex items-center"
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Dashboard
+              </Button>
+              <ConfirmationCard 
+                isConfirming={isConfirming}
+                onConfirm={confirmAndStartMonitoring}
+                disabled={!onboardingRecord}
+              />
+            </div>
 
-          <div className="space-y-8">
-            <PromptsTable prompts={prompts} companyName={onboardingData.companyName} />
-            <PromptStrategyExplanation />
+            <div className="space-y-8">
+              <PromptsTable prompts={prompts} companyName={onboardingData.companyName} />
+              <PromptStrategyExplanation />
+            </div>
           </div>
-        </div>
+        </DialogContent>
+      </Dialog>
 
-        {/* Loading Modal */}
-        <LoadingModal
-          isOpen={isConfirming}
-          currentModel={progress.currentModel}
-          currentPrompt={progress.currentPrompt}
-          completed={progress.completed}
-          total={progress.total}
-        />
-      </DialogContent>
-    </Dialog>
+      {/* Loading Modal */}
+      <LoadingModal
+        isOpen={isConfirming}
+        currentModel={progress.currentModel}
+        currentPrompt={progress.currentPrompt}
+        completed={progress.completed}
+        total={progress.total}
+      />
+    </>
   );
 }; 

@@ -64,7 +64,7 @@ export const useRefreshPrompts = () => {
         modelsToTest.push({ name: 'OpenAI', function: 'test-prompt-openai', model: 'gpt-4o-mini' });
       }
       if (!modelType || modelType === 'perplexity') {
-        modelsToTest.push({ name: 'Perplexity', function: 'test-prompt-perplexity', model: 'llama-3.1-sonar-small-128k-online' });
+        modelsToTest.push({ name: 'Perplexity', function: 'test-prompt-perplexity', model: 'perplexity' });
       }
       if (!modelType || modelType === 'gemini') {
         modelsToTest.push({ name: 'Gemini', function: 'test-prompt-gemini', model: 'gemini-1.5-flash' });
@@ -110,7 +110,9 @@ export const useRefreshPrompts = () => {
                     response: responseData.response,
                     companyName: companyName,
                     promptType: confirmedPrompt.prompt_type,
-                    perplexityCitations: perplexityCitations
+                    perplexityCitations: perplexityCitations,
+                    confirmed_prompt_id: confirmedPrompt.id,
+                    ai_model: model.model
                   }
                 });
 
@@ -126,20 +128,19 @@ export const useRefreshPrompts = () => {
               }
 
               // Store the response with enhanced visibility metrics
-              await supabase
-                .from('prompt_responses')
-                .insert({
-                  confirmed_prompt_id: confirmedPrompt.id,
-                  ai_model: model.model,
-                  response_text: responseData.response,
-                  sentiment_score: sentimentData?.sentiment_score || 0,
-                  sentiment_label: sentimentData?.sentiment_label || 'neutral',
-                  citations: finalCitations,
-                  company_mentioned: sentimentData?.company_mentioned || false,
-                  mention_ranking: sentimentData?.mention_ranking || null,
-                  competitor_mentions: sentimentData?.competitor_mentions || [],
-                  workplace_themes: sentimentData?.workplace_themes || []
-                });
+              // await supabase
+              //   .from('prompt_responses')
+              //   .insert({
+              //     confirmed_prompt_id: confirmedPrompt.id,
+              //     ai_model: model.model,
+              //     response_text: responseData.response,
+              //     sentiment_score: sentimentData?.sentiment_score || 0,
+              //     sentiment_label: sentimentData?.sentiment_label || 'neutral',
+              //     citations: finalCitations,
+              //     company_mentioned: sentimentData?.company_mentioned || false,
+              //     mention_ranking: sentimentData?.mention_ranking || null,
+              //     competitor_mentions: sentimentData?.competitor_mentions || []
+              //   });
             }
           } catch (error) {
             console.error(`Error testing with ${model.name}:`, error);

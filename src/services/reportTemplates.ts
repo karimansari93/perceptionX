@@ -1,4 +1,3 @@
-
 import { DashboardMetrics, PromptResponse, SentimentTrendData, CitationCount, PromptData } from '@/types/dashboard';
 
 interface ReportData {
@@ -32,7 +31,10 @@ export class ReportTemplates {
           ? response.competitor_mentions 
           : JSON.parse(response.competitor_mentions as string || '[]');
         mentions.forEach((mention: any) => {
-          acc[mention.company] = (acc[mention.company] || 0) + 1;
+          const name = typeof mention === 'string' ? mention : mention.name;
+          if (name) {
+            acc[name] = (acc[name] || 0) + 1;
+          }
         });
       }
       return acc;

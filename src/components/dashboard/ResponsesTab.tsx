@@ -105,7 +105,7 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
               </td>
               <td className="px-4 py-2">
                 <span className={`px-2 py-1 rounded-full text-xs font-medium ${getSentimentBgColor(response.sentiment_score)} ${getSentimentColor(response.sentiment_score)}`}>
-                  {response.sentiment_label || 'No sentiment'}
+                  {response.sentiment_label === 'neutral' ? 'normal' : response.sentiment_label || 'No sentiment'}
                 </span>
               </td>
               <td className="px-4 py-2">

@@ -32,7 +32,9 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
       }
 
       try {
-        console.log('Checking onboarding completion for user:', user.id);
+        if (process.env.NODE_ENV === 'development') {
+          console.log('Checking onboarding completion status');
+        }
         
         // Test connection first with a simple query
         const { error: connectionTest } = await supabase
@@ -62,7 +64,9 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
         } else {
           const isComplete = data && data.length > 0;
           setHasOnboarding(isComplete);
-          console.log('Onboarding completion status:', isComplete);
+          if (process.env.NODE_ENV === 'development') {
+            console.log('Onboarding completion status:', isComplete);
+          }
           setConnectionError(false);
         }
       } catch (error) {

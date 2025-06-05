@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { PromptResponse, DashboardMetrics, SentimentTrendData, CitationCount, PromptData, Citation } from "@/types/dashboard";
+import { PromptResponse, DashboardMetrics, SentimentTrendData, CitationCount, PromptData, Citation, CompetitorMention } from "@/types/dashboard";
 import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 
 export const useDashboardData = () => {
@@ -66,10 +66,7 @@ export const useDashboardData = () => {
 
       if (error) throw error;
       
-      setResponses((data || []).map((r: any) => ({
-        ...r,
-        workplace_themes: r.workplace_themes ?? []
-      })));
+      setResponses(data || []);
     } catch (error) {
       console.error('Error fetching responses:', error);
     } finally {
@@ -158,6 +155,11 @@ export const useDashboardData = () => {
 
     const sentimentLabel = averageSentiment > 0.1 ? 'Positive' : averageSentiment < -0.1 ? 'Negative' : 'Neutral';
     
+    // Calculate sentiment counts
+    const positiveCount = responses.filter(r => (r.sentiment_score || 0) > 0.1).length;
+    const neutralCount = responses.filter(r => (r.sentiment_score || 0) >= -0.1 && (r.sentiment_score || 0) <= 0.1).length;
+    const negativeCount = responses.filter(r => (r.sentiment_score || 0) < -0.1).length;
+    
     // Calculate sentiment trend comparison
     const lastWeekResponses = responses.filter(r => {
       const responseDate = new Date(r.tested_at);
@@ -210,7 +212,10 @@ export const useDashboardData = () => {
       totalCitations,
       uniqueDomains,
       totalResponses: responses.length,
-      averageVisibility
+      averageVisibility,
+      positiveCount,
+      neutralCount,
+      negativeCount
     };
   }, [responses, promptsData]);
 
@@ -307,41 +312,17 @@ export const useDashboardData = () => {
     });
   };
 
-  const popularThemes = useMemo(() => {
-    const themeCounts: Record<string, { count: number, sentiment: Record<string, number> }> = {};
-    responses.forEach(r => {
-      if (r.workplace_themes && Array.isArray(r.workplace_themes)) {
-        r.workplace_themes.forEach(theme => {
-          if (!themeCounts[theme.name]) {
-            themeCounts[theme.name] = { count: 0, sentiment: { positive: 0, neutral: 0, negative: 0 } };
-          }
-          themeCounts[theme.name].count++;
-          themeCounts[theme.name].sentiment[theme.sentiment]++;
-        });
-      }
-    });
-    return Object.entries(themeCounts)
-      .map(([name, data]) => ({
-        name,
-        count: data.count,
-        sentiment: Object.entries(data.sentiment).sort((a, b) => b[1] - a[1])[0][0] as 'positive' | 'neutral' | 'negative'
-      }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 6); // top 6 themes
-  }, [responses]);
-
   const topCompetitors = useMemo(() => {
     if (!companyName) return [];
     const competitorCounts: Record<string, number> = {};
     responses.forEach(r => {
-      if (r.competitor_mentions && Array.isArray(r.competitor_mentions)) {
-        r.competitor_mentions.forEach((mention: any) => {
-          // mention can be a string or object with company property
-          const name = typeof mention === 'string' ? mention : mention.company;
-          if (name && name !== companyName) {
+      if (r.detected_competitors) {
+        r.detected_competitors.split(',')
+          .map(name => name.trim())
+          .filter(name => name && name.toLowerCase() !== companyName.toLowerCase())
+          .forEach(name => {
             competitorCounts[name] = (competitorCounts[name] || 0) + 1;
-          }
-        });
+          });
       }
     });
     return Object.entries(competitorCounts)
@@ -360,7 +341,6 @@ export const useDashboardData = () => {
     promptsData,
     refreshData,
     parseCitations,
-    popularThemes,
     topCompetitors
   };
 };

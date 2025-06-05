@@ -170,30 +170,32 @@ export type Database = {
       }
       user_onboarding: {
         Row: {
-          company_name: string
-          created_at: string
           id: string
+          user_id: string | null
+          company_name: string
           industry: string
           session_id: string
-          user_id: string | null
+          created_at: string
+          competitors: string[]
         }
         Insert: {
-          company_name: string
-          created_at?: string
           id?: string
+          user_id?: string | null
+          company_name: string
           industry: string
           session_id: string
-          user_id?: string | null
+          created_at?: string
+          competitors?: string[]
         }
         Update: {
-          company_name?: string
-          created_at?: string
           id?: string
+          user_id?: string | null
+          company_name?: string
           industry?: string
           session_id?: string
-          user_id?: string | null
+          created_at?: string
+          competitors?: string[]
         }
-        Relationships: []
       }
     }
     Views: {

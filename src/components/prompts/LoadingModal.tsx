@@ -4,6 +4,8 @@ import { Progress } from "@/components/ui/progress";
 import LLMLogo from "@/components/LLMLogo";
 import { CheckCircle } from "lucide-react";
 import { getLLMDisplayName } from '@/config/llmLogos';
+import { useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 
 interface LoadingModalProps {
   isOpen: boolean;
@@ -29,6 +31,7 @@ export const LoadingModal = ({
 }: LoadingModalProps) => {
   const [carouselIndex, setCarouselIndex] = useState(0);
   const progressPercentage = total > 0 ? (completed / total) * 100 : 0;
+  const navigate = useNavigate();
 
   // Auto-rotate carousel every 3 seconds
   useEffect(() => {
@@ -53,10 +56,12 @@ export const LoadingModal = ({
           {/* Header */}
           <div className="space-y-2">
             <h3 className="text-lg font-semibold text-blue-900">
-              Getting Your Results
+              {completed === total ? "Results Ready!" : "Getting Your Results"}
             </h3>
             <p className="text-sm text-gray-600">
-              Testing your prompts across multiple AI models...
+              {completed === total 
+                ? "Your AI responses are ready to view"
+                : "Testing your prompts across multiple AI models..."}
             </p>
           </div>
 
@@ -124,6 +129,16 @@ export const LoadingModal = ({
               </div>
             ))}
           </div>
+
+          {/* Show button when loading is complete */}
+          {completed === total && (
+            <Button
+              onClick={() => navigate('/dashboard')}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              See my results
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

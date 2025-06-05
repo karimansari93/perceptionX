@@ -1,4 +1,3 @@
-
 interface CrawlResult {
   success: boolean;
   data?: {
@@ -114,10 +113,11 @@ export class FirecrawlService {
       if (response.competitor_mentions) {
         const mentions = Array.isArray(response.competitor_mentions) 
           ? response.competitor_mentions 
-          : JSON.parse(response.competitor_mentions || '[]');
+          : JSON.parse(response.competitor_mentions as string || '[]');
         mentions.forEach((mention: any) => {
-          if (mention.company && mention.company !== companyName) {
-            competitorMentions.add(mention.company);
+          const name = typeof mention === 'string' ? mention : mention.name;
+          if (name && name !== companyName) {
+            competitorMentions.add(name);
           }
         });
       }

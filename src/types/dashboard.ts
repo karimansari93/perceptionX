@@ -12,7 +12,6 @@ export interface PromptResponse {
   company_mentioned: boolean | null;
   mention_ranking: number | null;
   competitor_mentions: Json | null;
-  workplace_themes: WorkplaceTheme[] | null;
   confirmed_prompts: {
     prompt_text: string;
     prompt_category: string;
@@ -20,13 +19,7 @@ export interface PromptResponse {
   };
   first_mention_position?: number;
   total_words?: number;
-}
-
-export interface WorkplaceTheme {
-  name: string;
-  confidence: 'high' | 'medium' | 'low';
-  context: string;
-  sentiment: 'positive' | 'neutral' | 'negative';
+  detected_competitors?: string;
 }
 
 export interface Citation {
@@ -36,9 +29,9 @@ export interface Citation {
 }
 
 export interface CompetitorMention {
-  company: string;
-  ranking?: number;
-  context?: string;
+  name: string;
+  ranking: number | null;
+  context: string;
 }
 
 export interface SentimentTrendData {
@@ -78,6 +71,9 @@ export interface DashboardMetrics {
   uniqueDomains: number;
   totalResponses: number;
   averageVisibility: number;
+  positiveCount: number;
+  neutralCount: number;
+  negativeCount: number;
 }
 
 export interface VisibilityMetrics {

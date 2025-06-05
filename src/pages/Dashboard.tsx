@@ -16,6 +16,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
 
 interface DatabaseOnboardingData {
   company_name: string;
@@ -49,7 +50,6 @@ const DashboardContent = () => {
     promptsData,
     refreshData,
     parseCitations,
-    popularThemes,
     topCompetitors
   } = useDashboardData();
 
@@ -66,8 +66,23 @@ const DashboardContent = () => {
   const [error, setError] = useState<string | null>(null);
   const [onboardingId, setOnboardingId] = useState<string | null>(null);
   const [isNewUser, setIsNewUser] = useState(false);
+  const justFinishedOnboarding = !!location.state?.shouldRefresh;
 
+  // Handle refresh when navigating from prompts modal
   useEffect(() => {
+    if (justFinishedOnboarding) {
+      refreshData();
+      // Clear the state to prevent unnecessary refreshes
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [justFinishedOnboarding, location.pathname, refreshData, navigate]);
+
+  // Onboarding check: skip if just finished onboarding
+  useEffect(() => {
+    if (justFinishedOnboarding) {
+      setIsLoading(true); // Show skeleton until data loads
+      return;
+    }
     const checkOnboardingStatus = async () => {
       if (!user) return;
 
@@ -110,7 +125,7 @@ const DashboardContent = () => {
     };
 
     checkOnboardingStatus();
-  }, [user]);
+  }, [user, justFinishedOnboarding]);
 
   useEffect(() => {
     // Check for answer gaps data in sessionStorage
@@ -218,15 +233,11 @@ const DashboardContent = () => {
   }, [onboardingData, user]);
 
   if (loading) {
-    return <LoadingSpinner text="Loading dashboard data..." />;
+    return <DashboardSkeleton />;
   }
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
+    return <DashboardSkeleton />;
   }
 
   if (error) {
@@ -254,7 +265,6 @@ const DashboardContent = () => {
           <OverviewTab 
             metrics={metrics}
             topCitations={topCitations}
-            popularThemes={popularThemes}
             topCompetitors={topCompetitors}
           />
         );
@@ -291,7 +301,6 @@ const DashboardContent = () => {
           <OverviewTab 
             metrics={metrics}
             topCitations={topCitations}
-            popularThemes={popularThemes}
             topCompetitors={topCompetitors}
           />
         );
@@ -347,11 +356,13 @@ const DashboardContent = () => {
         </SidebarInset>
       </div>
       {/* Prompts Modal */}
-      <PromptsModal
-        open={showPromptsModal}
-        onOpenChange={setShowPromptsModal}
-        onboardingData={onboardingData || undefined}
-      />
+      {!justFinishedOnboarding && (
+        <PromptsModal
+          open={showPromptsModal}
+          onOpenChange={setShowPromptsModal}
+          onboardingData={onboardingData || undefined}
+        />
+      )}
       {/* Onboarding Modal */}
       <OnboardingModal
         open={showOnboardingModal}

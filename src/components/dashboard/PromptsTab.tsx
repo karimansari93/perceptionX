@@ -17,19 +17,18 @@ export const PromptsTab = ({ promptsData, responses }: PromptsTabProps) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const handlePromptClick = (promptText: string) => {
-    console.log('Prompt clicked:', promptText);
-    console.log('All responses:', responses);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Prompt clicked:', promptText);
+    }
     
     // Find the matching responses for this exact prompt text
     const matchingResponses = responses.filter(r => {
       const matches = r.confirmed_prompts?.prompt_text === promptText;
-      console.log('Response prompt text:', r.confirmed_prompts?.prompt_text);
-      console.log('Clicked prompt text:', promptText);
-      console.log('Matches:', matches);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Response matches:', matches);
+      }
       return matches;
     });
-    
-    console.log('Filtered matching responses:', matchingResponses);
     
     setSelectedPrompt(promptText);
     setIsModalOpen(true);
@@ -37,39 +36,22 @@ export const PromptsTab = ({ promptsData, responses }: PromptsTabProps) => {
 
   const getPromptResponses = (promptText: string) => {
     const matchingResponses = responses.filter(r => r.confirmed_prompts?.prompt_text === promptText);
-    console.log('getPromptResponses called for:', promptText);
-    console.log('Found responses:', matchingResponses);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Found responses for prompt:', matchingResponses.length);
+    }
     return matchingResponses;
   };
-
-  const sentimentPrompts = promptsData.filter(p => p.type === 'sentiment');
-  const visibilityPrompts = promptsData.filter(p => p.type === 'visibility');
-  const competitivePrompts = promptsData.filter(p => p.type === 'competitive');
 
   return (
     <div className="space-y-6">
       {/* Summary Cards */}
       <PromptSummaryCards promptsData={promptsData} />
 
-      {/* Detailed Tables */}
+      {/* Single Combined Table */}
       <PromptTable
-        prompts={sentimentPrompts}
-        title="Sentiment Tracking Prompts"
-        description="Monitor how AI models perceive your company with balanced, nuanced questions"
-        onPromptClick={handlePromptClick}
-      />
-
-      <PromptTable
-        prompts={visibilityPrompts}
-        title="Visibility Monitoring Prompts"
-        description="Track how often your company appears in industry-wide AI responses"
-        onPromptClick={handlePromptClick}
-      />
-
-      <PromptTable
-        prompts={competitivePrompts}
-        title="Competitive Analysis Prompts"
-        description="Compare your company directly against specific competitors"
+        prompts={promptsData}
+        title="All Prompts"
+        description="Monitor and analyze all your prompts in one place"
         onPromptClick={handlePromptClick}
       />
 

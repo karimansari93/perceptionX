@@ -83,13 +83,12 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
             <TableHeader>
               <TableRow>
                 <TableHead>Prompt</TableHead>
+                <TableHead className="text-center">Type</TableHead>
                 <TableHead>Category</TableHead>
                 <TableHead className="text-center">Responses</TableHead>
-                <TableHead className="text-center">
-                  {prompts[0]?.type === 'sentiment' ? 'Avg Sentiment' :
-                   prompts[0]?.type === 'visibility' ? 'Visibility Score' :
-                   'Competitive Score'}
-                </TableHead>
+                <TableHead className="text-center">Sentiment</TableHead>
+                <TableHead className="text-center">Visibility</TableHead>
+                <TableHead className="text-center">Competitive</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -104,6 +103,9 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
                       {prompt.prompt}
                     </div>
                   </TableCell>
+                  <TableCell className="text-center">
+                    <Badge variant="secondary">{prompt.type.charAt(0).toUpperCase() + prompt.type.slice(1)}</Badge>
+                  </TableCell>
                   <TableCell>
                     <Badge variant="outline">{prompt.category}</Badge>
                   </TableCell>
@@ -111,7 +113,28 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
                     <Badge variant="secondary">{prompt.responses}</Badge>
                   </TableCell>
                   <TableCell className="text-center">
-                    {getMetricColumn(prompt)}
+                    {prompt.type === 'sentiment'
+                      ? (
+                        <span className={`font-semibold ${getSentimentColor(prompt.avgSentiment)}`}>
+                          {prompt.sentimentLabel === 'neutral' ? 'normal' : `${Math.round(prompt.avgSentiment * 100)}% ${prompt.sentimentLabel}`}
+                        </span>
+                      ) : '-'}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {prompt.type === 'visibility'
+                      ? (
+                        <span className="font-semibold text-blue-600">
+                          {typeof prompt.averageVisibility === 'number' ? `${Math.round(prompt.averageVisibility)}%` : '-'}
+                        </span>
+                      ) : '-'}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {prompt.type === 'competitive'
+                      ? (
+                        <span className="font-semibold text-purple-600">
+                          {getCompetitiveScore(prompt).toFixed(0)}%
+                        </span>
+                      ) : '-'}
                   </TableCell>
                 </TableRow>
               ))}

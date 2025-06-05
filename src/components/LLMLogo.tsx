@@ -1,4 +1,3 @@
-
 import { getLLMLogo } from '@/config/llmLogos';
 import { Bot } from 'lucide-react';
 
@@ -23,8 +22,6 @@ const LLMLogo = ({
     lg: 'w-12 h-12',
   };
   
-  console.log('LLMLogo debug:', { modelName, faviconUrl, hasFavicon: !!faviconUrl });
-  
   if (faviconUrl) {
     return (
       <div className="relative">
@@ -33,15 +30,11 @@ const LLMLogo = ({
           alt={`${modelName} favicon`}
           className={`${sizeClasses[size]} object-contain ${className}`}
           onError={(e) => {
-            console.error('Favicon failed to load:', faviconUrl, e);
             // Hide the image on error
             e.currentTarget.style.display = 'none';
             // Show the fallback
             const fallback = e.currentTarget.nextElementSibling as HTMLElement;
             if (fallback) fallback.style.display = 'flex';
-          }}
-          onLoad={() => {
-            console.log('Favicon loaded successfully:', faviconUrl);
           }}
         />
         {/* Fallback that shows when favicon fails to load */}

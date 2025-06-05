@@ -12,10 +12,22 @@ import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Database } from '@/integrations/supabase/types';
+
+type UserOnboarding = Database['public']['Tables']['user_onboarding']['Insert'];
 
 interface OnboardingData {
   company_name: string;
   industry: string;
+}
+
+interface DatabaseOnboardingData {
+  company_name: string;
+  industry: string;
+  user_id?: string;
+  session_id?: string;
+  created_at?: string;
+  id?: string;
 }
 
 interface OnboardingModalProps {
@@ -29,7 +41,7 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [onboardingData, setOnboardingData] = useState<OnboardingData>({
     company_name: "",
-    industry: "",
+    industry: ""
   });
   const [onboardingId, setOnboardingId] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState(false);
@@ -61,7 +73,7 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
     if (onboardingStep === onboardingSteps.length - 1) {
       // Save onboarding data
       try {
-        const newRecord = {
+        const newRecord: UserOnboarding = {
           user_id: user?.id,
           company_name: onboardingData.company_name,
           industry: onboardingData.industry,
@@ -79,42 +91,57 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
         setOnboardingId(data.id);
         onOpenChange(false);
 
-        // Generate 3 prompts
-        const prompts = [
-          {
-            onboarding_id: data.id,
-            user_id: user?.id,
-            prompt_text: `How is ${data.company_name} as an employer?`,
-            prompt_category: 'Employer Reputation',
-            prompt_type: 'sentiment' as 'sentiment',
-            is_active: true
-          },
-          {
-            onboarding_id: data.id,
-            user_id: user?.id,
-            prompt_text: `How does working at ${data.company_name} compare to other companies in the ${data.industry} industry?`,
-            prompt_category: 'Competitive Analysis',
-            prompt_type: 'competitive' as 'competitive',
-            is_active: true
-          },
-          {
-            onboarding_id: data.id,
-            user_id: user?.id,
-            prompt_text: `What companies offer the best career opportunities in the ${data.industry} industry?`,
-            prompt_category: 'Industry Leaders',
-            prompt_type: 'visibility' as 'visibility',
-            is_active: true
-          }
-        ];
-
-        const { error: promptsError } = await supabase
+        // Check for existing prompts
+        const { data: existingPrompts, error: fetchError } = await supabase
           .from('confirmed_prompts')
-          .insert(prompts);
+          .select('prompt_text')
+          .eq('onboarding_id', data.id);
 
-        if (promptsError) {
-          console.error('Error inserting prompts:', promptsError);
-          toast.error('Failed to generate prompts. Please try again.');
-          return;
+        if (fetchError) {
+          console.error('Error fetching existing prompts:', fetchError);
+          throw fetchError;
+        }
+
+        // Generate prompts only if none exist
+        if (!existingPrompts || existingPrompts.length === 0) {
+          const prompts = [
+            {
+              onboarding_id: data.id,
+              user_id: user?.id,
+              prompt_text: `How is ${data.company_name} as an employer?`,
+              prompt_category: 'Employer Reputation',
+              prompt_type: 'sentiment' as 'sentiment',
+              is_active: true
+            },
+            {
+              onboarding_id: data.id,
+              user_id: user?.id,
+              prompt_text: `How does working at ${data.company_name} compare to other companies in the ${data.industry} industry?`,
+              prompt_category: 'Competitive Analysis',
+              prompt_type: 'competitive' as 'competitive',
+              is_active: true
+            },
+            {
+              onboarding_id: data.id,
+              user_id: user?.id,
+              prompt_text: `What companies offer the best career opportunities in the ${data.industry} industry?`,
+              prompt_category: 'Industry Leaders',
+              prompt_type: 'visibility' as 'visibility',
+              is_active: true
+            }
+          ];
+
+          const { error: promptsError } = await supabase
+            .from('confirmed_prompts')
+            .insert(prompts);
+
+          if (promptsError) {
+            console.error('Error inserting prompts:', promptsError);
+            toast.error('Failed to generate prompts. Please try again.');
+            return;
+          }
+        } else {
+          console.log('Prompts already exist for this onboarding record');
         }
 
         // Navigate to dashboard and trigger prompts modal, including onboarding record ID
@@ -139,76 +166,70 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
     }
   };
 
+  const handleBack = () => {
+    setOnboardingStep(prev => prev - 1);
+  };
+
   const currentStep = onboardingSteps[onboardingStep];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogTitle className="sr-only">Company Onboarding</DialogTitle>
-        <DialogDescription className="sr-only">
-          Enter your company information to get started with PerceptionX
+      <DialogContent className="sm:max-w-[500px]">
+        <DialogTitle className="text-xl font-semibold text-gray-900">
+          {currentStep.title}
+        </DialogTitle>
+        <DialogDescription className="text-gray-600">
+          {currentStep.description}
         </DialogDescription>
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <Button 
-              variant="ghost" 
-              onClick={() => onOpenChange(false)}
-              className="flex items-center"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Dashboard
-            </Button>
+
+        <div className="space-y-4">
+          <div className="space-y-4">
+            {currentStep.fields.map((field, index) => (
+              <div key={index}>
+                <Label htmlFor={field.label.toLowerCase().replace(/\s+/g, '-')}>
+                  {field.label}
+                </Label>
+                {field.type === 'textarea' ? (
+                  <Textarea
+                    id={field.label.toLowerCase().replace(/\s+/g, '-')}
+                    value={field.value}
+                    onChange={(e) => field.onChange(e.target.value)}
+                    placeholder={field.placeholder}
+                    className="mt-1"
+                  />
+                ) : (
+                  <Input
+                    id={field.label.toLowerCase().replace(/\s+/g, '-')}
+                    type={field.type}
+                    value={field.value}
+                    onChange={(e) => field.onChange(e.target.value)}
+                    placeholder={field.placeholder}
+                    className="mt-1"
+                  />
+                )}
+              </div>
+            ))}
           </div>
 
-          <div className="space-y-4">
-            <div className="text-center">
-              <h2 className="text-2xl font-bold text-gray-900">{currentStep.title}</h2>
-              <p className="text-gray-600 mt-2">{currentStep.description}</p>
-            </div>
-
-            <div className="space-y-4">
-              {currentStep.fields.map((field, index) => (
-                <div key={index}>
-                  <Label htmlFor={field.label.toLowerCase().replace(/\s+/g, '-')}>
-                    {field.label}
-                  </Label>
-                  {field.type === 'textarea' ? (
-                    <Textarea
-                      id={field.label.toLowerCase().replace(/\s+/g, '-')}
-                      value={field.value}
-                      onChange={(e) => field.onChange(e.target.value)}
-                      placeholder={field.placeholder}
-                      className="mt-1"
-                    />
-                  ) : (
-                    <Input
-                      id={field.label.toLowerCase().replace(/\s+/g, '-')}
-                      type={field.type}
-                      value={field.value}
-                      onChange={(e) => field.onChange(e.target.value)}
-                      placeholder={field.placeholder}
-                      className="mt-1"
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-end">
+          <div className="flex justify-between">
+            {onboardingStep > 0 && (
               <Button
-                onClick={handleNext}
-                className="bg-[#db5f89] hover:bg-[#c94e7c] text-white px-6 py-2 text-base font-semibold rounded-full shadow-none flex items-center"
-                style={{ minWidth: 120 }}
+                onClick={handleBack}
+                variant="outline"
+                className="text-gray-600"
               >
-                <CheckCircle className="w-5 h-5 mr-2" />
-                {onboardingStep === onboardingSteps.length - 1 ? 'Complete' : 'Next'}
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back
               </Button>
-            </div>
-
-            <Progress 
-              value={(onboardingStep + 1) / onboardingSteps.length * 100} 
-              className="mt-4"
-            />
+            )}
+            <Button
+              onClick={handleNext}
+              className="bg-[#db5f89] hover:bg-[#c94e7c] text-white px-6 py-2 text-base font-semibold rounded-full shadow-none flex items-center ml-auto"
+              style={{ minWidth: 120 }}
+            >
+              <CheckCircle className="w-5 h-5 mr-2" />
+              {onboardingStep === onboardingSteps.length - 1 ? 'Complete' : 'Next'}
+            </Button>
           </div>
         </div>
       </DialogContent>
