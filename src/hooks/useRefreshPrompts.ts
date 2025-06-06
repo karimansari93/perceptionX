@@ -61,16 +61,16 @@ export const useRefreshPrompts = () => {
       // Define which models to test based on the modelType parameter
       const modelsToTest = [];
       if (!modelType || modelType === 'openai') {
-        modelsToTest.push({ name: 'OpenAI', function: 'test-prompt-openai', model: 'gpt-4o-mini' });
+        modelsToTest.push({ name: 'OpenAI', function: 'test-prompt-openai', model: 'openai' });
       }
       if (!modelType || modelType === 'perplexity') {
         modelsToTest.push({ name: 'Perplexity', function: 'test-prompt-perplexity', model: 'perplexity' });
       }
       if (!modelType || modelType === 'gemini') {
-        modelsToTest.push({ name: 'Gemini', function: 'test-prompt-gemini', model: 'gemini-1.5-flash' });
+        modelsToTest.push({ name: 'Gemini', function: 'test-prompt-gemini', model: 'gemini' });
       }
       if (!modelType || modelType === 'deepseek') {
-        modelsToTest.push({ name: 'DeepSeek', function: 'test-prompt-deepseek', model: 'deepseek-chat' });
+        modelsToTest.push({ name: 'DeepSeek', function: 'test-prompt-deepseek', model: 'deepseek' });
       }
 
       const totalOperations = confirmedPrompts.length * modelsToTest.length;

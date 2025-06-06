@@ -46,7 +46,6 @@ export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
           <TableHeader>
             <TableRow>
               <TableHead className="w-[100px]">Type</TableHead>
-              <TableHead className="w-[150px]">Category</TableHead>
               <TableHead>Prompt Question</TableHead>
             </TableRow>
           </TableHeader>
@@ -57,11 +56,6 @@ export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
                   <Badge className={getCategoryColor(prompt.type)}>
                     {getTypeLabel(prompt.type)}
                   </Badge>
-                </TableCell>
-                <TableCell>
-                  <span className="text-sm text-gray-600">
-                    {prompt.category}
-                  </span>
                 </TableCell>
                 <TableCell className="font-medium leading-relaxed">
                   {prompt.text}

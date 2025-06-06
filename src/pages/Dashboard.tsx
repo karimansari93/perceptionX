@@ -266,6 +266,7 @@ const DashboardContent = () => {
             metrics={metrics}
             topCitations={topCitations}
             topCompetitors={topCompetitors}
+            responses={responses}
           />
         );
       case "prompts":
@@ -302,6 +303,7 @@ const DashboardContent = () => {
             metrics={metrics}
             topCitations={topCitations}
             topCompetitors={topCompetitors}
+            responses={responses}
           />
         );
     }

@@ -84,7 +84,6 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
               <TableRow>
                 <TableHead>Prompt</TableHead>
                 <TableHead className="text-center">Type</TableHead>
-                <TableHead>Category</TableHead>
                 <TableHead className="text-center">Responses</TableHead>
                 <TableHead className="text-center">Sentiment</TableHead>
                 <TableHead className="text-center">Visibility</TableHead>
@@ -105,9 +104,6 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
                   </TableCell>
                   <TableCell className="text-center">
                     <Badge variant="secondary">{prompt.type.charAt(0).toUpperCase() + prompt.type.slice(1)}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{prompt.category}</Badge>
                   </TableCell>
                   <TableCell className="text-center">
                     <Badge variant="secondary">{prompt.responses}</Badge>

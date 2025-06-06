@@ -24,8 +24,7 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     email: '',
-    password: '',
-    companyName: ''
+    password: ''
   });
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -137,7 +136,6 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
         navigate('/prompts', { 
           state: { 
             onboardingData: onboardingData || {
-              companyName: formData.companyName,
               industry: '',
               hiringChallenges: [],
               targetRoles: [],
@@ -157,23 +155,6 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
 
         console.log('User signed up:', data.user?.id);
 
-        // Update profile with company name
-        if (formData.companyName) {
-          const { error: profileError } = await supabase
-            .from('profiles')
-            .update({ company_name: formData.companyName })
-            .eq('email', formData.email);
-
-          if (profileError) {
-            console.error('Error updating profile:', profileError);
-          }
-        }
-
-        // Link onboarding data if available
-        if (onboardingData && data.user) {
-          await linkOnboardingToUser(data.user.id);
-        }
-
         toast.success('Account created successfully!');
         onOpenChange(false);
         
@@ -181,7 +162,6 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
         navigate('/prompts', { 
           state: { 
             onboardingData: onboardingData || {
-              companyName: formData.companyName,
               industry: '',
               hiringChallenges: [],
               targetRoles: [],
@@ -294,21 +274,6 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
                 minLength={6}
               />
             </div>
-
-            {!isLogin && (
-              <div>
-                <Label htmlFor="companyName">Company Name</Label>
-                <Input
-                  id="companyName"
-                  name="companyName"
-                  type="text"
-                  value={formData.companyName || onboardingData?.companyName || ''}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="Enter your company name"
-                />
-              </div>
-            )}
 
             <Button
               type="submit"

@@ -66,7 +66,26 @@ export const useDashboardData = () => {
 
       if (error) throw error;
       
-      setResponses(data || []);
+      // Create a map to store the latest response for each prompt-model combination
+      const responseMap = new Map();
+      
+      // Process responses and keep only the latest one for each prompt-model combination
+      (data || []).forEach(response => {
+        const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
+        const existingResponse = responseMap.get(key);
+        
+        if (!existingResponse || new Date(response.tested_at) > new Date(existingResponse.tested_at)) {
+          responseMap.set(key, response);
+        }
+      });
+      
+      // Convert the map values back to an array
+      const uniqueResponses = Array.from(responseMap.values());
+      
+      // Sort by tested_at in descending order
+      uniqueResponses.sort((a, b) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
+      
+      setResponses(uniqueResponses);
     } catch (error) {
       console.error('Error fetching responses:', error);
     } finally {

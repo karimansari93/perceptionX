@@ -31,7 +31,8 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
     onboardingRecord,
     error,
     progress,
-    confirmAndStartMonitoring
+    confirmAndStartMonitoring,
+    setIsConfirming
   } = usePromptsLogic(onboardingData);
 
   // Navigate to dashboard when loading completes
@@ -112,6 +113,8 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
         currentPrompt={progress.currentPrompt}
         completed={progress.completed}
         total={progress.total}
+        showResultsButton={true}
+        onClose={() => setIsConfirming(false)}
       />
     </>
   );

@@ -13,6 +13,8 @@ interface LoadingModalProps {
   currentPrompt?: string;
   completed: number;
   total: number;
+  onClose?: () => void;
+  showResultsButton?: boolean;
 }
 
 const llmModels = [
@@ -27,7 +29,9 @@ export const LoadingModal = ({
   currentModel, 
   currentPrompt, 
   completed, 
-  total 
+  total, 
+  onClose,
+  showResultsButton = true
 }: LoadingModalProps) => {
   const [carouselIndex, setCarouselIndex] = useState(0);
   const progressPercentage = total > 0 ? (completed / total) * 100 : 0;
@@ -131,9 +135,12 @@ export const LoadingModal = ({
           </div>
 
           {/* Show button when loading is complete */}
-          {completed === total && (
+          {completed === total && showResultsButton && (
             <Button
-              onClick={() => navigate('/dashboard')}
+              onClick={() => {
+                if (onClose) onClose();
+                navigate('/dashboard');
+              }}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white"
             >
               See my results

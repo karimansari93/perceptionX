@@ -30,7 +30,7 @@ serve(async (req) => {
         'Authorization': `Bearer ${perplexityApiKey}`,
       },
       body: JSON.stringify({
-        model: 'sonar-pro',
+        model: 'sonar',
         messages: [
           {
             role: 'system',

@@ -140,21 +140,36 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
 
   const confirmAndStartMonitoring = async () => {
     if (!user || !onboardingRecord) {
-      console.error('Missing user or onboardingRecord');
+      console.error('Missing user or onboardingRecord:', { user, onboardingRecord });
       toast.error('Missing user or onboarding data. Please try again.');
       return;
     }
     setIsConfirming(true);
     try {
       if (process.env.NODE_ENV === 'development') {
-        console.log('Starting monitoring process');
+        console.log('Starting monitoring process with:', { 
+          userId: user.id, 
+          onboardingId: onboardingRecord.id 
+        });
+      }
+
+      // First, deactivate any existing prompts for this user
+      const { error: deactivateError } = await supabase
+        .from('confirmed_prompts')
+        .update({ is_active: false })
+        .eq('user_id', user.id);
+
+      if (deactivateError) {
+        console.error('Error deactivating existing prompts:', deactivateError);
+        throw deactivateError;
       }
 
       // Fetch all prompts for this onboarding record
       let { data: allPrompts, error: fetchAllError } = await supabase
         .from('confirmed_prompts')
         .select('*')
-        .eq('onboarding_id', onboardingRecord.id);
+        .eq('onboarding_id', onboardingRecord.id)
+        .eq('user_id', user.id);
 
       if (fetchAllError) {
         console.error('Error fetching all prompts:', fetchAllError);
@@ -163,6 +178,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
 
       // If no prompts exist, insert the default prompts
       if (!allPrompts || allPrompts.length === 0) {
+        console.log('No existing prompts found, inserting default prompts');
         const defaultPrompts = [
           {
             onboarding_id: onboardingRecord.id,
@@ -189,19 +205,51 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
             is_active: true
           }
         ];
+
         const { data: insertedPrompts, error: insertError } = await supabase
           .from('confirmed_prompts')
           .insert(defaultPrompts)
           .select();
+
         if (insertError) {
           console.error('Failed to insert prompts:', insertError);
           throw insertError;
         }
+
+        if (!insertedPrompts || insertedPrompts.length === 0) {
+          throw new Error('Failed to insert prompts: No data returned');
+        }
+
         allPrompts = insertedPrompts;
+        console.log('Successfully inserted default prompts:', insertedPrompts.length);
+      } else {
+        // Reactivate the existing prompts
+        const { error: activateError } = await supabase
+          .from('confirmed_prompts')
+          .update({ is_active: true })
+          .eq('onboarding_id', onboardingRecord.id)
+          .eq('user_id', user.id);
+
+        if (activateError) {
+          console.error('Error activating prompts:', activateError);
+          throw activateError;
+        }
+      }
+
+      // Clear any existing responses for these prompts
+      const promptIds = allPrompts.map(p => p.id);
+      const { error: deleteError } = await supabase
+        .from('prompt_responses')
+        .delete()
+        .in('confirmed_prompt_id', promptIds);
+
+      if (deleteError) {
+        console.error('Error clearing existing responses:', deleteError);
+        throw deleteError;
       }
 
       // Now run the testing/monitoring process for all prompts
-      const totalOperations = (allPrompts?.length || 0) * 4; // 4 models per prompt (including Perplexity)
+      const totalOperations = (allPrompts?.length || 0) * 4;
       setProgress({ completed: 0, total: totalOperations });
       let completedOperations = 0;
 
@@ -209,53 +257,79 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         console.log('=== TESTING PROMPT ===');
         console.log('Prompt:', confirmedPrompt.prompt_text);
         console.log('Type:', confirmedPrompt.prompt_type);
-        // Test with OpenAI
-        setProgress(prev => ({ 
-          ...prev, 
-          currentModel: getLLMDisplayName('gpt-4o-mini'),
-          currentPrompt: confirmedPrompt.prompt_text
-        }));
-        await testWithModel(confirmedPrompt, 'test-prompt-openai', 'gpt-4o-mini');
-        completedOperations++;
-        setProgress(prev => ({ ...prev, completed: completedOperations }));
-        // Test with Perplexity
-        setProgress(prev => ({ 
-          ...prev, 
-          currentModel: 'Perplexity',
-          currentPrompt: confirmedPrompt.prompt_text
-        }));
-        await testWithModel(confirmedPrompt, 'test-prompt-perplexity', 'perplexity');
-        completedOperations++;
-        setProgress(prev => ({ ...prev, completed: completedOperations }));
-        // Test with Gemini
-        setProgress(prev => ({ 
-          ...prev, 
-          currentModel: 'Gemini',
-          currentPrompt: confirmedPrompt.prompt_text
-        }));
-        await testWithModel(confirmedPrompt, 'test-prompt-gemini', 'gemini-1.5-flash');
-        completedOperations++;
-        setProgress(prev => ({ ...prev, completed: completedOperations }));
-        // Test with DeepSeek
-        setProgress(prev => ({ 
-          ...prev, 
-          currentModel: 'DeepSeek',
-          currentPrompt: confirmedPrompt.prompt_text
-        }));
-        await testWithModel(confirmedPrompt, 'test-prompt-deepseek', 'deepseek-chat');
-        completedOperations++;
-        setProgress(prev => ({ ...prev, completed: completedOperations }));
+
+        try {
+          // Test with OpenAI
+          setProgress(prev => ({ 
+            ...prev, 
+            currentModel: getLLMDisplayName('openai'),
+            currentPrompt: confirmedPrompt.prompt_text
+          }));
+          await testWithModel(confirmedPrompt, 'test-prompt-openai', 'openai');
+          completedOperations++;
+          setProgress(prev => ({ ...prev, completed: completedOperations }));
+
+          // Test with Perplexity
+          setProgress(prev => ({ 
+            ...prev, 
+            currentModel: 'Perplexity',
+            currentPrompt: confirmedPrompt.prompt_text
+          }));
+          await testWithModel(confirmedPrompt, 'test-prompt-perplexity', 'perplexity');
+          completedOperations++;
+          setProgress(prev => ({ ...prev, completed: completedOperations }));
+
+          // Test with Gemini
+          setProgress(prev => ({ 
+            ...prev, 
+            currentModel: 'Gemini',
+            currentPrompt: confirmedPrompt.prompt_text
+          }));
+          await testWithModel(confirmedPrompt, 'test-prompt-gemini', 'gemini');
+          completedOperations++;
+          setProgress(prev => ({ ...prev, completed: completedOperations }));
+
+          // Test with DeepSeek
+          setProgress(prev => ({ 
+            ...prev, 
+            currentModel: 'DeepSeek',
+            currentPrompt: confirmedPrompt.prompt_text
+          }));
+          await testWithModel(confirmedPrompt, 'test-prompt-deepseek', 'deepseek');
+          completedOperations++;
+          setProgress(prev => ({ ...prev, completed: completedOperations }));
+        } catch (error) {
+          console.error('Error testing prompt:', error);
+          toast.error(`Error testing prompt: ${error.message}`);
+          // Continue with next prompt instead of failing completely
+          continue;
+        }
       }
 
       console.log('All prompts tested, navigating to dashboard...');
       toast.success('Prompts confirmed and monitoring started!');
-      setTimeout(() => {
-        navigate('/dashboard', { replace: true });
-      }, 1500);
+      
+      // Ensure we're in a valid state before navigating
+      if (completedOperations > 0) {
+        setTimeout(() => {
+          navigate('/dashboard', { 
+            state: { 
+              shouldRefresh: true,
+              onboardingData: {
+                companyName: onboardingRecord.company_name,
+                industry: onboardingRecord.industry,
+                id: onboardingRecord.id
+              }
+            },
+            replace: true 
+          });
+        }, 1500);
+      } else {
+        throw new Error('No operations were completed successfully');
+      }
     } catch (error) {
       console.error('Error confirming prompts:', error);
-      toast.error('Failed to confirm prompts. Please try again.');
-    } finally {
+      toast.error(error.message || 'Failed to confirm prompts. Please try again.');
       setIsConfirming(false);
     }
   };
@@ -266,6 +340,19 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         console.log(`Testing with ${modelName}`);
       }
       
+      // Check for existing response first
+      const { data: existingResponse } = await supabase
+        .from('prompt_responses')
+        .select('*')
+        .eq('confirmed_prompt_id', confirmedPrompt.id)
+        .eq('ai_model', modelName)
+        .single();
+
+      if (existingResponse) {
+        console.log(`Response already exists for ${modelName}, skipping...`);
+        return;
+      }
+      
       const { data: responseData, error: functionError } = await supabase.functions
         .invoke(functionName, {
           body: { prompt: confirmedPrompt.prompt_text }
@@ -273,60 +360,52 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
 
       if (functionError) {
         console.error(`${functionName} edge function error:`, functionError);
-      } else if (responseData?.response) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`${modelName} response received`);
-        }
-        
-        // Handle citations from Perplexity responses
-        const perplexityCitations = functionName === 'test-prompt-perplexity' ? responseData.citations : null;
-        
-        // Analyze sentiment and extract citations with enhanced visibility support
-        const { data: sentimentData, error: sentimentError } = await supabase.functions
-          .invoke('analyze-response', {
-            body: { 
-              response: responseData.response,
-              companyName: onboardingData?.companyName,
-              promptType: confirmedPrompt.prompt_type,
-              perplexityCitations: perplexityCitations,
-              confirmed_prompt_id: confirmedPrompt.id,
-              ai_model: modelName
-            }
-          });
+        throw new Error(`API Error: ${functionError.message}`);
+      }
 
-        if (sentimentError) {
-          console.error('Sentiment analysis error:', sentimentError);
-        }
+      if (!responseData) {
+        throw new Error(`No response data from ${modelName}`);
+      }
 
-        // Combine Perplexity citations with analyzed citations
-        let finalCitations = sentimentData?.citations || [];
-        if (perplexityCitations && perplexityCitations.length > 0) {
-          finalCitations = [...perplexityCitations, ...finalCitations];
-        }
+      if (!responseData.response) {
+        throw new Error(`Invalid response format from ${modelName}`);
+      }
 
-        // Store the response with enhanced analysis
-        const { error: storeError } = await supabase
-          .from('prompt_responses')
-          .insert({
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`${modelName} response received`);
+      }
+      
+      // Handle citations from Perplexity responses
+      const perplexityCitations = functionName === 'test-prompt-perplexity' ? responseData.citations : null;
+      
+      // Analyze sentiment and extract citations with enhanced visibility support
+      const { data: sentimentData, error: sentimentError } = await supabase.functions
+        .invoke('analyze-response', {
+          body: { 
+            response: responseData.response,
+            companyName: onboardingData?.companyName,
+            promptType: confirmedPrompt.prompt_type,
+            perplexityCitations: perplexityCitations,
             confirmed_prompt_id: confirmedPrompt.id,
-            ai_model: modelName,
-            response_text: responseData.response,
-            sentiment_score: sentimentData?.sentiment_score || 0,
-            sentiment_label: sentimentData?.sentiment_label || 'neutral',
-            citations: finalCitations,
-            company_mentioned: sentimentData?.company_mentioned || false,
-            mention_ranking: sentimentData?.mention_ranking || null,
-            competitor_mentions: sentimentData?.competitor_mentions || []
-          });
+            ai_model: modelName
+          }
+        });
 
-        if (storeError) {
-          console.error(`Error storing ${modelName} response:`, storeError);
-        } else if (process.env.NODE_ENV === 'development') {
-          console.log(`${modelName} response stored successfully`);
-        }
+      if (sentimentError) {
+        console.error('Sentiment analysis error:', sentimentError);
+        throw new Error(`Sentiment Analysis Error: ${sentimentError.message}`);
+      }
+
+      if (!sentimentData) {
+        throw new Error('No sentiment analysis data received');
+      }
+
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`${modelName} response stored successfully`);
       }
     } catch (error) {
       console.error(`Error testing with ${modelName}:`, error);
+      throw error; // Re-throw to be handled by the caller
     }
   };
 
@@ -336,7 +415,8 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
     onboardingRecord,
     error,
     progress,
-    confirmAndStartMonitoring
+    confirmAndStartMonitoring,
+    setIsConfirming
   };
 };
 
@@ -459,12 +539,12 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
     
     // Test with OpenAI
     setProgress({ 
-      currentModel: getLLMDisplayName('gpt-4o-mini'),
+      currentModel: getLLMDisplayName('openai'),
       currentPrompt: confirmedPrompt.prompt_text,
       completed: completedOperations,
       total: totalOperations
     });
-    await testWithModel(confirmedPrompt, 'test-prompt-openai', 'gpt-4o-mini');
+    await testWithModel(confirmedPrompt, 'test-prompt-openai', 'openai');
     completedOperations++;
     
     // Test with Perplexity
@@ -484,7 +564,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
       completed: completedOperations,
       total: totalOperations
     });
-    await testWithModel(confirmedPrompt, 'test-prompt-gemini', 'gemini-1.5-flash');
+    await testWithModel(confirmedPrompt, 'test-prompt-gemini', 'gemini');
     completedOperations++;
     
     // Test with DeepSeek
@@ -494,7 +574,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
       completed: completedOperations,
       total: totalOperations
     });
-    await testWithModel(confirmedPrompt, 'test-prompt-deepseek', 'deepseek-chat');
+    await testWithModel(confirmedPrompt, 'test-prompt-deepseek', 'deepseek');
     completedOperations++;
   }
 

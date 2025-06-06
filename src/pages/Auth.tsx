@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { X, ArrowRight, Sparkles, BarChart3, Target, Users } from 'lucide-react';
+import { X, ArrowRight, Sparkles, BarChart3, Target, Users, Mail } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -20,15 +20,36 @@ const Auth = () => {
   const [showAuthForm, setShowAuthForm] = useState(false);
   const [formData, setFormData] = useState({
     email: '',
-    password: '',
-    companyName: ''
+    password: ''
   });
   const [showLoadingModal, setShowLoadingModal] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState({ currentModel: '', currentPrompt: '', completed: 0, total: 0 });
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState('');
 
   // Get onboarding data and redirect destination from location state
   const onboardingData = location.state?.onboardingData;
   const redirectTo = location.state?.redirectTo || '/dashboard';
+
+  // Check for email verification in URL
+  useEffect(() => {
+    const handleEmailVerification = async () => {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.error('Error checking session:', error);
+        return;
+      }
+
+      if (session?.user?.email_confirmed_at) {
+        toast.success('Email verified successfully!');
+        navigate('/dashboard');
+      }
+    };
+
+    handleEmailVerification();
+  }, [navigate]);
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -105,6 +126,27 @@ const Auth = () => {
     }
   };
 
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(formData.email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+
+      if (error) throw error;
+
+      toast.success('Password reset instructions sent to your email');
+      setShowResetPassword(false);
+    } catch (error: any) {
+      console.error('Password reset error:', error);
+      toast.error(error.message || 'Failed to send password reset email');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -116,7 +158,15 @@ const Auth = () => {
           password: formData.password,
         });
 
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes('Email not confirmed')) {
+            toast.error('Please verify your email before signing in');
+            setVerificationEmail(formData.email);
+            setVerificationSent(true);
+            return;
+          }
+          throw error;
+        }
         
         console.log('User signed in:', data.user?.id);
         toast.success('Signed in successfully!');
@@ -128,80 +178,50 @@ const Auth = () => {
         
         navigate('/dashboard');
       } else {
-        // Create the account directly
+        // Create the account with email verification
         const { data, error } = await supabase.auth.signUp({
           email: formData.email,
           password: formData.password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth`,
+          },
         });
 
         if (error) throw error;
 
-        console.log('User signed up:', data.user?.id);
-
-        // Update profile with company name
-        if (formData.companyName) {
-          const { error: profileError } = await supabase
-            .from('profiles')
-            .update({ company_name: formData.companyName })
-            .eq('email', formData.email);
-
-          if (profileError) {
-            console.error('Error updating profile:', profileError);
-          }
+        if (data.user) {
+          setVerificationEmail(formData.email);
+          setVerificationSent(true);
+          toast.success('Please check your email to verify your account');
         }
 
         // Link onboarding data if available
         if (onboardingData && data.user) {
           await linkOnboardingToUser(data.user.id);
         }
-
-        toast.success('Account created successfully!');
-        
-        // Show loading modal and generate prompts
-        setShowLoadingModal(true);
-        setLoadingProgress({ currentModel: '', currentPrompt: '', completed: 0, total: 0 });
-        
-        try {
-          // Fetch the onboarding record for the user
-          const { data: onboardingRecord, error: onboardingError } = await supabase
-            .from('user_onboarding')
-            .select('*')
-            .eq('user_id', data.user.id)
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (onboardingError) {
-            throw onboardingError;
-          }
-
-          if (onboardingRecord && onboardingRecord.length > 0) {
-            // Generate and insert prompts
-            await generateAndInsertPrompts(
-              data.user,
-              onboardingRecord[0],
-              onboardingData,
-              (progress: ProgressInfo) => {
-                setLoadingProgress({
-                  currentModel: progress.currentModel || '',
-                  currentPrompt: progress.currentPrompt || '',
-                  completed: progress.completed ?? 0,
-                  total: progress.total ?? 0
-                });
-              }
-            );
-          }
-        } catch (error) {
-          console.error('Error generating prompts:', error);
-          toast.error('Failed to generate prompts. Please try again.');
-        } finally {
-          setShowLoadingModal(false);
-          // Navigate to dashboard - the onboarding modal will show automatically if needed
-          navigate('/dashboard', { replace: true });
-        }
       }
     } catch (error: any) {
       console.error('Auth error:', error);
       toast.error(error.message || 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: verificationEmail,
+      });
+
+      if (error) throw error;
+
+      toast.success('Verification email resent successfully');
+    } catch (error: any) {
+      console.error('Error resending verification:', error);
+      toast.error(error.message || 'Failed to resend verification email');
     } finally {
       setLoading(false);
     }
@@ -240,7 +260,7 @@ const Auth = () => {
   return (
     <div className="min-h-screen flex flex-col md:flex-row" style={{ background: 'linear-gradient(to right bottom, rgb(4, 89, 98), rgb(1, 157, 173))' }}>
       {/* Left side - Illustration and Marketing Copy */}
-      <div className="flex-1 flex flex-col justify-center items-center px-8 py-12 relative">
+      <div className="hidden md:flex flex-1 flex-col justify-center items-center px-8 py-12 relative">
         <h1 className="text-4xl md:text-5xl font-bold text-white mb-4 text-center">Take control of your talent perception</h1>
         <p className="text-lg text-white mb-8 text-center max-w-lg">Track how leading AI models like ChatGPT, Claude, and Gemini perceive your company. Make informed decisions to improve your talent acquisition and employer branding.</p>
         <div className="space-y-6 mt-8 max-w-md w-full">
@@ -271,7 +291,17 @@ const Auth = () => {
       <div className="flex-1 flex items-center justify-center px-4 py-12 bg-transparent">
         <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8">
           <div className="mb-8 text-center">
-            {isLogin ? (
+            {showResetPassword ? (
+              <>
+                <h3 className="text-2xl font-bold text-gray-900 mb-1">Reset Password</h3>
+                <p className="text-gray-500 text-sm">Enter your email to receive reset instructions</p>
+              </>
+            ) : verificationSent ? (
+              <>
+                <h3 className="text-2xl font-bold text-gray-900 mb-1">Check Your Email</h3>
+                <p className="text-gray-500 text-sm">We've sent you a verification link</p>
+              </>
+            ) : isLogin ? (
               <>
                 <h3 className="text-2xl font-bold text-gray-900 mb-1">Sign in to your account</h3>
                 <p className="text-gray-500 text-sm">Access your dashboard and AI perception insights</p>
@@ -283,69 +313,112 @@ const Auth = () => {
               </>
             )}
           </div>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                value={formData.email}
-                onChange={handleInputChange}
-                required
-                placeholder="Enter your email"
-                className="rounded-lg border-gray-200"
-              />
+
+          {verificationSent ? (
+            <div className="text-center space-y-4">
+              <div className="flex justify-center">
+                <Mail className="h-12 w-12 text-primary" />
+              </div>
+              <p className="text-gray-600">
+                We've sent a verification link to {verificationEmail}. Please check your email and click the link to verify your account.
+              </p>
+              <div className="space-y-2">
+                <Button
+                  variant="outline"
+                  onClick={handleResendVerification}
+                  disabled={loading}
+                  className="w-full"
+                >
+                  {loading ? 'Sending...' : 'Resend Verification Email'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setVerificationSent(false);
+                    setIsLogin(true);
+                  }}
+                  className="w-full"
+                >
+                  Back to Sign In
+                </Button>
+              </div>
             </div>
-            <div>
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                value={formData.password}
-                onChange={handleInputChange}
-                required
-                placeholder="Enter your password"
-                minLength={6}
-                className="rounded-lg border-gray-200"
-              />
-            </div>
-            {!isLogin && (
+          ) : (
+            <form onSubmit={showResetPassword ? handlePasswordReset : handleSubmit} className="space-y-4">
               <div>
-                <Label htmlFor="companyName">Company Name</Label>
+                <Label htmlFor="email">Email</Label>
                 <Input
-                  id="companyName"
-                  name="companyName"
-                  type="text"
-                  value={formData.companyName}
+                  id="email"
+                  name="email"
+                  type="email"
+                  value={formData.email}
                   onChange={handleInputChange}
                   required
-                  placeholder="Enter your company name"
+                  placeholder="Enter your email"
                   className="rounded-lg border-gray-200"
                 />
               </div>
-            )}
-            <Button
-              type="submit"
-              className="w-full bg-pink-600 hover:bg-pink-700 text-white font-semibold h-12 text-base rounded-lg mt-2 shadow-none border border-pink-600"
-              disabled={loading}
-            >
-              {loading ? 'Loading...' : (isLogin ? 'Sign In' : 'Create My Account')}
-            </Button>
-          </form>
-          <div className="flex justify-center items-center mt-4">
-            <button
-              type="button"
-              onClick={() => {
-                setIsLogin(!isLogin);
-                setFormData({ email: '', password: '', companyName: '' });
-              }}
-              className="text-primary hover:text-primary/80 underline text-sm"
-            >
-              {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-            </button>
-          </div>
+              {!showResetPassword && (
+                <div>
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    name="password"
+                    type="password"
+                    value={formData.password}
+                    onChange={handleInputChange}
+                    required
+                    placeholder="Enter your password"
+                    minLength={6}
+                    className="rounded-lg border-gray-200"
+                  />
+                </div>
+              )}
+
+              <Button
+                type="submit"
+                className="w-full bg-primary hover:bg-primary/90"
+                disabled={loading}
+              >
+                {loading ? 'Loading...' : (
+                  showResetPassword ? 'Send Reset Instructions' : 
+                  (isLogin ? 'Sign In' : 'Create Account')
+                )}
+              </Button>
+
+              <div className="text-center space-y-2">
+                {showResetPassword ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPassword(false)}
+                    className="text-primary hover:text-primary/80 text-sm block w-full"
+                  >
+                    Back to {isLogin ? 'Sign In' : 'Sign Up'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsLogin(!isLogin);
+                      setShowResetPassword(false);
+                    }}
+                    className="text-primary hover:text-primary/80 text-sm block w-full"
+                  >
+                    {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+                  </button>
+                )}
+                {!showResetPassword && (
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPassword(true)}
+                    className="text-gray-500 hover:text-gray-700 text-sm block w-full mt-1"
+                  >
+                    Forgot your password?
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
         </div>
       </div>
       {showLoadingModal && (
