@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import UserMenu from "@/components/UserMenu";
-import { PromptsTable } from "@/components/prompts/PromptsTable";
+import { PromptsTable, PromptsHeader } from "@/components/prompts/PromptsTable";
 import { PromptStrategyExplanation } from "@/components/prompts/PromptStrategyExplanation";
 import { ConfirmationCard } from "@/components/prompts/ConfirmationCard";
 import { LoadingModal } from "@/components/prompts/LoadingModal";
@@ -128,6 +128,7 @@ const Prompts = () => {
       </header>
       <div className="container mx-auto px-6 py-8">
         <div className="max-w-6xl mx-auto">
+          <PromptsHeader companyName={onboardingData?.companyName} />
           <PromptsTable prompts={prompts} companyName={onboardingData?.companyName} />
           <PromptStrategyExplanation />
         </div>

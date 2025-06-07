@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, AlertTriangle } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PromptsTable } from "@/components/prompts/PromptsTable";
+import { PromptsTable, PromptsHeader } from "@/components/prompts/PromptsTable";
 import { PromptStrategyExplanation } from "@/components/prompts/PromptStrategyExplanation";
 import { ConfirmationCard } from "@/components/prompts/ConfirmationCard";
 import { LoadingModal } from "@/components/prompts/LoadingModal";
@@ -76,31 +76,26 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
   return (
     <>
       <Dialog open={open && !isConfirming} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto pb-28">
           <DialogTitle className="sr-only">Prompts Setup</DialogTitle>
           <DialogDescription className="sr-only">
-            Review and confirm your AI prompts for monitoring
+            Review and confirm yor AI prompts for monitoring
           </DialogDescription>
           <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <Button 
-                variant="ghost" 
-                onClick={() => onOpenChange(false)}
-                className="flex items-center"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Dashboard
-              </Button>
+            <div className="space-y-8">
+              <PromptsHeader companyName={onboardingData.companyName} />
+              <PromptsTable prompts={prompts} companyName={onboardingData.companyName} />
+              <PromptStrategyExplanation />
+            </div>
+          </div>
+          <div className="fixed left-0 right-0 bottom-0 z-50 flex justify-center pb-6 pointer-events-none">
+            <div className="pointer-events-auto w-full px-6">
               <ConfirmationCard 
                 isConfirming={isConfirming}
                 onConfirm={confirmAndStartMonitoring}
                 disabled={!onboardingRecord}
+                className="w-full"
               />
-            </div>
-
-            <div className="space-y-8">
-              <PromptsTable prompts={prompts} companyName={onboardingData.companyName} />
-              <PromptStrategyExplanation />
             </div>
           </div>
         </DialogContent>

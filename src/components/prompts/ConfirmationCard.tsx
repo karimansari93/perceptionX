@@ -5,13 +5,14 @@ interface ConfirmationCardProps {
   isConfirming: boolean;
   onConfirm: () => void;
   disabled?: boolean;
+  className?: string;
 }
 
-export const ConfirmationCard = ({ isConfirming, onConfirm, disabled }: ConfirmationCardProps) => {
+export const ConfirmationCard = ({ isConfirming, onConfirm, disabled, className }: ConfirmationCardProps) => {
   return (
     <Button 
       onClick={onConfirm}
-      className="bg-pink-600 hover:bg-pink-700"
+      className={`bg-pink-600 hover:bg-pink-700 ${className || ''}`}
       size="lg"
       disabled={isConfirming || disabled}
     >

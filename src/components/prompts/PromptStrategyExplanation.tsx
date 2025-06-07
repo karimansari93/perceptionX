@@ -5,12 +5,12 @@ export const PromptStrategyExplanation = () => {
   return (
     <Card className="mt-6 bg-gray-50 border-gray-200">
       <CardContent className="p-6">
-        <h3 className="text-lg font-semibold mb-4">Monitoring Strategy</h3>
+        <h3 className="text-lg font-semibold mb-4">How it works</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
             <Badge className="bg-blue-100 text-blue-800 mb-2">Sentiment</Badge>
             <p className="text-sm text-gray-600">
-              Company-specific prompts that measure how AI models perceive your organization, with balanced perspectives.
+              Brand-specific prompts that measure general sentiment about your company  , with balanced perspectives.
             </p>
           </div>
           <div>

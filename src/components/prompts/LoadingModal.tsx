@@ -7,12 +7,20 @@ import { getLLMDisplayName } from '@/config/llmLogos';
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 
-interface LoadingModalProps {
-  isOpen: boolean;
-  currentModel?: string;
-  currentPrompt?: string;
+interface ProgressInfo {
+  currentModel: string;
+  currentPrompt: string;
   completed: number;
   total: number;
+}
+
+interface LoadingModalProps {
+  isOpen: boolean;
+  progress?: ProgressInfo;
+  currentModel?: string;
+  currentPrompt?: string;
+  completed?: number;
+  total?: number;
   onClose?: () => void;
   showResultsButton?: boolean;
 }
@@ -26,15 +34,17 @@ const llmModels = [
 
 export const LoadingModal = ({ 
   isOpen, 
-  currentModel, 
-  currentPrompt, 
-  completed, 
-  total, 
+  progress,
+  currentModel,
+  currentPrompt,
+  completed,
+  total,
   onClose,
   showResultsButton = true
 }: LoadingModalProps) => {
   const [carouselIndex, setCarouselIndex] = useState(0);
-  const progressPercentage = total > 0 ? (completed / total) * 100 : 0;
+  const progressData = progress || { currentModel, currentPrompt, completed, total };
+  const progressPercentage = progressData.total > 0 ? (progressData.completed / progressData.total) * 100 : 0;
   const navigate = useNavigate();
 
   // Auto-rotate carousel every 3 seconds
@@ -49,8 +59,8 @@ export const LoadingModal = ({
   }, [isOpen]);
 
   // Show the currently active model in the carousel if available
-  const displayModel = currentModel ? 
-    llmModels.find(m => currentModel.toLowerCase().includes(m.model)) || llmModels[carouselIndex] :
+  const displayModel = progressData.currentModel ? 
+    llmModels.find(m => progressData.currentModel.toLowerCase().includes(m.model)) || llmModels[carouselIndex] :
     llmModels[carouselIndex];
 
   return (
@@ -60,10 +70,10 @@ export const LoadingModal = ({
           {/* Header */}
           <div className="space-y-2">
             <h3 className="text-lg font-semibold text-blue-900">
-              {completed === total ? "Results Ready!" : "Getting Your Results"}
+              {progressData.completed === progressData.total ? "Results Ready!" : "Getting Your Results"}
             </h3>
             <p className="text-sm text-gray-600">
-              {completed === total 
+              {progressData.completed === progressData.total 
                 ? "Your AI responses are ready to view"
                 : "Testing your prompts across multiple AI models..."}
             </p>
@@ -81,7 +91,7 @@ export const LoadingModal = ({
                   size="lg" 
                   className="w-16 h-16 hover:scale-105 transition-transform duration-300" 
                 />
-                {currentModel && currentModel.toLowerCase().includes(displayModel.model) && (
+                {progressData.currentModel && progressData.currentModel.toLowerCase().includes(displayModel.model) && (
                   <div className="absolute -top-1 -right-1">
                     <div className="w-4 h-4 bg-green-500 rounded-full animate-pulse flex items-center justify-center">
                       <div className="w-2 h-2 bg-white rounded-full"></div>
@@ -100,18 +110,18 @@ export const LoadingModal = ({
             <div className="flex items-center justify-between text-sm">
               <span className="text-gray-600">Progress</span>
               <span className="font-medium text-blue-600">
-                {completed} / {total} complete
+                {progressData.completed} / {progressData.total} complete
               </span>
             </div>
             
             <Progress value={progressPercentage} className="h-2" />
             
-            {currentModel && (
+            {progressData.currentModel && (
               <div className="text-xs text-gray-500 space-y-1">
-                <div>Testing: {getLLMDisplayName(currentModel)}</div>
-                {currentPrompt && (
+                <div>Testing: {getLLMDisplayName(progressData.currentModel)}</div>
+                {progressData.currentPrompt && (
                   <div className="truncate max-w-full">
-                    Prompt: {currentPrompt.substring(0, 50)}...
+                    Prompt: {progressData.currentPrompt.substring(0, 50)}...
                   </div>
                 )}
               </div>
@@ -135,7 +145,7 @@ export const LoadingModal = ({
           </div>
 
           {/* Show button when loading is complete */}
-          {completed === total && showResultsButton && (
+          {progressData.completed === progressData.total && showResultsButton && (
             <Button
               onClick={() => {
                 if (onClose) onClose();

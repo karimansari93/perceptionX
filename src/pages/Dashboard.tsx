@@ -39,6 +39,35 @@ const transformOnboardingData = (data: DatabaseOnboardingData): PromptsModalOnbo
   id: data.id
 });
 
+const PROMPTS_COMPLETED_KEY = 'promptsCompleted';
+
+const hasCompletedPrompts = (onboardingId: string | null) => {
+  if (!onboardingId) return false;
+  const completed = localStorage.getItem(PROMPTS_COMPLETED_KEY);
+  if (!completed) return false;
+  try {
+    const completedIds = JSON.parse(completed);
+    return Array.isArray(completedIds) && completedIds.includes(onboardingId);
+  } catch {
+    return false;
+  }
+};
+
+const setPromptsCompleted = (onboardingId: string | null) => {
+  if (!onboardingId) return;
+  const completed = localStorage.getItem(PROMPTS_COMPLETED_KEY);
+  let completedIds: string[] = [];
+  try {
+    completedIds = completed ? JSON.parse(completed) : [];
+  } catch {
+    completedIds = [];
+  }
+  if (!completedIds.includes(onboardingId)) {
+    completedIds.push(onboardingId);
+    localStorage.setItem(PROMPTS_COMPLETED_KEY, JSON.stringify(completedIds));
+  }
+};
+
 const DashboardContent = () => {
   const {
     responses,
@@ -232,6 +261,13 @@ const DashboardContent = () => {
     }
   }, [onboardingData, user]);
 
+  useEffect(() => {
+    // If just finished onboarding, mark prompts as completed
+    if (justFinishedOnboarding && onboardingId) {
+      setPromptsCompleted(onboardingId);
+    }
+  }, [justFinishedOnboarding, onboardingId]);
+
   if (loading) {
     return <DashboardSkeleton />;
   }
@@ -358,7 +394,7 @@ const DashboardContent = () => {
         </SidebarInset>
       </div>
       {/* Prompts Modal */}
-      {!justFinishedOnboarding && (
+      {!justFinishedOnboarding && !hasCompletedPrompts(onboardingId) && (
         <PromptsModal
           open={showPromptsModal}
           onOpenChange={setShowPromptsModal}

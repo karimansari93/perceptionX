@@ -14,6 +14,17 @@ interface PromptsTableProps {
   companyName?: string;
 }
 
+export const PromptsHeader = ({ companyName }: { companyName?: string }) => {
+  return (
+    <div className="mb-6">
+      <h2 className="text-2xl font-semibold text-gray-900 mb-2">Let's setup your monitoring strategy</h2>
+      <p className="text-gray-600">
+      We'll test how AI models respond to three key questions about {companyName || '(Company name)'} as an employer. This takes about 2 minutes to complete.
+      </p>
+    </div>
+  );
+};
+
 export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
   const getCategoryColor = (type: string) => {
     const colors: Record<string, string> = {
@@ -35,12 +46,6 @@ export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
 
   return (
     <Card className="bg-white shadow-lg">
-      <CardHeader>
-        <CardTitle className="text-2xl font-semibold text-gray-900 mb-2">Your Company Through AI's Eyes</CardTitle>
-        <p className="text-gray-600">
-          Millions of job seekers are asking AI about employers. We'll show you exactly what they're discovering about {companyName || '(Company name)'}.
-        </p>
-      </CardHeader>
       <CardContent>
         <Table>
           <TableHeader>
