@@ -138,7 +138,7 @@ export const OverviewTab = ({ metrics, topCitations, topCompetitors, responses }
           <CardHeader className="pb-4">
             <CardTitle className="text-lg font-semibold">Information Sources</CardTitle>
             <CardDescription className="text-sm text-gray-600">
-              The sources most frequently influencing AI responses about your workplace and culture
+              The sources most frequently influencing AI responses
             </CardDescription>
           </CardHeader>
           <CardContent>
