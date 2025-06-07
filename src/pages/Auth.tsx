@@ -267,7 +267,7 @@ const Auth = () => {
   // Show loading state while checking auth
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#045962] to-[#019dad]">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
           <p className="text-white">Loading...</p>
@@ -278,7 +278,7 @@ const Auth = () => {
 
   if (user) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#045962] to-[#019dad]">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
           <p className="text-white">Redirecting...</p>
@@ -288,23 +288,18 @@ const Auth = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-gray-100">
-      {/* Left side - Illustration and Marketing Copy with geometric background */}
-      <div className="flex-1 flex flex-col justify-center items-center px-8 py-12 relative overflow-hidden" style={{ background: 'linear-gradient(to right bottom, #045962, #019dad)' }}>
-        {/* Enhanced Geometric SVG background */}
+    <div className="min-h-screen w-screen flex flex-col md:flex-row">
+      {/* Left: Marketing/Branding */}
+      <div className="md:w-1/2 w-full flex flex-col justify-center items-center px-8 py-12 relative bg-gradient-to-br from-[#045962] to-[#019dad] overflow-hidden">
+        {/* SVG geometric background */}
         <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.45}}>
-          {/* Large blurred circle */}
           <circle cx="18%" cy="12%" r="110" fill="#fff" fillOpacity="0.18" filter="url(#blur1)" />
-          {/* Medium circle */}
           <circle cx="80%" cy="30%" r="60" fill="#fff" fillOpacity="0.13" />
-          {/* Small circles */}
           <circle cx="90%" cy="90%" r="28" fill="#fff" fillOpacity="0.15" />
           <circle cx="30%" cy="80%" r="18" fill="#fff" fillOpacity="0.13" />
           <circle cx="60%" cy="60%" r="14" fill="#fff" fillOpacity="0.13" />
-          {/* Squares */}
           <rect x="70%" y="70%" width="90" height="90" rx="18" fill="#fff" fillOpacity="0.10" />
           <rect x="10%" y="60%" width="60" height="60" rx="12" fill="#fff" fillOpacity="0.09" />
-          {/* Grid lines */}
           <g stroke="#fff" strokeOpacity="0.10" strokeWidth="1">
             <line x1="10%" y1="10%" x2="90%" y2="10%" />
             <line x1="10%" y1="30%" x2="90%" y2="30%" />
@@ -316,9 +311,7 @@ const Auth = () => {
             <line x1="60%" y1="0%" x2="60%" y2="100%" />
             <line x1="80%" y1="0%" x2="80%" y2="100%" />
           </g>
-          {/* Chart-like line */}
           <polyline points="10,300 80,220 180,260 300,180 400,220 500,120 600,200 700,100 800,180 900,80" fill="none" stroke="#fff" strokeWidth="2.5" strokeOpacity="0.18" />
-          {/* Dots */}
           <circle cx="25%" cy="40%" r="4" fill="#fff" fillOpacity="0.22" />
           <circle cx="55%" cy="20%" r="3" fill="#fff" fillOpacity="0.22" />
           <circle cx="75%" cy="75%" r="5" fill="#fff" fillOpacity="0.22" />
@@ -328,7 +321,6 @@ const Auth = () => {
             </filter>
           </defs>
         </svg>
-        {/* Content above background */}
         <div className="relative z-10 w-full flex flex-col items-center">
           <h1 className="text-4xl md:text-5xl font-bold text-white mb-4 text-left w-full max-w-3xl pl-8 md:pl-16 pr-8 md:pr-16">Take control of your talent perception</h1>
           <p className="text-lg text-white text-left w-full max-w-2xl mb-6 pl-8 md:pl-16 pr-8 md:pr-16">Track how leading AI models like ChatGPT, Claude, and Gemini perceive your company.</p>
