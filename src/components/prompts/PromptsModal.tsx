@@ -117,7 +117,9 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
             <div className="space-y-8">
               <PromptsHeader companyName={onboardingData.companyName} />
               <PromptsTable prompts={prompts} companyName={onboardingData.companyName} />
-              <PromptStrategyExplanation />
+              <div className="hidden md:block">
+                <PromptStrategyExplanation />
+              </div>
             </div>
           </div>
           <div className="fixed left-0 right-0 bottom-0 z-50 flex justify-center pb-6 pointer-events-none">

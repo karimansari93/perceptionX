@@ -4,6 +4,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { RefreshCw, ChevronDown } from "lucide-react";
 import LLMLogo from "@/components/LLMLogo";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 
 interface DashboardHeaderProps {
   companyName: string;
@@ -31,8 +32,11 @@ export const DashboardHeader = ({
   return (
     <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/50">
       <div className="px-6 py-4">
-        <div className="flex items-center justify-end">
-          <div className="flex flex-row items-center gap-3 flex-nowrap">
+        <div className="flex items-center justify-end md:justify-end">
+          <div className="md:hidden mr-3">
+            <SidebarTrigger />
+          </div>
+          <div className="hidden md:flex flex-row items-center gap-3 flex-nowrap">
             <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
               <LLMLogo modelName="openai" size="sm" className="mr-1" />
               <span className="text-sm text-gray-700">OpenAI</span>

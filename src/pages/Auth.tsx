@@ -290,7 +290,7 @@ const Auth = () => {
   return (
     <div className="min-h-screen w-screen flex flex-col md:flex-row">
       {/* Left: Marketing/Branding */}
-      <div className="md:w-1/2 w-full flex flex-col justify-center items-center px-8 py-12 relative bg-gradient-to-br from-[#045962] to-[#019dad] overflow-hidden">
+      <div className="hidden md:flex md:w-1/2 flex-col justify-center items-center px-8 py-12 relative bg-gradient-to-br from-[#045962] to-[#019dad] overflow-hidden">
         {/* SVG geometric background */}
         <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.45}}>
           <circle cx="18%" cy="12%" r="110" fill="#fff" fillOpacity="0.18" filter="url(#blur1)" />
@@ -350,7 +350,7 @@ const Auth = () => {
         </div>
       </div>
       {/* Right side - Auth Form */}
-      <div className="flex-1 flex items-center justify-center p-8 bg-white relative flex-col">
+      <div className="w-full md:flex-1 flex items-center justify-center p-8 bg-white relative flex-col">
         <img src="/logos/perceptionx-normal.png" alt="PerceptionX Logo" className="mx-auto mb-10 h-7" />
         <Card className="w-full max-w-md bg-white rounded-2xl border border-gray-100">
           <CardHeader>

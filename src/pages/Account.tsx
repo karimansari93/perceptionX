@@ -21,7 +21,7 @@ function AccountSidebar({ activeSection, onSectionChange }) {
           className="object-contain h-4"
           src={isCollapsed ? "/logos/perceptionx-small.png" : "/logos/perceptionx-normal.png"}
         />
-        <SidebarTrigger className="h-7 w-7" />
+        <SidebarTrigger className="h-7 w-7 md:hidden" />
       </SidebarHeader>
       <SidebarContent className="flex-1 flex flex-col gap-2 p-0">
         <button
@@ -123,6 +123,10 @@ export default function Account() {
       </div>
       <div className="flex-1 min-w-0">
         <SidebarInset>
+          {/* Hamburger for mobile */}
+          <div className="md:hidden flex items-center mb-4">
+            <SidebarTrigger className="h-8 w-8" />
+          </div>
           <div className="flex-1 p-8 max-w-2xl mx-auto">
             <Card>
               <CardHeader>
