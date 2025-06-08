@@ -13,6 +13,7 @@ import { enhanceCitations } from "@/utils/citationUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import ReactMarkdown from 'react-markdown';
 import { getLLMDisplayName } from '@/config/llmLogos';
+import { supabase } from "@/integrations/supabase/client";
 
 interface ResponseDetailsModalProps {
   isOpen: boolean;
@@ -109,22 +110,38 @@ export const ResponseDetailsModal = ({
     );
     // Build the prompt with only the latest response per model
     const prompt = `Summarize the following AI model responses to the question: "${promptText}" in one concise paragraph, highlighting key themes, sentiment, and any notable mentions.\n\nResponses:\n${latestByModel.map(r => r.response_text.slice(0, 1000)).join('\n---\n')}`;
-    fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-openai", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt })
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.response) {
-          setSummary(data.response.trim());
-          setSummaryCache(prev => ({ ...prev, [promptText]: data.response.trim() }));
-        } else {
-          setSummaryError(data.error || "No summary generated.");
-        }
+    
+    // Get the current session
+    const getSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setSummaryError("Authentication required");
+        setLoadingSummary(false);
+        return;
+      }
+
+      fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-openai", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ prompt })
       })
-      .catch(err => setSummaryError("Failed to fetch summary."))
-      .finally(() => setLoadingSummary(false));
+        .then(res => res.json())
+        .then(data => {
+          if (data.response) {
+            setSummary(data.response.trim());
+            setSummaryCache(prev => ({ ...prev, [promptText]: data.response.trim() }));
+          } else {
+            setSummaryError(data.error || "No summary generated.");
+          }
+        })
+        .catch(err => setSummaryError("Failed to fetch summary."))
+        .finally(() => setLoadingSummary(false));
+    };
+
+    getSession();
   }, [isOpen, promptText, responses, summaryCache]);
 
   const getSentimentColor = (score: number | null) => {

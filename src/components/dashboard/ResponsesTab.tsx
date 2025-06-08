@@ -18,6 +18,7 @@ const PROMPT_CATEGORIES = [
 export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
   const [expandedRows, setExpandedRows] = useState<{ [key: string]: boolean }>({});
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [sentimentFilter, setSentimentFilter] = useState("all");
   const [selectedResponse, setSelectedResponse] = useState<any | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -44,9 +45,15 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
     setExpandedRows((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const filteredResponses = categoryFilter === "all"
-    ? responses
-    : responses.filter(r => r.confirmed_prompts?.prompt_type === categoryFilter);
+  const filteredResponses = responses.filter(r => {
+    const categoryMatch = categoryFilter === "all" || r.confirmed_prompts?.prompt_type === categoryFilter;
+    const sentiment = r.sentiment_label ? r.sentiment_label.toLowerCase() : 'normal';
+    const sentimentMatch = sentimentFilter === "all" ||
+      (sentimentFilter === "positive" && sentiment === "positive") ||
+      (sentimentFilter === "normal" && (sentiment === "neutral" || sentiment === "normal")) ||
+      (sentimentFilter === "negative" && sentiment === "negative");
+    return categoryMatch && sentimentMatch;
+  });
 
   const handleRowClick = (response: any) => {
     setSelectedResponse(response);
@@ -72,6 +79,18 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>
+        <label htmlFor="sentiment-filter" className="text-sm font-medium text-gray-700 ml-4">Filter by sentiment:</label>
+        <select
+          id="sentiment-filter"
+          className="border rounded px-2 py-1 text-sm"
+          value={sentimentFilter}
+          onChange={e => setSentimentFilter(e.target.value)}
+        >
+          <option value="all">All</option>
+          <option value="positive">Positive</option>
+          <option value="normal">Normal</option>
+          <option value="negative">Negative</option>
+        </select>
       </div>
       <table className="min-w-full divide-y divide-gray-200">
         <thead className="bg-gray-50">
@@ -81,7 +100,7 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Sentiment</th>
             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Visibility</th>
             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mentioned</th>
-            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Competitors</th>
+            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase w-40">Competitors</th>
             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Answered</th>
           </tr>
         </thead>
@@ -105,16 +124,75 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
               </td>
               <td className="px-4 py-2">
                 <span className={`px-2 py-1 rounded-full text-xs font-medium ${getSentimentBgColor(response.sentiment_score)} ${getSentimentColor(response.sentiment_score)}`}>
-                  {response.sentiment_label === 'neutral' ? 'normal' : response.sentiment_label || 'No sentiment'}
+                  {response.sentiment_label === 'neutral' ? 'Normal' : response.sentiment_label ? response.sentiment_label.charAt(0).toUpperCase() + response.sentiment_label.slice(1) : 'No sentiment'}
                 </span>
               </td>
               <td className="px-4 py-2">
-                {response.confirmed_prompts?.prompt_type === 'visibility'
-                  ? (response.company_mentioned ? '100%' : '0%')
-                  : '-'}
+                {typeof response.visibility_score === 'number' ? (
+                  <div className="flex items-center gap-2">
+                    <svg width="28" height="28" viewBox="0 0 36 36" className="-ml-1">
+                      <circle
+                        cx="18"
+                        cy="18"
+                        r="16"
+                        fill="none"
+                        stroke="#e5e7eb" // Tailwind gray-200
+                        strokeWidth="4"
+                      />
+                      <circle
+                        cx="18"
+                        cy="18"
+                        r="16"
+                        fill="none"
+                        stroke={
+                          response.visibility_score >= 95 ? '#22c55e' : // green-500
+                          response.visibility_score >= 60 ? '#4ade80' : // green-400
+                          response.visibility_score > 0 ? '#fde047' : // yellow-300
+                          '#e5e7eb' // gray-200
+                        }
+                        strokeWidth="4"
+                        strokeDasharray={2 * Math.PI * 16}
+                        strokeDashoffset={2 * Math.PI * 16 * (1 - response.visibility_score / 100)}
+                        strokeLinecap="round"
+                        style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
+                      />
+                    </svg>
+                    <span className="text-sm font-regular text-gray-900">{Math.round(response.visibility_score)}%</span>
+                  </div>
+                ) : (
+                  '-' 
+                )}
               </td>
-              <td className="px-4 py-2">{response.mentioned ? 'Yes' : 'No'}</td>
-              <td className="px-4 py-2">{response.competitors ? 'Yes' : 'No'}</td>
+              <td className="px-4 py-2">
+                <span
+                  className={`px-2 py-1 rounded-full text-xs font-medium ${response.company_mentioned ? 'bg-[#06b6d4] text-white' : 'bg-gray-100 text-gray-800'}`}
+                >
+                  {response.company_mentioned ? 'Yes' : 'No'}
+                </span>
+              </td>
+              <td className="px-4 py-2 w-20">
+                <div className="truncate max-w-sm overflow-hidden">
+                  {typeof response.detected_competitors === 'string' && response.detected_competitors.trim() ? (
+                    (() => {
+                      const competitors = response.detected_competitors.split(',').map((c: string) => c.trim()).filter(Boolean);
+                      const maxToShow = 1;
+                      const extraCount = competitors.length - maxToShow;
+                      return (
+                        <div className="flex flex-nowrap gap-2">
+                          {competitors.slice(0, maxToShow).map((name: string, idx: number) => (
+                            <span key={idx} className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">{name}</span>
+                          ))}
+                          {extraCount > 0 && (
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">+{extraCount} more</span>
+                          )}
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">No</span>
+                  )}
+                </div>
+              </td>
               <td className="px-4 py-2">{response.answered ? response.answered : (response.tested_at ? new Date(response.tested_at).toLocaleDateString() : '-')}</td>
             </tr>
           ))}

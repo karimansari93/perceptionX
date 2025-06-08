@@ -3,44 +3,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 
 const supabase = createClient(
-  // @ts-ignore
+  // @ts-ignore: Deno.env.get() is not recognized by TypeScript but is available in Deno runtime
   Deno.env.get('SUPABASE_URL') ?? '',
-  // @ts-ignore
+  // @ts-ignore: Deno.env.get() is not recognized by TypeScript but is available in Deno runtime
   Deno.env.get('SUPABASE_ANON_KEY') ?? ''
 );
 
-// Helper function to escape regex special characters
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
-// Mock EMPLOYMENT_SOURCES for testing
-const EMPLOYMENT_SOURCES = {
-  GLASSDOOR: {
-    domain: 'glassdoor.com',
-    type: 'review-site',
-    displayName: 'Glassdoor',
-    categories: ['reviews', 'salaries', 'interviews'],
-    baseUrl: 'https://www.glassdoor.com'
-  }
-};
-
-interface SourceConfig {
-  domain: string;
-  type: string;
-  displayName: string;
-  categories: string[];
-  baseUrl: string;
-}
-
-interface InformationSource {
-  domain: string;
-  type: string;
-  confidence: string;
-  title: string;
-  categories: string[];
-  url?: string | null;
-}
 
 interface CompetitorMention {
   name: string;
@@ -57,7 +26,7 @@ interface Citation {
 interface AnalysisResult {
   sentiment_score: number;
   sentiment_label: string;
-  citations: any[];
+  citations: Citation[];
   company_mentioned: boolean;
   mention_ranking: number | null;
   competitor_mentions: CompetitorMention[];
@@ -68,15 +37,6 @@ interface AnalysisResult {
   detected_competitors: string;
 }
 
-interface RequestBody {
-  response: string;
-  companyName: string;
-  promptType: string;
-  perplexityCitations?: any[];
-  competitors?: string[];
-  confirmed_prompt_id?: string;
-  ai_model?: string;
-}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -87,7 +47,7 @@ serve(async (req) => {
     // Parse and log the request body
     const body = await req.json();
     console.log("Request body received:", body);
-    const { response, companyName, promptType, perplexityCitations, competitors = [], confirmed_prompt_id, ai_model } = body;
+    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model } = body;
 
     // Check for required fields
     if (!confirmed_prompt_id) {
@@ -108,11 +68,10 @@ serve(async (req) => {
     console.log('=== ANALYZE RESPONSE DEBUG ===');
     console.log('Company Name:', companyName);
     console.log('Prompt Type:', promptType);
-    console.log('Competitors:', competitors);
     console.log('Response length:', response.length);
     console.log('Response preview:', response.substring(0, 500));
 
-    const result = await analyzeResponse(response, companyName, competitors);
+    const result = await analyzeResponse(response, companyName);
     console.log('Analysis result:', JSON.stringify(result, null, 2));
 
     // Prepare data for insert
@@ -167,15 +126,15 @@ serve(async (req) => {
   }
 })
 
-async function analyzeResponse(text: string, companyName: string, competitors: string[]): Promise<AnalysisResult> {
+async function analyzeResponse(text: string, companyName: string): Promise<AnalysisResult> {
   // Get basic analysis
-  const basicAnalysis = performEnhancedBasicAnalysis(text, companyName, 'visibility', competitors);
+  const basicAnalysis = performEnhancedBasicAnalysis(text, companyName, 'visibility');
   
   // Get sentiment analysis
-  const sentimentData = await analyzeSentiment(text);
+  const sentimentData = analyzeSentiment(text);
   
   // Get company mention data
-  const companyMentionData = await detectCompanyMention(text, companyName);
+  const companyMentionData = detectCompanyMention(text, companyName);
   
   // Get competitor mentions using the new function
   let detectedCompetitors = '';
@@ -224,7 +183,7 @@ async function analyzeResponse(text: string, companyName: string, competitors: s
   };
 }
 
-function performEnhancedBasicAnalysis(responseText: string, companyName: string, promptType: string, competitors: string[]): AnalysisResult {
+function performEnhancedBasicAnalysis(responseText: string, companyName: string, promptType: string): AnalysisResult {
   console.log('=== PERFORMING ENHANCED BASIC ANALYSIS ===')
   
   // Basic sentiment analysis based on keywords
@@ -277,7 +236,8 @@ function performEnhancedBasicAnalysis(responseText: string, companyName: string,
     total_words: totalWords,
     first_mention_position: companyDetection.first_mention_position,
     visibility_score: visibilityScore,
-    competitive_score: competitiveScore
+    competitive_score: competitiveScore,
+    detected_competitors: ""
   }
 }
 
@@ -338,7 +298,6 @@ function detectEnhancedRanking(text: string, companyName: string): number | null
 
 function detectEnhancedCompetitors(text: string, companyName: string): CompetitorMention[] {
   const mentions: CompetitorMention[] = [];
-  const lowerText = text.toLowerCase();
   const lowerCompany = companyName.toLowerCase();
   
   // Common company suffixes and patterns
@@ -427,41 +386,7 @@ function extractContext(text: string, competitor: string): string {
   return text.substring(start, end).trim()
 }
 
-function detectSources(text: string): InformationSource[] {
-  const sources: InformationSource[] = [];
-  const lowerText = text.toLowerCase();
-  
-  // Check for mentions of known employment sources
-  Object.values(EMPLOYMENT_SOURCES).forEach((source: SourceConfig) => {
-    if (lowerText.includes(source.displayName.toLowerCase()) || 
-        lowerText.includes(source.domain)) {
-      sources.push({
-        domain: source.domain,
-        type: source.type,
-        confidence: 'medium',
-        title: source.displayName,
-        categories: source.categories,
-        url: source.baseUrl
-      });
-    }
-  });
-  
-  // Add general source detection
-  if (lowerText.includes('according to') || lowerText.includes('reports indicate') || lowerText.includes('studies show')) {
-    sources.push({
-      domain: 'industry-report',
-      type: 'industry-knowledge',
-      confidence: 'medium',
-      title: 'Industry Report or Analysis',
-      categories: ['general-knowledge'],
-      url: null
-    });
-  }
-  
-  return sources;
-}
-
-async function analyzeSentiment(text: string): Promise<{ sentiment_score: number; sentiment_label: string }> {
+function analyzeSentiment(text: string): { sentiment_score: number; sentiment_label: string } {
   // Basic sentiment analysis implementation
   const positiveWords = ['excellent', 'great', 'good', 'strong', 'successful', 'leader', 'innovative', 'quality', 'best', 'top', 'outstanding', 'superior', 'leading']
   const negativeWords = ['poor', 'bad', 'weak', 'failed', 'struggle', 'decline', 'issues', 'problems', 'worst', 'inferior', 'lacking']
@@ -479,80 +404,10 @@ async function analyzeSentiment(text: string): Promise<{ sentiment_score: number
   return { sentiment_score: sentimentScore, sentiment_label: sentimentLabel }
 }
 
-async function extractCitations(text: string): Promise<Citation[]> {
-  // Basic citation extraction implementation
-  const citations: Citation[] = []
-  const urlPattern = /(https?:\/\/[^\s]+)/g
-  let match
-  
-  while ((match = urlPattern.exec(text)) !== null) {
-    const url = match[1]
-    const domain = new URL(url).hostname
-    citations.push({ domain, url })
-  }
-  
-  return citations
-}
-
-async function detectCompanyMention(text: string, companyName: string): Promise<{ mentioned: boolean; ranking: number | null }> {
+function detectCompanyMention(text: string, companyName: string): { mentioned: boolean; ranking: number | null } {
   // Basic company mention detection implementation
   const mentioned = text.toLowerCase().includes(companyName.toLowerCase())
   const ranking = detectEnhancedRanking(text, companyName)
   
   return { mentioned, ranking }
-}
-
-async function detectCompetitorsWithOpenAI(text: string, companyName: string): Promise<CompetitorMention[]> {
-  try {
-    const prompt = `You are a helpful assistant that identifies company names from text. 
-Return only a comma-separated list of company names that are direct competitors or alternatives to "${companyName}" in the same industry or market. 
-Do NOT include job boards, review sites, or information sources such as Glassdoor, Indeed, LinkedIn, Monster, or similar companies. 
-Exclude the main company name itself. 
-If no competitors are found, return an empty string.`;
-
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          { role: 'system', content: 'You are a JSON API that returns only valid JSON arrays. Do not include any markdown formatting or additional text.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.2,
-        max_tokens: 512,
-        response_format: { type: "json_object" }
-      })
-    });
-
-    const data = await response.json();
-    const textResponse = data.choices?.[0]?.message?.content;
-    if (!textResponse) {
-      console.error('Invalid response from OpenAI:', data);
-      return [];
-    }
-
-    // Clean the response of any markdown formatting
-    const cleanResponse = textResponse.replace(/```json\n?|\n?```/g, '').trim();
-    const result = JSON.parse(cleanResponse);
-    
-    // Ensure we have an array of competitor mentions
-    const mentions = Array.isArray(result) ? result : [];
-    
-    return mentions.filter((mention: CompetitorMention) => 
-      mention.name.toLowerCase() !== companyName.toLowerCase()
-    );
-  } catch (error) {
-    console.error('Error detecting competitors with OpenAI:', error);
-    // Fallback to regex-based detection if OpenAI fails
-    return detectEnhancedCompetitors(text, companyName);
-  }
-}
-
-async function detectCompetitorMentions(text: string, companyName: string, competitors: string[]): Promise<CompetitorMention[]> {
-  // Use OpenAI for competitor detection
-  return detectCompetitorsWithOpenAI(text, companyName);
 }

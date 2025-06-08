@@ -8,8 +8,8 @@ interface MetricCardProps {
   title: string;
   value: string | number;
   subtitle: string;
-  icon: LucideIcon;
-  iconColor: string;
+  icon?: LucideIcon;
+  iconColor?: string;
   trend?: {
     value: number;
     direction: 'up' | 'down' | 'neutral';
@@ -74,7 +74,7 @@ export const MetricCard = ({
             </TooltipProvider>
           )}
         </div>
-        <Icon className={`w-5 h-5 ${iconColor}`} />
+        {Icon && iconColor && <Icon className={`w-5 h-5 ${iconColor}`} />}
       </CardHeader>
       <CardContent className="pt-0">
         <div className="text-2xl font-bold text-gray-900 mb-1" style={{

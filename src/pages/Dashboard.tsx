@@ -72,6 +72,7 @@ const DashboardContent = () => {
   const {
     responses,
     loading,
+    competitorLoading,
     companyName,
     metrics,
     sentimentTrend,
@@ -303,6 +304,7 @@ const DashboardContent = () => {
             topCitations={topCitations}
             topCompetitors={topCompetitors}
             responses={responses}
+            competitorLoading={competitorLoading}
           />
         );
       case "prompts":
@@ -340,6 +342,7 @@ const DashboardContent = () => {
             topCitations={topCitations}
             topCompetitors={topCompetitors}
             responses={responses}
+            competitorLoading={competitorLoading}
           />
         );
     }
@@ -377,7 +380,7 @@ const DashboardContent = () => {
               </h1>
               <p className="text-gray-600">
                 {activeSection === "responses"
-                  ? "View and analyze responses from different AI models."
+                  ? "visibility_score"
                   : activeSection === "prompts"
                   ? "Manage and monitor your AI prompts across different categories."
                   : activeSection === "answer-gaps"

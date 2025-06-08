@@ -14,9 +14,16 @@ interface OverviewTabProps {
   topCitations: CitationCount[];
   topCompetitors: { company: string; count: number }[];
   responses: any[]; // Add responses prop
+  competitorLoading?: boolean; // Add competitor loading prop
 }
 
-export const OverviewTab = ({ metrics, topCitations, topCompetitors, responses }: OverviewTabProps) => {
+export const OverviewTab = ({ 
+  metrics, 
+  topCitations, 
+  topCompetitors, 
+  responses,
+  competitorLoading = false 
+}: OverviewTabProps) => {
   const [selectedSource, setSelectedSource] = useState<CitationCount | null>(null);
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
   const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
@@ -103,6 +110,20 @@ export const OverviewTab = ({ metrics, topCitations, topCompetitors, responses }
     return name.charAt(0).toUpperCase() + name.slice(1);
   };
 
+  // Normalize and merge topCompetitors by case-insensitive name
+  const normalizedCompetitorsMap = new Map<string, { company: string; count: number }>();
+  topCompetitors.forEach(({ company, count }) => {
+    const normalized = company.trim().toLowerCase();
+    if (normalizedCompetitorsMap.has(normalized)) {
+      normalizedCompetitorsMap.get(normalized)!.count += count;
+    } else {
+      // Capitalize first letter, rest lowercase for display
+      const displayName = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+      normalizedCompetitorsMap.set(normalized, { company: displayName, count });
+    }
+  });
+  const normalizedTopCompetitors = Array.from(normalizedCompetitorsMap.values()).sort((a, b) => b.count - a.count);
+
   return (
     <div className="space-y-8">
       {/* Metrics Grid */}
@@ -119,8 +140,6 @@ export const OverviewTab = ({ metrics, topCitations, topCompetitors, responses }
               return 'Normal';
             })()}
             subtitle={`${metrics.positiveCount} positive, ${metrics.neutralCount} neutral, ${metrics.negativeCount} negative`}
-            icon={TrendingUp}
-            iconColor="text-gray-400"
             trend={metrics.sentimentTrendComparison}
             tooltip="Overall sentiment category based on the distribution of positive, neutral, and negative responses."
           />
@@ -128,24 +147,18 @@ export const OverviewTab = ({ metrics, topCitations, topCompetitors, responses }
             title="Average Visibility"
             value={`${Math.round(metrics.averageVisibility)}%`}
             subtitle="Company mention prominence"
-            icon={Target}
-            iconColor="text-gray-400"
             tooltip="How prominently your company is mentioned in AI responses, on average."
           />
           <MetricCard
             title="Total Citations"
             value={metrics.totalCitations.toString()}
             subtitle={`${metrics.uniqueDomains} unique domains`}
-            icon={FileText}
-            iconColor="text-gray-400"
             tooltip="Total number of source citations found in AI responses, and how many unique domains they come from."
           />
           <MetricCard
             title="Total Responses"
             value={metrics.totalResponses.toString()}
             subtitle="AI responses analyzed"
-            icon={MessageSquare}
-            iconColor="text-gray-400"
             tooltip="Total number of AI-generated responses analyzed for this dashboard."
           />
         </div>
@@ -236,41 +249,48 @@ export const OverviewTab = ({ metrics, topCitations, topCompetitors, responses }
             </CardDescription>
           </CardHeader>
           <CardContent className="relative">
-            {/* Match Information Sources bar style for Top Competitors */}
-            {(() => {
-              const maxCount = topCompetitors.length > 0 ? topCompetitors[0].count : 1;
-              return (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto relative">
-                  {topCompetitors.length > 0 ? (
-                    topCompetitors.map((competitor, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center py-1 hover:bg-gray-50/50 transition-colors cursor-pointer"
-                        onClick={() => handleCompetitorClick(competitor.company)}
-                      >
-                        <div className="flex items-center space-x-3 min-w-[200px]">
-                          <span className="text-sm font-medium text-gray-900">{competitor.company}</span>
-                        </div>
-                        <div className="flex-1 flex items-center gap-2 ml-4">
-                          <div className="h-4 inline-flex items-center w-[120px]">
-                            <div
-                              className="h-full bg-blue-100 rounded-full transition-all duration-300"
-                              style={{ width: `${(competitor.count / maxCount) * 100}%`, minWidth: '12px' }}
-                            />
-                            <span className="text-sm font-semibold text-blue-900 ml-2" style={{whiteSpace: 'nowrap'}}>{competitor.count}</span>
+            {competitorLoading ? (
+              <div className="text-center py-12 text-gray-500">
+                <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300 animate-spin" />
+                <p className="text-sm">Loading competitor data...</p>
+              </div>
+            ) : (
+              // Match Information Sources bar style for Top Competitors
+              (() => {
+                const maxCount = normalizedTopCompetitors.length > 0 ? normalizedTopCompetitors[0].count : 1;
+                return (
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto relative">
+                    {normalizedTopCompetitors.length > 0 ? (
+                      normalizedTopCompetitors.map((competitor, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center py-1 hover:bg-gray-50/50 transition-colors cursor-pointer"
+                          onClick={() => handleCompetitorClick(competitor.company)}
+                        >
+                          <div className="flex items-center space-x-3 min-w-[200px]">
+                            <span className="text-sm font-medium text-gray-900">{competitor.company}</span>
+                          </div>
+                          <div className="flex-1 flex items-center gap-2 ml-4">
+                            <div className="h-4 inline-flex items-center w-[120px]">
+                              <div
+                                className="h-full bg-blue-100 rounded-full transition-all duration-300"
+                                style={{ width: `${(competitor.count / maxCount) * 100}%`, minWidth: '12px' }}
+                              />
+                              <span className="text-sm font-semibold text-blue-900 ml-2" style={{whiteSpace: 'nowrap'}}>{competitor.count}</span>
+                            </div>
                           </div>
                         </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-12 text-gray-500">
+                        <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                        <p className="text-sm">No competitor mentions found yet.</p>
                       </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-12 text-gray-500">
-                      <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                      <p className="text-sm">No competitor mentions found yet.</p>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+                    )}
+                  </div>
+                );
+              })()
+            )}
           </CardContent>
         </Card>
       </div>

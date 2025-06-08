@@ -71,6 +71,23 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
     }
   };
 
+  // Helper for sentiment pill
+  const getSentimentPill = (sentimentLabel?: string) => {
+    if (!sentimentLabel) return <span>-</span>;
+    let color = "bg-gray-100 text-gray-700";
+    let label = "Normal";
+    if (sentimentLabel.toLowerCase() === "positive") {
+      color = "bg-green-100 text-green-700";
+      label = "Positive";
+    } else if (sentimentLabel.toLowerCase() === "negative") {
+      color = "bg-red-100 text-red-700";
+      label = "Negative";
+    }
+    return (
+      <span className={`px-2 py-1 rounded-full text-xs font-medium ${color}`}>{label}</span>
+    );
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -87,7 +104,6 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
                 <TableHead className="text-center">Responses</TableHead>
                 <TableHead className="text-center">Sentiment</TableHead>
                 <TableHead className="text-center">Visibility</TableHead>
-                <TableHead className="text-center">Competitive</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -109,28 +125,46 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
                     <Badge variant="secondary">{prompt.responses}</Badge>
                   </TableCell>
                   <TableCell className="text-center">
-                    {prompt.type === 'sentiment'
-                      ? (
-                        <span className={`font-semibold ${getSentimentColor(prompt.avgSentiment)}`}>
-                          {prompt.sentimentLabel === 'neutral' ? 'normal' : `${Math.round(prompt.avgSentiment * 100)}% ${prompt.sentimentLabel}`}
-                        </span>
-                      ) : '-'}
+                    {getSentimentPill(prompt.sentimentLabel)}
                   </TableCell>
                   <TableCell className="text-center">
-                    {prompt.type === 'visibility'
-                      ? (
-                        <span className="font-semibold text-blue-600">
-                          {typeof prompt.averageVisibility === 'number' ? `${Math.round(prompt.averageVisibility)}%` : '-'}
-                        </span>
-                      ) : '-'}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {prompt.type === 'competitive'
-                      ? (
-                        <span className="font-semibold text-purple-600">
-                          {getCompetitiveScore(prompt).toFixed(0)}%
-                        </span>
-                      ) : '-'}
+                    {Array.isArray(prompt.visibilityScores) && prompt.visibilityScores.length > 0 ? (
+                      (() => {
+                        const avgVisibility = prompt.visibilityScores!.reduce((sum, score) => sum + score, 0) / prompt.visibilityScores!.length;
+                        return (
+                          <div className="flex items-center gap-1 justify-center">
+                            <svg width="20" height="20" viewBox="0 0 20 20" className="-ml-1">
+                              <circle
+                                cx="10"
+                                cy="10"
+                                r="8"
+                                fill="none"
+                                stroke="#e5e7eb"
+                                strokeWidth="2"
+                              />
+                              <circle
+                                cx="10"
+                                cy="10"
+                                r="8"
+                                fill="none"
+                                stroke={
+                                  avgVisibility >= 95 ? '#22c55e' :
+                                  avgVisibility >= 60 ? '#4ade80' :
+                                  avgVisibility > 0 ? '#fde047' :
+                                  '#e5e7eb'
+                                }
+                                strokeWidth="2"
+                                strokeDasharray={2 * Math.PI * 8}
+                                strokeDashoffset={2 * Math.PI * 8 * (1 - avgVisibility / 100)}
+                                strokeLinecap="round"
+                                style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
+                              />
+                            </svg>
+                            <span className="text-xs font-regular text-gray-900">{Math.round(avgVisibility)}%</span>
+                          </div>
+                        );
+                      })()
+                    ) : 'N/A'}
                   </TableCell>
                 </TableRow>
               ))}

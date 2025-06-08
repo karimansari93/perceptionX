@@ -10,7 +10,7 @@ export const PromptStrategyExplanation = () => {
           <div>
             <Badge className="bg-blue-100 text-blue-800 mb-2">Sentiment</Badge>
             <p className="text-sm text-gray-600">
-              Brand-specific prompts that measure general sentiment about your company  , with balanced perspectives.
+              Brand-specific prompts that measure general sentiment about your culture, with balanced perspectives.
             </p>
           </div>
           <div>
@@ -22,7 +22,7 @@ export const PromptStrategyExplanation = () => {
           <div>
             <Badge className="bg-purple-100 text-purple-800 mb-2">Competitive</Badge>
             <p className="text-sm text-gray-600">
-              Direct comparison prompts that analyze your position relative to specific competitors.
+              Direct comparison prompts that analyze your employer reputation relative to specific competitors.
             </p>
           </div>
         </div>

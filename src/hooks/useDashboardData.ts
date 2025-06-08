@@ -8,6 +8,7 @@ export const useDashboardData = () => {
   const { user } = useAuth();
   const [responses, setResponses] = useState<PromptResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [competitorLoading, setCompetitorLoading] = useState(true);
   const [companyName, setCompanyName] = useState<string>("");
 
   const fetchCompanyName = async () => {
@@ -58,6 +59,7 @@ export const useDashboardData = () => {
     if (!user) return;
     
     try {
+      setCompetitorLoading(true); // Set competitor loading to true when starting fetch
       const { data: userPrompts, error: promptsError } = await supabase
         .from('confirmed_prompts')
         .select('id')
@@ -68,6 +70,7 @@ export const useDashboardData = () => {
       if (!userPrompts || userPrompts.length === 0) {
         setResponses([]);
         setLoading(false);
+        setCompetitorLoading(false);
         return;
       }
 
@@ -108,8 +111,10 @@ export const useDashboardData = () => {
       uniqueResponses.sort((a, b) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
       
       setResponses(uniqueResponses);
+      setCompetitorLoading(false); // Set competitor loading to false after responses are loaded
     } catch (error) {
       console.error('Error fetching responses:', error);
+      setCompetitorLoading(false);
     } finally {
       setLoading(false);
     }
@@ -146,9 +151,17 @@ export const useDashboardData = () => {
         item.prompt === response.confirmed_prompts?.prompt_text
       );
       
+      // Extract visibility_score if present and numeric
+      const visibilityScore = typeof response.visibility_score === 'number' ? response.visibility_score : undefined;
+      
       if (existing) {
         existing.responses += 1;
         existing.avgSentiment = (existing.avgSentiment + (response.sentiment_score || 0)) / 2;
+        // Add visibility score to array
+        if (visibilityScore !== undefined) {
+          existing.visibilityScores = existing.visibilityScores || [];
+          existing.visibilityScores.push(visibilityScore);
+        }
         // Update visibility metrics
         if (response.confirmed_prompts?.prompt_type === 'visibility') {
           if (typeof existing.averageVisibility === 'number') {
@@ -181,7 +194,8 @@ export const useDashboardData = () => {
           mentionRanking: response.mention_ranking || undefined,
           competitivePosition: response.mention_ranking || undefined,
           competitorMentions: response.competitor_mentions as string[] || undefined,
-          averageVisibility: response.confirmed_prompts?.prompt_type === 'visibility' ? (response.company_mentioned ? 100 : 0) : undefined
+          averageVisibility: response.confirmed_prompts?.prompt_type === 'visibility' ? (response.company_mentioned ? 100 : 0) : undefined,
+          visibilityScores: visibilityScore !== undefined ? [visibilityScore] : [],
         });
       }
       
@@ -240,10 +254,12 @@ export const useDashboardData = () => {
       responses.flatMap(r => parseCitations(r.citations).map((c: Citation) => c.domain).filter(Boolean))
     ).size;
 
-    // Calculate average visibility from promptsData
-    const visibilityPrompts = promptsData.filter(p => p.type === 'visibility' && typeof p.averageVisibility === 'number');
-    const averageVisibility = visibilityPrompts.length > 0
-      ? visibilityPrompts.reduce((sum, p) => sum + (p.averageVisibility || 0), 0) / visibilityPrompts.length
+    // Calculate average visibility as the average of all numeric visibility_score values from all responses
+    const allVisibilityScores = responses
+      .map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined)
+      .filter((v): v is number => typeof v === 'number');
+    const averageVisibility = allVisibilityScores.length > 0
+      ? allVisibilityScores.reduce((sum, v) => sum + v, 0) / allVisibilityScores.length
       : 0;
 
     return {
@@ -316,6 +332,11 @@ export const useDashboardData = () => {
     return prompts.map(prompt => {
       const promptResponses = responses.filter(r => r.confirmed_prompt_id === prompt.id);
       const totalResponses = promptResponses.length;
+
+      // Debug: Log company_mentioned values for this prompt
+      // (Can be removed if not needed)
+      // console.log('Prompt:', prompt.prompt_text, 'Prompt ID:', prompt.id);
+      // console.log('company_mentioned values:', promptResponses.map(r => r.company_mentioned));
       
       // Calculate average sentiment
       const totalSentiment = promptResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0);
@@ -327,15 +348,13 @@ export const useDashboardData = () => {
         .filter(Boolean);
       const sentimentLabel = getMostCommonValue(sentimentLabels) || 'neutral';
       
-      // For visibility prompts, calculate average visibility
+      // Calculate average visibility as the average of visibility_score for all responses
+      const visibilityScores = promptResponses
+        .map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined)
+        .filter((v): v is number => typeof v === 'number');
       let averageVisibility: number | undefined = undefined;
-      if (prompt.prompt_type === 'visibility') {
-        if (totalResponses > 0) {
-          const mentionedCount = promptResponses.filter(r => r.company_mentioned).length;
-          averageVisibility = (mentionedCount / totalResponses) * 100;
-        } else {
-          averageVisibility = 0;
-        }
+      if (visibilityScores.length > 0) {
+        averageVisibility = visibilityScores.reduce((sum, v) => sum + v, 0) / visibilityScores.length;
       }
       
       return {
@@ -375,6 +394,7 @@ export const useDashboardData = () => {
   return {
     responses,
     loading,
+    competitorLoading,
     companyName,
     metrics,
     sentimentTrend,

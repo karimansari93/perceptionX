@@ -20,6 +20,7 @@ export interface PromptResponse {
   first_mention_position?: number;
   total_words?: number;
   detected_competitors?: string;
+  visibility_score?: number;
 }
 
 export interface Citation {
@@ -58,6 +59,7 @@ export interface PromptData {
   averageVisibility?: number;
   totalWords?: number;
   firstMentionPosition?: number;
+  visibilityScores?: number[];
 }
 
 export interface DashboardMetrics {

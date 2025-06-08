@@ -51,7 +51,15 @@ If no competitors are found, return an empty string.`
     });
 
     const data = await openAIResponse.json();
-    const detectedCompetitors = data.choices?.[0]?.message?.content?.trim() || '';
+    let detectedCompetitors = data.choices?.[0]?.message?.content?.trim() || '';
+
+    // Filter out responses that indicate no competitors were found
+    if (
+      detectedCompetitors.includes("There are no specific company names mentioned as competitors or alternatives") ||
+      detectedCompetitors.includes("Some companies mentioned as competitors or alternatives")
+    ) {
+      detectedCompetitors = '';
+    }
 
     return new Response(
       JSON.stringify({ detectedCompetitors }),

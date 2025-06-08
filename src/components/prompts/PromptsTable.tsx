@@ -7,6 +7,10 @@ interface GeneratedPrompt {
   text: string;
   category: string;
   type: 'sentiment' | 'visibility' | 'competitive';
+  sentiment?: string | number;
+  visibility?: string | number;
+  competitive?: string | number;
+  sentimentLabel?: string;
 }
 
 interface PromptsTableProps {
@@ -42,6 +46,23 @@ export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
       'competitive': 'Competitive'
     };
     return labels[type] || type;
+  };
+
+  // Helper for sentiment pill
+  const getSentimentPill = (sentimentLabel?: string) => {
+    if (!sentimentLabel) return <span>-</span>;
+    let color = "bg-gray-100 text-gray-700";
+    let label = "Normal";
+    if (sentimentLabel.toLowerCase() === "positive") {
+      color = "bg-green-100 text-green-700";
+      label = "Positive";
+    } else if (sentimentLabel.toLowerCase() === "negative") {
+      color = "bg-red-100 text-red-700";
+      label = "Negative";
+    }
+    return (
+      <span className={`px-2 py-1 rounded-full text-xs font-medium ${color}`}>{label}</span>
+    );
   };
 
   return (
