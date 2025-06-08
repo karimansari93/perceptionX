@@ -12,17 +12,15 @@ export const ConfirmationCard = ({ isConfirming, onConfirm, disabled, className 
   return (
     <Button 
       onClick={onConfirm}
-      className={`bg-pink-600 hover:bg-pink-700 ${className || ''}`}
+      variant="default"
+      className={`w-full ${className || ''}`}
       size="lg"
       disabled={isConfirming || disabled}
     >
       {isConfirming ? (
         <>Loading...</>
       ) : (
-        <>
-          <CheckCircle className="w-5 h-5 mr-2" />
-          I'm ready
-        </>
+        <>I'm ready</>
       )}
     </Button>
   );

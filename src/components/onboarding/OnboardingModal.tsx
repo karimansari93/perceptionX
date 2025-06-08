@@ -222,14 +222,23 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
                 Back
               </Button>
             )}
-            <Button
-              onClick={handleNext}
-              className="bg-[#db5f89] hover:bg-[#c94e7c] text-white px-6 py-2 text-base font-semibold rounded-full shadow-none flex items-center ml-auto"
-              style={{ minWidth: 120 }}
-            >
-              <CheckCircle className="w-5 h-5 mr-2" />
-              {onboardingStep === onboardingSteps.length - 1 ? 'Complete' : 'Next'}
-            </Button>
+            {onboardingStep === 0 ? (
+              <Button
+                onClick={handleNext}
+                variant="default"
+                className="w-full"
+              >
+                Next
+              </Button>
+            ) : (
+              <Button
+                onClick={handleNext}
+                variant="default"
+                className="w-full ml-4"
+              >
+                Next
+              </Button>
+            )}
           </div>
         </div>
       </DialogContent>

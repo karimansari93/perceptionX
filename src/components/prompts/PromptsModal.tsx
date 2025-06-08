@@ -9,6 +9,8 @@ import { ConfirmationCard } from "@/components/prompts/ConfirmationCard";
 import { LoadingModal } from "@/components/prompts/LoadingModal";
 import { usePromptsLogic } from "@/hooks/usePromptsLogic";
 import { useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface OnboardingData {
   companyName: string;
@@ -39,16 +41,46 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
   useEffect(() => {
     if (isConfirming && progress.completed === progress.total && progress.total > 0) {
       // Add a small delay to ensure the loading modal shows completion
-      setTimeout(() => {
-        navigate('/dashboard', { 
-          state: { 
-            shouldRefresh: true,
-            onboardingData 
+      setTimeout(async () => {
+        try {
+          // Verify the update completed
+          const { data, error } = await supabase
+            .from('user_onboarding')
+            .select('prompts_completed')
+            .eq('id', onboardingRecord.id)
+            .single();
+          
+          // If the column doesn't exist yet, we'll consider it complete
+          // as long as we have the onboarding record
+          if (error && !error.message?.includes('column "prompts_completed" does not exist')) {
+            console.error('Error verifying completion:', error);
+            toast.error('Failed to complete setup. Please try again.');
+            return;
           }
-        });
+
+          // Navigate if either prompts_completed is true or the column doesn't exist yet
+          if (!error || error.message?.includes('column "prompts_completed" does not exist')) {
+            navigate('/dashboard', { 
+              state: { 
+                shouldRefresh: true,
+                onboardingData 
+              }
+            });
+          }
+        } catch (error) {
+          console.error('Error in verification:', error);
+          // Still navigate even if verification fails
+          // The migration will handle setting prompts_completed later
+          navigate('/dashboard', { 
+            state: { 
+              shouldRefresh: true,
+              onboardingData 
+            }
+          });
+        }
       }, 1000);
     }
-  }, [isConfirming, progress.completed, progress.total, navigate, onboardingData]);
+  }, [isConfirming, progress.completed, progress.total, navigate, onboardingData, onboardingRecord]);
 
   // If onboardingRecord or onboardingData is missing, don't show the modal
   if (!onboardingRecord || !onboardingData) {

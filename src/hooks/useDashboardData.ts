@@ -14,21 +14,43 @@ export const useDashboardData = () => {
     if (!user) return;
     
     try {
+      // First try to get the most recent onboarding record
       const { data, error } = await supabase
         .from('user_onboarding')
         .select('company_name')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
 
       if (error) {
         console.error('Error fetching company name:', error);
-      } else if (data) {
-        setCompanyName(data.company_name);
+        setCompanyName('');
+        return;
+      }
+
+      // If we have data, use the company name
+      if (data && data.length > 0) {
+        setCompanyName(data[0].company_name);
+      } else {
+        // If no data, try to get from profiles table as fallback
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('company_name')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError) {
+          console.error('Error fetching profile company name:', profileError);
+          setCompanyName('');
+        } else if (profileData?.company_name) {
+          setCompanyName(profileData.company_name);
+        } else {
+          setCompanyName('');
+        }
       }
     } catch (error) {
-      console.error('Error fetching company name:', error);
+      console.error('Error in fetchCompanyName:', error);
+      setCompanyName('');
     }
   };
 

@@ -43,9 +43,17 @@ export const LoadingModal = ({
   showResultsButton = true
 }: LoadingModalProps) => {
   const [carouselIndex, setCarouselIndex] = useState(0);
-  const progressData = progress || { currentModel, currentPrompt, completed, total };
+  const progressData = progress || { 
+    currentModel: currentModel || '', 
+    currentPrompt: currentPrompt || '', 
+    completed: completed || 0, 
+    total: total || 0 
+  };
   const progressPercentage = progressData.total > 0 ? (progressData.completed / progressData.total) * 100 : 0;
   const navigate = useNavigate();
+
+  // Check if loading is actually complete (not just initial state)
+  const isLoadingComplete = progressData.total > 0 && progressData.completed === progressData.total;
 
   // Auto-rotate carousel every 3 seconds
   useEffect(() => {
@@ -70,10 +78,10 @@ export const LoadingModal = ({
           {/* Header */}
           <div className="space-y-2">
             <h3 className="text-lg font-semibold text-blue-900">
-              {progressData.completed === progressData.total ? "Results Ready!" : "Getting Your Results"}
+              {isLoadingComplete ? "Results Ready!" : "Getting Your Results"}
             </h3>
             <p className="text-sm text-gray-600">
-              {progressData.completed === progressData.total 
+              {isLoadingComplete 
                 ? "Your AI responses are ready to view"
                 : "Testing your prompts across multiple AI models..."}
             </p>
@@ -145,7 +153,7 @@ export const LoadingModal = ({
           </div>
 
           {/* Show button when loading is complete */}
-          {progressData.completed === progressData.total && showResultsButton && (
+          {isLoadingComplete && showResultsButton && (
             <Button
               onClick={() => {
                 if (onClose) onClose();

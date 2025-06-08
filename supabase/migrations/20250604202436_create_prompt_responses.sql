@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS prompt_responses (
 -- Add missing columns
 ALTER TABLE prompt_responses 
   ADD COLUMN IF NOT EXISTS visibility_score FLOAT,
-  ADD COLUMN IF NOT EXISTS competitive_score FLOAT;
+  ADD COLUMN IF NOT EXISTS competitive_score FLOAT,
+  ADD COLUMN IF NOT EXISTS detected_competitors TEXT;
 
 -- Create index on confirmed_prompt_id
 CREATE INDEX IF NOT EXISTS idx_prompt_responses_confirmed_prompt_id 

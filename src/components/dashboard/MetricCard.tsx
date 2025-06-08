@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LucideIcon, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { ReactNode } from "react";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import { HelpCircle } from "lucide-react";
 
 interface MetricCardProps {
   title: string;
@@ -13,6 +15,7 @@ interface MetricCardProps {
     direction: 'up' | 'down' | 'neutral';
   };
   children?: ReactNode;
+  tooltip?: string;
 }
 
 export const MetricCard = ({ 
@@ -22,7 +25,8 @@ export const MetricCard = ({
   icon: Icon, 
   iconColor,
   trend,
-  children 
+  children,
+  tooltip
 }: MetricCardProps) => {
   const getTrendIcon = () => {
     if (!trend) return null;
@@ -51,9 +55,25 @@ export const MetricCard = ({
   return (
     <Card className="shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-        <CardTitle className="text-sm font-medium text-gray-600">
-          {title}
-        </CardTitle>
+        <div className="flex items-center gap-1">
+          <CardTitle className="text-sm font-medium text-gray-600">
+            {title}
+          </CardTitle>
+          {tooltip && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="ml-1 cursor-pointer align-middle">
+                    <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {tooltip}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
         <Icon className={`w-5 h-5 ${iconColor}`} />
       </CardHeader>
       <CardContent className="pt-0">

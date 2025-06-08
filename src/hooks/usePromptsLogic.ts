@@ -311,19 +311,53 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       
       // Ensure we're in a valid state before navigating
       if (completedOperations > 0) {
-        setTimeout(() => {
-          navigate('/dashboard', { 
-            state: { 
-              shouldRefresh: true,
-              onboardingData: {
-                companyName: onboardingRecord.company_name,
-                industry: onboardingRecord.industry,
-                id: onboardingRecord.id
-              }
-            },
-            replace: true 
-          });
-        }, 1500);
+        try {
+          // Update the onboarding record to mark prompts as completed
+          const { error: updateError } = await supabase
+            .from('user_onboarding')
+            .update({ prompts_completed: true })
+            .eq('id', onboardingRecord.id);
+
+          if (updateError) {
+            // If the error is about the column not existing, we can ignore it
+            // as the migration will handle it later
+            if (!updateError.message?.includes('column "prompts_completed" does not exist')) {
+              console.error('Error updating onboarding record:', updateError);
+              throw new Error('Failed to update onboarding status');
+            }
+          }
+
+          setTimeout(() => {
+            navigate('/dashboard', { 
+              state: { 
+                shouldRefresh: true,
+                onboardingData: {
+                  companyName: onboardingRecord.company_name,
+                  industry: onboardingRecord.industry,
+                  id: onboardingRecord.id
+                }
+              },
+              replace: true 
+            });
+          }, 1500);
+        } catch (error) {
+          console.error('Error in final update:', error);
+          // Still navigate even if the update fails
+          // The migration will handle setting prompts_completed later
+          setTimeout(() => {
+            navigate('/dashboard', { 
+              state: { 
+                shouldRefresh: true,
+                onboardingData: {
+                  companyName: onboardingRecord.company_name,
+                  industry: onboardingRecord.industry,
+                  id: onboardingRecord.id
+                }
+              },
+              replace: true 
+            });
+          }, 1500);
+        }
       } else {
         throw new Error('No operations were completed successfully');
       }

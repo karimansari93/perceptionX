@@ -62,7 +62,12 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
           console.error('Error checking onboarding:', error);
           setConnectionError(true);
         } else {
-          const isComplete = data && data.length > 0;
+          // Check if the record has prompts_completed set to true
+          // If the column doesn't exist yet, we'll consider it complete if it has company_name and industry
+          const isComplete = data && data.length > 0 && (
+            data[0].prompts_completed === true || 
+            (data[0].company_name && data[0].industry)
+          );
           setHasOnboarding(isComplete);
           if (process.env.NODE_ENV === 'development') {
             console.log('Onboarding completion status:', isComplete);
