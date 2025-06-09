@@ -1,13 +1,25 @@
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PromptData } from "@/types/dashboard";
+import { PromptData, PromptResponse } from "@/types/dashboard";
+import LLMLogo from "@/components/LLMLogo";
+import { getLLMDisplayName } from "@/config/llmLogos";
 
 interface PromptSummaryCardsProps {
   promptsData: PromptData[];
+  responses: PromptResponse[];
 }
 
-export const PromptSummaryCards = ({ promptsData }: PromptSummaryCardsProps) => {
+function getUniqueLLMsForType(responses: PromptResponse[], type: string) {
+  const models = new Set<string>();
+  responses.forEach(r => {
+    if (r.confirmed_prompts?.prompt_type === type && r.ai_model) {
+      models.add(r.ai_model);
+    }
+  });
+  return Array.from(models);
+}
+
+export const PromptSummaryCards = ({ promptsData, responses }: PromptSummaryCardsProps) => {
   const sentimentPrompts = promptsData.filter(p => p.type === 'sentiment');
   const visibilityPrompts = promptsData.filter(p => p.type === 'visibility');
   const competitivePrompts = promptsData.filter(p => p.type === 'competitive');

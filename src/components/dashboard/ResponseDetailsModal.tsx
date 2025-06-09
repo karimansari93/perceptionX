@@ -6,10 +6,10 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ExternalLink, X, Lightbulb, Building2 } from "lucide-react";
 import LLMLogo from "@/components/LLMLogo";
-import { PromptResponse } from "@/types/dashboard";
+import { PromptResponse, PromptData } from "@/types/dashboard";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { enhanceCitations } from "@/utils/citationUtils";
+import { enhanceCitations, getFavicon } from "@/utils/citationUtils";
 import { Skeleton } from "@/components/ui/skeleton";
 import ReactMarkdown from 'react-markdown';
 import { getLLMDisplayName } from '@/config/llmLogos';
@@ -20,6 +20,7 @@ interface ResponseDetailsModalProps {
   onClose: () => void;
   promptText: string;
   responses: PromptResponse[];
+  promptsData?: PromptData[];
   showMarkdownCheatSheet?: boolean;
 }
 
@@ -28,6 +29,7 @@ export const ResponseDetailsModal = ({
   onClose, 
   promptText, 
   responses,
+  promptsData = [],
   showMarkdownCheatSheet = false
 }: ResponseDetailsModalProps) => {
   const [selectedResponse, setSelectedResponse] = useState<PromptResponse | null>(
@@ -37,6 +39,12 @@ export const ResponseDetailsModal = ({
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryCache, setSummaryCache] = useState<{ [prompt: string]: string }>({});
+
+  // Find the matching PromptData for this promptText
+  const promptData = promptsData.find ? promptsData.find(p => p.prompt === promptText) : undefined;
+  const sentimentLabel = promptData?.sentimentLabel;
+  const visibilityScores = promptData?.visibilityScores;
+  const avgVisibility = visibilityScores && visibilityScores.length > 0 ? visibilityScores.reduce((sum, score) => sum + score, 0) / visibilityScores.length : (responses.length > 0 ? responses.reduce((sum, r) => sum + (r.company_mentioned ? 100 : 0), 0) / responses.length : 0);
 
   // Add debugging and validation
   useEffect(() => {
@@ -76,7 +84,6 @@ export const ResponseDetailsModal = ({
   // Compute averages and sources
   const avgSentiment = responses.length > 0 ? responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length : 0;
   const avgSentimentLabel = avgSentiment > 0.1 ? "Positive" : avgSentiment < -0.1 ? "Negative" : "Neutral";
-  const avgVisibility = responses.length > 0 ? responses.reduce((sum, r) => sum + (r.company_mentioned ? 100 : 0), 0) / responses.length : 0;
   const brandMentionedPct = responses.length > 0 ? Math.round(responses.filter(r => r.company_mentioned).length / responses.length * 100) : 0;
 
   // Extract real sources (with URLs)
@@ -216,6 +223,15 @@ export const ResponseDetailsModal = ({
     return insights;
   };
 
+  // Helper to get unique LLMs for the current responses
+  function getUniqueLLMs(responses: PromptResponse[]) {
+    const models = new Set<string>();
+    responses.forEach(r => {
+      if (r.ai_model) models.add(r.ai_model);
+    });
+    return Array.from(models);
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
@@ -237,44 +253,131 @@ export const ResponseDetailsModal = ({
 
         {/* Show summary card only if multiple responses (prompt view), otherwise show just the response details */}
         {responses.length > 1 ? (
-          <div className="mb-6">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base font-semibold">Summary</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {loadingSummary ? (
-                  <div className="w-full">
-                    <Skeleton className="h-6 w-3/4 mb-2" />
-                    <Skeleton className="h-6 w-5/6 mb-2" />
-                    <Skeleton className="h-6 w-2/3 mb-2" />
-                    <Skeleton className="h-6 w-1/2 mb-2" />
-                  </div>
-                ) : summaryError ? (
-                  <div className="text-red-600 text-sm py-2">{summaryError}</div>
-                ) : (
-                  <div className="text-gray-800 text-base mb-3 whitespace-pre-line">
-                    <ReactMarkdown>{summary}</ReactMarkdown>
-                  </div>
-                )}
-                <div className="flex flex-wrap gap-4 items-center mt-2">
-                  <Badge variant="outline">Avg. Sentiment: <span className="ml-1 font-semibold">{Math.round(avgSentiment * 100)}% {avgSentimentLabel}</span></Badge>
-                  <Badge variant="outline">Avg. Visibility: <span className="ml-1 font-semibold">{Math.round(avgVisibility)}%</span></Badge>
-                  <Badge variant="outline">Brand Mentioned: <span className="ml-1 font-semibold">{brandMentionedPct}%</span></Badge>
+          <>
+            {/* MODELS, SENTIMENT & VISIBILITY ROW - with labels above values */}
+            <div className="flex flex-row gap-8 mt-1 mb-1 w-full">
+              {/* Models */}
+              <div className="flex flex-col items-start min-w-[120px]">
+                <span className="text-xs text-gray-400 font-medium mb-1">Models</span>
+                <div className="flex flex-row flex-wrap items-center gap-2">
+                  {getUniqueLLMs(responses).length === 0 ? (
+                    <span className="text-xs text-gray-400">None</span>
+                  ) : (
+                    getUniqueLLMs(responses).map(model => (
+                      <span key={model} className="inline-flex items-center">
+                        <LLMLogo modelName={model} size="sm" className="mr-1" />
+                        <span className="text-xs text-gray-700 mr-2">{getLLMDisplayName(model)}</span>
+                      </span>
+                    ))
+                  )}
                 </div>
-                {uniqueSources.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-gray-500">Sources:</span>
-                    {uniqueSources.map((src, i) => (
-                      <a key={src.url} href={src.url} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline text-xs font-medium hover:text-blue-900">
-                        {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+              {/* Sentiment */}
+              <div className="flex flex-col items-start min-w-[80px]">
+                <span className="text-xs text-gray-400 font-medium mb-1">Sentiment</span>
+                {(() => {
+                  let label = "Normal";
+                  if (sentimentLabel && sentimentLabel.toLowerCase() === "positive") {
+                    label = "Positive";
+                  } else if (sentimentLabel && sentimentLabel.toLowerCase() === "negative") {
+                    label = "Negative";
+                  } else if (!sentimentLabel && responses.length > 0) {
+                    const avgSentiment = responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length;
+                    if (avgSentiment > 0.1) {
+                      label = "Positive";
+                    } else if (avgSentiment < -0.1) {
+                      label = "Negative";
+                    }
+                  }
+                  return (
+                    <span className="text-xs text-gray-700 mr-2">{label}</span>
+                  );
+                })()}
+              </div>
+              {/* Visibility */}
+              <div className="flex flex-col items-start min-w-[90px]">
+                <span className="text-xs text-gray-400 font-medium mb-1">Visibility</span>
+                <span className="flex items-center gap-1">
+                  <svg width="20" height="20" viewBox="0 0 20 20" className="-ml-1">
+                    <circle
+                      cx="10"
+                      cy="10"
+                      r="8"
+                      fill="none"
+                      stroke="#e5e7eb"
+                      strokeWidth="2"
+                    />
+                    <circle
+                      cx="10"
+                      cy="10"
+                      r="8"
+                      fill="none"
+                      stroke={
+                        avgVisibility >= 95 ? '#22c55e' :
+                        avgVisibility >= 60 ? '#4ade80' :
+                        avgVisibility > 0 ? '#fde047' :
+                        '#e5e7eb'
+                      }
+                      strokeWidth="2"
+                      strokeDasharray={2 * Math.PI * 8}
+                      strokeDashoffset={2 * Math.PI * 8 * (1 - avgVisibility / 100)}
+                      strokeLinecap="round"
+                      style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
+                    />
+                  </svg>
+                  <span className="text-xs font-regular text-gray-900">{Math.round(avgVisibility)}%</span>
+                </span>
+              </div>
+            </div>
+            <div className="mb-6">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base font-semibold">Summary</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {loadingSummary ? (
+                    <div className="w-full">
+                      <Skeleton className="h-6 w-3/4 mb-2" />
+                      <Skeleton className="h-6 w-5/6 mb-2" />
+                      <Skeleton className="h-6 w-2/3 mb-2" />
+                      <Skeleton className="h-6 w-1/2 mb-2" />
+                    </div>
+                  ) : summaryError ? (
+                    <div className="text-red-600 text-sm py-2">{summaryError}</div>
+                  ) : (
+                    <>
+                      <div className="text-gray-800 text-base mb-3 whitespace-pre-line">
+                        <ReactMarkdown>{summary}</ReactMarkdown>
+                      </div>
+                      {uniqueSources.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
+                          <span className="text-xs text-gray-500">Sources:</span>
+                          {uniqueSources.map((src, i) => (
+                            <a
+                              key={src.url}
+                              href={src.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200"
+                            >
+                              <img
+                                src={getFavicon(src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0])}
+                                alt=""
+                                className="w-4 h-4 mr-1 rounded"
+                                style={{ background: '#fff' }}
+                                onError={e => { e.currentTarget.style.display = 'none'; }}
+                              />
+                              {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </>
         ) : (
           // Single response: show prompt, model, sentiment, and full response
           <div className="mb-6">
