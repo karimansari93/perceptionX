@@ -1,5 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { serve } from "std/http/server.ts";
+import { createClient } from "@supabase/supabase-js";
 import { corsHeaders } from "../_shared/cors.ts";
 
 const supabase = createClient(
@@ -242,39 +242,30 @@ function performEnhancedBasicAnalysis(responseText: string, companyName: string,
 }
 
 function detectEnhancedCompanyMention(text: string, companyName: string) {
-  const lowerText = text.toLowerCase()
-  const lowerCompany = companyName.toLowerCase()
-  
-  // Check for various company name variations
-  const variations = [
-    lowerCompany,
-    `${lowerCompany} inc`,
-    `${lowerCompany} systems`,
-    `${lowerCompany} technologies`,
-    `${lowerCompany} company`
-  ]
-  
-  let mentioned = false
-  let mentions = 0
-  let first_mention_position: number | null = null
-  
-  variations.forEach(variation => {
-    let position = lowerText.indexOf(variation)
-    while (position !== -1) {
-      mentioned = true
-      mentions++
-      if (first_mention_position === null) {
-        first_mention_position = position
-      }
-      position = lowerText.indexOf(variation, position + 1)
+  // Lowercase for case-insensitive matching
+  const lowerText = text.toLowerCase();
+  const lowerCompany = companyName.toLowerCase();
+
+  // Split text into words
+  const words = lowerText.split(/\s+/);
+  let firstMentionWordIndex = null;
+  for (let i = 0; i < words.length; i++) {
+    if (words[i].includes(lowerCompany)) {
+      firstMentionWordIndex = i;
+      break;
     }
-  })
-  
-  return {
-    mentioned,
-    mentions,
-    first_mention_position
   }
+
+  // Debug logging
+  console.log('Debug - Original text:', text);
+  console.log('Debug - Company name:', companyName);
+  console.log('Debug - First mention word index:', firstMentionWordIndex);
+
+  return {
+    mentioned: firstMentionWordIndex !== null,
+    mentions: firstMentionWordIndex !== null ? 1 : 0,
+    first_mention_position: firstMentionWordIndex !== null ? firstMentionWordIndex : null
+  };
 }
 
 function detectEnhancedRanking(text: string, companyName: string): number | null {

@@ -11,6 +11,7 @@ import { usePromptsLogic } from "@/hooks/usePromptsLogic";
 import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { setPromptsCompleted } from "@/pages/Dashboard";
 
 interface OnboardingData {
   companyName: string;
@@ -60,6 +61,7 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
 
           // Navigate if either prompts_completed is true or the column doesn't exist yet
           if (!error || error.message?.includes('column "prompts_completed" does not exist')) {
+            setPromptsCompleted(onboardingRecord.id);
             navigate('/dashboard', { 
               state: { 
                 shouldRefresh: true,
@@ -71,6 +73,7 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
           console.error('Error in verification:', error);
           // Still navigate even if verification fails
           // The migration will handle setting prompts_completed later
+          setPromptsCompleted(onboardingRecord.id);
           navigate('/dashboard', { 
             state: { 
               shouldRefresh: true,

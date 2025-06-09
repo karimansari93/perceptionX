@@ -53,7 +53,7 @@ const hasCompletedPrompts = (onboardingId: string | null) => {
   }
 };
 
-const setPromptsCompleted = (onboardingId: string | null) => {
+export const setPromptsCompleted = (onboardingId: string | null) => {
   if (!onboardingId) return;
   const completed = localStorage.getItem(PROMPTS_COMPLETED_KEY);
   let completedIds: string[] = [];
@@ -373,14 +373,14 @@ const DashboardContent = () => {
           <div className="flex-1 space-y-4 p-8">
             <div className="mb-8">
               <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                {activeSection === "responses" ? "AI Responses" :
-                 activeSection === "prompts" ? "Prompt Library" :
+                {activeSection === "responses" ? "Responses" :
+                 activeSection === "prompts" ? "Prompts" :
                  activeSection === "answer-gaps" ? "Answer Gaps Analysis" :
                  activeSection === "reports" ? "Reports" : "Dashboard"}
               </h1>
               <p className="text-gray-600">
                 {activeSection === "responses"
-                  ? "visibility_score"
+                  ? "Manage and monitor all the individual responses for your prompts."
                   : activeSection === "prompts"
                   ? "Manage and monitor your AI prompts across different categories."
                   : activeSection === "answer-gaps"

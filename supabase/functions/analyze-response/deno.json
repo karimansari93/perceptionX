@@ -2,14 +2,10 @@
   "compilerOptions": {
     "allowJs": true,
     "lib": ["deno.window", "deno.ns", "dom"],
-    "strict": true,
-    "allowImportingTsExtensions": true,
-    "module": "esnext",
-    "moduleResolution": "node",
-    "noEmit": true,
-    "isolatedModules": true
+    "strict": true
   },
+  "importMap": "./import_map.json",
   "tasks": {
-    "start": "deno run --allow-net index.ts"
+    "start": "deno run --allow-net --allow-env index.ts"
   }
 } 
