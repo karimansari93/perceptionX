@@ -69,6 +69,14 @@ export interface DashboardMetrics {
     value: number;
     direction: 'up' | 'down' | 'neutral';
   };
+  visibilityTrendComparison: {
+    value: number;
+    direction: 'up' | 'down' | 'neutral';
+  };
+  citationsTrendComparison: {
+    value: number;
+    direction: 'up' | 'down' | 'neutral';
+  };
   totalCitations: number;
   uniqueDomains: number;
   totalResponses: number;

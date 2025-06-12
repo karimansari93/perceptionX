@@ -62,6 +62,7 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
           // Navigate if either prompts_completed is true or the column doesn't exist yet
           if (!error || error.message?.includes('column "prompts_completed" does not exist')) {
             setPromptsCompleted(onboardingRecord.id);
+            onOpenChange(false); // Close the modal before navigating
             navigate('/dashboard', { 
               state: { 
                 shouldRefresh: true,
@@ -74,6 +75,7 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
           // Still navigate even if verification fails
           // The migration will handle setting prompts_completed later
           setPromptsCompleted(onboardingRecord.id);
+          onOpenChange(false); // Close the modal before navigating
           navigate('/dashboard', { 
             state: { 
               shouldRefresh: true,
@@ -83,7 +85,7 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
         }
       }, 1000);
     }
-  }, [isConfirming, progress.completed, progress.total, navigate, onboardingData, onboardingRecord]);
+  }, [isConfirming, progress.completed, progress.total, navigate, onboardingData, onboardingRecord, onOpenChange]);
 
   // If onboardingRecord or onboardingData is missing, don't show the modal
   if (!onboardingRecord || !onboardingData) {
@@ -147,6 +149,7 @@ export const PromptsModal = ({ open, onOpenChange, onboardingData }: PromptsModa
         total={progress.total}
         showResultsButton={true}
         onClose={() => setIsConfirming(false)}
+        isLoadingComplete={progress.completed === progress.total && progress.total > 0}
       />
     </>
   );

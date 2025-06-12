@@ -48,7 +48,7 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
           return;
         }
 
-        // Check for completed onboarding (only company_name and industry required)
+        // Check for completed onboarding (both company_name and industry are required)
         const { data, error } = await supabase
           .from('user_onboarding')
           .select('*')
@@ -62,12 +62,11 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
           console.error('Error checking onboarding:', error);
           setConnectionError(true);
         } else {
-          // Check if the record has prompts_completed set to true
-          // If the column doesn't exist yet, we'll consider it complete if it has company_name and industry
-          const isComplete = data && data.length > 0 && (
-            data[0].prompts_completed === true || 
-            (data[0].company_name && data[0].industry)
-          );
+          // Check if the record has both required fields: company_name and industry
+          const isComplete = data && data.length > 0 && 
+            data[0].company_name && 
+            data[0].industry && 
+            (data[0].prompts_completed === true || true); // Keep prompts_completed check for backward compatibility
           setHasOnboarding(isComplete);
           if (process.env.NODE_ENV === 'development') {
             console.log('Onboarding completion status:', isComplete);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { SidebarProvider, SidebarInset, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
@@ -14,9 +14,17 @@ import { OnboardingModal } from "@/components/onboarding/OnboardingModal";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ChevronRight, LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DashboardSkeleton } from "@/components/dashboard/DashboardSkeleton";
+import { 
+  OverviewSkeleton, 
+  PromptsSkeleton, 
+  ResponsesSkeleton, 
+  AnswerGapsSkeleton, 
+  ReportsSkeleton 
+} from "@/components/dashboard/SectionSkeletons";
+import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
+import LLMLogo from "@/components/LLMLogo";
 
 interface DatabaseOnboardingData {
   company_name: string;
@@ -269,33 +277,24 @@ const DashboardContent = () => {
     }
   }, [justFinishedOnboarding, onboardingId]);
 
-  if (loading) {
-    return <DashboardSkeleton />;
-  }
-
-  if (isLoading) {
-    return <DashboardSkeleton />;
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-lg font-semibold text-red-900 mb-2">Error</h2>
-          <p className="text-red-700 mb-4">{error}</p>
-          <Button 
-            onClick={() => window.location.reload()}
-            className="bg-red-600 hover:bg-red-700"
-          >
-            Try Again
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
   const renderActiveSection = () => {
+    if (loading) {
+      switch (activeSection) {
+        case "overview":
+          return <OverviewSkeleton />;
+        case "prompts":
+          return <PromptsSkeleton />;
+        case "responses":
+          return <ResponsesSkeleton />;
+        case "answer-gaps":
+          return <AnswerGapsSkeleton />;
+        case "reports":
+          return <ReportsSkeleton />;
+        default:
+          return <OverviewSkeleton />;
+      }
+    }
+
     switch (activeSection) {
       case "overview":
         return (
@@ -351,6 +350,55 @@ const DashboardContent = () => {
   // Sidebar width variables
   const sidebarWidth = isMobile ? 0 : state === "collapsed" ? "4rem" : "16rem";
 
+  // Helper to get breadcrumb label for each section
+  const getBreadcrumbLabel = (section) => {
+    switch (section) {
+      case "overview":
+        return "Dashboard";
+      case "responses":
+        return "Responses";
+      case "prompts":
+        return "Prompts";
+      case "answer-gaps":
+        return "Answer Gaps";
+      case "reports":
+        return "Reports";
+      default:
+        return "Dashboard";
+    }
+  };
+
+  const breadcrumbs = useMemo(() => {
+    // Only two-level for now: Dashboard > Section
+    if (activeSection === "overview") {
+      return [
+        { label: "Dashboard", icon: LayoutDashboard, active: true }
+      ];
+    }
+    return [
+      { label: "Dashboard", icon: LayoutDashboard, active: false },
+      { label: getBreadcrumbLabel(activeSection), icon: null, active: true }
+    ];
+  }, [activeSection]);
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-lg font-semibold text-red-900 mb-2">Error</h2>
+          <p className="text-red-700 mb-4">{error}</p>
+          <Button 
+            onClick={() => window.location.reload()}
+            className="bg-red-600 hover:bg-red-700"
+          >
+            Try Again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative min-h-screen w-full flex flex-row">
       <div
@@ -368,27 +416,54 @@ const DashboardContent = () => {
             companyName={companyName}
             responsesCount={responses.length}
             onRefresh={refreshData}
+            breadcrumbs={breadcrumbs}
           />
 
           <div className="flex-1 space-y-4 p-8">
             <div className="mb-8">
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                {activeSection === "responses" ? "Responses" :
-                 activeSection === "prompts" ? "Prompts" :
-                 activeSection === "answer-gaps" ? "Answer Gaps Analysis" :
-                 activeSection === "reports" ? "Reports" : "Dashboard"}
-              </h1>
-              <p className="text-gray-600">
-                {activeSection === "responses"
-                  ? "Manage and monitor all the individual responses for your prompts."
-                  : activeSection === "prompts"
-                  ? "Manage and monitor your AI prompts across different categories."
-                  : activeSection === "answer-gaps"
-                  ? "Analyze and identify gaps in AI responses about your company."
-                  : activeSection === "reports"
-                  ? "Generate comprehensive reports about your AI perception and performance."
-                  : `Overview of your project's performance and AI interactions for ${companyName}.`}
-              </p>
+              {/* Dashboard Title, LLM Logos (right-aligned only for overview), and Subtitle */}
+              <div className="flex items-center justify-between mb-1 w-full">
+                <div>
+                  <h1 className="text-3xl font-bold text-gray-900 whitespace-nowrap">
+                    {activeSection === "responses" ? "Responses" :
+                     activeSection === "prompts" ? "Prompts" :
+                     activeSection === "answer-gaps" ? "Answer Gaps Analysis" :
+                     activeSection === "reports" ? "Reports" : "Dashboard"}
+                  </h1>
+                  <p className="text-gray-600">
+                    {activeSection === "responses"
+                      ? "Manage and monitor all the individual responses for your prompts."
+                      : activeSection === "prompts"
+                      ? "Manage and monitor your AI prompts across different categories."
+                      : activeSection === "answer-gaps"
+                      ? "Analyze and identify gaps in AI responses about your company."
+                      : activeSection === "reports"
+                      ? "Generate comprehensive reports about your AI perception and performance."
+                      : `Overview of your project's performance and AI interactions for ${companyName}.`}
+                  </p>
+                </div>
+                {/* LLM Logos right-aligned only for overview */}
+                {activeSection === "overview" && (
+                  <div className="flex flex-row items-center gap-2 flex-nowrap">
+                    <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
+                      <LLMLogo modelName="openai" size="sm" className="mr-1" />
+                      <span className="text-sm text-gray-700">OpenAI</span>
+                    </div>
+                    <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
+                      <LLMLogo modelName="perplexity" size="sm" className="mr-1" />
+                      <span className="text-sm text-gray-700">Perplexity</span>
+                    </div>
+                    <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
+                      <LLMLogo modelName="gemini" size="sm" className="mr-1" />
+                      <span className="text-sm text-gray-700">Gemini</span>
+                    </div>
+                    <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
+                      <LLMLogo modelName="deepseek" size="sm" className="mr-1" />
+                      <span className="text-sm text-gray-700">DeepSeek</span>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="space-y-8">
               {renderActiveSection()}
@@ -396,19 +471,21 @@ const DashboardContent = () => {
           </div>
         </SidebarInset>
       </div>
-      {/* Prompts Modal */}
-      {!justFinishedOnboarding && !hasCompletedPrompts(onboardingId) && (
+
+      {/* Modals */}
+      {showPromptsModal && (
         <PromptsModal
           open={showPromptsModal}
           onOpenChange={setShowPromptsModal}
-          onboardingData={onboardingData || undefined}
+          onboardingData={onboardingData}
         />
       )}
-      {/* Onboarding Modal */}
-      <OnboardingModal
-        open={showOnboardingModal}
-        onOpenChange={setShowOnboardingModal}
-      />
+      {showOnboardingModal && (
+        <OnboardingModal
+          open={showOnboardingModal}
+          onOpenChange={setShowOnboardingModal}
+        />
+      )}
     </div>
   );
 };

@@ -1,65 +1,30 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PromptResponse, DashboardMetrics, SentimentTrendData, CitationCount, PromptData, Citation, CompetitorMention } from "@/types/dashboard";
 import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 
 export const useDashboardData = () => {
-  const { user } = useAuth();
+  const { user: rawUser } = useAuth();
+  // Memoize user to avoid unnecessary effect reruns
+  const user = useMemo(() => rawUser, [rawUser?.id]);
   const [responses, setResponses] = useState<PromptResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [competitorLoading, setCompetitorLoading] = useState(true);
   const [companyName, setCompanyName] = useState<string>("");
+  const subscriptionRef = useRef<any>(null); // Track subscription instance
+  const pollingRef = useRef<NodeJS.Timeout | null>(null); // Track polling interval
 
-  const fetchCompanyName = async () => {
+  const fetchResponses = useCallback(async () => {
     if (!user) return;
     
     try {
-      // First try to get the most recent onboarding record
-      const { data, error } = await supabase
-        .from('user_onboarding')
-        .select('company_name')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (error) {
-        console.error('Error fetching company name:', error);
-        setCompanyName('');
-        return;
+      if (import.meta.env.MODE === 'development') {
+        console.log('Fetching responses...');
       }
-
-      // If we have data, use the company name
-      if (data && data.length > 0) {
-        setCompanyName(data[0].company_name);
-      } else {
-        // If no data, try to get from profiles table as fallback
-        const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('company_name')
-          .eq('id', user.id)
-          .single();
-
-        if (profileError) {
-          console.error('Error fetching profile company name:', profileError);
-          setCompanyName('');
-        } else if (profileData?.company_name) {
-          setCompanyName(profileData.company_name);
-        } else {
-          setCompanyName('');
-        }
-      }
-    } catch (error) {
-      console.error('Error in fetchCompanyName:', error);
-      setCompanyName('');
-    }
-  };
-
-  const fetchResponses = async () => {
-    if (!user) return;
-    
-    try {
-      setCompetitorLoading(true); // Set competitor loading to true when starting fetch
+      setLoading(true);
+      setCompetitorLoading(true);
+      
       const { data: userPrompts, error: promptsError } = await supabase
         .from('confirmed_prompts')
         .select('id')
@@ -68,6 +33,9 @@ export const useDashboardData = () => {
       if (promptsError) throw promptsError;
 
       if (!userPrompts || userPrompts.length === 0) {
+        if (import.meta.env.MODE === 'development') {
+          console.log('No prompts found');
+        }
         setResponses([]);
         setLoading(false);
         setCompetitorLoading(false);
@@ -91,6 +59,10 @@ export const useDashboardData = () => {
 
       if (error) throw error;
       
+      if (import.meta.env.MODE === 'development') {
+        console.log('Fetched responses:', data?.length || 0);
+      }
+      
       // Create a map to store the latest response for each prompt-model combination
       const responseMap = new Map();
       
@@ -110,28 +82,157 @@ export const useDashboardData = () => {
       // Sort by tested_at in descending order
       uniqueResponses.sort((a, b) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
       
+      if (import.meta.env.MODE === 'development') {
+        console.log('Setting responses:', uniqueResponses.length);
+      }
       setResponses(uniqueResponses);
-      setCompetitorLoading(false); // Set competitor loading to false after responses are loaded
-    } catch (error) {
-      console.error('Error fetching responses:', error);
-      setCompetitorLoading(false);
-    } finally {
       setLoading(false);
+      setCompetitorLoading(false);
+    } catch (error) {
+      if (import.meta.env.MODE === 'development') {
+        console.error('Error fetching responses:', error);
+      }
+      setLoading(false);
+      setCompetitorLoading(false);
     }
-  };
+  }, [user]);
 
-  const refreshData = async () => {
-    await fetchResponses();
-  };
+  const fetchCompanyName = useCallback(async () => {
+    if (!user) return;
+    
+    try {
+      // First try to get the most recent onboarding record
+      const { data, error } = await supabase
+        .from('user_onboarding')
+        .select('company_name')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
 
+      if (error) {
+        if (import.meta.env.MODE === 'development') {
+          console.error('Error fetching company name:', error);
+        }
+        setCompanyName('');
+        return;
+      }
+
+      // If we have data, use the company name
+      if (data && data.length > 0) {
+        setCompanyName(data[0].company_name);
+      } else {
+        // If no data, try to get from profiles table as fallback
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('company_name')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError) {
+          if (import.meta.env.MODE === 'development') {
+            console.error('Error fetching profile company name:', profileError);
+          }
+          setCompanyName('');
+        } else if (profileData?.company_name) {
+          setCompanyName(profileData.company_name);
+        } else {
+          setCompanyName('');
+        }
+      }
+    } catch (error) {
+      if (import.meta.env.MODE === 'development') {
+        console.error('Error in fetchCompanyName:', error);
+      }
+      setCompanyName('');
+    }
+  }, [user]);
+
+  // Real-time subscription effect (only once per user session)
+  useEffect(() => {
+    if (!user) return;
+    if (subscriptionRef.current) {
+      // Clean up any existing subscription before creating a new one
+      subscriptionRef.current.unsubscribe();
+      subscriptionRef.current = null;
+    }
+    if (import.meta.env.MODE === 'development') {
+      console.log('Setting up real-time subscription...');
+    }
+    const subscription = supabase
+      .channel('prompt_responses_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'prompt_responses'
+        },
+        (payload) => {
+          if (import.meta.env.MODE === 'development') {
+            console.log('Real-time update received:', payload);
+          }
+          fetchResponses();
+        }
+      )
+      .subscribe();
+    subscriptionRef.current = subscription;
+    return () => {
+      if (subscriptionRef.current) {
+        if (import.meta.env.MODE === 'development') {
+          console.log('Cleaning up real-time subscription...');
+        }
+        subscriptionRef.current.unsubscribe();
+        subscriptionRef.current = null;
+      }
+    };
+  }, [user, fetchResponses]);
+
+  // Polling effect: only set up polling when loading is true and only one interval at a time
+  useEffect(() => {
+    if (!user || !loading) {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+        if (import.meta.env.MODE === 'development') {
+          console.log('Cleaning up polling...');
+        }
+      }
+      return;
+    }
+    if (pollingRef.current) return; // Already polling
+    if (import.meta.env.MODE === 'development') {
+      console.log('Setting up polling...');
+    }
+    pollingRef.current = setInterval(() => {
+      if (import.meta.env.MODE === 'development') {
+        console.log('Polling for updates...');
+      }
+      fetchResponses();
+    }, 2000);
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+        if (import.meta.env.MODE === 'development') {
+          console.log('Cleaning up polling...');
+        }
+      }
+    };
+  }, [user, loading, fetchResponses]);
+
+  // Initial data fetch
   useEffect(() => {
     if (user) {
       fetchResponses();
       fetchCompanyName();
     }
-  }, [user]);
+  }, [user, fetchResponses, fetchCompanyName]);
 
-  const parseCitations = (citations: any): Citation[] => {
+  const refreshData = useCallback(async () => {
+    await fetchResponses();
+  }, [fetchResponses]);
+
+  const parseCitations = useCallback((citations: any): Citation[] => {
     if (!citations) return [];
     if (Array.isArray(citations)) return citations;
     if (typeof citations === 'string') {
@@ -143,7 +244,7 @@ export const useDashboardData = () => {
       }
     }
     return [];
-  };
+  }, []);
 
   const promptsData: PromptData[] = useMemo(() => {
     return responses.reduce((acc: PromptData[], response) => {
@@ -214,40 +315,63 @@ export const useDashboardData = () => {
     const positiveCount = responses.filter(r => (r.sentiment_score || 0) > 0.1).length;
     const neutralCount = responses.filter(r => (r.sentiment_score || 0) >= -0.1 && (r.sentiment_score || 0) <= 0.1).length;
     const negativeCount = responses.filter(r => (r.sentiment_score || 0) < -0.1).length;
-    
-    // Calculate sentiment trend comparison
-    const lastWeekResponses = responses.filter(r => {
-      const responseDate = new Date(r.tested_at);
-      const oneWeekAgo = new Date();
-      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-      return responseDate >= oneWeekAgo;
-    });
-    
-    const previousWeekResponses = responses.filter(r => {
-      const responseDate = new Date(r.tested_at);
-      const twoWeeksAgo = new Date();
-      twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
-      const oneWeekAgo = new Date();
-      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-      return responseDate >= twoWeeksAgo && responseDate < oneWeekAgo;
-    });
 
-    const lastWeekSentiment = lastWeekResponses.length > 0
-      ? lastWeekResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / lastWeekResponses.length
-      : 0;
+    // --- NEW LOGIC: Compare most recent update to previous update ---
+    let sentimentTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
+    let visibilityTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
+    let citationsTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     
-    const previousWeekSentiment = previousWeekResponses.length > 0
-      ? previousWeekResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / previousWeekResponses.length
-      : 0;
+    if (responses.length > 1) {
+      // Sort responses by tested_at descending
+      const sorted = [...responses].sort((a, b) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
+      const latestDate = sorted[0].tested_at;
+      const prevDate = sorted.find(r => r.tested_at !== latestDate)?.tested_at;
+      
+      if (prevDate) {
+        const latestResponses = sorted.filter(r => r.tested_at === latestDate);
+        const prevResponses = sorted.filter(r => r.tested_at === prevDate);
+        
+        // Calculate sentiment trend
+        const latestSentimentAvg = latestResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / latestResponses.length;
+        const prevSentimentAvg = prevResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / prevResponses.length;
+        const sentimentChange = prevSentimentAvg !== 0 ? ((latestSentimentAvg - prevSentimentAvg) / Math.abs(prevSentimentAvg)) * 100 : 0;
+        sentimentTrendComparison = {
+          value: Math.abs(Math.round(sentimentChange)),
+          direction: sentimentChange > 0 ? 'up' : sentimentChange < 0 ? 'down' : 'neutral'
+        };
 
-    const sentimentChange = previousWeekSentiment !== 0
-      ? ((lastWeekSentiment - previousWeekSentiment) / Math.abs(previousWeekSentiment)) * 100
-      : 0;
+        // Calculate visibility trend
+        const latestVisibilityScores = latestResponses
+          .map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined)
+          .filter((v): v is number => typeof v === 'number');
+        const prevVisibilityScores = prevResponses
+          .map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined)
+          .filter((v): v is number => typeof v === 'number');
+        
+        const latestVisibilityAvg = latestVisibilityScores.length > 0
+          ? latestVisibilityScores.reduce((sum, v) => sum + v, 0) / latestVisibilityScores.length
+          : 0;
+        const prevVisibilityAvg = prevVisibilityScores.length > 0
+          ? prevVisibilityScores.reduce((sum, v) => sum + v, 0) / prevVisibilityScores.length
+          : 0;
+        
+        const visibilityChange = prevVisibilityAvg !== 0 ? ((latestVisibilityAvg - prevVisibilityAvg) / Math.abs(prevVisibilityAvg)) * 100 : 0;
+        visibilityTrendComparison = {
+          value: Math.abs(Math.round(visibilityChange)),
+          direction: visibilityChange > 0 ? 'up' : visibilityChange < 0 ? 'down' : 'neutral'
+        };
 
-    const sentimentTrendComparison = {
-      value: Math.abs(Math.round(sentimentChange)),
-      direction: sentimentChange > 0 ? 'up' as const : sentimentChange < 0 ? 'down' as const : 'neutral' as const
-    };
+        // Calculate citations trend
+        const latestCitations = latestResponses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
+        const prevCitations = prevResponses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
+        const citationsChange = prevCitations !== 0 ? ((latestCitations - prevCitations) / Math.abs(prevCitations)) * 100 : 0;
+        citationsTrendComparison = {
+          value: Math.abs(Math.round(citationsChange)),
+          direction: citationsChange > 0 ? 'up' : citationsChange < 0 ? 'down' : 'neutral'
+        };
+      }
+    }
+    // --- END NEW LOGIC ---
 
     const totalCitations = responses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
     const uniqueDomains = new Set(
@@ -266,6 +390,8 @@ export const useDashboardData = () => {
       averageSentiment,
       sentimentLabel,
       sentimentTrendComparison,
+      visibilityTrendComparison,
+      citationsTrendComparison,
       totalCitations,
       uniqueDomains,
       totalResponses: responses.length,
@@ -373,23 +499,48 @@ export const useDashboardData = () => {
   };
 
   const topCompetitors = useMemo(() => {
-    if (!companyName) return [];
+    if (!companyName || !responses.length) {
+      console.log('No company name or responses for competitors');
+      return [];
+    }
+    
+    console.log('Processing competitors from responses:', responses.length);
     const competitorCounts: Record<string, number> = {};
-    responses.forEach(r => {
-      if (r.detected_competitors) {
-        r.detected_competitors.split(',')
+    
+    responses.forEach(response => {
+      if (response.detected_competitors) {
+        const competitors = response.detected_competitors
+          .split(',')
           .map(name => name.trim())
-          .filter(name => name && name.toLowerCase() !== companyName.toLowerCase())
-          .forEach(name => {
-            competitorCounts[name] = (competitorCounts[name] || 0) + 1;
-          });
+          .filter(name => 
+            name && 
+            name.toLowerCase() !== companyName.toLowerCase() &&
+            name.length > 1
+          );
+        
+        competitors.forEach(name => {
+          competitorCounts[name] = (competitorCounts[name] || 0) + 1;
+        });
       }
     });
-    return Object.entries(competitorCounts)
+
+    const result = Object.entries(competitorCounts)
       .map(([company, count]) => ({ company, count }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 8); // top 8 competitors
+      .slice(0, 8);
+
+    console.log('Processed competitors:', result);
+    return result;
   }, [responses, companyName]);
+
+  // Add debug logging for data updates
+  useEffect(() => {
+    if (responses.length > 0) {
+      console.log('Responses updated:', responses.length);
+      console.log('Top competitors:', topCompetitors);
+      console.log('Loading states:', { loading, competitorLoading });
+    }
+  }, [responses, topCompetitors, loading, competitorLoading]);
 
   return {
     responses,

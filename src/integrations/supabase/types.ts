@@ -177,6 +177,11 @@ export type Database = {
           session_id: string
           created_at: string
           competitors: string[]
+          subscription_type: Database["public"]["Enums"]["subscription_type"]
+          subscription_start_date: string | null
+          prompts_used: number
+          last_report_date: string | null
+          next_call_date: string | null
         }
         Insert: {
           id?: string
@@ -186,6 +191,11 @@ export type Database = {
           session_id: string
           created_at?: string
           competitors?: string[]
+          subscription_type?: Database["public"]["Enums"]["subscription_type"]
+          subscription_start_date?: string | null
+          prompts_used?: number
+          last_report_date?: string | null
+          next_call_date?: string | null
         }
         Update: {
           id?: string
@@ -195,7 +205,47 @@ export type Database = {
           session_id?: string
           created_at?: string
           competitors?: string[]
+          subscription_type?: Database["public"]["Enums"]["subscription_type"]
+          subscription_start_date?: string | null
+          prompts_used?: number
+          last_report_date?: string | null
+          next_call_date?: string | null
         }
+      }
+      subscription_features: {
+        Row: {
+          id: string
+          user_id: string
+          feature_name: string
+          feature_value: Json
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          feature_name: string
+          feature_value?: Json
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          feature_name?: string
+          feature_value?: Json
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subscription_features_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
       }
     }
     Views: {
@@ -206,6 +256,7 @@ export type Database = {
     }
     Enums: {
       prompt_type: "sentiment" | "visibility" | "competitive"
+      subscription_type: "free" | "pro"
     }
     CompositeTypes: {
       [_ in never]: never

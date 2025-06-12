@@ -172,25 +172,33 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
               </td>
               <td className="px-4 py-2 w-20">
                 <div className="truncate max-w-sm overflow-hidden">
-                  {typeof response.detected_competitors === 'string' && response.detected_competitors.trim() ? (
-                    (() => {
-                      const competitors = response.detected_competitors.split(',').map((c: string) => c.trim()).filter(Boolean);
+                  {(() => {
+                    const competitorsRaw = typeof response.detected_competitors === 'string' ? response.detected_competitors.trim() : '';
+                    // Treat as empty if it contains 'no competitors', 'no competitors or alternatives', or 'none' (case-insensitive)
+                    const isNoCompetitors = /no competitors|no competitors or alternatives|none/i.test(competitorsRaw);
+                    if (competitorsRaw && !isNoCompetitors) {
+                      // Normalize to lowercase and deduplicate
+                      const competitors = Array.from(new Set(
+                        competitorsRaw.split(',')
+                          .map((c: string) => c.trim().toLowerCase())
+                          .filter(Boolean)
+                      ));
                       const maxToShow = 1;
                       const extraCount = competitors.length - maxToShow;
                       return (
                         <div className="flex flex-nowrap gap-2">
                           {competitors.slice(0, maxToShow).map((name: string, idx: number) => (
-                            <span key={idx} className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">{name}</span>
+                            <span key={idx} className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">{name.charAt(0).toUpperCase() + name.slice(1)}</span>
                           ))}
                           {extraCount > 0 && (
                             <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">+{extraCount} more</span>
                           )}
                         </div>
                       );
-                    })()
-                  ) : (
-                    <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">No</span>
-                  )}
+                    } else {
+                      return null;
+                    }
+                  })()}
                 </div>
               </td>
               <td className="px-4 py-2">{response.answered ? response.answered : (response.tested_at ? new Date(response.tested_at).toLocaleDateString() : '-')}</td>

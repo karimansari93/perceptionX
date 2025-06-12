@@ -1,4 +1,4 @@
-import { BarChart3, FileText, MessageSquare, Search, TrendingUp } from "lucide-react";
+import { BarChart3, FileText, MessageSquare, Search, TrendingUp, HelpCircle } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -74,13 +74,12 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
   // Expanded sidebar (full layout)
   return (
     <Sidebar className="border-r bg-white/90 backdrop-blur-sm transition-all duration-200">
-      <SidebarHeader className="border-b border-gray-200/50 flex flex-row items-center justify-between p-6">
+      <SidebarHeader className="border-b border-gray-200/50 flex flex-row items-center p-6">
         <img
           alt="Perception Logo"
           className="object-contain h-4"
           src="/logos/perceptionx-normal.png"
         />
-        <SidebarTrigger className="h-7 w-7" />
       </SidebarHeader>
       <SidebarContent className="flex-1">
         <SidebarGroup>

@@ -8,6 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import ReactMarkdown from 'react-markdown';
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import LLMLogo from "@/components/LLMLogo";
+import { KeyTakeaways } from "./KeyTakeaways";
 
 interface OverviewTabProps {
   metrics: DashboardMetrics;
@@ -125,10 +127,11 @@ export const OverviewTab = ({
   const normalizedTopCompetitors = Array.from(normalizedCompetitorsMap.values()).sort((a, b) => b.count - a.count);
 
   return (
-    <div className="space-y-8">
-      {/* Metrics Grid */}
-      <TooltipProvider>
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      {/* Left Column - Main Content */}
+      <div className="lg:col-span-2 space-y-8">
+        {/* Metrics Grid */}
+        <div className="grid gap-6 grid-cols-2">
           <MetricCard
             title="Average Sentiment"
             value={(() => {
@@ -147,12 +150,14 @@ export const OverviewTab = ({
             title="Average Visibility"
             value={`${Math.round(metrics.averageVisibility)}%`}
             subtitle="Company mention prominence"
+            trend={metrics.visibilityTrendComparison}
             tooltip="How prominently your company is mentioned in AI responses, on average."
           />
           <MetricCard
             title="Total Citations"
             value={metrics.totalCitations.toString()}
             subtitle={`${metrics.uniqueDomains} unique domains`}
+            trend={metrics.citationsTrendComparison}
             tooltip="Total number of source citations found in AI responses, and how many unique domains they come from."
           />
           <MetricCard
@@ -162,71 +167,8 @@ export const OverviewTab = ({
             tooltip="Total number of AI-generated responses analyzed for this dashboard."
           />
         </div>
-      </TooltipProvider>
 
-      {/* Charts Grid */}
-      <div className="grid gap-8 lg:grid-cols-2">
-        <Card className="shadow-sm border border-gray-200">
-          <CardHeader className="pb-4">
-            <div className="flex items-center gap-1">
-              <CardTitle className="text-lg font-semibold">Information Sources</CardTitle>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="ml-1 cursor-pointer align-middle">
-                      <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600" />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    Websites and sources most frequently cited in AI responses.
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-            <CardDescription className="text-sm text-gray-600">
-              The sources most frequently influencing AI responses
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {/* Find the max count for scaling bars */}
-            {(() => {
-              const maxCount = topCitations.length > 0 ? topCitations[0].count : 1;
-              return (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto relative">
-                  {topCitations.length > 0 ? (
-                    topCitations.map((citation, idx) => (
-                      <div 
-                        key={idx} 
-                        className="flex items-center py-1 hover:bg-gray-50/50 transition-colors cursor-pointer"
-                        onClick={() => handleSourceClick(citation)}
-                      >
-                        <div className="flex items-center min-w-[220px] w-[220px] space-x-3">
-                          <img src={getFavicon(citation.domain)} alt="" className="w-4 h-4" />
-                          <span className="text-sm font-medium text-gray-900 truncate max-w-[170px]">{getSourceDisplayName(citation.domain)}</span>
-                        </div>
-                        <div className="flex-1 flex items-center gap-2 ml-4">
-                          <div className="h-4 inline-flex items-center w-full max-w-[120px]">
-                            <div 
-                              className="h-full bg-pink-100 rounded-full transition-all duration-300" 
-                              style={{ width: `${(citation.count / maxCount) * 100}%`, minWidth: '12px' }} 
-                            />
-                            <span className="text-sm font-semibold text-pink-900 ml-2" style={{whiteSpace: 'nowrap'}}>{citation.count}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-center py-12 text-gray-500">
-                      <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                      <p className="text-sm">No citations found yet.</p>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </CardContent>
-        </Card>
-
+        {/* Competitors Card */}
         <Card className="shadow-sm border border-gray-200">
           <CardHeader className="pb-4">
             <div className="flex items-center gap-1">
@@ -293,6 +235,79 @@ export const OverviewTab = ({
             )}
           </CardContent>
         </Card>
+
+        {/* Information Sources Card */}
+        <Card className="shadow-sm border border-gray-200">
+          <CardHeader className="pb-4">
+            <div className="flex items-center gap-1">
+              <CardTitle className="text-lg font-semibold">Information Sources</CardTitle>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="ml-1 cursor-pointer align-middle">
+                      <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    Websites and sources most frequently cited in AI responses.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <CardDescription className="text-sm text-gray-600">
+              The sources most frequently influencing AI responses
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {/* Find the max count for scaling bars */}
+            {(() => {
+              const maxCount = topCitations.length > 0 ? topCitations[0].count : 1;
+              return (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto relative">
+                  {topCitations.length > 0 ? (
+                    topCitations.map((citation, idx) => (
+                      <div 
+                        key={idx} 
+                        className="flex items-center py-1 hover:bg-gray-50/50 transition-colors cursor-pointer"
+                        onClick={() => handleSourceClick(citation)}
+                      >
+                        <div className="flex items-center min-w-[220px] w-[220px] space-x-3">
+                          <img src={getFavicon(citation.domain)} alt="" className="w-4 h-4" />
+                          <span className="text-sm font-medium text-gray-900 truncate max-w-[170px]">{getSourceDisplayName(citation.domain)}</span>
+                        </div>
+                        <div className="flex-1 flex items-center gap-2 ml-4">
+                          <div className="h-4 inline-flex items-center w-full max-w-[120px]">
+                            <div 
+                              className="h-full bg-pink-100 rounded-full transition-all duration-300" 
+                              style={{ width: `${(citation.count / maxCount) * 100}%`, minWidth: '12px' }} 
+                            />
+                            <span className="text-sm font-semibold text-pink-900 ml-2" style={{whiteSpace: 'nowrap'}}>{citation.count}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-12 text-gray-500">
+                      <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                      <p className="text-sm">No citations found yet.</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Right Column - Fixed KeyTakeaways */}
+      <div className="lg:col-span-1">
+        <div className="sticky top-4">
+          <KeyTakeaways 
+            metrics={metrics}
+            topCompetitors={topCompetitors}
+            topCitations={topCitations}
+          />
+        </div>
       </div>
 
       {/* Source Details Modal */}

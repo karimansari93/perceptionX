@@ -70,6 +70,12 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
   ];
 
   const handleNext = async () => {
+    // Validate required fields
+    if (!onboardingData.company_name.trim() || !onboardingData.industry.trim()) {
+      toast.error('Please fill in both company name and industry before continuing');
+      return;
+    }
+
     if (onboardingStep === onboardingSteps.length - 1) {
       // Save onboarding data
       try {
