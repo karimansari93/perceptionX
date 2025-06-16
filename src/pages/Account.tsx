@@ -7,6 +7,7 @@ import UserMenu from '@/components/UserMenu';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 
 function AccountSidebar({ activeSection, onSectionChange }) {
   const { state } = useSidebar();
@@ -70,7 +71,7 @@ export default function Account() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [form, setForm] = useState({ name: '', company: '', industry: '' });
+  const [form, setForm] = useState({ company: '', industry: '', email: '' });
 
   useEffect(() => {
     async function fetchData() {
@@ -85,9 +86,9 @@ export default function Account() {
         .limit(1)
         .single();
       setForm({
-        name: user.user_metadata?.full_name || user.email || '',
         company: data?.company_name || '',
         industry: data?.industry || '',
+        email: user.email || '',
       });
       setLoading(false);
     }
@@ -102,18 +103,32 @@ export default function Account() {
     e.preventDefault();
     setSaving(true);
     setSuccess(false);
-    // Update user name
-    if (form.name && form.name !== user.user_metadata?.full_name) {
-      await supabase.auth.updateUser({ data: { full_name: form.name } });
+    try {
+      // Update onboarding data
+      const { error } = await supabase
+        .from('user_onboarding')
+        .update({ 
+          company_name: form.company, 
+          industry: form.industry 
+        })
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (error) {
+        console.error('Error updating data:', error);
+        toast.error('Failed to save changes');
+        return;
+      }
+
+      setSaving(false);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 2000);
+    } catch (error) {
+      console.error('Error in handleSave:', error);
+      toast.error('Failed to save changes');
+      setSaving(false);
     }
-    // Update onboarding data
-    await supabase
-      .from('user_onboarding')
-      .update({ company_name: form.company, industry: form.industry })
-      .eq('user_id', user.id);
-    setSaving(false);
-    setSuccess(true);
-    setTimeout(() => setSuccess(false), 2000);
   };
 
   return (
@@ -131,20 +146,19 @@ export default function Account() {
             <Card>
               <CardHeader>
                 <CardTitle>Account & Settings</CardTitle>
-                <CardDescription>Update your profile, company, and industry information.</CardDescription>
+                <CardDescription>Update your company and industry information.</CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleSave} className="space-y-6">
                   <div>
-                    <label className="block text-sm font-medium mb-1">Name</label>
+                    <label className="block text-sm font-medium mb-1">Email</label>
                     <input
-                      type="text"
-                      name="name"
-                      value={form.name}
-                      onChange={handleChange}
-                      className="w-full border rounded-md px-3 py-2"
-                      disabled={loading || saving}
+                      type="email"
+                      value={form.email}
+                      className="w-full border rounded-md px-3 py-2 bg-gray-50"
+                      disabled={true}
                     />
+                    <p className="text-sm text-gray-500 mt-1">Email cannot be changed at this time.</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Company</label>

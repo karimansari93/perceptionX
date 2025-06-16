@@ -1,4 +1,4 @@
-import { BarChart3, FileText, MessageSquare, Search, TrendingUp, HelpCircle } from "lucide-react";
+import { BarChart3, FileText, MessageSquare, Search, TrendingUp, HelpCircle, Calendar, CheckCircle2 } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -14,6 +14,9 @@ import {
 } from "@/components/ui/sidebar";
 import UserMenu from "@/components/UserMenu";
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { useState } from 'react';
+import { UpgradeModal } from '@/components/upgrade/UpgradeModal';
 
 interface NavigationItem {
   title: string;
@@ -38,6 +41,7 @@ interface AppSidebarProps {
 export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) {
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   if (isCollapsed) {
     // Render a minimal sidebar with only logo, trigger, and icons
@@ -109,8 +113,23 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
           <span className="font-semibold block mb-1">Dashboard is in Alpha</span>
           Please reach out to <a href="mailto:karim@perceptionx.co" className="underline font-medium">karim@perceptionx.co</a> if you have any feedback.
         </div>
+        
+        <Button
+          onClick={() => setShowUpgradeModal(true)}
+          variant="outline"
+          className="w-full border-primary text-primary hover:bg-primary/10 hover:text-primary"
+        >
+          <Calendar className="w-4 h-4 mr-2 text-primary" />
+          Upgrade to Pro
+        </Button>
+
         <UserMenu />
       </SidebarFooter>
+
+      <UpgradeModal 
+        open={showUpgradeModal}
+        onOpenChange={setShowUpgradeModal}
+      />
     </Sidebar>
   );
 }

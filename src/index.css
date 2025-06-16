@@ -99,3 +99,9 @@
     @apply bg-background text-foreground;
   }
 }
+
+@media (max-width: 640px) {
+  .hide-on-mobile {
+    display: none !important;
+  }
+}

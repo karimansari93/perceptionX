@@ -120,27 +120,35 @@ export const KeyTakeaways = ({ metrics, topCompetitors, topCitations }: KeyTakea
       </CardHeader>
       <CardContent>
         <div className="grid gap-3">
-          {insights.map((insight, index) => (
-            <div key={index} className="flex flex-col gap-2 p-3 rounded-lg bg-gray-50">
-              <div className="flex items-start gap-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900">{insight.text}</p>
+          {insights.map((insight, index) => {
+            const isEmpty = insight.text.startsWith('No ');
+            return (
+              <div
+                key={index}
+                className={`flex flex-col gap-2 p-3 rounded-lg bg-gray-50 ${isEmpty ? 'py-2' : ''}`}
+              >
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className={isEmpty ? "text-base font-semibold text-gray-500 m-0 leading-tight" : "text-sm font-medium text-gray-900"}>
+                      {insight.text}
+                    </p>
+                  </div>
+                  <Badge 
+                    variant="secondary"
+                    className={`shrink-0 ${
+                      insight.type === 'positive' ? 'bg-green-100 text-green-800' :
+                      insight.type === 'negative' ? 'bg-red-100 text-red-800' :
+                      insight.type === 'warning' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-blue-100 text-blue-800'
+                    }`}
+                  >
+                    {insight.type.charAt(0).toUpperCase() + insight.type.slice(1)}
+                  </Badge>
                 </div>
-                <Badge 
-                  variant="secondary"
-                  className={`shrink-0 ${
-                    insight.type === 'positive' ? 'bg-green-100 text-green-800' :
-                    insight.type === 'negative' ? 'bg-red-100 text-red-800' :
-                    insight.type === 'warning' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-blue-100 text-blue-800'
-                  }`}
-                >
-                  {insight.type.charAt(0).toUpperCase() + insight.type.slice(1)}
-                </Badge>
+                <p className={isEmpty ? "text-xs text-gray-400" : "text-xs text-gray-600"}>{insight.action}</p>
               </div>
-              <p className="text-xs text-gray-600">{insight.action}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </CardContent>
     </Card>

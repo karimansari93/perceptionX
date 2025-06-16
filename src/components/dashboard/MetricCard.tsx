@@ -77,12 +77,18 @@ export const MetricCard = ({
         {Icon && iconColor && <Icon className={`w-5 h-5 ${iconColor}`} />}
       </CardHeader>
       <CardContent className="pt-0 px-4 pb-3 flex-1 flex flex-col justify-center">
-        <div className="text-3xl font-extrabold text-gray-900 mb-1 leading-tight">
-          {value}
-        </div>
+        {value === 'No data available' ? (
+          <div className="text-base font-semibold text-gray-500 mb-0 mt-2 leading-tight min-h-[32px] flex items-center">
+            {value}
+          </div>
+        ) : (
+          <div className="text-3xl font-extrabold text-gray-900 mb-1 leading-tight">
+            {value}
+          </div>
+        )}
         <div className="flex items-center justify-between mt-1">
           <p className="text-xs text-gray-500 truncate max-w-[70%]">{subtitle}</p>
-          {trend && (
+          {trend && value !== 'No data available' && (
             <div className={`flex items-center space-x-1 text-xs font-medium ${getTrendColor()}`}>
               {getTrendIcon()}
               <span>{trend.value}%</span>

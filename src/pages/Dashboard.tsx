@@ -304,6 +304,7 @@ const DashboardContent = () => {
             topCompetitors={topCompetitors}
             responses={responses}
             competitorLoading={competitorLoading}
+            companyName={companyName}
           />
         );
       case "prompts":
@@ -342,6 +343,7 @@ const DashboardContent = () => {
             topCompetitors={topCompetitors}
             responses={responses}
             competitorLoading={competitorLoading}
+            companyName={companyName}
           />
         );
     }
@@ -444,7 +446,7 @@ const DashboardContent = () => {
                 </div>
                 {/* LLM Logos right-aligned only for overview */}
                 {activeSection === "overview" && (
-                  <div className="flex flex-row items-center gap-2 flex-nowrap">
+                  <div className="flex flex-row items-center gap-2 flex-nowrap hide-on-mobile">
                     <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
                       <LLMLogo modelName="openai" size="sm" className="mr-1" />
                       <span className="text-sm text-gray-700">OpenAI</span>

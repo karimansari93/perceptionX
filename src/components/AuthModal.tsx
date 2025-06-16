@@ -10,6 +10,54 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 
+// Microsoft Button component
+interface MicrosoftButtonProps {
+  onClick: () => void;
+  loading: boolean;
+  mode: 'login' | 'signup';
+}
+
+const MicrosoftButton: React.FC<MicrosoftButtonProps> = ({ onClick, loading, mode }) => {
+  return (
+    <button
+      type="button"
+      className="w-full mb-2"
+      onClick={onClick}
+      disabled={loading}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        border: 'none',
+        borderRadius: '28px',
+        background: '#fff',
+        boxShadow: '0 1px 2px rgba(60,64,67,.3),0 1.5px 6px 1px rgba(60,64,67,.15)',
+        height: '56px',
+        cursor: loading ? 'not-allowed' : 'pointer',
+        opacity: loading ? 0.7 : 1,
+        padding: 0,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'center' }}>
+        <div style={{ marginRight: 12 }}>
+          {/* Microsoft SVG */}
+          <svg width="24" height="24" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">
+            <path fill="#f25022" d="M1 1h10v10H1z"/>
+            <path fill="#00a4ef" d="M1 12h10v10H1z"/>
+            <path fill="#7fba00" d="M12 1h10v10H12z"/>
+            <path fill="#ffb900" d="M12 12h10v10H12z"/>
+          </svg>
+        </div>
+        <span style={{ fontWeight: 500, fontSize: 16, color: '#3c4043' }}>
+          {mode === 'login' ? 'Sign in with Microsoft' : 'Sign up with Microsoft'}
+        </span>
+        {loading && (
+          <div className="ml-2 animate-spin rounded-full h-5 w-5 border-b-2 border-gray-400" />
+        )}
+      </div>
+    </button>
+  );
+};
+
 interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -19,6 +67,7 @@ interface AuthModalProps {
 
 const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboard' }: AuthModalProps) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -28,6 +77,7 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
   });
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [microsoftLoading, setMicrosoftLoading] = useState(false);
 
   // Close modal and redirect if already authenticated
   useEffect(() => {
@@ -216,6 +266,24 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
     }
   };
 
+  // Add Microsoft sign in/up handler
+  const handleMicrosoftAuth = async () => {
+    setMicrosoftLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'azure',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+      if (error) throw error;
+    } catch (error: any) {
+      toast.error(error.message || 'Microsoft authentication failed');
+    } finally {
+      setMicrosoftLoading(false);
+    }
+  };
+
   if (user) {
     return null; // Will redirect via useEffect
   }
@@ -248,6 +316,11 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
         
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            <MicrosoftButton
+              onClick={handleMicrosoftAuth}
+              loading={microsoftLoading}
+              mode={isLogin ? 'login' : 'signup'}
+            />
             <div>
               <Label htmlFor="email">Email</Label>
               <Input

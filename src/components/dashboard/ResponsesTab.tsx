@@ -174,21 +174,36 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
                 <div className="truncate max-w-sm overflow-hidden">
                   {(() => {
                     const competitorsRaw = typeof response.detected_competitors === 'string' ? response.detected_competitors.trim() : '';
-                    // Treat as empty if it contains 'no competitors', 'no competitors or alternatives', or 'none' (case-insensitive)
-                    const isNoCompetitors = /no competitors|no competitors or alternatives|none/i.test(competitorsRaw);
-                    if (competitorsRaw && !isNoCompetitors) {
-                      // Normalize to lowercase and deduplicate
+                    // Treat as empty if it contains 'no competitors', 'no competitors or alternatives', 'none', or is not a comma-separated list (case-insensitive)
+                    const isNoCompetitors = /no competitors|no competitors or alternatives|none|no specific company|no specific competitors|not mentioned|n\/a|not applicable|glassdoor|indeed|linkedin|monster|careerbuilder|ziprecruiter/i.test(competitorsRaw);
+                    // Only allow valid comma-separated company names (letters, numbers, spaces, dashes, dots, ampersands)
+                    const validCompanyPattern = /^[A-Za-z0-9 .&\-,'/]+(,[A-Za-z0-9 .&\-,'/]+)*$/;
+                    if (
+                      competitorsRaw &&
+                      !isNoCompetitors &&
+                      validCompanyPattern.test(competitorsRaw)
+                    ) {
+                      // Split, trim, and filter out excluded sources
+                      const excluded = [
+                        'glassdoor', 'indeed', 'linkedin', 'monster', 'careerbuilder', 'ziprecruiter',
+                        'trustpilot', 'g2', 'capterra', 'reuters', 'bloomberg', 'twitter', 'facebook',
+                        'crunchbase', 'pitchbook', 'gartner', 'forrester'
+                      ];
                       const competitors = Array.from(new Set(
                         competitorsRaw.split(',')
-                          .map((c: string) => c.trim().toLowerCase())
+                          .map((c: string) => c.trim())
                           .filter(Boolean)
+                          .filter((c: string) => !excluded.includes(c.toLowerCase()))
                       ));
+                      if (competitors.length === 0) {
+                        return null;
+                      }
                       const maxToShow = 1;
                       const extraCount = competitors.length - maxToShow;
                       return (
                         <div className="flex flex-nowrap gap-2">
                           {competitors.slice(0, maxToShow).map((name: string, idx: number) => (
-                            <span key={idx} className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">{name.charAt(0).toUpperCase() + name.slice(1)}</span>
+                            <span key={idx} className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">{name}</span>
                           ))}
                           {extraCount > 0 && (
                             <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">+{extraCount} more</span>

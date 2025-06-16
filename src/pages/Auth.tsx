@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingModal } from '@/components/prompts/LoadingModal';
 import { generateAndInsertPrompts, ProgressInfo } from '@/hooks/usePromptsLogic';
+import { LoadingScreen } from '@/components/ui/loading-screen';
 
 // Google Material Button component
 const GoogleMaterialButton = ({ onClick, loading, mode }) => (
@@ -56,6 +57,54 @@ const GoogleMaterialButton = ({ onClick, loading, mode }) => (
   </button>
 );
 
+// Microsoft Button component
+interface MicrosoftButtonProps {
+  onClick: () => void;
+  loading: boolean;
+  mode: 'login' | 'signup';
+}
+
+const MicrosoftButton: React.FC<MicrosoftButtonProps> = ({ onClick, loading, mode }) => {
+  return (
+    <button
+      type="button"
+      className="w-full mb-2"
+      onClick={onClick}
+      disabled={loading}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        border: 'none',
+        borderRadius: '28px',
+        background: '#fff',
+        boxShadow: '0 1px 2px rgba(60,64,67,.3),0 1.5px 6px 1px rgba(60,64,67,.15)',
+        height: '56px',
+        cursor: loading ? 'not-allowed' : 'pointer',
+        opacity: loading ? 0.7 : 1,
+        padding: 0,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'center' }}>
+        <div style={{ marginRight: 12 }}>
+          {/* Microsoft SVG */}
+          <svg width="24" height="24" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">
+            <path fill="#f25022" d="M1 1h10v10H1z"/>
+            <path fill="#00a4ef" d="M1 12h10v10H1z"/>
+            <path fill="#7fba00" d="M12 1h10v10H12z"/>
+            <path fill="#ffb900" d="M12 12h10v10H12z"/>
+          </svg>
+        </div>
+        <span style={{ fontWeight: 500, fontSize: 16, color: '#3c4043' }}>
+          {mode === 'login' ? 'Sign in with Microsoft' : 'Sign up with Microsoft'}
+        </span>
+        {loading && (
+          <div className="ml-2 animate-spin rounded-full h-5 w-5 border-b-2 border-gray-400" />
+        )}
+      </div>
+    </button>
+  );
+};
+
 const Auth = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -73,6 +122,7 @@ const Auth = () => {
   const [showVerifyEmailMessage, setShowVerifyEmailMessage] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [microsoftLoading, setMicrosoftLoading] = useState(false);
 
   // Get onboarding data and redirect destination from location state
   const onboardingData = location.state?.onboardingData;
@@ -264,27 +314,26 @@ const Auth = () => {
     }
   };
 
-  // Show loading state while checking auth
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#045962] to-[#019dad]">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-          <p className="text-white">Loading...</p>
-        </div>
-      </div>
-    );
-  }
+  // Add Microsoft sign in/up handler
+  const handleMicrosoftAuth = async () => {
+    setMicrosoftLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'azure',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+      if (error) throw error;
+    } catch (error: any) {
+      toast.error(error.message || 'Microsoft authentication failed');
+    } finally {
+      setMicrosoftLoading(false);
+    }
+  };
 
   if (user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#045962] to-[#019dad]">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-          <p className="text-white">Redirecting...</p>
-        </div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   return (
@@ -389,12 +438,17 @@ const Auth = () => {
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Google Login Button and Divider only for login/signup, not password reset */}
+                {/* Google and Microsoft Login Buttons and Divider only for login/signup, not password reset */}
                 {!isPasswordReset && (
                   <>
                     <GoogleMaterialButton
                       onClick={handleGoogleAuth}
                       loading={googleLoading}
+                      mode={isLogin ? 'login' : 'signup'}
+                    />
+                    <MicrosoftButton
+                      onClick={handleMicrosoftAuth}
+                      loading={microsoftLoading}
                       mode={isLogin ? 'login' : 'signup'}
                     />
                     {/* Divider */}

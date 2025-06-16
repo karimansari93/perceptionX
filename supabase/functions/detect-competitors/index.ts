@@ -35,14 +35,48 @@ serve(async (req) => {
           {
             role: 'system',
             content: `You are a helpful assistant that identifies company names from text.
-Return only a comma-separated list of company names that are direct competitors or alternatives to "${companyName}" in the same industry or market.
-Do NOT include job boards, review sites, or information sources such as Glassdoor, Indeed, LinkedIn, Monster, CareerBuilder, ZipRecruiter, or similar companies.
+Return ONLY a comma-separated list of company names that are direct competitors or alternatives to "${companyName}" in the same industry or market.
+
+IMPORTANT FORMAT RULES:
+- Return ONLY the company names separated by commas, nothing else
+- Do not include any explanatory text, prefixes, or suffixes
+- Use proper company name capitalization (e.g., "IBM" not "Ibm", "Salesforce" not "salesforce")
+- If no competitors are found, return an empty string
+- Do not include phrases like "None" or "No competitors found"
+
+A competitor is defined as:
+- A company that offers similar products/services in the same market
+- A company that competes for the same customers
+- A company that operates in the same industry segment
+
+Do NOT include:
+- Job boards (Glassdoor, Indeed, LinkedIn, Monster, CareerBuilder, ZipRecruiter, etc.)
+- Review sites (Trustpilot, G2, Capterra, etc.)
+- News sources (Reuters, Bloomberg, etc.)
+- Social media platforms (Twitter, Facebook, etc.)
+- Information aggregators (Crunchbase, PitchBook, etc.)
+- Market research firms (Gartner, Forrester, etc.)
+- Industry associations or organizations
+- Government agencies or regulatory bodies
+- Educational institutions
+- Consulting firms or agencies
+
 Exclude the main company name itself.
-If no competitors are found, return an empty string.`
+
+Example valid responses:
+"IBM, Salesforce, Oracle"
+"Microsoft, Apple, Google"
+"" (empty string if no competitors found)
+
+Example invalid responses:
+"None"
+"No competitors found"
+"Competitors include: IBM, Salesforce"
+"Some competitors are IBM, Salesforce"`
           },
           {
             role: 'user',
-            content: `In the following text, identify all company names that are mentioned as competitors or alternatives to "${companyName}". Return ONLY a comma-separated list of company names, nothing else:\n\n${response}`
+            content: `In the following text, identify all company names that are mentioned as competitors or alternatives to "${companyName}". Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`
           }
         ],
         temperature: 0.2,
