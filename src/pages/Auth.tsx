@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { X, ArrowRight, Sparkles, BarChart3, Target, Users, Mail } from 'lucide-react';
+import { X, ArrowRight, Sparkles, BarChart3, Target, Users, Mail, Medal } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -57,54 +57,6 @@ const GoogleMaterialButton = ({ onClick, loading, mode }) => (
   </button>
 );
 
-// Microsoft Button component
-interface MicrosoftButtonProps {
-  onClick: () => void;
-  loading: boolean;
-  mode: 'login' | 'signup';
-}
-
-const MicrosoftButton: React.FC<MicrosoftButtonProps> = ({ onClick, loading, mode }) => {
-  return (
-    <button
-      type="button"
-      className="w-full mb-2"
-      onClick={onClick}
-      disabled={loading}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        border: 'none',
-        borderRadius: '28px',
-        background: '#fff',
-        boxShadow: '0 1px 2px rgba(60,64,67,.3),0 1.5px 6px 1px rgba(60,64,67,.15)',
-        height: '56px',
-        cursor: loading ? 'not-allowed' : 'pointer',
-        opacity: loading ? 0.7 : 1,
-        padding: 0,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'center' }}>
-        <div style={{ marginRight: 12 }}>
-          {/* Microsoft SVG */}
-          <svg width="24" height="24" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">
-            <path fill="#f25022" d="M1 1h10v10H1z"/>
-            <path fill="#00a4ef" d="M1 12h10v10H1z"/>
-            <path fill="#7fba00" d="M12 1h10v10H12z"/>
-            <path fill="#ffb900" d="M12 12h10v10H12z"/>
-          </svg>
-        </div>
-        <span style={{ fontWeight: 500, fontSize: 16, color: '#3c4043' }}>
-          {mode === 'login' ? 'Sign in with Microsoft' : 'Sign up with Microsoft'}
-        </span>
-        {loading && (
-          <div className="ml-2 animate-spin rounded-full h-5 w-5 border-b-2 border-gray-400" />
-        )}
-      </div>
-    </button>
-  );
-};
-
 const Auth = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -122,7 +74,6 @@ const Auth = () => {
   const [showVerifyEmailMessage, setShowVerifyEmailMessage] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [microsoftLoading, setMicrosoftLoading] = useState(false);
 
   // Get onboarding data and redirect destination from location state
   const onboardingData = location.state?.onboardingData;
@@ -314,96 +265,17 @@ const Auth = () => {
     }
   };
 
-  // Add Microsoft sign in/up handler
-  const handleMicrosoftAuth = async () => {
-    setMicrosoftLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'azure',
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
-        },
-      });
-      if (error) throw error;
-    } catch (error: any) {
-      toast.error(error.message || 'Microsoft authentication failed');
-    } finally {
-      setMicrosoftLoading(false);
-    }
-  };
-
   if (user) {
     return <LoadingScreen />;
   }
 
   return (
-    <div className="min-h-screen w-screen flex flex-col md:flex-row">
-      {/* Left: Marketing/Branding */}
-      <div className="hidden md:flex md:w-1/2 flex-col justify-center items-center px-8 py-12 relative bg-gradient-to-br from-[#045962] to-[#019dad] overflow-hidden">
-        {/* SVG geometric background */}
-        <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" width="100%" height="100%" fill="none" xmlns="http://www.w3.org/2000/svg" style={{opacity:0.45}}>
-          <circle cx="18%" cy="12%" r="110" fill="#fff" fillOpacity="0.18" filter="url(#blur1)" />
-          <circle cx="80%" cy="30%" r="60" fill="#fff" fillOpacity="0.13" />
-          <circle cx="90%" cy="90%" r="28" fill="#fff" fillOpacity="0.15" />
-          <circle cx="30%" cy="80%" r="18" fill="#fff" fillOpacity="0.13" />
-          <circle cx="60%" cy="60%" r="14" fill="#fff" fillOpacity="0.13" />
-          <rect x="70%" y="70%" width="90" height="90" rx="18" fill="#fff" fillOpacity="0.10" />
-          <rect x="10%" y="60%" width="60" height="60" rx="12" fill="#fff" fillOpacity="0.09" />
-          <g stroke="#fff" strokeOpacity="0.10" strokeWidth="1">
-            <line x1="10%" y1="10%" x2="90%" y2="10%" />
-            <line x1="10%" y1="30%" x2="90%" y2="30%" />
-            <line x1="10%" y1="50%" x2="90%" y2="50%" />
-            <line x1="10%" y1="70%" x2="90%" y2="70%" />
-            <line x1="10%" y1="90%" x2="90%" y2="90%" />
-            <line x1="20%" y1="0%" x2="20%" y2="100%" />
-            <line x1="40%" y1="0%" x2="40%" y2="100%" />
-            <line x1="60%" y1="0%" x2="60%" y2="100%" />
-            <line x1="80%" y1="0%" x2="80%" y2="100%" />
-          </g>
-          <polyline points="10,300 80,220 180,260 300,180 400,220 500,120 600,200 700,100 800,180 900,80" fill="none" stroke="#fff" strokeWidth="2.5" strokeOpacity="0.18" />
-          <circle cx="25%" cy="40%" r="4" fill="#fff" fillOpacity="0.22" />
-          <circle cx="55%" cy="20%" r="3" fill="#fff" fillOpacity="0.22" />
-          <circle cx="75%" cy="75%" r="5" fill="#fff" fillOpacity="0.22" />
-          <defs>
-            <filter id="blur1" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="30" />
-            </filter>
-          </defs>
-        </svg>
-        <div className="relative z-10 w-full flex flex-col items-center">
-          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4 text-left w-full max-w-3xl pl-8 md:pl-16 pr-8 md:pr-16">Take control of your talent perception</h1>
-          <p className="text-lg text-white text-left w-full max-w-2xl mb-6 pl-8 md:pl-16 pr-8 md:pr-16">Track how leading AI models like ChatGPT, Claude, and Gemini perceive your company.</p>
-          <div className="space-y-6 mt-8 max-w-md w-full">
-            <div className="flex items-start space-x-3">
-              <Sparkles className="w-6 h-6 text-pink-600 flex-shrink-0 mt-1" />
-              <div>
-                <h3 className="font-semibold text-white">AI-Powered Insights</h3>
-                <p className="text-white text-sm">Monitor how leading AI models perceive your company and help shape the narrative</p>
-              </div>
-            </div>
-            <div className="flex items-start space-x-3">
-              <BarChart3 className="w-6 h-6 text-pink-600 flex-shrink-0 mt-1" />
-              <div>
-                <h3 className="font-semibold text-white">Data-Driven Strategy</h3>
-                <p className="text-white text-sm">Make informed decisions to improve your talent acquisition and employer branding</p>
-              </div>
-            </div>
-            <div className="flex items-start space-x-3">
-              <Target className="w-6 h-6 text-pink-600 flex-shrink-0 mt-1" />
-              <div>
-                <h3 className="font-semibold text-white">Competitive Analysis</h3>
-                <p className="text-white text-sm">Compare your employer brand perception against industry competitors</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      {/* Right side - Auth Form */}
-      <div className="w-full md:flex-1 flex items-center justify-center p-8 bg-white relative flex-col">
-        <img src="/logos/perceptionx-normal.png" alt="PerceptionX Logo" className="mx-auto mb-10 h-7" />
-        <Card className="w-full max-w-md bg-white rounded-2xl border border-gray-100">
+    <div className="min-h-screen w-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #13274F 0%, #183056 100%)' }}>
+      <div className="w-full max-w-md flex items-center justify-center p-8 relative flex-col">
+        <img src="/logos/PerceptionX-PrimaryLogo-ForOnDark-large.png" alt="PerceptionX Logo" className="mx-auto mb-10 h-12" />
+        <Card className="w-full bg-white rounded-2xl border border-silver">
           <CardHeader>
-            <CardTitle className="text-2xl text-center text-gray-900">
+            <CardTitle className="text-2xl text-center text-nightsky font-bold" style={{ fontFamily: 'Geologica, sans-serif' }}>
               {showVerifyEmailMessage
                 ? 'Verify your email'
                 : isPasswordReset
@@ -416,10 +288,10 @@ const Auth = () => {
           <CardContent>
             {showVerifyEmailMessage ? (
               <div className="text-center space-y-6">
-                <p className="mb-6">
+                <p className="mb-6 text-nightsky text-base" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
                   We've sent a verification link to your email address. Please check your inbox and click the link to activate your account.
                 </p>
-                <Button className="w-full" onClick={() => {
+                <Button className="w-full bg-nightsky text-white rounded-full font-bold text-base" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }} onClick={() => {
                   setShowVerifyEmailMessage(false);
                   setIsLogin(true);
                   setFormData({ email: '', password: '' });
@@ -427,10 +299,11 @@ const Auth = () => {
                   Back to Login
                 </Button>
                 <Button
-                  className="w-full mt-2"
+                  className="w-full mt-2 border-nightsky text-nightsky rounded-full font-bold text-base"
                   variant="outline"
                   type="button"
                   disabled={resendLoading}
+                  style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
                   onClick={handleResendVerification}
                 >
                   {resendLoading ? 'Resending...' : 'Resend verification email'}
@@ -446,21 +319,16 @@ const Auth = () => {
                       loading={googleLoading}
                       mode={isLogin ? 'login' : 'signup'}
                     />
-                    <MicrosoftButton
-                      onClick={handleMicrosoftAuth}
-                      loading={microsoftLoading}
-                      mode={isLogin ? 'login' : 'signup'}
-                    />
                     {/* Divider */}
                     <div className="flex items-center my-4">
-                      <div className="flex-grow h-px bg-gray-200" />
-                      <span className="mx-2 text-gray-400 text-sm">or</span>
-                      <div className="flex-grow h-px bg-gray-200" />
+                      <div className="flex-grow h-px bg-silver" />
+                      <span className="mx-2 text-silver text-sm" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>or</span>
+                      <div className="flex-grow h-px bg-silver" />
                     </div>
                   </>
                 )}
                 <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
+                  <Label htmlFor="email" className="text-nightsky font-medium" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>Email</Label>
                   <Input
                     id="email"
                     name="email"
@@ -469,11 +337,13 @@ const Auth = () => {
                     value={formData.email}
                     onChange={handleInputChange}
                     required
+                    className="border-silver focus:border-nightsky focus:ring-nightsky text-base"
+                    style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
                   />
                 </div>
                 {!isPasswordReset && (
                   <div className="space-y-2">
-                    <Label htmlFor="password">Password</Label>
+                    <Label htmlFor="password" className="text-nightsky font-medium" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>Password</Label>
                     <Input
                       id="password"
                       name="password"
@@ -482,20 +352,23 @@ const Auth = () => {
                       value={formData.password}
                       onChange={handleInputChange}
                       required
+                      className="border-silver focus:border-nightsky focus:ring-nightsky text-base"
+                      style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
                     />
                   </div>
                 )}
                 {/* Remember Me and Forgot Password */}
                 <div className="flex items-center justify-between">
-                  <label className="flex items-center text-sm text-gray-600">
-                    <input type="checkbox" checked readOnly className="form-checkbox mr-2 accent-[#045962]" />
+                  <label className="flex items-center text-sm text-nightsky" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
+                    <input type="checkbox" checked readOnly className="form-checkbox mr-2 accent-nightsky" />
                     Remember Me
                   </label>
                   {!isPasswordReset && (
                     <button
                       type="button"
                       onClick={() => setIsPasswordReset(true)}
-                      className="text-sm text-[#045962] hover:underline"
+                      className="text-sm text-pink-500 hover:underline font-bold"
+                      style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
                     >
                       Forgot Password?
                     </button>
@@ -503,7 +376,8 @@ const Auth = () => {
                 </div>
                 <Button
                   type="submit"
-                  className="w-full bg-[#045962] hover:bg-[#03474d] text-white rounded-full"
+                  className="w-full bg-nightsky hover:bg-dusk-navy text-white rounded-full font-bold text-base"
+                  style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
                   disabled={loading}
                 >
                   {loading ? (
@@ -521,7 +395,8 @@ const Auth = () => {
                     <button
                       type="button"
                       onClick={() => setIsPasswordReset(false)}
-                      className="text-sm text-[#045962] hover:underline"
+                      className="text-sm text-nightsky hover:underline font-bold"
+                      style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
                     >
                       Back to {isLogin ? 'sign in' : 'sign up'}
                     </button>
@@ -532,7 +407,8 @@ const Auth = () => {
                         setIsLogin(!isLogin);
                         setIsPasswordReset(false);
                       }}
-                      className="text-sm text-[#045962] hover:underline"
+                      className="text-sm text-pink-500 hover:underline font-bold"
+                      style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
                     >
                       {isLogin ? "Not member yet? Create an account" : 'Already have an account? Sign in'}
                     </button>

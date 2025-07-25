@@ -63,29 +63,16 @@ export const useDashboardData = () => {
         console.log('Fetched responses:', data?.length || 0);
       }
       
-      // Create a map to store the latest response for each prompt-model combination
-      const responseMap = new Map();
-      
-      // Process responses and keep only the latest one for each prompt-model combination
-      (data || []).forEach(response => {
-        const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
-        const existingResponse = responseMap.get(key);
-        
-        if (!existingResponse || new Date(response.tested_at) > new Date(existingResponse.tested_at)) {
-          responseMap.set(key, response);
-        }
-      });
-      
-      // Convert the map values back to an array
-      const uniqueResponses = Array.from(responseMap.values());
+      // Keep all responses for time-based analysis
+      const allResponses = data || [];
       
       // Sort by tested_at in descending order
-      uniqueResponses.sort((a, b) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
+      allResponses.sort((a, b) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
       
       if (import.meta.env.MODE === 'development') {
-        console.log('Setting responses:', uniqueResponses.length);
+        console.log('Setting responses:', allResponses.length);
       }
-      setResponses(uniqueResponses);
+      setResponses(allResponses);
       setLoading(false);
       setCompetitorLoading(false);
     } catch (error) {
@@ -316,62 +303,56 @@ export const useDashboardData = () => {
     const neutralCount = responses.filter(r => (r.sentiment_score || 0) >= -0.1 && (r.sentiment_score || 0) <= 0.1).length;
     const negativeCount = responses.filter(r => (r.sentiment_score || 0) < -0.1).length;
 
-    // --- NEW LOGIC: Compare most recent update to previous update ---
     let sentimentTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     let visibilityTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     let citationsTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     
     if (responses.length > 1) {
-      // Sort responses by tested_at descending
       const sorted = [...responses].sort((a, b) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
-      const latestDate = sorted[0].tested_at;
-      const prevDate = sorted.find(r => r.tested_at !== latestDate)?.tested_at;
       
-      if (prevDate) {
-        const latestResponses = sorted.filter(r => r.tested_at === latestDate);
-        const prevResponses = sorted.filter(r => r.tested_at === prevDate);
-        
+      const latestDate = new Date(sorted[0].tested_at).toDateString();
+      
+      const currentResponses = sorted.filter(r => new Date(r.tested_at).toDateString() === latestDate);
+      const previousResponses = sorted.filter(r => new Date(r.tested_at).toDateString() !== latestDate);
+
+      if (previousResponses.length > 0) {
+        const previousUniqueDays = new Set(previousResponses.map(r => new Date(r.tested_at).toDateString()));
+        const numPreviousDays = Math.max(1, previousUniqueDays.size);
+
         // Calculate sentiment trend
-        const latestSentimentAvg = latestResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / latestResponses.length;
-        const prevSentimentAvg = prevResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / prevResponses.length;
-        const sentimentChange = prevSentimentAvg !== 0 ? ((latestSentimentAvg - prevSentimentAvg) / Math.abs(prevSentimentAvg)) * 100 : 0;
+        const currentSentimentAvg = currentResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / currentResponses.length;
+        const previousSentimentTotal = previousResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0);
+        const previousSentimentAvg = previousSentimentTotal / previousResponses.length;
+        const sentimentChange = currentSentimentAvg - previousSentimentAvg;
         sentimentTrendComparison = {
-          value: Math.abs(Math.round(sentimentChange)),
-          direction: sentimentChange > 0 ? 'up' : sentimentChange < 0 ? 'down' : 'neutral'
+          value: Math.abs(Math.round(sentimentChange * 100)),
+          direction: sentimentChange > 0.01 ? 'up' : sentimentChange < -0.01 ? 'down' : 'neutral'
         };
 
         // Calculate visibility trend
-        const latestVisibilityScores = latestResponses
-          .map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined)
-          .filter((v): v is number => typeof v === 'number');
-        const prevVisibilityScores = prevResponses
-          .map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined)
-          .filter((v): v is number => typeof v === 'number');
+        const currentVisibilityScores = currentResponses.map(r => r.visibility_score).filter((v): v is number => typeof v === 'number');
+        const currentVisibilityAvg = currentVisibilityScores.length > 0 ? currentVisibilityScores.reduce((a, b) => a + b, 0) / currentVisibilityScores.length : 0;
         
-        const latestVisibilityAvg = latestVisibilityScores.length > 0
-          ? latestVisibilityScores.reduce((sum, v) => sum + v, 0) / latestVisibilityScores.length
-          : 0;
-        const prevVisibilityAvg = prevVisibilityScores.length > 0
-          ? prevVisibilityScores.reduce((sum, v) => sum + v, 0) / prevVisibilityScores.length
-          : 0;
+        const previousVisibilityScores = previousResponses.map(r => r.visibility_score).filter((v): v is number => typeof v === 'number');
+        const previousVisibilityAvg = previousVisibilityScores.length > 0 ? previousVisibilityScores.reduce((a, b) => a + b, 0) / previousVisibilityScores.length : 0;
         
-        const visibilityChange = prevVisibilityAvg !== 0 ? ((latestVisibilityAvg - prevVisibilityAvg) / Math.abs(prevVisibilityAvg)) * 100 : 0;
+        const visibilityChange = currentVisibilityAvg - previousVisibilityAvg;
         visibilityTrendComparison = {
-          value: Math.abs(Math.round(visibilityChange)),
-          direction: visibilityChange > 0 ? 'up' : visibilityChange < 0 ? 'down' : 'neutral'
+          value: Math.abs(visibilityChange),
+          direction: visibilityChange > 1 ? 'up' : visibilityChange < -1 ? 'down' : 'neutral'
         };
 
         // Calculate citations trend
-        const latestCitations = latestResponses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
-        const prevCitations = prevResponses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
-        const citationsChange = prevCitations !== 0 ? ((latestCitations - prevCitations) / Math.abs(prevCitations)) * 100 : 0;
+        const currentCitationsTotal = currentResponses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
+        const previousCitationsTotal = previousResponses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
+        const previousCitationsAvg = previousCitationsTotal / numPreviousDays;
+        const citationsChange = currentCitationsTotal - previousCitationsAvg;
         citationsTrendComparison = {
           value: Math.abs(Math.round(citationsChange)),
-          direction: citationsChange > 0 ? 'up' : citationsChange < 0 ? 'down' : 'neutral'
+          direction: citationsChange > 0.1 ? 'up' : citationsChange < -0.1 ? 'down' : 'neutral'
         };
       }
     }
-    // --- END NEW LOGIC ---
 
     const totalCitations = responses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
     const uniqueDomains = new Set(
@@ -386,6 +367,56 @@ export const useDashboardData = () => {
       ? allVisibilityScores.reduce((sum, v) => sum + v, 0) / allVisibilityScores.length
       : 0;
 
+    // Calculate overall perception score
+    const calculatePerceptionScore = () => {
+      if (responses.length === 0) return { score: 0, label: 'No Data' };
+
+      // Normalize sentiment to 0-100 scale (sentiment is typically -1 to 1)
+      const normalizedSentiment = Math.max(0, Math.min(100, (averageSentiment + 1) * 50));
+      
+      // Visibility is already 0-100 scale
+      const visibilityScore = averageVisibility;
+      
+      // Calculate competitive score based on competitor mentions and positioning
+      const competitiveResponses = responses.filter(r => r.detected_competitors);
+      const totalCompetitorMentions = competitiveResponses.reduce((sum, r) => {
+        const competitors = r.detected_competitors?.split(',').filter(Boolean) || [];
+        return sum + competitors.length;
+      }, 0);
+      
+      // Calculate average mention ranking (lower is better)
+      const mentionRankings = responses
+        .map(r => r.mention_ranking)
+        .filter((r): r is number => typeof r === 'number');
+      const avgMentionRanking = mentionRankings.length > 0 
+        ? mentionRankings.reduce((sum, rank) => sum + rank, 0) / mentionRankings.length 
+        : 0;
+      
+      // Competitive score: higher when mentioned more and ranked better
+      const competitiveScore = Math.min(100, Math.max(0, 
+        (totalCompetitorMentions * 10) + // Bonus for being mentioned alongside competitors
+        (avgMentionRanking > 0 ? Math.max(0, 100 - (avgMentionRanking * 10)) : 50) // Better ranking = higher score
+      ));
+
+      // Weighted formula: 40% sentiment + 35% visibility + 25% competitive
+      const perceptionScore = Math.round(
+        (normalizedSentiment * 0.4) + 
+        (visibilityScore * 0.35) + 
+        (competitiveScore * 0.25)
+      );
+
+      // Determine label based on score
+      let perceptionLabel = 'Poor';
+      if (perceptionScore >= 80) perceptionLabel = 'Excellent';
+      else if (perceptionScore >= 65) perceptionLabel = 'Good';
+      else if (perceptionScore >= 50) perceptionLabel = 'Fair';
+      else if (perceptionScore >= 30) perceptionLabel = 'Poor';
+
+      return { score: perceptionScore, label: perceptionLabel };
+    };
+
+    const { score: perceptionScore, label: perceptionLabel } = calculatePerceptionScore();
+
     return {
       averageSentiment,
       sentimentLabel,
@@ -398,7 +429,9 @@ export const useDashboardData = () => {
       averageVisibility,
       positiveCount,
       neutralCount,
-      negativeCount
+      negativeCount,
+      perceptionScore,
+      perceptionLabel
     };
   }, [responses, promptsData]);
 

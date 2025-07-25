@@ -23,39 +23,43 @@ const App = () => (
     <TooltipProvider>
       <BrowserRouter>
         <AuthProvider>
-          <SidebarProvider>
-            <Toaster />
-            <Sonner />
-            <Routes>
-              <Route path="/" element={<Auth />} />
-              <Route path="/auth" element={<Auth />} />
-              <Route path="/auth/callback" element={<AuthCallback />} />
-              <Route path="/verify-email" element={<VerifyEmail />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/dashboard" element={
-                <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
+          <Toaster />
+          <Sonner />
+          <Routes>
+            <Route path="/" element={<Auth />} />
+            <Route path="/auth" element={<Auth />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/dashboard" element={
+              <ProtectedRoute>
+                <OnboardingGuard requireOnboarding={true}>
+                  <SidebarProvider>
                     <Dashboard />
-                  </OnboardingGuard>
-                </ProtectedRoute>
-              } />
-              <Route path="/usage" element={
-                <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
+                  </SidebarProvider>
+                </OnboardingGuard>
+              </ProtectedRoute>
+            } />
+            <Route path="/usage" element={
+              <ProtectedRoute>
+                <OnboardingGuard requireOnboarding={true}>
+                  <SidebarProvider>
                     <Usage />
-                  </OnboardingGuard>
-                </ProtectedRoute>
-              } />
-              <Route path="/account" element={
-                <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
+                  </SidebarProvider>
+                </OnboardingGuard>
+              </ProtectedRoute>
+            } />
+            <Route path="/account" element={
+              <ProtectedRoute>
+                <OnboardingGuard requireOnboarding={true}>
+                  <SidebarProvider>
                     <Account />
-                  </OnboardingGuard>
-                </ProtectedRoute>
-              } />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </SidebarProvider>
+                  </SidebarProvider>
+                </OnboardingGuard>
+              </ProtectedRoute>
+            } />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

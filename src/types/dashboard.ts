@@ -84,6 +84,8 @@ export interface DashboardMetrics {
   positiveCount: number;
   neutralCount: number;
   negativeCount: number;
+  perceptionScore: number;
+  perceptionLabel: string;
 }
 
 export interface VisibilityMetrics {

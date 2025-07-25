@@ -20,7 +20,7 @@ function AccountSidebar({ activeSection, onSectionChange }) {
         <img
           alt="Perception Logo"
           className="object-contain h-4"
-          src={isCollapsed ? "/logos/perceptionx-small.png" : "/logos/perceptionx-normal.png"}
+          src={isCollapsed ? "/logos/perceptionx-small.png" : "/logos/PerceptionX-PrimaryLogo.png"}
         />
         <SidebarTrigger className="h-7 w-7 md:hidden" />
       </SidebarHeader>

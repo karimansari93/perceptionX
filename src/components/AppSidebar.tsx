@@ -1,4 +1,4 @@
-import { BarChart3, FileText, MessageSquare, Search, TrendingUp, HelpCircle, Calendar, CheckCircle2 } from "lucide-react";
+import { BarChart3, FileText, MessageSquare, Search, TrendingUp, HelpCircle, Calendar, CheckCircle2, ActivitySquare } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -82,7 +82,7 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
         <img
           alt="Perception Logo"
           className="object-contain h-4"
-          src="/logos/perceptionx-normal.png"
+          src="/logos/PerceptionX-PrimaryLogo.png"
         />
       </SidebarHeader>
       <SidebarContent className="flex-1">
@@ -97,9 +97,9 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
                     className="w-full justify-start relative"
                   >
                     <item.icon className="h-4 w-4" />
-                    <span>{item.title}</span>
+                    <span className="text-sm">{item.title}</span>
                     {item.comingSoon && (
-                      <Badge className="ml-2 bg-gray-200 text-gray-700 px-2 py-0.5 text-xs font-semibold">Coming Soon</Badge>
+                      <Badge className="ml-2 bg-gray-200 text-gray-700 px-2 py-0.5 text-[10px] font-semibold">Coming Soon</Badge>
                     )}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -111,7 +111,7 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
       <SidebarFooter className="p-4 flex flex-col gap-3">
         <div className="w-full rounded-lg border border-pink-600 bg-pink-100/60 text-pink-800 text-xs px-4 py-3 mb-1">
           <span className="font-semibold block mb-1">Dashboard is in Alpha</span>
-          Please reach out to <a href="mailto:karim@perceptionx.co" className="underline font-medium">karim@perceptionx.co</a> if you have any feedback.
+          Please reach out to <a href="mailto:karim@perceptionx.ai" className="underline font-medium">karim@perceptionx.ai</a> if you have any feedback.
         </div>
         
         <Button

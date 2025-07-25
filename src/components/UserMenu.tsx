@@ -31,7 +31,7 @@ const UserMenu = () => {
       <DropdownMenuTrigger asChild>
         <Button 
           variant="ghost" 
-          className={`w-full ${isCollapsed ? 'px-2' : 'justify-start px-3'} text-gray-700 hover:bg-gray-100/50`}
+          className={`w-full ${isCollapsed ? 'px-2' : 'justify-start px-3'} text-gray-700 hover:bg-pink hover:text-white`}
         >
           <User className="w-4 h-4" />
           {!isCollapsed && (

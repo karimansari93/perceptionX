@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useMemo } from "react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { MetricCard } from "./MetricCard";
 import { DashboardMetrics, CitationCount } from "@/types/dashboard";
-import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X } from 'lucide-react';
+import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { SourceDetailsModal } from "./SourceDetailsModal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ReactMarkdown from 'react-markdown';
@@ -12,6 +12,13 @@ import LLMLogo from "@/components/LLMLogo";
 import { KeyTakeaways } from "./KeyTakeaways";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart"
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
+import { ChartConfig } from "@/components/ui/chart"
 
 interface OverviewTabProps {
   metrics: DashboardMetrics;
@@ -21,6 +28,29 @@ interface OverviewTabProps {
   competitorLoading?: boolean; // Add competitor loading prop
   companyName: string; // <-- Add this
 }
+
+interface TimeBasedData {
+  name: string;
+  current: number;
+  previous: number;
+  change: number;
+  changePercent: number;
+}
+
+const normalizeCompetitorName = (name: string): string => {
+  const lowerName = name.trim().toLowerCase();
+  const aliases: { [key: string]: string } = {
+    'amazon web services': 'AWS',
+    'google cloud': 'GCP',
+    // Add other aliases as needed
+  };
+  for (const alias in aliases) {
+    if (lowerName === alias) {
+      return aliases[alias];
+    }
+  }
+  return name.trim().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+};
 
 export const OverviewTab = ({ 
   metrics, 
@@ -41,10 +71,284 @@ export const OverviewTab = ({
   const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
   const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = useState(false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Responsive check
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth <= 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Collapsible Trends & Details
+  const [showTrends, setShowTrends] = useState(false);
+
+  // Helper for mini-cards
+  const breakdowns = [
+    {
+      title: 'Sentiment',
+      value: Math.round((metrics.averageSentiment + 1) * 50),
+      trend: metrics.sentimentTrendComparison,
+      color: 'green',
+      description: 'How positively your brand is perceived.'
+    },
+    {
+      title: 'Visibility',
+      value: Math.round(metrics.averageVisibility),
+      trend: metrics.visibilityTrendComparison,
+      color: 'blue',
+      description: 'How prominently your brand is mentioned.'
+    },
+    {
+      title: 'Competitive',
+      value: metrics.perceptionScore > 0 ? Math.round(metrics.perceptionScore * 0.25) : 0, // Approximation
+      trend: metrics.citationsTrendComparison, // Use citations trend as a placeholder for now
+      color: 'purple',
+      description: 'How well you are positioned vs competitors.'
+    }
+  ];
 
   const getFavicon = (domain: string): string => {
     return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
   };
+
+  // Helper to group responses by time period
+  const groupResponsesByTimePeriod = useMemo(() => {
+    if (responses.length === 0) return { current: [], previous: [] };
+
+    // Sort responses by tested_at descending
+    const sortedResponses = [...responses].sort((a, b) => 
+      new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime()
+    );
+
+    // Find the most recent date
+    const latestDate = new Date(sortedResponses[0].tested_at);
+    
+    // Group responses into current (latest date) and previous (all other dates)
+    const current = sortedResponses.filter(r => {
+      const responseDate = new Date(r.tested_at);
+      return responseDate.toDateString() === latestDate.toDateString();
+    });
+    
+    const previous = sortedResponses.filter(r => {
+      const responseDate = new Date(r.tested_at);
+      return responseDate.toDateString() !== latestDate.toDateString();
+    });
+
+    // If we only have responses from one date, treat them all as current
+    if (previous.length === 0) {
+      return { current: sortedResponses, previous: [] };
+    }
+
+    // Debug logging
+    if (import.meta.env.MODE === 'development') {
+      console.log('Time-based grouping:', {
+        totalResponses: responses.length,
+        currentPeriod: current.length,
+        previousPeriod: previous.length,
+        latestDate: latestDate.toLocaleDateString(),
+        uniqueDates: [...new Set(sortedResponses.map(r => new Date(r.tested_at).toDateString()))]
+      });
+    }
+
+    return { current, previous };
+  }, [responses]);
+
+  // Calculate time-based competitor data
+  const timeBasedCompetitors = useMemo(() => {
+    const { current, previous } = groupResponsesByTimePeriod;
+    
+    // Get competitor counts for current period
+    const currentCompetitors: Record<string, number> = {};
+    current.forEach(response => {
+      if (response.detected_competitors) {
+        const competitors = response.detected_competitors
+          .split(',')
+          .map(name => normalizeCompetitorName(name))
+          .filter(name => 
+            name && 
+            name.toLowerCase() !== companyName.toLowerCase() &&
+            name.length > 1
+          );
+        
+        competitors.forEach(name => {
+          currentCompetitors[name] = (currentCompetitors[name] || 0) + 1;
+        });
+      }
+    });
+
+    // Get competitor counts for previous period and calculate average
+    const previousCompetitors: Record<string, number> = {};
+    const previousUniqueDays = new Set(previous.map(r => new Date(r.tested_at).toDateString()));
+    const numPreviousDays = Math.max(1, previousUniqueDays.size);
+
+    previous.forEach(response => {
+      if (response.detected_competitors) {
+        const competitors = response.detected_competitors
+          .split(',')
+          .map(name => normalizeCompetitorName(name))
+          .filter(name => 
+            name && 
+            name.toLowerCase() !== companyName.toLowerCase() &&
+            name.length > 1
+          );
+        
+        competitors.forEach(name => {
+          previousCompetitors[name] = (previousCompetitors[name] || 0) + 1;
+        });
+      }
+    });
+
+    // Combine all unique competitors
+    const allCompetitors = new Set([
+      ...Object.keys(currentCompetitors),
+      ...Object.keys(previousCompetitors)
+    ]);
+
+    const timeBasedData: TimeBasedData[] = Array.from(allCompetitors).map(competitor => {
+      const currentCount = currentCompetitors[competitor] || 0;
+      const previousTotalCount = previousCompetitors[competitor] || 0;
+      const previousAverage = Math.round(previousTotalCount / numPreviousDays);
+
+      const change = currentCount - previousAverage;
+      const changePercent = previousAverage > 0 ? (change / previousAverage) * 100 : currentCount > 0 ? 100 : 0;
+
+      return {
+        name: competitor,
+        current: currentCount,
+        previous: previousAverage,
+        change,
+        changePercent
+      };
+    });
+
+    // Sort by current count descending
+    const result = timeBasedData
+      .sort((a, b) => b.current - a.current)
+      .slice(0, 8);
+
+    // Debug logging
+    if (import.meta.env.MODE === 'development') {
+      console.log('Time-based competitors:', {
+        currentPeriodResponses: current.length,
+        previousPeriodResponses: previous.length,
+        numPreviousDays: numPreviousDays,
+        currentCompetitors: Object.keys(currentCompetitors).length,
+        previousCompetitors: Object.keys(previousCompetitors).length,
+        totalUniqueCompetitors: allCompetitors.size,
+        topCompetitors: result.slice(0, 3).map(c => ({ name: c.name, current: c.current, previous: c.previous, change: c.change }))
+      });
+    }
+
+    return result;
+  }, [groupResponsesByTimePeriod, companyName]);
+
+  // Calculate time-based citation data
+  const timeBasedCitations = useMemo(() => {
+    const { current, previous } = groupResponsesByTimePeriod;
+    
+    // Helper to parse citations
+    const parseCitations = (citations: any) => {
+      if (!citations) return [];
+      try {
+        return typeof citations === 'string' ? JSON.parse(citations) : citations;
+      } catch {
+        return [];
+      }
+    };
+
+    // Get citation counts for current period
+    const currentCitations: Record<string, number> = {};
+    current.forEach(response => {
+      const citations = parseCitations(response.citations);
+      citations.forEach((citation: any) => {
+        if (citation.domain) {
+          currentCitations[citation.domain] = (currentCitations[citation.domain] || 0) + 1;
+        }
+      });
+    });
+
+    // Get citation counts for previous period and calculate average
+    const previousCitations: Record<string, number> = {};
+    const previousUniqueDays = new Set(previous.map(r => new Date(r.tested_at).toDateString()));
+    const numPreviousDays = Math.max(1, previousUniqueDays.size);
+
+    previous.forEach(response => {
+      const citations = parseCitations(response.citations);
+      citations.forEach((citation: any) => {
+        if (citation.domain) {
+          previousCitations[citation.domain] = (previousCitations[citation.domain] || 0) + 1;
+        }
+      });
+    });
+
+    // Combine all unique domains
+    const allDomains = new Set([
+      ...Object.keys(currentCitations),
+      ...Object.keys(previousCitations)
+    ]);
+
+    const timeBasedData: TimeBasedData[] = Array.from(allDomains).map(domain => {
+      const currentCount = currentCitations[domain] || 0;
+      const previousTotalCount = previousCitations[domain] || 0;
+      const previousAverage = Math.round(previousTotalCount / numPreviousDays);
+
+      const change = currentCount - previousAverage;
+      const changePercent = previousAverage > 0 ? (change / previousAverage) * 100 : currentCount > 0 ? 100 : 0;
+
+      return {
+        name: domain,
+        current: currentCount,
+        previous: previousAverage,
+        change,
+        changePercent
+      };
+    });
+
+    // Sort by current count descending, then by change descending
+    const result = timeBasedData
+      .sort((a, b) => {
+        if (b.current !== a.current) return b.current - a.current;
+        return b.change - a.change;
+      })
+      .slice(0, 8);
+
+    // Debug logging
+    if (import.meta.env.MODE === 'development') {
+      console.log('Time-based citations:', {
+        currentPeriodResponses: current.length,
+        previousPeriodResponses: previous.length,
+        numPreviousDays: numPreviousDays,
+        currentCitations: Object.keys(currentCitations).length,
+        previousCitations: Object.keys(previousCitations).length,
+        totalUniqueDomains: allDomains.size,
+        topCitations: result.slice(0, 3).map(c => ({ name: c.name, current: c.current, previous: c.previous, change: c.change }))
+      });
+    }
+
+    return result;
+  }, [groupResponsesByTimePeriod]);
+
+  // Helper to get time period labels
+  const getTimePeriodLabels = () => {
+    const { current, previous } = groupResponsesByTimePeriod;
+    if (current.length === 0) return { current: 'No data', previous: 'No data' };
+
+    const currentDate = new Date(current[0].tested_at);
+    const currentLabel = currentDate.toLocaleDateString();
+    
+    if (previous.length === 0) {
+      return { current: currentLabel, previous: 'No previous data' };
+    }
+    
+    const previousLabel = "Previous Avg.";
+
+    return { current: currentLabel, previous: previousLabel };
+  };
+
+  const timeLabels = getTimePeriodLabels();
 
   const handleSourceClick = (citation: CitationCount) => {
     setSelectedSource(citation);
@@ -113,12 +417,9 @@ export const OverviewTab = ({
   };
 
   // Helper to format domain to a human-friendly name
+  // For Information Sources chart, show the domain as-is (e.g., example.com, example.ai), no capitalization, but remove www.
   const getSourceDisplayName = (domain: string) => {
-    // Remove www. and domain extension
-    let name = domain.replace(/^www\./, "");
-    name = name.replace(/\.(com|org|net|io|co|edu|gov|info|biz|us|uk|ca|au|in|de|fr|jp|ru|ch|it|nl|se|no|es|mil|tv|me|ai|ly|app|site|online|tech|dev|xyz|pro|club|store|blog|io|co|us|ca|uk|au|in|de|fr|jp|ru|ch|it|nl|se|no|es|mil|tv|me|ai|ly|app|site|online|tech|dev|xyz|pro|club|store|blog)(\.[a-z]{2})?$/, "");
-    // Capitalize first letter
-    return name.charAt(0).toUpperCase() + name.slice(1);
+    return domain.replace(/^www\./, ""); // Remove www. if present
   };
 
   // Normalize and merge topCompetitors by case-insensitive name
@@ -212,185 +513,371 @@ export const OverviewTab = ({
     return clean;
   }
 
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-      {/* Left Column - Main Content */}
-      <div className="lg:col-span-2 space-y-8">
-        {/* Metrics Grid */}
-        <div className="grid gap-6 grid-cols-1 md:grid-cols-3">
-          <MetricCard
-            title="Average Sentiment"
-            value={metrics.totalResponses && metrics.totalResponses > 0 ? (() => {
-              const total = metrics.totalResponses || 1;
-              const positivePct = (metrics.positiveCount / total) * 100;
-              const negativePct = (metrics.negativeCount / total) * 100;
-              if (positivePct >= 60) return 'Positive';
-              if (negativePct >= 40) return 'Negative';
-              return 'Normal';
-            })() : 'No data available'}
-            subtitle={metrics.totalResponses && metrics.totalResponses > 0 ? `${metrics.positiveCount} positive, ${metrics.neutralCount} neutral, ${metrics.negativeCount} negative` : 'No sentiment data to display'}
-            trend={metrics.totalResponses && metrics.totalResponses > 0 ? metrics.sentimentTrendComparison : undefined}
-            tooltip="Overall sentiment category based on the distribution of positive, neutral, and negative responses."
-          />
-          <MetricCard
-            title="Average Visibility"
-            value={metrics.totalResponses && metrics.totalResponses > 0 ? `${Math.round(metrics.averageVisibility)}%` : 'No data available'}
-            subtitle={metrics.totalResponses && metrics.totalResponses > 0 ? 'Company mention prominence' : 'No visibility data to display'}
-            trend={metrics.totalResponses && metrics.totalResponses > 0 ? metrics.visibilityTrendComparison : undefined}
-            tooltip="How prominently your company is mentioned in AI responses, on average."
-          />
-          <MetricCard
-            title="Total Citations"
-            value={metrics.totalCitations && metrics.totalCitations > 0 ? metrics.totalCitations.toString() : 'No data available'}
-            subtitle={metrics.totalCitations && metrics.totalCitations > 0 ? `${metrics.uniqueDomains} unique domains` : 'No citation data to display'}
-            trend={metrics.totalCitations && metrics.totalCitations > 0 ? metrics.citationsTrendComparison : undefined}
-            tooltip="Total number of source citations found in AI responses, and how many unique domains they come from."
-          />
-        </div>
+  // Aggregate themes by sentiment
+  const themesBySentiment = useMemo(() => {
+    const allThemes = { positive: [], neutral: [], negative: [] as string[] };
+    responses.forEach(r => {
+      if (Array.isArray(r.themes)) {
+        r.themes.forEach((t: any) => {
+          if (t && t.theme && t.sentiment) {
+            if (allThemes[t.sentiment]) {
+              allThemes[t.sentiment].push(t.theme);
+            }
+          }
+        });
+      }
+    });
+    // Deduplicate and take top 3 for each
+    return {
+      positive: Array.from(new Set(allThemes.positive)).slice(0, 3),
+      neutral: Array.from(new Set(allThemes.neutral)).slice(0, 3),
+      negative: Array.from(new Set(allThemes.negative)).slice(0, 3),
+    };
+  }, [responses]);
 
-        {/* Competitors and Information Sources Row */}
-        <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
-          {/* Competitors Card */}
-          <Card className="shadow-sm border border-gray-200">
-            <CardHeader className="pb-4">
-              <div className="flex items-center gap-1">
-                <CardTitle className="text-lg font-semibold">Top Competitors</CardTitle>
+  // Helper to render a simple comparison bar
+  const renderComparisonBar = (data: TimeBasedData, maxCurrent: number, isCompetitor: boolean = false) => {
+    const barWidth = maxCurrent > 0 ? (data.current / maxCurrent) * 100 : 0;
+    
+    return (
+      <div className="flex items-center py-1 hover:bg-gray-50/50 transition-colors cursor-pointer">
+        <div className="flex items-center space-x-3 min-w-[200px] truncate">
+          {!isCompetitor && (
+            <img src={getFavicon(data.name)} alt="" className="w-4 h-4 flex-shrink-0" />
+          )}
+          <span className="text-sm font-medium text-gray-900 truncate">
+            {isCompetitor ? data.name : getSourceDisplayName(data.name)}
+          </span>
+        </div>
+        <div className="flex-1 flex items-center gap-2 ml-4">
+          <div className="w-[120px]">
+            <div
+              className={`h-4 rounded-full transition-all duration-300 ${
+                isCompetitor ? 'bg-blue-100' : 'bg-pink-100'
+              }`}
+              style={{ width: `${barWidth}%`, minWidth: '2px' }}
+            />
+          </div>
+          <div className="flex items-center w-20">
+            <span className="text-sm font-semibold text-gray-900 mr-2">
+              {data.current}
+            </span>
+            {data.change !== 0 && (
+              <div className={`flex items-center text-xs ${
+                data.change > 0 ? 'text-green-600' : 'text-red-600'
+              }`}>
+                {data.change > 0 ? (
+                  <TrendingUp className="w-3 h-3" />
+                ) : (
+                  <TrendingDown className="w-3 h-3" />
+                )}
+                <span className="ml-0.5">{Math.abs(data.change)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const visibilityTrendData = useMemo(() => {
+    if (!responses || responses.length === 0) {
+      return [];
+    }
+
+    const dataByDate: Record<string, { totalScore: number; count: number }> = {};
+    
+    responses.forEach(response => {
+      if (typeof response.visibility_score === 'number') {
+        const date = new Date(response.tested_at).toISOString().split('T')[0];
+        if (!dataByDate[date]) {
+          dataByDate[date] = { totalScore: 0, count: 0 };
+        }
+        dataByDate[date].totalScore += response.visibility_score;
+        dataByDate[date].count += 1;
+      }
+    });
+
+    const trendData = Object.entries(dataByDate).map(([date, { totalScore, count }]) => ({
+      date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      "Visibility": Math.round(totalScore / count),
+    }));
+
+    return trendData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [responses]);
+
+  const sentimentTrendData = useMemo(() => {
+    if (!responses || responses.length === 0) {
+      return [];
+    }
+  
+    const dataByDate: Record<string, { totalScore: number; count: number }> = {};
+    
+    responses.forEach(response => {
+      if (typeof response.sentiment_score === 'number') {
+        const date = new Date(response.tested_at).toISOString().split('T')[0];
+        if (!dataByDate[date]) {
+          dataByDate[date] = { totalScore: 0, count: 0 };
+        }
+        dataByDate[date].totalScore += response.sentiment_score;
+        dataByDate[date].count += 1;
+      }
+    });
+  
+    const trendData = Object.entries(dataByDate).map(([date, { totalScore, count }]) => ({
+      date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      "Sentiment": Math.round((totalScore / count) * 100),
+    }));
+  
+    return trendData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [responses]);
+
+  const chartConfig = {
+    Visibility: {
+      label: "Visibility",
+      color: "hsl(var(--chart-1))",
+    },
+    Sentiment: {
+      label: "Sentiment",
+      color: "hsl(var(--chart-2))",
+    },
+  } satisfies ChartConfig
+
+  // Compute perception score trend by date
+  const perceptionScoreTrend = useMemo(() => {
+    if (!responses || responses.length === 0) return [];
+    // Group responses by date
+    const grouped: Record<string, any[]> = {};
+    responses.forEach(r => {
+      const date = new Date(r.tested_at).toISOString().split('T')[0];
+      if (!grouped[date]) grouped[date] = [];
+      grouped[date].push(r);
+    });
+    // For each date, calculate perception score using the same formula as in useDashboardData
+    return Object.entries(grouped)
+      .map(([date, group]) => {
+        // Average sentiment
+        const avgSentiment = group.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / group.length;
+        const normalizedSentiment = Math.max(0, Math.min(100, (avgSentiment + 1) * 50));
+        // Average visibility
+        const visScores = group.map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined).filter((v): v is number => typeof v === 'number');
+        const avgVisibility = visScores.length > 0 ? visScores.reduce((sum, v) => sum + v, 0) / visScores.length : 0;
+        // Competitive score
+        const competitiveResponses = group.filter(r => r.detected_competitors);
+        const totalCompetitorMentions = competitiveResponses.reduce((sum, r) => {
+          const competitors = r.detected_competitors?.split(',').filter(Boolean) || [];
+          return sum + competitors.length;
+        }, 0);
+        const mentionRankings = group.map(r => r.mention_ranking).filter((r): r is number => typeof r === 'number');
+        const avgMentionRanking = mentionRankings.length > 0 ? mentionRankings.reduce((sum, rank) => sum + rank, 0) / mentionRankings.length : 0;
+        const competitiveScore = Math.min(100, Math.max(0, (totalCompetitorMentions * 10) + (avgMentionRanking > 0 ? Math.max(0, 100 - (avgMentionRanking * 10)) : 50)));
+        // Weighted formula
+        const perceptionScore = Math.round(
+          (normalizedSentiment * 0.4) +
+          (avgVisibility * 0.35) +
+          (competitiveScore * 0.25)
+        );
+        return {
+          date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          score: perceptionScore
+        };
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [responses]);
+
+  return (
+    <div className="flex flex-col gap-8 w-full">
+      <div className="flex flex-col md:flex-row gap-6 w-full">
+        {/* Perception Score Card */}
+        <Card className="flex-1 bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col justify-between hover:shadow-md transition-shadow duration-200 p-0 relative overflow-hidden" style={{ minHeight: 220, height: 220 }}>
+          {/* Top: Score, label, % change */}
+          <div className="flex flex-row items-start justify-between px-8 pt-6 pb-2 z-10">
+            <div className="flex flex-col items-start">
+              <div className="flex items-center gap-2 mb-2">
+                <CardTitle className="text-lg font-bold text-gray-700 tracking-wide">Perception Score</CardTitle>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span className="ml-1 cursor-pointer align-middle">
-                        <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600" />
+                        <HelpCircle className="w-5 h-5 text-gray-400 hover:text-gray-600" />
                       </span>
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      Companies most often mentioned alongside your brand in AI responses.
+                      Overall perception score (0-100) combines:<br/>
+                      <b>Sentiment</b> (40%), <b>Visibility</b> (35%), <b>Competitive</b> (25%)<br/>
+                      Higher scores indicate better brand perception.
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               </div>
-              <CardDescription className="text-sm text-gray-600">
-                Companies most frequently mentioned alongside your brand
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="relative">
-              {competitorLoading ? (
-                <div className="text-center py-12 text-gray-500">
-                  <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300 animate-spin" />
-                  <p className="text-sm">Loading competitor data...</p>
-                </div>
-              ) : (
-                // Match Information Sources bar style for Top Competitors
-                (() => {
-                  const maxCount = normalizedTopCompetitors.length > 0 ? normalizedTopCompetitors[0].count : 1;
-                  return (
-                    <div className="space-y-2 max-h-[300px] overflow-y-auto relative">
-                      {normalizedTopCompetitors.length > 0 ? (
-                        normalizedTopCompetitors.map((competitor, idx) => (
+              <div className="flex items-end gap-3 mb-1 mt-2">
+                <span className="text-6xl font-extrabold text-gray-900 drop-shadow-sm leading-none">{metrics.perceptionScore}</span>
+                <span className={`ml-4 flex items-center gap-1 text-xl font-semibold ${metrics.sentimentTrendComparison.direction === 'up' ? 'text-green-600' : metrics.sentimentTrendComparison.direction === 'down' ? 'text-red-600' : 'text-gray-400'}`}
+                  style={{marginBottom: 6}}>
+                  {metrics.sentimentTrendComparison.direction === 'up' && <TrendingUp className="w-5 h-5" />} 
+                  {metrics.sentimentTrendComparison.direction === 'down' && <TrendingDown className="w-5 h-5" />} 
+                  {metrics.sentimentTrendComparison.direction === 'neutral' && null}
+                  {metrics.sentimentTrendComparison.direction !== 'neutral' && `${metrics.sentimentTrendComparison.value}%`}
+                </span>
+              </div>
+            </div>
+            {/* Badge in top right */}
+            <div className="flex items-start">
+              <span className={`px-3 py-1 rounded-full text-base font-semibold mt-1 ${metrics.perceptionScore >= 80 ? 'bg-green-100 text-green-800' : metrics.perceptionScore >= 65 ? 'bg-blue-100 text-blue-800' : metrics.perceptionScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{metrics.perceptionLabel}</span>
+            </div>
+          </div>
+          {/* Bottom: Chart, visually anchored */}
+          {perceptionScoreTrend.length > 1 && (
+            <div className="w-full flex-1 flex items-end" style={{ minHeight: 0 }}>
+              <AreaChart width={600} height={90} data={perceptionScoreTrend} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorPerceptionBg" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#0DBCBA" stopOpacity={0.18}/>
+                    <stop offset="100%" stopColor="#0DBCBA" stopOpacity={0.04}/>
+                  </linearGradient>
+                </defs>
+                <Area type="monotone" dataKey="score" stroke="#0DBCBA" strokeWidth={3} fill="url(#colorPerceptionBg)" dot={false} isAnimationActive={false} />
+              </AreaChart>
+            </div>
+          )}
+        </Card>
+        {/* Score Breakdown Card */}
+        <Card className="flex-1 bg-white rounded-2xl shadow-sm p-0 flex flex-col justify-between">
+          <CardHeader className="pb-2 pt-6 px-8">
+            <div className="flex items-center gap-2 mb-2">
+              <CardTitle className="text-lg font-bold text-gray-700">Score breakdown</CardTitle>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="ml-1 cursor-pointer align-middle">
+                      <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    Perception Score = (Sentiment + Visibility + Competitive) / 3<br/>
+                    Each bar shows your current value for that factor.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4 px-8 pb-6">
+            <div className="flex items-center gap-3 mb-2">
+              <span className="w-28 text-sm font-medium text-gray-700">Sentiment</span>
+              <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${Math.round((metrics.averageSentiment + 1) * 50)}%` }} />
+              </div>
+              <span className="ml-2 text-sm font-semibold text-gray-700 min-w-[32px] text-right">{Math.round((metrics.averageSentiment + 1) * 50)}%</span>
+            </div>
+            <div className="flex items-center gap-3 mb-2">
+              <span className="w-28 text-sm font-medium text-gray-700">Visibility</span>
+              <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageVisibility)}%` }} />
+              </div>
+              <span className="ml-2 text-sm font-semibold text-gray-700 min-w-[32px] text-right">{Math.round(metrics.averageVisibility)}%</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="w-28 text-sm font-medium text-gray-700">Competitive</span>
+              <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div className="h-full bg-purple-500 transition-all duration-300" style={{ width: `${metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%` }} />
+              </div>
+              <span className="ml-2 text-sm font-semibold text-gray-700 min-w-[32px] text-right">{metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%</span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+      {/* Key Takeaways */}
+      <div>
+        <KeyTakeaways 
+          metrics={metrics}
+          topCompetitors={normalizedTopCompetitors}
+          topCitations={topCitations}
+          themesBySentiment={themesBySentiment}
+        />
+      </div>
+
+      {/* Trends & Details Collapsible */}
+      <div className="mt-2">
+        <button
+          className="flex items-center gap-2 text-base font-semibold text-blue-700 hover:underline focus:outline-none mb-2"
+          onClick={() => setShowTrends(v => !v)}
+        >
+          {showTrends ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          Trends & Details
+        </button>
+        {showTrends && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-2">
+            {/* Competitors Card */}
+            <Card className="shadow-sm border border-gray-200">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg font-semibold">Top Competitors</CardTitle>
+                <CardDescription className="text-sm text-gray-600">
+                  Companies most frequently mentioned alongside your brand
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {competitorLoading ? (
+                  <div className="text-center py-12 text-gray-500">
+                    <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300 animate-spin" />
+                    <p className="text-sm">Loading competitor data...</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1 max-h-[300px] overflow-y-auto relative">
+                    {timeBasedCompetitors.length > 0 ? (
+                      (() => {
+                        const maxCurrent = Math.max(...timeBasedCompetitors.map(c => c.current), 1);
+                        return timeBasedCompetitors.map((competitor, idx) => (
                           <div
                             key={idx}
-                            className="flex items-center py-1 hover:bg-gray-50/50 transition-colors cursor-pointer"
-                            onClick={() => handleCompetitorClick(competitor.company)}
+                            onClick={() => handleCompetitorClick(competitor.name)}
                           >
-                            <div className="flex items-center space-x-3 min-w-[200px]">
-                              <span className="text-sm font-medium text-gray-900">{competitor.company}</span>
-                            </div>
-                            <div className="flex-1 flex items-center gap-2 ml-4">
-                              <div className="h-4 inline-flex items-center w-[120px]">
-                                <div
-                                  className="h-full bg-blue-100 rounded-full transition-all duration-300"
-                                  style={{ width: `${(competitor.count / maxCount) * 100}%`, minWidth: '12px' }}
-                                />
-                                <span className="text-sm font-semibold text-blue-900 ml-2" style={{whiteSpace: 'nowrap'}}>{competitor.count}</span>
-                              </div>
-                            </div>
+                            {renderComparisonBar(competitor, maxCurrent, true)}
                           </div>
-                        ))
-                      ) : (
-                        <div className="text-center py-12 text-gray-500">
-                          <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                          <p className="text-sm">No competitor mentions found yet.</p>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Information Sources Card */}
-          <Card className="shadow-sm border border-gray-200">
-            <CardHeader className="pb-4">
-              <div className="flex items-center gap-1">
-                <CardTitle className="text-lg font-semibold">Information Sources</CardTitle>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="ml-1 cursor-pointer align-middle">
-                        <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600" />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="top">
-                      Websites and sources most frequently cited in AI responses.
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              <CardDescription className="text-sm text-gray-600">
-                The sources most frequently influencing AI responses
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* Find the max count for scaling bars */}
-              {(() => {
-                const maxCount = topCitations.length > 0 ? topCitations[0].count : 1;
-                return (
-                  <div className="space-y-2 max-h-[300px] overflow-y-auto relative">
-                    {topCitations.length > 0 ? (
-                      topCitations.map((citation, idx) => (
-                        <div 
-                          key={idx} 
-                          className="flex items-center py-1 hover:bg-gray-50/50 transition-colors cursor-pointer"
-                          onClick={() => handleSourceClick(citation)}
-                        >
-                          <div className="flex items-center min-w-[220px] w-[220px] space-x-3">
-                            <img src={getFavicon(citation.domain)} alt="" className="w-4 h-4" />
-                            <span className="text-sm font-medium text-gray-900 truncate max-w-[170px]">{getSourceDisplayName(citation.domain)}</span>
-                          </div>
-                          <div className="flex-1 flex items-center gap-2 ml-4">
-                            <div className="h-4 inline-flex items-center w-full max-w-[120px]">
-                              <div 
-                                className="h-full bg-pink-100 rounded-full transition-all duration-300" 
-                                style={{ width: `${(citation.count / maxCount) * 100}%`, minWidth: '12px' }} 
-                              />
-                              <span className="text-sm font-semibold text-pink-900 ml-2" style={{whiteSpace: 'nowrap'}}>{citation.count}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))
+                        ));
+                      })()
                     ) : (
                       <div className="text-center py-12 text-gray-500">
-                        <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                        <p className="text-sm">No citations found yet.</p>
+                        <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                        <p className="text-sm">No competitor mentions found yet.</p>
                       </div>
                     )}
                   </div>
-                );
-              })()}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Right Column - Fixed KeyTakeaways */}
-      <div className="lg:col-span-1">
-        <div className="sticky top-4">
-          <KeyTakeaways 
-            metrics={metrics}
-            topCompetitors={topCompetitors}
-            topCitations={topCitations}
-          />
-        </div>
+                )}
+              </CardContent>
+            </Card>
+            {/* Information Sources Card */}
+            <Card className="shadow-sm border border-gray-200">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg font-semibold">Information Sources</CardTitle>
+                <CardDescription className="text-sm text-gray-600">
+                  The sources most frequently influencing AI responses
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-1 max-h-[300px] overflow-y-auto relative">
+                  {timeBasedCitations.length > 0 ? (
+                    (() => {
+                      const maxCurrent = Math.max(...timeBasedCitations.map(c => c.current), 1);
+                      return timeBasedCitations.map((citation, idx) => (
+                        <div 
+                          key={idx} 
+                          onClick={() => handleSourceClick({ domain: citation.name, count: citation.current + citation.previous })}
+                        >
+                          {renderComparisonBar(citation, maxCurrent, false)}
+                        </div>
+                      ));
+                    })()
+                  ) : (
+                    <div className="text-center py-12 text-gray-500">
+                      <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                      <p className="text-sm">No citations found yet.</p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
 
       {/* Source Details Modal */}
