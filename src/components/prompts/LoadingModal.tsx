@@ -7,6 +7,14 @@ import { getLLMDisplayName } from '@/config/llmLogos';
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 
+// Add shimmer animation styles
+const shimmerStyles = `
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+`;
+
 interface ProgressInfo {
   currentModel: string;
   currentPrompt: string;
@@ -29,7 +37,7 @@ interface LoadingModalProps {
 const llmModels = [
   { name: "OpenAI", model: "openai" },
   { name: "Perplexity", model: "perplexity" },
-  { name: "Google AI", model: "google-ai" }, // Updated to show Google AI during onboarding
+  { name: "Google AI", model: "google-ai" },
   { name: "DeepSeek", model: "deepseek" },
   { name: "Google AI Overviews", model: "google-ai-overviews" }
 ];
@@ -69,11 +77,6 @@ export const LoadingModal = ({
     return () => clearInterval(interval);
   }, [isOpen]);
 
-  // Show the currently active model in the carousel if available
-  const displayModel = progressData.currentModel ? 
-    llmModels.find(m => progressData.currentModel.toLowerCase().includes(m.model)) || llmModels[carouselIndex] :
-    llmModels[carouselIndex];
-
   return (
     <Dialog open={isOpen}>
       <DialogContent className="sm:max-w-md">
@@ -85,6 +88,7 @@ export const LoadingModal = ({
             ? "Your AI responses are ready to view"
             : "Testing your prompts across multiple AI models..."}
         </DialogDescription>
+        <style>{shimmerStyles}</style> {/* Apply shimmer styles */}
         <div className="text-center space-y-6 py-4">
           {/* Header */}
           <div className="space-y-2">
@@ -98,53 +102,31 @@ export const LoadingModal = ({
             </p>
           </div>
 
-          {/* Carousel with LLM Logo */}
-          <div className="flex justify-center items-center h-24">
-            <div 
-              key={displayModel.model}
-              className="animate-fade-in flex flex-col items-center space-y-2"
-            >
-              <div className="relative">
-                <LLMLogo 
-                  modelName={displayModel.model} 
-                  size="lg" 
-                  className="w-16 h-16 hover:scale-105 transition-transform duration-300" 
-                />
-                {progressData.currentModel && progressData.currentModel.toLowerCase().includes(displayModel.model) && (
-                  <div className="absolute -top-1 -right-1">
-                    <div className="w-4 h-4 bg-green-500 rounded-full animate-pulse flex items-center justify-center">
-                      <div className="w-2 h-2 bg-white rounded-full"></div>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <span className="text-sm font-medium text-gray-700">
-                {displayModel.name}
-              </span>
-            </div>
-          </div>
-
           {/* Progress Information */}
           <div className="space-y-3">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600">Progress</span>
+              <span className="text-gray-600">Responses collected</span>
               <span className="font-medium text-blue-600">
-                {progressData.completed} / {progressData.total} complete
+                {progressData.completed} / {progressData.total}
               </span>
             </div>
-            
-            <Progress value={progressPercentage} className="h-2" />
-            
-            {progressData.currentModel && (
-              <div className="text-xs text-gray-500 space-y-1">
-                <div>Testing: {getLLMDisplayName(progressData.currentModel)}</div>
-                {progressData.currentPrompt && (
-                  <div className="truncate max-w-full">
-                    Prompt: {progressData.currentPrompt.substring(0, 50)}...
-                  </div>
-                )}
+            <div className="h-2 bg-gray-200 rounded-full overflow-hidden relative">
+              <div 
+                className="h-full bg-blue-500 rounded-full transition-all duration-500 ease-out"
+                style={{ width: `${progressPercentage}%` }}
+              ></div>
+              {/* Animated shimmer effect */}
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-pulse" 
+                   style={{ 
+                     animation: 'shimmer 2s infinite',
+                     background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)',
+                     backgroundSize: '200% 100%'
+                   }}>
               </div>
-            )}
+            </div>
+            <div className="text-xs text-gray-500">
+              {progressData.total > 0 ? `${progressData.total - progressData.completed} responses remaining` : 'Collecting responses...'}
+            </div>
           </div>
 
           {/* All models indicator */}
