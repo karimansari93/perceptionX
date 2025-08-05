@@ -68,7 +68,7 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
                 <div>
                   <p className="font-medium text-[#13274F]">Full AI Coverage</p>
                   <p className="text-sm text-[#183056]">
-                    Access to all AI models including Google AI Overviews for comprehensive analysis
+                    Access to all AI models for comprehensive employer reputation analysis
                   </p>
                 </div>
               </div>

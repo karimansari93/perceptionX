@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogOverlay } from '@/components/ui/dialog';
-import { X } from 'lucide-react';
+import { Dialog, DialogContent, DialogOverlay, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -282,16 +282,15 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
-        <div className="absolute right-4 top-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => onOpenChange(false)}
-            className="h-6 w-6"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+        <DialogTitle className="sr-only">
+          {isLogin ? 'Sign In' : 'Create Account'}
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          {onboardingData ? 
+            'Create an account to save your personalized prompts and start monitoring' :
+            (isLogin ? 'Welcome back!' : 'Start monitoring your AI perception')
+          }
+        </DialogDescription>
         
         <CardHeader className="text-center pb-4">
           <CardTitle className="text-2xl">

@@ -192,13 +192,13 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       const modelsToTest = isProUser ? [
         { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
         { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
-        { name: 'gemini', displayName: 'Gemini', functionName: 'test-prompt-gemini' },
+        { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }, // Using Google AI Overviews during onboarding
         { name: 'deepseek', displayName: 'DeepSeek', functionName: 'test-prompt-deepseek' },
         { name: 'google-ai-overviews', displayName: 'Google AI Overviews', functionName: 'test-prompt-google-ai-overviews' }
       ] : [
         { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
         { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
-        { name: 'gemini', displayName: 'Gemini', functionName: 'test-prompt-gemini' }
+        { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' } // Using Google AI Overviews during onboarding
       ];
 
       // Now run the testing/monitoring process for all prompts
@@ -214,13 +214,41 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
               currentModel: model.displayName,
               currentPrompt: confirmedPrompt.prompt_text
             }));
-            await testWithModel(confirmedPrompt, model.functionName, model.name);
-            completedOperations++;
-            setProgress(prev => ({ ...prev, completed: completedOperations }));
+            
+            try {
+              await testWithModel(confirmedPrompt, model.functionName, model.name);
+              completedOperations++;
+              setProgress(prev => ({ ...prev, completed: completedOperations }));
+            } catch (modelError) {
+              console.error(`Error with ${model.name}:`, modelError);
+              
+              // Show error toast but continue with other models
+              if (modelError.message?.includes('overloaded')) {
+                toast.error(`${model.displayName} is currently overloaded. Skipping to next model.`);
+              } else if (modelError.message?.includes('quota')) {
+                toast.error(`${model.displayName} quota exceeded. Skipping to next model.`);
+              } else {
+                toast.error(`${model.displayName} failed: ${modelError.message}. Skipping to next model.`);
+              }
+              
+              // Continue with next model instead of failing completely
+              continue;
+            }
           }
         } catch (error) {
           console.error('Error testing prompt:', error);
-          toast.error(`Error testing prompt: ${error.message}`);
+          
+          // Provide specific error messages for common issues
+          if (error.message?.includes('overloaded')) {
+            toast.error(`The AI model is currently overloaded. Please try again in a few minutes.`);
+          } else if (error.message?.includes('quota')) {
+            toast.error(`API quota exceeded. Please try again later.`);
+          } else if (error.message?.includes('authentication')) {
+            toast.error(`Authentication error. Please contact support.`);
+          } else {
+            toast.error(`Error testing prompt: ${error.message}`);
+          }
+          
           // Continue with next prompt instead of failing completely
           continue;
         }
@@ -296,6 +324,27 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
 
       if (functionError) {
         console.error(`${functionName} edge function error:`, functionError);
+        console.error('Error details:', functionError.details);
+        console.error('Error context:', functionError.context);
+        
+        // Handle specific error cases
+        if (functionError.message?.includes('overloaded') || functionError.message?.includes('quota')) {
+          throw new Error(`The ${modelName} model is currently overloaded. Please try again later.`);
+        }
+        
+        if (functionError.message?.includes('API key') || functionError.message?.includes('unauthorized')) {
+          throw new Error(`Authentication error with ${modelName}. Please contact support.`);
+        }
+        
+        if (functionError.message?.includes('invalid')) {
+          throw new Error(`Invalid request to ${modelName}. Please check your prompt.`);
+        }
+        
+        // Check if there are additional error details
+        if (functionError.details) {
+          throw new Error(`API Error: ${functionError.message}. ${functionError.details}`);
+        }
+        
         throw new Error(`API Error: ${functionError.message}`);
       }
 
@@ -311,17 +360,17 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       const perplexityCitations = functionName === 'test-prompt-perplexity' ? responseData.citations : null;
       
       // Analyze sentiment and extract citations with enhanced visibility support
-              const { data: sentimentData, error: sentimentError } = await supabase.functions
-          .invoke('analyze-response', {
-            body: { 
-              response: responseData.response,
-              companyName: onboardingRecord?.companyName,
-              promptType: confirmedPrompt.prompt_type,
-              perplexityCitations: perplexityCitations,
-              confirmed_prompt_id: confirmedPrompt.id,
-              ai_model: modelName
-            }
-          });
+      const { data: sentimentData, error: sentimentError } = await supabase.functions
+        .invoke('analyze-response', {
+          body: { 
+            response: responseData.response,
+            companyName: onboardingRecord?.companyName,
+            promptType: confirmedPrompt.prompt_type,
+            perplexityCitations: perplexityCitations,
+            confirmed_prompt_id: confirmedPrompt.id,
+            ai_model: modelName
+          }
+        });
 
       if (sentimentError) {
         console.error('Sentiment analysis error:', sentimentError);
@@ -333,6 +382,16 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       }
     } catch (error) {
       console.error(`Error testing with ${modelName}:`, error);
+      
+      // Provide user-friendly error messages
+      if (error.message?.includes('overloaded')) {
+        throw new Error(`The ${modelName} model is currently experiencing high demand. Please try again in a few minutes.`);
+      }
+      
+      if (error.message?.includes('quota')) {
+        throw new Error(`API quota exceeded for ${modelName}. Please try again later.`);
+      }
+      
       throw error; // Re-throw to be handled by the caller
     }
   };
@@ -393,13 +452,13 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
   const modelsToTest = isProUser ? [
     { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
     { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
-    { name: 'gemini', displayName: 'Gemini', functionName: 'test-prompt-gemini' },
+    { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }, // Using Google AI Overviews during onboarding
     { name: 'deepseek', displayName: 'DeepSeek', functionName: 'test-prompt-deepseek' },
     { name: 'google-ai-overviews', displayName: 'Google AI Overviews', functionName: 'test-prompt-google-ai-overviews' }
   ] : [
     { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
     { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
-    { name: 'gemini', displayName: 'Gemini', functionName: 'test-prompt-gemini' }
+    { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' } // Using Google AI Overviews during onboarding
   ];
 
   // Calculate total operations for progress tracking

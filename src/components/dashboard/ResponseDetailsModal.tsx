@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink, X, Lightbulb, Building2, MessageSquare } from "lucide-react";
+import { ExternalLink, Lightbulb, Building2, MessageSquare } from "lucide-react";
 import LLMLogo from "@/components/LLMLogo";
 import { PromptResponse, PromptData } from "@/types/dashboard";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -220,9 +220,6 @@ export const ResponseDetailsModal = ({
                 Generated {responses.length > 0 ? new Date(responses[0].tested_at).toLocaleDateString() : 'recently'}
               </DialogDescription>
             </div>
-            <Button variant="ghost" size="sm" onClick={onClose}>
-              <X className="w-4 h-4" />
-            </Button>
           </div>
         </DialogHeader>
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import LLMLogo from "@/components/LLMLogo";
 import { CheckCircle } from "lucide-react";
@@ -29,7 +29,7 @@ interface LoadingModalProps {
 const llmModels = [
   { name: "OpenAI", model: "openai" },
   { name: "Perplexity", model: "perplexity" },
-  { name: "Gemini", model: "gemini" },
+  { name: "Google AI", model: "google-ai" }, // Updated to show Google AI during onboarding
   { name: "DeepSeek", model: "deepseek" },
   { name: "Google AI Overviews", model: "google-ai-overviews" }
 ];
@@ -77,6 +77,14 @@ export const LoadingModal = ({
   return (
     <Dialog open={isOpen}>
       <DialogContent className="sm:max-w-md">
+        <DialogTitle className="sr-only">
+          {isComplete ? "Results Ready!" : "Getting Your Results"}
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          {isComplete 
+            ? "Your AI responses are ready to view"
+            : "Testing your prompts across multiple AI models..."}
+        </DialogDescription>
         <div className="text-center space-y-6 py-4">
           {/* Header */}
           <div className="space-y-2">

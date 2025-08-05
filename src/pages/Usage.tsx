@@ -229,9 +229,9 @@ export default function Usage() {
                           <LLMLogo modelName="perplexity" size="sm" className="mr-2" />
                           Refresh Perplexity Only
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleRefresh('gemini')}>
-                          <LLMLogo modelName="gemini" size="sm" className="mr-2" />
-                          Refresh Gemini Only
+                        <DropdownMenuItem onClick={() => handleRefresh('google-ai')}>
+                          <LLMLogo modelName="google-ai" size="sm" className="mr-2" />
+                          Refresh Google AI Only
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleRefresh('deepseek')}>
                           <LLMLogo modelName="deepseek" size="sm" className="mr-2" />
@@ -240,6 +240,10 @@ export default function Usage() {
                         <DropdownMenuItem onClick={() => handleRefresh('google-ai-overviews')}>
                           <LLMLogo modelName="google-ai-overviews" size="sm" className="mr-2" />
                           Refresh Google AI Overviews Only
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleRefresh('gemini')}>
+                          <LLMLogo modelName="gemini" size="sm" className="mr-2" />
+                          Refresh Gemini Only
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
