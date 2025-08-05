@@ -30,11 +30,13 @@ export const securityConfig = {
     styleSrc: [
       "'self'",
       "'unsafe-inline'",
-      "https://fonts.googleapis.com"
+      "https://fonts.googleapis.com",
+      "https://client.crisp.chat"
     ],
     fontSrc: [
       "'self'",
-      "https://fonts.gstatic.com"
+      "https://fonts.gstatic.com",
+      "https://client.crisp.chat"
     ],
     imgSrc: [
       "'self'",
@@ -44,8 +46,10 @@ export const securityConfig = {
     connectSrc: [
       "'self'",
       "https://ofyjvfmcgtntwamkubui.supabase.co",
+      "wss://ofyjvfmcgtntwamkubui.supabase.co",
       "https://api.stripe.com",
-      "https://client.crisp.chat"
+      "https://client.crisp.chat",
+      "wss://client.relay.crisp.chat"
     ],
     frameSrc: [
       "'self'",
