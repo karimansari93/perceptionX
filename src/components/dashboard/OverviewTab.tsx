@@ -1,23 +1,25 @@
 import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { MetricCard } from "./MetricCard";
-import { DashboardMetrics, CitationCount } from "@/types/dashboard";
-import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown, ChevronDown, ChevronUp } from 'lucide-react';
-import { SourceDetailsModal } from "./SourceDetailsModal";
+import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dashboard";
+import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown } from 'lucide-react';
+
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ReactMarkdown from 'react-markdown';
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import LLMLogo from "@/components/LLMLogo";
 import { KeyTakeaways } from "./KeyTakeaways";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
+import { Favicon } from "@/components/ui/favicon";
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart"
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis, BarChart, Bar, ResponsiveContainer, Cell } from "recharts"
 import { ChartConfig } from "@/components/ui/chart"
 
 interface OverviewTabProps {
@@ -27,6 +29,9 @@ interface OverviewTabProps {
   responses: any[]; // Add responses prop
   competitorLoading?: boolean; // Add competitor loading prop
   companyName: string; // <-- Add this
+  llmMentionRankings: LLMMentionRanking[]; // Add this
+  talentXProData?: any[]; // Add TalentX Pro data
+  isPro?: boolean; // Add Pro subscription status
 }
 
 interface TimeBasedData {
@@ -58,10 +63,11 @@ export const OverviewTab = ({
   topCompetitors, 
   responses,
   competitorLoading = false,
-  companyName // <-- Add this
+  companyName, // <-- Add this
+  llmMentionRankings,
+  talentXProData = [],
+  isPro = false
 }: OverviewTabProps) => {
-  const [selectedSource, setSelectedSource] = useState<CitationCount | null>(null);
-  const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
   const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = useState(false);
   const [competitorSnippets, setCompetitorSnippets] = useState<{ snippet: string; full: string }[]>([]);
@@ -72,6 +78,7 @@ export const OverviewTab = ({
   const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = useState(false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isScoreBreakdownModalOpen, setIsScoreBreakdownModalOpen] = useState(false);
 
   // Responsive check
   const [isMobile, setIsMobile] = useState(false);
@@ -82,8 +89,7 @@ export const OverviewTab = ({
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Collapsible Trends & Details
-  const [showTrends, setShowTrends] = useState(false);
+
 
   // Helper for mini-cards
   const breakdowns = [
@@ -140,17 +146,6 @@ export const OverviewTab = ({
     // If we only have responses from one date, treat them all as current
     if (previous.length === 0) {
       return { current: sortedResponses, previous: [] };
-    }
-
-    // Debug logging
-    if (import.meta.env.MODE === 'development') {
-      console.log('Time-based grouping:', {
-        totalResponses: responses.length,
-        currentPeriod: current.length,
-        previousPeriod: previous.length,
-        latestDate: latestDate.toLocaleDateString(),
-        uniqueDates: [...new Set(sortedResponses.map(r => new Date(r.tested_at).toDateString()))]
-      });
     }
 
     return { current, previous };
@@ -229,23 +224,81 @@ export const OverviewTab = ({
       .sort((a, b) => b.current - a.current)
       .slice(0, 8);
 
-    // Debug logging
-    if (import.meta.env.MODE === 'development') {
-      console.log('Time-based competitors:', {
-        currentPeriodResponses: current.length,
-        previousPeriodResponses: previous.length,
-        numPreviousDays: numPreviousDays,
-        currentCompetitors: Object.keys(currentCompetitors).length,
-        previousCompetitors: Object.keys(previousCompetitors).length,
-        totalUniqueCompetitors: allCompetitors.size,
-        topCompetitors: result.slice(0, 3).map(c => ({ name: c.name, current: c.current, previous: c.previous, change: c.change }))
-      });
-    }
-
     return result;
   }, [groupResponsesByTimePeriod, companyName]);
 
-  // Calculate time-based citation data
+  // Calculate all-time citation data with change indicators
+  const allTimeCitations = useMemo(() => {
+    // Helper to parse citations
+    const parseCitations = (citations: any) => {
+      if (!citations) return [];
+      try {
+        return typeof citations === 'string' ? JSON.parse(citations) : citations;
+      } catch {
+        return [];
+      }
+    };
+
+    // Get citation counts across all time
+    const citationCounts: Record<string, number> = {};
+    responses.forEach(response => {
+      const citations = parseCitations(response.citations);
+      citations.forEach((citation: any) => {
+        if (citation.domain) {
+          citationCounts[citation.domain] = (citationCounts[citation.domain] || 0) + 1;
+        }
+      });
+    });
+
+    // Convert to array and sort by count descending
+    const result = Object.entries(citationCounts)
+      .map(([domain, count]) => ({
+        name: domain,
+        count: count,
+        change: 0 // Will be updated after timeBasedCitations is calculated
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+
+    return result;
+  }, [responses]);
+
+  // Calculate all-time competitor data
+  const allTimeCompetitors = useMemo(() => {
+    // Get competitor counts across all time
+    const competitorCounts: Record<string, number> = {};
+    
+    responses.forEach(response => {
+      if (response.detected_competitors) {
+        const competitors = response.detected_competitors
+          .split(',')
+          .map(name => normalizeCompetitorName(name))
+          .filter(name => 
+            name && 
+            name.toLowerCase() !== companyName.toLowerCase() &&
+            name.length > 1
+          );
+        
+        competitors.forEach(name => {
+          competitorCounts[name] = (competitorCounts[name] || 0) + 1;
+        });
+      }
+    });
+
+    // Convert to array and sort by count descending
+    const result = Object.entries(competitorCounts)
+      .map(([competitor, count]) => ({
+        name: competitor,
+        count: count,
+        change: 0 // Will be updated after timeBasedCompetitors is calculated
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+
+    return result;
+  }, [responses, companyName]);
+
+  // Calculate time-based citation data (keeping for reference)
   const timeBasedCitations = useMemo(() => {
     const { current, previous } = groupResponsesByTimePeriod;
     
@@ -315,21 +368,34 @@ export const OverviewTab = ({
       })
       .slice(0, 8);
 
-    // Debug logging
-    if (import.meta.env.MODE === 'development') {
-      console.log('Time-based citations:', {
-        currentPeriodResponses: current.length,
-        previousPeriodResponses: previous.length,
-        numPreviousDays: numPreviousDays,
-        currentCitations: Object.keys(currentCitations).length,
-        previousCitations: Object.keys(previousCitations).length,
-        totalUniqueDomains: allDomains.size,
-        topCitations: result.slice(0, 3).map(c => ({ name: c.name, current: c.current, previous: c.previous, change: c.change }))
-      });
-    }
-
     return result;
   }, [groupResponsesByTimePeriod]);
+
+  // Merge change data into all-time competitors
+  const allTimeCompetitorsWithChanges = useMemo(() => {
+    const changeData = new Map();
+    timeBasedCompetitors.forEach(competitor => {
+      changeData.set(competitor.name, competitor.change);
+    });
+
+    return allTimeCompetitors.map(competitor => ({
+      ...competitor,
+      change: changeData.get(competitor.name) || 0
+    }));
+  }, [allTimeCompetitors, timeBasedCompetitors]);
+
+  // Merge change data into all-time citations
+  const allTimeCitationsWithChanges = useMemo(() => {
+    const changeData = new Map();
+    timeBasedCitations.forEach(citation => {
+      changeData.set(citation.name, citation.change);
+    });
+
+    return allTimeCitations.map(citation => ({
+      ...citation,
+      change: changeData.get(citation.name) || 0
+    }));
+  }, [allTimeCitations, timeBasedCitations]);
 
   // Helper to get time period labels
   const getTimePeriodLabels = () => {
@@ -350,28 +416,7 @@ export const OverviewTab = ({
 
   const timeLabels = getTimePeriodLabels();
 
-  const handleSourceClick = (citation: CitationCount) => {
-    setSelectedSource(citation);
-    setIsSourceModalOpen(true);
-  };
 
-  const handleCloseSourceModal = () => {
-    setIsSourceModalOpen(false);
-    setSelectedSource(null);
-  };
-
-  const getResponsesForSource = (domain: string) => {
-    return responses.filter(response => {
-      try {
-        const citations = typeof response.citations === 'string' 
-          ? JSON.parse(response.citations) 
-          : response.citations;
-        return Array.isArray(citations) && citations.some(c => c.domain === domain);
-      } catch {
-        return false;
-      }
-    });
-  };
 
   // Helper to extract snippets for a competitor from all responses
   const getSnippetsForCompetitor = (competitor: string) => {
@@ -410,6 +455,10 @@ export const OverviewTab = ({
     setIsCompetitorModalOpen(false);
     setSelectedCompetitor(null);
     setCompetitorSnippets([]);
+  };
+
+  const handleLLMClick = (llm: LLMMentionRanking) => {
+    // For now, just show a simple alert or could be expanded later
   };
 
   const handleExpandSnippet = (idx: number) => {
@@ -537,20 +586,24 @@ export const OverviewTab = ({
 
   // Helper to render a simple comparison bar
   const renderComparisonBar = (data: TimeBasedData, maxCurrent: number, isCompetitor: boolean = false) => {
-    const barWidth = maxCurrent > 0 ? (data.current / maxCurrent) * 100 : 0;
+    const barWidth = maxCurrent > 0 ? Math.max((data.current / maxCurrent) * 100, 2) : 2; // Ensure minimum 2% width
+    
+    // Truncate labels to 15 characters
+    const displayName = isCompetitor ? data.name : getSourceDisplayName(data.name);
+    const truncatedName = displayName.length > 15 ? displayName.substring(0, 15) + '...' : displayName;
     
     return (
       <div className="flex items-center py-1 hover:bg-gray-50/50 transition-colors cursor-pointer">
         <div className="flex items-center space-x-3 min-w-[200px] truncate">
           {!isCompetitor && (
-            <img src={getFavicon(data.name)} alt="" className="w-4 h-4 flex-shrink-0" />
+            <Favicon domain={data.name} />
           )}
-          <span className="text-sm font-medium text-gray-900 truncate">
-            {isCompetitor ? data.name : getSourceDisplayName(data.name)}
+          <span className="text-sm font-medium text-gray-900 truncate" title={displayName}>
+            {truncatedName}
           </span>
         </div>
         <div className="flex-1 flex items-center gap-2 ml-4">
-          <div className="w-[120px]">
+          <div className="w-[120px] bg-gray-200 rounded-full">
             <div
               className={`h-4 rounded-full transition-all duration-300 ${
                 isCompetitor ? 'bg-blue-100' : 'bg-pink-100'
@@ -563,6 +616,54 @@ export const OverviewTab = ({
               {data.current}
             </span>
             {data.change !== 0 && (
+              <div className={`flex items-center text-xs ${
+                data.change > 0 ? 'text-green-600' : 'text-red-600'
+              }`}>
+                {data.change > 0 ? (
+                  <TrendingUp className="w-3 h-3" />
+                ) : (
+                  <TrendingDown className="w-3 h-3" />
+                )}
+                <span className="ml-0.5">{Math.abs(data.change)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAllTimeBar = (data: { name: string; count: number; change?: number }, maxCount: number, isCompetitor: boolean = false) => {
+    const barWidth = maxCount > 0 ? Math.max((data.count / maxCount) * 100, 2) : 2; // Ensure minimum 2% width
+    
+    // Truncate labels to 15 characters
+    const displayName = isCompetitor ? data.name : getSourceDisplayName(data.name);
+    const truncatedName = displayName.length > 15 ? displayName.substring(0, 15) + '...' : displayName;
+    
+    return (
+      <div className="flex items-center py-1 hover:bg-gray-50/50 transition-colors cursor-pointer">
+        <div className="flex items-center space-x-3 min-w-[200px] truncate">
+          {!isCompetitor && (
+            <Favicon domain={data.name} />
+          )}
+          <span className="text-sm font-medium text-gray-900 truncate" title={displayName}>
+            {truncatedName}
+          </span>
+        </div>
+        <div className="flex-1 flex items-center gap-2 ml-4">
+          <div className="w-[120px] bg-gray-200 rounded-full">
+            <div
+              className={`h-4 rounded-full transition-all duration-300 ${
+                isCompetitor ? 'bg-blue-100' : 'bg-pink-100'
+              }`}
+              style={{ width: `${barWidth}%`, minWidth: '2px' }}
+            />
+          </div>
+          <div className="flex items-center w-20">
+            <span className="text-sm font-semibold text-gray-900 mr-2">
+              {data.count}
+            </span>
+            {data.change !== undefined && data.change !== 0 && (
               <div className={`flex items-center text-xs ${
                 data.change > 0 ? 'text-green-600' : 'text-red-600'
               }`}>
@@ -685,16 +786,28 @@ export const OverviewTab = ({
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [responses]);
 
+  // Prepare chart data for LLM mentions
+  const llmMentionChartData = useMemo(() => {
+    return llmMentionRankings.map((llm, index) => ({
+      name: llm.displayName,
+      mentions: llm.mentions,
+      color: `hsl(${index * 60}, 70%, 50%)` // Generate different colors
+    }));
+  }, [llmMentionRankings]);
+
   return (
     <div className="flex flex-col gap-8 w-full">
-      <div className="flex flex-col md:flex-row gap-6 w-full">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
         {/* Perception Score Card */}
-        <Card className="flex-1 bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col justify-between hover:shadow-md transition-shadow duration-200 p-0 relative overflow-hidden" style={{ minHeight: 220, height: 220 }}>
+        <Card className="bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col justify-between hover:shadow-md transition-shadow duration-200 p-0 relative overflow-hidden h-full min-h-[240px]">
           {/* Top: Score, label, % change */}
-          <div className="flex flex-row items-start justify-between px-8 pt-6 pb-2 z-10">
+          <div className="flex flex-row items-start justify-between px-8 pt-6 pb-1 z-10">
             <div className="flex flex-col items-start">
               <div className="flex items-center gap-2 mb-2">
-                <CardTitle className="text-lg font-bold text-gray-700 tracking-wide">Perception Score</CardTitle>
+                <CardTitle className="text-lg font-bold text-gray-700 tracking-wide">Score</CardTitle>
+                <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-pink-100 text-pink-700 border-pink-200">
+                  Beta
+                </Badge>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -703,9 +816,7 @@ export const OverviewTab = ({
                       </span>
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      Overall perception score (0-100) combines:<br/>
-                      <b>Sentiment</b> (40%), <b>Visibility</b> (35%), <b>Competitive</b> (25%)<br/>
-                      Higher scores indicate better brand perception.
+                      Your perception score is an aggregate of sentiment, visibility and competitive scores.
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -727,25 +838,45 @@ export const OverviewTab = ({
             </div>
           </div>
           {/* Bottom: Chart, visually anchored */}
-          {perceptionScoreTrend.length > 1 && (
-            <div className="w-full flex-1 flex items-end" style={{ minHeight: 0 }}>
-              <AreaChart width={600} height={90} data={perceptionScoreTrend} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+          <div className="w-full flex-1 flex items-end" style={{ minHeight: 0 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart 
+                data={perceptionScoreTrend.length > 1 ? perceptionScoreTrend : [
+                  { date: 'Start', score: metrics.perceptionScore },
+                  { date: 'Today', score: metrics.perceptionScore }
+                ]} 
+                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
+              >
                 <defs>
                   <linearGradient id="colorPerceptionBg" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#0DBCBA" stopOpacity={0.18}/>
                     <stop offset="100%" stopColor="#0DBCBA" stopOpacity={0.04}/>
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="score" stroke="#0DBCBA" strokeWidth={3} fill="url(#colorPerceptionBg)" dot={false} isAnimationActive={false} />
+                <Area 
+                  type="monotone" 
+                  dataKey="score" 
+                  stroke="#0DBCBA" 
+                  strokeWidth={3} 
+                  fill="url(#colorPerceptionBg)" 
+                  dot={false} 
+                  isAnimationActive={false} 
+                />
               </AreaChart>
-            </div>
-          )}
+            </ResponsiveContainer>
+          </div>
         </Card>
         {/* Score Breakdown Card */}
-        <Card className="flex-1 bg-white rounded-2xl shadow-sm p-0 flex flex-col justify-between">
-          <CardHeader className="pb-2 pt-6 px-8">
+        <Card 
+          className="bg-white rounded-2xl shadow-sm p-0 hover:shadow-md transition-shadow duration-200 cursor-pointer h-full min-h-[240px] flex flex-col" 
+          onClick={() => setIsScoreBreakdownModalOpen(true)}
+        >
+          <CardHeader className="pb-2 pt-6 px-4 sm:px-8 flex-shrink-0">
             <div className="flex items-center gap-2 mb-2">
               <CardTitle className="text-lg font-bold text-gray-700">Score breakdown</CardTitle>
+              <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-pink-100 text-pink-700 border-pink-200">
+                Beta
+              </Badge>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -754,34 +885,33 @@ export const OverviewTab = ({
                     </span>
                   </TooltipTrigger>
                   <TooltipContent side="top">
-                    Perception Score = (Sentiment + Visibility + Competitive) / 3<br/>
-                    Each bar shows your current value for that factor.
+                    Click to learn more about each score component
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             </div>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4 px-8 pb-6">
-            <div className="flex items-center gap-3 mb-2">
-              <span className="w-28 text-sm font-medium text-gray-700">Sentiment</span>
+          <CardContent className="px-4 sm:px-8 pb-4 flex-1 flex flex-col justify-center">
+            <div className="flex items-center gap-2 sm:gap-3 mb-6">
+              <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Sentiment</span>
               <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${Math.round((metrics.averageSentiment + 1) * 50)}%` }} />
               </div>
-              <span className="ml-2 text-sm font-semibold text-gray-700 min-w-[32px] text-right">{Math.round((metrics.averageSentiment + 1) * 50)}%</span>
+              <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{Math.round((metrics.averageSentiment + 1) * 50)}%</span>
             </div>
-            <div className="flex items-center gap-3 mb-2">
-              <span className="w-28 text-sm font-medium text-gray-700">Visibility</span>
+            <div className="flex items-center gap-2 sm:gap-3 mb-6">
+              <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Visibility</span>
               <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageVisibility)}%` }} />
               </div>
-              <span className="ml-2 text-sm font-semibold text-gray-700 min-w-[32px] text-right">{Math.round(metrics.averageVisibility)}%</span>
+              <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{Math.round(metrics.averageVisibility)}%</span>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="w-28 text-sm font-medium text-gray-700">Competitive</span>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Competitive</span>
               <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
                 <div className="h-full bg-purple-500 transition-all duration-300" style={{ width: `${metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%` }} />
               </div>
-              <span className="ml-2 text-sm font-semibold text-gray-700 min-w-[32px] text-right">{metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%</span>
+              <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%</span>
             </div>
           </CardContent>
         </Card>
@@ -793,102 +923,20 @@ export const OverviewTab = ({
           topCompetitors={normalizedTopCompetitors}
           topCitations={topCitations}
           themesBySentiment={themesBySentiment}
+          llmMentionRankings={llmMentionRankings}
+          responses={responses}
+          talentXProData={talentXProData}
+          isPro={isPro}
         />
       </div>
 
-      {/* Trends & Details Collapsible */}
-      <div className="mt-2">
-        <button
-          className="flex items-center gap-2 text-base font-semibold text-blue-700 hover:underline focus:outline-none mb-2"
-          onClick={() => setShowTrends(v => !v)}
-        >
-          {showTrends ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-          Trends & Details
-        </button>
-        {showTrends && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-2">
-            {/* Competitors Card */}
-            <Card className="shadow-sm border border-gray-200">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-lg font-semibold">Top Competitors</CardTitle>
-                <CardDescription className="text-sm text-gray-600">
-                  Companies most frequently mentioned alongside your brand
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {competitorLoading ? (
-                  <div className="text-center py-12 text-gray-500">
-                    <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300 animate-spin" />
-                    <p className="text-sm">Loading competitor data...</p>
-                  </div>
-                ) : (
-                  <div className="space-y-1 max-h-[300px] overflow-y-auto relative">
-                    {timeBasedCompetitors.length > 0 ? (
-                      (() => {
-                        const maxCurrent = Math.max(...timeBasedCompetitors.map(c => c.current), 1);
-                        return timeBasedCompetitors.map((competitor, idx) => (
-                          <div
-                            key={idx}
-                            onClick={() => handleCompetitorClick(competitor.name)}
-                          >
-                            {renderComparisonBar(competitor, maxCurrent, true)}
-                          </div>
-                        ));
-                      })()
-                    ) : (
-                      <div className="text-center py-12 text-gray-500">
-                        <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                        <p className="text-sm">No competitor mentions found yet.</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            {/* Information Sources Card */}
-            <Card className="shadow-sm border border-gray-200">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-lg font-semibold">Information Sources</CardTitle>
-                <CardDescription className="text-sm text-gray-600">
-                  The sources most frequently influencing AI responses
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-1 max-h-[300px] overflow-y-auto relative">
-                  {timeBasedCitations.length > 0 ? (
-                    (() => {
-                      const maxCurrent = Math.max(...timeBasedCitations.map(c => c.current), 1);
-                      return timeBasedCitations.map((citation, idx) => (
-                        <div 
-                          key={idx} 
-                          onClick={() => handleSourceClick({ domain: citation.name, count: citation.current + citation.previous })}
-                        >
-                          {renderComparisonBar(citation, maxCurrent, false)}
-                        </div>
-                      ));
-                    })()
-                  ) : (
-                    <div className="text-center py-12 text-gray-500">
-                      <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                      <p className="text-sm">No citations found yet.</p>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-      </div>
 
-      {/* Source Details Modal */}
-      {selectedSource && (
-        <SourceDetailsModal
-          isOpen={isSourceModalOpen}
-          onClose={handleCloseSourceModal}
-          source={selectedSource}
-          responses={getResponsesForSource(selectedSource.domain)}
-        />
-      )}
+
+
+
+
+
+
 
       {/* Competitor Snippet Modal (Summary Only) */}
       <Dialog open={isCompetitorModalOpen} onOpenChange={handleCloseCompetitorModal}>
@@ -982,6 +1030,187 @@ export const OverviewTab = ({
               <div className="text-gray-500 text-sm">No mentions found.</div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Score Breakdown Modal */}
+      <Dialog open={isScoreBreakdownModalOpen} onOpenChange={setIsScoreBreakdownModalOpen}>
+        <DialogContent className="max-w-4xl w-full sm:w-[95vw] p-6">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold text-gray-900">
+              Understanding Your Perception Score
+            </DialogTitle>
+          </DialogHeader>
+          
+          {/* Beta Notice */}
+          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 border-blue-200">
+                Beta
+              </Badge>
+              <span className="text-sm text-blue-800 font-medium">
+                This feature is currently in beta. We're actively improving the scoring algorithm and welcome your feedback.
+              </span>
+            </div>
+          </div>
+          
+          <Tabs defaultValue="overview" className="w-full">
+            <TabsList className="grid w-full grid-cols-4 bg-gray-100">
+              <TabsTrigger 
+                value="overview"
+                className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+              >
+                Overview
+              </TabsTrigger>
+              <TabsTrigger 
+                value="sentiment"
+                className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+              >
+                Sentiment
+              </TabsTrigger>
+              <TabsTrigger 
+                value="visibility"
+                className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+              >
+                Visibility
+              </TabsTrigger>
+              <TabsTrigger 
+                value="competitive"
+                className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+              >
+                Competitive
+              </TabsTrigger>
+            </TabsList>
+            
+                        {/* Overview Tab */}
+            <TabsContent value="overview" className="space-y-4">
+              {/* Current Performance Summary */}
+              <Card className="bg-gray-50 border-gray-200">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg font-semibold text-gray-900">
+                    Your Current Performance
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">{Math.round((metrics.averageSentiment + 1) * 50)}%</div>
+                      <div className="text-sm text-gray-600">Sentiment</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-blue-600">{Math.round(metrics.averageVisibility)}%</div>
+                      <div className="text-sm text-gray-600">Visibility</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-purple-600">{metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%</div>
+                      <div className="text-sm text-gray-600">Competitive</div>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-gray-900">{metrics.perceptionScore}</div>
+                      <div className="text-sm text-gray-600">Overall Perception Score</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Sentiment Tab */}
+            <TabsContent value="sentiment" className="space-y-4">
+              <Card className="border-l-4 border-l-green-500">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <div className="w-4 h-4 bg-green-500 rounded-full"></div>
+                    Sentiment Score
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${Math.round((metrics.averageSentiment + 1) * 50)}%` }} />
+                    </div>
+                    <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
+                      {Math.round((metrics.averageSentiment + 1) * 50)}%
+                    </span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
+                    <ul className="text-sm text-gray-700 space-y-2 ml-4">
+                      <li>• How positively or negatively AI models perceive your brand</li>
+                      <li>• The emotional tone and sentiment in responses about your company</li>
+                      <li>• Whether mentions are favorable, neutral, or unfavorable</li>
+                      <li>• The overall brand sentiment across different AI platforms</li>
+                    </ul>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Visibility Tab */}
+            <TabsContent value="visibility" className="space-y-4">
+              <Card className="border-l-4 border-l-blue-500">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <div className="w-4 h-4 bg-blue-500 rounded-full"></div>
+                    Visibility Score
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageVisibility)}%` }} />
+                    </div>
+                    <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
+                      {Math.round(metrics.averageVisibility)}%
+                    </span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
+                    <ul className="text-sm text-gray-700 space-y-2 ml-4">
+                      <li>• How prominently your brand appears in AI responses</li>
+                      <li>• The frequency and prominence of mentions across platforms</li>
+                      <li>• Whether you're mentioned early or late in responses</li>
+                      <li>• Your brand's recognition and recall value</li>
+                      <li>• How easily AI models can find and reference your company</li>
+                    </ul>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Competitive Tab */}
+            <TabsContent value="competitive" className="space-y-4">
+              <Card className="border-l-4 border-l-purple-500">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <div className="w-4 h-4 bg-purple-500 rounded-full"></div>
+                    Competitive Score
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-purple-500 transition-all duration-300" style={{ width: `${metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%` }} />
+                    </div>
+                    <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
+                      {metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%
+                    </span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
+                    <ul className="text-sm text-gray-700 space-y-2 ml-4">
+                      <li>• How well you compete against other companies in your space</li>
+                      <li>• Your mention ranking compared to competitors</li>
+                      <li>• Whether you're mentioned alongside or instead of competitors</li>
+                      <li>• Your competitive positioning in the market</li>
+                      <li>• How often you're the preferred choice over alternatives</li>
+                    </ul>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </DialogContent>
       </Dialog>
     </div>

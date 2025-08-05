@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { SidebarInset, Sidebar, SidebarHeader, SidebarContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarFooter, SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
-import { User, BarChart3, ArrowLeft } from 'lucide-react';
+import { User, BarChart3, ArrowLeft, Lock } from 'lucide-react';
 import UserMenu from '@/components/UserMenu';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import { useSubscription } from '@/hooks/useSubscription';
+import { UpgradeModal } from '@/components/upgrade/UpgradeModal';
 
 function AccountSidebar({ activeSection, onSectionChange }) {
   const { state } = useSidebar();
@@ -68,9 +70,11 @@ function AccountSidebar({ activeSection, onSectionChange }) {
 export default function Account() {
   const [activeSection, setActiveSection] = useState('account');
   const { user } = useAuth();
+  const { isPro, canUpdateData, getLimits } = useSubscription();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [form, setForm] = useState({ company: '', industry: '', email: '' });
 
   useEffect(() => {
@@ -101,6 +105,12 @@ export default function Account() {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    
+    if (!canUpdateData) {
+      toast.error('Updating data requires a Pro subscription');
+      return;
+    }
+    
     setSaving(true);
     setSuccess(false);
     try {
@@ -146,7 +156,12 @@ export default function Account() {
             <Card>
               <CardHeader>
                 <CardTitle>Account & Settings</CardTitle>
-                <CardDescription>Update your company and industry information.</CardDescription>
+                <CardDescription>
+                  {isPro 
+                    ? "Update your company and industry information." 
+                    : "Pro subscription required to update account information."
+                  }
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleSave} className="space-y-6">
@@ -162,36 +177,84 @@ export default function Account() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Company</label>
-                    <input
-                      type="text"
-                      name="company"
-                      value={form.company}
-                      onChange={handleChange}
-                      className="w-full border rounded-md px-3 py-2"
-                      disabled={loading || saving}
-                    />
+                    <div className="relative">
+                      <input
+                        type="text"
+                        name="company"
+                        value={form.company}
+                        onChange={handleChange}
+                        className={`w-full border rounded-md px-3 py-2 ${
+                          !canUpdateData ? 'bg-gray-50 cursor-not-allowed' : ''
+                        }`}
+                        disabled={loading || saving || !canUpdateData}
+                      />
+                      {!canUpdateData && (
+                        <div className="absolute inset-0 flex items-center justify-end pr-3">
+                          <Lock className="w-4 h-4 text-gray-400" />
+                        </div>
+                      )}
+                    </div>
+                    {!canUpdateData && (
+                      <p className="text-sm text-orange-600 mt-1">
+                        Upgrade to Pro to edit company information
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Industry</label>
-                    <input
-                      type="text"
-                      name="industry"
-                      value={form.industry}
-                      onChange={handleChange}
-                      className="w-full border rounded-md px-3 py-2"
-                      disabled={loading || saving}
-                    />
+                    <div className="relative">
+                      <input
+                        type="text"
+                        name="industry"
+                        value={form.industry}
+                        onChange={handleChange}
+                        className={`w-full border rounded-md px-3 py-2 ${
+                          !canUpdateData ? 'bg-gray-50 cursor-not-allowed' : ''
+                        }`}
+                        disabled={loading || saving || !canUpdateData}
+                      />
+                      {!canUpdateData && (
+                        <div className="absolute inset-0 flex items-center justify-end pr-3">
+                          <Lock className="w-4 h-4 text-gray-400" />
+                        </div>
+                      )}
+                    </div>
+                    {!canUpdateData && (
+                      <p className="text-sm text-orange-600 mt-1">
+                        Upgrade to Pro to edit industry information
+                      </p>
+                    )}
                   </div>
-                  <Button type="submit" disabled={loading || saving} className="w-full">
-                    {saving ? 'Saving...' : 'Save Changes'}
+                  <Button 
+                    type="submit" 
+                    disabled={loading || saving || !canUpdateData} 
+                    className="w-full"
+                  >
+                    {saving ? 'Saving...' : canUpdateData ? 'Save Changes' : 'Pro Required'}
                   </Button>
                   {success && <div className="text-green-600 text-center mt-2">Changes saved!</div>}
+                  {!canUpdateData && (
+                    <div className="text-center">
+                      <Button 
+                        variant="outline" 
+                        onClick={() => setShowUpgradeModal(true)}
+                        className="mt-2"
+                      >
+                        Upgrade to Pro
+                      </Button>
+                    </div>
+                  )}
                 </form>
               </CardContent>
             </Card>
           </div>
         </SidebarInset>
       </div>
+      
+      <UpgradeModal 
+        open={showUpgradeModal}
+        onOpenChange={setShowUpgradeModal}
+      />
     </div>
   );
 } 

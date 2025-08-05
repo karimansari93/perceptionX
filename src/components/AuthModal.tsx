@@ -9,6 +9,7 @@ import { X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { validateEmail, sanitizeInput, logger } from '@/lib/utils';
 
 // Microsoft Button component
 interface MicrosoftButtonProps {
@@ -100,8 +101,6 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
     if (!onboardingData) return;
 
     try {
-      console.log('Linking onboarding data to user:', userId);
-      
       // First, check if user already has an onboarding record
       const { data: existingRecord } = await supabase
         .from('user_onboarding')
@@ -110,7 +109,6 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
         .limit(1);
 
       if (existingRecord && existingRecord.length > 0) {
-        console.log('User already has onboarding record');
         return;
       }
 
@@ -132,8 +130,6 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
 
         if (linkError) {
           console.error('Error linking onboarding record:', linkError);
-        } else {
-          console.log('Successfully linked existing onboarding record');
         }
       } else {
         // Create new onboarding record for the user
@@ -150,8 +146,6 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
 
         if (createError) {
           console.error('Error creating onboarding record:', createError);
-        } else {
-          console.log('Successfully created new onboarding record');
         }
       }
     } catch (error) {
@@ -172,8 +166,7 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
 
         if (error) throw error;
         
-        console.log('User signed in:', data.user?.id);
-        toast.success('Signed in successfully!');
+        // Signed in successfully - no toast needed
         
         // Link onboarding data if available
         if (onboardingData && data.user) {
@@ -203,9 +196,7 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
 
         if (error) throw error;
 
-        console.log('User signed up:', data.user?.id);
-
-        toast.success('Account created successfully!');
+        // Account created successfully - no toast needed
         onOpenChange(false);
         
         // Navigate to prompts page with onboarding data

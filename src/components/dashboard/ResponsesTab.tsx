@@ -71,7 +71,7 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
         <label htmlFor="category-filter" className="text-sm font-medium text-gray-700">Filter by prompt type:</label>
         <select
           id="category-filter"
-          className="border rounded px-2 py-1 text-sm"
+          className="border rounded px-2 py-1 text-sm text-[#13274F]"
           value={categoryFilter}
           onChange={e => setCategoryFilter(e.target.value)}
         >
@@ -82,7 +82,7 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
         <label htmlFor="sentiment-filter" className="text-sm font-medium text-gray-700 ml-4">Filter by sentiment:</label>
         <select
           id="sentiment-filter"
-          className="border rounded px-2 py-1 text-sm"
+          className="border rounded px-2 py-1 text-sm text-[#13274F]"
           value={sentimentFilter}
           onChange={e => setSentimentFilter(e.target.value)}
         >
@@ -112,7 +112,7 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
               onClick={() => handleRowClick(response)}
             >
               <td className="px-4 py-2 max-w-xs">
-                <div className="truncate whitespace-nowrap max-w-[300px]">
+                <div className="truncate whitespace-nowrap max-w-[300px] text-[#13274F]">
                   {response.response_text}
                 </div>
               </td>
@@ -157,7 +157,7 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
                         style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
                       />
                     </svg>
-                    <span className="text-sm font-regular text-gray-900">{Math.round(response.visibility_score)}%</span>
+                    <span className="text-sm font-regular text-[#13274F]">{Math.round(response.visibility_score)}%</span>
                   </div>
                 ) : (
                   '-' 
@@ -216,7 +216,7 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
                   })()}
                 </div>
               </td>
-              <td className="px-4 py-2">{response.answered ? response.answered : (response.tested_at ? new Date(response.tested_at).toLocaleDateString() : '-')}</td>
+              <td className="px-4 py-2 text-[#13274F]">{response.answered ? response.answered : (response.tested_at ? new Date(response.tested_at).toLocaleDateString() : '-')}</td>
             </tr>
           ))}
           {filteredResponses.length === 0 && (

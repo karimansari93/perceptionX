@@ -2,11 +2,182 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 
+// TalentX Analysis Service
+class TalentXAnalysisService {
+  static analyzeResponse(text: string, companyName: string): any[] {
+    const analyses: any[] = [];
+    const lowerText = text.toLowerCase();
+    const lowerCompany = companyName.toLowerCase();
+
+    // Define TalentX attributes
+    const talentXAttributes = [
+      {
+        id: 'mission-purpose',
+        name: 'Mission & Purpose',
+        keywords: ['mission', 'purpose', 'values', 'vision', 'meaningful', 'impact', 'change the world', 'make a difference']
+      },
+      {
+        id: 'rewards-recognition',
+        name: 'Rewards & Recognition',
+        keywords: ['salary', 'compensation', 'benefits', 'bonus', 'recognition', 'rewards', 'incentives', 'perks']
+      },
+      {
+        id: 'company-culture',
+        name: 'Company Culture',
+        keywords: ['culture', 'workplace', 'environment', 'atmosphere', 'values', 'team', 'collaboration', 'fun']
+      },
+      {
+        id: 'social-impact',
+        name: 'Social Impact',
+        keywords: ['social impact', 'community', 'charity', 'volunteering', 'sustainability', 'environmental', 'giving back']
+      },
+      {
+        id: 'inclusion',
+        name: 'Inclusion',
+        keywords: ['diversity', 'inclusion', 'equity', 'DEI', 'minority', 'women', 'LGBTQ', 'accessible']
+      },
+      {
+        id: 'innovation',
+        name: 'Innovation',
+        keywords: ['innovation', 'innovative', 'technology', 'cutting-edge', 'research', 'development', 'breakthrough']
+      },
+      {
+        id: 'wellbeing-balance',
+        name: 'Wellbeing & Balance',
+        keywords: ['work-life balance', 'wellbeing', 'wellness', 'flexible', 'remote', 'mental health', 'stress']
+      },
+      {
+        id: 'leadership',
+        name: 'Leadership',
+        keywords: ['leadership', 'management', 'executives', 'CEO', 'directors', 'managers', 'decision-making']
+      },
+      {
+        id: 'security-perks',
+        name: 'Security & Perks',
+        keywords: ['job security', 'stability', 'perks', 'amenities', 'office', 'food', 'gym', 'transportation']
+      },
+      {
+        id: 'career-opportunities',
+        name: 'Career Opportunities',
+        keywords: ['career', 'growth', 'development', 'advancement', 'promotion', 'learning', 'training', 'mentorship']
+      }
+    ];
+
+    talentXAttributes.forEach(attribute => {
+      const analysis = this.analyzeAttribute(text, lowerText, attribute, lowerCompany);
+      if (analysis.relevanceScore > 0.1) { // Only include relevant attributes
+        analyses.push(analysis);
+      }
+    });
+
+    return analyses.sort((a, b) => b.relevanceScore - a.relevanceScore);
+  }
+
+  private static analyzeAttribute(text: string, lowerText: string, attribute: any, companyName: string): any {
+    // Calculate relevance score based on keyword matches
+    const keywordMatches = attribute.keywords.filter((keyword: string) => 
+      lowerText.includes(keyword.toLowerCase())
+    );
+    const relevanceScore = Math.min(100, (keywordMatches.length / attribute.keywords.length) * 100);
+
+    // Calculate sentiment score for this attribute
+    const sentimentScore = this.calculateAttributeSentiment(lowerText, attribute);
+
+    // Count mentions
+    const mentionCount = keywordMatches.length;
+
+    // Extract relevant context
+    const context = this.extractAttributeContext(text, attribute.keywords);
+
+    // Calculate confidence based on relevance and context quality
+    const confidence = Math.min(1, (relevanceScore / 100) * (context.length > 0 ? 1 : 0.5));
+
+    return {
+      attributeId: attribute.id,
+      attributeName: attribute.name,
+      relevanceScore,
+      sentimentScore,
+      mentionCount,
+      context,
+      confidence
+    };
+  }
+
+  private static calculateAttributeSentiment(text: string, attribute: any): number {
+    // Attribute-specific sentiment analysis
+    const positiveWords = ['excellent', 'great', 'good', 'strong', 'positive', 'amazing', 'outstanding'];
+    const negativeWords = ['poor', 'bad', 'weak', 'negative', 'terrible', 'awful', 'disappointing'];
+
+    let positiveCount = 0;
+    let negativeCount = 0;
+
+    // Look for sentiment words near attribute keywords
+    attribute.keywords.forEach((keyword: string) => {
+      const keywordIndex = text.indexOf(keyword.toLowerCase());
+      if (keywordIndex !== -1) {
+        const contextStart = Math.max(0, keywordIndex - 100);
+        const contextEnd = Math.min(text.length, keywordIndex + keyword.length + 100);
+        const context = text.substring(contextStart, contextEnd);
+
+        positiveWords.forEach(word => {
+          if (context.includes(word)) positiveCount++;
+        });
+        negativeWords.forEach(word => {
+          if (context.includes(word)) negativeCount++;
+        });
+      }
+    });
+
+    if (positiveCount === 0 && negativeCount === 0) return 0;
+    
+    const total = positiveCount + negativeCount;
+    return (positiveCount - negativeCount) / total;
+  }
+
+  private static extractAttributeContext(text: string, keywords: string[]): string[] {
+    const contexts: string[] = [];
+    const lowerText = text.toLowerCase();
+
+    keywords.forEach(keyword => {
+      const keywordIndex = lowerText.indexOf(keyword.toLowerCase());
+      if (keywordIndex !== -1) {
+        const start = Math.max(0, keywordIndex - 150);
+        const end = Math.min(text.length, keywordIndex + keyword.length + 150);
+        const context = text.substring(start, end).trim();
+        if (context.length > 20) { // Only include substantial context
+          contexts.push(context);
+        }
+      }
+    });
+
+    return contexts.slice(0, 3); // Limit to 3 contexts per attribute
+  }
+
+  static getOverallTalentXScore(analyses: any[]): number {
+    if (analyses.length === 0) return 0;
+    
+    const weightedSum = analyses.reduce((sum, analysis) => {
+      return sum + (analysis.relevanceScore * analysis.sentimentScore);
+    }, 0);
+    
+    const totalRelevance = analyses.reduce((sum, analysis) => sum + analysis.relevanceScore, 0);
+    
+    return totalRelevance > 0 ? weightedSum / totalRelevance : 0;
+  }
+
+  static getTopAttributes(analyses: any[], count: number = 3): string[] {
+    return analyses
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, count)
+      .map(analysis => analysis.attributeName);
+  }
+}
+
 const supabase = createClient(
   // @ts-ignore: Deno.env.get() is not recognized by TypeScript but is available in Deno runtime
   Deno.env.get('SUPABASE_URL') ?? '',
   // @ts-ignore: Deno.env.get() is not recognized by TypeScript but is available in Deno runtime
-  Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 );
 
 
@@ -35,6 +206,12 @@ interface AnalysisResult {
   visibility_score: number;
   competitive_score: number;
   detected_competitors: string;
+  talentx_analysis: any[];
+  talentx_scores: {
+    overall_score: number;
+    top_attributes: string[];
+    attribute_scores: Record<string, number>;
+  };
 }
 
 
@@ -47,7 +224,13 @@ serve(async (req) => {
     // Parse and log the request body
     const body = await req.json();
     console.log("Request body received:", body);
-    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model } = body;
+    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, isTalentXPrompt, talentXAttributeId } = body;
+    
+    // Handle citations from different LLMs
+    let llmCitations = perplexityCitations || [];
+    if (ai_model === 'google-ai-overviews' && body.citations) {
+      llmCitations = body.citations;
+    }
 
     // Check for required fields
     if (!confirmed_prompt_id) {
@@ -64,15 +247,24 @@ serve(async (req) => {
         { status: 400, headers: corsHeaders }
       );
     }
+    if (!response) {
+      console.error("Missing response in request body");
+      return new Response(
+        JSON.stringify({ error: "response is required and was not provided." }),
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    if (!companyName) {
+      console.error("Missing companyName in request body");
+      return new Response(
+        JSON.stringify({ error: "companyName is required and was not provided." }),
+        { status: 400, headers: corsHeaders }
+      );
+    }
 
-    console.log('=== ANALYZE RESPONSE DEBUG ===');
-    console.log('Company Name:', companyName);
-    console.log('Prompt Type:', promptType);
-    console.log('Response length:', response.length);
-    console.log('Response preview:', response.substring(0, 500));
 
-    const result = await analyzeResponse(response, companyName);
-    console.log('Analysis result:', JSON.stringify(result, null, 2));
+
+    const result = await analyzeResponse(response, companyName, promptType);
 
     // Prepare data for insert
     const insertData = {
@@ -81,7 +273,7 @@ serve(async (req) => {
       response_text: response,
       sentiment_score: result.sentiment_score,
       sentiment_label: result.sentiment_label,
-      citations: perplexityCitations || [],
+      citations: llmCitations,
       company_mentioned: result.company_mentioned,
       mention_ranking: result.mention_ranking,
       competitor_mentions: result.competitor_mentions,
@@ -90,33 +282,112 @@ serve(async (req) => {
       visibility_score: result.visibility_score,
       competitive_score: result.competitive_score,
       detected_competitors: result.detected_competitors
+      // Removed talentx_analysis and talentx_scores as they don't exist in the table
     };
 
-    // Log the insert data
-    console.log("Insert data:", insertData);
 
-    const { data: promptResponse, error: insertError } = await supabase
-      .from('prompt_responses')
-      .insert(insertData)
-      .select()
-      .single();
 
-    if (insertError) {
-      console.error('Error storing analysis:', insertError);
+    // Handle TalentX Pro prompts differently
+    if (isTalentXPrompt && talentXAttributeId && confirmed_prompt_id) {
+      try {
+        // For TalentX prompts, we need to get the user_id from the talentx_pro_prompts table
+        // The confirmed_prompt_id is actually the talentx_pro_prompts.id
+        const { data: talentXPrompt, error: talentXError } = await supabase
+          .from('talentx_pro_prompts')
+          .select('user_id')
+          .eq('id', confirmed_prompt_id)
+          .single();
+
+        if (talentXError) {
+          console.error('Error fetching TalentX prompt user_id:', talentXError);
+          return new Response(
+            JSON.stringify({ 
+              error: 'TalentX prompt not found', 
+              details: talentXError 
+            }),
+            { status: 404, headers: corsHeaders }
+          );
+        }
+
+        if (talentXPrompt) {
+          // Calculate perception score for this specific attribute
+          const talentXAnalysis = result.talentx_analysis || [];
+          const attributeAnalysis = talentXAnalysis.find((analysis: any) => analysis.attributeId === talentXAttributeId);
+          
+          if (attributeAnalysis) {
+            // Store TalentX perception score with citations and competitors
+            const { error: perceptionError } = await supabase
+              .from('talentx_perception_scores')
+              .upsert({
+                user_id: talentXPrompt.user_id,
+                attribute_id: talentXAttributeId,
+                perception_score: attributeAnalysis.relevanceScore,
+                sentiment_score: attributeAnalysis.sentimentScore,
+                visibility_score: promptType === 'visibility' ? attributeAnalysis.relevanceScore : null,
+                competitive_score: promptType === 'competitive' ? attributeAnalysis.relevanceScore : null,
+                response_text: response,
+                ai_model: ai_model,
+                prompt_type: promptType,
+                citations: llmCitations || result.citations,
+                detected_competitors: result.detected_competitors
+              });
+
+            if (perceptionError) {
+              console.error('Error storing TalentX perception score:', perceptionError);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error in TalentX processing:', error);
+        // Don't fail the entire function if TalentX processing fails
+        // Continue with regular processing
+      }
+    }
+      
+      // For TalentX prompts, return success without inserting into prompt_responses
+      return new Response(
+        JSON.stringify({
+          success: true,
+          analysis: result,
+          message: 'TalentX analysis completed successfully'
+        }),
+        { headers: corsHeaders }
+      );
+    }
+
+    // For non-TalentX prompts, continue with regular processing
+
+    // Only insert into prompt_responses for non-TalentX prompts
+    try {
+      const { data: promptResponse, error: insertError } = await supabase
+        .from('prompt_responses')
+        .insert(insertData)
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('Error storing analysis:', insertError);
+        return new Response(
+          JSON.stringify({ error: 'Failed to store analysis', details: insertError }),
+          { status: 500, headers: corsHeaders }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          analysis: result,
+          promptResponse
+        }),
+        { headers: corsHeaders }
+      );
+    } catch (insertError) {
+      console.error('Error in database insert:', insertError);
       return new Response(
         JSON.stringify({ error: 'Failed to store analysis', details: insertError }),
         { status: 500, headers: corsHeaders }
       );
     }
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        analysis: result,
-        promptResponse
-      }),
-      { headers: corsHeaders }
-    );
   } catch (error) {
     console.error('Error analyzing response:', error);
     return new Response(
@@ -124,11 +395,20 @@ serve(async (req) => {
       { status: 500, headers: corsHeaders }
     );
   }
-})
+});
 
-async function analyzeResponse(text: string, companyName: string): Promise<AnalysisResult> {
+async function analyzeResponse(text: string, companyName: string, promptType: string = 'visibility'): Promise<AnalysisResult> {
+  // Add null checks
+  if (!text) {
+    throw new Error('Text is required for analysis');
+  }
+  
+  if (!companyName) {
+    throw new Error('Company name is required for analysis');
+  }
+
   // Get basic analysis
-  const basicAnalysis = performEnhancedBasicAnalysis(text, companyName, 'visibility');
+  const basicAnalysis = performEnhancedBasicAnalysis(text, companyName, promptType);
   
   // Get sentiment analysis
   const sentimentData = analyzeSentiment(text);
@@ -168,23 +448,60 @@ async function analyzeResponse(text: string, companyName: string): Promise<Analy
   const competitorCount = detectedCompetitors.split(',').filter(Boolean).length;
   const competitiveScore = Math.min(100, competitorCount * 20); // 20 points per competitor, max 100
 
+  // Add TalentX analysis
+  const talentXAnalyses = TalentXAnalysisService.analyzeResponse(text, companyName);
+  const overallTalentXScore = TalentXAnalysisService.getOverallTalentXScore(talentXAnalyses);
+  const topAttributes = TalentXAnalysisService.getTopAttributes(talentXAnalyses);
+  
+  const attributeScores: Record<string, number> = {};
+  talentXAnalyses.forEach(analysis => {
+    attributeScores[analysis.attributeId] = analysis.relevanceScore * analysis.sentimentScore;
+  });
+
   return {
     sentiment_score: sentimentData.sentiment_score,
     sentiment_label: sentimentData.sentiment_label,
     citations: basicAnalysis.citations,
     company_mentioned: companyMentionData.mentioned,
     mention_ranking: companyMentionData.ranking,
-    competitor_mentions: [], // Keep empty array for backward compatibility
+    competitor_mentions: [], // Keep empty array for backward compatibility with existing code
     first_mention_position: firstMentionPosition,
     total_words: totalWords,
     visibility_score: visibilityScore,
     competitive_score: competitiveScore,
-    detected_competitors: detectedCompetitors // Add the new field
+    detected_competitors: detectedCompetitors,
+    talentx_analysis: talentXAnalyses,
+    talentx_scores: {
+      overall_score: overallTalentXScore,
+      top_attributes: topAttributes,
+      attribute_scores: attributeScores
+    }
   };
 }
 
 function performEnhancedBasicAnalysis(responseText: string, companyName: string, promptType: string): AnalysisResult {
-  console.log('=== PERFORMING ENHANCED BASIC ANALYSIS ===')
+  // Add null checks
+  if (!responseText || !companyName) {
+    return {
+      sentiment_score: 0,
+      sentiment_label: 'neutral',
+      citations: [],
+      company_mentioned: false,
+      mention_ranking: null,
+      competitor_mentions: [],
+      first_mention_position: null,
+      total_words: 0,
+      visibility_score: 0,
+      competitive_score: 0,
+      detected_competitors: "",
+      talentx_analysis: [],
+      talentx_scores: {
+        overall_score: 0,
+        top_attributes: [],
+        attribute_scores: {}
+      }
+    };
+  }
   
   // Basic sentiment analysis based on keywords
   const positiveWords = ['excellent', 'great', 'good', 'strong', 'successful', 'leader', 'innovative', 'quality', 'best', 'top', 'outstanding', 'superior', 'leading']
@@ -226,10 +543,13 @@ function performEnhancedBasicAnalysis(responseText: string, companyName: string,
     return score;
   }, 0) / Math.max(1, competitorMentions.length);
 
+  // Extract citations from the response text
+  const citations = extractCitationsFromText(responseText);
+  
   return {
     sentiment_score: sentimentScore,
     sentiment_label: sentimentLabel,
-    citations: [],
+    citations: citations,
     company_mentioned: companyDetection.mentioned,
     mention_ranking: mentionRanking,
     competitor_mentions: competitorMentions,
@@ -242,6 +562,15 @@ function performEnhancedBasicAnalysis(responseText: string, companyName: string,
 }
 
 function detectEnhancedCompanyMention(text: string, companyName: string) {
+  // Add null checks
+  if (!text || !companyName) {
+    return {
+      mentioned: false,
+      mentions: 0,
+      first_mention_position: null
+    };
+  }
+
   // Lowercase for case-insensitive matching
   const lowerText = text.toLowerCase();
   const lowerCompany = companyName.toLowerCase();
@@ -256,10 +585,7 @@ function detectEnhancedCompanyMention(text: string, companyName: string) {
     }
   }
 
-  // Debug logging
-  console.log('Debug - Original text:', text);
-  console.log('Debug - Company name:', companyName);
-  console.log('Debug - First mention word index:', firstMentionWordIndex);
+
 
   return {
     mentioned: firstMentionWordIndex !== null,
@@ -269,6 +595,10 @@ function detectEnhancedCompanyMention(text: string, companyName: string) {
 }
 
 function detectEnhancedRanking(text: string, companyName: string): number | null {
+  if (!text || !companyName) {
+    return null;
+  }
+  
   const lowerText = text.toLowerCase()
   const lowerCompany = companyName.toLowerCase()
   
@@ -288,14 +618,18 @@ function detectEnhancedRanking(text: string, companyName: string): number | null
 }
 
 function detectEnhancedCompetitors(text: string, companyName: string): CompetitorMention[] {
+  if (!text || !companyName) {
+    return [];
+  }
+  
   const mentions: CompetitorMention[] = [];
   const lowerCompany = companyName.toLowerCase();
   
   // Common company suffixes and patterns
   const companyPatterns = [
-    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Company|Technologies|Systems|Solutions|Software|Group|International|Global)\b/g,
+    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Company|Technologies|Systems|Solutions|Software|Group|International|Global|Games|Entertainment|Studios)\b/g,
     /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:&|and)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g,
-    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:AI|ML|Cloud|Digital|Data|Analytics|Security|Network|Media|Health|Finance|Bank|Insurance)\b/g
+    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:AI|ML|Cloud|Digital|Data|Analytics|Security|Network|Media|Health|Finance|Bank|Insurance|Games|Gaming)\b/g
   ];
 
   // Track found companies to avoid duplicates
@@ -361,8 +695,66 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
     }
   });
 
-  console.log('Detected competitors:', mentions);
   return mentions;
+}
+
+function extractCitationsFromText(text: string): Citation[] {
+  const citations: Citation[] = [];
+  
+  // Look for URLs in the text
+  const urlPattern = /https?:\/\/([^\s]+)/g;
+  let match;
+  
+  while ((match = urlPattern.exec(text)) !== null) {
+    const url = match[0];
+    const domain = new URL(url).hostname.replace('www.', '');
+    
+    citations.push({
+      domain: domain,
+      url: url,
+      title: `Source from ${domain}`
+    });
+  }
+  
+  // Look for Perplexity citation patterns like [1], [2], [3], etc.
+  const perplexityCitationPattern = /\[(\d+)\]/g;
+  const perplexityCitations = new Set<number>();
+  
+  while ((match = perplexityCitationPattern.exec(text)) !== null) {
+    const citationNumber = parseInt(match[1]);
+    perplexityCitations.add(citationNumber);
+  }
+  
+  // Add Perplexity citations
+  perplexityCitations.forEach(citationNumber => {
+    citations.push({
+      domain: 'perplexity.ai',
+      title: `Perplexity Citation [${citationNumber}]`,
+      url: undefined
+    });
+  });
+  
+  // Look for common citation patterns like "According to [Company]" or "as reported by [Company]"
+  const citationPatterns = [
+    /(?:according to|as reported by|as stated by|per|via)\s+([A-Z][a-zA-Z\s&]+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Company|Technologies|Systems|Solutions|Software|Group|International|Global))/gi,
+    /(?:source|reference|cited from)\s*:\s*([A-Z][a-zA-Z\s&]+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Company|Technologies|Systems|Solutions|Software|Group|International|Global))/gi
+  ];
+  
+  citationPatterns.forEach(pattern => {
+    let citationMatch;
+    while ((citationMatch = pattern.exec(text)) !== null) {
+      const companyName = citationMatch[1].trim();
+      if (companyName.length > 3) { // Filter out very short matches
+        citations.push({
+          domain: companyName.toLowerCase().replace(/\s+/g, ''),
+          title: `Cited from ${companyName}`,
+          url: undefined
+        });
+      }
+    }
+  });
+  
+  return citations;
 }
 
 function extractContext(text: string, competitor: string): string {

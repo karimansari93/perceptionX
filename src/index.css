@@ -12,16 +12,16 @@
     --white: 255 255 255;
     --teal: 13 188 186;
 
-    --background: var(--white);
-    --foreground: var(--nightsky);
-    --primary: var(--nightsky);
-    --primary-foreground: var(--white);
-    --secondary: var(--dusk-navy);
-    --secondary-foreground: var(--white);
-    --accent: var(--pink);
-    --accent-foreground: var(--white);
-    --muted: var(--silver);
-    --muted-foreground: var(--nightsky);
+    --background: 0 0% 100%;          /* white in HSL */
+    --foreground: 221 60% 19%;        /* nightsky in HSL */
+    --primary: 221 60% 19%;           /* nightsky in HSL */
+    --primary-foreground: 0 0% 100%;  /* white in HSL */
+    --secondary: 221 56% 22%;         /* dusk-navy in HSL */
+    --secondary-foreground: 0 0% 100%; /* white in HSL */
+    --accent: 337 57% 61%;            /* pink in HSL */
+    --accent-foreground: 0 0% 100%;   /* white in HSL */
+    --muted: 210 9% 93%;              /* silver in HSL */
+    --muted-foreground: 221 60% 19%;  /* nightsky in HSL */
     --info: var(--teal);
     --radius: 0.75rem;
 
@@ -106,6 +106,71 @@
 
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Geologica', sans-serif;
+  }
+
+  /* Remove yellow selection highlight */
+  ::selection {
+    background-color: transparent !important;
+    color: inherit !important;
+  }
+
+  ::-moz-selection {
+    background-color: transparent !important;
+    color: inherit !important;
+  }
+
+  /* Remove all focus outlines */
+  *:focus {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
+  *:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
+  /* Remove any yellow highlights from scrolling */
+  * {
+    -webkit-tap-highlight-color: transparent !important;
+    -webkit-touch-callout: none !important;
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+    user-select: none !important;
+  }
+
+  /* Allow text selection only where needed */
+  p, span, div, h1, h2, h3, h4, h5, h6, li, td, th {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    user-select: text !important;
+  }
+
+  /* Custom scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #13274F;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #183056;
+  }
+
+  /* Firefox scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #13274F #f1f5f9;
   }
 }
 

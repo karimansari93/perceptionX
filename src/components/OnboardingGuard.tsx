@@ -32,10 +32,6 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
       }
 
       try {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('Checking onboarding completion status');
-        }
-        
         // Test connection first with a simple query
         const { error: connectionTest } = await supabase
           .from('user_onboarding')
@@ -68,9 +64,6 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
             data[0].industry && 
             (data[0].prompts_completed === true || true); // Keep prompts_completed check for backward compatibility
           setHasOnboarding(isComplete);
-          if (process.env.NODE_ENV === 'development') {
-            console.log('Onboarding completion status:', isComplete);
-          }
           setConnectionError(false);
         }
       } catch (error) {

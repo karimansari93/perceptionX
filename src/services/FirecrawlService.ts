@@ -27,8 +27,6 @@ export class FirecrawlService {
 
   static async scrapeWebsite(url: string, apiKey: string): Promise<CrawlResult> {
     try {
-      console.log('Starting Firecrawl scrape for:', url);
-      
       const response = await fetch(`${this.API_BASE_URL}/scrape`, {
         method: 'POST',
         headers: {
@@ -53,7 +51,6 @@ export class FirecrawlService {
       }
 
       const result = await response.json();
-      console.log('Firecrawl scrape successful');
       
       return {
         success: true,

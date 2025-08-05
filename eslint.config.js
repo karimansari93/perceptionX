@@ -24,6 +24,17 @@ export default tseslint.config(
         { allowConstantExport: true },
       ],
       "@typescript-eslint/no-unused-vars": "off",
+      "@typescript-eslint/no-explicit-any": "warn", // Changed from "off" to "warn" for production
+      "no-console": import.meta.env.PROD ? "warn" : "off",
+      "prefer-const": "error",
+      "no-case-declarations": "error",
+      "no-useless-escape": "error",
+      // Security rules
+      "no-eval": "error",
+      "no-implied-eval": "error",
+      "no-new-func": "error",
+      "no-script-url": "error",
+      "no-unsafe-finally": "error",
     },
   }
 );

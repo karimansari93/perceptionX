@@ -15,7 +15,7 @@ interface SourceDetailsModalProps {
 
 export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: SourceDetailsModalProps) => {
   const getFavicon = (domain: string): string => {
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
+    return `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=32`;
   };
 
   const parseAndEnhanceCitations = (citations: any) => {
@@ -73,7 +73,7 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: Sourc
       <DialogContent className="max-w-4xl max-h-[90vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <img src={getFavicon(source.domain)} alt="" className="w-5 h-5" />
+            <img src={getFavicon(source.domain)} alt="" className="w-5 h-5 object-contain" />
             <span>{source.domain}</span>
             <Badge variant="secondary">{source.count} citations</Badge>
           </DialogTitle>

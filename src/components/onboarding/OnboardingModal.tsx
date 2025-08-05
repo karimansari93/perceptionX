@@ -48,8 +48,8 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
 
   const onboardingSteps = [
     {
-      title: "Company Information",
-      description: "Let's start with some basic information about your company.",
+      title: "Let's get you set up!",
+      description: "We just need some basic information about your company & talent industry.",
       fields: [
         {
           label: "Company Name",
@@ -130,7 +130,7 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
             {
               onboarding_id: data.id,
               user_id: user?.id,
-              prompt_text: `What companies offer the best career opportunities in the ${data.industry} industry?`,
+              prompt_text: `What is the best company to work for in the ${data.industry} industry?`,
               prompt_category: 'Industry Leaders',
               prompt_type: 'visibility' as 'visibility',
               is_active: true
@@ -147,7 +147,7 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
             return;
           }
         } else {
-          console.log('Prompts already exist for this onboarding record');
+          // Prompts already exist for this onboarding record
         }
 
         // Navigate to dashboard and trigger prompts modal, including onboarding record ID
@@ -192,7 +192,7 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
           <div className="space-y-4">
             {currentStep.fields.map((field, index) => (
               <div key={index}>
-                <Label htmlFor={field.label.toLowerCase().replace(/\s+/g, '-')}>
+                <Label htmlFor={field.label.toLowerCase().replace(/\s+/g, '-')} className="text-[#13274F]">
                   {field.label}
                 </Label>
                 {field.type === 'textarea' ? (
@@ -201,7 +201,7 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
                     value={field.value}
                     onChange={(e) => field.onChange(e.target.value)}
                     placeholder={field.placeholder}
-                    className="mt-1"
+                    className="mt-1 text-[#13274F]"
                   />
                 ) : (
                   <Input
@@ -210,7 +210,7 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
                     value={field.value}
                     onChange={(e) => field.onChange(e.target.value)}
                     placeholder={field.placeholder}
-                    className="mt-1"
+                    className="mt-1 text-[#13274F]"
                   />
                 )}
               </div>

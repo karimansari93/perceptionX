@@ -25,6 +25,8 @@ export const LLM_DOMAINS = {
   'llama-3.1-sonar-small-128k-online': 'perplexity.ai',
   'llama-3.1-sonar-large-128k-online': 'perplexity.ai',
   'llama-3.1-sonar-huge-128k-online': 'perplexity.ai',
+  'google-ai-overviews': 'google.com',
+  'ai-overviews': 'google.com',
 } as const;
 
 export type LLMModel = keyof typeof LLM_DOMAINS;
@@ -72,7 +74,8 @@ export const LLM_DISPLAY_NAMES = {
   'pplx': 'Perplexity',
   'llama-3.1-sonar-small-128k-online': 'Perplexity',
   'llama-3.1-sonar-large-128k-online': 'Perplexity',
-  'llama-3.1-sonar-huge-128k-online': 'Perplexity',
+  'google-ai-overviews': 'Google AI Overviews',
+  'ai-overviews': 'Google AI Overviews',
 };
 
 export function getLLMDisplayName(modelName: string): string {

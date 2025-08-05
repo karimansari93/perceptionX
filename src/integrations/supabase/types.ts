@@ -57,6 +57,9 @@ export type Database = {
           email: string
           id: string
           updated_at: string
+          subscription_type: Database["public"]["Enums"]["subscription_type"]
+          subscription_start_date: string | null
+          prompts_used: number
         }
         Insert: {
           company_name?: string | null
@@ -64,6 +67,9 @@ export type Database = {
           email: string
           id: string
           updated_at?: string
+          subscription_type?: Database["public"]["Enums"]["subscription_type"]
+          subscription_start_date?: string | null
+          prompts_used?: number
         }
         Update: {
           company_name?: string | null
@@ -71,6 +77,9 @@ export type Database = {
           email?: string
           id?: string
           updated_at?: string
+          subscription_type?: Database["public"]["Enums"]["subscription_type"]
+          subscription_start_date?: string | null
+          prompts_used?: number
         }
         Relationships: []
       }

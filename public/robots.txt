@@ -12,3 +12,13 @@ Allow: /
 
 User-agent: *
 Allow: /
+
+# Block access to authenticated pages
+Disallow: /dashboard
+Disallow: /monitor
+Disallow: /analyze
+Disallow: /usage
+Disallow: /account
+Disallow: /auth/callback
+
+Sitemap: https://app.perceptionx.ai/sitemap.xml

@@ -1,12 +1,8 @@
-import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ExternalLink } from "lucide-react";
 import { EnhancedCitation } from "@/utils/citationUtils";
+import { Favicon } from "@/components/ui/favicon";
 
 interface CitationDisplayProps {
   citation: EnhancedCitation;
@@ -20,11 +16,11 @@ export const CitationDisplay = ({ citation, showType = false, size = 'md' }: Cit
   const renderSourceType = () => {
     if (!citation.sourceType) return null;
     
-    const typeColors = {
-      'review-platform': 'bg-purple-100 text-purple-800',
-      'job-board': 'bg-blue-100 text-blue-800',
-      'employer-branding': 'bg-green-100 text-green-800',
-      'salary-data': 'bg-yellow-100 text-yellow-800',
+    const typeColors: Record<string, string> = {
+      'job-board': 'bg-green-100 text-green-800',
+      'company-careers': 'bg-blue-100 text-blue-800',
+      'news-media': 'bg-purple-100 text-purple-800',
+      'social-media': 'bg-orange-100 text-orange-800',
       'professional-network': 'bg-pink-100 text-pink-800'
     };
     
@@ -59,25 +55,11 @@ export const CitationDisplay = ({ citation, showType = false, size = 'md' }: Cit
   
   const content = (
     <div className={`flex items-center space-x-2 ${isSmall ? 'text-xs' : 'text-sm'}`}>
-      <img 
-        src={citation.favicon} 
+      <Favicon 
+        domain={citation.domain} 
+        size={isSmall ? 'sm' : 'md'}
         alt={`${citation.domain} favicon`}
-        className={`${isSmall ? 'w-3 h-3' : 'w-4 h-4'} flex-shrink-0`}
-        onError={(e) => {
-          // Fallback to a colored dot if favicon fails to load
-          e.currentTarget.style.display = 'none';
-          const fallback = e.currentTarget.nextElementSibling as HTMLElement;
-          if (fallback) fallback.style.display = 'flex';
-        }}
       />
-      <div 
-        className={`${isSmall ? 'w-3 h-3' : 'w-4 h-4'} bg-blue-100 rounded flex items-center justify-center flex-shrink-0`}
-        style={{ display: 'none' }}
-      >
-        <span className={`${isSmall ? 'text-[8px]' : 'text-xs'} font-medium text-blue-600`}>
-          {citation.domain?.charAt(0)?.toUpperCase() || 'U'}
-        </span>
-      </div>
       
       <span className={`font-medium ${isSmall ? 'max-w-[120px]' : 'max-w-[200px]'} truncate`}>
         {citation.displayName || citation.title || citation.domain}

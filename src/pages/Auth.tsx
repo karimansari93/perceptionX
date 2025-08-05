@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { X, ArrowRight, Sparkles, BarChart3, Target, Users, Mail, Medal } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -11,6 +12,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { LoadingModal } from '@/components/prompts/LoadingModal';
 import { generateAndInsertPrompts, ProgressInfo } from '@/hooks/usePromptsLogic';
 import { LoadingScreen } from '@/components/ui/loading-screen';
+import { validateEmail, sanitizeInput, logger } from '@/lib/utils';
 
 // Google Material Button component
 const GoogleMaterialButton = ({ onClick, loading, mode }) => (
@@ -99,8 +101,6 @@ const Auth = () => {
     if (!onboardingData) return;
 
     try {
-      console.log('Linking onboarding data to user:', userId);
-      
       // First, check if user already has an onboarding record
       const { data: existingRecord } = await supabase
         .from('user_onboarding')
@@ -109,7 +109,6 @@ const Auth = () => {
         .limit(1);
 
       if (existingRecord && existingRecord.length > 0) {
-        console.log('User already has onboarding record');
         return;
       }
 
@@ -131,8 +130,6 @@ const Auth = () => {
 
         if (linkError) {
           console.error('Error linking onboarding record:', linkError);
-        } else {
-          console.log('Successfully linked existing onboarding record');
         }
       } else {
         // Create new onboarding record for the user
@@ -149,8 +146,6 @@ const Auth = () => {
 
         if (createError) {
           console.error('Error creating onboarding record:', createError);
-        } else {
-          console.log('Successfully created new onboarding record');
         }
       }
     } catch (error) {
@@ -163,8 +158,16 @@ const Auth = () => {
     setLoading(true);
 
     try {
+      // Validate and sanitize email input
+      const sanitizedEmail = sanitizeInput(formData.email.trim());
+      if (!validateEmail(sanitizedEmail)) {
+        toast.error('Please enter a valid email address');
+        setLoading(false);
+        return;
+      }
+
       if (isPasswordReset) {
-        const { error } = await supabase.auth.resetPasswordForEmail(formData.email, {
+        const { error } = await supabase.auth.resetPasswordForEmail(sanitizedEmail, {
           redirectTo: `${window.location.origin}/reset-password`,
         });
 
@@ -178,14 +181,13 @@ const Auth = () => {
 
       if (isLogin) {
         const { data, error } = await supabase.auth.signInWithPassword({
-          email: formData.email,
+          email: sanitizedEmail,
           password: formData.password,
         });
 
         if (error) throw error;
         
-        console.log('User signed in:', data.user?.id);
-        toast.success('Signed in successfully!');
+        // Signed in successfully - no toast needed
         
         if (onboardingData && data.user) {
           await linkOnboardingToUser(data.user.id);
@@ -194,7 +196,7 @@ const Auth = () => {
         navigate('/dashboard');
       } else {
         const { data, error } = await supabase.auth.signUp({
-          email: formData.email,
+          email: sanitizedEmail,
           password: formData.password,
           options: {
             emailRedirectTo: `${window.location.origin}/auth/callback`,
@@ -203,18 +205,16 @@ const Auth = () => {
 
         if (error) throw error;
 
-        console.log('User signed up:', data.user?.id);
-
         if (onboardingData && data.user) {
           await linkOnboardingToUser(data.user.id);
         }
 
-        toast.success('Account created! Please check your email to confirm your account.');
+        // Account created - no toast needed
         setShowVerifyEmailMessage(true);
         return;
       }
     } catch (error: any) {
-      console.error('Auth error:', error);
+      logger.error('Auth error:', error);
       toast.error(error.message || 'An error occurred');
     } finally {
       setLoading(false);
@@ -272,7 +272,12 @@ const Auth = () => {
   return (
     <div className="min-h-screen w-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #13274F 0%, #183056 100%)' }}>
       <div className="w-full max-w-md flex items-center justify-center p-8 relative flex-col">
-        <img src="/logos/PerceptionX-PrimaryLogo-ForOnDark-large.png" alt="PerceptionX Logo" className="mx-auto mb-10 h-12" />
+        <div className="flex items-center justify-center mb-10">
+          <img src="/logos/PerceptionX-PrimaryLogo-ForOnDark-large.png" alt="PerceptionX Logo" className="h-12" />
+          <Badge className="ml-3 bg-pink text-white px-2 py-0.5 text-xs font-bold border-2 border-white">
+            BETA
+          </Badge>
+        </div>
         <Card className="w-full bg-white rounded-2xl border border-silver">
           <CardHeader>
             <CardTitle className="text-2xl text-center text-nightsky font-bold" style={{ fontFamily: 'Geologica, sans-serif' }}>

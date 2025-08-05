@@ -1,6 +1,17 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DashboardMetrics, CitationCount } from "@/types/dashboard";
+import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dashboard";
 import { Badge } from "@/components/ui/badge";
+import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
+import { useState, useEffect } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { SourceDetailsModal } from "./SourceDetailsModal";
+import { ResponseDetailsModal } from "./ResponseDetailsModal";
+import { getCompetitorFavicon } from "@/utils/citationUtils";
+import ReactMarkdown from 'react-markdown';
+import { Skeleton } from "@/components/ui/skeleton";
+import LLMLogo from "@/components/LLMLogo";
+import { X, ExternalLink } from 'lucide-react';
+import { useNavigate } from "react-router-dom";
 
 interface KeyTakeawaysProps {
   metrics: DashboardMetrics;
@@ -11,6 +22,10 @@ interface KeyTakeawaysProps {
     neutral: string[];
     negative: string[];
   };
+  llmMentionRankings: LLMMentionRanking[];
+  responses: any[];
+  talentXProData?: any[];
+  isPro?: boolean;
 }
 
 interface BaseInsight {
@@ -31,9 +46,237 @@ interface InsightWithThemes extends BaseInsight {
   themes: { theme: string; sentiment: 'positive' | 'neutral' | 'negative' }[];
 }
 
-type Insight = BaseInsight | InsightWithSources | InsightWithCompetitor | InsightWithThemes;
+interface InsightWithLLM extends BaseInsight {
+  llm: LLMMentionRanking;
+  promptType?: string;
+}
 
-export const KeyTakeaways = ({ metrics, topCompetitors, topCitations, themesBySentiment = { positive: [], neutral: [], negative: [] } }: KeyTakeawaysProps) => {
+interface InsightWithTalentXAttribute extends BaseInsight {
+  attribute: {
+    id: string;
+    name: string;
+    score: number;
+  };
+}
+
+type Insight = BaseInsight | InsightWithSources | InsightWithCompetitor | InsightWithThemes | InsightWithLLM | InsightWithTalentXAttribute;
+
+export const KeyTakeaways = ({ 
+  metrics, 
+  topCompetitors, 
+  topCitations, 
+  themesBySentiment = { positive: [], neutral: [], negative: [] },
+  llmMentionRankings,
+  responses,
+  talentXProData = [],
+  isPro = false
+}: KeyTakeawaysProps) => {
+  const navigate = useNavigate();
+  // Modal states for clickable takeaways
+  const [selectedSource, setSelectedSource] = useState<CitationCount | null>(null);
+  const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
+  const [selectedLLM, setSelectedLLM] = useState<LLMMentionRanking | null>(null);
+  const [selectedPrompt, setSelectedPrompt] = useState<string | null>(null);
+  const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
+  const [isCompetitorModalOpen, setIsCompetitorModalOpen] = useState(false);
+  const [isLLMModalOpen, setIsLLMModalOpen] = useState(false);
+  const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+
+  // Competitor modal states (from CompetitorsTab)
+  const [competitorSnippets, setCompetitorSnippets] = useState<{ snippet: string; full: string }[]>([]);
+  const [expandedSnippetIdx, setExpandedSnippetIdx] = useState<number | null>(null);
+  const [competitorSummary, setCompetitorSummary] = useState<string>("");
+  const [loadingCompetitorSummary, setLoadingCompetitorSummary] = useState(false);
+  const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
+  const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = useState(false);
+  const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
+  const [selectedCompetitorSource, setSelectedCompetitorSource] = useState<{ domain: string; count: number } | null>(null);
+  const [isCompetitorSourceModalOpen, setIsCompetitorSourceModalOpen] = useState(false);
+  const [showAllCompetitorSources, setShowAllCompetitorSources] = useState(false);
+
+  // Click handlers
+  const handleSourceClick = (source: CitationCount) => {
+    setSelectedSource(source);
+    setIsSourceModalOpen(true);
+  };
+
+  const handleCompetitorClick = (competitor: string) => {
+    const snippets = getSnippetsForCompetitor(competitor);
+    setSelectedCompetitor(competitor);
+    setCompetitorSnippets(snippets);
+    setShowAllCompetitorSources(false);
+    setIsCompetitorModalOpen(true);
+  };
+
+  const handleLLMClick = (llm: LLMMentionRanking) => {
+    setSelectedLLM(llm);
+    setIsLLMModalOpen(true);
+  };
+
+  const handleCloseSourceModal = () => {
+    setIsSourceModalOpen(false);
+    setSelectedSource(null);
+  };
+
+  const handleCloseCompetitorModal = () => {
+    setIsCompetitorModalOpen(false);
+    setSelectedCompetitor(null);
+    setCompetitorSnippets([]);
+  };
+
+  const handleCloseLLMModal = () => {
+    setIsLLMModalOpen(false);
+    setSelectedLLM(null);
+  };
+
+  const handlePromptClick = (promptText: string) => {
+    // Close the LLM modal first
+    setIsLLMModalOpen(false);
+    setSelectedLLM(null);
+    
+    // Open the ResponseDetailsModal for this specific prompt
+    setSelectedPrompt(promptText);
+    setIsPromptModalOpen(true);
+  };
+
+  const getPromptResponses = (promptText: string) => {
+    return responses.filter(r => r.confirmed_prompts?.prompt_text === promptText);
+  };
+
+  // Competitor modal handlers (from CompetitorsTab)
+  const handleCompetitorSourceClick = (source: { domain: string; count: number }) => {
+    setSelectedCompetitorSource(source);
+    setIsCompetitorSourceModalOpen(true);
+  };
+
+  const handleCloseCompetitorSourceModal = () => {
+    setIsCompetitorSourceModalOpen(false);
+    setSelectedCompetitorSource(null);
+  };
+
+  // Helper functions (from CompetitorsTab)
+  const getSnippetsForCompetitor = (competitor: string) => {
+    const snippets: { snippet: string; full: string }[] = [];
+    // Regex to match competitor name with optional bolding and punctuation after
+    const competitorPattern = `(?:\\*\\*|__)?${competitor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(?:\\*\\*|__)?[\\s]*[:*\-]*`;
+    const regex = new RegExp(`((?:\\S+\\s+){0,4})(${competitorPattern})`, 'gi');
+    responses.forEach(response => {
+      if (!response.response_text) return;
+      let match;
+      while ((match = regex.exec(response.response_text)) !== null) {
+        // Get 4 words before
+        const before = match[1]?.split(/\s+/).slice(-4).join(' ') || '';
+        // Find the index just after the match
+        const afterStartIdx = match.index + match[0].length;
+        // Take the next 12 words from the remaining text
+        const afterText = response.response_text.slice(afterStartIdx).replace(/^([:*\-\s])+/, '');
+        const after = afterText.split(/\s+/).slice(0, 12).join(' ');
+        snippets.push({
+          snippet: `${before} ${match[2]} ${after}`.trim(),
+          full: response.response_text
+        });
+      }
+    });
+    return snippets;
+  };
+
+  const getFullResponsesForCompetitor = (competitor: string) => {
+    return responses.filter(response => 
+      response.response_text?.toLowerCase().includes(competitor.toLowerCase())
+    );
+  };
+
+  function highlightCompetitor(snippet: string, competitor: string) {
+    if (!competitor) return snippet;
+    
+    // Escape special regex characters in competitor name
+    const escapedCompetitor = competitor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    
+    // Create regex to match competitor name with optional bolding
+    const regex = new RegExp(`(\\*\\*|__)?(${escapedCompetitor})(\\*\\*|__)?`, 'gi');
+    
+    // Replace matches with highlighted version
+    let clean = snippet.replace(regex, (match, prefix, name, suffix) => {
+      // If already bolded, keep it bolded
+      if (prefix && suffix) {
+        return `<strong class="bg-yellow-200 px-1 rounded">${name}</strong>`;
+      }
+      // Otherwise, just highlight
+      return `<span class="bg-yellow-200 px-1 rounded font-medium">${name}</span>`;
+    });
+    
+    return clean;
+  }
+
+  // Fetch AI summary for competitor when modal opens
+  useEffect(() => {
+    if (!isCompetitorModalOpen || !selectedCompetitor) return;
+    
+    const fetchSummary = async () => {
+      setLoadingCompetitorSummary(true);
+      setCompetitorSummaryError(null);
+      
+      try {
+        // Generate a simple summary based on the competitor mentions
+        const competitorResponses = getFullResponsesForCompetitor(selectedCompetitor);
+        const responseTexts = competitorResponses
+          .map(r => r.response_text)
+          .filter(Boolean)
+          .join('\n\n');
+        
+        if (!responseTexts.trim()) {
+          setCompetitorSummary('No detailed mentions found for this competitor.');
+          return;
+        }
+
+        // Create a simple analysis without calling the analyze-response function
+        const totalMentions = competitorResponses.length;
+        const uniqueSources = new Set<string>();
+        const uniqueLLMs = new Set<string>();
+        
+        competitorResponses.forEach(response => {
+          // Extract sources from citations
+          try {
+            const citations = typeof response.citations === 'string' 
+              ? JSON.parse(response.citations) 
+              : response.citations;
+            
+            if (Array.isArray(citations)) {
+              citations.forEach((citation: any) => {
+                if (citation.domain) {
+                  uniqueSources.add(citation.domain);
+                }
+              });
+            }
+          } catch {
+            // Skip invalid citations
+          }
+          
+          // Add AI model
+          if (response.ai_model) {
+            uniqueLLMs.add(response.ai_model);
+          }
+        });
+
+        // Generate a simple summary
+        const summary = `${selectedCompetitor} is mentioned ${totalMentions} times across your analysis. ` +
+          `The mentions appear in responses from ${uniqueLLMs.size} different AI models (${Array.from(uniqueLLMs).join(', ')}). ` +
+          `These mentions are sourced from ${uniqueSources.size} different websites and sources. ` +
+          `This level of competitor presence suggests ${selectedCompetitor} is a significant player in your market space. ` +
+          `Consider analyzing the specific contexts of these mentions to understand how your brand compares and identify potential competitive advantages or areas for improvement.`;
+
+        setCompetitorSummary(summary);
+      } catch (error) {
+        console.error('Error generating competitor summary:', error);
+        setCompetitorSummaryError('Failed to generate summary. Please try again.');
+      } finally {
+        setLoadingCompetitorSummary(false);
+      }
+    };
+    fetchSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCompetitorModalOpen, selectedCompetitor]);
+
   // Helper to get favicon for a domain
   const getFavicon = (domain: string): string => {
     return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
@@ -46,6 +289,38 @@ export const KeyTakeaways = ({ metrics, topCompetitors, topCitations, themesBySe
     name = name.replace(/\.(com|org|net|io|co|edu|gov|info|biz|us|uk|ca|au|in|de|fr|jp|ru|ch|it|nl|se|no|es|mil|tv|me|ai|ly|app|site|online|tech|dev|xyz|pro|club|store|blog|io|co|us|ca|uk|au|in|de|fr|jp|ru|ch|it|nl|se|no|es|mil|tv|me|ai|ly|app|site|online|tech|dev|xyz|pro|club|store|blog)(\.[a-z]{2})?$/, "");
     // Capitalize first letter
     return name.charAt(0).toUpperCase() + name.slice(1);
+  };
+
+  // Helper to get sources contributing to competitor mentions
+  const getCompetitorSources = (competitorName: string) => {
+    const sourceCounts: Record<string, number> = {};
+    
+    responses.forEach(response => {
+      // Check if response mentions the competitor
+      if (response.response_text?.toLowerCase().includes(competitorName.toLowerCase())) {
+        // Parse citations from the response
+        try {
+          const citations = typeof response.citations === 'string' 
+            ? JSON.parse(response.citations) 
+            : response.citations;
+          
+          if (Array.isArray(citations)) {
+            citations.forEach((citation: any) => {
+              if (citation.domain) {
+                sourceCounts[citation.domain] = (sourceCounts[citation.domain] || 0) + 1;
+              }
+            });
+          }
+        } catch {
+          // Skip invalid citations
+        }
+      }
+    });
+    
+    // Convert to array and sort by count
+    return Object.entries(sourceCounts)
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((a, b) => b.count - a.count);
   };
 
   // Calculate key insights
@@ -129,44 +404,153 @@ export const KeyTakeaways = ({ metrics, topCompetitors, topCitations, themesBySe
     };
   };
 
-  const getVisibilityInsight = (): BaseInsight => {
-    // Get visibility score from metrics
-    const visibilityScore = metrics.averageVisibility;
-    
-    if (visibilityScore === 0) {
+  const getAIMentionsInsight = (): InsightWithLLM | BaseInsight => {
+    if (!llmMentionRankings || llmMentionRankings.length === 0) {
       return {
-        text: "No visibility in industry conversations",
-        type: "negative",
-        action: "Create content focused on key industry topics to improve visibility"
-      };
-    } else if (visibilityScore < 40) {
-      return {
-        text: `Low visibility (${Math.round(visibilityScore)}%) in industry conversations`,
-        type: "negative",
-        action: "Prioritize content creation and optimization for key industry topics"
-      };
-    } else if (visibilityScore < 70) {
-      return {
-        text: `Moderate visibility (${Math.round(visibilityScore)}%) in industry conversations`,
+        text: "No AI model mentions detected",
         type: "neutral",
-        action: "Focus on improving content visibility for key industry topics"
+        action: "Test prompts with different AI models to understand mention patterns"
       };
     }
+
+    // Find the AI model that mentions the company least
+    const lowestMentionLLM = llmMentionRankings[llmMentionRankings.length - 1];
+    const highestMentionLLM = llmMentionRankings[0];
+
+    // Analyze what prompts this AI model is used for
+    const llmResponses = responses.filter(r => r.ai_model === lowestMentionLLM.model);
+    const promptTypes = llmResponses.map(r => r.confirmed_prompts?.prompt_type || 'general');
+    const mostCommonPromptType = promptTypes.reduce((acc, type) => {
+      acc[type] = (acc[type] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const dominantPromptType = Object.entries(mostCommonPromptType)
+      .sort(([,a], [,b]) => (b as number) - (a as number))[0]?.[0];
+
+    // Check if competitors are mentioned in this AI's responses
+    const competitorMentions = llmResponses.filter(r => r.detected_competitors && r.detected_competitors.trim() !== '');
+    const competitorMentionRate = llmResponses.length > 0 ? (competitorMentions.length / llmResponses.length) * 100 : 0;
+
+    if (lowestMentionLLM.mentions === 0) {
+      return {
+        text: `${getLLMDisplayName(lowestMentionLLM.model)} never mentions your company`,
+        type: "negative",
+        action: `Focus on ${dominantPromptType || 'general'} prompts to improve visibility with this AI model`,
+        llm: lowestMentionLLM,
+        promptType: dominantPromptType
+      };
+    }
+
+    const mentionDifference = highestMentionLLM.mentions - lowestMentionLLM.mentions;
+    const isSignificantGap = mentionDifference > 3;
+
+    // Short, concise text like other takeaways
+    let text = `${getLLMDisplayName(lowestMentionLLM.model)} mentions your company least`;
+    let type = "warning"; // Always warning when an AI mentions least
+    let action = `Click to see which specific prompts are missing company mentions and get actionable insights`;
+
     return {
-      text: `Strong visibility (${Math.round(visibilityScore)}%) in industry conversations`,
+      text,
+      type,
+      action,
+      llm: lowestMentionLLM,
+      promptType: dominantPromptType
+    };
+  };
+
+  const getTopTalentXAttributeInsight = (): InsightWithTalentXAttribute | BaseInsight => {
+    if (!talentXProData || talentXProData.length === 0) {
+      return {
+        text: "No TalentX attribute data available",
+        type: "neutral",
+        action: "Generate TalentX Pro prompts to analyze employer brand attributes"
+      };
+    }
+
+    // Find the attribute with the highest perception score
+    const topAttribute = talentXProData.reduce((best, current) => 
+      current.perceptionScore > best.perceptionScore ? current : best
+    );
+
+    if (topAttribute.perceptionScore < 50) {
+      return {
+        text: `${topAttribute.attributeName} is your strongest employer brand attribute`,
+        type: "warning",
+        action: "Focus on improving perception scores across all attributes",
+        attribute: {
+          id: topAttribute.attributeId,
+          name: topAttribute.attributeName,
+          score: topAttribute.perceptionScore
+        }
+      };
+    }
+
+    return {
+      text: `${topAttribute.attributeName} is your strongest employer brand attribute`,
       type: "positive",
-      action: "Maintain high visibility and continue optimizing content for key topics"
+      action: "Leverage this strength in recruitment and employer branding",
+      attribute: {
+        id: topAttribute.attributeId,
+        name: topAttribute.attributeName,
+        score: topAttribute.perceptionScore
+      }
+    };
+  };
+
+  const getTalentXImprovementOpportunityInsight = (): InsightWithTalentXAttribute | BaseInsight => {
+    if (!talentXProData || talentXProData.length === 0) {
+      return {
+        text: "No TalentX attribute data available",
+        type: "neutral",
+        action: "Generate TalentX Pro prompts to identify improvement opportunities"
+      };
+    }
+
+    // Find the attribute with the lowest perception score
+    const lowestAttribute = talentXProData.reduce((worst, current) => 
+      current.perceptionScore < worst.perceptionScore ? current : worst
+    );
+
+    if (lowestAttribute.perceptionScore > 70) {
+      return {
+        text: `${lowestAttribute.attributeName} has the lowest perception score`,
+        type: "positive",
+        action: "All attributes are performing well, focus on maintaining excellence",
+        attribute: {
+          id: lowestAttribute.attributeId,
+          name: lowestAttribute.attributeName,
+          score: lowestAttribute.perceptionScore
+        }
+      };
+    }
+
+    return {
+      text: `${lowestAttribute.attributeName} needs attention`,
+      type: "warning",
+      action: "Develop strategies to improve perception in this area",
+      attribute: {
+        id: lowestAttribute.attributeId,
+        name: lowestAttribute.attributeName,
+        score: lowestAttribute.perceptionScore
+      }
     };
   };
 
   const insights: Insight[] = [
     getBrandPerceptionInsight(),
     getCompetitiveInsight(),
-    getVisibilityInsight()
+    getAIMentionsInsight(),
+    // TalentX insights temporarily hidden until feature is fully launched
+    // ...(isPro && talentXProData && talentXProData.length > 0 ? [
+    //   getTopTalentXAttributeInsight(),
+    //   getTalentXImprovementOpportunityInsight()
+    // ] : [])
   ];
 
   return (
-    <Card className="shadow-sm border border-gray-200 h-full">
+    <>
+      <Card className="shadow-sm border border-gray-200 h-full">
       <CardHeader className="pb-2">
         <CardTitle className="text-lg font-semibold">Key Takeaways</CardTitle>
       </CardHeader>
@@ -177,11 +561,24 @@ export const KeyTakeaways = ({ metrics, topCompetitors, topCitations, themesBySe
             const hasSources = 'sources' in insight && insight.sources && insight.sources.length > 0;
             const hasCompetitor = 'competitor' in insight && insight.competitor && insight.competitor.length > 0;
             const hasThemes = 'themes' in insight && insight.themes && insight.themes.length > 0;
+            const hasLLM = 'llm' in insight && insight.llm;
+            const hasTalentXAttribute = 'attribute' in insight && insight.attribute;
             
             return (
               <div
                 key={index}
-                className={`flex flex-col gap-3 p-4 rounded-lg bg-gray-50/80 hover:bg-gray-100/80 transition-colors duration-200 ${isEmpty ? 'py-3' : ''}`}
+                className={`flex flex-col gap-3 p-4 rounded-lg bg-gray-50/80 hover:bg-gray-100/80 transition-colors duration-200 ${isEmpty ? 'py-3' : ''} ${
+                  hasSources || hasCompetitor || hasLLM ? 'cursor-pointer' : ''
+                }`}
+                onClick={() => {
+                  if (hasSources && insight.sources.length > 0) {
+                    handleSourceClick(insight.sources[0]);
+                  } else if (hasCompetitor) {
+                    handleCompetitorClick(insight.competitor);
+                  } else if (hasLLM) {
+                    handleLLMClick(insight.llm);
+                  }
+                }}
               >
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
@@ -208,7 +605,7 @@ export const KeyTakeaways = ({ metrics, topCompetitors, topCitations, themesBySe
                             {insight.text.split(getSourceDisplayName(insight.sources[0].domain))[1]}
                           </span>
                         </div>
-                        <p className="text-xs text-gray-600 leading-relaxed ml-0">{insight.action}</p>
+                        <p className="text-xs text-gray-600 leading-relaxed ml-0 pl-4">{insight.action}</p>
                       </div>
                     ) : hasCompetitor ? (
                       <div className="flex flex-col gap-2">
@@ -218,8 +615,26 @@ export const KeyTakeaways = ({ metrics, topCompetitors, topCitations, themesBySe
                           </span>
                           <Badge 
                             variant="outline" 
-                            className="flex items-center gap-1.5 bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors"
+                            className="flex items-center gap-1.5 bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer"
+                            onClick={() => handleCompetitorClick(insight.competitor)}
                           >
+                            <img 
+                              src={getCompetitorFavicon(insight.competitor)} 
+                              alt={`${insight.competitor} favicon`}
+                              className="w-3 h-3 flex-shrink-0 rounded"
+                              onError={(e) => {
+                                // Fallback to initials if favicon fails to load
+                                e.currentTarget.style.display = 'none';
+                                const fallback = e.currentTarget.nextElementSibling as HTMLElement;
+                                if (fallback) fallback.style.display = 'flex';
+                              }}
+                            />
+                            <span 
+                              className="w-3 h-3 flex-shrink-0 bg-blue-200 rounded flex items-center justify-center text-[8px] font-bold text-blue-600"
+                              style={{ display: 'none' }}
+                            >
+                              {insight.competitor.charAt(0).toUpperCase()}
+                            </span>
                             <span className="text-xs font-medium">
                               {insight.competitor}
                             </span>
@@ -228,7 +643,7 @@ export const KeyTakeaways = ({ metrics, topCompetitors, topCitations, themesBySe
                             {insight.text.split(insight.competitor)[1]}
                           </span>
                         </div>
-                        <p className="text-xs text-gray-600 leading-relaxed ml-0">{insight.action}</p>
+                        <p className="text-xs text-gray-600 leading-relaxed ml-0 pl-4">{insight.action}</p>
                       </div>
                     ) : hasThemes ? (
                       <div className="flex flex-col gap-2">
@@ -251,7 +666,52 @@ export const KeyTakeaways = ({ metrics, topCompetitors, topCitations, themesBySe
                             </Badge>
                           ))}
                         </div>
-                        <p className="text-xs text-gray-600 leading-relaxed ml-0">{insight.action}</p>
+                        <p className="text-xs text-gray-600 leading-relaxed ml-0 pl-4">{insight.action}</p>
+                      </div>
+                    ) : hasLLM ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                            {insight.text.split(getLLMDisplayName(insight.llm.model))[0]}
+                          </span>
+                          <Badge 
+                            variant="outline" 
+                            className="flex items-center gap-1.5 bg-white/80 border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+                          >
+                            {insight.llm.logoUrl ? (
+                              <img src={insight.llm.logoUrl} alt="" className="w-3 h-3 flex-shrink-0" />
+                            ) : (
+                              <div className="w-3 h-3 flex-shrink-0 bg-gray-200 rounded" />
+                            )}
+                            <span className="text-xs font-medium">
+                              {getLLMDisplayName(insight.llm.model)}
+                            </span>
+                          </Badge>
+                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                            {insight.text.split(getLLMDisplayName(insight.llm.model))[1]}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-600 leading-relaxed ml-0 pl-4">{insight.action}</p>
+                      </div>
+                    ) : hasTalentXAttribute ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                            {insight.text.split(insight.attribute.name)[0]}
+                          </span>
+                          <Badge 
+                            variant="outline" 
+                            className="flex items-center gap-1.5 bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors"
+                          >
+                            <span className="text-xs font-medium">
+                              {insight.attribute.name}
+                            </span>
+                          </Badge>
+                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                            {insight.text.split(insight.attribute.name)[1]}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-600 leading-relaxed ml-0 pl-4">{insight.action}</p>
                       </div>
                     ) : (
                       <div className="flex flex-col gap-2">
@@ -280,5 +740,403 @@ export const KeyTakeaways = ({ metrics, topCompetitors, topCitations, themesBySe
         </div>
       </CardContent>
     </Card>
+
+    {/* Modals */}
+    {selectedSource && (
+      <SourceDetailsModal
+        isOpen={isSourceModalOpen}
+        onClose={handleCloseSourceModal}
+        source={selectedSource}
+        responses={responses}
+      />
+    )}
+
+    {/* Competitor Modal */}
+    <Dialog open={isCompetitorModalOpen} onOpenChange={handleCloseCompetitorModal}>
+      <DialogContent className="max-w-xl w-full sm:max-w-2xl sm:w-[90vw] p-2 sm:p-6">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <img 
+              src={getCompetitorFavicon(selectedCompetitor || '')} 
+              alt={`${selectedCompetitor} favicon`}
+              className="w-5 h-5 rounded"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
+            />
+            <span>{selectedCompetitor}</span>
+            <Badge variant="secondary">{getFullResponsesForCompetitor(selectedCompetitor || '').length} mentions</Badge>
+          </DialogTitle>
+        </DialogHeader>
+        
+        <div className="space-y-4">
+          {/* MODELS ROW - matching PromptsModal style */}
+          {selectedCompetitor && (() => {
+            const competitorResponses = getFullResponsesForCompetitor(selectedCompetitor);
+            const uniqueLLMs = Array.from(new Set(competitorResponses.map(r => r.ai_model).filter(Boolean)));
+            
+            return (
+              <div className="flex flex-row gap-8 mt-1 mb-1 w-full">
+                {/* Models */}
+                <div className="flex flex-col items-start min-w-[120px]">
+                  <span className="text-xs text-gray-400 font-medium mb-1">Models</span>
+                  <div className="flex flex-row flex-wrap items-center gap-2">
+                    {uniqueLLMs.length === 0 ? (
+                      <span className="text-xs text-gray-400">None</span>
+                    ) : (
+                      uniqueLLMs.map(model => (
+                        <span key={model} className="inline-flex items-center">
+                          <LLMLogo modelName={model} size="sm" className="mr-1" />
+                          <span className="text-xs text-gray-700 mr-2">{getLLMDisplayName(model)}</span>
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Summary Card - matching PromptsModal style */}
+          <div className="mb-6">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-semibold">Summary</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loadingCompetitorSummary ? (
+                  <div className="w-full">
+                    <Skeleton className="h-6 w-3/4 mb-2" />
+                    <Skeleton className="h-6 w-5/6 mb-2" />
+                    <Skeleton className="h-6 w-2/3 mb-2" />
+                    <Skeleton className="h-6 w-1/2 mb-2" />
+                  </div>
+                ) : competitorSummaryError ? (
+                  <div className="text-red-600 text-sm py-2">{competitorSummaryError}</div>
+                ) : competitorSummary ? (
+                  <>
+                    <div className="text-gray-800 text-base mb-3 whitespace-pre-line">
+                      <ReactMarkdown>{competitorSummary}</ReactMarkdown>
+                    </div>
+                    
+                    {/* Sources section - matching PromptsModal style */}
+                    {selectedCompetitor && (() => {
+                      const competitorSources = getCompetitorSources(selectedCompetitor);
+                      const topSources = showAllCompetitorSources ? competitorSources : competitorSources.slice(0, 5);
+                      const hasMoreSources = competitorSources.length > 5;
+                      
+                      return competitorSources.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
+                          <span className="text-xs text-gray-500">Sources:</span>
+                          {topSources.map((source, index) => (
+                            <div
+                              key={index}
+                              onClick={() => handleCompetitorSourceClick(source)}
+                              className="inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200 cursor-pointer"
+                            >
+                              <img
+                                src={getFavicon(source.domain)}
+                                alt=""
+                                className="w-4 h-4 mr-1 rounded"
+                                style={{ background: '#fff' }}
+                                onError={e => { e.currentTarget.style.display = 'none'; }}
+                              />
+                              {getSourceDisplayName(source.domain)}
+                              <span className="ml-1 text-gray-500">({source.count})</span>
+                            </div>
+                          ))}
+                          {hasMoreSources && (
+                            <button
+                              onClick={() => setShowAllCompetitorSources(!showAllCompetitorSources)}
+                              className="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded transition-colors font-medium"
+                            >
+                              {showAllCompetitorSources 
+                                ? `Show Less` 
+                                : `+${competitorSources.length - 5} more`
+                              }
+                            </button>
+                          )}
+                        </div>
+                      ) : null;
+                    })()}
+                  </>
+                ) : null}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Mentions Drawer Modal */}
+    <Dialog open={isMentionsDrawerOpen} onOpenChange={setIsMentionsDrawerOpen}>
+      <DialogContent className="max-w-3xl w-full h-[90vh] flex flex-col p-0">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <div className="flex items-center gap-2">
+            <DialogTitle className="text-lg font-semibold">All Mentions of {selectedCompetitor}</DialogTitle>
+            <Badge variant="secondary">{competitorSnippets.length} mentions</Badge>
+          </div>
+          <button onClick={() => setIsMentionsDrawerOpen(false)} className="p-2 rounded hover:bg-gray-100">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="px-6 py-3 border-b bg-gray-50">
+          {/* Search input removed as requested */}
+        </div>
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
+          {competitorSnippets.length > 0 ? (
+            competitorSnippets.map((item, idx) => {
+              // Show only first 2 lines unless expanded
+              const lines = item.snippet.split(/\n|\r/);
+              const isExpanded = expandedMentionIdx === idx;
+              const preview = lines.slice(0, 2).join(' ');
+              const rest = lines.slice(2).join(' ');
+              return (
+                <div key={idx} className="p-3 bg-gray-50 rounded border text-sm text-gray-800">
+                  <div
+                    className="prose prose-sm max-w-none"
+                    dangerouslySetInnerHTML={{
+                      __html: highlightCompetitor(isExpanded ? item.snippet : preview, selectedCompetitor || "")
+                    }}
+                  />
+                  {lines.length > 2 && (
+                    <button
+                      className="text-xs text-blue-600 underline mt-1 hover:text-blue-800"
+                      onClick={() => setExpandedMentionIdx(isExpanded ? null : idx)}
+                    >
+                      {isExpanded ? 'Show less' : 'Show more'}
+                    </button>
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            <div className="text-gray-500 text-sm">No mentions found.</div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Competitor Source Modal */}
+    <Dialog open={isCompetitorSourceModalOpen} onOpenChange={handleCloseCompetitorSourceModal}>
+      <DialogContent className="max-w-xl w-full sm:max-w-2xl sm:w-[90vw] p-2 sm:p-6">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <img 
+              src={getFavicon(selectedCompetitorSource?.domain || '')} 
+              alt={`${selectedCompetitorSource?.domain} favicon`}
+              className="w-5 h-5 rounded"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
+            />
+            <span>Source: {selectedCompetitorSource && getSourceDisplayName(selectedCompetitorSource.domain)}</span>
+            <Badge variant="secondary">
+              {selectedCompetitorSource?.count} {selectedCompetitorSource?.count === 1 ? 'mention' : 'mentions'}
+            </Badge>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="text-sm text-gray-600">
+            <p>This source contributes to {selectedCompetitor}'s presence in your analysis.</p>
+          </div>
+          
+          {/* Show responses that mention both the competitor and this source */}
+          {selectedCompetitorSource && selectedCompetitor && (() => {
+            const relevantResponses = responses.filter(response => {
+              // Check if response mentions both the competitor and has this source
+              const mentionsCompetitor = response.response_text?.toLowerCase().includes(selectedCompetitor.toLowerCase());
+              if (!mentionsCompetitor) return false;
+              
+              try {
+                const citations = typeof response.citations === 'string' 
+                  ? JSON.parse(response.citations) 
+                  : response.citations;
+                
+                if (Array.isArray(citations)) {
+                  return citations.some((citation: any) => citation.domain === selectedCompetitorSource.domain);
+                }
+              } catch {
+                return false;
+              }
+              return false;
+            });
+            
+            return (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                  Responses mentioning {selectedCompetitor} from {getSourceDisplayName(selectedCompetitorSource.domain)}:
+                </h3>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {relevantResponses.slice(0, 5).map((response, index) => (
+                    <div key={index} className="p-3 bg-gray-50 rounded-lg text-sm text-gray-800">
+                      <div
+                        className="prose prose-sm max-w-none"
+                        dangerouslySetInnerHTML={{
+                          __html: highlightCompetitor(response.response_text?.slice(0, 200) + '...', selectedCompetitor)
+                        }}
+                      />
+                    </div>
+                  ))}
+                  {relevantResponses.length > 5 && (
+                    <div className="text-xs text-gray-500 text-center py-2">
+                      Showing first 5 of {relevantResponses.length} responses
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* LLM Modal */}
+    <Dialog open={isLLMModalOpen} onOpenChange={handleCloseLLMModal}>
+      <DialogContent className="max-w-xl w-full sm:max-w-2xl sm:w-[90vw] p-2 sm:p-6">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {selectedLLM?.logoUrl ? (
+              <img src={selectedLLM.logoUrl} alt="" className="w-5 h-5" />
+            ) : (
+              <div className="w-5 h-5 bg-gray-200 rounded" />
+            )}
+            <span>{selectedLLM?.displayName}</span>
+            <Badge variant="secondary">
+              {selectedLLM?.mentions} mentions
+            </Badge>
+          </DialogTitle>
+        </DialogHeader>
+        
+        {selectedLLM && (() => {
+          const llmResponses = responses.filter(r => r.ai_model === selectedLLM.model);
+          const notMentionedResponses = llmResponses.filter(r => !r.company_mentioned);
+          
+          if (notMentionedResponses.length === 0) {
+            return (
+              <div className="space-y-4">
+                <div className="text-center py-8">
+                  <div className="text-4xl mb-4">✅</div>
+                  <h3 className="text-lg font-semibold text-green-700 mb-2">All Prompts Covered</h3>
+                  <p className="text-sm text-gray-600">
+                    Great news! {selectedLLM.displayName} mentions your company in all analyzed responses.
+                  </p>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div className="space-y-4">
+              {/* Summary */}
+              <div className="text-sm text-gray-800 bg-gray-50 p-3 rounded-lg">
+                <p>
+                  <strong>{selectedLLM.displayName}</strong> did not mention your company in <strong>{notMentionedResponses.length} out of {llmResponses.length}</strong> responses.
+                </p>
+              </div>
+
+              {/* Missing Prompts */}
+              <div>
+                <h3 className="text-base font-semibold text-amber-700 mb-3">
+                  Prompts ({notMentionedResponses.length})
+                </h3>
+                
+                                 <div className="space-y-3 max-h-80 overflow-y-auto">
+                   {notMentionedResponses.map((response, index) => {
+                     // Get sources for this specific response
+                     const responseSources: string[] = [];
+                     try {
+                       const citations = typeof response.citations === 'string' 
+                         ? JSON.parse(response.citations) 
+                         : response.citations;
+                       
+                       if (Array.isArray(citations)) {
+                         citations.forEach((citation: any) => {
+                           if (citation.domain) {
+                             responseSources.push(citation.domain);
+                           }
+                         });
+                       }
+                     } catch {
+                       // Skip invalid citations
+                     }
+
+                     return (
+                       <div 
+                         key={index} 
+                         className="p-4 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer group"
+                         onClick={() => handlePromptClick(response.confirmed_prompts?.prompt_text || '')}
+                       >
+                         <div className="flex items-start justify-between mb-2">
+                           <div className="flex-1">
+                             <div className="text-sm font-medium text-gray-900 group-hover:text-gray-800">
+                               {response.confirmed_prompts?.prompt_text?.slice(0, 100)}
+                               {response.confirmed_prompts?.prompt_text && response.confirmed_prompts.prompt_text.length > 100 && '...'}
+                             </div>
+                           </div>
+                           <ExternalLink className="w-3 h-3 text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                         </div>
+
+                         {responseSources.length > 0 && (
+                           <div className="flex flex-wrap items-center gap-2">
+                             <span className="text-xs text-gray-500">Sources:</span>
+                             {responseSources.slice(0, 3).map((domain, sourceIndex) => (
+                               <div
+                                 key={sourceIndex}
+                                 className="inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200"
+                               >
+                                 <img
+                                   src={getFavicon(domain)}
+                                   alt=""
+                                   className="w-3 h-3 mr-1 rounded"
+                                   style={{ background: '#fff' }}
+                                   onError={e => { e.currentTarget.style.display = 'none'; }}
+                                 />
+                                 {getSourceDisplayName(domain)}
+                               </div>
+                             ))}
+                             {responseSources.length > 3 && (
+                               <span className="text-xs text-gray-500">+{responseSources.length - 3} more</span>
+                             )}
+                           </div>
+                         )}
+                       </div>
+                     );
+                   })}
+                 </div>
+              </div>
+
+
+
+              
+
+              {/* Action Items */}
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h4 className="text-sm font-semibold text-blue-900 mb-2">💡 Next Steps:</h4>
+                <ul className="text-sm text-blue-800 space-y-1">
+                  <li>• <strong>Improve prompts:</strong> Add more specific company context to these prompt types</li>
+                  <li>• <strong>Enhance online presence:</strong> Focus on sources where competitors are being mentioned</li>
+                </ul>
+              </div>
+            </div>
+          );
+        })()}
+      </DialogContent>
+    </Dialog>
+
+    {/* Response Details Modal */}
+    {selectedPrompt && (
+      <ResponseDetailsModal
+        isOpen={isPromptModalOpen}
+        onClose={() => {
+          setIsPromptModalOpen(false);
+          setSelectedPrompt(null);
+        }}
+        promptText={selectedPrompt}
+        responses={getPromptResponses(selectedPrompt)}
+        promptsData={[]}
+      />
+    )}
+  </>
   );
 }; 

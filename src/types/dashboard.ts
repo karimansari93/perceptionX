@@ -21,6 +21,12 @@ export interface PromptResponse {
   total_words?: number;
   detected_competitors?: string;
   visibility_score?: number;
+  talentx_analysis?: any[];
+  talentx_scores?: {
+    overall_score: number;
+    top_attributes: string[];
+    attribute_scores: Record<string, number>;
+  };
 }
 
 export interface Citation {
@@ -60,6 +66,10 @@ export interface PromptData {
   totalWords?: number;
   firstMentionPosition?: number;
   visibilityScores?: number[];
+  // TalentX Pro prompt fields
+  isTalentXPrompt?: boolean;
+  talentXAttributeId?: string;
+  talentXPromptType?: string;
 }
 
 export interface DashboardMetrics {
@@ -93,4 +103,11 @@ export interface VisibilityMetrics {
   averageRanking: number | null;
   totalVisibilityPrompts: number;
   competitorCounts: Record<string, number>;
+}
+
+export interface LLMMentionRanking {
+  model: string;
+  displayName: string;
+  mentions: number;
+  logoUrl: string | null;
 }

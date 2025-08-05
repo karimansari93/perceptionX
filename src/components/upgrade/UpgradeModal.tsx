@@ -1,7 +1,9 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, CheckCircle2 } from "lucide-react";
+import { Calendar, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { StripeService } from "@/services/stripe";
 
 interface UpgradeModalProps {
   open: boolean;
@@ -9,61 +11,140 @@ interface UpgradeModalProps {
 }
 
 export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Replace this with your actual Stripe Price ID
+  const PRO_PRICE_ID = 'price_1Rqug0GV9Zk8Y0y04uSzpRHw';
+
+  const handleUpgrade = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      await StripeService.redirectToCheckout(
+        PRO_PRICE_ID,
+        `${window.location.origin}/dashboard?upgrade=success`,
+        `${window.location.origin}/dashboard?upgrade=cancelled`
+      );
+    } catch (err) {
+      console.error('Upgrade error:', err);
+      setError('Failed to start checkout. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleBookDemo = () => {
     window.open('https://cal.com/karimalansari', '_blank');
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
-            <DialogTitle className="text-2xl font-bold text-gray-900">Upgrade to Pro</DialogTitle>
-            <Badge variant="secondary" className="bg-primary/10 text-primary">Coming Soon</Badge>
+            <DialogTitle className="text-2xl font-bold text-[#13274F]">PerceptionX Pro</DialogTitle>
+            <Badge variant="secondary" className="bg-[#DB5E89] text-white font-semibold">Limited Time</Badge>
           </div>
         </DialogHeader>
 
         <div className="space-y-6 py-4">
           {/* Benefits Section */}
           <div className="space-y-4">
-            <h3 className="font-semibold text-gray-900">What's included:</h3>
+            <h3 className="font-semibold text-[#13274F]">What's included:</h3>
             <div className="space-y-3">
               <div className="flex items-start gap-3">
-                <CheckCircle2 className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                <CheckCircle2 className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="font-medium text-gray-900">Full LLM Coverage</p>
-                  <p className="text-sm text-gray-600">Monitor all major LLMs including Claude, Qwen and more</p>
+                  <p className="font-medium text-[#13274F]">Competitor & Source Breakdowns</p>
+                  <p className="text-sm text-[#183056]">
+                    Detailed analysis of your competitors' talent attraction strategies and comprehensive analysis of data sources and their impact on talent perception
+                  </p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
-                <CheckCircle2 className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                <CheckCircle2 className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="font-medium text-gray-900">Employer Branding & Reputation</p>
-                  <p className="text-sm text-gray-600">Analyze perception using proprietary our TalentX attributes for themes talent care about most</p>
+                  <p className="font-medium text-[#13274F]">Full AI Coverage</p>
+                  <p className="text-sm text-[#183056]">
+                    Access to all AI models including Google AI Overviews for comprehensive analysis
+                  </p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
-                <CheckCircle2 className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
+                <CheckCircle2 className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="font-medium text-gray-900">Competitor Monitoring</p>
-                  <p className="text-sm text-gray-600">Get detailed insights on talent competitors & their AI perception</p>
+                  <p className="font-medium text-[#13274F]">Weekly Data Updates & Notifications</p>
+                  <p className="text-sm text-[#183056]">
+                    Stay informed with regular updates and automated notifications about new insights
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-[#13274F]">All TalentX Pro Prompts</p>
+                    <Badge variant="secondary" className="bg-[#183056] text-white text-xs px-2 py-0.5">Coming Soon</Badge>
+                  </div>
+                  <p className="text-sm text-[#183056]">
+                    Access to 30 specialized prompts for comprehensive talent attraction analysis across 10 key attributes
+                  </p>
                 </div>
               </div>
             </div>
           </div>
 
+          {/* Error Message */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-sm text-red-700">{error}</p>
+            </div>
+          )}
+
           {/* CTA Section */}
-          <div className="bg-primary/10 rounded-lg p-4 space-y-3">
-            <p className="text-sm text-gray-600">
-              Ready to get started? Book a quick demo call to learn more about our Pro features and pricing.
-            </p>
-            <Button
-              onClick={handleBookDemo}
-              className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              <Calendar className="w-4 h-4 mr-2" />
-              Book a Demo
-            </Button>
+          <div className="bg-[#EBECED] rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-[#13274F]">Pro Plan - Beta Pricing</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm text-[#183056] line-through">$199/month</p>
+                  <p className="text-lg font-bold text-[#0DBCBA]">$99/month</p>
+                  <Badge variant="secondary" className="bg-[#DB5E89] text-white text-xs">50% OFF</Badge>
+                </div>
+                <p className="text-xs text-[#DB5E89] font-medium mt-1">⚡ Limited time beta pricing</p>
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <Button
+                onClick={handleUpgrade}
+                disabled={loading}
+                className="w-full bg-[#DB5E89] text-white hover:bg-[#C54A7A] font-semibold"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <CreditCard className="w-4 h-4 mr-2" />
+                    Get Early Access Now
+                  </>
+                )}
+              </Button>
+              
+              <Button
+                onClick={handleBookDemo}
+                variant="outline"
+                className="w-full border-[#0DBCBA] text-[#0DBCBA] hover:bg-[#0DBCBA] hover:text-white"
+              >
+                <Calendar className="w-4 h-4 mr-2" />
+                Book a Demo First
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>

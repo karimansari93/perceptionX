@@ -6,15 +6,19 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { OverviewTab } from "@/components/dashboard/OverviewTab";
 import { PromptsTab } from "@/components/dashboard/PromptsTab";
 import { ResponsesTab } from "@/components/dashboard/ResponsesTab";
+import { SourcesTab } from "@/components/dashboard/SourcesTab";
+import { CompetitorsTab } from "@/components/dashboard/CompetitorsTab";
 import { AnswerGapsTab } from "@/components/dashboard/AnswerGapsTab";
+import { TalentXTab } from "@/components/dashboard/TalentXTab";
 import { ReportGenerator } from "@/components/dashboard/ReportGenerator";
 import { AppSidebar } from "@/components/AppSidebar";
 import { PromptsModal } from "@/components/prompts/PromptsModal";
 import { OnboardingModal } from "@/components/onboarding/OnboardingModal";
+import { UpgradeModal } from "@/components/upgrade/UpgradeModal";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertTriangle, ChevronRight, LayoutDashboard } from "lucide-react";
+import { AlertTriangle, ChevronRight, LayoutDashboard, Lock, Target, Globe, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { 
   OverviewSkeleton, 
@@ -25,6 +29,9 @@ import {
 } from "@/components/dashboard/SectionSkeletons";
 import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
 import LLMLogo from "@/components/LLMLogo";
+import { useSubscription } from "@/hooks/useSubscription";
+import { generatePlaceholderTalentXData } from "@/config/talentXAttributes";
+import { WelcomeProModal } from "@/components/upgrade/WelcomeProModal";
 
 interface DatabaseOnboardingData {
   company_name: string;
@@ -76,7 +83,15 @@ export const setPromptsCompleted = (onboardingId: string | null) => {
   }
 };
 
-const DashboardContent = () => {
+interface DashboardProps {
+  defaultGroup?: string;
+  defaultSection?: string;
+}
+
+const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {}) => {
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showWelcomeProModal, setShowWelcomeProModal] = useState(false);
+  
   const {
     responses,
     loading,
@@ -88,14 +103,31 @@ const DashboardContent = () => {
     promptsData,
     refreshData,
     parseCitations,
-    topCompetitors
+    topCompetitors,
+    lastUpdated,
+    llmMentionRankings,
+    talentXProData,
+    talentXProLoading
   } = useDashboardData();
+  const { isPro } = useSubscription();
 
   const [answerGapsData, setAnswerGapsData] = useState<any>(null);
-  const [activeSection, setActiveSection] = useState("overview");
+  const [activeSection, setActiveSection] = useState(defaultSection || "overview");
+  const [activeGroup, setActiveGroup] = useState(defaultGroup || "dashboard");
   const { state, isMobile } = useSidebar();
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Process TalentX data - use Pro data if available, otherwise fallback to placeholder
+  const talentXData = useMemo(() => {
+    // If user is Pro and we have Pro data, use it
+    if (isPro && talentXProData && talentXProData.length > 0) {
+      return talentXProData;
+    }
+    
+    // Otherwise use placeholder data
+    return generatePlaceholderTalentXData(companyName || 'Your Company');
+  }, [isPro, talentXProData, companyName]);
   const { user } = useAuth();
   const [showPromptsModal, setShowPromptsModal] = useState(false);
   const [showOnboardingModal, setShowOnboardingModal] = useState(false);
@@ -104,7 +136,38 @@ const DashboardContent = () => {
   const [error, setError] = useState<string | null>(null);
   const [onboardingId, setOnboardingId] = useState<string | null>(null);
   const [isNewUser, setIsNewUser] = useState(false);
+  const [hasDismissedPromptsModal, setHasDismissedPromptsModal] = useState(false);
   const justFinishedOnboarding = !!location.state?.shouldRefresh;
+
+  // Handle prompts modal dismissal
+  const handlePromptsModalClose = (open: boolean) => {
+    if (!open) {
+      setShowPromptsModal(false);
+      // Only set dismissed state if user hasn't completed setup
+      if (onboardingData && !hasCompletedPrompts(onboardingId)) {
+        setHasDismissedPromptsModal(true);
+      }
+    }
+  };
+
+  // Handle upgrade success/cancelled states
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const upgradeStatus = urlParams.get('upgrade');
+    
+    if (upgradeStatus === 'success') {
+      // Show success message and refresh data
+      refreshData();
+      // Show welcome modal
+      setShowWelcomeProModal(true);
+      // Clear the URL parameter
+      navigate(location.pathname, { replace: true });
+    } else if (upgradeStatus === 'cancelled') {
+      // Show cancelled message
+      // Clear the URL parameter
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.search, refreshData, navigate, location.pathname]);
 
   // Handle refresh when navigating from prompts modal
   useEffect(() => {
@@ -114,6 +177,46 @@ const DashboardContent = () => {
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [justFinishedOnboarding, location.pathname, refreshData, navigate]);
+
+  // Handle URL-based navigation to update active section and group
+  useEffect(() => {
+    const path = location.pathname;
+    
+    // Map URL paths to sections and groups
+    if (path === '/dashboard') {
+      setActiveGroup('dashboard');
+      setActiveSection('overview');
+    } else if (path === '/monitor') {
+      setActiveGroup('monitor');
+      setActiveSection('prompts');
+    } else if (path === '/monitor/responses') {
+      setActiveGroup('monitor');
+      setActiveSection('responses');
+    } else if (path === '/analyze') {
+      setActiveGroup('analyze');
+      setActiveSection('talentx');
+    } else if (path === '/analyze/answer-gaps') {
+      setActiveGroup('analyze');
+      setActiveSection('answer-gaps');
+    } else if (path === '/analyze/reports') {
+      setActiveGroup('analyze');
+      setActiveSection('reports');
+    }
+  }, [location.pathname]);
+
+  // Handle section changes within the dashboard
+  const handleSectionChange = (section: string) => {
+    setActiveSection(section);
+    
+    // Update group based on section
+    if (['overview', 'sources', 'competitors'].includes(section)) {
+      setActiveGroup('dashboard');
+    } else if (['prompts', 'responses'].includes(section)) {
+      setActiveGroup('monitor');
+    } else if (['talentx', 'answer-gaps', 'reports'].includes(section)) {
+      setActiveGroup('analyze');
+    }
+  };
 
   // Onboarding check: skip if just finished onboarding
   useEffect(() => {
@@ -274,8 +377,75 @@ const DashboardContent = () => {
     // If just finished onboarding, mark prompts as completed
     if (justFinishedOnboarding && onboardingId) {
       setPromptsCompleted(onboardingId);
+      setHasDismissedPromptsModal(false); // Reset dismissed state when setup is completed
     }
   }, [justFinishedOnboarding, onboardingId]);
+
+  // Reset dismissed state if user has completed prompts
+  useEffect(() => {
+    if (onboardingId && hasCompletedPrompts(onboardingId)) {
+      setHasDismissedPromptsModal(false);
+    }
+  }, [onboardingId]);
+
+  const renderBlurredSection = (sectionName: string, description: string, children: React.ReactNode) => {
+    return (
+      <div className="relative">
+        {/* Blurred content */}
+        <div className="blur-sm pointer-events-none">
+          {children}
+        </div>
+        
+        {/* Upgrade overlay */}
+        <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-8 border border-gray-200 shadow-lg max-w-md text-center">
+            <div className="flex items-center justify-center w-16 h-16 bg-gradient-to-r from-[#13274F] to-[#0DBCBA] rounded-full mx-auto mb-6">
+              <Lock className="w-8 h-8 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">{sectionName}</h2>
+            <p className="text-gray-600 mb-6">{description}</p>
+            <Button 
+              onClick={() => setShowUpgradeModal(true)}
+              className="bg-gradient-to-r from-[#13274F] to-[#0DBCBA] text-white hover:from-[#0F1F3D] hover:to-[#0BA8A6]"
+            >
+              Upgrade to Pro
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSetupBlurredOverview = (children: React.ReactNode) => {
+    return (
+      <div className="relative">
+        {/* Blurred content */}
+        <div className="blur-sm pointer-events-none">
+          {children}
+        </div>
+        
+        {/* Setup overlay */}
+        <div className="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-8 border border-gray-200 shadow-lg max-w-md text-center">
+            <div className="flex items-center justify-center w-16 h-16 bg-gradient-to-r from-[#13274F] to-[#0DBCBA] rounded-full mx-auto mb-6">
+              <Target className="w-8 h-8 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Complete Your Setup</h2>
+            <p className="text-gray-600 mb-6">Finish setting up your monitoring strategy to see your dashboard insights.</p>
+            <Button 
+              onClick={() => {
+                setShowPromptsModal(true);
+                setHasDismissedPromptsModal(false); // Reset dismissed state when user chooses to continue
+              }}
+              className="bg-gradient-to-r from-[#13274F] to-[#0DBCBA] text-white hover:from-[#0F1F3D] hover:to-[#0BA8A6]"
+            >
+              Continue Setup
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderActiveSection = () => {
     if (loading) {
@@ -286,6 +456,12 @@ const DashboardContent = () => {
           return <PromptsSkeleton />;
         case "responses":
           return <ResponsesSkeleton />;
+        case "sources":
+          return <div className="animate-pulse">Loading sources...</div>;
+        case "competitors":
+          return <div className="animate-pulse">Loading competitors...</div>;
+        case "talentx":
+          return <div className="animate-pulse">Loading TalentX analysis...</div>;
         case "answer-gaps":
           return <AnswerGapsSkeleton />;
         case "reports":
@@ -297,7 +473,7 @@ const DashboardContent = () => {
 
     switch (activeSection) {
       case "overview":
-        return (
+        const overviewContent = (
           <OverviewTab 
             metrics={metrics}
             topCitations={topCitations}
@@ -305,8 +481,18 @@ const DashboardContent = () => {
             responses={responses}
             competitorLoading={competitorLoading}
             companyName={companyName}
+            llmMentionRankings={llmMentionRankings}
+            talentXProData={talentXProData}
+            isPro={isPro}
           />
         );
+        
+        // Show blurred overview if user dismissed prompts modal and hasn't completed setup
+        if (hasDismissedPromptsModal && onboardingData && !hasCompletedPrompts(onboardingId)) {
+          return renderSetupBlurredOverview(overviewContent);
+        }
+        
+        return overviewContent;
       case "prompts":
         return (
           <PromptsTab 
@@ -321,10 +507,83 @@ const DashboardContent = () => {
             parseCitations={parseCitations}
           />
         );
-      case "answer-gaps":
-        return <AnswerGapsTab />;
-      case "reports":
+      case "sources":
+        const sourcesContent = (
+          <SourcesTab 
+            topCitations={topCitations}
+            responses={responses}
+            parseCitations={parseCitations}
+          />
+        );
+        return isPro ? sourcesContent : renderBlurredSection(
+          "Sources Analysis",
+          "Get detailed insights into your content sources and citations with Pro access.",
+          sourcesContent
+        );
+      case "competitors":
+        const competitorsContent = (
+          <CompetitorsTab 
+            topCompetitors={topCompetitors}
+            responses={responses}
+            companyName={companyName}
+          />
+        );
+        return isPro ? competitorsContent : renderBlurredSection(
+          "Competitor Analysis",
+          "Discover your top competitors and understand their positioning with Pro access.",
+          competitorsContent
+        );
+      case "talentx":
+        const talentXContent = (
+          <TalentXTab 
+            talentXData={talentXData}
+            isProUser={isPro}
+            companyName={companyName}
+            industry={onboardingData?.industry || 'Technology'}
+          />
+        );
         return (
+          <div className="relative min-h-[600px]">
+            {/* Overlay for Coming Soon */}
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm" style={{ pointerEvents: 'all' }}>
+              <div className="text-center p-8 max-w-lg mx-auto">
+                <h2 className="text-2xl font-bold mb-4 text-gray-800">TalentX Attributes (Coming Soon)</h2>
+                <p className="text-gray-600 mb-6 leading-relaxed">
+                  This feature will provide detailed analysis of how your company performs across key talent attraction attributes. 
+                  Get insights into mission & purpose, company culture, rewards & recognition, and more to improve your employer brand.
+                </p>
+                <span className="inline-block bg-yellow-400 text-yellow-900 px-4 py-2 rounded-full font-semibold text-sm">Coming Soon</span>
+              </div>
+            </div>
+            {/* Blurred/disabled content underneath */}
+            <div className="blur-sm pointer-events-none select-none opacity-60">
+              {talentXContent}
+            </div>
+          </div>
+        );
+      case "answer-gaps":
+        const answerGapsContent = <AnswerGapsTab />;
+        return (
+          <div className="relative min-h-[600px]">
+            {/* Overlay for Coming Soon */}
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm" style={{ pointerEvents: 'all' }}>
+              <div className="text-center p-8 max-w-lg mx-auto">
+                <h2 className="text-2xl font-bold mb-4 text-gray-800">Answer Gaps Analysis (Coming Soon)</h2>
+                <p className="text-gray-600 mb-6 leading-relaxed">
+                  This feature will help you identify gaps in your content and discover opportunities for improvement. 
+                  Get insights into what questions AI can't answer about your company and how to address them.
+                </p>
+                <span className="inline-block bg-yellow-400 text-yellow-900 px-4 py-2 rounded-full font-semibold text-sm">Coming Soon</span>
+              </div>
+            </div>
+            {/* Blurred/disabled content underneath */}
+            <div className="blur-sm pointer-events-none select-none opacity-60">
+              {answerGapsContent}
+            </div>
+          </div>
+        );
+      case "reports":
+        const reportsContent = (
           <ReportGenerator
             companyName={companyName}
             metrics={metrics}
@@ -335,6 +594,25 @@ const DashboardContent = () => {
             answerGapsData={answerGapsData}
           />
         );
+        return (
+          <div className="relative min-h-[600px]">
+            {/* Overlay for Coming Soon */}
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm" style={{ pointerEvents: 'all' }}>
+              <div className="text-center p-8 max-w-lg mx-auto">
+                <h2 className="text-2xl font-bold mb-4 text-gray-800">Report Generator (Coming Soon)</h2>
+                <p className="text-gray-600 mb-6 leading-relaxed">
+                  This feature will allow you to generate comprehensive reports about your AI perception and performance. 
+                  Create detailed insights and analytics to share with your team and stakeholders.
+                </p>
+                <span className="inline-block bg-yellow-400 text-yellow-900 px-4 py-2 rounded-full font-semibold text-sm">Coming Soon</span>
+              </div>
+            </div>
+            {/* Blurred/disabled content underneath */}
+            <div className="blur-sm pointer-events-none select-none opacity-60">
+              {reportsContent}
+            </div>
+          </div>
+        );
       default:
         return (
           <OverviewTab 
@@ -344,6 +622,9 @@ const DashboardContent = () => {
             responses={responses}
             competitorLoading={competitorLoading}
             companyName={companyName}
+            llmMentionRankings={llmMentionRankings}
+            talentXProData={talentXProData}
+            isPro={isPro}
           />
         );
     }
@@ -356,32 +637,61 @@ const DashboardContent = () => {
   const getBreadcrumbLabel = (section) => {
     switch (section) {
       case "overview":
-        return "Dashboard";
+        return "Overview";
       case "responses":
         return "Responses";
       case "prompts":
         return "Prompts";
+      case "sources":
+        return "Sources";
+      case "competitors":
+        return "Competitors";
+      case "talentx":
+        return "TalentX";
       case "answer-gaps":
         return "Answer Gaps";
       case "reports":
         return "Reports";
+      default:
+        return "Overview";
+    }
+  };
+
+  // Helper to get group label
+  const getGroupLabel = (group) => {
+    switch (group) {
+      case "dashboard":
+        return "Dashboard";
+      case "monitor":
+        return "Monitoring";
+      case "analyze":
+        return "Analyze";
       default:
         return "Dashboard";
     }
   };
 
   const breadcrumbs = useMemo(() => {
-    // Only two-level for now: Dashboard > Section
-    if (activeSection === "overview") {
+    // Handle group-based breadcrumbs
+    if (activeGroup === "dashboard" && activeSection === "overview") {
       return [
-        { label: "Dashboard", icon: LayoutDashboard, active: true }
+        { label: "Dashboard", icon: <LayoutDashboard className="w-4 h-4" />, active: true }
       ];
     }
+    
+    if (activeGroup === "dashboard") {
+      return [
+        { label: "Dashboard", icon: <LayoutDashboard className="w-4 h-4" />, active: false },
+        { label: getBreadcrumbLabel(activeSection), icon: null, active: true }
+      ];
+    }
+    
+    // For monitor and analyze groups
     return [
-      { label: "Dashboard", icon: LayoutDashboard, active: false },
+      { label: getGroupLabel(activeGroup), icon: <LayoutDashboard className="w-4 h-4" />, active: false },
       { label: getBreadcrumbLabel(activeSection), icon: null, active: true }
     ];
-  }, [activeSection]);
+  }, [activeSection, activeGroup]);
 
   if (error) {
     return (
@@ -409,7 +719,7 @@ const DashboardContent = () => {
       >
         <AppSidebar 
           activeSection={activeSection}
-          onSectionChange={setActiveSection}
+          onSectionChange={handleSectionChange}
         />
       </div>
       <div className="flex-1 min-w-0">
@@ -419,6 +729,7 @@ const DashboardContent = () => {
             responsesCount={responses.length}
             onRefresh={refreshData}
             breadcrumbs={breadcrumbs}
+            lastUpdated={lastUpdated}
           />
 
           <div className="flex-1 space-y-4 p-8">
@@ -429,6 +740,9 @@ const DashboardContent = () => {
                   <h1 className="text-3xl font-bold text-gray-900 whitespace-nowrap">
                     {activeSection === "responses" ? "Responses" :
                      activeSection === "prompts" ? "Prompts" :
+                     activeSection === "sources" ? "Sources" :
+                     activeSection === "competitors" ? "Competitors" :
+                     activeSection === "talentx" ? "TalentX Analysis" :
                      activeSection === "answer-gaps" ? "Answer Gaps Analysis" :
                      activeSection === "reports" ? "Reports" : "Dashboard"}
                   </h1>
@@ -437,11 +751,17 @@ const DashboardContent = () => {
                       ? "Manage and monitor all the individual responses for your prompts."
                       : activeSection === "prompts"
                       ? "Manage and monitor your AI prompts across different categories."
+                      : activeSection === "sources"
+                      ? "Analyze the sources influencing how AI sees your employer brand."
+                      : activeSection === "competitors"
+                      ? "Analyze the companies competing with you for talent."
+                      : activeSection === "talentx"
+                      ? "Analyze how your company performs across key talent attraction attributes."
                       : activeSection === "answer-gaps"
                       ? "Analyze and identify gaps in AI responses about your company."
                       : activeSection === "reports"
                       ? "Generate comprehensive reports about your AI perception and performance."
-                      : `Overview of your project's performance and AI interactions for ${companyName}.`}
+                      : `Overview of ${companyName}'s AI employer reputation.`}
                   </p>
                 </div>
                 {/* LLM Logos right-aligned only for overview */}
@@ -459,9 +779,21 @@ const DashboardContent = () => {
                       <LLMLogo modelName="gemini" size="sm" className="mr-1" />
                       <span className="text-sm text-gray-700">Gemini</span>
                     </div>
-                    <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
+                    <div 
+                      className={`flex items-center px-2 py-1 rounded-lg ${isPro ? 'bg-gray-100/80' : 'bg-gray-100/80 opacity-60'} ${!isPro ? 'cursor-pointer hover:bg-gray-200/80 transition-colors' : ''}`}
+                      onClick={!isPro ? () => setShowUpgradeModal(true) : undefined}
+                    >
                       <LLMLogo modelName="deepseek" size="sm" className="mr-1" />
                       <span className="text-sm text-gray-700">DeepSeek</span>
+                      {!isPro && <Lock className="w-3 h-3 ml-1 text-gray-500" />}
+                    </div>
+                    <div 
+                      className={`flex items-center px-2 py-1 rounded-lg ${isPro ? 'bg-gray-100/80' : 'bg-gray-100/80 opacity-60'} ${!isPro ? 'cursor-pointer hover:bg-gray-200/80 transition-colors' : ''}`}
+                      onClick={!isPro ? () => setShowUpgradeModal(true) : undefined}
+                    >
+                      <LLMLogo modelName="google-ai-overviews" size="sm" className="mr-1" />
+                      <span className="text-sm text-gray-700">Google AI</span>
+                      {!isPro && <Lock className="w-3 h-3 ml-1 text-gray-500" />}
                     </div>
                   </div>
                 )}
@@ -478,7 +810,7 @@ const DashboardContent = () => {
       {showPromptsModal && (
         <PromptsModal
           open={showPromptsModal}
-          onOpenChange={setShowPromptsModal}
+          onOpenChange={handlePromptsModalClose}
           onboardingData={onboardingData}
         />
       )}
@@ -488,13 +820,15 @@ const DashboardContent = () => {
           onOpenChange={setShowOnboardingModal}
         />
       )}
+      <UpgradeModal open={showUpgradeModal} onOpenChange={setShowUpgradeModal} />
+      <WelcomeProModal open={showWelcomeProModal} onOpenChange={setShowWelcomeProModal} />
     </div>
   );
 };
 
-const Dashboard = () => (
+const Dashboard = ({ defaultGroup, defaultSection }: DashboardProps = {}) => (
   <SidebarProvider>
-    <DashboardContent />
+    <DashboardContent defaultGroup={defaultGroup} defaultSection={defaultSection} />
   </SidebarProvider>
 );
 

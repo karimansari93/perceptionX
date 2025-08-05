@@ -16,7 +16,7 @@ const AuthCallback = () => {
         }
 
         if (session) {
-          toast.success('Successfully authenticated!');
+          // Authentication successful - no toast needed
           navigate('/dashboard');
         } else {
           toast.error('Authentication failed');

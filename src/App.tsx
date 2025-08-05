@@ -15,55 +15,135 @@ import ResetPassword from "./pages/ResetPassword";
 import Usage from "./pages/Usage";
 import Account from "./pages/Account";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { ErrorBoundary } from "react-error-boundary";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      staleTime: 5 * 60 * 1000, // 5 minutes
+    },
+  },
+});
+
+// Error Fallback Component
+const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) => {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="max-w-md w-full bg-white shadow-lg rounded-lg p-6">
+        <div className="text-center">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Something went wrong</h2>
+          <p className="text-gray-600 mb-4">We're sorry, but something unexpected happened.</p>
+          <button
+            onClick={resetErrorBoundary}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <BrowserRouter>
-        <AuthProvider>
-          <Toaster />
-          <Sonner />
-          <Routes>
-            <Route path="/" element={<Auth />} />
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/auth/callback" element={<AuthCallback />} />
-            <Route path="/verify-email" element={<VerifyEmail />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
-            <Route path="/dashboard" element={
-              <ProtectedRoute>
-                <OnboardingGuard requireOnboarding={true}>
-                  <SidebarProvider>
-                    <Dashboard />
-                  </SidebarProvider>
-                </OnboardingGuard>
-              </ProtectedRoute>
-            } />
-            <Route path="/usage" element={
-              <ProtectedRoute>
-                <OnboardingGuard requireOnboarding={true}>
-                  <SidebarProvider>
-                    <Usage />
-                  </SidebarProvider>
-                </OnboardingGuard>
-              </ProtectedRoute>
-            } />
-            <Route path="/account" element={
-              <ProtectedRoute>
-                <OnboardingGuard requireOnboarding={true}>
-                  <SidebarProvider>
-                    <Account />
-                  </SidebarProvider>
-                </OnboardingGuard>
-              </ProtectedRoute>
-            } />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AuthProvider>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
+  <ErrorBoundary FallbackComponent={ErrorFallback}>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <Toaster />
+            <Sonner />
+            <Routes>
+              <Route path="/" element={<Auth />} />
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/auth/callback" element={<AuthCallback />} />
+              <Route path="/verify-email" element={<VerifyEmail />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+              
+              {/* Legacy dashboard route - maintains backward compatibility */}
+              <Route path="/dashboard" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="dashboard" defaultSection="overview" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              
+              {/* New group-based routes */}
+              <Route path="/monitor" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="monitor" defaultSection="prompts" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/monitor/responses" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="monitor" defaultSection="responses" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/analyze" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="analyze" defaultSection="talentx" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/analyze/answer-gaps" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="analyze" defaultSection="answer-gaps" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/analyze/reports" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="analyze" defaultSection="reports" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              
+              <Route path="/usage" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Usage />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/account" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Account />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </AuthProvider>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;

@@ -20,15 +20,15 @@ function getUniqueLLMsForType(responses: PromptResponse[], type: string) {
 }
 
 export const PromptSummaryCards = ({ promptsData, responses }: PromptSummaryCardsProps) => {
-  const sentimentPrompts = promptsData.filter(p => p.type === 'sentiment');
-  const visibilityPrompts = promptsData.filter(p => p.type === 'visibility');
-  const competitivePrompts = promptsData.filter(p => p.type === 'competitive');
+  const sentimentPrompts = promptsData.filter(p => p.type === 'sentiment' || p.type === 'talentx_sentiment');
+  const visibilityPrompts = promptsData.filter(p => p.type === 'visibility' || p.type === 'talentx_visibility');
+  const competitivePrompts = promptsData.filter(p => p.type === 'competitive' || p.type === 'talentx_competitive');
 
   return (
     <div className="grid gap-4 md:grid-cols-3">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Sentiment Prompts</CardTitle>
+                          <CardTitle className="text-sm font-medium text-[#13274F]">Sentiment Prompts</CardTitle>
           <Badge className="bg-blue-100 text-blue-800">Sentiment</Badge>
         </CardHeader>
         <CardContent>
@@ -41,7 +41,7 @@ export const PromptSummaryCards = ({ promptsData, responses }: PromptSummaryCard
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Visibility Prompts</CardTitle>
+                          <CardTitle className="text-sm font-medium text-[#13274F]">Visibility Prompts</CardTitle>
           <Badge className="bg-green-100 text-green-800">Visibility</Badge>
         </CardHeader>
         <CardContent>
@@ -54,7 +54,7 @@ export const PromptSummaryCards = ({ promptsData, responses }: PromptSummaryCard
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Competitive Prompts</CardTitle>
+                          <CardTitle className="text-sm font-medium text-[#13274F]">Competitive Prompts</CardTitle>
           <Badge className="bg-purple-100 text-purple-800">Competitive</Badge>
         </CardHeader>
         <CardContent>

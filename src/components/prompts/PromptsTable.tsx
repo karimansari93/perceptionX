@@ -8,6 +8,8 @@ import { SubscriptionService } from "@/services/subscription";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
+import { useSubscription } from '@/hooks/useSubscription';
+import { CheckCircle, Info } from 'lucide-react';
 
 interface GeneratedPrompt {
   id: string;
@@ -27,36 +29,41 @@ interface PromptsTableProps {
 
 export const PromptsLimitIndicator = () => {
   const { user } = useAuth();
-  const navigate = useNavigate();
-  const [subscription, setSubscription] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const { subscription, isPro, getLimits } = useSubscription();
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
-  useEffect(() => {
-    const fetchSubscription = async () => {
-      if (!user) return;
-      try {
-        const data = await SubscriptionService.getUserSubscription(user.id);
-        setSubscription(data);
-      } catch (error) {
-        console.error('Error fetching subscription:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+  if (!subscription) return null;
 
-    fetchSubscription();
-  }, [user]);
-
-  if (loading || !subscription) return null;
-
-  const limit = 3;
+  const limits = getLimits();
   const used = subscription.prompts_used || 0;
-  const percentage = (used / limit) * 100;
-  const isNearLimit = percentage >= 80;
+  const isUnlimited = isPro;
+  const percentage = isUnlimited ? 0 : (used / limits.prompts) * 100;
+  const isNearLimit = !isUnlimited && percentage >= 80;
 
   return (
     <div className="mb-6">
-      <Progress value={percentage} className="h-2 mb-2" />
+      {isUnlimited ? (
+        <div className="flex items-center gap-2 text-green-600">
+          <CheckCircle className="w-4 h-4" />
+          <span className="text-sm font-medium">Pro Plan - Unlimited Prompts</span>
+        </div>
+      ) : (
+        <>
+          <Progress value={percentage} className="h-2 mb-2" />
+          <div className="flex justify-between text-sm text-gray-600">
+            <span>{used} of {limits.prompts} prompts used</span>
+            {isNearLimit && (
+              <Button
+                variant="link"
+                className="text-primary p-0 h-auto"
+                onClick={() => setShowUpgradeModal(true)}
+              >
+                Upgrade to Pro
+              </Button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 };

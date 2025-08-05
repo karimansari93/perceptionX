@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink, X, Lightbulb, Building2 } from "lucide-react";
+import { ExternalLink, X, Lightbulb, Building2, MessageSquare } from "lucide-react";
 import LLMLogo from "@/components/LLMLogo";
 import { PromptResponse, PromptData } from "@/types/dashboard";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -46,31 +46,7 @@ export const ResponseDetailsModal = ({
   const visibilityScores = promptData?.visibilityScores;
   const avgVisibility = visibilityScores && visibilityScores.length > 0 ? visibilityScores.reduce((sum, score) => sum + score, 0) / visibilityScores.length : (responses.length > 0 ? responses.reduce((sum, r) => sum + (r.company_mentioned ? 100 : 0), 0) / responses.length : 0);
 
-  // Add debugging and validation
-  useEffect(() => {
-    if (isOpen) {
-      console.log('Modal opened with:');
-      console.log('Prompt Text:', promptText);
-      console.log('Responses:', responses);
-      console.log('Responses count:', responses.length);
-      
-      // Validate that all responses match the prompt text
-      const mismatchedResponses = responses.filter(r => 
-        r.confirmed_prompts?.prompt_text !== promptText
-      );
-      
-      if (mismatchedResponses.length > 0) {
-        console.error('MISMATCH DETECTED! These responses do not match the prompt:');
-        mismatchedResponses.forEach(r => {
-          console.error('Response ID:', r.id);
-          console.error('Response prompt text:', r.confirmed_prompts?.prompt_text);
-          console.error('Expected prompt text:', promptText);
-        });
-      } else {
-        console.log('✅ All responses correctly match the prompt text');
-      }
-    }
-  }, [isOpen, promptText, responses]);
+
 
   // Update selected response when responses change
   useEffect(() => {
@@ -237,12 +213,12 @@ export const ResponseDetailsModal = ({
         <DialogHeader className="pb-4 flex-shrink-0">
           <div className="flex items-start justify-between">
             <div className="flex-1">
-              <DialogTitle className="text-lg font-semibold mb-2">
+              <DialogTitle className="text-lg font-semibold mb-2 text-[#13274F]">
                 {promptText}
               </DialogTitle>
-              <p className="text-sm text-gray-500">
+              <DialogDescription className="text-sm text-[#13274F]">
                 Generated {responses.length > 0 ? new Date(responses[0].tested_at).toLocaleDateString() : 'recently'}
-              </p>
+              </DialogDescription>
             </div>
             <Button variant="ghost" size="sm" onClick={onClose}>
               <X className="w-4 h-4" />
@@ -250,8 +226,32 @@ export const ResponseDetailsModal = ({
           </div>
         </DialogHeader>
 
-        {/* Show summary card only if multiple responses (prompt view), otherwise show just the response details */}
-        {responses.length > 1 ? (
+        {/* Show summary card for all responses (including single TalentX responses) */}
+        {responses.length === 0 ? (
+          // No responses: show prompt info and message
+          <div className="mb-6">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-semibold text-[#13274F]">Prompt Details</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="mb-4">
+                  <div className="text-xs text-gray-500 mb-1">Prompt</div>
+                  <div className="text-base text-gray-900 mb-2 font-medium">
+                    {promptText}
+                  </div>
+                </div>
+                <div className="text-center py-8 text-gray-500">
+                  <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                  <p className="text-lg font-medium mb-2">No responses yet</p>
+                  <p className="text-sm">
+                    This prompt hasn't been tested yet. Responses will appear here once the prompt is analyzed.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
           <>
             {/* MODELS, SENTIMENT & VISIBILITY ROW - with labels above values */}
             <div className="flex flex-row gap-8 mt-1 mb-1 w-full">
@@ -331,7 +331,7 @@ export const ResponseDetailsModal = ({
             <div className="mb-6">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base font-semibold">Summary</CardTitle>
+                  <CardTitle className="text-base font-semibold text-[#13274F]">Summary</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {loadingSummary ? (
@@ -377,37 +377,6 @@ export const ResponseDetailsModal = ({
               </Card>
             </div>
           </>
-        ) : (
-          // Single response: show prompt, model, sentiment, and full response
-          <div className="mb-6">
-            <Card>
-              <CardHeader className="pb-2 flex flex-row items-center gap-4">
-                <div className="flex items-center bg-gray-100/80 px-2 py-1 rounded-lg">
-                  <LLMLogo modelName={selectedResponse?.ai_model} size="sm" className="mr-1" />
-                  <span className="text-sm text-gray-700">{getLLMDisplayName(selectedResponse?.ai_model)}</span>
-                </div>
-                <Badge variant="outline" className="capitalize">
-                  {selectedResponse?.sentiment_label || 'No sentiment'}
-                </Badge>
-              </CardHeader>
-              <CardContent>
-                <div className="mb-4">
-                  <div className="text-xs text-gray-500 mb-1">Prompt</div>
-                  <div className="text-base text-gray-900 mb-2 font-medium">
-                    {selectedResponse?.confirmed_prompts?.prompt_text}
-                  </div>
-                </div>
-                <div className="mb-2">
-                  <div className="text-xs text-gray-500 mb-1">AI Response</div>
-                  <div className="text-gray-800 whitespace-pre-line max-h-72 overflow-auto rounded border border-gray-100 p-2 bg-gray-50">
-                    {selectedResponse?.response_text && (
-                      <ReactMarkdown>{selectedResponse.response_text}</ReactMarkdown>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
         )}
 
         <div className="grid grid-cols-3 gap-6 flex-1 min-h-0">

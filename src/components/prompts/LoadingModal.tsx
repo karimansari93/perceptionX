@@ -30,7 +30,8 @@ const llmModels = [
   { name: "OpenAI", model: "openai" },
   { name: "Perplexity", model: "perplexity" },
   { name: "Gemini", model: "gemini" },
-  { name: "DeepSeek", model: "deepseek" }
+  { name: "DeepSeek", model: "deepseek" },
+  { name: "Google AI Overviews", model: "google-ai-overviews" }
 ];
 
 export const LoadingModal = ({ 

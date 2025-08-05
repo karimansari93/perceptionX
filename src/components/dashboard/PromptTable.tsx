@@ -1,8 +1,10 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PromptData } from "@/types/dashboard";
-import { MessageSquare, TrendingUp, TrendingDown, Minus, Target } from "lucide-react";
+import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter } from "lucide-react";
+import { useState, useMemo } from "react";
 
 interface PromptTableProps {
   prompts: PromptData[];
@@ -12,6 +14,66 @@ interface PromptTableProps {
 }
 
 export const PromptTable = ({ prompts, title, description, onPromptClick }: PromptTableProps) => {
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+
+  // Get unique types and categories for filter options
+  const uniqueTypes = useMemo(() => {
+    const types = new Set<string>();
+    prompts.forEach(prompt => {
+      let typeLabel = prompt.type;
+      if (prompt.type.startsWith('talentx_')) {
+        typeLabel = prompt.type.replace('talentx_', '');
+      }
+      types.add(typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1));
+    });
+    return Array.from(types).sort();
+  }, [prompts]);
+
+  const uniqueCategories = useMemo(() => {
+    const categories = new Set<string>();
+    prompts.forEach(prompt => {
+      if (prompt.isTalentXPrompt && prompt.talentXAttributeId) {
+        const attributeLabel = prompt.talentXAttributeId
+          .replace('-', ' ')
+          .replace(/\b\w/g, l => l.toUpperCase());
+        categories.add(attributeLabel);
+      } else {
+        categories.add('General');
+      }
+    });
+    return Array.from(categories).sort();
+  }, [prompts]);
+
+  // Filter prompts based on selected filters
+  const filteredPrompts = useMemo(() => {
+    return prompts.filter(prompt => {
+      // Type filter
+      let typeLabel = prompt.type;
+      if (prompt.type.startsWith('talentx_')) {
+        typeLabel = prompt.type.replace('talentx_', '');
+      }
+      const displayType = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
+      
+      if (typeFilter !== "all" && displayType !== typeFilter) {
+        return false;
+      }
+
+      // Category filter
+      let categoryLabel = 'General';
+      if (prompt.isTalentXPrompt && prompt.talentXAttributeId) {
+        categoryLabel = prompt.talentXAttributeId
+          .replace('-', ' ')
+          .replace(/\b\w/g, l => l.toUpperCase());
+      }
+      
+      if (categoryFilter !== "all" && categoryLabel !== categoryFilter) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [prompts, typeFilter, categoryFilter]);
   const getSentimentIcon = (sentiment: number) => {
     if (sentiment > 0.1) return <TrendingUp className="w-4 h-4 text-green-600" />;
     if (sentiment < -0.1) return <TrendingDown className="w-4 h-4 text-red-600" />;
@@ -66,6 +128,16 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
             </span>
           </div>
         );
+      case 'talentx_sentiment':
+      case 'talentx_visibility':
+      case 'talentx_competitive':
+        return (
+          <div className="flex items-center justify-center space-x-2">
+            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+              Pro
+            </Badge>
+          </div>
+        );
       default:
         return null;
     }
@@ -88,26 +160,96 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
     );
   };
 
+  const getTypeBadge = (prompt: PromptData) => {
+    // Extract the base type from TalentX prompts (e.g., 'talentx_sentiment' -> 'sentiment')
+    let typeLabel = prompt.type;
+    if (prompt.type.startsWith('talentx_')) {
+      typeLabel = prompt.type.replace('talentx_', '');
+    }
+    
+    // Capitalize the first letter
+    typeLabel = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
+    
+    // Apply colors matching PromptSummaryCards
+    let badgeClass = "bg-gray-100 text-gray-800"; // default
+    if (typeLabel.toLowerCase() === 'sentiment') {
+      badgeClass = "bg-blue-100 text-blue-800";
+    } else if (typeLabel.toLowerCase() === 'visibility') {
+      badgeClass = "bg-green-100 text-green-800";
+    } else if (typeLabel.toLowerCase() === 'competitive') {
+      badgeClass = "bg-purple-100 text-purple-800";
+    }
+    
+    return <Badge className={badgeClass}>{typeLabel}</Badge>;
+  };
+
+  const getCategoryBadge = (prompt: PromptData) => {
+    if (prompt.isTalentXPrompt && prompt.talentXAttributeId) {
+      // Format the TalentX attribute ID for display
+      const attributeLabel = prompt.talentXAttributeId
+        .replace('-', ' ')
+        .replace(/\b\w/g, l => l.toUpperCase());
+      return <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">{attributeLabel}</Badge>;
+    } else {
+      // Regular prompts get "General" category
+      return <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">General</Badge>;
+    }
+  };
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-gray-500" />
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
+                <SelectTrigger className="w-32">
+                  <SelectValue placeholder="Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  {uniqueTypes.map(type => (
+                    <SelectItem key={type} value={type}>{type}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <SelectTrigger className="w-32">
+                  <SelectValue placeholder="Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {uniqueCategories.map(category => (
+                    <SelectItem key={category} value={category}>{category}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
-        {prompts.length > 0 ? (
+        {filteredPrompts.length > 0 ? (
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Prompt</TableHead>
                 <TableHead className="text-center">Type</TableHead>
+                <TableHead className="text-center">Category</TableHead>
                 <TableHead className="text-center">Responses</TableHead>
                 <TableHead className="text-center">Sentiment</TableHead>
                 <TableHead className="text-center">Visibility</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {prompts.map((prompt, index) => (
+              {filteredPrompts.map((prompt, index) => (
                 <TableRow 
                   key={index} 
                   className="cursor-pointer hover:bg-gray-50"
@@ -119,7 +261,10 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
                     </div>
                   </TableCell>
                   <TableCell className="text-center">
-                    <Badge variant="secondary">{prompt.type.charAt(0).toUpperCase() + prompt.type.slice(1)}</Badge>
+                    {getTypeBadge(prompt)}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {getCategoryBadge(prompt)}
                   </TableCell>
                   <TableCell className="text-center">
                     <Badge variant="secondary">{prompt.responses}</Badge>

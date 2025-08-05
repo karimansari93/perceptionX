@@ -32,7 +32,36 @@ export const extractDomain = (url: string): string => {
 };
 
 export const getFavicon = (domain: string): string => {
-  return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+  if (!domain) return '';
+  
+  // Clean the domain
+  const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
+  
+  // Use a more reliable favicon service with better error handling
+  return `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`;
+};
+
+export const getEmailDomainFavicon = (email: string): string => {
+  const domain = email.split('@')[1];
+  return domain ? getFavicon(domain) : '';
+};
+
+export const getCompetitorFavicon = (competitorName: string): string => {
+  if (!competitorName) return '';
+  
+  // For competitor names, we'll use a more conservative approach
+  // Only create domains for simple, short names that are likely to exist
+  const cleanName = competitorName.trim().toLowerCase()
+    .replace(/\s+/g, '') // Remove spaces
+    .replace(/[^a-z0-9-]/g, '') // Remove special characters except hyphens
+    .replace(/-+/g, '-') // Replace multiple hyphens with single
+    .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+  
+  // Only create domain if we have a valid, reasonably short name
+  if (cleanName.length === 0 || cleanName.length > 20) return '';
+  
+  const domain = `${cleanName}.com`;
+  return getFavicon(domain);
 };
 
 export const enhanceCitations = (citations: any[]): EnhancedCitation[] => {
