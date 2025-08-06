@@ -171,7 +171,15 @@ const Auth = () => {
           redirectTo: `${window.location.origin}/reset-password`,
         });
 
-        if (error) throw error;
+        if (error) {
+          console.error('Password reset error:', error);
+          if (error.message.includes('500') || error.message.includes('Internal Server Error')) {
+            toast.error('Email service is currently unavailable. Please try again later or contact support.');
+          } else {
+            throw error;
+          }
+          return;
+        }
         
         toast.success('Password reset email sent! Please check your inbox.');
         setFormData({ email: '', password: '' });

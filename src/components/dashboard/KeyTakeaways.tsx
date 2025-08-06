@@ -405,7 +405,7 @@ export const KeyTakeaways = ({
   };
 
   const getAIMentionsInsight = (): InsightWithLLM | BaseInsight => {
-    if (!llmMentionRankings || llmMentionRankings.length === 0) {
+    if (!responses || responses.length === 0) {
       return {
         text: "No AI model mentions detected",
         type: "neutral",
@@ -413,9 +413,35 @@ export const KeyTakeaways = ({
       };
     }
 
-    // Find the AI model that mentions the company least
-    const lowestMentionLLM = llmMentionRankings[llmMentionRankings.length - 1];
-    const highestMentionLLM = llmMentionRankings[0];
+    // Count the number of company_mentioned: false for each model
+    const modelNonMentions: Record<string, number> = {};
+    responses.forEach(response => {
+      const model = response.ai_model;
+      if (response.company_mentioned === false) {
+        modelNonMentions[model] = (modelNonMentions[model] || 0) + 1;
+      }
+    });
+
+    // If all models mention the company at least once, fall back to old logic
+    if (Object.keys(modelNonMentions).length === 0) {
+      return {
+        text: "All AI models mention your company at least once",
+        type: "positive",
+        action: "Great job! Your company is being recognized by all tested AI models."
+      };
+    }
+
+    // Find the model with the most non-mentions (company_mentioned: false)
+    const rankings = Object.entries(modelNonMentions)
+      .map(([model, nonMentions]) => ({
+        model,
+        displayName: getLLMDisplayName(model),
+        nonMentions,
+        logoUrl: getLLMLogo(model)
+      }))
+      .sort((a, b) => b.nonMentions - a.nonMentions);
+
+    const lowestMentionLLM = rankings[0]; // Most non-mentions
 
     // Analyze what prompts this AI model is used for
     const llmResponses = responses.filter(r => r.ai_model === lowestMentionLLM.model);
@@ -424,30 +450,11 @@ export const KeyTakeaways = ({
       acc[type] = (acc[type] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
-
     const dominantPromptType = Object.entries(mostCommonPromptType)
       .sort(([,a], [,b]) => (b as number) - (a as number))[0]?.[0];
 
-    // Check if competitors are mentioned in this AI's responses
-    const competitorMentions = llmResponses.filter(r => r.detected_competitors && r.detected_competitors.trim() !== '');
-    const competitorMentionRate = llmResponses.length > 0 ? (competitorMentions.length / llmResponses.length) * 100 : 0;
-
-    if (lowestMentionLLM.mentions === 0) {
-      return {
-        text: `${getLLMDisplayName(lowestMentionLLM.model)} never mentions your company`,
-        type: "negative",
-        action: `Focus on ${dominantPromptType || 'general'} prompts to improve visibility with this AI model`,
-        llm: lowestMentionLLM,
-        promptType: dominantPromptType
-      };
-    }
-
-    const mentionDifference = highestMentionLLM.mentions - lowestMentionLLM.mentions;
-    const isSignificantGap = mentionDifference > 3;
-
-    // Short, concise text like other takeaways
-    let text = `${getLLMDisplayName(lowestMentionLLM.model)} mentions your company least`;
-    let type = "warning"; // Always warning when an AI mentions least
+    let text = `${lowestMentionLLM.displayName} mentions your company least`;
+    let type = "warning";
     let action = `Click to see which specific prompts are missing company mentions and get actionable insights`;
 
     return {
