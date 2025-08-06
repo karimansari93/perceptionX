@@ -278,25 +278,45 @@ const Auth = () => {
   }
 
   return (
-    <div className="min-h-screen w-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #13274F 0%, #183056 100%)' }}>
-      <div className="w-full max-w-md flex items-center justify-center p-8 relative flex-col">
-        <div className="flex items-center justify-center mb-10">
-          <img src="/logos/PerceptionX-PrimaryLogo-ForOnDark-large.png" alt="PerceptionX Logo" className="h-12" />
-          <Badge className="ml-3 bg-pink text-white px-2 py-0.5 text-xs font-bold border-2 border-white">
-            BETA
-          </Badge>
+    <div className="min-h-screen w-screen flex items-center justify-center relative" style={{ background: '#f7dee7' }}>
+      {/* Top left logo */}
+      <div className="absolute top-6 left-6 z-10">
+        <a href="https://perceptionx.ai" target="_blank" rel="noopener noreferrer">
+          <img src="/logos/PinkBadge.png" alt="PerceptionX" className="h-8 rounded-md shadow-md" />
+        </a>
+      </div>
+      
+      {/* Top right demo link */}
+      <div className="absolute top-6 z-10 right-6 md:right-6 left-1/2 md:left-auto transform md:transform-none -translate-x-1/2 md:translate-x-0">
+        <div className="flex items-center gap-2 text-sm text-nightsky font-medium text-center whitespace-nowrap" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
+          <span>Looking to learn more?</span>
+          <a 
+            href="https://meetings-eu1.hubspot.com/karim-al-ansari" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="border-2 border-pink text-pink bg-transparent px-3 py-1 rounded-full hover:bg-pink hover:text-white transition-colors font-bold text-xs"
+          >
+            Book a demo
+          </a>
         </div>
+      </div>
+      <div className="w-full max-w-md flex items-center justify-center p-8 relative flex-col">
         <Card className="w-full bg-white rounded-2xl border border-silver">
           <CardHeader>
-            <CardTitle className="text-2xl text-center text-nightsky font-bold" style={{ fontFamily: 'Geologica, sans-serif' }}>
-              {showVerifyEmailMessage
-                ? 'Verify your email'
-                : isPasswordReset
-                  ? 'Reset Password'
-                  : isLogin
-                    ? 'Sign In'
-                    : 'Get Started'}
-            </CardTitle>
+            <div className="flex items-center justify-center gap-3">
+              <CardTitle className="text-2xl text-center text-nightsky font-bold" style={{ fontFamily: 'Geologica, sans-serif' }}>
+                {showVerifyEmailMessage
+                  ? 'Verify your email'
+                  : isPasswordReset
+                    ? 'Reset Password'
+                    : isLogin
+                      ? 'Sign In'
+                      : 'Get Started'}
+              </CardTitle>
+              <Badge className="bg-pink text-white px-2 py-0.5 text-xs font-bold">
+                BETA
+              </Badge>
+            </div>
           </CardHeader>
           <CardContent>
             {showVerifyEmailMessage ? (
@@ -431,6 +451,28 @@ const Auth = () => {
             )}
           </CardContent>
         </Card>
+        
+        {/* Footer links */}
+        <div className="mt-8 text-center space-x-6">
+          <a 
+            href="https://perceptionx.ai/privacy" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-sm text-nightsky hover:text-pink-500 transition-colors"
+            style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
+          >
+            Privacy Policy
+          </a>
+          <a 
+            href="https://perceptionx.ai/terms" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-sm text-nightsky hover:text-pink-500 transition-colors"
+            style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
+          >
+            Terms & Conditions
+          </a>
+        </div>
       </div>
       {showLoadingModal && (
         <LoadingModal
