@@ -15,7 +15,7 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
   const [error, setError] = useState<string | null>(null);
 
   // Replace this with your actual Stripe Price ID
-  const PRO_PRICE_ID = 'price_1Rqug0GV9Zk8Y0y04uSzpRHw';
+  const PRO_PRICE_ID = 'price_1RtPMbKHaELhU81I97BZcvpg';
 
   const handleUpgrade = async () => {
     setLoading(true);
@@ -118,7 +118,8 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
             </div>
             
             <div className="space-y-2">
-              <Button
+              {/* Stripe button temporarily hidden - can be re-enabled later */}
+              {/* <Button
                 onClick={handleUpgrade}
                 disabled={loading}
                 className="w-full bg-[#DB5E89] text-white hover:bg-[#C54A7A] font-semibold"
@@ -134,7 +135,7 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
                     Get Early Access Now
                   </>
                 )}
-              </Button>
+              </Button> */}
               
               <Button
                 onClick={handleBookDemo}
@@ -142,7 +143,7 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
                 className="w-full border-[#0DBCBA] text-[#0DBCBA] hover:bg-[#0DBCBA] hover:text-white"
               >
                 <Calendar className="w-4 h-4 mr-2" />
-                Book a Demo First
+                Book a Demo
               </Button>
             </div>
           </div>
