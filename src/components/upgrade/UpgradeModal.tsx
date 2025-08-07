@@ -36,7 +36,7 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
   };
 
   const handleBookDemo = () => {
-    window.open('https://cal.com/karimalansari', '_blank');
+    window.open('https://meetings-eu1.hubspot.com/karim-al-ansari', '_blank');
   };
 
   return (
