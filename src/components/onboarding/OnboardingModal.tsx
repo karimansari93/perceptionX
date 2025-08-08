@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import { Database } from '@/integrations/supabase/types';
 type UserOnboarding = Database['public']['Tables']['user_onboarding']['Insert'];
 
 interface OnboardingData {
+  display_name: string;
   company_name: string;
   industry: string;
 }
@@ -40,19 +41,38 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
   const { user } = useAuth();
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [onboardingData, setOnboardingData] = useState<OnboardingData>({
+    display_name: "",
     company_name: "",
     industry: ""
   });
   const [onboardingId, setOnboardingId] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState(false);
+  const [needsDisplayName, setNeedsDisplayName] = useState(false);
+
+  // Check if user needs to provide display name
+  useEffect(() => {
+    if (user && open) {
+      setNeedsDisplayName(!user.user_metadata?.full_name && !user.user_metadata?.name);
+      // Pre-fill display name if available
+      const existingName = user.user_metadata?.full_name || user.user_metadata?.name || "";
+      setOnboardingData(prev => ({ ...prev, display_name: existingName }));
+    }
+  }, [user, open]);
 
   const onboardingSteps = [
     {
       title: "Let's get you set up!",
-      description: "We just need some basic information about your company & talent industry.",
+      description: "We just need some basic information about you and your company.",
       fields: [
+        ...(needsDisplayName ? [{
+          label: "Your Name",
+          type: "text",
+          placeholder: "Enter your full name",
+          value: onboardingData.display_name,
+          onChange: (value: string) => setOnboardingData(prev => ({ ...prev, display_name: value }))
+        }] : []),
         {
-          label: "Company Name",
+          label: "Company",
           type: "text",
           placeholder: "Enter your company name",
           value: onboardingData.company_name,
@@ -71,8 +91,12 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
 
   const handleNext = async () => {
     // Validate required fields
-    if (!onboardingData.company_name.trim() || !onboardingData.industry.trim()) {
-      toast.error('Please fill in both company name and industry before continuing');
+    const requiredFields = needsDisplayName 
+      ? [onboardingData.display_name, onboardingData.company_name, onboardingData.industry]
+      : [onboardingData.company_name, onboardingData.industry];
+    
+    if (requiredFields.some(field => !field.trim())) {
+      toast.error('Please fill in all required fields before continuing');
       return;
     }
 
@@ -93,6 +117,18 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
           .single();
 
         if (error) throw error;
+
+        // Update user's display name in auth if needed
+        if (needsDisplayName && onboardingData.display_name.trim()) {
+          const { error: updateError } = await supabase.auth.updateUser({
+            data: { full_name: onboardingData.display_name }
+          });
+          
+          if (updateError) {
+            console.error('Error updating user display name:', updateError);
+            // Don't fail the onboarding if display name update fails
+          }
+        }
 
         setOnboardingId(data.id);
         onOpenChange(false);
@@ -154,6 +190,7 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
         navigate('/dashboard', {
           state: {
             onboardingData: {
+              displayName: onboardingData.display_name,
               companyName: data.company_name,
               industry: data.industry,
               id: data.id
