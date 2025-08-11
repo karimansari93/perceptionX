@@ -12,8 +12,6 @@ import { AnswerGapsTab } from "@/components/dashboard/AnswerGapsTab";
 import { TalentXTab } from "@/components/dashboard/TalentXTab";
 import { ReportGenerator } from "@/components/dashboard/ReportGenerator";
 import { AppSidebar } from "@/components/AppSidebar";
-import { PromptsModal } from "@/components/prompts/PromptsModal";
-import { OnboardingModal } from "@/components/onboarding/OnboardingModal";
 import { UpgradeModal } from "@/components/upgrade/UpgradeModal";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -89,6 +87,7 @@ interface DashboardProps {
 }
 
 const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {}) => {
+  const { user } = useAuth();
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showWelcomeProModal, setShowWelcomeProModal] = useState(false);
   
@@ -107,7 +106,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     lastUpdated,
     llmMentionRankings,
     talentXProData,
-    talentXProLoading
+    talentXProLoading,
+    fixExistingPrompts,
+    hasDataIssues
   } = useDashboardData();
   const { isPro } = useSubscription();
 
@@ -128,9 +129,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     // Otherwise use placeholder data
     return generatePlaceholderTalentXData(companyName || 'Your Company');
   }, [isPro, talentXProData, companyName]);
-  const { user } = useAuth();
-  const [showPromptsModal, setShowPromptsModal] = useState(false);
-  const [showOnboardingModal, setShowOnboardingModal] = useState(false);
+
   const [onboardingData, setOnboardingData] = useState<PromptsModalOnboardingData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -138,17 +137,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const [isNewUser, setIsNewUser] = useState(false);
   const [hasDismissedPromptsModal, setHasDismissedPromptsModal] = useState(false);
   const justFinishedOnboarding = !!location.state?.shouldRefresh;
-
-  // Handle prompts modal dismissal
-  const handlePromptsModalClose = (open: boolean) => {
-    if (!open) {
-      setShowPromptsModal(false);
-      // Only set dismissed state if user hasn't completed setup
-      if (onboardingData && !hasCompletedPrompts(onboardingId)) {
-        setHasDismissedPromptsModal(true);
-      }
-    }
-  };
 
   // Handle upgrade success/cancelled states
   useEffect(() => {
@@ -241,7 +229,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         // If no onboarding data exists, show onboarding modal
         if (!onboardingData || onboardingData.length === 0) {
           setIsNewUser(true);
-          setShowOnboardingModal(true);
+          // setShowPromptsModal(true); // Removed as per edit hint
         } else {
           // If onboarding exists but no prompts, show prompts modal
           const { data: promptsData, error: promptsError } = await (supabase as any)
@@ -254,7 +242,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           if (!promptsData || promptsData.length === 0) {
             setOnboardingData(transformOnboardingData(onboardingData[0]));
             setOnboardingId(onboardingData[0].id);
-            setShowPromptsModal(true);
+            // setShowPromptsModal(true); // Removed as per edit hint
           }
         }
       } catch (error) {
@@ -298,7 +286,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   useEffect(() => {
     // If navigation state requests to show prompts modal, do so and set onboarding data
     if (location.state?.showPromptsModal) {
-      setShowPromptsModal(true);
+      // setShowPromptsModal(true); // Removed as per edit hint
       if (location.state.onboardingData) {
         setOnboardingData(location.state.onboardingData);
         setOnboardingId(location.state.onboardingData.id || null);
@@ -324,13 +312,13 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           return;
         }
         if (!promptsData || promptsData.length === 0) {
-          setShowPromptsModal(true);
+          // setShowPromptsModal(true); // Removed as per edit hint
           return;
         }
         // 2. Get all prompt_responses for these prompt IDs
         const promptIds = promptsData.map((p: any) => p.id);
         if (promptIds.length === 0) {
-          setShowPromptsModal(true);
+          // setShowPromptsModal(true); // Removed as per edit hint
           return;
         }
         const { data: responsesData, error: responsesError } = await (supabase as any)
@@ -342,7 +330,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           return;
         }
         if (!responsesData || responsesData.length === 0) {
-          setShowPromptsModal(true);
+          // setShowPromptsModal(true); // Removed as per edit hint
         }
       };
       checkPromptsAndResponses();
@@ -434,7 +422,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             <p className="text-gray-600 mb-6">Finish setting up your monitoring strategy to see your dashboard insights.</p>
             <Button 
               onClick={() => {
-                setShowPromptsModal(true);
+                // setShowPromptsModal(true); // Removed as per edit hint
                 setHasDismissedPromptsModal(false); // Reset dismissed state when user chooses to continue
               }}
               className="bg-gradient-to-r from-[#13274F] to-[#0DBCBA] text-white hover:from-[#0F1F3D] hover:to-[#0BA8A6]"
@@ -730,6 +718,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             onRefresh={refreshData}
             breadcrumbs={breadcrumbs}
             lastUpdated={lastUpdated}
+            onFixData={fixExistingPrompts}
+            hasDataIssues={hasDataIssues}
           />
 
           <div className="flex-1 space-y-4 p-8">
@@ -807,19 +797,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       </div>
 
       {/* Modals */}
-      {showPromptsModal && (
-        <PromptsModal
-          open={showPromptsModal}
-          onOpenChange={handlePromptsModalClose}
-          onboardingData={onboardingData}
-        />
-      )}
-      {showOnboardingModal && (
-        <OnboardingModal
-          open={showOnboardingModal}
-          onOpenChange={setShowOnboardingModal}
-        />
-      )}
       <UpgradeModal open={showUpgradeModal} onOpenChange={setShowUpgradeModal} />
       <WelcomeProModal open={showWelcomeProModal} onOpenChange={setShowWelcomeProModal} />
     </div>

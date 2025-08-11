@@ -223,8 +223,42 @@ serve(async (req) => {
   try {
     // Parse and log the request body
     const body = await req.json();
-    console.log("Request body received:", body);
-    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, isTalentXPrompt, talentXAttributeId } = body;
+    
+    // Extract company name from request body
+    const { companyName, confirmed_prompt_id, ai_model, response } = body;
+
+    // Validate required fields
+    if (!confirmed_prompt_id) {
+      console.error("Missing confirmed_prompt_id in request body");
+      return new Response(JSON.stringify({ error: "Missing confirmed_prompt_id" }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (!ai_model) {
+      console.error("Missing ai_model in request body");
+      return new Response(JSON.stringify({ error: "Missing ai_model" }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (!response) {
+      console.error("Missing response in request body");
+      return new Response(JSON.stringify({ error: "Missing response" }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (!companyName) {
+      console.error("Missing companyName in request body");
+      return new Response(JSON.stringify({ error: "Missing companyName" }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
     
     // Handle citations from different LLMs
     let llmCitations = perplexityCitations || [];
@@ -342,7 +376,6 @@ serve(async (req) => {
         // Don't fail the entire function if TalentX processing fails
         // Continue with regular processing
       }
-    }
       
       // For TalentX prompts, return success without inserting into prompt_responses
       return new Response(

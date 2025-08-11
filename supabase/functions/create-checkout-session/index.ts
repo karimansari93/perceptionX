@@ -15,8 +15,6 @@ serve(async (req) => {
   try {
     const { userId, priceId, successUrl, cancelUrl } = await req.json();
 
-    console.log('Creating checkout session for:', { userId, priceId });
-
     if (!userId || !priceId) {
       console.error('Missing required parameters:', { userId, priceId });
       return new Response(
@@ -104,8 +102,6 @@ serve(async (req) => {
       }
     }
 
-    console.log('Creating checkout session with customer:', customerId);
-
     // Create checkout session
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
@@ -128,8 +124,6 @@ serve(async (req) => {
         },
       },
     });
-
-    console.log('Checkout session created:', session.id);
 
     return new Response(
       JSON.stringify({ 

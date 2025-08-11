@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import ReactMarkdown from 'react-markdown';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { supabase } from "@/integrations/supabase/client";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface ResponseDetailsModalProps {
   isOpen: boolean;
@@ -39,6 +40,7 @@ export const ResponseDetailsModal = ({
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryCache, setSummaryCache] = useState<{ [prompt: string]: string }>({});
+  const isMobile = useIsMobile();
 
   // Find the matching PromptData for this promptText
   const promptData = promptsData.find ? promptsData.find(p => p.prompt === promptText) : undefined;
@@ -209,17 +211,25 @@ export const ResponseDetailsModal = ({
   }
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
-        <DialogHeader className="pb-4 flex-shrink-0">
+      <DialogContent className="max-w-4xl h-[85vh] sm:h-[90vh] flex flex-col w-full mx-auto">
+        <DialogHeader className="pb-3 sm:pb-4 flex-shrink-0">
           <div className="flex items-start justify-between">
             <div className="flex-1">
-              <DialogTitle className="text-lg font-semibold mb-2 text-[#13274F]">
+              <DialogTitle className="text-base sm:text-lg font-semibold mb-2 text-[#13274F] leading-tight text-left">
                 {promptText}
               </DialogTitle>
-              <DialogDescription className="text-sm text-[#13274F]">
+              <DialogDescription className="text-xs sm:text-sm text-[#13274F] text-left">
                 Generated {responses.length > 0 ? new Date(responses[0].tested_at).toLocaleDateString() : 'recently'}
               </DialogDescription>
             </div>
+            <button
+              onClick={onClose}
+              className="ml-4 p-2 rounded-md hover:bg-gray-100 transition-colors flex-shrink-0"
+            >
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </DialogHeader>
 
@@ -250,156 +260,149 @@ export const ResponseDetailsModal = ({
           </div>
         ) : (
           <>
-            {/* MODELS, SENTIMENT & VISIBILITY ROW - with labels above values */}
-            <div className="flex flex-row gap-8 mt-1 mb-1 w-full">
-              {/* Models */}
-              <div className="flex flex-col items-start min-w-[120px]">
-                <span className="text-xs text-gray-400 font-medium mb-1">Models</span>
-                <div className="flex flex-row flex-wrap items-center gap-2">
-                  {getUniqueLLMs(responses).length === 0 ? (
-                    <span className="text-xs text-gray-400">None</span>
-                  ) : (
-                    getUniqueLLMs(responses).map(model => (
-                      <span key={model} className="inline-flex items-center">
-                        <LLMLogo modelName={model} size="sm" className="mr-1" />
-                        <span className="text-xs text-gray-700 mr-2">{getLLMDisplayName(model)}</span>
-                      </span>
-                    ))
-                  )}
-                </div>
-              </div>
-              {/* Sentiment */}
-              <div className="flex flex-col items-start min-w-[80px]">
-                <span className="text-xs text-gray-400 font-medium mb-1">Sentiment</span>
-                {(() => {
-                  let label = "Normal";
-                  if (sentimentLabel && sentimentLabel.toLowerCase() === "positive") {
-                    label = "Positive";
-                  } else if (sentimentLabel && sentimentLabel.toLowerCase() === "negative") {
-                    label = "Negative";
-                  } else if (!sentimentLabel && responses.length > 0) {
-                    const avgSentiment = responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length;
-                    if (avgSentiment > 0.1) {
-                      label = "Positive";
-                    } else if (avgSentiment < -0.1) {
-                      label = "Negative";
-                    }
-                  }
-                  return (
-                    <span className="text-xs text-gray-700 mr-2">{label}</span>
-                  );
-                })()}
-              </div>
-              {/* Visibility */}
-              <div className="flex flex-col items-start min-w-[90px]">
-                <span className="text-xs text-gray-400 font-medium mb-1">Visibility</span>
-                <span className="flex items-center gap-1">
-                  <svg width="20" height="20" viewBox="0 0 20 20" className="-ml-1">
-                    <circle
-                      cx="10"
-                      cy="10"
-                      r="8"
-                      fill="none"
-                      stroke="#e5e7eb"
-                      strokeWidth="2"
-                    />
-                    <circle
-                      cx="10"
-                      cy="10"
-                      r="8"
-                      fill="none"
-                      stroke={
-                        avgVisibility >= 95 ? '#22c55e' :
-                        avgVisibility >= 60 ? '#4ade80' :
-                        avgVisibility > 0 ? '#fde047' :
-                        '#e5e7eb'
-                      }
-                      strokeWidth="2"
-                      strokeDasharray={2 * Math.PI * 8}
-                      strokeDashoffset={2 * Math.PI * 8 * (1 - avgVisibility / 100)}
-                      strokeLinecap="round"
-                      style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
-                    />
-                  </svg>
-                  <span className="text-xs font-regular text-gray-900">{Math.round(avgVisibility)}%</span>
-                </span>
-              </div>
-            </div>
-            <div className="mb-6">
-              <Card>
-                <CardHeader className="pb-2">
+                         {/* MODELS, SENTIMENT & VISIBILITY ROW - with labels above values */}
+             <div className="flex flex-row gap-3 sm:gap-8 mt-1 mb-3 sm:mb-1 w-full overflow-x-auto">
+               {/* Models */}
+               <div className="flex flex-col items-start min-w-[120px] flex-shrink-0">
+                 <span className="text-xs text-gray-400 font-medium mb-1">Models</span>
+                 <div className="flex flex-row flex-wrap items-center gap-2">
+                   {getUniqueLLMs(responses).length === 0 ? (
+                     <span className="text-xs text-gray-400">None</span>
+                   ) : (
+                     getUniqueLLMs(responses).map(model => (
+                       <span key={model} className="inline-flex items-center">
+                         <LLMLogo modelName={model} size="sm" className="mr-1" />
+                         {!isMobile && (
+                           <span className="text-xs text-gray-700 mr-2">{getLLMDisplayName(model)}</span>
+                         )}
+                       </span>
+                     ))
+                   )}
+                 </div>
+               </div>
+               {/* Sentiment */}
+               <div className="flex flex-col items-start min-w-[80px] flex-shrink-0">
+                 <span className="text-xs text-gray-400 font-medium mb-1">Sentiment</span>
+                 {(() => {
+                   let label = "Normal";
+                   if (sentimentLabel && sentimentLabel.toLowerCase() === "positive") {
+                     label = "Positive";
+                   } else if (sentimentLabel && sentimentLabel.toLowerCase() === "negative") {
+                     label = "Negative";
+                   } else if (!sentimentLabel && responses.length > 0) {
+                     const avgSentiment = responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length;
+                     if (avgSentiment > 0.1) {
+                       label = "Positive";
+                     } else if (avgSentiment < -0.1) {
+                       label = "Negative";
+                     }
+                   }
+                   return (
+                     <span className="text-xs text-gray-700 mr-2">{label}</span>
+                   );
+                 })()}
+               </div>
+               {/* Visibility */}
+               <div className="flex flex-col items-start min-w-[90px] flex-shrink-0">
+                 <span className="text-xs text-gray-400 font-medium mb-1">Visibility</span>
+                 <span className="flex items-center gap-1">
+                   <svg width="20" height="20" viewBox="0 0 20 20" className="-ml-1">
+                     <circle
+                       cx="10"
+                       cy="10"
+                       r="8"
+                       fill="none"
+                       stroke="#e5e7eb"
+                       strokeWidth="2"
+                     />
+                     <circle
+                       cx="10"
+                       cy="10"
+                       r="8"
+                       fill="none"
+                       stroke={
+                         avgVisibility >= 95 ? '#22c55e' :
+                         avgVisibility >= 60 ? '#4ade80' :
+                         avgVisibility > 0 ? '#fde047' :
+                         '#e5e7eb'
+                       }
+                       strokeWidth="2"
+                       strokeDasharray={2 * Math.PI * 8}
+                       strokeDashoffset={2 * Math.PI * 8 * (1 - avgVisibility / 100)}
+                       strokeLinecap="round"
+                       style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
+                     />
+                   </svg>
+                   <span className="text-xs font-regular text-gray-900">{Math.round(avgVisibility)}%</span>
+                 </span>
+               </div>
+             </div>
+            <div className="flex-1 min-h-0">
+              <Card className="h-full flex flex-col">
+                <CardHeader className="pb-2 flex-shrink-0">
                   <CardTitle className="text-base font-semibold text-[#13274F]">Summary</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  {loadingSummary ? (
-                    <div className="w-full">
-                      <Skeleton className="h-6 w-3/4 mb-2" />
-                      <Skeleton className="h-6 w-5/6 mb-2" />
-                      <Skeleton className="h-6 w-2/3 mb-2" />
-                      <Skeleton className="h-6 w-1/2 mb-2" />
-                    </div>
-                  ) : summaryError ? (
-                    <div className="text-red-600 text-sm py-2">{summaryError}</div>
-                  ) : (
-                    <>
-                      <div className="text-gray-800 text-base mb-3 whitespace-pre-line">
-                        <ReactMarkdown>{summary}</ReactMarkdown>
+                <CardContent className="flex-1 p-4 overflow-hidden">
+                  <ScrollArea className="h-[300px] sm:h-[400px] w-full">
+                    {loadingSummary ? (
+                      <div className="w-full">
+                        <Skeleton className="h-6 w-3/4 mb-2" />
+                        <Skeleton className="h-6 w-5/6 mb-2" />
+                        <Skeleton className="h-6 w-2/3 mb-2" />
+                        <Skeleton className="h-6 w-1/2 mb-2" />
                       </div>
-                      {uniqueSources.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-2 mt-2">
-                          <span className="text-xs text-gray-500">Sources:</span>
-                          {uniqueSources.map((src, i) => (
-                            <a
-                              key={src.url}
-                              href={src.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200"
-                            >
-                              <img
-                                src={getFavicon(src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0])}
-                                alt=""
-                                className="w-4 h-4 mr-1 rounded"
-                                style={{ background: '#fff' }}
-                                onError={e => { e.currentTarget.style.display = 'none'; }}
-                              />
-                              {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
-                            </a>
-                          ))}
+                    ) : summaryError ? (
+                      <div className="text-red-600 text-sm py-2">{summaryError}</div>
+                    ) : (
+                      <>
+                        <div className="text-gray-800 text-sm sm:text-base mb-3 whitespace-pre-line leading-relaxed">
+                          <ReactMarkdown>{summary}</ReactMarkdown>
                         </div>
-                      )}
-                    </>
-                  )}
+                        {uniqueSources.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <span className="text-xs text-gray-500">Sources:</span>
+                            {uniqueSources.map((src, i) => (
+                              <a
+                                key={src.url}
+                                href={src.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200"
+                              >
+                                <img
+                                  src={getFavicon(src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0])}
+                                  alt=""
+                                  className="w-4 h-4 mr-1 rounded"
+                                  style={{ background: '#fff' }}
+                                  onError={e => { e.currentTarget.style.display = 'none'; }}
+                                />
+                                <span className="text-xs">
+                                  {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
+                                </span>
+                              </a>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400 mt-2">No sources available</div>
+                        )}
+                      </>
+                    )}
+                  </ScrollArea>
                 </CardContent>
               </Card>
             </div>
           </>
         )}
 
-        <div className="grid grid-cols-3 gap-6 flex-1 min-h-0">
-          {/* REMOVED: Responses list panel */}
-
-          {/* Right Panel - Selected Response Details */}
-          <ScrollArea className="col-span-3 h-full"> {/* Changed to span all columns */}
-            {selectedResponse && (
-              <div className="space-y-6 pr-4">
-                {/* REMOVED: Metrics Row */}
-                {/* REMOVED: Workplace Themes */}
-                {/* REMOVED: Brand Perception */}
-                {/* REMOVED: User Prompt */}
-                {/* REMOVED: AI Response */}
-              </div>
-            )}
-          </ScrollArea>
-        </div>
+        {/* Removed unused grid section to prevent layout issues */}
 
         {showMarkdownCheatSheet && (
-          <div className="mt-8 p-4 border-t border-gray-200">
+          <div className="mt-8 p-3 sm:p-4 border-t border-gray-200">
             <h2 className="text-lg font-bold mb-2">Markdown Cheat Sheet</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <h3 className="font-semibold mb-1">Markdown Syntax</h3>
-                <pre className="bg-gray-100 p-2 rounded text-xs overflow-x-auto">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+                              <div>
+                  <h3 className="font-semibold mb-1">Markdown Syntax</h3>
+                  <pre className="bg-gray-100 p-2 sm:p-3 rounded text-xs overflow-x-auto">
 {`
 # Heading 1
 ## Heading 2

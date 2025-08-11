@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { TrendingUp, TrendingDown, X } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import ReactMarkdown from 'react-markdown';
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -514,6 +514,9 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
               <span>{selectedCompetitor}</span>
               <Badge variant="secondary">{getFullResponsesForCompetitor(selectedCompetitor || '').length} mentions</Badge>
             </DialogTitle>
+            <DialogDescription className="text-gray-600">
+              Detailed analysis of competitor mentions and sources
+            </DialogDescription>
           </DialogHeader>
           
           <div className="space-y-4">
@@ -628,7 +631,9 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
             </button>
           </div>
           <div className="px-6 py-3 border-b bg-gray-50">
-            {/* Search input removed as requested */}
+            <DialogDescription className="text-sm text-gray-600">
+              View all mentions of this competitor across your analysis
+            </DialogDescription>
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
             {competitorSnippets.length > 0 ? (
@@ -682,6 +687,9 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
                 {selectedSource?.count} {selectedSource?.count === 1 ? 'mention' : 'mentions'}
               </Badge>
             </DialogTitle>
+            <DialogDescription className="text-gray-600">
+              This source contributes to {selectedCompetitor}'s presence in your analysis
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="text-sm text-gray-600">

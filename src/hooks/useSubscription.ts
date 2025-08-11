@@ -31,11 +31,10 @@ export const useSubscription = () => {
       if (error) {
         // If profile doesn't exist, create one with default values
         if (error.code === 'PGRST116') { // No rows returned
-          console.log('Profile not found, creating new profile for user:', user.id);
-          
+          // Use upsert to prevent duplicates
           const { data: newProfile, error: createError } = await supabase
             .from('profiles')
-            .insert({
+            .upsert({
               id: user.id,
               email: user.email,
               subscription_type: 'free',
@@ -43,44 +42,21 @@ export const useSubscription = () => {
               subscription_start_date: null,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
+            }, {
+              onConflict: 'id', // Use upsert on primary key to prevent duplicates
+              ignoreDuplicates: false
             })
             .select('subscription_type, prompts_used, subscription_start_date')
             .single();
 
           if (createError) {
             console.error('Error creating profile:', createError);
-            // If creation fails due to constraint violations, try to get the profile again
-            if (createError.code === '23505') { // Unique violation
-              console.log('Profile already exists, fetching again...');
-              const { data: existingProfile, error: fetchError } = await supabase
-                .from('profiles')
-                .select('subscription_type, prompts_used, subscription_start_date')
-                .eq('id', user.id)
-                .single();
-              
-              if (fetchError) {
-                console.error('Error fetching existing profile:', fetchError);
-                // Set default values if all else fails
-                setSubscription({
-                  subscription_type: 'free',
-                  prompts_used: 0,
-                  subscription_start_date: null
-                });
-              } else {
-                setSubscription({
-                  subscription_type: existingProfile.subscription_type || 'free',
-                  prompts_used: existingProfile.prompts_used || 0,
-                  subscription_start_date: existingProfile.subscription_start_date
-                });
-              }
-            } else {
-              // Set default values if profile creation fails for other reasons
-              setSubscription({
-                subscription_type: 'free',
-                prompts_used: 0,
-                subscription_start_date: null
-              });
-            }
+            // Set default values if profile creation fails
+            setSubscription({
+              subscription_type: 'free',
+              prompts_used: 0,
+              subscription_start_date: null
+            });
           } else {
             setSubscription({
               subscription_type: newProfile.subscription_type || 'free',

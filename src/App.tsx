@@ -16,6 +16,9 @@ import Usage from "./pages/Usage";
 import Account from "./pages/Account";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { ErrorBoundary } from "react-error-boundary";
+import { usePageTracking } from "@/hooks/usePageTracking";
+import { Onboarding } from "@/pages/Onboarding";
+import { OnboardingLoading } from "@/pages/OnboardingLoading";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -46,11 +49,18 @@ const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; resetError
   );
 };
 
+// Page Tracking Component
+const PageTracker = () => {
+  usePageTracking();
+  return null;
+};
+
 const App = () => (
   <ErrorBoundary FallbackComponent={ErrorFallback}>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <BrowserRouter>
+          <PageTracker />
           <AuthProvider>
             <Toaster />
             <Sonner />
@@ -60,6 +70,16 @@ const App = () => (
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/reset-password" element={<ResetPassword />} />
+              
+              {/* Onboarding route */}
+              <Route path="/onboarding" element={
+                <ProtectedRoute>
+                  <Onboarding />
+                </ProtectedRoute>
+              } />
+              
+              {/* Onboarding loading route */}
+              <Route path="/onboarding/loading" element={<OnboardingLoading />} />
               
               {/* Legacy dashboard route - maintains backward compatibility */}
               <Route path="/dashboard" element={

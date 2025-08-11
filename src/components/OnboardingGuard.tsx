@@ -17,12 +17,14 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
   const navigate = useNavigate();
   const [hasOnboarding, setHasOnboarding] = useState<boolean | null>(null);
   const [connectionError, setConnectionError] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
 
   useEffect(() => {
     const checkOnboarding = async () => {
       if (!user) {
         if (!authLoading) {
-          navigate('/auth');
+          // Use setTimeout to defer navigation until after render
+          setTimeout(() => navigate('/auth'), 0);
         }
         return;
       }
@@ -44,31 +46,44 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
           return;
         }
 
-        // Check for completed onboarding (both company_name and industry are required)
-        const { data, error } = await supabase
+        // Check if user has basic onboarding data
+        const { data: onboardingData, error } = await supabase
           .from('user_onboarding')
           .select('*')
           .eq('user_id', user.id)
-          .not('company_name', 'is', null)
-          .not('industry', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(1);
+          .single();
 
-        if (error) {
+        if (error && error.code !== 'PGRST116') {
           console.error('Error checking onboarding:', error);
-          setConnectionError(true);
-        } else {
-          // Check if the record has both required fields: company_name and industry
-          const isComplete = data && data.length > 0 && 
-            data[0].company_name && 
-            data[0].industry && 
-            (data[0].prompts_completed === true || true); // Keep prompts_completed check for backward compatibility
-          setHasOnboarding(isComplete);
-          setConnectionError(false);
+          return false;
         }
+
+        // Check if user has confirmed prompts
+        const { data: confirmedPrompts, error: promptsError } = await supabase
+          .from('confirmed_prompts')
+          .select('*')
+          .eq('user_id', user.id);
+
+        if (promptsError) {
+          console.error('Error checking confirmed prompts:', promptsError);
+          return false;
+        }
+
+        // If no basic onboarding data, user needs to complete onboarding
+        if (!onboardingData) {
+          return false;
+        }
+
+        // If no confirmed prompts, user needs to complete onboarding
+        if (!confirmedPrompts || confirmedPrompts.length === 0) {
+          return false;
+        }
+
+        // User has completed onboarding
+        return true;
       } catch (error) {
         console.error('Error in onboarding check:', error);
-        setConnectionError(true);
+        return false;
       }
     };
 
@@ -77,10 +92,38 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
     }
   }, [user, requireOnboarding, authLoading, navigate]);
 
+  // Handle navigation after render using useEffect
+  useEffect(() => {
+    if (hasOnboarding === false && requireOnboarding && !isNavigating) {
+      // Defer navigation to next tick to avoid render cycle issues
+      setIsNavigating(true);
+      const timer = setTimeout(() => {
+        navigate('/onboarding');
+      }, 0);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [hasOnboarding, requireOnboarding, navigate, isNavigating]);
+
   // Redirect to auth if not logged in
   if (!authLoading && !user) {
-    navigate('/');
-    return null;
+    if (!isNavigating) {
+      setIsNavigating(true);
+      setTimeout(() => navigate('/auth'), 0);
+    }
+    return null; // Don't navigate here, let the useEffect handle it
+  }
+
+  // Show loading while navigating
+  if (isNavigating) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Redirecting...</p>
+        </div>
+      </div>
+    );
   }
 
   // Show connection error with bypass options
@@ -117,9 +160,10 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
     );
   }
 
-  // If onboarding is required and not complete, show the children (which will show the onboarding modal)
+  // If onboarding is required and not complete, redirect to onboarding page
   if (requireOnboarding && hasOnboarding === false) {
-    return <>{children}</>;
+    navigate('/onboarding');
+    return null;
   }
 
   return <>{children}</>;

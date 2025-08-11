@@ -20,7 +20,7 @@ export const ConfirmationCard = ({ isConfirming, onConfirm, disabled, className 
       {isConfirming ? (
         <>Loading...</>
       ) : (
-        <>I'm ready</>
+        <>Continue</>
       )}
     </Button>
   );

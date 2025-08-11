@@ -116,31 +116,21 @@ export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
   };
 
   return (
-    <Card className="bg-white shadow-lg">
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[100px]">Type</TableHead>
-              <TableHead>Prompt Question</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {prompts.map((prompt) => (
-              <TableRow key={prompt.id}>
-                <TableCell>
-                  <Badge className={getCategoryColor(prompt.type)}>
-                    {getTypeLabel(prompt.type)}
-                  </Badge>
-                </TableCell>
-                <TableCell className="font-medium leading-relaxed">
-                  {prompt.text}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+    <div className="space-y-3 sm:space-y-4">
+      {prompts.map((prompt) => (
+        <div key={prompt.id} className="border border-gray-200 rounded-lg p-3 sm:p-4 bg-gray-50">
+          <div className="space-y-2 sm:space-y-3">
+            <Badge className={`${getCategoryColor(prompt.type)} w-fit text-xs sm:text-sm`}>
+              {getTypeLabel(prompt.type)}
+            </Badge>
+            <div>
+              <p className="text-xs sm:text-sm text-gray-900 font-medium leading-relaxed">
+                {prompt.text}
+              </p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 };

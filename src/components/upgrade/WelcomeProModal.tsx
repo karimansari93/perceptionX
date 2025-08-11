@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Sparkles, TrendingUp, Users, Database } from 'lucide-react';
 
@@ -29,9 +29,9 @@ export const WelcomeProModal = ({ open, onOpenChange }: WelcomeProModalProps) =>
               </div>
             </div>
           </div>
-          <p className="text-center text-[#183056] text-base sm:text-lg">
+          <DialogDescription className="text-center text-[#183056] text-base sm:text-lg">
             You now have access to all premium features
-          </p>
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 sm:space-y-6 py-4">

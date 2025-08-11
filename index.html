@@ -7,7 +7,7 @@
     <title>PerceptionX - Shape what AI says about your employer brand</title>
     
     <!-- Security Headers -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.gpteng.co https://client.crisp.chat https://www.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://client.crisp.chat; font-src 'self' https://fonts.gstatic.com https://client.crisp.chat; img-src 'self' data: https:; connect-src 'self' https://ofyjvfmcgtntwamkubui.supabase.co wss://ofyjvfmcgtntwamkubui.supabase.co https://api.stripe.com https://client.crisp.chat wss://client.relay.crisp.chat; frame-src 'self' https://js.stripe.com; object-src 'none'; base-uri 'self'; form-action 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.gpteng.co https://client.crisp.chat https://www.google.com https://www.gstatic.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://client.crisp.chat; font-src 'self' https://fonts.gstatic.com https://client.crisp.chat; img-src 'self' data: https:; connect-src 'self' https://ofyjvfmcgtntwamkubui.supabase.co wss://ofyjvfmcgtntwamkubui.supabase.co https://api.stripe.com https://client.crisp.chat wss://client.relay.crisp.chat https://www.google-analytics.com; frame-src 'self' https://js.stripe.com; object-src 'none'; base-uri 'self'; form-action 'self';">
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta http-equiv="X-XSS-Protection" content="1; mode=block">
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
@@ -44,6 +44,14 @@
       gtag('js', new Date());
 
       gtag('config', 'G-FGRDCN2WF3');
+      
+      // Google Ads conversion tracking
+      gtag('event', 'ads_conversion_PAGE_VIEW_1', {
+        // Event parameters for initial page load
+        page_title: document.title,
+        page_location: window.location.href,
+        page_path: window.location.pathname,
+      });
     </script>
 
     <!-- Structured Data -->

@@ -13,9 +13,10 @@ export const useDashboardData = () => {
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
   const [responses, setResponses] = useState<PromptResponse[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [competitorLoading, setCompetitorLoading] = useState(true);
-  const [companyName, setCompanyName] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const [competitorLoading, setCompetitorLoading] = useState(false);
+  const [companyName, setCompanyName] = useState('');
+  const [hasDataIssues, setHasDataIssues] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
   const [talentXProData, setTalentXProData] = useState<any[]>([]);
   const [talentXProLoading, setTalentXProLoading] = useState(false);
@@ -32,17 +33,39 @@ export const useDashboardData = () => {
       
       const { data: userPrompts, error: promptsError } = await supabase
         .from('confirmed_prompts')
-        .select('id')
+        .select('id, user_id, prompt_text')
         .eq('user_id', user.id);
 
-      if (promptsError) throw promptsError;
+      if (promptsError) {
+        throw promptsError;
+      }
 
       if (!userPrompts || userPrompts.length === 0) {
+        // Let's check if there are any prompts without user_id
+        const { data: allPrompts, error: allPromptsError } = await supabase
+          .from('confirmed_prompts')
+          .select('id, user_id, prompt_text, onboarding_id')
+          .is('user_id', null);
+
+        if (allPromptsError) {
+          // Silently handle error
+        } else {
+          // If we found prompts without user_id, set data issues flag
+          if (allPrompts && allPrompts.length > 0) {
+            setHasDataIssues(true);
+            await fixExistingPrompts();
+            return; // Exit early, fixExistingPrompts will call fetchResponses again
+          }
+        }
+
         setResponses([]);
         setLoading(false);
         setCompetitorLoading(false);
         return;
       }
+
+      // Clear data issues flag if we found prompts
+      setHasDataIssues(false);
 
       const promptIds = userPrompts.map(p => p.id);
 
@@ -75,7 +98,7 @@ export const useDashboardData = () => {
             .eq('user_id', user.id);
 
           if (promptsError) {
-            logger.error('Error fetching TalentX Pro prompts:', promptsError);
+            // Silently handle error
           } else {
             const { data: talentXScores, error: talentXError } = await supabase
               .from('talentx_perception_scores')
@@ -84,7 +107,7 @@ export const useDashboardData = () => {
               .order('created_at', { ascending: false });
 
             if (talentXError) {
-              logger.error('Error fetching TalentX perception scores:', talentXError);
+              // Silently handle error
             } else if (talentXScores && talentXScores.length > 0) {
               // Convert TalentX scores to PromptResponse format
               const talentXResponses: PromptResponse[] = talentXScores.map(score => {
@@ -122,7 +145,7 @@ export const useDashboardData = () => {
             }
           }
         } catch (error) {
-          logger.error('Error processing TalentX responses:', error);
+          // Silently handle error
         }
       }
       
@@ -139,7 +162,7 @@ export const useDashboardData = () => {
       setLoading(false);
       setCompetitorLoading(false);
           } catch (error) {
-        logger.error('Error fetching responses:', error);
+        // Silently handle error
         setLoading(false);
         setCompetitorLoading(false);
       }
@@ -158,7 +181,6 @@ export const useDashboardData = () => {
         .limit(1);
 
       if (error) {
-        logger.error('Error fetching company name:', error);
         setCompanyName('');
         return;
       }
@@ -170,7 +192,7 @@ export const useDashboardData = () => {
         setCompanyName('');
       }
     } catch (error) {
-      logger.error('Error in fetchCompanyName:', error);
+      // Silently handle error
       setCompanyName('');
     }
   }, [user]);
@@ -187,7 +209,7 @@ export const useDashboardData = () => {
       const data = await TalentXProService.getAggregatedProAnalysis(user.id);
       setTalentXProData(data);
     } catch (error) {
-      logger.error('Error fetching TalentX Pro data:', error);
+      // Silently handle error
       setTalentXProData([]);
     } finally {
       setTalentXProLoading(false);
@@ -293,7 +315,7 @@ export const useDashboardData = () => {
           .eq('user_id', user.id);
 
         if (error) {
-          console.error('Error fetching TalentX Pro prompts:', error);
+          // Silently handle error
           setTalentXProPrompts([]);
           return;
         }
@@ -344,7 +366,7 @@ export const useDashboardData = () => {
           setTalentXProPrompts([]);
         }
       } catch (error) {
-        console.error('Error processing TalentX Pro prompts:', error);
+        // Silently handle error
         setTalentXProPrompts([]);
       }
     };
@@ -638,11 +660,6 @@ export const useDashboardData = () => {
       const promptResponses = responses.filter(r => r.confirmed_prompt_id === prompt.id);
       const totalResponses = promptResponses.length;
 
-      // Debug: Log company_mentioned values for this prompt
-      // (Can be removed if not needed)
-      // console.log('Prompt:', prompt.prompt_text, 'Prompt ID:', prompt.id);
-      // console.log('company_mentioned values:', promptResponses.map(r => r.company_mentioned));
-      
       // Calculate average sentiment
       const totalSentiment = promptResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0);
       const avgSentiment = totalResponses > 0 ? totalSentiment / totalResponses : 0;
@@ -784,6 +801,45 @@ export const useDashboardData = () => {
     return rankings;
   }, [responses]);
 
+  const fixExistingPrompts = useCallback(async () => {
+    if (!user) return;
+    
+    try {
+      // Find prompts without user_id that belong to this user's onboarding
+      const { data: userOnboarding, error: onboardingError } = await supabase
+        .from('user_onboarding')
+        .select('id')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (onboardingError) {
+        // Silently handle error
+        return;
+      }
+
+      if (userOnboarding && userOnboarding.length > 0) {
+        const onboardingId = userOnboarding[0].id;
+        
+        // Update prompts without user_id to have the current user's ID
+        const { data: updateResult, error: updateError } = await supabase
+          .from('confirmed_prompts')
+          .update({ user_id: user.id })
+          .eq('onboarding_id', onboardingId)
+          .is('user_id', null);
+
+        if (updateError) {
+          // Silently handle error
+        } else {
+          // Refresh the data after fixing
+          fetchResponses();
+        }
+      }
+    } catch (error) {
+      // Silently handle error
+    }
+  }, [user, fetchResponses]);
+
   return {
     responses,
     loading,
@@ -800,6 +856,8 @@ export const useDashboardData = () => {
     llmMentionRankings,
     talentXProData,
     talentXProLoading,
-    fetchTalentXProData
+    fetchTalentXProData,
+    fixExistingPrompts,
+    hasDataIssues
   };
 };

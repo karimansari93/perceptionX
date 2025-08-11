@@ -9,144 +9,117 @@ const corsHeaders = {
 
 // This function needs to be public (no auth) for Stripe webhooks
 serve(async (req) => {
-  console.log('=== WEBHOOK RECEIVED ===');
-  console.log('Method:', req.method);
-  console.log('URL:', req.url);
-  console.log('Headers:', Object.fromEntries(req.headers.entries()));
-  
-  if (req.method === 'OPTIONS') {
-    console.log('Handling OPTIONS request');
-    return new Response('ok', { headers: corsHeaders });
-  }
-
   try {
-    console.log('Reading request body...');
-    const body = await req.text();
-    const signature = req.headers.get('stripe-signature');
-
-    console.log('Webhook body length:', body.length);
-    console.log('Signature present:', !!signature);
-    console.log('Body preview:', body.substring(0, 200) + '...');
-
-    if (!signature) {
-      console.error('No signature provided');
-      return new Response('No signature', { status: 400 });
+    // Handle preflight request
+    if (req.method === 'OPTIONS') {
+      return new Response(null, { status: 200, headers: corsHeaders });
     }
 
-    // Initialize Stripe
-    console.log('=== ENVIRONMENT VARIABLES DEBUG ===');
-    
+    // Initialize environment variables
     const stripeSecretKey = Deno.env.get('STRIPE_SECRET_KEY');
     const webhookSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET');
     
-    console.log('Stripe secret key present:', !!stripeSecretKey);
-    console.log('Webhook secret present:', !!webhookSecret);
-    console.log('Stripe secret key length:', stripeSecretKey?.length || 0);
-    console.log('Webhook secret length:', webhookSecret?.length || 0);
-    
     if (!stripeSecretKey || !webhookSecret) {
       console.error('Missing environment variables');
-      console.error('Stripe secret key missing:', !stripeSecretKey);
-      console.error('Webhook secret missing:', !webhookSecret);
-      return new Response('Server configuration error', { status: 500 });
+      return new Response(JSON.stringify({ error: 'Server configuration error' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
-    
+
     const stripe = new Stripe(stripeSecretKey, { apiVersion: '2022-11-15' });
 
+    // Read the request body
+    const body = await req.text();
+    const signature = req.headers.get('stripe-signature');
+
     // Verify webhook signature
-    let event: Stripe.Event;
-    try {
-      event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-      console.log('Webhook signature verified successfully');
-    } catch (err) {
-      console.error('Webhook signature verification failed:', err);
-      console.error('Error details:', err.message);
-      console.error('Webhook secret length:', webhookSecret.length);
-      console.error('Signature length:', signature?.length);
-      
-      // TEMPORARILY: Skip signature verification for testing
-      console.log('Temporarily skipping signature verification for testing...');
+    if (signature) {
       try {
-        event = JSON.parse(body) as Stripe.Event;
-        console.log('Parsed event without signature verification');
-      } catch (parseErr) {
-        console.error('Failed to parse event body:', parseErr);
-        return new Response(`Webhook Error: ${err.message}`, { status: 400 });
+        const event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
+        
+        // Process the webhook event
+        await processWebhookEvent(event);
+        
+        return new Response(JSON.stringify({ received: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (err) {
+        console.error('Webhook signature verification failed:', err);
+        return new Response(JSON.stringify({ error: 'Webhook signature verification failed' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
+    } else {
+      // For development/testing, process without signature verification
+      const event = JSON.parse(body);
+      
+      // Process the webhook event
+      await processWebhookEvent(event);
+      
+      return new Response(JSON.stringify({ received: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
-
-    // Initialize Supabase
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
-    console.log('Processing webhook event:', event.type);
-
-    // Handle different event types
-    switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const userId = session.metadata?.supabase_user_id;
-        
-        console.log('Checkout session completed for user:', userId);
-        
-        if (userId) {
-          console.log('Processing checkout completion for user:', userId);
-          await handleSubscriptionUpgrade(supabase, userId);
-        } else {
-          console.log('No user ID found in session metadata');
-        }
-        break;
-      }
-
-      case 'customer.subscription.created':
-      case 'customer.subscription.updated': {
-        const subscription = event.data.object as Stripe.Subscription;
-        const userId = subscription.metadata?.supabase_user_id;
-        
-        console.log('Subscription event for user:', userId, 'Status:', subscription.status);
-        
-        if (userId && subscription.status === 'active') {
-          console.log('Processing active subscription for user:', userId);
-          await handleSubscriptionUpgrade(supabase, userId);
-        }
-        break;
-      }
-
-      case 'customer.subscription.deleted': {
-        const subscription = event.data.object as Stripe.Subscription;
-        const userId = subscription.metadata?.supabase_user_id;
-        
-        console.log('Subscription deleted for user:', userId);
-        
-        if (userId) {
-          await handleSubscriptionDowngrade(supabase, userId);
-        }
-        break;
-      }
-
-      default:
-        console.log(`Unhandled event type: ${event.type}`);
-    }
-
-    console.log('Webhook processed successfully');
-    return new Response('Webhook processed successfully', { status: 200 });
-
   } catch (error) {
-    console.error('=== WEBHOOK PROCESSING ERROR ===');
-    console.error('Error:', error);
-    console.error('Error message:', error.message);
-    return new Response(`Webhook Error: ${error.message}`, { 
+    console.error('Webhook processing error:', error);
+    return new Response(JSON.stringify({ error: 'Webhook processing failed' }), {
       status: 500,
-      headers: corsHeaders 
+      headers: { 'Content-Type': 'application/json' }
     });
   }
 });
 
+async function processWebhookEvent(event: Stripe.Event) {
+  // Initialize Supabase
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
+  // Handle different event types
+  switch (event.type) {
+    case 'checkout.session.completed': {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const userId = session.metadata?.supabase_user_id;
+      
+      if (userId) {
+        await handleSubscriptionUpgrade(supabase, userId);
+      }
+      break;
+    }
+
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated': {
+      const subscription = event.data.object as Stripe.Subscription;
+      const userId = subscription.metadata?.supabase_user_id;
+      
+      if (userId && subscription.status === 'active') {
+        await handleSubscriptionUpgrade(supabase, userId);
+      }
+      break;
+    }
+
+    case 'customer.subscription.deleted': {
+      const subscription = event.data.object as Stripe.Subscription;
+      const userId = subscription.metadata?.supabase_user_id;
+      
+      if (userId) {
+        await handleSubscriptionDowngrade(supabase, userId);
+      }
+      break;
+    }
+
+    default:
+      // Unhandled event type
+      break;
+  }
+}
+
 async function handleSubscriptionUpgrade(supabase: any, userId: string) {
   try {
-    console.log('Handling subscription upgrade for user:', userId);
-    
     // Update user subscription status
     const { error: updateError } = await supabase
       .from('profiles')
@@ -160,8 +133,6 @@ async function handleSubscriptionUpgrade(supabase: any, userId: string) {
       console.error('Error updating subscription status:', updateError);
       return;
     }
-
-    console.log('Successfully updated user to Pro subscription');
 
     // Get user's onboarding data for company info
     const { data: onboardingData, error: onboardingError } = await supabase
@@ -177,34 +148,29 @@ async function handleSubscriptionUpgrade(supabase: any, userId: string) {
       return;
     }
 
-    console.log('Onboarding data found:', onboardingData);
+    if (onboardingData) {
+      // Generate TalentX Pro prompts for the user
+      const { error: promptError } = await supabase.functions.invoke('talentx-pro-service', {
+        body: {
+          action: 'generatePrompts',
+          userId: userId,
+          companyName: onboardingData.company_name,
+          industry: onboardingData.industry
+        }
+      });
 
-    // Generate TalentX Pro prompts
-    try {
-      // Import the TalentXProService
-      const { TalentXProService } = await import('../_shared/talentXProService.ts');
-      
-      await TalentXProService.generateProPrompts(
-        userId,
-        onboardingData.company_name || 'Your Company',
-        onboardingData.industry || 'Technology'
-      );
-      console.log('Successfully generated TalentX Pro prompts for user:', userId);
-    } catch (promptError) {
-      console.error('Error generating TalentX Pro prompts:', promptError);
-      // Don't throw the error - just log it and continue
+      if (promptError) {
+        console.error('Error generating TalentX Pro prompts:', promptError);
+      }
     }
-
   } catch (error) {
-    console.error('Error in handleSubscriptionUpgrade:', error);
+    console.error('Error during Pro upgrade:', error);
   }
 }
 
 async function handleSubscriptionDowngrade(supabase: any, userId: string) {
   try {
-    console.log('Handling subscription downgrade for user:', userId);
-    
-    // Update user subscription status back to free
+    // Update user subscription status
     const { error: updateError } = await supabase
       .from('profiles')
       .update({
@@ -215,9 +181,19 @@ async function handleSubscriptionDowngrade(supabase: any, userId: string) {
 
     if (updateError) {
       console.error('Error updating subscription status:', updateError);
+      return;
     }
 
+    // Remove TalentX Pro prompts
+    const { error: deleteError } = await supabase
+      .from('talentx_pro_prompts')
+      .delete()
+      .eq('user_id', userId);
+
+    if (deleteError) {
+      console.error('Error removing TalentX Pro prompts:', deleteError);
+    }
   } catch (error) {
-    console.error('Error in handleSubscriptionDowngrade:', error);
+    console.error('Error during Pro downgrade:', error);
   }
 } 

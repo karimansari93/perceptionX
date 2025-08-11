@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PromptData } from "@/types/dashboard";
 import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter } from "lucide-react";
 import { useState, useMemo } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface PromptTableProps {
   prompts: PromptData[];
@@ -16,6 +17,7 @@ interface PromptTableProps {
 export const PromptTable = ({ prompts, title, description, onPromptClick }: PromptTableProps) => {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const isMobile = useIsMobile();
 
   // Get unique types and categories for filter options
   const uniqueTypes = useMemo(() => {
@@ -198,17 +200,17 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
+      <CardHeader className="px-4 sm:px-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <CardTitle>{title}</CardTitle>
-            <CardDescription>{description}</CardDescription>
+            <CardTitle className="text-lg sm:text-xl">{title}</CardTitle>
+            <CardDescription className="text-sm">{description}</CardDescription>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-gray-500" />
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <Filter className="w-4 h-4 text-gray-500 flex-shrink-0" />
               <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="w-32">
+                <SelectTrigger className="w-full sm:w-32">
                   <SelectValue placeholder="Type" />
                 </SelectTrigger>
                 <SelectContent>
@@ -219,9 +221,9 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger className="w-32">
+                <SelectTrigger className="w-full sm:w-32">
                   <SelectValue placeholder="Category" />
                 </SelectTrigger>
                 <SelectContent>
@@ -235,86 +237,165 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
           </div>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-4 sm:px-6">
         {filteredPrompts.length > 0 ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Prompt</TableHead>
-                <TableHead className="text-center">Type</TableHead>
-                <TableHead className="text-center">Category</TableHead>
-                <TableHead className="text-center">Responses</TableHead>
-                <TableHead className="text-center">Sentiment</TableHead>
-                <TableHead className="text-center">Visibility</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          isMobile ? (
+                         // Mobile-friendly card layout
+             <div className="space-y-4">
               {filteredPrompts.map((prompt, index) => (
-                <TableRow 
-                  key={index} 
-                  className="cursor-pointer hover:bg-gray-50"
-                  onClick={() => onPromptClick(prompt.prompt)}
-                >
-                  <TableCell className="font-medium max-w-md">
-                    <div className="truncate" title={prompt.prompt}>
-                      {prompt.prompt}
+                                 <div
+                   key={index}
+                   className="p-5 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                   onClick={() => onPromptClick(prompt.prompt)}
+                 >
+                                     {/* Prompt text - full width on mobile */}
+                   <div className="mb-4">
+                     <p className="text-sm font-medium text-gray-900 leading-relaxed">
+                       {prompt.prompt}
+                     </p>
+                   </div>
+                  
+                                                        {/* Badges row - Type, Category, Sentiment */}
+                   <div className="flex items-center gap-2 mb-3">
+                     {getTypeBadge(prompt)}
+                     {getCategoryBadge(prompt)}
+                     {getSentimentPill(prompt.sentimentLabel)}
+                   </div>
+                   
+                   {/* Responses row */}
+                   <div className="flex items-center gap-2 mb-3">
+                     <Badge variant="secondary" className="text-xs">{prompt.responses} responses</Badge>
+                   </div>
+                  
+                  {/* Visibility score - full width */}
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500">Visibility:</span>
+                      {Array.isArray(prompt.visibilityScores) && prompt.visibilityScores.length > 0 ? (
+                        (() => {
+                          const avgVisibility = prompt.visibilityScores!.reduce((sum, score) => sum + score, 0) / prompt.visibilityScores!.length;
+                          return (
+                            <div className="flex items-center gap-2">
+                              <svg width="16" height="16" viewBox="0 0 20 20">
+                                <circle
+                                  cx="10"
+                                  cy="10"
+                                  r="8"
+                                  fill="none"
+                                  stroke="#e5e7eb"
+                                  strokeWidth="2"
+                                />
+                                <circle
+                                  cx="10"
+                                  cy="10"
+                                  r="8"
+                                  fill="none"
+                                  stroke={
+                                    avgVisibility >= 95 ? '#22c55e' :
+                                    avgVisibility >= 60 ? '#4ade80' :
+                                    avgVisibility > 0 ? '#fde047' :
+                                    '#e5e7eb'
+                                  }
+                                  strokeWidth="2"
+                                  strokeDasharray={2 * Math.PI * 8}
+                                  strokeDashoffset={2 * Math.PI * 8 * (1 - avgVisibility / 100)}
+                                  strokeLinecap="round"
+                                  style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
+                                />
+                              </svg>
+                              <span className="text-xs font-medium text-gray-900">{Math.round(avgVisibility)}%</span>
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <span className="text-xs text-gray-400">N/A</span>
+                      )}
                     </div>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {getTypeBadge(prompt)}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {getCategoryBadge(prompt)}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant="secondary">{prompt.responses}</Badge>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {getSentimentPill(prompt.sentimentLabel)}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {Array.isArray(prompt.visibilityScores) && prompt.visibilityScores.length > 0 ? (
-                      (() => {
-                        const avgVisibility = prompt.visibilityScores!.reduce((sum, score) => sum + score, 0) / prompt.visibilityScores!.length;
-                        return (
-                          <div className="flex items-center gap-1 justify-center">
-                            <svg width="20" height="20" viewBox="0 0 20 20" className="-ml-1">
-                              <circle
-                                cx="10"
-                                cy="10"
-                                r="8"
-                                fill="none"
-                                stroke="#e5e7eb"
-                                strokeWidth="2"
-                              />
-                              <circle
-                                cx="10"
-                                cy="10"
-                                r="8"
-                                fill="none"
-                                stroke={
-                                  avgVisibility >= 95 ? '#22c55e' :
-                                  avgVisibility >= 60 ? '#4ade80' :
-                                  avgVisibility > 0 ? '#fde047' :
-                                  '#e5e7eb'
-                                }
-                                strokeWidth="2"
-                                strokeDasharray={2 * Math.PI * 8}
-                                strokeDashoffset={2 * Math.PI * 8 * (1 - avgVisibility / 100)}
-                                strokeLinecap="round"
-                                style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
-                              />
-                            </svg>
-                            <span className="text-xs font-regular text-gray-900">{Math.round(avgVisibility)}%</span>
-                          </div>
-                        );
-                      })()
-                    ) : 'N/A'}
-                  </TableCell>
-                </TableRow>
+                  </div>
+                </div>
               ))}
-            </TableBody>
-          </Table>
+            </div>
+          ) : (
+            // Desktop table layout
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Prompt</TableHead>
+                  <TableHead className="text-center">Type</TableHead>
+                  <TableHead className="text-center">Category</TableHead>
+                  <TableHead className="text-center">Responses</TableHead>
+                  <TableHead className="text-center">Sentiment</TableHead>
+                  <TableHead className="text-center">Visibility</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredPrompts.map((prompt, index) => (
+                  <TableRow 
+                    key={index} 
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => onPromptClick(prompt.prompt)}
+                  >
+                    <TableCell className="font-medium max-w-md">
+                      <div className="truncate" title={prompt.prompt}>
+                        {prompt.prompt}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {getTypeBadge(prompt)}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {getCategoryBadge(prompt)}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant="secondary">{prompt.responses}</Badge>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {getSentimentPill(prompt.sentimentLabel)}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {Array.isArray(prompt.visibilityScores) && prompt.visibilityScores.length > 0 ? (
+                        (() => {
+                          const avgVisibility = prompt.visibilityScores!.reduce((sum, score) => sum + score, 0) / prompt.visibilityScores!.length;
+                          return (
+                            <div className="flex items-center gap-1 justify-center">
+                              <svg width="20" height="20" viewBox="0 0 20 20" className="-ml-1">
+                                <circle
+                                  cx="10"
+                                  cy="10"
+                                  r="8"
+                                  fill="none"
+                                  stroke="#e5e7eb"
+                                  strokeWidth="2"
+                                />
+                                <circle
+                                  cx="10"
+                                  cy="10"
+                                  r="8"
+                                  fill="none"
+                                  stroke={
+                                    avgVisibility >= 95 ? '#22c55e' :
+                                    avgVisibility >= 60 ? '#4ade80' :
+                                    avgVisibility > 0 ? '#fde047' :
+                                    '#e5e7eb'
+                                  }
+                                  strokeWidth="2"
+                                  strokeDasharray={2 * Math.PI * 8}
+                                  strokeDashoffset={2 * Math.PI * 8 * (1 - avgVisibility / 100)}
+                                  strokeLinecap="round"
+                                  style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
+                                />
+                              </svg>
+                              <span className="text-xs font-regular text-gray-900">{Math.round(avgVisibility)}%</span>
+                            </div>
+                          );
+                        })()
+                      ) : 'N/A'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )
         ) : (
           <div className="text-center py-8 text-gray-500">
             <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-300" />

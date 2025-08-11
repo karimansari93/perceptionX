@@ -1,4 +1,4 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -77,6 +77,9 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: Sourc
             <span>{source.domain}</span>
             <Badge variant="secondary">{source.count} citations</Badge>
           </DialogTitle>
+          <DialogDescription className="text-gray-600">
+            Detailed analysis of this data source and its impact on your perception
+          </DialogDescription>
         </DialogHeader>
 
         <ScrollArea className="h-[calc(90vh-8rem)]">

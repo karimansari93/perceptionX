@@ -68,7 +68,14 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
             return;
           }
 
-          setOnboardingRecord(data[0]);
+          // Check if the onboarding record has the required fields
+          const onboardingRecord = data[0];
+          if (!onboardingRecord.company_name || !onboardingRecord.industry) {
+            setError('Onboarding data is incomplete. Please complete onboarding first.');
+            return;
+          }
+
+          setOnboardingRecord(onboardingRecord);
         } catch (error) {
           logger.error('Error checking onboarding:', error);
           setError('Failed to check onboarding status');
@@ -137,6 +144,13 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
     if (!user || !onboardingRecord) {
       console.error('Missing user or onboardingRecord:', { user, onboardingRecord });
       toast.error('Missing user or onboarding data. Please try again.');
+      return;
+    }
+    
+    // Check if onboarding record has required fields
+    if (!onboardingRecord.company_name || !onboardingRecord.industry) {
+      console.error('Onboarding record missing required fields:', onboardingRecord);
+      toast.error('Onboarding data is incomplete. Please complete onboarding first.');
       return;
     }
     
@@ -364,7 +378,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         .invoke('analyze-response', {
           body: { 
             response: responseData.response,
-            companyName: onboardingRecord?.companyName,
+            companyName: onboardingRecord?.company_name || onboardingData?.companyName,
             promptType: confirmedPrompt.prompt_type,
             perplexityCitations: perplexityCitations,
             confirmed_prompt_id: confirmedPrompt.id,
@@ -487,7 +501,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
           .invoke('analyze-response', {
             body: { 
               response: responseData.response,
-              companyName: onboardingRecord?.companyName || onboardingData.companyName,
+              companyName: onboardingRecord?.company_name || onboardingData.companyName,
               promptType: confirmedPrompt.prompt_type,
               perplexityCitations: perplexityCitations,
               citations: googleAICitations, // Pass Google AI citations separately

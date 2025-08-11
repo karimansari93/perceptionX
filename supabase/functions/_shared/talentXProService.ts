@@ -11,27 +11,16 @@ export class TalentXProService {
       // Generate the 30 prompts
       const prompts = generateTalentXPrompts(companyName, industry);
       
-      // Insert prompts into talentx_pro_prompts table
+      // Insert the prompts
       const { error: insertError } = await supabase
         .from('talentx_pro_prompts')
-        .insert(
-          prompts.map(prompt => ({
-            user_id: userId,
-            company_name: companyName,
-            industry: industry,
-            prompt_text: prompt.prompt,
-            prompt_type: prompt.type,
-            attribute_id: prompt.attributeId,
-            is_generated: false
-          }))
-        );
+        .insert(prompts);
 
       if (insertError) {
         console.error('Error inserting TalentX Pro prompts:', insertError);
         throw insertError;
       }
 
-      console.log(`Generated ${prompts.length} TalentX Pro prompts for user ${userId}`);
       return prompts;
 
     } catch (error) {

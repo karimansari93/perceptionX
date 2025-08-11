@@ -3,7 +3,7 @@ import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dash
 import { Badge } from "@/components/ui/badge";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { SourceDetailsModal } from "./SourceDetailsModal";
 import { ResponseDetailsModal } from "./ResponseDetailsModal";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import LLMLogo from "@/components/LLMLogo";
 import { X, ExternalLink } from 'lucide-react';
 import { useNavigate } from "react-router-dom";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface KeyTakeawaysProps {
   metrics: DashboardMetrics;
@@ -72,6 +73,7 @@ export const KeyTakeaways = ({
   isPro = false
 }: KeyTakeawaysProps) => {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   // Modal states for clickable takeaways
   const [selectedSource, setSelectedSource] = useState<CitationCount | null>(null);
   const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
@@ -436,8 +438,9 @@ export const KeyTakeaways = ({
       .map(([model, nonMentions]) => ({
         model,
         displayName: getLLMDisplayName(model),
-        nonMentions,
-        logoUrl: getLLMLogo(model)
+        mentions: responses.filter(r => r.ai_model === model).length, // Total responses for this model
+        logoUrl: getLLMLogo(model),
+        nonMentions // Keep this for sorting
       }))
       .sort((a, b) => b.nonMentions - a.nonMentions);
 
@@ -558,195 +561,195 @@ export const KeyTakeaways = ({
   return (
     <>
       <Card className="shadow-sm border border-gray-200 h-full">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-lg font-semibold">Key Takeaways</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-3">
-          {insights.map((insight, index) => {
-            const isEmpty = insight.text.startsWith('No ');
-            const hasSources = 'sources' in insight && insight.sources && insight.sources.length > 0;
-            const hasCompetitor = 'competitor' in insight && insight.competitor && insight.competitor.length > 0;
-            const hasThemes = 'themes' in insight && insight.themes && insight.themes.length > 0;
-            const hasLLM = 'llm' in insight && insight.llm;
-            const hasTalentXAttribute = 'attribute' in insight && insight.attribute;
-            
-            return (
-              <div
-                key={index}
-                className={`flex flex-col gap-3 p-4 rounded-lg bg-gray-50/80 hover:bg-gray-100/80 transition-colors duration-200 ${isEmpty ? 'py-3' : ''} ${
-                  hasSources || hasCompetitor || hasLLM ? 'cursor-pointer' : ''
-                }`}
-                onClick={() => {
-                  if (hasSources && insight.sources.length > 0) {
-                    handleSourceClick(insight.sources[0]);
-                  } else if (hasCompetitor) {
-                    handleCompetitorClick(insight.competitor);
-                  } else if (hasLLM) {
-                    handleLLMClick(insight.llm);
-                  }
-                }}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    {hasSources ? (
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                            {insight.text.split(getSourceDisplayName(insight.sources[0].domain))[0]}
-                          </span>
-                          <Badge 
-                            variant="outline" 
-                            className="flex items-center gap-1.5 bg-white/80 border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-                          >
-                            <img 
-                              src={getFavicon(insight.sources[0].domain)} 
-                              alt="" 
-                              className="w-3 h-3 flex-shrink-0" 
-                            />
-                            <span className="text-xs font-medium">
-                              {insight.sources[0].domain}
+        <CardHeader className="pb-2 px-4 sm:px-6">
+          <CardTitle className="text-lg font-semibold">Key Takeaways</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 sm:px-6">
+          <div className="grid gap-3 sm:gap-4">
+            {insights.map((insight, index) => {
+              const isEmpty = insight.text.startsWith('No ');
+              const hasSources = 'sources' in insight && insight.sources && insight.sources.length > 0;
+              const hasCompetitor = 'competitor' in insight && insight.competitor && insight.competitor.length > 0;
+              const hasThemes = 'themes' in insight && insight.themes && insight.themes.length > 0;
+              const hasLLM = 'llm' in insight && insight.llm;
+              const hasTalentXAttribute = 'attribute' in insight && insight.attribute;
+              
+              return (
+                <div
+                  key={index}
+                  className={`flex flex-col gap-3 p-3 sm:p-4 rounded-lg bg-gray-50/80 hover:bg-gray-100/80 transition-colors duration-200 ${isEmpty ? 'py-2 sm:py-3' : ''} ${
+                    hasSources || hasCompetitor || hasLLM ? 'cursor-pointer' : ''
+                  }`}
+                  onClick={() => {
+                    if (hasSources && insight.sources.length > 0) {
+                      handleSourceClick(insight.sources[0]);
+                    } else if (hasCompetitor) {
+                      handleCompetitorClick(insight.competitor);
+                    } else if (hasLLM) {
+                      handleLLMClick(insight.llm);
+                    }
+                  }}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      {hasSources ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                              {insight.text.split(getSourceDisplayName(insight.sources[0].domain))[0]}
                             </span>
-                          </Badge>
-                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                            {insight.text.split(getSourceDisplayName(insight.sources[0].domain))[1]}
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-600 leading-relaxed ml-0 pl-4">{insight.action}</p>
-                      </div>
-                    ) : hasCompetitor ? (
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                            {insight.text.split(insight.competitor)[0]}
-                          </span>
-                          <Badge 
-                            variant="outline" 
-                            className="flex items-center gap-1.5 bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer"
-                            onClick={() => handleCompetitorClick(insight.competitor)}
-                          >
-                            <img 
-                              src={getCompetitorFavicon(insight.competitor)} 
-                              alt={`${insight.competitor} favicon`}
-                              className="w-3 h-3 flex-shrink-0 rounded"
-                              onError={(e) => {
-                                // Fallback to initials if favicon fails to load
-                                e.currentTarget.style.display = 'none';
-                                const fallback = e.currentTarget.nextElementSibling as HTMLElement;
-                                if (fallback) fallback.style.display = 'flex';
-                              }}
-                            />
-                            <span 
-                              className="w-3 h-3 flex-shrink-0 bg-blue-200 rounded flex items-center justify-center text-[8px] font-bold text-blue-600"
-                              style={{ display: 'none' }}
+                            <Badge 
+                              variant="outline" 
+                              className="flex items-center gap-1.5 bg-white/80 border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
                             >
-                              {insight.competitor.charAt(0).toUpperCase()}
-                            </span>
-                            <span className="text-xs font-medium">
-                              {insight.competitor}
-                            </span>
-                          </Badge>
-                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                            {insight.text.split(insight.competitor)[1]}
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-600 leading-relaxed ml-0 pl-4">{insight.action}</p>
-                      </div>
-                    ) : hasThemes ? (
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                            {insight.text}
-                          </span>
-                          {insight.themes.map((t, i) => (
-                            <Badge
-                              key={i}
-                              className={`text-xs font-medium px-2 py-1 rounded-full border-0 ${
-                                t.sentiment === 'positive'
-                                  ? 'bg-green-100 text-green-800'
-                                  : t.sentiment === 'neutral'
-                                  ? 'bg-gray-100 text-gray-700'
-                                  : 'bg-red-100 text-red-800'
-                              }`}
-                            >
-                              {t.theme}
+                              <img 
+                                src={getFavicon(insight.sources[0].domain)} 
+                                alt="" 
+                                className="w-3 h-3 flex-shrink-0" 
+                              />
+                              <span className="text-xs font-medium">
+                                {insight.sources[0].domain}
+                              </span>
                             </Badge>
-                          ))}
-                        </div>
-                        <p className="text-xs text-gray-600 leading-relaxed ml-0 pl-4">{insight.action}</p>
-                      </div>
-                    ) : hasLLM ? (
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                            {insight.text.split(getLLMDisplayName(insight.llm.model))[0]}
-                          </span>
-                          <Badge 
-                            variant="outline" 
-                            className="flex items-center gap-1.5 bg-white/80 border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-                          >
-                            {insight.llm.logoUrl ? (
-                              <img src={insight.llm.logoUrl} alt="" className="w-3 h-3 flex-shrink-0" />
-                            ) : (
-                              <div className="w-3 h-3 flex-shrink-0 bg-gray-200 rounded" />
-                            )}
-                            <span className="text-xs font-medium">
-                              {getLLMDisplayName(insight.llm.model)}
+                            <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                              {insight.text.split(getSourceDisplayName(insight.sources[0].domain))[1]}
                             </span>
-                          </Badge>
-                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                            {insight.text.split(getLLMDisplayName(insight.llm.model))[1]}
-                          </span>
+                          </div>
+                          <p className="text-xs text-gray-600 leading-relaxed pl-0 sm:pl-4">{insight.action}</p>
                         </div>
-                        <p className="text-xs text-gray-600 leading-relaxed ml-0 pl-4">{insight.action}</p>
-                      </div>
-                    ) : hasTalentXAttribute ? (
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                            {insight.text.split(insight.attribute.name)[0]}
-                          </span>
-                          <Badge 
-                            variant="outline" 
-                            className="flex items-center gap-1.5 bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors"
-                          >
-                            <span className="text-xs font-medium">
-                              {insight.attribute.name}
+                      ) : hasCompetitor ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                              {insight.text.split(insight.competitor)[0]}
                             </span>
-                          </Badge>
-                          <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                            {insight.text.split(insight.attribute.name)[1]}
-                          </span>
+                            <Badge 
+                              variant="outline" 
+                              className="flex items-center gap-1.5 bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer"
+                              onClick={() => handleCompetitorClick(insight.competitor)}
+                            >
+                              <img 
+                                src={getCompetitorFavicon(insight.competitor)} 
+                                alt={`${insight.competitor} favicon`}
+                                className="w-3 h-3 flex-shrink-0 rounded"
+                                onError={(e) => {
+                                  // Fallback to initials if favicon fails to load
+                                  e.currentTarget.style.display = 'none';
+                                  const fallback = e.currentTarget.nextElementSibling as HTMLElement;
+                                  if (fallback) fallback.style.display = 'flex';
+                                }}
+                              />
+                              <span 
+                                className="w-3 h-3 flex-shrink-0 bg-blue-200 rounded flex items-center justify-center text-[8px] font-bold text-blue-600"
+                                style={{ display: 'none' }}
+                              >
+                                {insight.competitor.charAt(0).toUpperCase()}
+                              </span>
+                              <span className="text-xs font-medium">
+                                {insight.competitor}
+                              </span>
+                            </Badge>
+                            <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                              {insight.text.split(insight.competitor)[1]}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-600 leading-relaxed pl-0 sm:pl-4">{insight.action}</p>
                         </div>
-                        <p className="text-xs text-gray-600 leading-relaxed ml-0 pl-4">{insight.action}</p>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-2">
-                        <p className={isEmpty ? "text-base font-semibold text-gray-500 m-0 leading-tight" : "text-sm font-medium text-gray-900 leading-relaxed"}>
-                          {insight.text}
-                        </p>
-                        <p className={isEmpty ? "text-xs text-gray-400" : "text-xs text-gray-600 leading-relaxed"}>{insight.action}</p>
-                      </div>
-                    )}
+                      ) : hasThemes ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                              {insight.text}
+                            </span>
+                            {insight.themes.map((t, i) => (
+                              <Badge
+                                key={i}
+                                className={`text-xs font-medium px-2 py-1 rounded-full border-0 ${
+                                  t.sentiment === 'positive'
+                                    ? 'bg-green-100 text-green-800'
+                                    : t.sentiment === 'neutral'
+                                    ? 'bg-gray-100 text-gray-700'
+                                    : 'bg-red-100 text-red-800'
+                                }`}
+                              >
+                                {t.theme}
+                              </Badge>
+                            ))}
+                          </div>
+                          <p className="text-xs text-gray-600 leading-relaxed pl-0 sm:pl-4">{insight.action}</p>
+                        </div>
+                      ) : hasLLM ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                              {insight.text.split(getLLMDisplayName(insight.llm.model))[0]}
+                            </span>
+                            <Badge 
+                              variant="outline" 
+                              className="flex items-center gap-1.5 bg-white/80 border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+                            >
+                              {insight.llm.logoUrl ? (
+                                <img src={insight.llm.logoUrl} alt="" className="w-3 h-3 flex-shrink-0" />
+                              ) : (
+                                <div className="w-3 h-3 flex-shrink-0 bg-gray-200 rounded" />
+                              )}
+                              <span className="text-xs font-medium">
+                                {getLLMDisplayName(insight.llm.model)}
+                              </span>
+                            </Badge>
+                            <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                              {insight.text.split(getLLMDisplayName(insight.llm.model))[1]}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-600 leading-relaxed pl-0 sm:pl-4">{insight.action}</p>
+                        </div>
+                      ) : hasTalentXAttribute ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                              {insight.text.split(insight.attribute.name)[0]}
+                            </span>
+                            <Badge 
+                              variant="outline" 
+                              className="flex items-center gap-1.5 bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors"
+                            >
+                              <span className="text-xs font-medium">
+                                {insight.attribute.name}
+                              </span>
+                            </Badge>
+                            <span className="text-sm font-medium text-gray-900 leading-relaxed">
+                              {insight.text.split(insight.attribute.name)[1]}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-600 leading-relaxed pl-0 sm:pl-4">{insight.action}</p>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          <p className={isEmpty ? "text-base font-semibold text-gray-500 m-0 leading-tight" : "text-sm font-medium text-gray-900 leading-relaxed"}>
+                            {insight.text}
+                          </p>
+                          <p className={isEmpty ? "text-xs text-gray-400" : "text-xs text-gray-600 leading-relaxed"}>{insight.action}</p>
+                        </div>
+                      )}
+                    </div>
+                    <Badge 
+                      variant="secondary"
+                      className={`shrink-0 ${
+                        insight.type === 'positive' ? 'bg-green-100 text-green-800 border-green-200' :
+                        insight.type === 'negative' ? 'bg-red-100 text-red-800 border-red-200' :
+                        insight.type === 'warning' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
+                        'bg-blue-100 text-blue-800 border-blue-200'
+                      }`}
+                    >
+                      {insight.type.charAt(0).toUpperCase() + insight.type.slice(1)}
+                    </Badge>
                   </div>
-                  <Badge 
-                    variant="secondary"
-                    className={`shrink-0 ${
-                      insight.type === 'positive' ? 'bg-green-100 text-green-800 border-green-200' :
-                      insight.type === 'negative' ? 'bg-red-100 text-red-800 border-red-200' :
-                      insight.type === 'warning' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
-                      'bg-blue-100 text-blue-800 border-blue-200'
-                    }`}
-                  >
-                    {insight.type.charAt(0).toUpperCase() + insight.type.slice(1)}
-                  </Badge>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
     {/* Modals */}
     {selectedSource && (
@@ -774,6 +777,9 @@ export const KeyTakeaways = ({
             <span>{selectedCompetitor}</span>
             <Badge variant="secondary">{getFullResponsesForCompetitor(selectedCompetitor || '').length} mentions</Badge>
           </DialogTitle>
+          <DialogDescription className="text-gray-600">
+            Detailed analysis of competitor mentions and sources
+          </DialogDescription>
         </DialogHeader>
         
         <div className="space-y-4">
@@ -888,7 +894,9 @@ export const KeyTakeaways = ({
           </button>
         </div>
         <div className="px-6 py-3 border-b bg-gray-50">
-          {/* Search input removed as requested */}
+          <DialogDescription className="text-sm text-gray-600">
+            View all mentions of this competitor across your analysis
+          </DialogDescription>
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
           {competitorSnippets.length > 0 ? (
@@ -928,7 +936,7 @@ export const KeyTakeaways = ({
     <Dialog open={isCompetitorSourceModalOpen} onOpenChange={handleCloseCompetitorSourceModal}>
       <DialogContent className="max-w-xl w-full sm:max-w-2xl sm:w-[90vw] p-2 sm:p-6">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <img 
               src={getFavicon(selectedCompetitorSource?.domain || '')} 
               alt={`${selectedCompetitorSource?.domain} favicon`}
@@ -941,12 +949,12 @@ export const KeyTakeaways = ({
             <Badge variant="secondary">
               {selectedCompetitorSource?.count} {selectedCompetitorSource?.count === 1 ? 'mention' : 'mentions'}
             </Badge>
-          </DialogTitle>
+          </div>
+          <DialogDescription className="text-gray-600">
+            This source contributes to {selectedCompetitor}'s presence in your analysis
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="text-sm text-gray-600">
-            <p>This source contributes to {selectedCompetitor}'s presence in your analysis.</p>
-          </div>
           
           {/* Show responses that mention both the competitor and this source */}
           {selectedCompetitorSource && selectedCompetitor && (() => {
@@ -1013,6 +1021,9 @@ export const KeyTakeaways = ({
               {selectedLLM?.mentions} mentions
             </Badge>
           </DialogTitle>
+          <DialogDescription className="text-gray-600">
+            Analysis of how this AI model perceives your company
+          </DialogDescription>
         </DialogHeader>
         
         {selectedLLM && (() => {
