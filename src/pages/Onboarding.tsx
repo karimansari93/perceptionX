@@ -50,6 +50,8 @@ export const Onboarding = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [onboardingStep, setOnboardingStep] = useState(0);
+  // Total number of steps in the onboarding flow (including the final step on the loading/confirmation page)
+  const TOTAL_STEPS = 4;
   const [onboardingData, setOnboardingData] = useState<OnboardingData>({
     display_name: "",
     company_name: "",
@@ -212,6 +214,7 @@ export const Onboarding = () => {
             if (error) throw error;
 
             setOnboardingId(data.id);
+            console.log('Created new onboarding record:', data.id);
           }
         } catch (error) {
           console.error('Error saving onboarding data:', error);
@@ -298,12 +301,12 @@ export const Onboarding = () => {
             <div className="flex items-center gap-2">
               <span className="text-xs font-medium text-[hsl(221,56%,22%)] opacity-70">Step</span>
               <span className="text-sm font-bold text-[hsl(221,56%,22%)]">{onboardingStep + 1}</span>
-              <span className="text-xs text-[hsl(221,56%,22%)] opacity-70">of {onboardingSteps.length}</span>
+              <span className="text-xs text-[hsl(221,56%,22%)] opacity-70">of {TOTAL_STEPS}</span>
             </div>
             <div className="w-24 h-1.5 bg-gray-200 rounded-full overflow-hidden">
               <div 
                 className="h-full bg-gradient-to-r from-pink to-pink-500 rounded-full transition-all duration-300 ease-out"
-                style={{ width: `${((onboardingStep + 1) / onboardingSteps.length) * 100}%` }}
+                style={{ width: `${((onboardingStep + 1) / TOTAL_STEPS) * 100}%` }}
               />
             </div>
           </div>
@@ -315,12 +318,12 @@ export const Onboarding = () => {
             <div className="flex items-center gap-2 flex-shrink-0">
               <span className="text-xs font-medium text-[hsl(221,56%,22%)] opacity-70">Step</span>
               <span className="text-sm font-bold text-[hsl(221,56%,22%)]">{onboardingStep + 1}</span>
-              <span className="text-xs text-[hsl(221,56%,22%)] opacity-70">of {onboardingSteps.length}</span>
+              <span className="text-xs text-[hsl(221,56%,22%)] opacity-70">of {TOTAL_STEPS}</span>
             </div>
             <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
               <div 
                 className="h-full bg-gradient-to-r from-pink to-pink-500 rounded-full transition-all duration-300 ease-out"
-                style={{ width: `${((onboardingStep + 1) / onboardingSteps.length) * 100}%` }}
+                style={{ width: `${((onboardingStep + 1) / TOTAL_STEPS) * 100}%` }}
               />
             </div>
           </div>

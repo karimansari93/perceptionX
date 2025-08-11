@@ -31,19 +31,24 @@ export const useSubscription = () => {
       if (error) {
         // If profile doesn't exist, create one with default values
         if (error.code === 'PGRST116') { // No rows returned
-          // Profile not found, create new profile for user
+          console.log('Profile not found, creating new profile for user:', user.id);
+          
+          // Use upsert to prevent duplicates
           const { data: newProfile, error: createError } = await supabase
             .from('profiles')
-            .insert([
-              {
-                id: user.id,
-                email: user.email,
-                subscription_type: 'free',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-              }
-            ])
-            .select()
+            .upsert({
+              id: user.id,
+              email: user.email,
+              subscription_type: 'free',
+              prompts_used: 0,
+              subscription_start_date: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            }, {
+              onConflict: 'id', // Use upsert on primary key to prevent duplicates
+              ignoreDuplicates: false
+            })
+            .select('subscription_type, prompts_used, subscription_start_date')
             .single();
 
           if (createError) {

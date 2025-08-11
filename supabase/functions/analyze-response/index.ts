@@ -205,6 +205,7 @@ interface AnalysisResult {
   total_words: number;
   visibility_score: number;
   competitive_score: number;
+  detected_competitors: string;
   talentx_analysis: any[];
   talentx_scores: {
     overall_score: number;
@@ -220,14 +221,19 @@ serve(async (req) => {
   }
 
   try {
-    // Request body received
-    const { companyName, industry, companySize, role, goals, responseText, modelName } = body;
-    
-    if (!companyName || !industry || !responseText || !modelName) {
-      return new Response('Missing required fields', { status: 400, headers: corsHeaders });
-    }
+    // Parse and log the request body
+    const body = await req.json();
+    console.log("Request body received:", body);
+    console.log("Company name received:", body.companyName);
+    console.log("Company name type:", typeof body.companyName);
+    console.log("Company name length:", body.companyName ? body.companyName.length : 'undefined');
     
     const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, isTalentXPrompt, talentXAttributeId } = body;
+    
+    // Additional logging for debugging
+    console.log("Destructured companyName:", companyName);
+    console.log("Destructured companyName type:", typeof companyName);
+    console.log("Destructured companyName length:", companyName ? companyName.length : 'undefined');
     
     // Handle citations from different LLMs
     let llmCitations = perplexityCitations || [];
@@ -284,7 +290,7 @@ serve(async (req) => {
       total_words: result.total_words,
       visibility_score: result.visibility_score,
       competitive_score: result.competitive_score,
-      
+      detected_competitors: result.detected_competitors
       // Removed talentx_analysis and talentx_scores as they don't exist in the table
     };
 
@@ -332,7 +338,9 @@ serve(async (req) => {
                 ai_model: ai_model,
                 prompt_type: promptType,
                 citations: llmCitations || result.citations,
-        
+                detected_competitors: result.detected_competitors
+              }, {
+                onConflict: 'user_id,attribute_id,prompt_type,ai_model'
               });
 
             if (perceptionError) {
@@ -359,20 +367,55 @@ serve(async (req) => {
 
     // For non-TalentX prompts, continue with regular processing
 
-    // Only insert into prompt_responses for non-TalentX prompts
+    // Only insert into prompt_responses for non-TalentX prompts (prevent duplicates)
     try {
-      const { data: promptResponse, error: insertError } = await supabase
+      // Check if a response already exists for this prompt and model (avoid 406 on zero rows)
+      const { data: existingResponse, error: checkError } = await supabase
         .from('prompt_responses')
-        .insert(insertData)
-        .select()
-        .single();
+        .select('id')
+        .eq('confirmed_prompt_id', confirmed_prompt_id)
+        .eq('ai_model', ai_model)
+        .maybeSingle();
 
-      if (insertError) {
-        console.error('Error storing analysis:', insertError);
+      if (checkError) {
+        console.error('Error checking existing response:', checkError);
         return new Response(
-          JSON.stringify({ error: 'Failed to store analysis', details: insertError }),
+          JSON.stringify({ error: 'Failed to check existing response', details: checkError }),
           { status: 500, headers: corsHeaders }
         );
+      }
+
+      let promptResponse;
+      if (existingResponse) {
+        const { data: updated, error: updateError } = await supabase
+          .from('prompt_responses')
+          .update(insertData)
+          .eq('id', existingResponse.id)
+          .select()
+          .single();
+        if (updateError) {
+          console.error('Error updating existing response:', updateError);
+          return new Response(
+            JSON.stringify({ error: 'Failed to update existing response', details: updateError }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        promptResponse = updated;
+      } else {
+        const { data: inserted, error: insertError } = await supabase
+          .from('prompt_responses')
+          .insert(insertData)
+          .select()
+          .single();
+
+        if (insertError) {
+          console.error('Error storing analysis:', insertError);
+          return new Response(
+            JSON.stringify({ error: 'Failed to store analysis', details: insertError }),
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        promptResponse = inserted;
       }
 
       return new Response(
@@ -417,9 +460,11 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
   
   // Get company mention data
   const companyMentionData = detectCompanyMention(text, companyName);
-  
-  // Get competitor mentions using the detect-competitors API
+
+  // Competitor detection: use LLM edge function output only
+  let detectedCompetitors = '';
   let competitorMentions: CompetitorMention[] = [];
+
   try {
     const competitorResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/detect-competitors`, {
       method: 'POST',
@@ -427,29 +472,50 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`
       },
-      body: JSON.stringify({
-        response: text,
-        companyName: companyName
-      })
+      body: JSON.stringify({ response: text, companyName })
     });
 
-    const competitorData = await competitorResponse.json();
-    const detectedCompetitors = competitorData.detectedCompetitors || '';
-    
-    // Convert comma-separated string to CompetitorMention array
-    if (detectedCompetitors) {
-      competitorMentions = detectedCompetitors
+    if (competitorResponse.ok) {
+      const competitorData = await competitorResponse.json();
+      const raw = (competitorData.detectedCompetitors || '') as string;
+      // Parse names and filter out obvious non-company tokens
+      const stopwords = new Set([
+        'other', 'others', 'equal', 'training', 'development', 'skills', 'school', 'its', 'the', 'and', 'or',
+        'companies', 'company', 'co', 'inc', 'llc', 'ltd'
+      ]);
+      const names = raw
         .split(',')
-        .map(name => name.trim())
-        .filter(name => name && name.toLowerCase() !== companyName.toLowerCase())
-        .map(name => ({
-          name: name,
-          ranking: null,
-          context: extractContext(text, name)
-        }));
+        .map(n => n.trim())
+        .filter(n => n.length >= 2)
+        // Remove phrases like "other companies in the"
+        .filter(n => !/\bother\b/i.test(n) || /\bother\b/i.test(companyName) === false)
+        // Keep tokens that look like proper names (has uppercase letter)
+        .filter(n => /[A-Z]/.test(n))
+        // Remove generic words
+        .filter(n => !stopwords.has(n.toLowerCase()));
+
+      const uniqueLower = Array.from(new Set(names.map(n => n.toLowerCase())));
+      const llmMentions: CompetitorMention[] = uniqueLower.map(lower => {
+        const original = names.find(n => n.toLowerCase() === lower) || lower;
+        return {
+          name: original,
+          ranking: detectEnhancedRanking(text, original),
+          context: extractContext(text, original)
+        } as CompetitorMention;
+      });
+
+      competitorMentions = llmMentions;
+      detectedCompetitors = competitorMentions.map(m => m.name).join(', ');
+    } else {
+      // Edge function failed; do not fallback to local
+      competitorMentions = [];
+      detectedCompetitors = '';
     }
-  } catch (error) {
-    console.error('Error detecting competitors:', error);
+  } catch (err) {
+    // Network/edge error; do not fallback to local
+    console.error('detect-competitors failed:', err);
+    competitorMentions = [];
+    detectedCompetitors = '';
   }
   
   // Calculate visibility score based on company mention position and frequency
@@ -484,7 +550,7 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
     total_words: totalWords,
     visibility_score: visibilityScore,
     competitive_score: competitiveScore,
-
+    detected_competitors: detectedCompetitors,
     talentx_analysis: talentXAnalyses,
     talentx_scores: {
       overall_score: overallTalentXScore,
@@ -508,7 +574,7 @@ function performEnhancedBasicAnalysis(responseText: string, companyName: string,
       total_words: 0,
       visibility_score: 0,
       competitive_score: 0,
-
+      detected_competitors: "",
       talentx_analysis: [],
       talentx_scores: {
         overall_score: 0,
@@ -572,7 +638,13 @@ function performEnhancedBasicAnalysis(responseText: string, companyName: string,
     first_mention_position: companyDetection.first_mention_position,
     visibility_score: visibilityScore,
     competitive_score: competitiveScore,
-    
+    detected_competitors: "",
+    talentx_analysis: [],
+    talentx_scores: {
+      overall_score: 0,
+      top_attributes: [],
+      attribute_scores: {}
+    }
   }
 }
 
@@ -592,7 +664,7 @@ function detectEnhancedCompanyMention(text: string, companyName: string) {
 
   // Split text into words
   const words = lowerText.split(/\s+/);
-  let firstMentionWordIndex = null;
+  let firstMentionWordIndex: number | null = null;
   for (let i = 0; i < words.length; i++) {
     if (words[i].includes(lowerCompany)) {
       firstMentionWordIndex = i;
@@ -644,9 +716,7 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
   const companyPatterns = [
     /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Company|Technologies|Systems|Solutions|Software|Group|International|Global|Games|Entertainment|Studios)\b/g,
     /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:&|and)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g,
-    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:AI|ML|Cloud|Digital|Data|Analytics|Security|Network|Media|Health|Finance|Bank|Insurance|Games|Gaming)\b/g,
-    // More general company name patterns - this is the key one that was missing!
-    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g
+    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:AI|ML|Cloud|Digital|Data|Analytics|Security|Network|Media|Health|Finance|Bank|Insurance|Games|Gaming)\b/g
   ];
 
   // Track found companies to avoid duplicates
@@ -670,20 +740,6 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
         continue;
       }
 
-      // Skip very common words that are likely not company names
-      const commonWords = [
-        'the', 'and', 'or', 'but', 'for', 'with', 'from', 'this', 'that', 'these', 'those', 
-        'they', 'them', 'their', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'it', 'its', 
-        'who', 'what', 'where', 'when', 'why', 'how', 'innovation', 'technology', 'traditional', 
-        'automakers', 'companies', 'industry', 'environment', 'experience', 'focus', 'vertical', 
-        'integration', 'work', 'life', 'balance', 'good', 'compared', 'reviews', 'indeed', 'com',
-        'according', 'some', 'other', 'different', 'supportive', 'cutting', 'edge', 'known',
-        'generally', 'offers', 'particularly', 'due', 'having', 'company', 'review'
-      ];
-      if (commonWords.includes(lowerCompanyName)) {
-        continue;
-      }
-
       foundCompanies.add(lowerCompanyName);
 
       // Get ranking and context
@@ -701,7 +757,7 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
   // Additional check for companies mentioned in lists or comparisons
   const comparisonPatterns = [
     /(?:compared to|versus|vs\.?|like|similar to|such as)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/gi,
-    /(?:better than|worse than|more than|less than)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/gi
+    /(?:better than|worse than|more than|less than)\s+([A-Z][a-z]+(?:\s+[A-z]+)*)/gi
   ];
 
   comparisonPatterns.forEach(pattern => {
@@ -711,25 +767,6 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
       const lowerCompanyName = companyName.toLowerCase();
 
       if (lowerCompanyName === lowerCompany || foundCompanies.has(lowerCompanyName)) {
-        continue;
-      }
-
-      // Skip if it's a common word or too short
-      if (companyName.length < 3 || /^(The|A|An)\s/i.test(companyName)) {
-        continue;
-      }
-
-      // Skip very common words that are likely not company names
-      const commonWords = [
-        'the', 'and', 'or', 'but', 'for', 'with', 'from', 'this', 'that', 'these', 'those', 
-        'they', 'them', 'their', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'it', 'its', 
-        'who', 'what', 'where', 'when', 'why', 'how', 'innovation', 'technology', 'traditional', 
-        'automakers', 'companies', 'industry', 'environment', 'experience', 'focus', 'vertical', 
-        'integration', 'work', 'life', 'balance', 'good', 'compared', 'reviews', 'indeed', 'com',
-        'according', 'some', 'other', 'different', 'supportive', 'cutting', 'edge', 'known',
-        'generally', 'offers', 'particularly', 'due', 'having', 'company', 'review'
-      ];
-      if (commonWords.includes(lowerCompanyName)) {
         continue;
       }
 
@@ -768,15 +805,15 @@ function extractCitationsFromText(text: string): Citation[] {
   
   // Look for Perplexity citation patterns like [1], [2], [3], etc.
   const perplexityCitationPattern = /\[(\d+)\]/g;
-  const perplexityCitations = new Set<number>();
+  const localPerplexityCitations = new Set<number>();
   
   while ((match = perplexityCitationPattern.exec(text)) !== null) {
     const citationNumber = parseInt(match[1]);
-    perplexityCitations.add(citationNumber);
+    localPerplexityCitations.add(citationNumber);
   }
   
   // Add Perplexity citations
-  perplexityCitations.forEach(citationNumber => {
+  localPerplexityCitations.forEach(citationNumber => {
     citations.push({
       domain: 'perplexity.ai',
       title: `Perplexity Citation [${citationNumber}]`,

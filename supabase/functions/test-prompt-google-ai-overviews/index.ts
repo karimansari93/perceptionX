@@ -27,9 +27,13 @@ serve(async (req) => {
     
     if (!serpApiKey) {
       console.error('SERP API key not configured')
+      // Return graceful fallback to avoid breaking onboarding
       return new Response(
-        JSON.stringify({ error: 'SERP API key not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ 
+          response: 'Google AI Overviews is not configured. Please set SERP_API_KEY to enable this feature.',
+          citations: []
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
@@ -48,11 +52,25 @@ serve(async (req) => {
 
       if (!searchResponse.ok) {
         console.error('SERP API error:', searchData)
-        throw new Error(searchData.error || 'Google search API error')
+        // Graceful fallback instead of throwing 500
+        return new Response(
+          JSON.stringify({ 
+            response: `Google search API error: ${searchData.error || 'unexpected error'}`,
+            citations: []
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
       }
     } catch (fetchError) {
       console.error('Fetch error in step 1:', fetchError)
-      throw new Error(`Failed to fetch search results: ${fetchError.message}`)
+      // Graceful fallback instead of throwing 500
+      return new Response(
+        JSON.stringify({ 
+          response: `Failed to fetch search results: ${fetchError.message}`,
+          citations: []
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
     }
 
     // Check if AI overview is available
@@ -82,7 +100,14 @@ serve(async (req) => {
 
     if (!aiOverviewResponse.ok) {
       console.error('AI Overview API error:', aiOverviewData)
-      throw new Error(aiOverviewData.error || 'Google AI Overview API error')
+      // Graceful fallback instead of throwing 500
+      return new Response(
+        JSON.stringify({ 
+          response: `Google AI Overview API error: ${aiOverviewData.error || 'unexpected error'}`,
+          citations: []
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
     }
 
     // Extract the AI overview response and citations
@@ -129,15 +154,13 @@ serve(async (req) => {
     )
   } catch (error) {
     console.error('Error:', error)
+    // Last-resort graceful fallback
     return new Response(
-      JSON.stringify({ error: error.message }),
-      { 
-        status: 500, 
-        headers: { 
-          ...corsHeaders, 
-          'Content-Type': 'application/json' 
-        } 
-      }
+      JSON.stringify({ 
+        response: `Google AI Overviews temporary error: ${error.message}`,
+        citations: []
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
 }) 

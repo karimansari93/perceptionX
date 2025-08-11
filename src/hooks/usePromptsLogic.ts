@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { TALENTX_ATTRIBUTES, getProOnlyAttributes, getFreeAttributes } from '@/config/talentXAttributes';
 import { useSubscription } from '@/hooks/useSubscription';
-import { logger, sanitizeInput } from '@/lib/utils';
+import { logger, sanitizeInput, safeStorePromptResponse, checkExistingPromptResponse } from '@/lib/utils';
 
 interface OnboardingData {
   companyName: string;
@@ -373,7 +373,23 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       // Handle citations from Perplexity responses
       const perplexityCitations = functionName === 'test-prompt-perplexity' ? responseData.citations : null;
       
+      // Check if response already exists for this prompt and model
+      const responseExists = await checkExistingPromptResponse(
+        supabase,
+        confirmedPrompt.id,
+        modelName
+      );
+
+      if (responseExists) {
+        console.log(`Response already exists for ${modelName} with prompt: ${confirmedPrompt.prompt_text}, skipping analysis`);
+        return;
+      }
+
       // Analyze sentiment and extract citations with enhanced visibility support
+      console.log("Debug - onboardingRecord:", onboardingRecord);
+      console.log("Debug - onboardingRecord.company_name:", onboardingRecord?.company_name);
+      console.log("Debug - onboardingRecord.companyName:", onboardingRecord?.companyName);
+      
       const { data: sentimentData, error: sentimentError } = await supabase.functions
         .invoke('analyze-response', {
           body: { 

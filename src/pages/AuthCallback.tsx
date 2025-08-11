@@ -34,10 +34,11 @@ const AuthCallback = () => {
               return;
             }
 
+            // If no basic onboarding data, redirect to onboarding
             if (!onboardingData || onboardingData.length === 0 || 
                 !onboardingData[0].company_name || !onboardingData[0].industry) {
-              // No basic onboarding data, redirect to onboarding
-              navigate('/onboarding');
+              console.log('AuthCallback: No basic onboarding data, redirecting to onboarding');
+              setTimeout(() => navigate('/onboarding'), 0);
               return;
             }
 
@@ -55,12 +56,14 @@ const AuthCallback = () => {
               return;
             }
 
+            // If no confirmed prompts, onboarding is incomplete
             if (!promptsData || promptsData.length === 0) {
-              // No confirmed prompts, redirect to onboarding
-              navigate('/onboarding');
+              console.log('AuthCallback: No confirmed prompts found, redirecting to onboarding');
+              setTimeout(() => navigate('/onboarding'), 0);
             } else {
-              // Onboarding complete, redirect to dashboard
-              navigate('/dashboard');
+              console.log('AuthCallback: Onboarding complete, redirecting to dashboard');
+              // User has completed onboarding, go to dashboard
+              setTimeout(() => navigate('/dashboard'), 0);
             }
           } catch (onboardingCheckError) {
             console.error('Error checking onboarding status:', onboardingCheckError);

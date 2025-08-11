@@ -18,7 +18,6 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
   const [hasOnboarding, setHasOnboarding] = useState<boolean | null>(null);
   const [connectionError, setConnectionError] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
-  const [onboardingId, setOnboardingId] = useState<string | null>(null);
 
   useEffect(() => {
     const checkOnboarding = async () => {
@@ -48,7 +47,7 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
         }
 
         // Check for completed onboarding (both company_name and industry are required)
-        const { data: onboardingData, error } = await supabase
+        const { data, error } = await supabase
           .from('user_onboarding')
           .select('*')
           .eq('user_id', user.id)
@@ -61,17 +60,25 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
           console.error('Error checking onboarding:', error);
           setConnectionError(true);
         } else {
-          if (onboardingData && onboardingData.length > 0) {
-            const basicData = onboardingData[0];
-            // Basic onboarding data found
-            setHasOnboarding(true);
-            setOnboardingId(basicData.id);
-            
+          // Check if the record has both required fields: company_name and industry
+          const hasBasicOnboarding = data && data.length > 0 && 
+            data[0].company_name && 
+            data[0].industry;
+          
+          console.log('OnboardingGuard: Basic onboarding data:', {
+            hasData: !!data,
+            dataLength: data?.length,
+            hasBasicOnboarding,
+            companyName: data?.[0]?.company_name,
+            industry: data?.[0]?.industry
+          });
+          
+          if (hasBasicOnboarding) {
             // Check if there are actual confirmed prompts (not just the flag)
             const { data: promptsData, error: promptsError } = await supabase
               .from('confirmed_prompts')
               .select('id')
-              .eq('onboarding_id', basicData.id)
+              .eq('onboarding_id', data[0].id)
               .limit(1);
 
             if (promptsError) {
@@ -82,10 +89,17 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
 
             // Onboarding is complete only if we have both basic info AND confirmed prompts
             const isComplete = promptsData && promptsData.length > 0;
+            
+            console.log('OnboardingGuard: Confirmed prompts check:', {
+              promptsData,
+              promptsCount: promptsData?.length,
+              isComplete
+            });
+            
             setHasOnboarding(isComplete);
             setConnectionError(false);
           } else {
-            // No basic onboarding data
+            console.log('OnboardingGuard: No basic onboarding data, setting hasOnboarding to false');
             setHasOnboarding(false);
             setConnectionError(false);
           }

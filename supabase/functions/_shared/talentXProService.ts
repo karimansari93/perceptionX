@@ -31,6 +31,7 @@ export class TalentXProService {
         throw insertError;
       }
 
+      console.log(`Generated ${prompts.length} TalentX Pro prompts for user ${userId}`);
       return prompts;
 
     } catch (error) {

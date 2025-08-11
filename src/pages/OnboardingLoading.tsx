@@ -6,6 +6,7 @@ import { CheckCircle, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import LLMLogo from "@/components/LLMLogo";
+import { checkExistingPromptResponse } from "@/lib/utils";
 
 interface LocationState {
   onboardingId: string;
@@ -108,8 +109,7 @@ export const OnboardingLoading = () => {
 
           confirmedPrompts = newPrompts;
         } else {
-          // Using existing prompts for onboarding session
-          confirmedPrompts = existingPrompts;
+          console.log('Using existing prompts for onboarding session:', existingPrompts.length);
         }
 
         // Define models to test
@@ -133,11 +133,11 @@ export const OnboardingLoading = () => {
             .limit(1);
           
           if (tableCheckError && (tableCheckError.code === '42P01' || tableCheckError.code === '406')) {
-            // prompt_responses table does not exist yet, skipping duplicate checks
+            console.log('prompt_responses table does not exist yet, skipping duplicate checks');
             promptResponsesTableExists = false;
           }
         } catch (tableError) {
-          // Error checking prompt_responses table, assuming it does not exist
+          console.log('Error checking prompt_responses table, assuming it does not exist:', tableError);
           promptResponsesTableExists = false;
         }
 
@@ -159,17 +159,18 @@ export const OnboardingLoading = () => {
                   console.error(`Error checking existing response for ${model.name}:`, responseCheckError);
                   // If it's a table not found error or other database error, continue with processing
                   if (responseCheckError.code === '42P01' || responseCheckError.code === '406' || responseCheckError.code === 'PGRST116') {
-                    // Database error for this model (table may not exist yet), continuing with processing
-                    continue;
+                    console.log(`Database error for ${model.name} (table may not exist yet), continuing with processing...`);
                   } else {
-                    // Unknown error for this model, continuing with processing
-                    continue;
+                    console.log(`Unknown error for ${model.name}, continuing with processing...`);
                   }
+                  // Continue with processing regardless of the error
                 }
 
                 // Skip if response already exists
                 if (existingResponse && existingResponse.length > 0) {
-                  // Response for this model already exists, skipping
+                  console.log(`Response for ${model.name} already exists, skipping...`);
+                  completedOperations++;
+                  setProgress(prev => ({ ...prev, completed: completedOperations }));
                   continue;
                 }
               }
@@ -193,12 +194,23 @@ export const OnboardingLoading = () => {
               }
 
               if (responseData && responseData.response) {
+                // Check if response already exists for this prompt and model
+                const responseExists = await checkExistingPromptResponse(
+                  supabase,
+                  confirmedPrompt.id,
+                  model.name
+                );
+
+                if (responseExists) {
+                  console.log(`Response already exists for ${model.name} with prompt: ${confirmedPrompt.prompt_text}, skipping analysis`);
+                  continue;
+                }
+
                 // Process the response through analyze-response
                 const perplexityCitations = model.functionName === 'test-prompt-perplexity' ? responseData.citations : null;
                 
                 try {
-                  // Successfully processed response for this model
-                  const prompt = confirmedPrompt.prompt_text;
+                  console.log(`Processing response for ${model.name} with prompt: ${confirmedPrompt.prompt_text}`);
                   
                   const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-response', {
                     body: {
@@ -214,8 +226,7 @@ export const OnboardingLoading = () => {
                   if (analysisError) {
                     console.error(`Error in analyze-response for ${model.name}:`, analysisError);
                   } else {
-                    // Successfully processed response for this model
-                    // setResponses(prev => [...prev, analysisData]); // This line was removed from the new_code
+                    console.log(`Successfully processed response for ${model.name}:`, analysisData);
                   }
                 } catch (analysisError) {
                   console.error(`Exception in analyze-response for ${model.name}:`, analysisError);
@@ -243,7 +254,8 @@ export const OnboardingLoading = () => {
           .eq('id', onboardingId);
 
         // Verify data was stored by checking the database
-        // Onboarding completed, checking stored data
+        console.log('Onboarding completed, checking stored data...');
+        
         try {
           const { data: storedResponses, error: verifyError } = await supabase
             .from('prompt_responses')
@@ -253,8 +265,7 @@ export const OnboardingLoading = () => {
           if (verifyError) {
             console.error('Error checking stored data:', verifyError);
           } else {
-            // Stored responses found
-            // const storedResponses = responses; // This line was removed from the new_code
+            console.log('Stored responses found:', storedResponses);
           }
         } catch (verifyException) {
           console.error('Exception checking stored data:', verifyException);

@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { useSubscription } from '@/hooks/useSubscription';
+import { safeStorePromptResponse, checkExistingPromptResponse } from '@/lib/utils';
 
 interface RefreshProgress {
   currentPrompt: string;
@@ -147,6 +148,18 @@ export const useRefreshPrompts = () => {
               console.error(`${model.name} error:`, responseError);
               toast.error(`${model.name} test failed: ${responseError.message}`);
             } else if (responseData?.response) {
+              // Check if response already exists for this prompt and model
+              const responseExists = await checkExistingPromptResponse(
+                supabase,
+                confirmedPrompt.id,
+                model.model
+              );
+
+              if (responseExists) {
+                console.log(`Response already exists for ${model.model} with prompt: ${confirmedPrompt.prompt_text}, skipping analysis`);
+                continue;
+              }
+
               // Process response through analyze-response function to get proper analysis
               try {
                 const { data: analysisData, error: analysisError } = await supabase.functions
@@ -165,36 +178,8 @@ export const useRefreshPrompts = () => {
 
                 if (analysisError) {
                   console.error('Error analyzing response:', analysisError);
-                  // Fallback to storing with placeholder values
-                  const { error: insertError } = await supabase
-                    .from('prompt_responses')
-                    .insert({
-                      confirmed_prompt_id: confirmedPrompt.id,
-                      ai_model: model.model,
-                      response_text: responseData.response,
-                      sentiment_score: 0,
-                      sentiment_label: 'neutral',
-                      citations: responseData.citations || [],
-                      company_mentioned: false,
-                      mention_ranking: null,
-                      competitor_mentions: [],
-                      first_mention_position: null,
-                      total_words: responseData.response.split(' ').length,
-                      visibility_score: 0,
-                      competitive_score: 0,
-
-                    });
-
-                  if (insertError) {
-                    console.error('Error storing response:', insertError);
-                  }
-                }
-              } catch (error) {
-                console.error('Error processing response analysis:', error);
-                // Fallback to storing with placeholder values
-                const { error: insertError } = await supabase
-                  .from('prompt_responses')
-                  .insert({
+                  // Fallback to storing with placeholder values using safe storage
+                  const fallbackData = {
                     confirmed_prompt_id: confirmedPrompt.id,
                     ai_model: model.model,
                     response_text: responseData.response,
@@ -208,11 +193,36 @@ export const useRefreshPrompts = () => {
                     total_words: responseData.response.split(' ').length,
                     visibility_score: 0,
                     competitive_score: 0,
-                    detected_competitors: ''
-                  });
+                  };
 
-                if (insertError) {
-                  console.error('Error storing response:', insertError);
+                  const { success, error: storeError } = await safeStorePromptResponse(supabase, fallbackData);
+                  if (!success) {
+                    console.error('Error storing fallback response:', storeError);
+                  }
+                }
+              } catch (error) {
+                console.error('Error processing response analysis:', error);
+                // Fallback to storing with placeholder values using safe storage
+                const fallbackData = {
+                  confirmed_prompt_id: confirmedPrompt.id,
+                  ai_model: model.model,
+                  response_text: responseData.response,
+                  sentiment_score: 0,
+                  sentiment_label: 'neutral',
+                  citations: responseData.citations || [],
+                  company_mentioned: false,
+                  mention_ranking: null,
+                  competitor_mentions: [],
+                  first_mention_position: null,
+                  total_words: responseData.response.split(' ').length,
+                  visibility_score: 0,
+                  competitive_score: 0,
+                  detected_competitors: ''
+                };
+
+                const { success, error: storeError } = await safeStorePromptResponse(supabase, fallbackData);
+                if (!success) {
+                  console.error('Error storing fallback response:', storeError);
                 }
               }
             }
