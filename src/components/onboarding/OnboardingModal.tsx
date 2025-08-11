@@ -456,9 +456,6 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
           <DialogTitle className="text-xl font-semibold text-[hsl(221,56%,22%)]">
             How it works
           </DialogTitle>
-          <DialogDescription className="text-[hsl(221,56%,22%)] opacity-70">
-            Understanding the different types of prompts and their purpose
-          </DialogDescription>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
             <div className="text-center space-y-3">
               <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium mx-auto w-fit">

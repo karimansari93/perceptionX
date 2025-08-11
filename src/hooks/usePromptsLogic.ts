@@ -537,7 +537,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
             total_words: responseData.response.split(' ').length,
             visibility_score: sentimentData?.visibility_score || 0,
             competitive_score: sentimentData?.competitive_score || 0,
-            detected_competitors: sentimentData?.detected_competitors || ''
+
           });
 
         if (storeError) {

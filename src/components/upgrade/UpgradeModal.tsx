@@ -1,4 +1,4 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
@@ -47,9 +47,6 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
             <DialogTitle className="text-2xl font-bold text-[#13274F]">PerceptionX Pro</DialogTitle>
             <Badge variant="secondary" className="bg-[#DB5E89] text-white font-semibold">Limited Time</Badge>
           </div>
-          <DialogDescription className="text-[#183056] opacity-80">
-            Unlock advanced competitor analysis, comprehensive AI coverage, and weekly insights
-          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6 py-4">

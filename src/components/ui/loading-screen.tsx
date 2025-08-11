@@ -9,7 +9,7 @@ export function LoadingScreen({ className }: LoadingScreenProps) {
     <div className={cn("min-h-screen w-screen flex items-center justify-center bg-gradient-to-br from-[#045962] to-[#019dad]", className)}>
       <div className="text-center">
         <img
-          src="/logos/PerceptionX-PrimaryLogo.png"
+          src="/logos/PinkBadge.png"
           alt="PerceptionX Logo"
           className="w-32 h-32 animate-pulse"
         />

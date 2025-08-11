@@ -213,23 +213,13 @@ export const ResponseDetailsModal = ({
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl h-[85vh] sm:h-[90vh] flex flex-col w-full mx-auto">
         <DialogHeader className="pb-3 sm:pb-4 flex-shrink-0">
-          <div className="flex items-start justify-between">
-            <div className="flex-1">
-              <DialogTitle className="text-base sm:text-lg font-semibold mb-2 text-[#13274F] leading-tight text-left">
-                {promptText}
-              </DialogTitle>
-              <DialogDescription className="text-xs sm:text-sm text-[#13274F] text-left">
-                Generated {responses.length > 0 ? new Date(responses[0].tested_at).toLocaleDateString() : 'recently'}
-              </DialogDescription>
-            </div>
-            <button
-              onClick={onClose}
-              className="ml-4 p-2 rounded-md hover:bg-gray-100 transition-colors flex-shrink-0"
-            >
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+          <div className="flex-1">
+            <DialogTitle className="text-base sm:text-lg font-semibold mb-2 text-[#13274F] leading-tight text-left">
+              {promptText}
+            </DialogTitle>
+            <DialogDescription className="text-xs sm:text-sm text-[#13274F] text-left">
+              Generated {responses.length > 0 ? new Date(responses[0].tested_at).toLocaleDateString() : 'recently'}
+            </DialogDescription>
           </div>
         </DialogHeader>
 

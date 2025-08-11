@@ -12,8 +12,10 @@ serve(async (req) => {
 
   try {
     const { prompt } = await req.json()
+    console.log('Received prompt:', prompt)
 
     if (!prompt) {
+      console.error('Missing prompt parameter')
       return new Response(
         JSON.stringify({ error: 'Missing prompt parameter' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -21,6 +23,8 @@ serve(async (req) => {
     }
 
     const serpApiKey = Deno.env.get('SERP_API_KEY')
+    console.log('SERP API key available:', !!serpApiKey)
+    
     if (!serpApiKey) {
       console.error('SERP API key not configured')
       return new Response(
@@ -34,12 +38,21 @@ serve(async (req) => {
     
     console.log('Step 1 - Google search URL:', searchUrl)
 
-    const searchResponse = await fetch(searchUrl)
-    const searchData = await searchResponse.json()
+    let searchData: any;
+    try {
+      const searchResponse = await fetch(searchUrl)
+      console.log('Search response status:', searchResponse.status)
+      
+      searchData = await searchResponse.json()
+      console.log('Search response data keys:', Object.keys(searchData))
 
-    if (!searchResponse.ok) {
-      console.error('SERP API error:', searchData)
-      throw new Error(searchData.error || 'Google search API error')
+      if (!searchResponse.ok) {
+        console.error('SERP API error:', searchData)
+        throw new Error(searchData.error || 'Google search API error')
+      }
+    } catch (fetchError) {
+      console.error('Fetch error in step 1:', fetchError)
+      throw new Error(`Failed to fetch search results: ${fetchError.message}`)
     }
 
     // Check if AI overview is available

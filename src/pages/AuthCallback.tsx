@@ -27,38 +27,41 @@ const AuthCallback = () => {
               .order('created_at', { ascending: false })
               .limit(1);
 
-            if (onboardingError && onboardingError.code !== 'PGRST116') {
+            if (onboardingError) {
               console.error('Error checking onboarding status:', onboardingError);
+              // If we can't check, default to dashboard
+              setTimeout(() => navigate('/dashboard'), 0);
+              return;
+            }
+
+            if (!onboardingData || onboardingData.length === 0 || 
+                !onboardingData[0].company_name || !onboardingData[0].industry) {
+              // No basic onboarding data, redirect to onboarding
               navigate('/onboarding');
               return;
             }
 
-            // If no basic onboarding data, redirect to onboarding
-            if (!onboardingData) {
-              navigate('/onboarding');
-              return;
-            }
-
-            // Check if user has confirmed prompts
-            const { data: confirmedPrompts, error: promptsError } = await supabase
+            // Check if there are actual confirmed prompts
+            const { data: promptsData, error: promptsError } = await supabase
               .from('confirmed_prompts')
-              .select('*')
-              .eq('user_id', session.user.id);
+              .select('id')
+              .eq('onboarding_id', onboardingData[0].id)
+              .limit(1);
 
             if (promptsError) {
               console.error('Error checking confirmed prompts:', promptsError);
-              navigate('/onboarding');
+              // If we can't check, default to dashboard
+              setTimeout(() => navigate('/dashboard'), 0);
               return;
             }
 
-            // If no confirmed prompts, redirect to onboarding
-            if (!confirmedPrompts || confirmedPrompts.length === 0) {
+            if (!promptsData || promptsData.length === 0) {
+              // No confirmed prompts, redirect to onboarding
               navigate('/onboarding');
-              return;
+            } else {
+              // Onboarding complete, redirect to dashboard
+              navigate('/dashboard');
             }
-
-            // Onboarding complete, redirect to dashboard
-            navigate('/dashboard');
           } catch (onboardingCheckError) {
             console.error('Error checking onboarding status:', onboardingCheckError);
             // If we can't check, default to dashboard

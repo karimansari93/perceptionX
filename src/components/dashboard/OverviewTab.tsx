@@ -4,7 +4,7 @@ import { MetricCard } from "./MetricCard";
 import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dashboard";
 import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown } from 'lucide-react';
 
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ReactMarkdown from 'react-markdown';
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
@@ -158,18 +158,20 @@ export const OverviewTab = ({
     // Get competitor counts for current period
     const currentCompetitors: Record<string, number> = {};
     current.forEach(response => {
-      if (response.detected_competitors) {
-        const competitors = response.detected_competitors
-          .split(',')
-          .map(name => normalizeCompetitorName(name))
-          .filter(name => 
-            name && 
-            name.toLowerCase() !== companyName.toLowerCase() &&
-            name.length > 1
-          );
+      if (response.competitor_mentions) {
+        const mentions = Array.isArray(response.competitor_mentions) 
+          ? response.competitor_mentions 
+          : JSON.parse(response.competitor_mentions as string || '[]');
         
-        competitors.forEach(name => {
-          currentCompetitors[name] = (currentCompetitors[name] || 0) + 1;
+        mentions.forEach((mention: any) => {
+          if (mention.name) {
+            const competitorName = normalizeCompetitorName(mention.name);
+            if (competitorName && 
+                competitorName.toLowerCase() !== companyName.toLowerCase() &&
+                competitorName.length > 1) {
+              currentCompetitors[competitorName] = (currentCompetitors[competitorName] || 0) + 1;
+            }
+          }
         });
       }
     });
@@ -180,18 +182,20 @@ export const OverviewTab = ({
     const numPreviousDays = Math.max(1, previousUniqueDays.size);
 
     previous.forEach(response => {
-      if (response.detected_competitors) {
-        const competitors = response.detected_competitors
-          .split(',')
-          .map(name => normalizeCompetitorName(name))
-          .filter(name => 
-            name && 
-            name.toLowerCase() !== companyName.toLowerCase() &&
-            name.length > 1
-          );
+      if (response.competitor_mentions) {
+        const mentions = Array.isArray(response.competitor_mentions) 
+          ? response.competitor_mentions 
+          : JSON.parse(response.competitor_mentions as string || '[]');
         
-        competitors.forEach(name => {
-          previousCompetitors[name] = (previousCompetitors[name] || 0) + 1;
+        mentions.forEach((mention: any) => {
+          if (mention.name) {
+            const competitorName = normalizeCompetitorName(mention.name);
+            if (competitorName && 
+                competitorName.toLowerCase() !== companyName.toLowerCase() &&
+                competitorName.length > 1) {
+              previousCompetitors[competitorName] = (previousCompetitors[competitorName] || 0) + 1;
+            }
+          }
         });
       }
     });
@@ -269,18 +273,20 @@ export const OverviewTab = ({
     const competitorCounts: Record<string, number> = {};
     
     responses.forEach(response => {
-      if (response.detected_competitors) {
-        const competitors = response.detected_competitors
-          .split(',')
-          .map(name => normalizeCompetitorName(name))
-          .filter(name => 
-            name && 
-            name.toLowerCase() !== companyName.toLowerCase() &&
-            name.length > 1
-          );
+      if (response.competitor_mentions) {
+        const mentions = Array.isArray(response.competitor_mentions) 
+          ? response.competitor_mentions 
+          : JSON.parse(response.competitor_mentions as string || '[]');
         
-        competitors.forEach(name => {
-          competitorCounts[name] = (competitorCounts[name] || 0) + 1;
+        mentions.forEach((mention: any) => {
+          if (mention.name) {
+            const competitorName = normalizeCompetitorName(mention.name);
+            if (competitorName && 
+                competitorName.toLowerCase() !== companyName.toLowerCase() &&
+                competitorName.length > 1) {
+              competitorCounts[competitorName] = (competitorCounts[competitorName] || 0) + 1;
+            }
+          }
         });
       }
     });
@@ -946,9 +952,6 @@ export const OverviewTab = ({
               <span>Mentions of {selectedCompetitor}</span>
               <Badge variant="secondary">{competitorSnippets.length} mentions</Badge>
             </DialogTitle>
-            <DialogDescription className="text-gray-600">
-              AI-generated summary of competitor mentions
-            </DialogDescription>
           </DialogHeader>
           {/* AI-generated summary */}
           <div className="mb-4">
@@ -990,19 +993,12 @@ export const OverviewTab = ({
       {/* Mentions Drawer Modal */}
       <Dialog open={isMentionsDrawerOpen} onOpenChange={setIsMentionsDrawerOpen}>
         <DialogContent className="max-w-3xl w-full h-[90vh] flex flex-col p-0">
-          <div className="flex items-center justify-between px-6 py-4 border-b">
-            <div className="flex items-center gap-2">
-              <DialogTitle className="text-lg font-semibold">All Mentions of {selectedCompetitor}</DialogTitle>
-              <Badge variant="secondary">{competitorSnippets.length} mentions</Badge>
-            </div>
-            <button onClick={() => setIsMentionsDrawerOpen(false)} className="p-2 rounded hover:bg-gray-100">
-              <X className="w-5 h-5" />
-            </button>
+          <div className="flex items-center gap-2 px-6 py-4 border-b">
+            <DialogTitle className="text-lg font-semibold">All Mentions of {selectedCompetitor}</DialogTitle>
+            <Badge variant="secondary">{competitorSnippets.length} mentions</Badge>
           </div>
           <div className="px-6 py-3 border-b bg-gray-50">
-            <DialogDescription className="text-sm text-gray-600">
-              View all mentions of this competitor across your analysis
-            </DialogDescription>
+            {/* Search input removed as requested */}
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
             {filteredMentions.length > 0 ? (
@@ -1045,9 +1041,6 @@ export const OverviewTab = ({
             <DialogTitle className="text-xl font-bold text-gray-900">
               Understanding Your Perception Score
             </DialogTitle>
-            <DialogDescription className="text-gray-600">
-              Learn how your perception score is calculated and what it means
-            </DialogDescription>
           </DialogHeader>
           
           {/* Beta Notice */}

@@ -131,7 +131,7 @@ export const useDashboardData = () => {
                   company_mentioned: true, // TalentX responses are always about the company
                   mention_ranking: 1, // Default to 1 since it's about the company
                   competitor_mentions: score.competitor_mentions,
-                  detected_competitors: score.detected_competitors,
+
                   confirmed_prompts: {
                     prompt_text: promptText,
                     prompt_category: `TalentX: ${score.attribute_id.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
@@ -545,12 +545,14 @@ export const useDashboardData = () => {
       // Visibility is already 0-100 scale
       const visibilityScore = averageVisibility;
       
-      // Calculate competitive score based on competitor mentions and positioning
-      const competitiveResponses = responses.filter(r => r.detected_competitors);
-      const totalCompetitorMentions = competitiveResponses.reduce((sum, r) => {
-        const competitors = r.detected_competitors?.split(',').filter(Boolean) || [];
-        return sum + competitors.length;
-      }, 0);
+          // Calculate competitive score based on competitor mentions and positioning
+    const competitiveResponses = responses.filter(r => r.competitor_mentions);
+    const totalCompetitorMentions = competitiveResponses.reduce((sum, r) => {
+      const mentions = Array.isArray(r.competitor_mentions) 
+        ? r.competitor_mentions 
+        : JSON.parse(r.competitor_mentions as string || '[]');
+      return sum + mentions.length;
+    }, 0);
       
       // Calculate average mention ranking (lower is better)
       const mentionRankings = responses
@@ -751,18 +753,20 @@ export const useDashboardData = () => {
     const competitorCounts: Record<string, number> = {};
     
     responses.forEach(response => {
-      if (response.detected_competitors) {
-        const competitors = response.detected_competitors
-          .split(',')
-          .map(name => name.trim())
-          .filter(name => 
-            name && 
-            name.toLowerCase() !== companyName.toLowerCase() &&
-            name.length > 1
-          );
+      if (response.competitor_mentions) {
+        const mentions = Array.isArray(response.competitor_mentions) 
+          ? response.competitor_mentions 
+          : JSON.parse(response.competitor_mentions as string || '[]');
         
-        competitors.forEach(name => {
-          competitorCounts[name] = (competitorCounts[name] || 0) + 1;
+        mentions.forEach((mention: any) => {
+          if (mention.name) {
+            const name = mention.name.trim();
+            if (name && 
+                name.toLowerCase() !== companyName.toLowerCase() &&
+                name.length > 1) {
+              competitorCounts[name] = (competitorCounts[name] || 0) + 1;
+            }
+          }
         });
       }
     });

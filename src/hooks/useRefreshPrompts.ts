@@ -182,7 +182,7 @@ export const useRefreshPrompts = () => {
                       total_words: responseData.response.split(' ').length,
                       visibility_score: 0,
                       competitive_score: 0,
-                      detected_competitors: ''
+
                     });
 
                   if (insertError) {

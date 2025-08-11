@@ -205,7 +205,6 @@ interface AnalysisResult {
   total_words: number;
   visibility_score: number;
   competitive_score: number;
-  detected_competitors: string;
   talentx_analysis: any[];
   talentx_scores: {
     overall_score: number;
@@ -221,44 +220,14 @@ serve(async (req) => {
   }
 
   try {
-    // Parse and log the request body
-    const body = await req.json();
+    // Request body received
+    const { companyName, industry, companySize, role, goals, responseText, modelName } = body;
     
-    // Extract company name from request body
-    const { companyName, confirmed_prompt_id, ai_model, response } = body;
-
-    // Validate required fields
-    if (!confirmed_prompt_id) {
-      console.error("Missing confirmed_prompt_id in request body");
-      return new Response(JSON.stringify({ error: "Missing confirmed_prompt_id" }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+    if (!companyName || !industry || !responseText || !modelName) {
+      return new Response('Missing required fields', { status: 400, headers: corsHeaders });
     }
-
-    if (!ai_model) {
-      console.error("Missing ai_model in request body");
-      return new Response(JSON.stringify({ error: "Missing ai_model" }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    if (!response) {
-      console.error("Missing response in request body");
-      return new Response(JSON.stringify({ error: "Missing response" }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    if (!companyName) {
-      console.error("Missing companyName in request body");
-      return new Response(JSON.stringify({ error: "Missing companyName" }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
+    
+    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, isTalentXPrompt, talentXAttributeId } = body;
     
     // Handle citations from different LLMs
     let llmCitations = perplexityCitations || [];
@@ -315,7 +284,7 @@ serve(async (req) => {
       total_words: result.total_words,
       visibility_score: result.visibility_score,
       competitive_score: result.competitive_score,
-      detected_competitors: result.detected_competitors
+      
       // Removed talentx_analysis and talentx_scores as they don't exist in the table
     };
 
@@ -363,7 +332,7 @@ serve(async (req) => {
                 ai_model: ai_model,
                 prompt_type: promptType,
                 citations: llmCitations || result.citations,
-                detected_competitors: result.detected_competitors
+        
               });
 
             if (perceptionError) {
@@ -449,8 +418,8 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
   // Get company mention data
   const companyMentionData = detectCompanyMention(text, companyName);
   
-  // Get competitor mentions using the new function
-  let detectedCompetitors = '';
+  // Get competitor mentions using the detect-competitors API
+  let competitorMentions: CompetitorMention[] = [];
   try {
     const competitorResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/detect-competitors`, {
       method: 'POST',
@@ -465,7 +434,20 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
     });
 
     const competitorData = await competitorResponse.json();
-    detectedCompetitors = competitorData.detectedCompetitors || '';
+    const detectedCompetitors = competitorData.detectedCompetitors || '';
+    
+    // Convert comma-separated string to CompetitorMention array
+    if (detectedCompetitors) {
+      competitorMentions = detectedCompetitors
+        .split(',')
+        .map(name => name.trim())
+        .filter(name => name && name.toLowerCase() !== companyName.toLowerCase())
+        .map(name => ({
+          name: name,
+          ranking: null,
+          context: extractContext(text, name)
+        }));
+    }
   } catch (error) {
     console.error('Error detecting competitors:', error);
   }
@@ -478,7 +460,7 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
     : 0;
   
   // Calculate competitive score based on competitor mentions
-  const competitorCount = detectedCompetitors.split(',').filter(Boolean).length;
+  const competitorCount = competitorMentions.length;
   const competitiveScore = Math.min(100, competitorCount * 20); // 20 points per competitor, max 100
 
   // Add TalentX analysis
@@ -497,12 +479,12 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
     citations: basicAnalysis.citations,
     company_mentioned: companyMentionData.mentioned,
     mention_ranking: companyMentionData.ranking,
-    competitor_mentions: [], // Keep empty array for backward compatibility with existing code
+    competitor_mentions: competitorMentions,
     first_mention_position: firstMentionPosition,
     total_words: totalWords,
     visibility_score: visibilityScore,
     competitive_score: competitiveScore,
-    detected_competitors: detectedCompetitors,
+
     talentx_analysis: talentXAnalyses,
     talentx_scores: {
       overall_score: overallTalentXScore,
@@ -526,7 +508,7 @@ function performEnhancedBasicAnalysis(responseText: string, companyName: string,
       total_words: 0,
       visibility_score: 0,
       competitive_score: 0,
-      detected_competitors: "",
+
       talentx_analysis: [],
       talentx_scores: {
         overall_score: 0,
@@ -590,7 +572,7 @@ function performEnhancedBasicAnalysis(responseText: string, companyName: string,
     first_mention_position: companyDetection.first_mention_position,
     visibility_score: visibilityScore,
     competitive_score: competitiveScore,
-    detected_competitors: ""
+    
   }
 }
 
@@ -662,7 +644,9 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
   const companyPatterns = [
     /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Company|Technologies|Systems|Solutions|Software|Group|International|Global|Games|Entertainment|Studios)\b/g,
     /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:&|and)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g,
-    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:AI|ML|Cloud|Digital|Data|Analytics|Security|Network|Media|Health|Finance|Bank|Insurance|Games|Gaming)\b/g
+    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:AI|ML|Cloud|Digital|Data|Analytics|Security|Network|Media|Health|Finance|Bank|Insurance|Games|Gaming)\b/g,
+    // More general company name patterns - this is the key one that was missing!
+    /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g
   ];
 
   // Track found companies to avoid duplicates
@@ -686,6 +670,20 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
         continue;
       }
 
+      // Skip very common words that are likely not company names
+      const commonWords = [
+        'the', 'and', 'or', 'but', 'for', 'with', 'from', 'this', 'that', 'these', 'those', 
+        'they', 'them', 'their', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'it', 'its', 
+        'who', 'what', 'where', 'when', 'why', 'how', 'innovation', 'technology', 'traditional', 
+        'automakers', 'companies', 'industry', 'environment', 'experience', 'focus', 'vertical', 
+        'integration', 'work', 'life', 'balance', 'good', 'compared', 'reviews', 'indeed', 'com',
+        'according', 'some', 'other', 'different', 'supportive', 'cutting', 'edge', 'known',
+        'generally', 'offers', 'particularly', 'due', 'having', 'company', 'review'
+      ];
+      if (commonWords.includes(lowerCompanyName)) {
+        continue;
+      }
+
       foundCompanies.add(lowerCompanyName);
 
       // Get ranking and context
@@ -703,7 +701,7 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
   // Additional check for companies mentioned in lists or comparisons
   const comparisonPatterns = [
     /(?:compared to|versus|vs\.?|like|similar to|such as)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/gi,
-    /(?:better than|worse than|more than|less than)\s+([A-Z][a-z]+(?:\s+[A-z]+)*)/gi
+    /(?:better than|worse than|more than|less than)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/gi
   ];
 
   comparisonPatterns.forEach(pattern => {
@@ -713,6 +711,25 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
       const lowerCompanyName = companyName.toLowerCase();
 
       if (lowerCompanyName === lowerCompany || foundCompanies.has(lowerCompanyName)) {
+        continue;
+      }
+
+      // Skip if it's a common word or too short
+      if (companyName.length < 3 || /^(The|A|An)\s/i.test(companyName)) {
+        continue;
+      }
+
+      // Skip very common words that are likely not company names
+      const commonWords = [
+        'the', 'and', 'or', 'but', 'for', 'with', 'from', 'this', 'that', 'these', 'those', 
+        'they', 'them', 'their', 'we', 'us', 'our', 'you', 'your', 'he', 'she', 'it', 'its', 
+        'who', 'what', 'where', 'when', 'why', 'how', 'innovation', 'technology', 'traditional', 
+        'automakers', 'companies', 'industry', 'environment', 'experience', 'focus', 'vertical', 
+        'integration', 'work', 'life', 'balance', 'good', 'compared', 'reviews', 'indeed', 'com',
+        'according', 'some', 'other', 'different', 'supportive', 'cutting', 'edge', 'known',
+        'generally', 'offers', 'particularly', 'due', 'having', 'company', 'review'
+      ];
+      if (commonWords.includes(lowerCompanyName)) {
         continue;
       }
 

@@ -78,7 +78,6 @@ serve(async (req) => {
 
     // Create Stripe customer if doesn't exist
     if (!customerId) {
-      console.log('Creating new Stripe customer for user:', userId);
       const customer = await stripe.customers.create({
         email: userEmail,
         metadata: {

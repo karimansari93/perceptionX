@@ -3,7 +3,7 @@ import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dash
 import { Badge } from "@/components/ui/badge";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SourceDetailsModal } from "./SourceDetailsModal";
 import { ResponseDetailsModal } from "./ResponseDetailsModal";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
@@ -777,9 +777,6 @@ export const KeyTakeaways = ({
             <span>{selectedCompetitor}</span>
             <Badge variant="secondary">{getFullResponsesForCompetitor(selectedCompetitor || '').length} mentions</Badge>
           </DialogTitle>
-          <DialogDescription className="text-gray-600">
-            Detailed analysis of competitor mentions and sources
-          </DialogDescription>
         </DialogHeader>
         
         <div className="space-y-4">
@@ -884,19 +881,12 @@ export const KeyTakeaways = ({
     {/* Mentions Drawer Modal */}
     <Dialog open={isMentionsDrawerOpen} onOpenChange={setIsMentionsDrawerOpen}>
       <DialogContent className="max-w-3xl w-full h-[90vh] flex flex-col p-0">
-        <div className="flex items-center justify-between px-6 py-4 border-b">
-          <div className="flex items-center gap-2">
-            <DialogTitle className="text-lg font-semibold">All Mentions of {selectedCompetitor}</DialogTitle>
-            <Badge variant="secondary">{competitorSnippets.length} mentions</Badge>
-          </div>
-          <button onClick={() => setIsMentionsDrawerOpen(false)} className="p-2 rounded hover:bg-gray-100">
-            <X className="w-5 h-5" />
-          </button>
+        <div className="flex items-center gap-2 px-6 py-4 border-b">
+          <DialogTitle className="text-lg font-semibold">All Mentions of {selectedCompetitor}</DialogTitle>
+          <Badge variant="secondary">{competitorSnippets.length} mentions</Badge>
         </div>
         <div className="px-6 py-3 border-b bg-gray-50">
-          <DialogDescription className="text-sm text-gray-600">
-            View all mentions of this competitor across your analysis
-          </DialogDescription>
+          {/* Search input removed as requested */}
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
           {competitorSnippets.length > 0 ? (
@@ -936,7 +926,7 @@ export const KeyTakeaways = ({
     <Dialog open={isCompetitorSourceModalOpen} onOpenChange={handleCloseCompetitorSourceModal}>
       <DialogContent className="max-w-xl w-full sm:max-w-2xl sm:w-[90vw] p-2 sm:p-6">
         <DialogHeader>
-          <div className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2">
             <img 
               src={getFavicon(selectedCompetitorSource?.domain || '')} 
               alt={`${selectedCompetitorSource?.domain} favicon`}
@@ -949,12 +939,12 @@ export const KeyTakeaways = ({
             <Badge variant="secondary">
               {selectedCompetitorSource?.count} {selectedCompetitorSource?.count === 1 ? 'mention' : 'mentions'}
             </Badge>
-          </div>
-          <DialogDescription className="text-gray-600">
-            This source contributes to {selectedCompetitor}'s presence in your analysis
-          </DialogDescription>
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          <div className="text-sm text-gray-600">
+            <p>This source contributes to {selectedCompetitor}'s presence in your analysis.</p>
+          </div>
           
           {/* Show responses that mention both the competitor and this source */}
           {selectedCompetitorSource && selectedCompetitor && (() => {
@@ -1021,9 +1011,6 @@ export const KeyTakeaways = ({
               {selectedLLM?.mentions} mentions
             </Badge>
           </DialogTitle>
-          <DialogDescription className="text-gray-600">
-            Analysis of how this AI model perceives your company
-          </DialogDescription>
         </DialogHeader>
         
         {selectedLLM && (() => {

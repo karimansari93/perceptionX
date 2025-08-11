@@ -76,6 +76,7 @@ const Auth = () => {
   const [showVerifyEmailMessage, setShowVerifyEmailMessage] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [checkingOnboarding, setCheckingOnboarding] = useState(false);
 
   // Get onboarding data and redirect destination from location state
   const onboardingData = location.state?.onboardingData;
@@ -88,12 +89,79 @@ const Auth = () => {
       !authLoading &&
       (user.email_confirmed_at || user.confirmed_at)
     ) {
-      navigate('/dashboard', { 
-        state: { 
-          onboardingData,
-          userId: user.id 
-        } 
-      });
+      // Check if user needs onboarding before redirecting
+      setCheckingOnboarding(true);
+      const checkOnboardingAndRedirect = async () => {
+        try {
+          const { data: userOnboardingData, error: onboardingError } = await supabase
+            .from('user_onboarding')
+            .select('id, company_name, industry')
+            .eq('user_id', user.id)
+            .not('company_name', 'is', null)
+            .not('industry', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (onboardingError) {
+            console.error('Error checking onboarding status:', onboardingError);
+            // If we can't check, default to dashboard
+            navigate('/dashboard', { 
+              state: { 
+                onboardingData,
+                userId: user.id 
+              } 
+            });
+            return;
+          }
+
+          // If no basic onboarding data, redirect to onboarding
+          if (!userOnboardingData || userOnboardingData.length === 0 || 
+              !userOnboardingData[0].company_name || !userOnboardingData[0].industry) {
+            navigate('/onboarding');
+            return;
+          }
+
+          // Check if there are actual confirmed prompts
+          const { data: promptsData, error: promptsError } = await supabase
+            .from('confirmed_prompts')
+            .select('id')
+            .eq('onboarding_id', userOnboardingData[0].id)
+            .limit(1);
+
+          if (promptsError) {
+            console.error('Error checking confirmed prompts:', promptsError);
+            // If we can't check, default to dashboard
+            navigate('/dashboard', { 
+              state: { 
+                onboardingData,
+                userId: user.id 
+              } 
+            });
+            return;
+          }
+
+          // If no confirmed prompts, onboarding is incomplete
+          if (!promptsData || promptsData.length === 0) {
+            navigate('/onboarding');
+          } else {
+            // Onboarding complete, redirect to dashboard
+            navigate('/dashboard');
+          }
+        } catch (onboardingCheckError) {
+          console.error('Error checking onboarding status:', onboardingCheckError);
+          // If we can't check, default to dashboard
+          navigate('/dashboard', { 
+            state: { 
+              onboardingData,
+              userId: user.id 
+            } 
+          });
+        } finally {
+          setCheckingOnboarding(false);
+        }
+      };
+
+      checkOnboardingAndRedirect();
     }
   }, [user, authLoading, navigate, onboardingData, redirectTo]);
 
@@ -201,7 +269,64 @@ const Auth = () => {
           await linkOnboardingToUser(data.user.id);
         }
         
-        navigate('/dashboard');
+        // Check if user needs onboarding before redirecting
+        setCheckingOnboarding(true);
+        const checkOnboardingAndRedirect = async () => {
+          try {
+            const { data: userOnboardingData, error: onboardingError } = await supabase
+              .from('user_onboarding')
+              .select('id, company_name, industry')
+              .eq('user_id', data.user.id)
+              .not('company_name', 'is', null)
+              .not('industry', 'is', null)
+              .order('created_at', { ascending: false })
+              .limit(1);
+
+            if (onboardingError) {
+              console.error('Error checking onboarding status:', onboardingError);
+              // If we can't check, default to dashboard
+              navigate('/dashboard');
+              return;
+            }
+
+            // If no basic onboarding data, redirect to onboarding
+            if (!userOnboardingData || userOnboardingData.length === 0 || 
+                !userOnboardingData[0].company_name || !userOnboardingData[0].industry) {
+              navigate('/onboarding');
+              return;
+            }
+
+            // Check if there are actual confirmed prompts
+            const { data: promptsData, error: promptsError } = await supabase
+              .from('confirmed_prompts')
+              .select('id')
+              .eq('onboarding_id', userOnboardingData[0].id)
+              .limit(1);
+
+            if (promptsError) {
+              console.error('Error checking confirmed prompts:', promptsError);
+              // If we can't check, default to dashboard
+              navigate('/dashboard');
+              return;
+            }
+
+            // If no confirmed prompts, onboarding is incomplete
+            if (!promptsData || promptsData.length === 0) {
+              navigate('/onboarding');
+            } else {
+              // Onboarding complete, redirect to dashboard
+              navigate('/dashboard');
+            }
+                  } catch (onboardingCheckError) {
+          console.error('Error checking onboarding status:', onboardingCheckError);
+          // If we can't check, default to dashboard
+          navigate('/dashboard');
+        } finally {
+          setCheckingOnboarding(false);
+        }
+      };
+
+        checkOnboardingAndRedirect();
       } else {
         const { data, error } = await supabase.auth.signUp({
           email: sanitizedEmail,
@@ -273,7 +398,7 @@ const Auth = () => {
     }
   };
 
-  if (user) {
+  if (user || checkingOnboarding) {
     return <LoadingScreen />;
   }
 

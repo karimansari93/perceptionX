@@ -37,7 +37,6 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey)
 
     // Scrape website using Firecrawl
-    console.log('Scraping website:', url)
     const scrapeResponse = await fetch('https://api.firecrawl.dev/v0/scrape', {
       method: 'POST',
       headers: {

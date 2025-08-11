@@ -19,7 +19,7 @@ export interface PromptResponse {
   };
   first_mention_position?: number;
   total_words?: number;
-  detected_competitors?: string;
+
   visibility_score?: number;
   talentx_analysis?: any[];
   talentx_scores?: {

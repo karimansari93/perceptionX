@@ -108,10 +108,8 @@ export const OnboardingLoading = () => {
 
           confirmedPrompts = newPrompts;
         } else {
-          // Use existing prompts if available
-          if (existingPrompts && existingPrompts.length > 0) {
-            confirmedPrompts = existingPrompts;
-          }
+          // Using existing prompts for onboarding session
+          confirmedPrompts = existingPrompts;
         }
 
         // Define models to test
@@ -127,46 +125,53 @@ export const OnboardingLoading = () => {
         let completedOperations = 0;
 
         // Check if prompt_responses table exists
+        let promptResponsesTableExists = true;
         try {
-          const { error: tableError } = await supabase
+          const { error: tableCheckError } = await supabase
             .from('prompt_responses')
             .select('id')
             .limit(1);
           
-          if (tableError && tableError.code === '42P01') {
-            // Table doesn't exist yet, skip duplicate checks
-          } else if (tableError) {
-            // Other error, assume table doesn't exist
+          if (tableCheckError && (tableCheckError.code === '42P01' || tableCheckError.code === '406')) {
+            // prompt_responses table does not exist yet, skipping duplicate checks
+            promptResponsesTableExists = false;
           }
-        } catch (error) {
-          // Error checking table, assume it doesn't exist
+        } catch (tableError) {
+          // Error checking prompt_responses table, assuming it does not exist
+          promptResponsesTableExists = false;
         }
 
         // Test each prompt with each model
         for (const confirmedPrompt of confirmedPrompts) {
           for (const model of modelsToTest) {
             try {
-              // Check if response already exists
-              try {
+              // Only check for existing responses if the table exists
+              if (promptResponsesTableExists) {
+                // Check if response already exists for this prompt and model
                 const { data: existingResponse, error: responseCheckError } = await supabase
                   .from('prompt_responses')
                   .select('id')
                   .eq('confirmed_prompt_id', confirmedPrompt.id)
                   .eq('ai_model', model.name)
-                  .single();
+                  .limit(1);
 
-                if (responseCheckError && responseCheckError.code !== 'PGRST116') {
-                  // Error checking existing response, continue with processing
-                  continue;
+                if (responseCheckError) {
+                  console.error(`Error checking existing response for ${model.name}:`, responseCheckError);
+                  // If it's a table not found error or other database error, continue with processing
+                  if (responseCheckError.code === '42P01' || responseCheckError.code === '406' || responseCheckError.code === 'PGRST116') {
+                    // Database error for this model (table may not exist yet), continuing with processing
+                    continue;
+                  } else {
+                    // Unknown error for this model, continuing with processing
+                    continue;
+                  }
                 }
 
-                if (existingResponse) {
-                  // Response already exists, skip
+                // Skip if response already exists
+                if (existingResponse && existingResponse.length > 0) {
+                  // Response for this model already exists, skipping
                   continue;
                 }
-              } catch (error) {
-                // Error checking existing response, continue with processing
-                continue;
               }
 
               setProgress(prev => ({
@@ -188,30 +193,32 @@ export const OnboardingLoading = () => {
               }
 
               if (responseData && responseData.response) {
-                // Process the response
+                // Process the response through analyze-response
+                const perplexityCitations = model.functionName === 'test-prompt-perplexity' ? responseData.citations : null;
+                
                 try {
-                  const { data: analysisData, error: analysisError } = await supabase.functions
-                    .invoke('analyze-response', {
-                      body: {
-                        confirmed_prompt_id: confirmedPrompt.id,
-                        ai_model: model.name,
-                        response: responseData.response,
-                        companyName: companyName
-                      }
-                    });
+                  // Successfully processed response for this model
+                  const prompt = confirmedPrompt.prompt_text;
+                  
+                  const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-response', {
+                    body: {
+                      response: responseData.response,
+                      companyName: companyName,
+                      promptType: confirmedPrompt.prompt_type,
+                      perplexityCitations: perplexityCitations,
+                      confirmed_prompt_id: confirmedPrompt.id,
+                      ai_model: model.name
+                    }
+                  });
 
                   if (analysisError) {
                     console.error(`Error in analyze-response for ${model.name}:`, analysisError);
-                    continue;
+                  } else {
+                    // Successfully processed response for this model
+                    // setResponses(prev => [...prev, analysisData]); // This line was removed from the new_code
                   }
-
-                  if (analysisData) {
-                    // Successfully processed response
-                    continue;
-                  }
-                } catch (error) {
-                  // Exception in analyze-response, continue with next model
-                  continue;
+                } catch (analysisError) {
+                  console.error(`Exception in analyze-response for ${model.name}:`, analysisError);
                 }
               }
 
@@ -235,26 +242,22 @@ export const OnboardingLoading = () => {
           .update({ prompts_completed: true })
           .eq('id', onboardingId);
 
-        // Verify that we have stored responses
+        // Verify data was stored by checking the database
+        // Onboarding completed, checking stored data
         try {
           const { data: storedResponses, error: verifyError } = await supabase
             .from('prompt_responses')
             .select('*')
-            .eq('user_id', (await supabase.auth.getUser()).data.user?.id)
-            .eq('onboarding_id', onboardingId);
+            .eq('confirmed_prompt_id', confirmedPrompts[0].id);
 
           if (verifyError) {
             console.error('Error checking stored data:', verifyError);
-            return;
+          } else {
+            // Stored responses found
+            // const storedResponses = responses; // This line was removed from the new_code
           }
-
-          if (storedResponses && storedResponses.length > 0) {
-            // Successfully stored responses
-            return;
-          }
-        } catch (error) {
-          // Exception checking stored data
-          return;
+        } catch (verifyException) {
+          console.error('Exception checking stored data:', verifyException);
         }
 
         setIsComplete(true);

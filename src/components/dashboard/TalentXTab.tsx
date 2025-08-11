@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TalentXAnalysis } from '@/types/talentX';
 import { TALENTX_ATTRIBUTES, generatePlaceholderTalentXData, getPromptsByAttribute } from '@/config/talentXAttributes';
@@ -412,20 +412,9 @@ export const TalentXTab = ({ talentXData, isProUser, companyName = 'Your Company
       <Dialog open={isContextModalOpen} onOpenChange={setIsContextModalOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <div className="flex items-center justify-between">
-              <DialogTitle className="text-xl">
-                {selectedAttributeForModal && TALENTX_ATTRIBUTES.find(attr => attr.id === selectedAttributeForModal.attributeId)?.name}
-              </DialogTitle>
-              <button 
-                onClick={() => setIsContextModalOpen(false)}
-                className="p-2 rounded hover:bg-gray-100"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <DialogDescription className="text-gray-600">
-              Detailed analysis of this talent attraction attribute
-            </DialogDescription>
+            <DialogTitle className="text-xl">
+              {selectedAttributeForModal && TALENTX_ATTRIBUTES.find(attr => attr.id === selectedAttributeForModal.attributeId)?.name}
+            </DialogTitle>
           </DialogHeader>
           {selectedAttributeForModal && (
             <div className="space-y-6">

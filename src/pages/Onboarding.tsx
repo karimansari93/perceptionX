@@ -14,7 +14,17 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { HelpCircle } from "lucide-react";
 
-type UserOnboarding = Database['public']['Tables']['user_onboarding']['Insert'];
+// Define the actual database schema we're working with
+interface UserOnboarding {
+  user_id: string;
+  company_name: string;
+  industry: string;
+  session_id: string;
+  company_size?: string;
+  role?: string;
+  goals?: string[];
+  competitors?: string[];
+}
 
 interface OnboardingData {
   display_name: string;
