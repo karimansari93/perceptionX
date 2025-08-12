@@ -503,11 +503,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             parseCitations={parseCitations}
           />
         );
-        return isPro ? sourcesContent : renderBlurredSection(
-          "Sources Analysis",
-          "Get detailed insights into your content sources and citations with Pro access.",
-          sourcesContent
-        );
+        return sourcesContent;
       case "competitors":
         const competitorsContent = (
           <CompetitorsTab 
@@ -516,11 +512,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             companyName={companyName}
           />
         );
-        return isPro ? competitorsContent : renderBlurredSection(
-          "Competitor Analysis",
-          "Discover your top competitors and understand their positioning with Pro access.",
-          competitorsContent
-        );
+        return competitorsContent;
       case "talentx":
         const talentXContent = (
           <TalentXTab 

@@ -503,34 +503,86 @@ export const Onboarding = () => {
 
         {/* How it works Modal */}
         <Dialog open={showHowItWorks} onOpenChange={setShowHowItWorks}>
-          <DialogContent className="max-w-2xl bg-gray-100 sm:top-[50%] sm:translate-y-[-50%] top-auto bottom-0 translate-y-0 rounded-t-xl sm:rounded-lg">
-            <DialogTitle className="text-xl font-semibold text-[hsl(221,56%,22%)]">
+          <DialogContent className="max-w-3xl bg-gray-100 sm:top-[50%] sm:translate-y-[-50%] top-auto bottom-0 translate-y-0 rounded-t-xl sm:rounded-lg max-h-[85vh] overflow-y-auto pb-8">
+            <DialogTitle className="text-xl font-semibold text-[hsl(221,56%,22%)] mb-6">
               How it works
             </DialogTitle>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mt-4 sm:mt-6">
-              <div className="text-center space-y-2 sm:space-y-3">
-                <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs sm:text-sm font-medium mx-auto w-fit">
-                  Sentiment
+            
+            {/* Process Description */}
+            <div className="mb-8">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-8 h-8 bg-[#0DBCBA] rounded-full flex items-center justify-center">
+                  <span className="text-white text-sm font-bold">1</span>
                 </div>
-                <p className="text-xs sm:text-sm text-[hsl(221,56%,22%)]">
-                  Brand-specific prompts that measure general sentiment about your culture, with balanced perspectives.
-                </p>
+                <h3 className="text-lg font-semibold text-[hsl(221,56%,22%)]">AI Analysis Process</h3>
               </div>
-              <div className="text-center space-y-2 sm:space-y-3">
-                <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs sm:text-sm font-medium mx-auto w-fit">
-                  Visibility
+              <p className="text-[hsl(221,56%,22%)] leading-relaxed text-base pl-11">
+                We ask multiple AI models the same questions covering the following types of prompts. You get a free sample to see how it works.
+              </p>
+            </div>
+            
+            {/* Prompt Types */}
+            <div className="mb-8">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-8 h-8 bg-[#0DBCBA] rounded-full flex items-center justify-center">
+                  <span className="text-white text-sm font-bold">2</span>
                 </div>
-                <p className="text-sm text-[hsl(221,56%,22%)]">
-                  Industry-wide prompts that track how often your company is mentioned compared to competitors.
-                </p>
+                <h3 className="text-lg font-semibold text-[hsl(221,56%,22%)]">Prompt Categories</h3>
               </div>
-              <div className="text-center space-y-2 sm:space-y-3">
-                <div className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs sm:text-sm font-medium mx-auto w-fit">
-                  Competitive
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="text-center space-y-2 sm:space-y-3">
+                  <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs sm:text-sm font-medium mx-auto w-fit">
+                    Sentiment
+                  </div>
+                  <p className="text-xs sm:text-sm text-[hsl(221,56%,22%)]">
+                    Prompts that measure general sentiment about your culture, with balanced perspectives.
+                  </p>
                 </div>
-                <p className="text-sm text-[hsl(221,56%,22%)]">
-                  Direct comparison prompts that analyze your employer reputation relative to specific competitors.
+                <div className="text-center space-y-2 sm:space-y-3">
+                  <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs sm:text-sm font-medium mx-auto w-fit">
+                    Visibility
+                  </div>
+                  <p className="text-sm text-[hsl(221,56%,22%)]">
+                    Prompts that track how often your company is mentioned compared to competitors.
+                  </p>
+                </div>
+                <div className="text-center space-y-2 sm:space-y-3">
+                  <div className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs sm:text-sm font-medium mx-auto w-fit">
+                    Competitive
+                  </div>
+                  <p className="text-sm text-[hsl(221,56%,22%)]">
+                    Pompts that analyze your employer reputation relative to specific competitors.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Pro Features */}
+            <div>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-8 h-8 bg-[#0DBCBA] rounded-full flex items-center justify-center">
+                  <span className="text-white text-sm font-bold">3</span>
+                </div>
+                <h3 className="text-lg font-semibold text-[hsl(221,56%,22%)]">Pro Features</h3>
+              </div>
+              <div className="pl-11">
+                <p className="text-[hsl(221,56%,22%)] leading-relaxed text-base mb-3">
+                  <span className="font-semibold text-[#0DBCBA]">Upgrading to Pro</span> unlocks:
                 </p>
+                <ul className="space-y-2 text-sm text-[hsl(221,56%,22%)]">
+                  <li className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-[#0DBCBA] rounded-full"></div>
+                    Weekly updates
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-[#0DBCBA] rounded-full"></div>
+                    Deeper competitive analysis
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-[#0DBCBA] rounded-full"></div>
+                    Source analysis & more features coming soon
+                  </li>
+                </ul>
               </div>
             </div>
           </DialogContent>

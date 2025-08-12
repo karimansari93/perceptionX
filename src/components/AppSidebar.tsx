@@ -37,8 +37,8 @@ const navigationGroups: NavigationGroup[] = [
     title: "Dashboard",
     items: [
       { title: "Overview", icon: BarChart3, section: "overview", group: "dashboard", route: "/dashboard" },
-      { title: "Sources", icon: Globe, section: "sources", requiresPro: true, group: "dashboard", route: "/dashboard" },
-      { title: "Competitors", icon: Users, section: "competitors", requiresPro: true, group: "dashboard", route: "/dashboard" },
+      { title: "Sources", icon: Globe, section: "sources", group: "dashboard", route: "/dashboard" },
+      { title: "Competitors", icon: Users, section: "competitors", group: "dashboard", route: "/dashboard" },
     ]
   },
   {

@@ -6,7 +6,7 @@ interface LoadingScreenProps {
 
 export function LoadingScreen({ className }: LoadingScreenProps) {
   return (
-    <div className={cn("min-h-screen w-screen flex items-center justify-center bg-gradient-to-br from-[#045962] to-[#019dad]", className)}>
+    <div className={cn("min-h-screen w-screen flex items-center justify-center bg-white", className)}>
       <div className="text-center">
         <img
           src="/logos/PinkBadge.png"

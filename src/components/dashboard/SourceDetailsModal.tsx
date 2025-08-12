@@ -70,7 +70,7 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: Sourc
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh]">
+      <DialogContent className="max-w-4xl w-[95vw] sm:w-auto max-h-[90vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <img src={getFavicon(source.domain)} alt="" className="w-5 h-5 object-contain" />
@@ -87,10 +87,17 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: Sourc
                 <CardTitle>Source Overview</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <p className="text-sm text-gray-500">Domain</p>
-                    <p className="font-medium">{source.domain}</p>
+                    <a 
+                      href={`https://${source.domain}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium break-all text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                    >
+                      {source.domain}
+                    </a>
                   </div>
                   <div>
                     <p className="text-sm text-gray-500">Total Citations</p>
@@ -113,10 +120,10 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: Sourc
                       href={url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50 transition-colors group"
+                      className="flex items-start gap-2 p-2 rounded-lg hover:bg-gray-50 transition-colors group"
                     >
-                      <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
-                      <span className="text-sm text-blue-600 group-hover:text-blue-700 truncate">
+                      <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-blue-500 flex-shrink-0 mt-0.5" />
+                      <span className="text-sm text-blue-600 group-hover:text-blue-700 break-all leading-relaxed">
                         {url}
                       </span>
                     </a>

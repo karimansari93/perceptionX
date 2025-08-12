@@ -55,13 +55,6 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
             <h3 className="font-semibold text-[#13274F]">What's included:</h3>
             <div className="space-y-3">
               <div className="flex items-start gap-3">
-                <CheckCircle2 className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="font-medium text-[#13274F]">Competitor & Source Breakdowns</p>
-                  <p className="text-sm text-[#183056]">
-                    Detailed analysis of your competitors' talent attraction strategies and comprehensive analysis of data sources and their impact on talent perception
-                  </p>
-                </div>
               </div>
               <div className="flex items-start gap-3">
                 <CheckCircle2 className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />

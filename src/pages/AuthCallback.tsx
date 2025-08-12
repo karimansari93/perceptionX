@@ -16,6 +16,12 @@ const AuthCallback = () => {
         }
 
         if (session) {
+          const adminEmails = ['karim@perceptionx.ai'];
+          if (adminEmails.includes(session.user.email?.toLowerCase() || '')) {
+            setTimeout(() => navigate('/admin'), 0);
+            return;
+          }
+
           // Check if user needs onboarding
           try {
             const { data: onboardingData, error: onboardingError } = await supabase

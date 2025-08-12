@@ -648,7 +648,7 @@ export const OverviewTab = ({
     
     return (
       <div className="flex items-center py-1 hover:bg-gray-50/50 transition-colors cursor-pointer">
-        <div className="flex items-center space-x-3 min-w-[200px] truncate">
+        <div className="flex items-center space-x-3 min-w-[140px] sm:min-w-[200px] truncate">
           {!isCompetitor && (
             <Favicon domain={data.name} />
           )}
@@ -656,8 +656,8 @@ export const OverviewTab = ({
             {truncatedName}
           </span>
         </div>
-        <div className="flex-1 flex items-center gap-2 ml-4">
-          <div className="w-[120px] bg-gray-200 rounded-full">
+        <div className="flex-1 flex items-center gap-2 ml-2 sm:ml-4">
+          <div className="w-[80px] sm:w-[120px] bg-gray-200 rounded-full">
             <div
               className={`h-4 rounded-full transition-all duration-300 ${
                 isCompetitor ? 'bg-blue-100' : 'bg-pink-100'
@@ -665,22 +665,10 @@ export const OverviewTab = ({
               style={{ width: `${barWidth}%`, minWidth: '2px' }}
             />
           </div>
-          <div className="flex items-center w-20">
-            <span className="text-sm font-semibold text-gray-900 mr-2">
+          <div className="flex items-center w-16 sm:w-20">
+            <span className="text-sm font-semibold text-gray-900">
               {data.count}
             </span>
-            {data.change !== undefined && data.change !== 0 && (
-              <div className={`flex items-center text-xs ${
-                data.change > 0 ? 'text-green-600' : 'text-red-600'
-              }`}>
-                {data.change > 0 ? (
-                  <TrendingUp className="w-3 h-3" />
-                ) : (
-                  <TrendingDown className="w-3 h-3" />
-                )}
-                <span className="ml-0.5">{Math.abs(data.change)}</span>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -1039,7 +1027,7 @@ export const OverviewTab = ({
         <DialogContent className="max-w-4xl w-full sm:w-[95vw] p-6">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold text-gray-900">
-              Understanding Your Perception Score
+              Understanding Your Score
             </DialogTitle>
           </DialogHeader>
           

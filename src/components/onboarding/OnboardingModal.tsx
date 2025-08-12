@@ -456,7 +456,16 @@ export const OnboardingModal = ({ open, onOpenChange }: OnboardingModalProps) =>
           <DialogTitle className="text-xl font-semibold text-[hsl(221,56%,22%)]">
             How it works
           </DialogTitle>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+          
+          {/* Process Description */}
+          <div className="mt-4 mb-6 p-4 bg-white rounded-lg border border-gray-200">
+            <p className="text-sm text-[hsl(221,56%,22%)] leading-relaxed">
+              We ask multiple AI models the same questions covering the following types of prompts. You get a free sample to see how it works. 
+              <span className="font-semibold text-[#0DBCBA]"> Upgrading to Pro</span> unlocks weekly updates, deeper competitive and source analysis, and more features coming soon.
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="text-center space-y-3">
               <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium mx-auto w-fit">
                 Sentiment

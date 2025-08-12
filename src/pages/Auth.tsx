@@ -89,6 +89,13 @@ const Auth = () => {
       !authLoading &&
       (user.email_confirmed_at || user.confirmed_at)
     ) {
+      // If admin, go straight to admin panel
+      const adminEmails = ['karim@perceptionx.ai'];
+      if (adminEmails.includes(user.email?.toLowerCase() || '')) {
+        navigate('/admin');
+        return;
+      }
+
       // Check if user needs onboarding before redirecting
       setCheckingOnboarding(true);
       const checkOnboardingAndRedirect = async () => {
@@ -277,6 +284,13 @@ const Auth = () => {
           await linkOnboardingToUser(data.user.id);
         }
         
+        // If admin, go straight to admin
+        const adminEmails = ['karim@perceptionx.ai'];
+        if (adminEmails.includes((data.user.email || '').toLowerCase())) {
+          navigate('/admin');
+          return;
+        }
+
         // Check if user needs onboarding before redirecting
         setCheckingOnboarding(true);
         const checkOnboardingAndRedirect = async () => {

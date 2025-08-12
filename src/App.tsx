@@ -19,6 +19,8 @@ import { ErrorBoundary } from "react-error-boundary";
 import { usePageTracking } from "@/hooks/usePageTracking";
 import { Onboarding } from "@/pages/Onboarding";
 import { OnboardingLoading } from "@/pages/OnboardingLoading";
+import Admin from "./pages/Admin";
+import AdminRoute from "./components/AdminRoute";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -70,6 +72,15 @@ const App = () => (
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/reset-password" element={<ResetPassword />} />
+              
+              {/* Admin route - no onboarding guard */}
+              <Route path="/admin" element={
+                <ProtectedRoute>
+                  <AdminRoute>
+                    <Admin />
+                  </AdminRoute>
+                </ProtectedRoute>
+              } />
               
               {/* Onboarding route */}
               <Route path="/onboarding" element={

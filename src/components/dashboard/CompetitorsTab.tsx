@@ -404,7 +404,7 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
         onClick={() => handleCompetitorClick(data.name)}
       >
         {/* Competitor name with favicon */}
-        <div className="flex items-center space-x-3 min-w-0 w-1/4 sm:w-1/3 max-w-[180px] sm:max-w-[220px]">
+        <div className="flex items-center space-x-3 min-w-0 w-1/3 sm:w-1/3 max-w-[140px] sm:max-w-[220px]">
           <div className="w-4 h-4 flex-shrink-0 bg-blue-100 rounded flex items-center justify-center">
             {faviconUrl ? (
               <img 
@@ -432,8 +432,8 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
           </span>
         </div>
         
-        {/* Bar chart - RESPONSIVE AND FULL WIDTH */}
-        <div className="flex-1 mx-3 sm:mx-4 bg-gray-200 rounded-full h-4 relative min-w-0">
+        {/* Bar chart - REDUCED WIDTH FOR MOBILE */}
+        <div className="flex-1 mx-2 sm:mx-4 bg-gray-200 rounded-full h-4 relative min-w-0 max-w-[120px] sm:max-w-none">
           <div
             className="h-4 rounded-full absolute left-0 top-0"
             style={{ 
@@ -443,23 +443,11 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
           />
         </div>
         
-        {/* Count and change indicators */}
-        <div className="flex items-center min-w-[60px] sm:min-w-[80px] justify-end">
+        {/* Count only - no change indicators */}
+        <div className="flex items-center min-w-[40px] sm:min-w-[60px] justify-end">
           <span className="text-sm font-semibold text-gray-900">
             {data.count}
           </span>
-          {data.change !== undefined && data.change !== 0 && (
-            <div className={`flex items-center text-xs ml-2 ${
-              data.change > 0 ? 'text-green-600' : 'text-red-600'
-            }`}>
-              {data.change > 0 ? (
-                <TrendingUp className="w-3 h-3" />
-              ) : (
-                <TrendingDown className="w-3 h-3" />
-              )}
-              <span className="ml-0.5">{Math.abs(data.change)}</span>
-            </div>
-          )}
         </div>
       </div>
     );
