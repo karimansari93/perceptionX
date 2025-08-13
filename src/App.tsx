@@ -21,6 +21,7 @@ import { Onboarding } from "@/pages/Onboarding";
 import { OnboardingLoading } from "@/pages/OnboardingLoading";
 import Admin from "./pages/Admin";
 import AdminRoute from "./components/AdminRoute";
+import GoogleOneTapCallback from "@/components/GoogleOneTapCallback";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -70,6 +71,7 @@ const App = () => (
               <Route path="/" element={<Auth />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
+              <Route path="/auth/google-onetap" element={<GoogleOneTapCallback />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               
