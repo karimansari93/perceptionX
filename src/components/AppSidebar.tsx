@@ -37,8 +37,8 @@ const navigationGroups: NavigationGroup[] = [
     title: "Dashboard",
     items: [
       { title: "Overview", icon: BarChart3, section: "overview", group: "dashboard", route: "/dashboard" },
-      { title: "Sources", icon: Globe, section: "sources", group: "dashboard", route: "/dashboard" },
-      { title: "Competitors", icon: Users, section: "competitors", group: "dashboard", route: "/dashboard" },
+      { title: "Sources", icon: Globe, section: "sources", group: "dashboard", route: "/dashboard/sources" },
+      { title: "Competitors", icon: Users, section: "competitors", group: "dashboard", route: "/dashboard/competitors" },
     ]
   },
   {
@@ -73,11 +73,11 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
   const navigate = useNavigate();
 
   const handleSectionClick = (item: NavigationItem) => {
-    // For items that have their own unique route, navigate to that route
-    if (item.route && item.route !== '/dashboard') {
+    // All items now have unique routes, so always navigate
+    if (item.route) {
       navigate(item.route);
     } else {
-      // For items that share a route (like dashboard items), use section change
+      // Fallback for items without routes
       onSectionChange(item.section);
     }
   };

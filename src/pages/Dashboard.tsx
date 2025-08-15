@@ -174,6 +174,12 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (path === '/dashboard') {
       setActiveGroup('dashboard');
       setActiveSection('overview');
+    } else if (path === '/dashboard/sources') {
+      setActiveGroup('dashboard');
+      setActiveSection('sources');
+    } else if (path === '/dashboard/competitors') {
+      setActiveGroup('dashboard');
+      setActiveSection('competitors');
     } else if (path === '/monitor') {
       setActiveGroup('monitor');
       setActiveSection('prompts');

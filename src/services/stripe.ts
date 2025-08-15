@@ -1,7 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
 
 export class StripeService {
-  static async createCheckoutSession(priceId: string, successUrl?: string, cancelUrl?: string) {
+  static async createCheckoutSession(priceId?: string, successUrl?: string, cancelUrl?: string) {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       
@@ -9,18 +9,27 @@ export class StripeService {
         throw new Error('User not authenticated');
       }
 
-      const { data, error } = await supabase.functions.invoke('create-checkout-session', {
-        body: {
-          userId: user.id,
-          priceId,
-          successUrl,
-          cancelUrl
-        }
-      });
+      // Build request body, omit priceId if undefined so server can use its configured secret
+      const body: Record<string, unknown> = {
+        userId: user.id,
+        successUrl,
+        cancelUrl,
+      };
+      if (priceId) {
+        body.priceId = priceId;
+      }
+
+      const { data, error } = await supabase.functions.invoke('create-checkout-session', { body });
 
       if (error) {
         console.error('Error creating checkout session:', error);
-        throw new Error('Failed to create checkout session');
+        const anyErr = error as any;
+        if (anyErr?.context) {
+          console.error('Function error context:', anyErr.context);
+        }
+        // Surface server error details if present for easier debugging
+        const message = anyErr?.context?.error || anyErr?.message || 'Failed to create checkout session';
+        throw new Error(message);
       }
 
       return data;
@@ -30,7 +39,7 @@ export class StripeService {
     }
   }
 
-  static async redirectToCheckout(priceId: string, successUrl?: string, cancelUrl?: string) {
+  static async redirectToCheckout(priceId?: string, successUrl?: string, cancelUrl?: string) {
     try {
       const { url } = await this.createCheckoutSession(priceId, successUrl, cancelUrl);
       
@@ -45,7 +54,7 @@ export class StripeService {
     }
   }
 
-  static async openCheckoutInNewTab(priceId: string, successUrl?: string, cancelUrl?: string) {
+  static async openCheckoutInNewTab(priceId?: string, successUrl?: string, cancelUrl?: string) {
     try {
       const { url } = await this.createCheckoutSession(priceId, successUrl, cancelUrl);
       

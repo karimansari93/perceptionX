@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@12.0.0?target=deno";
 
@@ -17,10 +17,10 @@ serve(async (req) => {
 
     console.log('Creating checkout session for:', { userId, priceId });
 
-    if (!userId || !priceId) {
-      console.error('Missing required parameters:', { userId, priceId });
+    if (!userId) {
+      console.error('Missing required parameter: userId');
       return new Response(
-        JSON.stringify({ error: 'Missing required parameters: userId, priceId' }),
+        JSON.stringify({ error: 'Missing required parameter: userId' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -29,12 +29,38 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const stripeSecretKey = Deno.env.get('STRIPE_SECRET_KEY')!;
+    const configuredPriceId = Deno.env.get('STRIPE_PRO_PRICE_ID');
+    const appBaseUrl = Deno.env.get('APP_BASE_URL');
     
-    if (!supabaseUrl || !supabaseKey || !stripeSecretKey) {
-      console.error('Missing environment variables');
+    if (!stripeSecretKey) {
+      console.error('Missing STRIPE_SECRET_KEY');
       return new Response(
-        JSON.stringify({ error: 'Server configuration error' }),
+        JSON.stringify({ error: 'Stripe not configured' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Determine price to use (prefer server-side configuration)
+    const priceToUse = configuredPriceId || priceId;
+    if (!priceToUse) {
+      console.error('No Stripe price configured (STRIPE_PRO_PRICE_ID) and none provided in request');
+      return new Response(
+        JSON.stringify({ error: 'Stripe price not configured on server' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Determine success/cancel URLs
+    const origin = req.headers.get('origin') || '';
+    const isLocalOrigin = origin.includes('localhost') || origin.includes('127.0.0.1');
+    const baseUrl = appBaseUrl || (isLocalOrigin ? '' : origin);
+    const successUrlToUse = successUrl || (baseUrl ? `${baseUrl}/dashboard?upgrade=success` : undefined);
+    const cancelUrlToUse = cancelUrl || (baseUrl ? `${baseUrl}/dashboard?upgrade=cancelled` : undefined);
+    if (!successUrlToUse || !cancelUrlToUse) {
+      console.error('No valid success/cancel URL. Set APP_BASE_URL for live usage or provide public URLs.');
+      return new Response(
+        JSON.stringify({ error: 'Missing success/cancel URLs. Configure APP_BASE_URL to your public site.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
     
@@ -95,6 +121,7 @@ serve(async (req) => {
         .from('profiles')
         .upsert({ 
           id: userId,
+          email: userEmail,
           stripe_customer_id: customerId 
         });
 
@@ -112,13 +139,14 @@ serve(async (req) => {
       payment_method_types: ['card'],
       line_items: [
         {
-          price: priceId,
+          price: priceToUse,
           quantity: 1,
         },
       ],
       mode: 'subscription',
-      success_url: successUrl || `${req.headers.get('origin')}/dashboard?upgrade=success`,
-      cancel_url: cancelUrl || `${req.headers.get('origin')}/dashboard?upgrade=cancelled`,
+      allow_promotion_codes: true,
+      success_url: successUrlToUse,
+      cancel_url: cancelUrlToUse,
       metadata: {
         supabase_user_id: userId,
       },

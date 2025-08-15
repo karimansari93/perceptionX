@@ -94,12 +94,30 @@ const App = () => (
               {/* Onboarding loading route */}
               <Route path="/onboarding/loading" element={<OnboardingLoading />} />
               
-              {/* Legacy dashboard route - maintains backward compatibility */}
+              {/* Dashboard routes */}
               <Route path="/dashboard" element={
                 <ProtectedRoute>
                   <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="dashboard" defaultSection="overview" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/dashboard/sources" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="dashboard" defaultSection="sources" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/dashboard/competitors" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="dashboard" defaultSection="competitors" />
                     </SidebarProvider>
                   </OnboardingGuard>
                 </ProtectedRoute>

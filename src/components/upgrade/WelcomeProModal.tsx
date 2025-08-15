@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Sparkles, TrendingUp, Users, Database } from 'lucide-react';
+import { TrendingUp, Bot, Headphones, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface WelcomeProModalProps {
   open: boolean;
@@ -9,13 +9,75 @@ interface WelcomeProModalProps {
 }
 
 export const WelcomeProModal = ({ open, onOpenChange }: WelcomeProModalProps) => {
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const touchStartX = useRef<number | null>(null);
+  const touchEndX = useRef<number | null>(null);
+
+  const slides = [
+    {
+      icon: TrendingUp,
+      title: "Weekly Updates",
+      description: "You'll be notified about new insights and changes in your AI perception every week."
+    },
+    {
+      icon: Bot,
+      title: "Access to All AI Models",
+      description: "Get comprehensive insights from all major AI platforms including the latest models."
+    },
+    {
+      icon: Headphones,
+      title: "Customer Support",
+      description: "Get priority support from our team. Book direct calls, get personalized recommendations, and receive dedicated assistance for your perception strategy."
+    }
+  ];
+
   const handleGetStarted = () => {
     onOpenChange(false);
   };
 
+  const nextSlide = () => {
+    setCurrentSlide((prev) => (prev + 1) % slides.length);
+  };
+
+  const prevSlide = () => {
+    setCurrentSlide((prev) => (prev - 1 + slides.length) % slides.length);
+  };
+
+  const goToSlide = (index: number) => {
+    setCurrentSlide(index);
+  };
+
+  // Touch handlers for swipe functionality
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    touchEndX.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchEnd = () => {
+    if (!touchStartX.current || !touchEndX.current) return;
+    
+    const distance = touchStartX.current - touchEndX.current;
+    const isLeftSwipe = distance > 50;
+    const isRightSwipe = distance < -50;
+
+    if (isLeftSwipe && currentSlide < slides.length - 1) {
+      nextSlide();
+    }
+    if (isRightSwipe && currentSlide > 0) {
+      prevSlide();
+    }
+
+    // Reset touch positions
+    touchStartX.current = null;
+    touchEndX.current = null;
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[95vw] max-w-[600px] p-4 sm:p-6">
+      <DialogContent className="w-[95vw] max-w-[500px] p-4 sm:p-6">
         <DialogHeader>
           <div className="flex items-center justify-center mb-4">
             <div className="flex items-center gap-3">
@@ -35,55 +97,78 @@ export const WelcomeProModal = ({ open, onOpenChange }: WelcomeProModalProps) =>
         </DialogHeader>
 
         <div className="space-y-4 sm:space-y-6 py-4">
-          {/* What's Next Section */}
-          <div className="bg-[#EBECED] rounded-lg p-4 sm:p-6">
-            <h3 className="font-semibold text-[#13274F] text-base sm:text-lg mb-3 sm:mb-4">What's Next?</h3>
-            <div className="space-y-4">
-              <div className="flex items-start gap-3">
-                <Users className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="font-medium text-[#13274F]">Explore Competitors</p>
-                  <p className="text-sm text-[#183056]">
-                    See how your competitors are perceived and identify opportunities to stand out
-                  </p>
+          {/* Carousel Container */}
+          <div className="relative">
+            {/* Navigation Arrows - Hidden on mobile */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={prevSlide}
+              className="absolute left-2 top-1/2 transform -translate-y-1/2 z-10 h-8 w-8 rounded-full bg-white/80 hover:bg-white shadow-md hidden sm:flex"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={nextSlide}
+              className="absolute right-2 top-1/2 transform -translate-y-1/2 z-10 h-8 w-8 rounded-full bg-white/80 hover:bg-white shadow-md hidden sm:flex"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+
+            {/* Slide Content */}
+            <div 
+              className="bg-[#EBECED] rounded-lg p-4 sm:p-6 text-center min-h-[200px] flex flex-col justify-center touch-pan-y"
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+            >
+              <div className="flex justify-center mb-4">
+                <div className="bg-white rounded-full p-3">
+                  {React.createElement(slides[currentSlide].icon, {
+                    className: "w-8 h-8 text-[#0DBCBA]"
+                  })}
                 </div>
               </div>
-              
-              <div className="flex items-start gap-3">
-                <Database className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="font-medium text-[#13274F]">Review Sources</p>
-                  <p className="text-sm text-[#183056]">
-                    Understand which data sources influence AI perceptions of your company
-                  </p>
-                </div>
-              </div>
-              
-              <div className="flex items-start gap-3">
-                <TrendingUp className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="font-medium text-[#13274F]">Weekly Updates</p>
-                  <p className="text-sm text-[#183056]">
-                    You'll be notified about new insights and changes in your AI perception every week
-                  </p>
-                </div>
-              </div>
+              <h3 className="font-semibold text-[#13274F] text-lg mb-3">
+                {slides[currentSlide].title}
+              </h3>
+              <p className="text-[#183056] leading-relaxed">
+                {slides[currentSlide].description}
+              </p>
+            </div>
+
+            {/* Dots Indicator */}
+            <div className="flex justify-center gap-2 mt-4">
+              {slides.map((_, index) => (
+                <button
+                  key={index}
+                  onClick={() => goToSlide(index)}
+                  className={`w-2 h-2 rounded-full transition-colors ${
+                    index === currentSlide ? 'bg-[#0DBCBA]' : 'bg-gray-300'
+                  }`}
+                  aria-label={`Go to slide ${index + 1}`}
+                />
+              ))}
             </div>
           </div>
         </div>
 
         {/* CTA Section */}
-        <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4 pt-4">
+        <div className="flex flex-col sm:flex-row justify-center gap-3 pt-4">
           <Button 
             onClick={handleGetStarted}
-            className="bg-[#0DBCBA] hover:bg-[#0A9B99] text-white font-semibold px-6 sm:px-8 py-3 text-base sm:text-lg"
+            variant="default"
+            className="w-full sm:w-auto"
           >
             I'm ready
           </Button>
           <Button 
             variant="outline"
             onClick={() => window.open('https://meetings-eu1.hubspot.com/karim-al-ansari', '_blank')}
-            className="border-[#0DBCBA] text-[#0DBCBA] hover:bg-[#0DBCBA] hover:text-white font-semibold px-6 sm:px-8 py-3 text-base sm:text-lg"
+            className="w-full sm:w-auto"
           >
             Got any questions?
           </Button>

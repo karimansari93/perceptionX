@@ -100,48 +100,63 @@ export const useDashboardData = () => {
           if (promptsError) {
             // Silently handle error
           } else {
-            const { data: talentXScores, error: talentXError } = await supabase
-              .from('talentx_perception_scores')
-              .select('*')
-              .eq('user_id', user.id)
+            // Fetch TalentX responses from prompt_responses table joined with confirmed_prompts
+            const { data: talentXResponses, error: talentXError } = await supabase
+              .from('prompt_responses')
+              .select(`
+                *,
+                confirmed_prompts!inner(
+                  user_id,
+                  prompt_type,
+                  prompt_text,
+                  talentx_attribute_id
+                )
+              `)
+              .eq('confirmed_prompts.user_id', user.id)
+              .like('confirmed_prompts.prompt_type', 'talentx_%')
+              .not('talentx_analysis', 'eq', '{}')
               .order('created_at', { ascending: false });
 
             if (talentXError) {
               // Silently handle error
-            } else if (talentXScores && talentXScores.length > 0) {
-              // Convert TalentX scores to PromptResponse format
-              const talentXResponses: PromptResponse[] = talentXScores.map(score => {
+            } else if (talentXResponses && talentXResponses.length > 0) {
+              // Convert TalentX responses to PromptResponse format
+              const talentXResponsesFormatted: PromptResponse[] = talentXResponses.map(response => {
+                const promptType = response.confirmed_prompts.prompt_type;
+                const attributeId = response.confirmed_prompts.talentx_attribute_id || 
+                                   promptType.replace('talentx_', '');
+                
                 // Find the matching prompt text
                 const matchingPrompt = talentXPrompts?.find(p => 
-                  p.attribute_id === score.attribute_id && 
-                  p.prompt_type === score.prompt_type
+                  p.attribute_id === attributeId && 
+                  p.prompt_type === promptType.replace('talentx_', '')
                 );
                 
-                const promptText = matchingPrompt?.prompt_text || `TalentX ${score.prompt_type} analysis for ${score.attribute_id}`;
+                const promptText = matchingPrompt?.prompt_text || `TalentX ${promptType.replace('talentx_', '')} analysis for ${attributeId}`;
                 
                 return {
-                  id: score.id,
-                  confirmed_prompt_id: score.id, // Use the score ID as prompt ID
-                  ai_model: score.ai_model,
-                  response_text: score.response_text,
-                  sentiment_score: score.sentiment_score,
-                  sentiment_label: score.sentiment_score > 0.1 ? 'positive' : score.sentiment_score < -0.1 ? 'negative' : 'neutral',
-                  citations: score.citations,
-                  tested_at: score.created_at,
+                  id: response.id,
+                  confirmed_prompt_id: response.confirmed_prompt_id,
+                  ai_model: response.ai_model,
+                  response_text: response.response_text,
+                  sentiment_score: response.sentiment_score,
+                  sentiment_label: response.sentiment_score > 0.1 ? 'positive' : response.sentiment_score < -0.1 ? 'negative' : 'neutral',
+                  citations: response.citations,
+                  tested_at: response.created_at,
                   company_mentioned: true, // TalentX responses are always about the company
                   mention_ranking: 1, // Default to 1 since it's about the company
-                  competitor_mentions: score.competitor_mentions,
+                  competitor_mentions: response.detected_competitors,
 
                   confirmed_prompts: {
                     prompt_text: promptText,
-                    prompt_category: `TalentX: ${score.attribute_id.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
-                    prompt_type: score.prompt_type
+                    prompt_category: `TalentX: ${attributeId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
+                    prompt_type: promptType.replace('talentx_', '')
                   }
                 };
               });
               
               // Combine regular responses with TalentX responses
-              allResponses = [...allResponses, ...talentXResponses];
+              allResponses = [...allResponses, ...talentXResponsesFormatted];
             }
           }
         } catch (error) {

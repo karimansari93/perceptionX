@@ -324,27 +324,39 @@ serve(async (req) => {
           const attributeAnalysis = talentXAnalysis.find((analysis: any) => analysis.attributeId === talentXAttributeId);
           
           if (attributeAnalysis) {
-            // Store TalentX perception score with citations and competitors
-            const { error: perceptionError } = await supabase
-              .from('talentx_perception_scores')
-              .upsert({
-                user_id: talentXPrompt.user_id,
-                attribute_id: talentXAttributeId,
+            // Store TalentX analysis in prompt_responses table
+            const talentXData = {
+              confirmed_prompt_id: confirmed_prompt_id,
+              ai_model: ai_model,
+              response_text: response,
+              sentiment_score: attributeAnalysis.sentimentScore,
+              citations: llmCitations || result.citations,
+              detected_competitors: result.detected_competitors,
+              talentx_analysis: {
+                attributeId: talentXAttributeId,
+                relevanceScore: attributeAnalysis.relevanceScore,
+                sentimentScore: attributeAnalysis.sentimentScore,
+                mentionCount: attributeAnalysis.mentionCount || 0,
+                confidence: attributeAnalysis.confidence || 0,
+                context: attributeAnalysis.context || []
+              },
+              talentx_scores: {
                 perception_score: attributeAnalysis.relevanceScore,
                 sentiment_score: attributeAnalysis.sentimentScore,
                 visibility_score: promptType === 'visibility' ? attributeAnalysis.relevanceScore : null,
-                competitive_score: promptType === 'competitive' ? attributeAnalysis.relevanceScore : null,
-                response_text: response,
-                ai_model: ai_model,
-                prompt_type: promptType,
-                citations: llmCitations || result.citations,
-                detected_competitors: result.detected_competitors
-              }, {
-                onConflict: 'user_id,attribute_id,prompt_type,ai_model'
+                competitive_score: promptType === 'competitive' ? attributeAnalysis.relevanceScore : null
+              }
+            };
+
+            // Insert or update TalentX response in prompt_responses
+            const { error: talentXError } = await supabase
+              .from('prompt_responses')
+              .upsert(talentXData, {
+                onConflict: 'confirmed_prompt_id,ai_model'
               });
 
-            if (perceptionError) {
-              console.error('Error storing TalentX perception score:', perceptionError);
+            if (talentXError) {
+              console.error('Error storing TalentX analysis:', talentXError);
             }
           }
         }
@@ -354,7 +366,7 @@ serve(async (req) => {
         // Continue with regular processing
       }
       
-      // For TalentX prompts, return success without inserting into prompt_responses
+      // For TalentX prompts, we've already stored the data above, so just return success
       return new Response(
         JSON.stringify({
           success: true,

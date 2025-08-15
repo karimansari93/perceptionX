@@ -14,8 +14,8 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Replace this with your actual Stripe Price ID
-  const PRO_PRICE_ID = 'price_1RtPMbKHaELhU81I97BZcvpg';
+  // Server holds Stripe Price ID; client does not need it
+  const PRO_PRICE_ID = undefined as unknown as string | undefined;
 
   const handleUpgrade = async () => {
     setLoading(true);
@@ -111,8 +111,7 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
             </div>
             
             <div className="space-y-2">
-              {/* Stripe button temporarily hidden - can be re-enabled later */}
-              {/* <Button
+              <Button
                 onClick={handleUpgrade}
                 disabled={loading}
                 className="w-full bg-[#DB5E89] text-white hover:bg-[#C54A7A] font-semibold"
@@ -128,7 +127,7 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
                     Get Early Access Now
                   </>
                 )}
-              </Button> */}
+              </Button>
               
               <Button
                 onClick={handleBookDemo}

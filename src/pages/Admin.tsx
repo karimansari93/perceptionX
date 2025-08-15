@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { RefreshCw, Users, Calendar, Building2, LogOut } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { checkExistingPromptResponse } from '@/lib/utils';
 
 interface UserRow {
   id: string;
@@ -24,6 +25,10 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   const [refreshingUsers, setRefreshingUsers] = useState<Set<string>>(new Set());
   const { signOut } = useAuth();
+
+  useEffect(() => {
+    document.title = 'pX Admin';
+  }, []);
 
   useEffect(() => {
     fetchUsers();
@@ -140,40 +145,64 @@ export default function Admin() {
         return;
       }
 
-      // Delete old responses for this user's prompts
-      const promptIds = confirmedPrompts.map((p: any) => p.id);
-      if (promptIds.length > 0) {
-        await supabase
-          .from('prompt_responses')
-          .delete()
-          .in('confirmed_prompt_id', promptIds);
-      }
+      // Keep historical responses: do not delete old responses
 
       const models = [
         { name: 'openai', fn: 'test-prompt-openai' },
         { name: 'perplexity', fn: 'test-prompt-perplexity' },
         { name: 'gemini', fn: 'test-prompt-gemini' },
+        { name: 'deepseek', fn: 'test-prompt-deepseek' },
+        { name: 'google-ai-overviews', fn: 'test-prompt-google-ai-overviews' },
       ];
 
       for (const prompt of confirmedPrompts) {
         for (const model of models) {
           try {
+            // First, get the raw response from the model-specific function
+            console.log(`🔄 Calling ${model.name} function for prompt: ${prompt.prompt_text.substring(0, 50)}...`);
+            
             const { data: resp, error } = await supabase.functions.invoke(model.fn, {
-              body: {
-                prompt: prompt.prompt_text,
-                companyName: target.company_name,
-                industry: target.industry,
-              },
+              body: { prompt: prompt.prompt_text }
             });
-            if (error) continue;
+            
+            console.log(`📡 ${model.name} response:`, { data: resp, error });
+            
+            if (error || !(resp as any)?.response) {
+              if (error) {
+                console.error(`❌ ${model.name} invocation error:`, error);
+              } else {
+                console.error(`❌ ${model.name} no response data:`, resp);
+              }
+              continue;
+            }
 
-            await supabase.from('prompt_responses').insert({
-              confirmed_prompt_id: prompt.id,
-              ai_model: model.name,
-              response_text: (resp as any)?.response || (resp as any)?.content || '',
+            console.log(`✅ ${model.name} got response:`, (resp as any).response.substring(0, 100) + '...');
+
+            console.log(`🚀 Sending ${model.name} response to analyze-response function...`);
+
+            // Send through analyze-response, which stores with service role and enriches fields
+            const analyzeResult = await supabase.functions.invoke('analyze-response', {
+              body: {
+                response: (resp as any).response,
+                companyName: target.company_name,
+                promptType: (prompt as any).prompt_type,
+                perplexityCitations: model.name === 'perplexity' ? (resp as any).citations : null,
+                citations: model.name === 'google-ai-overviews' ? (resp as any).citations : null,
+                confirmed_prompt_id: prompt.id,
+                ai_model: model.name,
+                isTalentXPrompt: false
+              }
             });
+            
+            console.log(`📊 ${model.name} analyze-response result:`, analyzeResult);
+            
+            if (analyzeResult.error) {
+              console.error(`❌ ${model.name} analyze-response error:`, analyzeResult.error);
+            } else {
+              console.log(`✅ ${model.name} successfully processed and stored`);
+            }
           } catch (e) {
-            console.error('Model run error', e);
+            console.error(`💥 ${model.name} unexpected error:`, e);
           }
         }
       }

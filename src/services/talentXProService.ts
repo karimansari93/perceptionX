@@ -364,19 +364,29 @@ export class TalentXProService {
    */
   static async getAggregatedProAnalysis(userId: string): Promise<any[]> {
     try {
-      // Fetch perception scores from the new table
-      const { data: perceptionScores, error } = await supabase
-        .from('talentx_perception_scores')
-        .select('*')
-        .eq('user_id', userId)
+      // Fetch TalentX responses from prompt_responses table joined with confirmed_prompts
+      const { data: talentXResponses, error } = await supabase
+        .from('prompt_responses')
+        .select(`
+          *,
+          confirmed_prompts!inner(
+            user_id,
+            prompt_type,
+            prompt_text,
+            talentx_attribute_id
+          )
+        `)
+        .eq('confirmed_prompts.user_id', userId)
+        .like('confirmed_prompts.prompt_type', 'talentx_%')
+        .not('talentx_analysis', 'eq', '{}')
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error fetching TalentX perception scores:', error);
+        console.error('Error fetching TalentX responses:', error);
         throw error;
       }
 
-      if (!perceptionScores || perceptionScores.length === 0) {
+      if (!talentXResponses || talentXResponses.length === 0) {
         return [];
       }
 
@@ -397,33 +407,54 @@ export class TalentXProService {
       // Group by attribute and aggregate scores
       const aggregated: Record<string, any> = {};
 
-      perceptionScores.forEach(score => {
-        if (!aggregated[score.attribute_id]) {
-          aggregated[score.attribute_id] = {
-            attributeId: score.attribute_id,
-            attributeName: attributeNames[score.attribute_id] || score.attribute_id,
+      talentXResponses.forEach(response => {
+        const promptType = response.confirmed_prompts.prompt_type;
+        const attributeId = response.confirmed_prompts.talentx_attribute_id || 
+                           promptType.replace('talentx_', '');
+        
+        if (!aggregated[attributeId]) {
+          aggregated[attributeId] = {
+            attributeId: attributeId,
+            attributeName: attributeNames[attributeId] || attributeId,
             sentimentAnalyses: [],
             competitiveAnalyses: [],
             visibilityAnalyses: [],
-            totalMentions: 1, // Each score represents one mention
+            totalMentions: 1,
             avgPerceptionScore: 0,
             avgSentimentScore: 0,
             totalResponses: 0
           };
         }
 
-        const group = aggregated[score.attribute_id];
+        const group = aggregated[attributeId];
+        
+        // Extract scores from talentx_analysis or talentx_scores
+        const talentXData = response.talentx_analysis || response.talentx_scores || {};
+        const perceptionScore = talentXData.perception_score || talentXData.score || 0;
+        const sentimentScore = talentXData.sentiment_score || response.sentiment_score || 0;
+        
+        const analysisData = {
+          id: response.id,
+          perception_score: perceptionScore,
+          sentiment_score: sentimentScore,
+          response_text: response.response_text,
+          ai_model: response.ai_model,
+          prompt_type: promptType.replace('talentx_', ''),
+          citations: response.citations,
+          detected_competitors: response.detected_competitors,
+          created_at: response.created_at
+        };
         
         // Add to appropriate type array
-        switch (score.prompt_type) {
+        switch (analysisData.prompt_type) {
           case 'sentiment':
-            group.sentimentAnalyses.push(score);
+            group.sentimentAnalyses.push(analysisData);
             break;
           case 'competitive':
-            group.competitiveAnalyses.push(score);
+            group.competitiveAnalyses.push(analysisData);
             break;
           case 'visibility':
-            group.visibilityAnalyses.push(score);
+            group.visibilityAnalyses.push(analysisData);
             break;
         }
 
