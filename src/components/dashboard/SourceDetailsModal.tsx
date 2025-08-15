@@ -82,18 +82,17 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: Sourc
             try {
               rawCitations = JSON.parse(rawCitations);
             } catch {
-              console.log('Failed to parse citations string:', rawCitations);
+              // Failed to parse citations string
               return;
             }
           }
           
           if (!Array.isArray(rawCitations)) {
-            console.log('Citations is not an array:', rawCitations);
+            // Citations is not an array
             return;
           }
           
-          console.log('Processing citations for domain:', domain, 'Raw citations:', rawCitations);
-          
+          // Process citations for the target domain
           rawCitations.forEach(citation => {
             // Handle different citation structures
             let citationDomain = '';
@@ -118,8 +117,6 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: Sourc
               }
             }
             
-            console.log('Citation processed:', { citation, citationDomain, citationUrl, targetDomain: domain });
-            
             // Check if this citation matches our target domain
             // For Google AI Overviews, we need to handle different source formats
             let isMatch = false;
@@ -140,7 +137,6 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: Sourc
             }
             
             if (isMatch && citationUrl) {
-              console.log('Adding citation:', citation);
               // Use URL as key to avoid duplicates, but store the full citation object
               citationsMap.set(citationUrl, citation);
             }

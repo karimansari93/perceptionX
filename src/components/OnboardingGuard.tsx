@@ -46,64 +46,55 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
           return;
         }
 
-        // Check for completed onboarding (both company_name and industry are required)
-        const { data, error } = await supabase
+        // Check if user has basic onboarding data
+        const { data: onboardingData, error: onboardingError } = await supabase
           .from('user_onboarding')
           .select('*')
           .eq('user_id', user.id)
-          .not('company_name', 'is', null)
-          .not('industry', 'is', null)
           .order('created_at', { ascending: false })
           .limit(1);
 
-        if (error) {
-          console.error('Error checking onboarding:', error);
-          setConnectionError(true);
-        } else {
-          // Check if the record has both required fields: company_name and industry
-          const hasBasicOnboarding = data && data.length > 0 && 
-            data[0].company_name && 
-            data[0].industry;
-          
-          console.log('OnboardingGuard: Basic onboarding data:', {
-            hasData: !!data,
-            dataLength: data?.length,
-            hasBasicOnboarding,
-            companyName: data?.[0]?.company_name,
-            industry: data?.[0]?.industry
-          });
-          
-          if (hasBasicOnboarding) {
-            // Check if there are actual confirmed prompts (not just the flag)
-            const { data: promptsData, error: promptsError } = await supabase
-              .from('confirmed_prompts')
+        if (onboardingError) {
+          console.error('Error fetching onboarding data:', onboardingError);
+          return;
+        }
+
+        // Check if user has confirmed prompts
+        if (onboardingData && onboardingData.length > 0) {
+          const { data: promptsData, error: promptsError } = await supabase
+            .from('confirmed_prompts')
+            .select('*')
+            .eq('onboarding_id', onboardingData[0].id);
+
+          if (promptsError) {
+            console.error('Error fetching confirmed prompts:', promptsError);
+            return;
+          }
+
+          // Check if user has completed onboarding
+          if (promptsData && promptsData.length > 0) {
+            // Check if user has any responses
+            const { data: responsesData, error: responsesError } = await supabase
+              .from('prompt_responses')
               .select('id')
-              .eq('onboarding_id', data[0].id)
+              .in('confirmed_prompt_id', promptsData.map(p => p.id))
               .limit(1);
 
-            if (promptsError) {
-              console.error('Error checking confirmed prompts:', promptsError);
-              setConnectionError(true);
+            if (responsesError) {
+              console.error('Error fetching responses:', responsesError);
               return;
             }
 
-            // Onboarding is complete only if we have both basic info AND confirmed prompts
-            const isComplete = promptsData && promptsData.length > 0;
-            
-            console.log('OnboardingGuard: Confirmed prompts check:', {
-              promptsData,
-              promptsCount: promptsData?.length,
-              isComplete
-            });
-            
-            setHasOnboarding(isComplete);
-            setConnectionError(false);
-          } else {
-            console.log('OnboardingGuard: No basic onboarding data, setting hasOnboarding to false');
-            setHasOnboarding(false);
-            setConnectionError(false);
+            // User has completed onboarding if they have prompts and responses
+            if (responsesData && responsesData.length > 0) {
+              setHasOnboarding(true);
+              return;
+            }
           }
         }
+
+        // No basic onboarding data found
+        setHasOnboarding(false);
       } catch (error) {
         console.error('Error in onboarding check:', error);
         setConnectionError(true);

@@ -214,7 +214,6 @@ export const Onboarding = () => {
             if (error) throw error;
 
             setOnboardingId(data.id);
-            console.log('Created new onboarding record:', data.id);
           }
         } catch (error) {
           console.error('Error saving onboarding data:', error);

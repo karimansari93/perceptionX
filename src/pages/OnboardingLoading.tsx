@@ -109,7 +109,7 @@ export const OnboardingLoading = () => {
 
           confirmedPrompts = newPrompts;
         } else {
-          console.log('Using existing prompts for onboarding session:', existingPrompts.length);
+          // Using existing prompts for onboarding session
         }
 
         // Define models to test
@@ -254,7 +254,6 @@ export const OnboardingLoading = () => {
           .eq('id', onboardingId);
 
         // Verify data was stored by checking the database
-        console.log('Onboarding completed, checking stored data...');
         
         try {
           const { data: storedResponses, error: verifyError } = await supabase

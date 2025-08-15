@@ -24,7 +24,7 @@ const AuthCallback = () => {
 
           // Check if user needs onboarding
           try {
-            const { data: onboardingData, error: onboardingError } = await supabase
+            const { data: userOnboardingData, error: onboardingError } = await supabase
               .from('user_onboarding')
               .select('id, company_name, industry')
               .eq('user_id', session.user.id)
@@ -41,10 +41,9 @@ const AuthCallback = () => {
             }
 
             // If no basic onboarding data, redirect to onboarding
-            if (!onboardingData || onboardingData.length === 0 || 
-                !onboardingData[0].company_name || !onboardingData[0].industry) {
-              console.log('AuthCallback: No basic onboarding data, redirecting to onboarding');
-              setTimeout(() => navigate('/onboarding'), 0);
+            if (!userOnboardingData || userOnboardingData.length === 0 || 
+                !userOnboardingData[0].company_name || !userOnboardingData[0].industry) {
+              navigate('/onboarding');
               return;
             }
 
@@ -52,24 +51,22 @@ const AuthCallback = () => {
             const { data: promptsData, error: promptsError } = await supabase
               .from('confirmed_prompts')
               .select('id')
-              .eq('onboarding_id', onboardingData[0].id)
+              .eq('onboarding_id', userOnboardingData[0].id)
               .limit(1);
 
             if (promptsError) {
               console.error('Error checking confirmed prompts:', promptsError);
               // If we can't check, default to dashboard
-              setTimeout(() => navigate('/dashboard'), 0);
+              navigate('/dashboard');
               return;
             }
 
             // If no confirmed prompts, onboarding is incomplete
             if (!promptsData || promptsData.length === 0) {
-              console.log('AuthCallback: No confirmed prompts found, redirecting to onboarding');
-              setTimeout(() => navigate('/onboarding'), 0);
+              navigate('/onboarding');
             } else {
-              console.log('AuthCallback: Onboarding complete, redirecting to dashboard');
               // User has completed onboarding, go to dashboard
-              setTimeout(() => navigate('/dashboard'), 0);
+              navigate('/dashboard');
             }
           } catch (onboardingCheckError) {
             console.error('Error checking onboarding status:', onboardingCheckError);

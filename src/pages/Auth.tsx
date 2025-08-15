@@ -124,7 +124,6 @@ const Auth = () => {
           // If no basic onboarding data, redirect to onboarding
           if (!userOnboardingData || userOnboardingData.length === 0 || 
               !userOnboardingData[0].company_name || !userOnboardingData[0].industry) {
-            console.log('Auth: No basic onboarding data, redirecting to onboarding');
             navigate('/onboarding');
             return;
           }
@@ -150,10 +149,8 @@ const Auth = () => {
 
           // If no confirmed prompts, onboarding is incomplete
           if (!promptsData || promptsData.length === 0) {
-            console.log('Auth: No confirmed prompts found, redirecting to onboarding');
             navigate('/onboarding');
           } else {
-            console.log('Auth: Onboarding complete, redirecting to dashboard');
             // User has completed onboarding, go to dashboard
             navigate('/dashboard', { 
               state: { 
@@ -314,7 +311,6 @@ const Auth = () => {
             // If no basic onboarding data, redirect to onboarding
             if (!userOnboardingData || userOnboardingData.length === 0 || 
                 !userOnboardingData[0].company_name || !userOnboardingData[0].industry) {
-              console.log('Auth: No basic onboarding data, redirecting to onboarding');
               navigate('/onboarding');
               return;
             }
@@ -335,10 +331,8 @@ const Auth = () => {
 
             // If no confirmed prompts, onboarding is incomplete
             if (!promptsData || promptsData.length === 0) {
-              console.log('Auth: No confirmed prompts found, redirecting to onboarding');
               navigate('/onboarding');
             } else {
-              console.log('Auth: Onboarding complete, redirecting to dashboard');
               // User has completed onboarding, go to dashboard
               navigate('/dashboard');
             }
