@@ -7,11 +7,22 @@ import { getLLMDisplayName } from '@/config/llmLogos';
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 
-// Add shimmer animation styles
+// Add shimmer and pulse animation styles
 const shimmerStyles = `
   @keyframes shimmer {
     0% { background-position: -200% 0; }
     100% { background-position: 200% 0; }
+  }
+  
+  @keyframes gradientPulse {
+    0%, 100% { 
+      background: linear-gradient(90deg, #ec4899, #f97316, #ec4899);
+      background-size: 200% 100%;
+    }
+    50% { 
+      background: linear-gradient(90deg, #f97316, #ec4899, #f97316);
+      background-size: 200% 100%;
+    }
   }
 `;
 
@@ -110,19 +121,39 @@ export const LoadingModal = ({
                 {progressData.completed} / {progressData.total}
               </span>
             </div>
-            <div className="h-2 bg-gray-200 rounded-full overflow-hidden relative">
+            <div className="h-3 bg-gray-200 rounded-full overflow-hidden relative">
+              {/* Progress bar with pink gradient */}
               <div 
-                className="h-full bg-blue-500 rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${progressPercentage}%` }}
-              ></div>
-              {/* Animated shimmer effect */}
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-pulse" 
-                   style={{ 
-                     animation: 'shimmer 2s infinite',
-                     background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent)',
-                     backgroundSize: '200% 100%'
-                   }}>
+                className="h-full rounded-full transition-all duration-700 ease-out relative"
+                style={{ 
+                  width: `${progressPercentage}%`,
+                  background: 'linear-gradient(90deg, #ec4899, #f97316)',
+                  animation: !isComplete ? 'gradientPulse 2s ease-in-out infinite' : 'none'
+                }}
+              >
+                {/* Shimmer overlay for active loading */}
+                {!isComplete && (
+                  <div 
+                    className="absolute inset-0 rounded-full"
+                    style={{ 
+                      animation: 'shimmer 1.5s infinite',
+                      background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent)',
+                      backgroundSize: '200% 100%'
+                    }}
+                  />
+                )}
               </div>
+              
+              {/* Subtle glow effect when loading */}
+              {!isComplete && progressPercentage > 0 && (
+                <div 
+                  className="absolute inset-0 rounded-full opacity-50 blur-sm"
+                  style={{ 
+                    width: `${progressPercentage}%`,
+                    background: 'linear-gradient(90deg, #ec4899, #f97316)'
+                  }}
+                />
+              )}
             </div>
             <div className="text-xs text-gray-500">
               {progressData.total > 0 ? `${progressData.total - progressData.completed} responses remaining` : 'Collecting responses...'}

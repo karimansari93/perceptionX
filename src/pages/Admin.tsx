@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { RefreshCw, Users, Calendar, Building2, LogOut } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { checkExistingPromptResponse } from '@/lib/utils';
+import { checkExistingPromptResponse, logger } from '@/lib/utils';
 
 interface UserRow {
   id: string;
@@ -159,26 +159,18 @@ export default function Admin() {
         for (const model of models) {
           try {
             // First, get the raw response from the model-specific function
-            console.log(`🔄 Calling ${model.name} function for prompt: ${prompt.prompt_text.substring(0, 50)}...`);
-            
             const { data: resp, error } = await supabase.functions.invoke(model.fn, {
               body: { prompt: prompt.prompt_text }
             });
             
-            console.log(`📡 ${model.name} response:`, { data: resp, error });
-            
             if (error || !(resp as any)?.response) {
               if (error) {
-                console.error(`❌ ${model.name} invocation error:`, error);
+                logger.error(`${model.name} invocation error:`, error);
               } else {
-                console.error(`❌ ${model.name} no response data:`, resp);
+                logger.error(`${model.name} no response data:`, resp);
               }
               continue;
             }
-
-            console.log(`✅ ${model.name} got response:`, (resp as any).response.substring(0, 100) + '...');
-
-            console.log(`🚀 Sending ${model.name} response to analyze-response function...`);
 
             // Send through analyze-response, which stores with service role and enriches fields
             const analyzeResult = await supabase.functions.invoke('analyze-response', {
@@ -194,15 +186,11 @@ export default function Admin() {
               }
             });
             
-            console.log(`📊 ${model.name} analyze-response result:`, analyzeResult);
-            
             if (analyzeResult.error) {
-              console.error(`❌ ${model.name} analyze-response error:`, analyzeResult.error);
-            } else {
-              console.log(`✅ ${model.name} successfully processed and stored`);
+              logger.error(`${model.name} analyze-response error:`, analyzeResult.error);
             }
           } catch (e) {
-            console.error(`💥 ${model.name} unexpected error:`, e);
+            logger.error(`${model.name} unexpected error:`, e);
           }
         }
       }

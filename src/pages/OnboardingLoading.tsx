@@ -6,7 +6,7 @@ import { CheckCircle, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import LLMLogo from "@/components/LLMLogo";
-import { checkExistingPromptResponse } from "@/lib/utils";
+import { checkExistingPromptResponse, logger } from "@/lib/utils";
 
 interface LocationState {
   onboardingId: string;
@@ -287,7 +287,6 @@ export const OnboardingLoading = () => {
                 );
 
                 if (responseExists) {
-                  console.log(`Response already exists for ${model.name} with prompt: ${confirmedPrompt.prompt_text}, skipping analysis`);
                   continue;
                 }
 
@@ -296,8 +295,6 @@ export const OnboardingLoading = () => {
                 const googleAICitations = model.name === 'google-ai-overviews' ? responseData.citations : null;
                 
                 try {
-                  console.log(`Processing response for ${model.name} with prompt: ${confirmedPrompt.prompt_text}`);
-                  
                   const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-response', {
                     body: {
                       response: responseData.response,
@@ -311,12 +308,10 @@ export const OnboardingLoading = () => {
                   });
 
                   if (analysisError) {
-                    console.error(`Error in analyze-response for ${model.name}:`, analysisError);
-                  } else {
-                    console.log(`Successfully processed response for ${model.name}:`, analysisData);
+                    logger.error(`Analysis error for ${model.name}:`, analysisError);
                   }
                 } catch (analysisError) {
-                  console.error(`Exception in analyze-response for ${model.name}:`, analysisError);
+                  logger.error(`Analysis exception for ${model.name}:`, analysisError);
                 }
               }
 
@@ -327,7 +322,7 @@ export const OnboardingLoading = () => {
               await new Promise(resolve => setTimeout(resolve, 1000));
 
             } catch (modelError) {
-              console.error(`Error with ${model.name}:`, modelError);
+              logger.error(`Error with ${model.name}:`, modelError);
               // Continue with next model
               continue;
             }
@@ -351,7 +346,7 @@ export const OnboardingLoading = () => {
           if (verifyError) {
             console.error('Error checking stored data:', verifyError);
           } else {
-            console.log('Stored responses found:', storedResponses);
+            logger.log('Stored responses found:', storedResponses?.length || 0);
           }
         } catch (verifyException) {
           console.error('Exception checking stored data:', verifyException);

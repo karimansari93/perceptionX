@@ -466,7 +466,7 @@ const Auth = () => {
             {showVerifyEmailMessage ? (
               <div className="text-center space-y-6">
                 <p className="mb-6 text-nightsky text-base" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
-                  We've sent a verification link to your email address. Please check your inbox and click the link to activate your account.
+                  We've sent a verification link to your email address. Please check your inbox and spam folder, then click the link to activate your account.
                 </p>
                 <Button className="w-full bg-nightsky text-white rounded-full font-bold text-base" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }} onClick={() => {
                   setShowVerifyEmailMessage(false);

@@ -221,19 +221,9 @@ serve(async (req) => {
   }
 
   try {
-    // Parse and log the request body
+    // Parse request body
     const body = await req.json();
-    console.log("Request body received:", body);
-    console.log("Company name received:", body.companyName);
-    console.log("Company name type:", typeof body.companyName);
-    console.log("Company name length:", body.companyName ? body.companyName.length : 'undefined');
-    
     const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, isTalentXPrompt, talentXAttributeId } = body;
-    
-    // Additional logging for debugging
-    console.log("Destructured companyName:", companyName);
-    console.log("Destructured companyName type:", typeof companyName);
-    console.log("Destructured companyName length:", companyName ? companyName.length : 'undefined');
     
     // Handle citations from different LLMs
     let llmCitations = perplexityCitations || [];

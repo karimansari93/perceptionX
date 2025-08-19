@@ -156,7 +156,7 @@ export const useRefreshPrompts = () => {
               );
 
               if (responseExists) {
-                console.log(`Response already exists for ${model.model} with prompt: ${confirmedPrompt.prompt_text}, skipping analysis`);
+                // Skip analysis for existing response
                 continue;
               }
 

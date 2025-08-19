@@ -369,14 +369,10 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       );
 
       if (responseExists) {
-        console.log(`Response already exists for ${modelName} with prompt: ${confirmedPrompt.prompt_text}, skipping analysis`);
         return;
       }
 
       // Analyze sentiment and extract citations with enhanced visibility support
-      console.log("Debug - onboardingRecord:", onboardingRecord);
-      console.log("Debug - onboardingRecord.company_name:", onboardingRecord?.company_name);
-      console.log("Debug - onboardingRecord.companyName:", onboardingRecord?.companyName);
       
       const { data: sentimentData, error: sentimentError } = await supabase.functions
         .invoke('analyze-response', {
@@ -391,7 +387,6 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         });
 
       if (sentimentError) {
-        console.error('Sentiment analysis error:', sentimentError);
         throw new Error(`Sentiment Analysis Error: ${sentimentError.message}`);
       }
 
@@ -399,8 +394,6 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         throw new Error('No sentiment analysis data received');
       }
     } catch (error) {
-      console.error(`Error testing with ${modelName}:`, error);
-      
       // Provide user-friendly error messages
       if (error.message?.includes('overloaded')) {
         throw new Error(`The ${modelName} model is currently experiencing high demand. Please try again in a few minutes.`);
@@ -515,7 +508,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
           });
 
         if (sentimentError) {
-          console.error('Sentiment analysis error:', sentimentError);
+          throw new Error(`Sentiment analysis error: ${sentimentError.message}`);
         }
 
         // Combine Perplexity citations with analyzed citations
