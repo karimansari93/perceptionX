@@ -241,6 +241,8 @@ serve(async (req) => {
       llmCitations = body.citations;
     }
 
+
+
     // Check for required fields
     if (!confirmed_prompt_id) {
       console.error("Missing confirmed_prompt_id in request body");
@@ -293,6 +295,8 @@ serve(async (req) => {
       detected_competitors: result.detected_competitors
       // Removed talentx_analysis and talentx_scores as they don't exist in the table
     };
+
+
 
 
 

@@ -11,6 +11,8 @@ import { logger, sanitizeInput, safeStorePromptResponse, checkExistingPromptResp
 interface OnboardingData {
   companyName: string;
   industry: string;
+  country?: string;
+  job_function?: string;
 }
 
 interface GeneratedPrompt {
@@ -86,53 +88,39 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
   }, [onboardingData]);
 
   useEffect(() => {
-    // Fetch prompts from confirmed_prompts if onboardingData.id is present
-    const fetchPrompts = async () => {
-      if (onboardingData && (onboardingData as any).id) {
-        const { data, error } = await (supabase as any)
-          .from('confirmed_prompts')
-          .select('*')
-          .eq('onboarding_id', (onboardingData as any).id);
-        if (error) {
-          console.error('Error fetching prompts:', error);
-          return;
-        }
-        if (data && data.length > 0) {
-          setPrompts(
-            data.map((p: any) => ({
-              id: p.id,
-              text: p.prompt_text,
-              category: p.prompt_category,
-              type: p.prompt_type
-            }))
-          );
-        }
-      }
-    };
-    fetchPrompts();
+    // Always generate fresh prompts with location support when onboarding data is available
+    if (onboardingData) {
+      generatePrompts();
+    }
   }, [onboardingData]);
 
   const generatePrompts = () => {
     if (!onboardingData) {
       return;
     }
-    const { companyName, industry } = onboardingData;
+    const { companyName, industry, country } = onboardingData;
+    
+    // Determine if we should include location-specific prompts
+    const hasLocation = country && country !== 'GLOBAL';
+    const formattedCountry = hasLocation ? formatCountryForPrompt(country) : '';
+    const locationSuffix = hasLocation ? ` in ${formattedCountry}` : '';
+    
     let generatedPrompts: GeneratedPrompt[] = [
       {
         id: 'sentiment-1',
-        text: `How is ${companyName} as an employer?`,
+        text: `How is ${companyName} as an employer${hasLocation ? ` in ${formattedCountry}` : ''}?`,
         category: 'Employer Reputation',
         type: 'sentiment'
       },
       {
         id: 'visibility-1',
-        text: `What companies offer the best career opportunities in the ${industry} industry?`,
+        text: `What companies offer the best career opportunities in the ${industry} industry${locationSuffix}?`,
         category: 'Industry Leaders',
         type: 'visibility'
       },
       {
         id: 'competitive-1',
-        text: `How does working at ${companyName} compare to other companies in the ${industry} industry?`,
+        text: `How does working at ${companyName} compare to other companies in the ${industry} industry${locationSuffix}?`,
         category: 'Competitive Analysis',
         type: 'competitive'
       }
@@ -582,25 +570,101 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
   return confirmedPrompts;
 };
 
+// Helper function to format country names properly
+const formatCountryForPrompt = (countryCode: string): string => {
+  // Countries that need "the" article
+  const countriesWithThe = [
+    'US', 'AE', 'GB', 'NL', 'PH', 'VA', 'CZ', 'DO', 'GA', 'GM',
+    'IO', 'KY', 'MH', 'NP', 'SB', 'TC', 'TF', 'VG', 'VI'
+  ];
+  
+  // Country code to display name mapping
+  const countryNames: { [key: string]: string } = {
+    'US': 'United States',
+    'GB': 'United Kingdom', 
+    'AE': 'United Arab Emirates',
+    'NL': 'Netherlands',
+    'PH': 'Philippines',
+    'VA': 'Vatican City',
+    'DO': 'Dominican Republic',
+    'GA': 'Gambia',
+    'GM': 'Gambia',
+    'IO': 'British Indian Ocean Territory',
+    'KY': 'Cayman Islands',
+    'MH': 'Marshall Islands',
+    'NP': 'Nepal',
+    'SB': 'Solomon Islands',
+    'TC': 'Turks and Caicos Islands',
+    'TF': 'French Southern Territories',
+    'VG': 'British Virgin Islands',
+    'VI': 'Virgin Islands',
+    // Add more country mappings as needed
+    'CA': 'Canada',
+    'AU': 'Australia',
+    'DE': 'Germany',
+    'FR': 'France',
+    'IT': 'Italy',
+    'ES': 'Spain',
+    'JP': 'Japan',
+    'BR': 'Brazil',
+    'IN': 'India',
+    'CN': 'China',
+    'MX': 'Mexico',
+    'RU': 'Russia',
+    'KR': 'South Korea',
+    'SE': 'Sweden',
+    'NO': 'Norway',
+    'DK': 'Denmark',
+    'FI': 'Finland',
+    'CH': 'Switzerland',
+    'AT': 'Austria',
+    'BE': 'Belgium',
+    'IE': 'Ireland',
+    'PT': 'Portugal',
+    'GR': 'Greece',
+    'PL': 'Poland',
+    'HU': 'Hungary',
+    'SK': 'Slovakia',
+    'SI': 'Slovenia',
+    'HR': 'Croatia',
+    'BG': 'Bulgaria',
+    'RO': 'Romania',
+    'EE': 'Estonia',
+    'LV': 'Latvia',
+    'LT': 'Lithuania'
+  };
+  
+  const countryName = countryNames[countryCode] || countryCode;
+  const needsThe = countriesWithThe.includes(countryCode);
+  
+  return needsThe ? `the ${countryName}` : countryName;
+};
+
 // Helper function to generate prompts from onboarding data
 const generatePromptsFromData = (onboardingData: OnboardingData, isProUser: boolean = false): GeneratedPrompt[] => {
-  const { companyName, industry } = onboardingData;
+  const { companyName, industry, country } = onboardingData;
+  
+  // Determine if we should include location-specific prompts
+  const hasLocation = country && country !== 'GLOBAL';
+  const formattedCountry = hasLocation ? formatCountryForPrompt(country) : '';
+  const locationSuffix = hasLocation ? ` in ${formattedCountry}` : '';
+  
   const basePrompts: GeneratedPrompt[] = [
     {
       id: 'sentiment-1',
-      text: `How is ${companyName} as an employer?`,
+      text: `How is ${companyName} as an employer${hasLocation ? ` in ${formattedCountry}` : ''}?`,
       category: 'Employer Reputation',
       type: 'sentiment'
     },
     {
       id: 'visibility-1',
-      text: `What companies offer the best career opportunities in the ${industry} industry?`,
+      text: `What companies offer the best career opportunities in the ${industry} industry${locationSuffix}?`,
       category: 'Industry Leaders',
       type: 'visibility'
     },
     {
       id: 'competitive-1',
-      text: `How does working at ${companyName} compare to other companies in the ${industry} industry?`,
+      text: `How does working at ${companyName} compare to other companies in the ${industry} industry${locationSuffix}?`,
       category: 'Competitive Analysis',
       type: 'competitive'
     }

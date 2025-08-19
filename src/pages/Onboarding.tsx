@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,13 +13,15 @@ import { PromptsTable } from "@/components/prompts/PromptsTable";
 import { ConfirmationCard } from "@/components/prompts/ConfirmationCard";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { HelpCircle } from "lucide-react";
+import { HelpCircle, LogOut } from "lucide-react";
 
 // Define the actual database schema we're working with
 interface UserOnboarding {
   user_id: string;
   company_name: string;
   industry: string;
+  job_function?: string | null;
+  country?: string | null;
   session_id: string;
   company_size?: string;
   role?: string;
@@ -30,6 +33,8 @@ interface OnboardingData {
   display_name: string;
   company_name: string;
   industry: string;
+  job_function: string;
+  country: string;
 }
 
 interface OnboardingStep {
@@ -48,14 +53,16 @@ interface OnboardingStep {
 
 export const Onboarding = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const [onboardingStep, setOnboardingStep] = useState(0);
   // Total number of steps in the onboarding flow (including the final step on the loading/confirmation page)
   const TOTAL_STEPS = 4;
   const [onboardingData, setOnboardingData] = useState<OnboardingData>({
     display_name: "",
     company_name: "",
-    industry: ""
+    industry: "",
+    job_function: "",
+    country: "GLOBAL"
   });
   const [onboardingId, setOnboardingId] = useState<string | null>(null);
   const [needsDisplayName, setNeedsDisplayName] = useState(false);
@@ -64,6 +71,7 @@ export const Onboarding = () => {
   const [onboardingDataForPrompts, setOnboardingDataForPrompts] = useState<{
     companyName: string;
     industry: string;
+    country: string;
   } | null>(null);
 
   // Local prompts state for display
@@ -87,33 +95,100 @@ export const Onboarding = () => {
     }
   }, [user]);
 
-  // Generate prompts when reaching the prompts step
+  // Helper function to format prompts with country context
+  const getCountryContext = (country: string) => {
+    if (!country || country === 'GLOBAL') {
+      return '';
+    }
+    // Map country codes to readable names for better prompt context
+    const countryNames: Record<string, string> = {
+      'US': ' in the United States',
+      'GB': ' in the United Kingdom',
+      'CA': ' in Canada',
+      'AU': ' in Australia',
+      'DE': ' in Germany',
+      'FR': ' in France',
+      'NL': ' in the Netherlands',
+      'SE': ' in Sweden',
+      'NO': ' in Norway',
+      'DK': ' in Denmark',
+      'FI': ' in Finland',
+      'CH': ' in Switzerland',
+      'AT': ' in Austria',
+      'BE': ' in Belgium',
+      'IE': ' in Ireland',
+      'IT': ' in Italy',
+      'ES': ' in Spain',
+      'PT': ' in Portugal',
+      'PL': ' in Poland',
+      'CZ': ' in the Czech Republic',
+      'HU': ' in Hungary',
+      'SK': ' in Slovakia',
+      'SI': ' in Slovenia',
+      'HR': ' in Croatia',
+      'BG': ' in Bulgaria',
+      'RO': ' in Romania',
+      'EE': ' in Estonia',
+      'LV': ' in Latvia',
+      'LT': ' in Lithuania',
+      'LU': ' in Luxembourg',
+      'MT': ' in Malta',
+      'CY': ' in Cyprus',
+      'GR': ' in Greece',
+      'JP': ' in Japan',
+      'KR': ' in South Korea',
+      'SG': ' in Singapore',
+      'MY': ' in Malaysia',
+      'TH': ' in Thailand',
+      'PH': ' in the Philippines',
+      'ID': ' in Indonesia',
+      'IN': ' in India',
+      'VN': ' in Vietnam',
+      'BR': ' in Brazil',
+      'MX': ' in Mexico',
+      'AR': ' in Argentina',
+      'CL': ' in Chile',
+      'CO': ' in Colombia',
+      'PE': ' in Peru',
+      'ZA': ' in South Africa',
+      'AE': ' in the UAE',
+      'SA': ' in Saudi Arabia',
+      'TR': ' in Turkey',
+      'IS': ' in Iceland',
+      'NZ': ' in New Zealand'
+    };
+    return countryNames[country] || ` in ${country}`;
+  };
+
+  // Generate prompts when reaching the prompts step or when data changes
   useEffect(() => {
-    if (onboardingStep === 2 && onboardingDataForPrompts && localPrompts.length === 0) {
+    if (onboardingStep === 3 && onboardingDataForPrompts) {
+      const countryContext = getCountryContext(onboardingDataForPrompts.country);
+      
       // Generate prompts for display
       const basePrompts = [
         {
           id: 'sentiment-1',
-          text: `How is ${onboardingDataForPrompts.companyName} as an employer?`,
+          text: `How is ${onboardingDataForPrompts.companyName} as an employer${countryContext}?`,
           category: 'Employer Reputation',
           type: 'sentiment'
         },
         {
           id: 'visibility-1',
-          text: `What is the best company to work for in the ${onboardingDataForPrompts.industry} industry?`,
+          text: `What is the best company to work for in the ${onboardingDataForPrompts.industry} industry${countryContext}?`,
           category: 'Industry Visibility',
           type: 'visibility'
         },
         {
           id: 'competitive-1',
-          text: `How does working at ${onboardingDataForPrompts.companyName} compare to other companies in the ${onboardingDataForPrompts.industry} industry?`,
+          text: `How does working at ${onboardingDataForPrompts.companyName} compare to other companies in the ${onboardingDataForPrompts.industry} industry${countryContext}?`,
           category: 'Competitive Analysis',
           type: 'competitive'
         }
       ];
       setLocalPrompts(basePrompts);
     }
-  }, [onboardingStep, onboardingDataForPrompts, localPrompts.length]);
+  }, [onboardingStep, onboardingDataForPrompts]);
 
   const onboardingSteps: OnboardingStep[] = [
     {
@@ -123,8 +198,8 @@ export const Onboarding = () => {
       isWelcomeStep: true
     },
     {
-      title: "Company details",
-      description: "We just need some basic information about you and your company.",
+      title: "Your details",
+      description: "We'd like to know your name and role.",
       fields: [
         ...(needsDisplayName ? [{
           label: "Your Name",
@@ -134,23 +209,43 @@ export const Onboarding = () => {
           onChange: (value: string) => setOnboardingData(prev => ({ ...prev, display_name: value }))
         }] : []),
         {
+          label: "Job Function",
+          type: "text",
+          placeholder: "e.g., Employer Branding Specialist, Talent Acquisition Manager",
+          value: onboardingData.job_function,
+          onChange: (value: string) => setOnboardingData(prev => ({ ...prev, job_function: value }))
+        }
+      ]
+    },
+    {
+      title: "What company do you want to analyze?  ",
+      description: "We'll scan AI to uncover what people really think about working there.",
+      fields: [
+        {
           label: "Company",
           type: "text",
-          placeholder: "Enter the company you work for",
+          placeholder: "e.g., Tesla   ",
           value: onboardingData.company_name,
           onChange: (value: string) => setOnboardingData(prev => ({ ...prev, company_name: value }))
         },
         {
           label: "Industry",
           type: "text",
-          placeholder: "e.g., Software or Healthcare",
+          placeholder: "e.g., Software",
           value: onboardingData.industry,
           onChange: (value: string) => setOnboardingData(prev => ({ ...prev, industry: value }))
+        },
+        {
+          label: "Country",
+          type: "select",
+          placeholder: "Global (default)",
+          value: onboardingData.country,
+          onChange: (value: string) => setOnboardingData(prev => ({ ...prev, country: value }))
         }
       ]
     },
     {
-      title: "Monitoring strategy",
+      title: "Get your free audit",
       description: "We'll test how AI models respond to three key questions.",
       fields: [],
       isPromptsStep: true
@@ -164,12 +259,24 @@ export const Onboarding = () => {
       return;
     }
 
-    // Handle moving from company info to prompts step
+    // Step 1: validate user details (name if needed, job function always)
     if (onboardingStep === 1) {
-      // Validate required fields
       const requiredFields = needsDisplayName 
-        ? [onboardingData.display_name, onboardingData.company_name, onboardingData.industry]
-        : [onboardingData.company_name, onboardingData.industry];
+        ? [onboardingData.display_name, onboardingData.job_function]
+        : [onboardingData.job_function];
+      
+      if (requiredFields.some(field => !field.trim())) {
+        toast.error('Please fill in all required fields before continuing');
+        return;
+      }
+      
+      setOnboardingStep(prev => prev + 1);
+      return;
+    }
+
+    // Step 2: validate and save company details then proceed to prompts
+    if (onboardingStep === 2) {
+      const requiredFields = [onboardingData.company_name, onboardingData.industry, onboardingData.country];
       
       if (requiredFields.some(field => !field.trim())) {
         toast.error('Please fill in all required fields before continuing');
@@ -202,8 +309,10 @@ export const Onboarding = () => {
               user_id: user?.id,
               company_name: onboardingData.company_name,
               industry: onboardingData.industry,
+              job_function: onboardingData.job_function || null,
+              country: onboardingData.country || null,
               session_id: `session_${user?.id}_${Date.now()}`
-            };
+            } as UserOnboarding;
 
             const { data, error } = await supabase
               .from('user_onboarding')
@@ -237,7 +346,8 @@ export const Onboarding = () => {
       // Set data for prompts step
       setOnboardingDataForPrompts({
         companyName: onboardingData.company_name,
-        industry: onboardingData.industry
+        industry: onboardingData.industry,
+        country: onboardingData.country
       });
 
       // Move to prompts step
@@ -245,14 +355,15 @@ export const Onboarding = () => {
       return;
     }
 
-    // Handle prompts step completion
-    if (onboardingStep === 2) {
+    // Handle prompts step completion (now step 3)
+    if (onboardingStep === 3) {
       // Navigate to loading page
       navigate('/onboarding/loading', { 
         state: { 
           onboardingId: onboardingId,
           companyName: onboardingData.company_name,
-          industry: onboardingData.industry
+          industry: onboardingData.industry,
+          country: onboardingData.country
         }
       });
       return;
@@ -260,6 +371,12 @@ export const Onboarding = () => {
   };
 
   const handleBack = () => {
+    // If going back from prompts step, clear the prompts and onboarding data for prompts
+    // so they can be regenerated when user returns with potentially updated data
+    if (onboardingStep === 3) {
+      setLocalPrompts([]);
+      setOnboardingDataForPrompts(null);
+    }
     setOnboardingStep(prev => prev - 1);
   };
 
@@ -271,6 +388,17 @@ export const Onboarding = () => {
         return;
       }
       handleNext();
+    }
+  };
+
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      navigate('/auth');
+    } catch (error) {
+      console.error('Error signing out:', error);
+      toast.error('Failed to sign out. Please try again.');
     }
   };
 
@@ -343,6 +471,19 @@ export const Onboarding = () => {
           </div>
         </div>
         
+        {/* Bottom left logout button */}
+        <div className="absolute bottom-6 left-6 z-10">
+          <Button
+            onClick={handleLogout}
+            variant="ghost"
+            size="sm"
+            className="flex items-center gap-2 text-gray-600 hover:text-gray-800 hover:bg-white/80 backdrop-blur-sm border border-gray-200/50 bg-white/60 rounded-lg px-3 py-2 shadow-sm transition-all"
+          >
+            <LogOut className="h-4 w-4" />
+            <span className="text-sm">Sign Out</span>
+          </Button>
+        </div>
+        
         <div className="bg-white rounded-2xl shadow-xl p-4 sm:p-6 md:p-8 max-w-2xl w-full mt-16 md:mt-0">
           <div className="space-y-4">
             {/* Step title and description (except for welcome step) */}
@@ -398,8 +539,167 @@ export const Onboarding = () => {
                           </Tooltip>
                         </TooltipProvider>
                       )}
+                      {field.label === "Country" && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <HelpCircle className="ml-1 inline-block h-4 w-4 text-gray-500" />
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="text-sm text-gray-700">
+                                The default is Global, but we can prompt for a specific country if needed for location-specific insights.
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
                     </Label>
-                    {field.type === 'textarea' ? (
+                    {field.type === 'select' ? (
+                      <div className="relative">
+                        <select
+                          value={field.value}
+                          onChange={(e) => field.onChange(e.target.value)}
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 pr-10 text-base ring-offset-background appearance-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm hover:border-gray-400 transition-colors"
+                        >
+                        <option value="">{field.placeholder}</option>
+                        {field.label === 'Job Function' ? (
+                          <>
+                            <option value="hr_generalist">HR Generalist</option>
+                            <option value="hr_business_partner">HR Business Partner</option>
+                            <option value="talent_acquisition">Talent Acquisition Specialist</option>
+                            <option value="talent_acquisition_manager">Talent Acquisition Manager</option>
+                            <option value="employer_branding">Employer Branding Specialist</option>
+                            <option value="employer_branding_manager">Employer Branding Manager</option>
+                            <option value="hr_director">HR Director</option>
+                            <option value="talent_director">Talent Director</option>
+                            <option value="people_operations">People Operations</option>
+                            <option value="recruiting_coordinator">Recruiting Coordinator</option>
+                            <option value="hr_analyst">HR Analyst</option>
+                            <option value="diversity_inclusion">Diversity & Inclusion Specialist</option>
+                            <option value="learning_development">Learning & Development</option>
+                            <option value="compensation_benefits">Compensation & Benefits</option>
+                            <option value="hr_consultant">HR Consultant</option>
+                            <option value="other">Other</option>
+                          </>
+                        ) : field.label === 'Country' ? (
+                          <>
+                            <option value="GLOBAL">🌍 Global</option>
+                            <option value="AX">🇦🇽 Åland Islands</option>
+                            <option value="AD">🇦🇩 Andorra</option>
+                            <option value="AI">🇦🇮 Anguilla</option>
+                            <option value="AQ">🇦🇶 Antarctica</option>
+                            <option value="AG">🇦🇬 Antigua and Barbuda</option>
+                            <option value="AR">🇦🇷 Argentina</option>
+                            <option value="AW">🇦🇼 Aruba</option>
+                            <option value="AU">🇦🇺 Australia</option>
+                            <option value="AT">🇦🇹 Austria</option>
+                            <option value="BS">🇧🇸 Bahamas</option>
+                            <option value="BB">🇧🇧 Barbados</option>
+                            <option value="BE">🇧🇪 Belgium</option>
+                            <option value="BM">🇧🇲 Bermuda</option>
+                            <option value="BV">🇧🇻 Bouvet Island</option>
+                            <option value="BR">🇧🇷 Brazil</option>
+                            <option value="IO">🇮🇴 British Indian Ocean Territory</option>
+                            <option value="VG">🇻🇬 British Virgin Islands</option>
+                            <option value="BG">🇧🇬 Bulgaria</option>
+                            <option value="CA">🇨🇦 Canada</option>
+                            <option value="BQ">🇧🇶 Caribbean Netherlands</option>
+                            <option value="KY">🇰🇾 Cayman Islands</option>
+                            <option value="CL">🇨🇱 Chile</option>
+                            <option value="CO">🇨🇴 Colombia</option>
+                            <option value="HR">🇭🇷 Croatia</option>
+                            <option value="CU">🇨🇺 Cuba</option>
+                            <option value="CW">🇨🇼 Curaçao</option>
+                            <option value="CY">🇨🇾 Cyprus</option>
+                            <option value="CZ">🇨🇿 Czech Republic</option>
+                            <option value="DK">🇩🇰 Denmark</option>
+                            <option value="DM">🇩🇲 Dominica</option>
+                            <option value="DO">🇩🇴 Dominican Republic</option>
+                            <option value="EE">🇪🇪 Estonia</option>
+                            <option value="FK">🇫🇰 Falkland Islands</option>
+                            <option value="FO">🇫🇴 Faroe Islands</option>
+                            <option value="FI">🇫🇮 Finland</option>
+                            <option value="FR">🇫🇷 France</option>
+                            <option value="GF">🇬🇫 French Guiana</option>
+                            <option value="PF">🇵🇫 French Polynesia</option>
+                            <option value="DE">🇩🇪 Germany</option>
+                            <option value="GI">🇬🇮 Gibraltar</option>
+                            <option value="GR">🇬🇷 Greece</option>
+                            <option value="GL">🇬🇱 Greenland</option>
+                            <option value="GD">🇬🇩 Grenada</option>
+                            <option value="GP">🇬🇵 Guadeloupe</option>
+                            <option value="HT">🇭🇹 Haiti</option>
+                            <option value="HM">🇭🇲 Heard Island and McDonald Islands</option>
+                            <option value="HU">🇭🇺 Hungary</option>
+                            <option value="IS">🇮🇸 Iceland</option>
+                            <option value="IN">🇮🇳 India</option>
+                            <option value="ID">🇮🇩 Indonesia</option>
+                            <option value="IE">🇮🇪 Ireland</option>
+                            <option value="IT">🇮🇹 Italy</option>
+                            <option value="JM">🇯🇲 Jamaica</option>
+                            <option value="JP">🇯🇵 Japan</option>
+                            <option value="LV">🇱🇻 Latvia</option>
+                            <option value="LI">🇱🇮 Liechtenstein</option>
+                            <option value="LT">🇱🇹 Lithuania</option>
+                            <option value="LU">🇱🇺 Luxembourg</option>
+                            <option value="MY">🇲🇾 Malaysia</option>
+                            <option value="MT">🇲🇹 Malta</option>
+                            <option value="MQ">🇲🇶 Martinique</option>
+                            <option value="YT">🇾🇹 Mayotte</option>
+                            <option value="MX">🇲🇽 Mexico</option>
+                            <option value="MC">🇲🇨 Monaco</option>
+                            <option value="MS">🇲🇸 Montserrat</option>
+                            <option value="NL">🇳🇱 Netherlands</option>
+                            <option value="NC">🇳🇨 New Caledonia</option>
+                            <option value="NZ">🇳🇿 New Zealand</option>
+                            <option value="NO">🇳🇴 Norway</option>
+                            <option value="PS">🇵🇸 Palestine</option>
+                            <option value="PE">🇵🇪 Peru</option>
+                            <option value="PH">🇵🇭 Philippines</option>
+                            <option value="PL">🇵🇱 Poland</option>
+                            <option value="PT">🇵🇹 Portugal</option>
+                            <option value="PR">🇵🇷 Puerto Rico</option>
+                            <option value="RE">🇷🇪 Réunion</option>
+                            <option value="RO">🇷🇴 Romania</option>
+                            <option value="BL">🇧🇱 Saint Barthélemy</option>
+                            <option value="KN">🇰🇳 Saint Kitts and Nevis</option>
+                            <option value="LC">🇱🇨 Saint Lucia</option>
+                            <option value="MF">🇲🇫 Saint Martin</option>
+                            <option value="PM">🇵🇲 Saint Pierre and Miquelon</option>
+                            <option value="VC">🇻🇨 Saint Vincent and the Grenadines</option>
+                            <option value="SM">🇸🇲 San Marino</option>
+                            <option value="SA">🇸🇦 Saudi Arabia</option>
+                            <option value="SG">🇸🇬 Singapore</option>
+                            <option value="SX">🇸🇽 Sint Maarten</option>
+                            <option value="SK">🇸🇰 Slovakia</option>
+                            <option value="SI">🇸🇮 Slovenia</option>
+                            <option value="ZA">🇿🇦 South Africa</option>
+                            <option value="GS">🇬🇸 South Georgia and the South Sandwich Islands</option>
+                            <option value="KR">🇰🇷 South Korea</option>
+                            <option value="ES">🇪🇸 Spain</option>
+                            <option value="SJ">🇸🇯 Svalbard and Jan Mayen</option>
+                            <option value="SE">🇸🇪 Sweden</option>
+                            <option value="CH">🇨🇭 Switzerland</option>
+                            <option value="TH">🇹🇭 Thailand</option>
+                            <option value="TT">🇹🇹 Trinidad and Tobago</option>
+                            <option value="TR">🇹🇷 Turkey</option>
+                            <option value="TC">🇹🇨 Turks and Caicos Islands</option>
+                            <option value="AE">🇦🇪 United Arab Emirates</option>
+                            <option value="GB">🇬🇧 United Kingdom</option>
+                            <option value="US">🇺🇸 United States</option>
+                            <option value="VA">🇻🇦 Vatican City</option>
+                            <option value="VN">🇻🇳 Vietnam</option>
+                            <option value="WF">🇼🇫 Wallis and Futuna</option>
+                          </>
+                        ) : null}
+                        </select>
+                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                          <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </div>
+                      </div>
+                    ) : field.type === 'textarea' ? (
                       <Textarea
                         placeholder={field.placeholder}
                         value={field.value}
@@ -432,47 +732,57 @@ export const Onboarding = () => {
             )}
 
             {/* Prompts step content */}
-            {currentStep.isPromptsStep && localPrompts && (
+            {currentStep.isPromptsStep && (
               <div className="space-y-6">
-                <PromptsTable 
-                  prompts={localPrompts.filter(p => p.type !== 'talentx') as any} 
-                  companyName={onboardingData.company_name} 
-                />
-                <div className="flex justify-between items-center">
-                  <Button
-                    onClick={handleBack}
-                    variant="outline"
-                    className="text-gray-600"
-                  >
-                    ← Back
-                  </Button>
-                                    <div className="flex gap-3">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowHowItWorks(true)}
-                      className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 hidden md:block"
-                    >
-                      How does this work?
-                    </Button>
-                    
-                    <ConfirmationCard 
-                      isConfirming={false}
-                      onConfirm={() => {
-                        // Navigate to loading page instead of starting monitoring
-                        navigate('/onboarding/loading', { 
-                          state: { 
-                            onboardingId: onboardingId,
-                            companyName: onboardingData.company_name,
-                            industry: onboardingData.industry
-                          }
-                        });
-                      }}
-                      disabled={false}
-                      className="w-auto"
+                {localPrompts.length > 0 ? (
+                  <>
+                    <PromptsTable 
+                      prompts={localPrompts.filter(p => p.type !== 'talentx') as any} 
+                      companyName={onboardingData.company_name} 
                     />
+                    <div className="flex justify-between items-center">
+                      <Button
+                        onClick={handleBack}
+                        variant="outline"
+                        className="text-gray-600"
+                      >
+                        ← Back
+                      </Button>
+                      <div className="flex gap-3">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowHowItWorks(true)}
+                          className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 hidden md:block"
+                        >
+                          How does this work?
+                        </Button>
+                        
+                        <ConfirmationCard 
+                          isConfirming={false}
+                          onConfirm={() => {
+                            // Navigate to loading page instead of starting monitoring
+                            navigate('/onboarding/loading', { 
+                              state: { 
+                                onboardingId: onboardingId,
+                                companyName: onboardingData.company_name,
+                                industry: onboardingData.industry,
+                                country: onboardingData.country
+                              }
+                            });
+                          }}
+                          disabled={false}
+                          className="w-auto"
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-pink-500 mx-auto mb-4"></div>
+                    <p className="text-gray-600">Generating your monitoring strategy...</p>
                   </div>
-                </div>
+                )}
               </div>
             )}
 

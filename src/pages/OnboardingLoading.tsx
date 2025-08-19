@@ -12,6 +12,7 @@ interface LocationState {
   onboardingId: string;
   companyName: string;
   industry: string;
+  country: string;
 }
 
 // Define the LLM models that will be tested
@@ -21,10 +22,75 @@ const llmModels = [
   { name: "Google AI", model: "google-ai-overviews" }
 ];
 
+// Helper function to format prompts with country context
+const getCountryContext = (country: string) => {
+  if (!country || country === 'GLOBAL') {
+    return '';
+  }
+  // Map country codes to readable names for better prompt context
+  const countryNames: Record<string, string> = {
+    'US': ' in the United States',
+    'GB': ' in the United Kingdom',
+    'CA': ' in Canada',
+    'AU': ' in Australia',
+    'DE': ' in Germany',
+    'FR': ' in France',
+    'NL': ' in the Netherlands',
+    'SE': ' in Sweden',
+    'NO': ' in Norway',
+    'DK': ' in Denmark',
+    'FI': ' in Finland',
+    'CH': ' in Switzerland',
+    'AT': ' in Austria',
+    'BE': ' in Belgium',
+    'IE': ' in Ireland',
+    'IT': ' in Italy',
+    'ES': ' in Spain',
+    'PT': ' in Portugal',
+    'PL': ' in Poland',
+    'CZ': ' in the Czech Republic',
+    'HU': ' in Hungary',
+    'SK': ' in Slovakia',
+    'SI': ' in Slovenia',
+    'HR': ' in Croatia',
+    'BG': ' in Bulgaria',
+    'RO': ' in Romania',
+    'EE': ' in Estonia',
+    'LV': ' in Latvia',
+    'LT': ' in Lithuania',
+    'LU': ' in Luxembourg',
+    'MT': ' in Malta',
+    'CY': ' in Cyprus',
+    'GR': ' in Greece',
+    'JP': ' in Japan',
+    'KR': ' in South Korea',
+    'SG': ' in Singapore',
+    'MY': ' in Malaysia',
+    'TH': ' in Thailand',
+    'PH': ' in the Philippines',
+    'ID': ' in Indonesia',
+    'IN': ' in India',
+    'VN': ' in Vietnam',
+    'BR': ' in Brazil',
+    'MX': ' in Mexico',
+    'AR': ' in Argentina',
+    'CL': ' in Chile',
+    'CO': ' in Colombia',
+    'PE': ' in Peru',
+    'ZA': ' in South Africa',
+    'AE': ' in the UAE',
+    'SA': ' in Saudi Arabia',
+    'TR': ' in Turkey',
+    'IS': ' in Iceland',
+    'NZ': ' in New Zealand'
+  };
+  return countryNames[country] || ` in ${country}`;
+};
+
 export const OnboardingLoading = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { onboardingId, companyName, industry } = location.state as LocationState;
+  const { onboardingId, companyName, industry, country } = location.state as LocationState;
   
   const [progress, setProgress] = useState({
     currentModel: '',
@@ -54,6 +120,22 @@ export const OnboardingLoading = () => {
     // Start the actual AI testing process
     const startAITesting = async () => {
       try {
+        // Get country from database if not provided in state (backward compatibility)
+        let finalCountry = country;
+        if (!country) {
+          const { data: onboardingData, error: onboardingError } = await supabase
+            .from('user_onboarding')
+            .select('country')
+            .eq('id', onboardingId)
+            .single();
+          
+          if (!onboardingError && onboardingData) {
+            finalCountry = onboardingData.country || 'GLOBAL';
+          } else {
+            finalCountry = 'GLOBAL';
+          }
+        }
+
         // Check if prompts already exist for this onboarding session
         const { data: existingPrompts, error: checkError } = await supabase
           .from('confirmed_prompts')
@@ -69,12 +151,15 @@ export const OnboardingLoading = () => {
 
         // Only create prompts if they don't exist
         if (!existingPrompts || existingPrompts.length === 0) {
+          // Generate country context for prompts
+          const countryContext = getCountryContext(finalCountry);
+          
           // First, generate and insert prompts
           const promptsToInsert = [
             {
               onboarding_id: onboardingId,
               user_id: (await supabase.auth.getUser()).data.user?.id,
-              prompt_text: `How is ${companyName} as an employer?`,
+              prompt_text: `How is ${companyName} as an employer${countryContext}?`,
               prompt_category: 'Employer Reputation',
               prompt_type: 'sentiment',
               is_active: true
@@ -82,7 +167,7 @@ export const OnboardingLoading = () => {
             {
               onboarding_id: onboardingId,
               user_id: (await supabase.auth.getUser()).data.user?.id,
-              prompt_text: `What is the best company to work for in the ${industry} industry?`,
+              prompt_text: `What is the best company to work for in the ${industry} industry${countryContext}?`,
               prompt_category: 'Industry Visibility',
               prompt_type: 'visibility',
               is_active: true
@@ -90,7 +175,7 @@ export const OnboardingLoading = () => {
             {
               onboarding_id: onboardingId,
               user_id: (await supabase.auth.getUser()).data.user?.id,
-              prompt_text: `How does working at ${companyName} compare to other companies in the ${industry} industry?`,
+              prompt_text: `How does working at ${companyName} compare to other companies in the ${industry} industry${countryContext}?`,
               prompt_category: 'Competitive Analysis',
               prompt_type: 'competitive',
               is_active: true
@@ -208,6 +293,7 @@ export const OnboardingLoading = () => {
 
                 // Process the response through analyze-response
                 const perplexityCitations = model.functionName === 'test-prompt-perplexity' ? responseData.citations : null;
+                const googleAICitations = model.name === 'google-ai-overviews' ? responseData.citations : null;
                 
                 try {
                   console.log(`Processing response for ${model.name} with prompt: ${confirmedPrompt.prompt_text}`);
@@ -218,6 +304,7 @@ export const OnboardingLoading = () => {
                       companyName: companyName,
                       promptType: confirmedPrompt.prompt_type,
                       perplexityCitations: perplexityCitations,
+                      citations: googleAICitations,
                       confirmed_prompt_id: confirmedPrompt.id,
                       ai_model: model.name
                     }

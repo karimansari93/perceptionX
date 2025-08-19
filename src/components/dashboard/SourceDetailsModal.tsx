@@ -1,4 +1,4 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -171,6 +171,9 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: Sourc
             <span>{source.domain}</span>
             <Badge variant="secondary">{source.count} citations</Badge>
           </DialogTitle>
+          <DialogDescription>
+            View detailed information about citations from {source.domain} including all cited URLs and their sources.
+          </DialogDescription>
         </DialogHeader>
 
         <ScrollArea className="h-[calc(90vh-8rem)]">
@@ -255,7 +258,7 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses }: Sourc
                   </div>
                 ) : (
                   <div className="text-center py-4">
-                    <p className="text-sm text-gray-500">No URLs found for this source.</p>
+                    <p className="text-sm text-gray-500">No unique URLs found for this source.</p>
                   </div>
                 )}
               </CardContent>

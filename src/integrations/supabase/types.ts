@@ -183,6 +183,8 @@ export type Database = {
           user_id: string | null
           company_name: string
           industry: string
+          job_function: string | null
+          country: string | null
           session_id: string
           created_at: string
           competitors: string[]
@@ -197,6 +199,8 @@ export type Database = {
           user_id?: string | null
           company_name: string
           industry: string
+          job_function?: string | null
+          country?: string | null
           session_id: string
           created_at?: string
           competitors?: string[]
@@ -211,6 +215,8 @@ export type Database = {
           user_id?: string | null
           company_name?: string
           industry?: string
+          job_function?: string | null
+          country?: string | null
           session_id?: string
           created_at?: string
           competitors?: string[]

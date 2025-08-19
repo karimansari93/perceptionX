@@ -88,10 +88,14 @@ const AuthCallback = () => {
   }, [navigate]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
+    <div className="min-h-screen flex items-center justify-center bg-white">
       <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-        <p className="text-white">Completing authentication...</p>
+        <img
+          src="/logos/PinkBadge.png"
+          alt="PerceptionX Logo"
+          className="w-32 h-32 animate-pulse mx-auto mb-4"
+        />
+        <p className="text-[hsl(221,56%,22%)]">Completing authentication...</p>
       </div>
     </div>
   );

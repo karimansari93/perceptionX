@@ -21,7 +21,7 @@
     --accent: 337 57% 61%;            /* pink in HSL */
     --accent-foreground: 0 0% 100%;   /* white in HSL */
     --muted: 210 9% 93%;              /* silver in HSL */
-    --muted-foreground: 221 60% 19%;  /* nightsky in HSL */
+    --muted-foreground: 210 15% 60%;  /* lighter grey for placeholders */
     --info: var(--teal);
     --radius: 0.75rem;
 
@@ -72,7 +72,7 @@
     --secondary-foreground: 210 40% 98%;
 
     --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted-foreground: 215 20.2% 65.1%;  /* already lighter in dark mode */
 
     --accent: 217.2 32.6% 17.5%;
     --accent-foreground: 210 40% 98%;

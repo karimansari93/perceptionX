@@ -3,7 +3,7 @@ import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dash
 import { Badge } from "@/components/ui/badge";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { SourceDetailsModal } from "./SourceDetailsModal";
 import { ResponseDetailsModal } from "./ResponseDetailsModal";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
@@ -92,8 +92,7 @@ export const KeyTakeaways = ({
   const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
   const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = useState(false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
-  const [selectedCompetitorSource, setSelectedCompetitorSource] = useState<{ domain: string; count: number } | null>(null);
-  const [isCompetitorSourceModalOpen, setIsCompetitorSourceModalOpen] = useState(false);
+
   const [showAllCompetitorSources, setShowAllCompetitorSources] = useState(false);
 
   // Click handlers
@@ -147,13 +146,24 @@ export const KeyTakeaways = ({
 
   // Competitor modal handlers (from CompetitorsTab)
   const handleCompetitorSourceClick = (source: { domain: string; count: number }) => {
-    setSelectedCompetitorSource(source);
-    setIsCompetitorSourceModalOpen(true);
+    // Use the regular source click handler instead of competitor-specific modal
+    handleSourceClick({ domain: source.domain, count: source.count });
   };
 
-  const handleCloseCompetitorSourceModal = () => {
-    setIsCompetitorSourceModalOpen(false);
-    setSelectedCompetitorSource(null);
+
+
+  // Helper function to get responses for a source (same as SourcesTab)
+  const getResponsesForSource = (domain: string) => {
+    return responses.filter(response => {
+      try {
+        const citations = typeof response.citations === 'string' 
+          ? JSON.parse(response.citations) 
+          : response.citations;
+        return Array.isArray(citations) && citations.some((c: any) => c.domain === domain);
+      } catch {
+        return false;
+      }
+    });
   };
 
   // Helper functions (from CompetitorsTab)
@@ -757,7 +767,7 @@ export const KeyTakeaways = ({
         isOpen={isSourceModalOpen}
         onClose={handleCloseSourceModal}
         source={selectedSource}
-        responses={responses}
+        responses={getResponsesForSource(selectedSource.domain)}
       />
     )}
 
@@ -777,6 +787,9 @@ export const KeyTakeaways = ({
             <span>{selectedCompetitor}</span>
             <Badge variant="secondary">{getFullResponsesForCompetitor(selectedCompetitor || '').length} mentions</Badge>
           </DialogTitle>
+          <DialogDescription>
+            Detailed analysis of {selectedCompetitor} mentions in your brand perception data, including AI models, sources, and summary insights.
+          </DialogDescription>
         </DialogHeader>
         
         <div className="space-y-4">
@@ -881,10 +894,15 @@ export const KeyTakeaways = ({
     {/* Mentions Drawer Modal */}
     <Dialog open={isMentionsDrawerOpen} onOpenChange={setIsMentionsDrawerOpen}>
       <DialogContent className="max-w-3xl w-full h-[90vh] flex flex-col p-0">
-        <div className="flex items-center gap-2 px-6 py-4 border-b">
-          <DialogTitle className="text-lg font-semibold">All Mentions of {selectedCompetitor}</DialogTitle>
-          <Badge variant="secondary">{competitorSnippets.length} mentions</Badge>
-        </div>
+        <DialogHeader className="px-6 py-4 border-b">
+          <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
+            All Mentions of {selectedCompetitor}
+            <Badge variant="secondary">{competitorSnippets.length} mentions</Badge>
+          </DialogTitle>
+          <DialogDescription>
+            Browse through all mentions of {selectedCompetitor} found in your brand perception analysis.
+          </DialogDescription>
+        </DialogHeader>
         <div className="px-6 py-3 border-b bg-gray-50">
           {/* Search input removed as requested */}
         </div>
@@ -922,79 +940,7 @@ export const KeyTakeaways = ({
       </DialogContent>
     </Dialog>
 
-    {/* Competitor Source Modal */}
-    <Dialog open={isCompetitorSourceModalOpen} onOpenChange={handleCloseCompetitorSourceModal}>
-      <DialogContent className="max-w-xl w-full sm:max-w-2xl sm:w-[90vw] p-2 sm:p-6">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <img 
-              src={getFavicon(selectedCompetitorSource?.domain || '')} 
-              alt={`${selectedCompetitorSource?.domain} favicon`}
-              className="w-5 h-5 rounded"
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-              }}
-            />
-            <span>Source: {selectedCompetitorSource && getSourceDisplayName(selectedCompetitorSource.domain)}</span>
-            <Badge variant="secondary">
-              {selectedCompetitorSource?.count} {selectedCompetitorSource?.count === 1 ? 'mention' : 'mentions'}
-            </Badge>
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="text-sm text-gray-600">
-            <p>This source contributes to {selectedCompetitor}'s presence in your analysis.</p>
-          </div>
-          
-          {/* Show responses that mention both the competitor and this source */}
-          {selectedCompetitorSource && selectedCompetitor && (() => {
-            const relevantResponses = responses.filter(response => {
-              // Check if response mentions both the competitor and has this source
-              const mentionsCompetitor = response.response_text?.toLowerCase().includes(selectedCompetitor.toLowerCase());
-              if (!mentionsCompetitor) return false;
-              
-              try {
-                const citations = typeof response.citations === 'string' 
-                  ? JSON.parse(response.citations) 
-                  : response.citations;
-                
-                if (Array.isArray(citations)) {
-                  return citations.some((citation: any) => citation.domain === selectedCompetitorSource.domain);
-                }
-              } catch {
-                return false;
-              }
-              return false;
-            });
-            
-            return (
-              <div>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                  Responses mentioning {selectedCompetitor} from {getSourceDisplayName(selectedCompetitorSource.domain)}:
-                </h3>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {relevantResponses.slice(0, 5).map((response, index) => (
-                    <div key={index} className="p-3 bg-gray-50 rounded-lg text-sm text-gray-800">
-                      <div
-                        className="prose prose-sm max-w-none"
-                        dangerouslySetInnerHTML={{
-                          __html: highlightCompetitor(response.response_text?.slice(0, 200) + '...', selectedCompetitor)
-                        }}
-                      />
-                    </div>
-                  ))}
-                  {relevantResponses.length > 5 && (
-                    <div className="text-xs text-gray-500 text-center py-2">
-                      Showing first 5 of {relevantResponses.length} responses
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
-        </div>
-      </DialogContent>
-    </Dialog>
+
 
     {/* LLM Modal */}
     <Dialog open={isLLMModalOpen} onOpenChange={handleCloseLLMModal}>
@@ -1011,6 +957,9 @@ export const KeyTakeaways = ({
               {selectedLLM?.mentions} mentions
             </Badge>
           </DialogTitle>
+          <DialogDescription>
+            Analysis of {selectedLLM?.displayName} mentions showing which prompts are missing company mentions and actionable insights for improvement.
+          </DialogDescription>
         </DialogHeader>
         
         {selectedLLM && (() => {
