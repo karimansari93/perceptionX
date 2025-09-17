@@ -22,6 +22,21 @@ import {
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis, BarChart, Bar, ResponsiveContainer, Cell } from "recharts"
 import { ChartConfig } from "@/components/ui/chart"
 
+interface AITheme {
+  id: string;
+  response_id: string;
+  theme_name: string;
+  theme_description: string;
+  sentiment: 'positive' | 'negative' | 'neutral';
+  sentiment_score: number;
+  talentx_attribute_id: string;
+  talentx_attribute_name: string;
+  confidence_score: number;
+  keywords: string[];
+  context_snippets: string[];
+  created_at: string;
+}
+
 interface OverviewTabProps {
   metrics: DashboardMetrics;
   topCitations: CitationCount[];
@@ -32,6 +47,7 @@ interface OverviewTabProps {
   llmMentionRankings: LLMMentionRanking[]; // Add this
   talentXProData?: any[]; // Add TalentX Pro data
   isPro?: boolean; // Add Pro subscription status
+  searchResults?: any[]; // Add search results
 }
 
 interface TimeBasedData {
@@ -66,12 +82,14 @@ export const OverviewTab = ({
   companyName, // <-- Add this
   llmMentionRankings,
   talentXProData = [],
-  isPro = false
+  isPro = false,
+  searchResults = []
 }: OverviewTabProps) => {
   const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = useState(false);
   const [competitorSnippets, setCompetitorSnippets] = useState<{ snippet: string; full: string }[]>([]);
   const [expandedSnippetIdx, setExpandedSnippetIdx] = useState<number | null>(null);
+  const [aiThemes, setAiThemes] = useState<AITheme[]>([]);
   const [competitorSummary, setCompetitorSummary] = useState<string>("");
   const [loadingCompetitorSummary, setLoadingCompetitorSummary] = useState(false);
   const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
@@ -88,6 +106,40 @@ export const OverviewTab = ({
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
+
+  // Fetch AI themes for thematic analysis insights
+  useEffect(() => {
+    const fetchAIThemes = async () => {
+      if (!responses.length) return;
+
+      try {
+        // Filter responses to only include sentiment and competitive prompts (excluding visibility)
+        const filteredResponses = responses.filter(response => {
+          const promptType = response.confirmed_prompts?.prompt_type;
+          return promptType === 'sentiment' || 
+                 promptType === 'competitive' || 
+                 promptType === 'talentx_sentiment' || 
+                 promptType === 'talentx_competitive';
+        });
+
+        const responseIds = filteredResponses.map(r => r.id);
+        if (responseIds.length === 0) return;
+
+        const { data, error } = await supabase
+          .from('ai_themes')
+          .select('*')
+          .in('response_id', responseIds)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        setAiThemes(data || []);
+      } catch (error) {
+        console.error('Error fetching AI themes:', error);
+      }
+    };
+
+    fetchAIThemes();
+  }, [responses]);
 
 
 
@@ -568,9 +620,11 @@ export const OverviewTab = ({
     return clean;
   }
 
-  // Aggregate themes by sentiment
+  // Aggregate themes by sentiment (including AI themes)
   const themesBySentiment = useMemo(() => {
     const allThemes = { positive: [], neutral: [], negative: [] as string[] };
+    
+    // Add traditional themes from responses
     responses.forEach(r => {
       if (Array.isArray(r.themes)) {
         r.themes.forEach((t: any) => {
@@ -582,13 +636,79 @@ export const OverviewTab = ({
         });
       }
     });
+
+    // Add AI themes
+    aiThemes.forEach(theme => {
+      if (allThemes[theme.sentiment]) {
+        allThemes[theme.sentiment].push(theme.theme_name);
+      }
+    });
+
     // Deduplicate and take top 3 for each
     return {
       positive: Array.from(new Set(allThemes.positive)).slice(0, 3),
       neutral: Array.from(new Set(allThemes.neutral)).slice(0, 3),
       negative: Array.from(new Set(allThemes.negative)).slice(0, 3),
     };
-  }, [responses]);
+  }, [responses, aiThemes]);
+
+  // Calculate overwhelmingly positive/negative attributes from AI themes
+  const attributeInsights = useMemo(() => {
+    if (aiThemes.length === 0) return { positive: [], negative: [] };
+
+    // Group themes by TalentX attribute
+    const attributeGroups: { [key: string]: { positive: AITheme[], negative: AITheme[], neutral: AITheme[] } } = {};
+    
+    aiThemes.forEach(theme => {
+      if (!attributeGroups[theme.talentx_attribute_id]) {
+        attributeGroups[theme.talentx_attribute_id] = { positive: [], negative: [], neutral: [] };
+      }
+      attributeGroups[theme.talentx_attribute_id][theme.sentiment].push(theme);
+    });
+
+    const positiveAttributes: { attribute: string; name: string; themes: AITheme[]; avgScore: number }[] = [];
+    const negativeAttributes: { attribute: string; name: string; themes: AITheme[]; avgScore: number }[] = [];
+
+    // Analyze each attribute
+    Object.entries(attributeGroups).forEach(([attributeId, themes]) => {
+      const totalThemes = themes.positive.length + themes.negative.length + themes.neutral.length;
+      
+      // Consider an attribute "overwhelmingly" positive/negative if:
+      // 1. It has at least 2 themes
+      // 2. At least 70% of themes are in one sentiment direction
+      // 3. The average sentiment score is significant (>0.5 or <-0.5)
+      
+      if (totalThemes >= 2) {
+        const positiveRatio = themes.positive.length / totalThemes;
+        const negativeRatio = themes.negative.length / totalThemes;
+        const avgSentimentScore = aiThemes
+          .filter(t => t.talentx_attribute_id === attributeId)
+          .reduce((sum, t) => sum + t.sentiment_score, 0) / totalThemes;
+
+        if (positiveRatio >= 0.7 && avgSentimentScore > 0.5) {
+          positiveAttributes.push({
+            attribute: attributeId,
+            name: themes.positive[0]?.talentx_attribute_name || attributeId,
+            themes: themes.positive,
+            avgScore: avgSentimentScore
+          });
+        } else if (negativeRatio >= 0.7 && avgSentimentScore < -0.5) {
+          negativeAttributes.push({
+            attribute: attributeId,
+            name: themes.negative[0]?.talentx_attribute_name || attributeId,
+            themes: themes.negative,
+            avgScore: avgSentimentScore
+          });
+        }
+      }
+    });
+
+    // Sort by average score and take top 2
+    return {
+      positive: positiveAttributes.sort((a, b) => b.avgScore - a.avgScore).slice(0, 2),
+      negative: negativeAttributes.sort((a, b) => a.avgScore - b.avgScore).slice(0, 2)
+    };
+  }, [aiThemes]);
 
   // Helper to render a simple comparison bar
   const renderComparisonBar = (data: TimeBasedData, maxCurrent: number, isCompetitor: boolean = false) => {
@@ -921,6 +1041,8 @@ export const OverviewTab = ({
           responses={responses}
           talentXProData={talentXProData}
           isPro={isPro}
+          attributeInsights={attributeInsights}
+          searchResults={searchResults}
         />
       </div>
 

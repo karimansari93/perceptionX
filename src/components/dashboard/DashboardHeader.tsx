@@ -29,11 +29,14 @@ export const DashboardHeader = ({
   return (
     <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/50">
       <div className="flex items-center h-16 px-4 sm:px-8">
-        {/* SidebarTrigger first, then breadcrumbs, then space */}
+        {/* SidebarTrigger first, then breadcrumbs */}
         <SidebarTrigger className="h-7 w-7 mr-4 text-[#13274F]" />
         {breadcrumbs && breadcrumbs.length > 0 && (
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
+              {breadcrumbs[0].icon && (
+                <span className="text-gray-500">{breadcrumbs[0].icon}</span>
+              )}
               <span className={`text-base font-light ${breadcrumbs[0].active ? "text-gray-700" : "text-gray-500"}`}>{breadcrumbs[0].label}</span>
             </span>
             {/* Render the rest of the breadcrumbs on desktop only */}

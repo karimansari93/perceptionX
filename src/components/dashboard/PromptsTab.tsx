@@ -35,14 +35,9 @@ export const PromptsTab = ({ promptsData, responses }: PromptsTabProps) => {
 
   return (
     <div className="space-y-6">
-      {/* Summary Cards */}
-      <PromptSummaryCards promptsData={promptsData} responses={responses} />
-
       {/* Single Combined Table */}
       <PromptTable
         prompts={promptsData}
-        title="All Prompts"
-        description="Monitor and analyze all your prompts in one place"
         onPromptClick={handlePromptClick}
       />
 

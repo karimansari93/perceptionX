@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { generateTalentXPrompts, getPromptsByAttribute, getPromptsByType, TALENTX_ATTRIBUTES } from '@/config/talentXAttributes';
 import { Copy, Check, Star, TrendingUp, Target } from 'lucide-react';
 
@@ -91,34 +92,36 @@ export const TalentXPrompts = ({ companyName, industry, onPromptSelect }: Talent
       </div>
 
       {/* Filter Controls */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="flex-1">
-          <label className="text-sm font-medium text-gray-700 mb-2 block">Filter by Attribute:</label>
-          <select 
-            value={selectedAttribute} 
-            onChange={(e) => setSelectedAttribute(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Attributes</option>
+      <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3">
+        <Select
+          value={selectedAttribute}
+          onValueChange={setSelectedAttribute}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="All Attributes" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Attributes</SelectItem>
             {TALENTX_ATTRIBUTES.map(attr => (
-              <option key={attr.id} value={attr.id}>{attr.name}</option>
+              <SelectItem key={attr.id} value={attr.id}>{attr.name}</SelectItem>
             ))}
-          </select>
-        </div>
+          </SelectContent>
+        </Select>
         
-        <div className="flex-1">
-          <label className="text-sm font-medium text-gray-700 mb-2 block">Filter by Type:</label>
-          <select 
-            value={selectedType} 
-            onChange={(e) => setSelectedType(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Types</option>
-            <option value="sentiment">Sentiment</option>
-            <option value="competitive">Competitive</option>
-            <option value="visibility">Visibility</option>
-          </select>
-        </div>
+        <Select
+          value={selectedType}
+          onValueChange={setSelectedType}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="All Types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="sentiment">Sentiment</SelectItem>
+            <SelectItem value="competitive">Competitive</SelectItem>
+            <SelectItem value="visibility">Visibility</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Stats */}

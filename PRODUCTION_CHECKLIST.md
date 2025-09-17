@@ -44,8 +44,8 @@
 ### Environment Setup
 1. Create `.env` file with production values:
    ```bash
-   VITE_SUPABASE_URL=https://your-production-project.supabase.co
-   VITE_SUPABASE_ANON_KEY=your-production-anon-key
+   VITE_SUPABASE_URL=https://ofyjvfmcgtntwamkubui.supabase.co
+   VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9meWp2Zm1jZ3RudHdhbWt1YnVpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgwNzk1ODgsImV4cCI6MjA2MzY1NTU4OH0.vkzuvNTDMlAS77MHjNDBvBmm0tFGTSPIE7y_Ce3dy2k
    NODE_ENV=production
    ```
 

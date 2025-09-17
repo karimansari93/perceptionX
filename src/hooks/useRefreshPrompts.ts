@@ -60,7 +60,7 @@ export const useRefreshPrompts = () => {
       }
 
       // Show warning for free users if they're trying to refresh with restricted models
-      if (!isPro && modelType && !['openai', 'perplexity', 'gemini'].includes(modelType)) {
+      if (!isPro && modelType && !['openai', 'perplexity', 'google-ai-overviews'].includes(modelType)) {
         toast.error('This AI model is only available for Pro users. Upgrade to Pro to access all AI models.');
         return;
       }
@@ -68,8 +68,8 @@ export const useRefreshPrompts = () => {
       // Define which models to test based on subscription status and modelType parameter
       const modelsToTest = [];
       
-      // Free users can only test with OpenAI, Perplexity, and Gemini
-      const allowedModelsForFree = ['openai', 'perplexity', 'gemini'];
+      // Free users can only test with OpenAI, Perplexity, and Google AI
+      const allowedModelsForFree = ['openai', 'perplexity', 'google-ai-overviews'];
       
       if (!modelType || modelType === 'openai') {
         if (isPro || allowedModelsForFree.includes('openai')) {
@@ -82,7 +82,7 @@ export const useRefreshPrompts = () => {
         }
       }
       if (!modelType || modelType === 'gemini') {
-        if (isPro || allowedModelsForFree.includes('gemini')) {
+        if (isPro) { // Only Pro users can test with Gemini
           modelsToTest.push({ name: 'Gemini', function: 'test-prompt-gemini', model: 'gemini' });
         }
       }
@@ -96,10 +96,15 @@ export const useRefreshPrompts = () => {
           modelsToTest.push({ name: 'Google AI Overviews', function: 'test-prompt-google-ai-overviews', model: 'google-ai-overviews' });
         }
       }
+      if (!modelType || modelType === 'claude') {
+        if (isPro) { // Only Pro users can test with Claude
+          modelsToTest.push({ name: 'Claude', function: 'test-prompt-claude', model: 'claude' });
+        }
+      }
 
       // Check if any models are available for testing
       if (modelsToTest.length === 0) {
-        if (!isPro && modelType && !['openai', 'perplexity', 'gemini'].includes(modelType)) {
+        if (!isPro && modelType && !['openai', 'perplexity', 'google-ai-overviews'].includes(modelType)) {
           toast.error('This AI model is only available for Pro users. Upgrade to Pro to access all AI models.');
         } else {
           toast.error('No AI models available for testing. Please try again.');
@@ -110,13 +115,14 @@ export const useRefreshPrompts = () => {
       // Calculate total operations including TalentX Pro prompts for Pro users
       let totalOperations = confirmedPrompts.length * modelsToTest.length;
       
-      // If user is Pro, add TalentX Pro prompts to the total
+      // If user is Pro, add TalentX Pro prompts to the total (now in confirmed_prompts)
       if (isPro) {
         const { data: talentXPrompts, error: talentXError } = await supabase
-          .from('talentx_pro_prompts')
+          .from('confirmed_prompts')
           .select('*')
           .eq('user_id', user.id)
-          .eq('is_generated', false);
+          .eq('is_pro_prompt', true)
+          .eq('is_active', true);
 
         if (talentXError) {
           console.error('Error fetching TalentX Pro prompts:', talentXError);
@@ -236,13 +242,14 @@ export const useRefreshPrompts = () => {
         }
       }
 
-      // If user is Pro, also refresh TalentX Pro prompts
+      // If user is Pro, also refresh TalentX Pro prompts (now in confirmed_prompts)
       if (isPro) {
         const { data: talentXPrompts, error: talentXError } = await supabase
-          .from('talentx_pro_prompts')
+          .from('confirmed_prompts')
           .select('*')
           .eq('user_id', user.id)
-          .eq('is_generated', false);
+          .eq('is_pro_prompt', true)
+          .eq('is_active', true);
 
         if (talentXError) {
           console.error('Failed to fetch TalentX Pro prompts:', talentXError);
@@ -286,7 +293,7 @@ export const useRefreshPrompts = () => {
                             confirmed_prompt_id: talentXPrompt.id,
                             ai_model: model.model,
                             isTalentXPrompt: true,
-                            talentXAttributeId: talentXPrompt.attribute_id
+                            talentXAttributeId: talentXPrompt.talentx_attribute_id
                           }
                         });
 
@@ -305,11 +312,7 @@ export const useRefreshPrompts = () => {
                 setProgress(prev => prev ? { ...prev, completed } : null);
               }
 
-              // Mark the prompt as generated after testing with all models
-              await supabase
-                .from('talentx_pro_prompts')
-                .update({ is_generated: true })
-                .eq('id', talentXPrompt.id);
+              // TalentX prompts in confirmed_prompts don't need is_generated flag
             } catch (error) {
               console.error('Error processing TalentX prompt:', error);
             }

@@ -153,6 +153,51 @@ export async function safeStorePromptResponse(
         return { success: false, error };
       }
 
+      // Trigger AI thematic analysis for new responses during onboarding
+      if (data) {
+        try {
+          // First, get the onboarding_id from the confirmed prompt
+          const { data: promptData, error: promptError } = await supabase
+            .from('confirmed_prompts')
+            .select('onboarding_id')
+            .eq('id', responseData.confirmed_prompt_id)
+            .single();
+
+          if (promptError) {
+            console.warn('Error fetching prompt data:', promptError);
+            return { success: true, data };
+          }
+
+          // Then get the company name from user_onboarding
+          const { data: onboardingData, error: onboardingError } = await supabase
+            .from('user_onboarding')
+            .select('company_name')
+            .eq('id', promptData.onboarding_id)
+            .single();
+
+          if (!onboardingError && onboardingData?.company_name) {
+            console.log(`🚀 Triggering AI thematic analysis for response ${data.id} (${responseData.ai_model})`);
+            // Trigger AI thematic analysis asynchronously (don't wait for completion)
+            supabase.functions.invoke('ai-thematic-analysis', {
+              body: {
+                response_id: data.id,
+                company_name: onboardingData.company_name,
+                response_text: responseData.response_text,
+                ai_model: responseData.ai_model
+              }
+            }).catch(error => {
+              // Log error but don't fail the response storage
+              console.warn('❌ Failed to trigger AI thematic analysis:', error);
+            });
+          } else {
+            console.warn('⚠️ Cannot trigger AI thematic analysis: missing company name or onboarding data');
+          }
+        } catch (analysisError) {
+          // Log error but don't fail the response storage
+          console.warn('Error triggering AI thematic analysis:', analysisError);
+        }
+      }
+
       return { success: true, data };
     }
   } catch (error) {

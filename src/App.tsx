@@ -122,6 +122,15 @@ const App = () => (
                   </OnboardingGuard>
                 </ProtectedRoute>
               } />
+              <Route path="/dashboard/themes" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="dashboard" defaultSection="thematic" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
               
               {/* New group-based routes */}
               <Route path="/monitor" element={
@@ -142,11 +151,29 @@ const App = () => (
                   </OnboardingGuard>
                 </ProtectedRoute>
               } />
+              <Route path="/monitor/search" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="monitor" defaultSection="search" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
               <Route path="/analyze" element={
                 <ProtectedRoute>
                   <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
-                      <Dashboard defaultGroup="analyze" defaultSection="talentx" />
+                      <Dashboard defaultGroup="analyze" defaultSection="thematic" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/analyze/thematic" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="analyze" defaultSection="thematic" />
                     </SidebarProvider>
                   </OnboardingGuard>
                 </ProtectedRoute>
@@ -156,6 +183,15 @@ const App = () => (
                   <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="analyze" defaultSection="answer-gaps" />
+                    </SidebarProvider>
+                  </OnboardingGuard>
+                </ProtectedRoute>
+              } />
+              <Route path="/analyze/career-site" element={
+                <ProtectedRoute>
+                  <OnboardingGuard requireOnboarding={true}>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="analyze" defaultSection="career-site" />
                     </SidebarProvider>
                   </OnboardingGuard>
                 </ProtectedRoute>

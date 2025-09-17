@@ -181,7 +181,7 @@ export const Onboarding = () => {
         },
         {
           id: 'competitive-1',
-          text: `How does working at ${onboardingDataForPrompts.companyName} compare to other companies in the ${onboardingDataForPrompts.industry} industry${countryContext}?`,
+          text: `How does working at ${onboardingDataForPrompts.companyName} compare to other companies?`,
           category: 'Competitive Analysis',
           type: 'competitive'
         }
@@ -246,7 +246,7 @@ export const Onboarding = () => {
     },
     {
       title: "Get your free audit",
-      description: "We'll test how AI models respond to three key questions.",
+      description: "We'll collect data about how your company is perceived by candidates across multiple digital channels:",
       fields: [],
       isPromptsStep: true
     }
@@ -471,16 +471,16 @@ export const Onboarding = () => {
           </div>
         </div>
         
-        {/* Bottom left logout button */}
-        <div className="absolute bottom-6 left-6 z-10">
+        {/* Bottom logout button - centered on mobile, left on desktop */}
+        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 md:left-6 md:transform-none z-10">
           <Button
             onClick={handleLogout}
             variant="ghost"
             size="sm"
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-800 hover:bg-white/80 backdrop-blur-sm border border-gray-200/50 bg-white/60 rounded-lg px-3 py-2 shadow-sm transition-all"
+            className="flex items-center gap-2 text-pink-600 hover:text-pink-800 hover:bg-pink-50 backdrop-blur-sm border border-pink-200/50 bg-white/60 rounded-lg px-3 py-2 shadow-sm transition-all"
           >
             <LogOut className="h-4 w-4" />
-            <span className="text-sm">Sign Out</span>
+            <span className="text-sm hidden md:inline">Sign Out</span>
           </Button>
         </div>
         
@@ -734,12 +734,59 @@ export const Onboarding = () => {
             {/* Prompts step content */}
             {currentStep.isPromptsStep && (
               <div className="space-y-6">
+                {/* Four individual analysis cards */}
+                <div className="grid grid-cols-2 gap-3 md:gap-4">
+                  <div className="bg-blue-50 rounded-lg p-3 md:p-4 border border-blue-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-6 h-6 md:w-8 md:h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                        <span className="text-blue-600 text-xs md:text-sm">🤖</span>
+                      </div>
+                      <h3 className="font-semibold text-[hsl(221,56%,22%)] text-xs md:text-sm">AI Analysis</h3>
+                    </div>
+                    <p className="text-[hsl(221,56%,22%)] text-xs leading-relaxed">
+                      AI model responses to key questions
+                    </p>
+                  </div>
+
+                  <div className="bg-green-50 rounded-lg p-3 md:p-4 border border-green-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-6 h-6 md:w-8 md:h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                        <span className="text-green-600 text-xs md:text-sm">🔍</span>
+                      </div>
+                      <h3 className="font-semibold text-[hsl(221,56%,22%)] text-xs md:text-sm">Search Insights</h3>
+                    </div>
+                    <p className="text-[hsl(221,56%,22%)] text-xs leading-relaxed">
+                      Search results for career queries
+                    </p>
+                  </div>
+
+                  <div className="bg-purple-50 rounded-lg p-3 md:p-4 border border-purple-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-6 h-6 md:w-8 md:h-8 bg-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
+                        <span className="text-purple-600 text-xs md:text-sm">⚔️</span>
+                      </div>
+                      <h3 className="font-semibold text-[hsl(221,56%,22%)] text-xs md:text-sm">Competitor Analysis</h3>
+                    </div>
+                    <p className="text-[hsl(221,56%,22%)] text-xs leading-relaxed">
+                      How you compare to competitors
+                    </p>
+                  </div>
+
+                  <div className="bg-orange-50 rounded-lg p-3 md:p-4 border border-orange-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-6 h-6 md:w-8 md:h-8 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
+                        <span className="text-orange-600 text-xs md:text-sm">📊</span>
+                      </div>
+                      <h3 className="font-semibold text-[hsl(221,56%,22%)] text-xs md:text-sm">Source Mapping</h3>
+                    </div>
+                    <p className="text-[hsl(221,56%,22%)] text-xs leading-relaxed">
+                      Which sources influence perception
+                    </p>
+                  </div>
+                </div>
+
                 {localPrompts.length > 0 ? (
                   <>
-                    <PromptsTable 
-                      prompts={localPrompts.filter(p => p.type !== 'talentx') as any} 
-                      companyName={onboardingData.company_name} 
-                    />
                     <div className="flex justify-between items-center">
                       <Button
                         onClick={handleBack}
@@ -817,79 +864,64 @@ export const Onboarding = () => {
               How it works
             </DialogTitle>
             
-            {/* Process Description */}
+            {/* Simple Process Description */}
             <div className="mb-8">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 bg-[#0DBCBA] rounded-full flex items-center justify-center">
                   <span className="text-white text-sm font-bold">1</span>
                 </div>
-                <h3 className="text-lg font-semibold text-[hsl(221,56%,22%)]">AI Analysis Process</h3>
+                <h3 className="text-lg font-semibold text-[hsl(221,56%,22%)]">How It Works</h3>
               </div>
               <p className="text-[hsl(221,56%,22%)] leading-relaxed text-base pl-11">
-                We ask multiple AI models the same questions covering the following types of prompts. You get a free sample to see how it works.
+                We ask AI models strategic questions about your company and analyze search results to give you a complete picture of your employer brand perception.
               </p>
             </div>
             
-            {/* Prompt Types */}
+            {/* Sample Questions */}
             <div className="mb-8">
-              <div className="flex items-center gap-3 mb-6">
+              <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 bg-[#0DBCBA] rounded-full flex items-center justify-center">
                   <span className="text-white text-sm font-bold">2</span>
                 </div>
-                <h3 className="text-lg font-semibold text-[hsl(221,56%,22%)]">Prompt Categories</h3>
+                <h3 className="text-lg font-semibold text-[hsl(221,56%,22%)]">Sample Questions</h3>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="text-center space-y-2 sm:space-y-3">
-                  <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs sm:text-sm font-medium mx-auto w-fit">
-                    Sentiment
-                  </div>
-                  <p className="text-xs sm:text-sm text-[hsl(221,56%,22%)]">
-                    Prompts that measure general sentiment about your culture, with balanced perspectives.
-                  </p>
-                </div>
-                <div className="text-center space-y-2 sm:space-y-3">
-                  <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs sm:text-sm font-medium mx-auto w-fit">
-                    Visibility
-                  </div>
-                  <p className="text-sm text-[hsl(221,56%,22%)]">
-                    Prompts that track how often your company is mentioned compared to competitors.
-                  </p>
-                </div>
-                <div className="text-center space-y-2 sm:space-y-3">
-                  <div className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs sm:text-sm font-medium mx-auto w-fit">
-                    Competitive
-                  </div>
-                  <p className="text-sm text-[hsl(221,56%,22%)]">
-                    Pompts that analyze your employer reputation relative to specific competitors.
-                  </p>
-                </div>
+              <div className="pl-11">
+                <p className="text-[hsl(221,56%,22%)] leading-relaxed text-base mb-4">
+                  Here are the types of questions we'll ask AI models about your company:
+                </p>
+                {localPrompts.length > 0 && (
+                  <PromptsTable 
+                    prompts={localPrompts.filter(p => p.type !== 'talentx') as any} 
+                    companyName={onboardingData.company_name} 
+                  />
+                )}
               </div>
             </div>
-
-            {/* Pro Features */}
+            
+            {/* What You Get */}
             <div>
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 bg-[#0DBCBA] rounded-full flex items-center justify-center">
                   <span className="text-white text-sm font-bold">3</span>
                 </div>
-                <h3 className="text-lg font-semibold text-[hsl(221,56%,22%)]">Pro Features</h3>
+                <h3 className="text-lg font-semibold text-[hsl(221,56%,22%)]">What You Get</h3>
               </div>
               <div className="pl-11">
-                <p className="text-[hsl(221,56%,22%)] leading-relaxed text-base mb-3">
-                  <span className="font-semibold text-[#0DBCBA]">Upgrading to Pro</span> unlocks:
+                <p className="text-[hsl(221,56%,22%)] leading-relaxed text-base mb-4">
+                  Your <span className="font-semibold text-[#0DBCBA]">free audit</span> includes:
                 </p>
                 <ul className="space-y-2 text-sm text-[hsl(221,56%,22%)]">
                   <li className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-[#0DBCBA] rounded-full"></div>
-                    Weekly updates
+                    AI perception analysis across 3 major models
                   </li>
                   <li className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-[#0DBCBA] rounded-full"></div>
-                    Deeper competitive analysis
+                    Search insights and career visibility analysis
                   </li>
                   <li className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-[#0DBCBA] rounded-full"></div>
-                    Source analysis & more features coming soon
+                    Competitor comparison and market positioning
                   </li>
                 </ul>
               </div>

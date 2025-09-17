@@ -248,41 +248,7 @@ export const TalentXTab = ({ talentXData, isProUser, companyName = 'Your Company
     );
   };
 
-  if (!isProUser) {
-    return (
-      <div className="relative min-h-[600px]">
-        {/* Overlay for Coming Soon */}
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm" style={{ pointerEvents: 'all' }}>
-          <div className="text-center p-8 max-w-lg mx-auto">
-            <h2 className="text-2xl font-bold mb-4 text-gray-800">TalentX Attributes (Coming Soon)</h2>
-            <p className="text-gray-600 mb-6 leading-relaxed">
-              This feature will provide detailed analysis of how your company performs across key talent attraction attributes. 
-              Get insights into mission & purpose, company culture, rewards & recognition, and more to improve your employer brand.
-            </p>
-            <span className="inline-block bg-yellow-400 text-yellow-900 px-4 py-2 rounded-full font-semibold text-sm">Coming Soon</span>
-          </div>
-        </div>
-        {/* Blurred/disabled content underneath */}
-        <div className="blur-sm pointer-events-none select-none opacity-60">
-          <div className="text-center py-12">
-            <div className="max-w-md mx-auto">
-              <div className="bg-gradient-to-r from-blue-500 to-purple-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Award className="w-8 h-8 text-white" />
-              </div>
-              <h3 className="text-xl font-semibold mb-2">TalentX Attributes Analysis</h3>
-              <p className="text-gray-600 mb-6">
-                Unlock detailed analysis of how your company performs across key talent attraction attributes. 
-                Get insights into mission & purpose, company culture, rewards & recognition, and more.
-              </p>
-              <Badge variant="secondary" className="bg-primary/10 text-primary px-4 py-2">
-                Pro Feature
-              </Badge>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+
 
   return (
     <div className="space-y-6">

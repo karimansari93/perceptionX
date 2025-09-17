@@ -15,7 +15,7 @@ interface GeneratedPrompt {
   id: string;
   text: string;
   category: string;
-  type: 'sentiment' | 'visibility' | 'competitive';
+  type: 'sentiment' | 'visibility' | 'competitive' | 'talentx';
   sentiment?: string | number;
   visibility?: string | number;
   competitive?: string | number;
@@ -84,7 +84,8 @@ export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
     const colors: Record<string, string> = {
       'sentiment': 'bg-blue-100 text-blue-800',
       'visibility': 'bg-green-100 text-green-800',
-      'competitive': 'bg-purple-100 text-purple-800'
+      'competitive': 'bg-purple-100 text-purple-800',
+      'talentx': 'bg-orange-100 text-orange-800'
     };
     return colors[type] || 'bg-gray-100 text-gray-800';
   };
@@ -93,7 +94,8 @@ export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
     const labels: Record<string, string> = {
       'sentiment': 'Sentiment',
       'visibility': 'Visibility',
-      'competitive': 'Competitive'
+      'competitive': 'Competitive',
+      'talentx': 'TalentX'
     };
     return labels[type] || type;
   };

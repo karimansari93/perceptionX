@@ -21,6 +21,9 @@ export const useDashboardData = () => {
   const [talentXProData, setTalentXProData] = useState<any[]>([]);
   const [talentXProLoading, setTalentXProLoading] = useState(false);
   const [talentXProPrompts, setTalentXProPrompts] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchResultsLoading, setSearchResultsLoading] = useState(false);
+  const [searchTermsData, setSearchTermsData] = useState<any[]>([]);
   const subscriptionRef = useRef<any>(null); // Track subscription instance
   const pollingRef = useRef<NodeJS.Timeout | null>(null); // Track polling interval
 
@@ -91,15 +94,6 @@ export const useDashboardData = () => {
       // If user is Pro, fetch TalentX perception scores and convert them to PromptResponse format
       if (isPro) {
         try {
-          // First fetch TalentX Pro prompts to get the actual prompt text
-          const { data: talentXPrompts, error: promptsError } = await supabase
-            .from('talentx_pro_prompts')
-            .select('*')
-            .eq('user_id', user.id);
-
-          if (promptsError) {
-            // Silently handle error
-          } else {
             // Fetch TalentX responses from prompt_responses table joined with confirmed_prompts
             const { data: talentXResponses, error: talentXError } = await supabase
               .from('prompt_responses')
@@ -126,13 +120,8 @@ export const useDashboardData = () => {
                 const attributeId = response.confirmed_prompts.talentx_attribute_id || 
                                    promptType.replace('talentx_', '');
                 
-                // Find the matching prompt text
-                const matchingPrompt = talentXPrompts?.find(p => 
-                  p.attribute_id === attributeId && 
-                  p.prompt_type === promptType.replace('talentx_', '')
-                );
-                
-                const promptText = matchingPrompt?.prompt_text || `TalentX ${promptType.replace('talentx_', '')} analysis for ${attributeId}`;
+                // Get prompt text from the confirmed_prompts join
+                const promptText = response.confirmed_prompts?.prompt_text || `TalentX ${promptType.replace('talentx_', '')} analysis for ${attributeId}`;
                 
                 return {
                   id: response.id,
@@ -158,7 +147,6 @@ export const useDashboardData = () => {
               // Combine regular responses with TalentX responses
               allResponses = [...allResponses, ...talentXResponsesFormatted];
             }
-          }
         } catch (error) {
           // Silently handle error
         }
@@ -186,6 +174,8 @@ export const useDashboardData = () => {
   const fetchCompanyName = useCallback(async () => {
     if (!user) return;
     
+    console.log('🔍 fetchCompanyName called for user:', user.id);
+    
     try {
       // Get the most recent onboarding record
       const { data, error } = await supabase
@@ -196,17 +186,21 @@ export const useDashboardData = () => {
         .limit(1);
 
       if (error) {
+        console.log('❌ Error fetching company name:', error);
         setCompanyName('');
         return;
       }
 
       // If we have data, use the company name
       if (data && data.length > 0) {
+        console.log('✅ Company name fetched:', data[0].company_name);
         setCompanyName(data[0].company_name);
       } else {
+        console.log('⚠️ No company name data found');
         setCompanyName('');
       }
     } catch (error) {
+      console.log('❌ Exception fetching company name:', error);
       // Silently handle error
       setCompanyName('');
     }
@@ -230,6 +224,150 @@ export const useDashboardData = () => {
       setTalentXProLoading(false);
     }
   }, [user, isPro]);
+
+  const fetchSearchResults = useCallback(async () => {
+    if (!user || !companyName) {
+      setSearchResults([]);
+      setSearchResultsLoading(false);
+      return;
+    }
+
+    try {
+      setSearchResultsLoading(true);
+      
+      // Get the most recent search session for this company
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('search_insights_sessions')
+        .select(`
+          id,
+          company_name,
+          initial_search_term,
+          total_results,
+          total_related_terms,
+          total_volume,
+          keywords_everywhere_available,
+          created_at
+        `)
+        .eq('company_name', companyName)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (sessionError && sessionError.code !== 'PGRST116') { // PGRST116 = no rows found
+        console.error('Error fetching search session:', sessionError);
+        setSearchResults([]);
+        return;
+      }
+
+      if (!sessionData) {
+        setSearchResults([]);
+        return;
+      }
+
+      // Get search results for this session
+      const { data: resultsData, error: resultsError } = await supabase
+        .from('search_insights_results')
+        .select('*')
+        .eq('session_id', sessionData.id)
+        .order('position', { ascending: true });
+
+      if (resultsError) {
+        console.error('Error fetching search results:', resultsError);
+        setSearchResults([]);
+        return;
+      }
+
+      // Process and deduplicate the data by URL
+      const urlMap = new Map<string, { result: any; count: number; searchTerms: Set<string> }>();
+      
+      // Group results by URL and count mentions
+      (resultsData || []).forEach(result => {
+        const url = result.link;
+        if (urlMap.has(url)) {
+          const existing = urlMap.get(url)!;
+          existing.count += 1;
+          existing.searchTerms.add(result.search_term);
+          // Keep the result with the best position (lowest number)
+          if (result.position < existing.result.position) {
+            existing.result = result;
+          }
+        } else {
+          urlMap.set(url, {
+            result: result,
+            count: 1,
+            searchTerms: new Set([result.search_term])
+          });
+        }
+      });
+      
+      // Convert to array and sort by mention count (descending), then by position (ascending)
+      const processedResults = Array.from(urlMap.values())
+        .map(item => ({
+          id: item.result.id,
+          title: item.result.title,
+          link: item.result.link,
+          snippet: item.result.snippet,
+          position: item.result.position,
+          domain: item.result.domain,
+          monthlySearchVolume: item.result.monthly_search_volume,
+          mediaType: item.result.media_type,
+          companyMentioned: item.result.company_mentioned,
+          detectedCompetitors: item.result.detected_competitors || '',
+          date: item.result.date_found,
+          searchTerm: item.result.search_term,
+          mentionCount: item.count,
+          searchTermsCount: item.searchTerms.size,
+          allSearchTerms: Array.from(item.searchTerms).join(', ')
+        }))
+        .sort((a, b) => {
+          // First sort by mention count (descending)
+          if (b.mentionCount !== a.mentionCount) {
+            return b.mentionCount - a.mentionCount;
+          }
+          // Then by position (ascending)
+          return a.position - b.position;
+        });
+
+      setSearchResults(processedResults);
+      console.log('🔍 Search results loaded:', processedResults.length, 'results');
+
+      // Process search terms data for ranking
+      if (processedResults.length > 0) {
+        const termMap = new Map<string, { volume: number; count: number }>();
+        
+        processedResults.forEach((result: any) => {
+          const term = result.searchTerm || 'combined';
+          const volume = result.monthlySearchVolume || 0;
+          
+          if (termMap.has(term)) {
+            const existing = termMap.get(term)!;
+            termMap.set(term, {
+              volume: Math.max(existing.volume, volume),
+              count: existing.count + 1
+            });
+          } else {
+            termMap.set(term, { volume, count: 1 });
+          }
+        });
+        
+        const termsData = Array.from(termMap.entries())
+          .map(([term, data]) => ({
+            term,
+            monthlyVolume: data.volume,
+            resultsCount: data.count
+          }))
+          .sort((a, b) => b.monthlyVolume - a.monthlyVolume);
+        
+        console.log('🔍 Search terms processed:', termsData.length, 'terms');
+        setSearchTermsData(termsData);
+      }
+    } catch (error) {
+      console.error('Error loading search results:', error);
+      setSearchResults([]);
+    } finally {
+      setSearchResultsLoading(false);
+    }
+  }, [user, companyName]);
 
   // Real-time subscription effect (only once per user session)
   useEffect(() => {
@@ -294,12 +432,20 @@ export const useDashboardData = () => {
     }
   }, [user, fetchResponses, fetchCompanyName, fetchTalentXProData, isPro]);
 
+  // Fetch search results when company name is available
+  useEffect(() => {
+    if (user && isPro && companyName) {
+      fetchSearchResults();
+    }
+  }, [user, isPro, companyName, fetchSearchResults]);
+
   const refreshData = useCallback(async () => {
     await fetchResponses();
     if (isPro) {
       await fetchTalentXProData();
+      await fetchSearchResults();
     }
-  }, [fetchResponses, fetchTalentXProData, isPro]);
+  }, [fetchResponses, fetchTalentXProData, fetchSearchResults, isPro]);
 
   const parseCitations = useCallback((citations: any): Citation[] => {
     if (!citations) return [];
@@ -325,9 +471,10 @@ export const useDashboardData = () => {
 
       try {
         const { data: talentXPrompts, error } = await supabase
-          .from('talentx_pro_prompts')
+          .from('confirmed_prompts')
           .select('*')
-          .eq('user_id', user.id);
+          .eq('user_id', user.id)
+          .eq('is_pro_prompt', true);
 
         if (error) {
           // Silently handle error
@@ -339,8 +486,8 @@ export const useDashboardData = () => {
           const talentXPromptData = talentXPrompts.map(prompt => {
             // Find matching TalentX responses to get visibility scores
             const matchingResponses = responses.filter(r => 
-              r.confirmed_prompts?.prompt_type === `talentx_${prompt.prompt_type}` &&
-              r.talentx_analysis?.some((analysis: any) => analysis.attributeId === prompt.attribute_id)
+              r.confirmed_prompts?.prompt_type === prompt.prompt_type &&
+              r.talentx_analysis?.some((analysis: any) => analysis.attributeId === prompt.talentx_attribute_id)
             );
             
             // Extract visibility scores from responses
@@ -360,9 +507,9 @@ export const useDashboardData = () => {
             
             return {
               prompt: prompt.prompt_text,
-              category: `TalentX: ${prompt.attribute_id.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
-              type: `talentx_${prompt.prompt_type}` as any,
-              responses: prompt.is_generated ? 1 : 0, // Mark as having responses if generated
+              category: `TalentX: ${prompt.talentx_attribute_id.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
+              type: prompt.prompt_type as any,
+              responses: matchingResponses.length > 0 ? 1 : 0, // Mark as having responses if any exist
               avgSentiment: avgSentiment,
               sentimentLabel: sentimentLabel,
               mentionRanking: undefined,
@@ -371,8 +518,8 @@ export const useDashboardData = () => {
               averageVisibility: visibilityScores.length > 0 ? visibilityScores.reduce((sum, score) => sum + score, 0) / visibilityScores.length : undefined,
               visibilityScores: visibilityScores,
               isTalentXPrompt: true,
-              talentXAttributeId: prompt.attribute_id,
-              talentXPromptType: prompt.prompt_type
+              talentXAttributeId: prompt.talentx_attribute_id,
+              talentXPromptType: prompt.prompt_type.replace('talentx_', '') // Remove prefix for display
             };
           });
 
@@ -644,7 +791,7 @@ export const useDashboardData = () => {
   }, [responses]);
 
   const topCitations: CitationCount[] = useMemo(() => {
-    // Use enhanceCitations to get EnhancedCitation objects
+    // Use enhanceCitations to get EnhancedCitation objects from responses
     const allCitations = responses.flatMap(r => enhanceCitations(parseCitations(r.citations)));
     // Only keep citations that are real websites
     const websiteCitations = allCitations.filter(citation => citation.type === 'website' && citation.url);
@@ -657,11 +804,24 @@ export const useDashboardData = () => {
       return acc;
     }, {});
 
-    return Object.entries(citationCounts)
+    // Add search result domains to citation counts
+    searchResults.forEach(result => {
+      const domain = result.domain;
+      if (domain) {
+        // Count each search result as a citation (mentionCount represents how many search terms found this domain)
+        const searchCount = result.mentionCount || 1;
+        citationCounts[domain] = (citationCounts[domain] || 0) + searchCount;
+      }
+    });
+
+    const finalCitations = Object.entries(citationCounts)
       .map(([domain, count]) => ({ domain, count: count as number }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
-  }, [responses]);
+      .slice(0, 20);
+
+    console.log('🔍 Top citations calculated:', finalCitations.length, 'domains, search results:', searchResults.length);
+    return finalCitations;
+  }, [responses, searchResults]);
 
   const getMostCommonValue = (arr: string[]): string | null => {
     if (!arr.length) return null;
@@ -761,12 +921,52 @@ export const useDashboardData = () => {
   };
 
   const topCompetitors = useMemo(() => {
-    if (!companyName || !responses.length || loading) {
+    if (!companyName || (!responses.length && !searchResults.length) || loading) {
       return [];
     }
     
     const competitorCounts: Record<string, number> = {};
     
+    // Excluded competitors and words
+    const excludedCompetitors = new Set([
+      'glassdoor', 'indeed', 'ambitionbox', 'workday', 'linkedin', 'monster', 'careerbuilder', 'ziprecruiter',
+      'dice', 'angelist', 'wellfound', 'builtin', 'stackoverflow', 'github'
+    ]);
+    
+    const excludedWords = new Set([
+      'none', 'n/a', 'na', 'null', 'undefined', 'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;',
+      'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
+      'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_',
+      'null.', 'null,', 'null:', 'null;', 'null)', 'null]', 'null}', 'null-', 'null_',
+      'undefined.', 'undefined,', 'undefined:', 'undefined;', 'undefined)', 'undefined]', 'undefined}', 'undefined-', 'undefined_',
+      'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;', 'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_',
+      'none', 'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
+      'na', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_'
+    ]);
+    
+    // Additional patterns to exclude
+    const excludedPatterns = [
+      /^none$/i,
+      /^n\/a$/i,
+      /^na$/i,
+      /^null$/i,
+      /^undefined$/i,
+      /^none\.?$/i,
+      /^n\/a\.?$/i,
+      /^na\.?$/i,
+      /^null\.?$/i,
+      /^undefined\.?$/i,
+      /^none[,:;\)\]\}\-_]$/i,
+      /^n\/a[,:;\)\]\}\-_]$/i,
+      /^na[,:;\)\]\}\-_]$/i,
+      /^null[,:;\)\]\}\-_]$/i,
+      /^undefined[,:;\)\]\}\-_]$/i,
+      /^[0-9]+$/i, // Pure numbers
+      /^[^a-zA-Z0-9]+$/i, // Only special characters
+      /^[a-z]{1,2}$/i, // Single or double letter words (likely abbreviations that aren't company names)
+    ];
+    
+    // Process competitors from AI responses
     responses.forEach(response => {
       if (response.competitor_mentions) {
         const mentions = Array.isArray(response.competitor_mentions) 
@@ -778,9 +978,36 @@ export const useDashboardData = () => {
             const name = mention.name.trim();
             if (name && 
                 name.toLowerCase() !== companyName.toLowerCase() &&
-                name.length > 1) {
+                name.length > 1 &&
+                !excludedCompetitors.has(name.toLowerCase()) &&
+                !excludedWords.has(name.toLowerCase()) &&
+                !excludedPatterns.some(pattern => pattern.test(name))) {
               competitorCounts[name] = (competitorCounts[name] || 0) + 1;
             }
+          }
+        });
+      }
+    });
+
+    // Process competitors from search results
+    searchResults.forEach(result => {
+      if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
+        const competitors = result.detectedCompetitors
+          .split(',')
+          .map((comp: string) => comp.trim())
+          .filter((comp: string) => comp.length > 0);
+        
+        competitors.forEach(competitor => {
+          const name = competitor.trim();
+          if (name && 
+              name.toLowerCase() !== companyName.toLowerCase() &&
+              name.length > 1 &&
+              !excludedCompetitors.has(name.toLowerCase()) &&
+              !excludedWords.has(name.toLowerCase()) &&
+              !excludedPatterns.some(pattern => pattern.test(name))) {
+            // Weight search result competitors by mention count (how many search terms found this domain)
+            const weight = result.mentionCount || 1;
+            competitorCounts[name] = (competitorCounts[name] || 0) + weight;
           }
         });
       }
@@ -789,10 +1016,11 @@ export const useDashboardData = () => {
     const result = Object.entries(competitorCounts)
       .map(([company, count]) => ({ company, count }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
+      .slice(0, 20);
 
+    console.log('🔍 Top competitors calculated:', result.length, 'competitors, search results:', searchResults.length);
     return result;
-  }, [responses, companyName, loading]);
+  }, [responses, searchResults, companyName, loading]);
 
   const llmMentionRankings = useMemo(() => {
     if (!responses.length) return [];
@@ -877,6 +1105,10 @@ export const useDashboardData = () => {
     talentXProLoading,
     fetchTalentXProData,
     fixExistingPrompts,
-    hasDataIssues
+    hasDataIssues,
+    searchResults,
+    searchResultsLoading,
+    searchTermsData,
+    fetchSearchResults
   };
 };

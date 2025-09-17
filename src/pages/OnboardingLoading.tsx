@@ -2,11 +2,11 @@ import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { CheckCircle, Loader2 } from "lucide-react";
+import { CheckCircle, Loader2, Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { toast } from "sonner";
 import LLMLogo from "@/components/LLMLogo";
 import { checkExistingPromptResponse, logger } from "@/lib/utils";
+import { useDashboardData } from "@/hooks/useDashboardData";
 
 interface LocationState {
   onboardingId: string;
@@ -19,7 +19,8 @@ interface LocationState {
 const llmModels = [
   { name: "OpenAI", model: "openai" },
   { name: "Perplexity", model: "perplexity" },
-  { name: "Google AI", model: "google-ai-overviews" }
+  { name: "Google AI", model: "google-ai-overviews" },
+  { name: "Search Insights", model: "search-insights" }
 ];
 
 // Helper function to format prompts with country context
@@ -98,6 +99,9 @@ export const OnboardingLoading = () => {
     completed: 0,
     total: 0
   });
+
+  // Optionally load dashboard data if needed in the future
+  useDashboardData();
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -204,7 +208,7 @@ export const OnboardingLoading = () => {
           { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }
         ];
 
-        const totalOperations = confirmedPrompts.length * modelsToTest.length;
+        const totalOperations = confirmedPrompts.length * modelsToTest.length + 1; // +1 for search insights
         setProgress(prev => ({ ...prev, total: totalOperations }));
 
         let completedOperations = 0;
@@ -226,108 +230,156 @@ export const OnboardingLoading = () => {
           promptResponsesTableExists = false;
         }
 
-        // Test each prompt with each model
-        for (const confirmedPrompt of confirmedPrompts) {
-          for (const model of modelsToTest) {
-            try {
-              // Only check for existing responses if the table exists
-              if (promptResponsesTableExists) {
-                // Check if response already exists for this prompt and model
-                const { data: existingResponse, error: responseCheckError } = await supabase
-                  .from('prompt_responses')
-                  .select('id')
-                  .eq('confirmed_prompt_id', confirmedPrompt.id)
-                  .eq('ai_model', model.name)
-                  .limit(1);
+        // Function to run AI prompts
+        const runAIPrompts = async () => {
+          for (const confirmedPrompt of confirmedPrompts) {
+            for (const model of modelsToTest) {
+              try {
+                // Only check for existing responses if the table exists
+                if (promptResponsesTableExists) {
+                  // Check if response already exists for this prompt and model
+                  const { data: existingResponse, error: responseCheckError } = await supabase
+                    .from('prompt_responses')
+                    .select('id')
+                    .eq('confirmed_prompt_id', confirmedPrompt.id)
+                    .eq('ai_model', model.name)
+                    .limit(1);
 
-                if (responseCheckError) {
-                  console.error(`Error checking existing response for ${model.name}:`, responseCheckError);
-                  // If it's a table not found error or other database error, continue with processing
-                  if (responseCheckError.code === '42P01' || responseCheckError.code === '406' || responseCheckError.code === 'PGRST116') {
-                    console.log(`Database error for ${model.name} (table may not exist yet), continuing with processing...`);
-                  } else {
-                    console.log(`Unknown error for ${model.name}, continuing with processing...`);
-                  }
-                  // Continue with processing regardless of the error
-                }
-
-                // Skip if response already exists
-                if (existingResponse && existingResponse.length > 0) {
-                  console.log(`Response for ${model.name} already exists, skipping...`);
-                  completedOperations++;
-                  setProgress(prev => ({ ...prev, completed: completedOperations }));
-                  continue;
-                }
-              }
-
-              setProgress(prev => ({
-                ...prev,
-                currentModel: model.displayName,
-                currentPrompt: confirmedPrompt.prompt_text
-              }));
-
-              // Call the LLM edge function
-              const { data: responseData, error: functionError } = await supabase.functions
-                .invoke(model.functionName, {
-                  body: { prompt: confirmedPrompt.prompt_text }
-                });
-
-              if (functionError) {
-                console.error(`${model.functionName} error:`, functionError);
-                // Continue with next model instead of failing completely
-                continue;
-              }
-
-              if (responseData && responseData.response) {
-                // Check if response already exists for this prompt and model
-                const responseExists = await checkExistingPromptResponse(
-                  supabase,
-                  confirmedPrompt.id,
-                  model.name
-                );
-
-                if (responseExists) {
-                  continue;
-                }
-
-                // Process the response through analyze-response
-                const perplexityCitations = model.functionName === 'test-prompt-perplexity' ? responseData.citations : null;
-                const googleAICitations = model.name === 'google-ai-overviews' ? responseData.citations : null;
-                
-                try {
-                  const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-response', {
-                    body: {
-                      response: responseData.response,
-                      companyName: companyName,
-                      promptType: confirmedPrompt.prompt_type,
-                      perplexityCitations: perplexityCitations,
-                      citations: googleAICitations,
-                      confirmed_prompt_id: confirmedPrompt.id,
-                      ai_model: model.name
+                  if (responseCheckError) {
+                    console.error(`Error checking existing response for ${model.name}:`, responseCheckError);
+                    // If it's a table not found error or other database error, continue with processing
+                    if (responseCheckError.code === '42P01' || responseCheckError.code === '406' || responseCheckError.code === 'PGRST116') {
+                      console.log(`Database error for ${model.name} (table may not exist yet), continuing with processing...`);
+                    } else {
+                      console.log(`Unknown error for ${model.name}, continuing with processing...`);
                     }
+                    // Continue with processing regardless of the error
+                  }
+
+                  // Skip if response already exists
+                  if (existingResponse && existingResponse.length > 0) {
+                    console.log(`Response for ${model.name} already exists, skipping...`);
+                    completedOperations++;
+                    setProgress(prev => ({ ...prev, completed: completedOperations }));
+                    continue;
+                  }
+                }
+
+                setProgress(prev => ({
+                  ...prev,
+                  currentModel: model.displayName,
+                  currentPrompt: confirmedPrompt.prompt_text
+                }));
+
+                // Call the LLM edge function
+                const { data: responseData, error: functionError } = await supabase.functions
+                  .invoke(model.functionName, {
+                    body: { prompt: confirmedPrompt.prompt_text }
                   });
 
-                  if (analysisError) {
-                    logger.error(`Analysis error for ${model.name}:`, analysisError);
-                  }
-                } catch (analysisError) {
-                  logger.error(`Analysis exception for ${model.name}:`, analysisError);
+                if (functionError) {
+                  console.error(`${model.functionName} error:`, functionError);
+                  // Continue with next model instead of failing completely
+                  continue;
                 }
+
+                if (responseData && responseData.response) {
+                  // Check if response already exists for this prompt and model
+                  const responseExists = await checkExistingPromptResponse(
+                    supabase,
+                    confirmedPrompt.id,
+                    model.name
+                  );
+
+                  if (responseExists) {
+                    continue;
+                  }
+
+                  // Process the response through analyze-response
+                  const perplexityCitations = model.functionName === 'test-prompt-perplexity' ? responseData.citations : null;
+                  const googleAICitations = model.name === 'google-ai-overviews' ? responseData.citations : null;
+                  
+                  try {
+                    const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-response', {
+                      body: {
+                        response: responseData.response,
+                        companyName: companyName,
+                        promptType: confirmedPrompt.prompt_type,
+                        perplexityCitations: perplexityCitations,
+                        citations: googleAICitations,
+                        confirmed_prompt_id: confirmedPrompt.id,
+                        ai_model: model.name
+                      }
+                    });
+
+                    if (analysisError) {
+                      logger.error(`Analysis error for ${model.name}:`, analysisError);
+                    }
+                  } catch (analysisError) {
+                    logger.error(`Analysis exception for ${model.name}:`, analysisError);
+                  }
+                }
+
+                completedOperations++;
+                setProgress(prev => ({ ...prev, completed: completedOperations }));
+
+                // Small delay to show progress
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+              } catch (modelError) {
+                logger.error(`Error with ${model.name}:`, modelError);
+                // Continue with next model
+                continue;
               }
-
-              completedOperations++;
-              setProgress(prev => ({ ...prev, completed: completedOperations }));
-
-              // Small delay to show progress
-              await new Promise(resolve => setTimeout(resolve, 1000));
-
-            } catch (modelError) {
-              logger.error(`Error with ${model.name}:`, modelError);
-              // Continue with next model
-              continue;
             }
           }
-        }
+        };
+
+        // Function to run search insights
+        const runSearchInsights = async () => {
+          try {
+            console.log('🔍 Starting search insights for company:', companyName);
+            
+            // Call the search insights function with combined search
+            const { data: searchData, error: searchError } = await supabase.functions.invoke('search-insights', {
+              body: {
+                companyName: companyName
+              }
+            });
+
+            if (searchError) {
+              console.error('❌ Search insights error:', searchError);
+              logger.log('Search insights failed, but continuing with onboarding');
+            } else {
+              console.log('✅ Search insights completed successfully');
+              logger.log('Search insights data:', searchData);
+            }
+            
+            // Update progress for search insights completion
+            completedOperations++;
+            setProgress(prev => ({ ...prev, completed: completedOperations }));
+            
+          } catch (searchException) {
+            console.error('Exception during search insights:', searchException);
+            logger.log('Search insights exception, but continuing with onboarding');
+            
+            // Still update progress even if search failed
+            completedOperations++;
+            setProgress(prev => ({ ...prev, completed: completedOperations }));
+          }
+        };
+
+        // Run both operations in parallel
+        console.log('🚀 Starting parallel AI prompts and search insights...');
+        
+        // Start search insights immediately
+        const searchPromise = runSearchInsights();
+        
+        // Start AI prompts
+        const promptsPromise = runAIPrompts();
+        
+        // Wait for both to complete
+        await Promise.all([promptsPromise, searchPromise]);
 
         // Mark onboarding as complete
         await supabase
@@ -375,6 +427,8 @@ export const OnboardingLoading = () => {
       }
     });
   };
+
+  // Removed PDF download handler – no longer needed
 
   if (error) {
     return (
@@ -461,7 +515,7 @@ export const OnboardingLoading = () => {
               <div className="space-y-3">
                 <h1 className="text-2xl font-semibold text-gray-900">Collecting your data</h1>
                 <p className="text-gray-600">
-                  We're testing how different AI models respond to questions about {companyName} as an employer.
+                  We're analyzing how AI models perceive {companyName} as an employer and collecting search insights for a complete picture.
                 </p>
               </div>
               
@@ -487,7 +541,11 @@ export const OnboardingLoading = () => {
                           <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center ${
                             carouselIndex === index ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
                           }`}>
-                            <LLMLogo modelName={model.model} size="sm" className="w-4 h-4" />
+                            {model.model === 'search-insights' ? (
+                              <Search className="w-4 h-4 text-blue-600" />
+                            ) : (
+                              <LLMLogo modelName={model.model} size="sm" className="w-4 h-4" />
+                            )}
                           </div>
                           <div className={`w-2 h-2 rounded-full ${
                             carouselIndex === index ? 'bg-blue-500' : 'bg-gray-300'
@@ -507,17 +565,20 @@ export const OnboardingLoading = () => {
               <div className="space-y-3">
                 <h1 className="text-2xl font-semibold text-gray-900">Your data is ready!</h1>
                 <p className="text-gray-600">
-                  We've analyzed how AI models perceive {companyName} as an employer. Your results are ready!
+                  We've completed a comprehensive analysis of how AI models and search engines perceive {companyName} as an employer. Your results are ready!
                 </p>
               </div>
               
-              <Button 
-                onClick={handleSeeResults}
-                size="lg"
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
-              >
-                See My Results
-              </Button>
+              <div className="flex justify-center">
+                <Button 
+                  onClick={handleSeeResults}
+                  size="lg"
+                  className="bg-[#ec4899] hover:bg-[#db2777] text-white px-8 border-0"
+                  style={{ backgroundColor: '#ec4899' }}
+                >
+                  See My Results
+                </Button>
+              </div>
             </>
           )}
         </div>

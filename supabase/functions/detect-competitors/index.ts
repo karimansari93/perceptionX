@@ -50,7 +50,7 @@ A competitor is defined as:
 - A company that operates in the same industry segment
 
 Do NOT include:
-- Job boards (Glassdoor, Indeed, LinkedIn, Monster, CareerBuilder, ZipRecruiter, etc.)
+- Job boards (Glassdoor, Indeed, AmbitionBox, LinkedIn, Monster, CareerBuilder, ZipRecruiter, etc.)
 - Review sites (Trustpilot, G2, Capterra, etc.)
 - News sources (Reuters, Bloomberg, etc.)
 - Social media platforms (Twitter, Facebook, etc.)
@@ -60,6 +60,7 @@ Do NOT include:
 - Government agencies or regulatory bodies
 - Educational institutions
 - Consulting firms or agencies
+- The word "None" or any variation of it
 
 Exclude the main company name itself.
 

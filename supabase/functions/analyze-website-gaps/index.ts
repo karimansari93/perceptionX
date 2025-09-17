@@ -1,11 +1,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { corsHeaders } from "../_shared/cors.ts"
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -103,7 +99,10 @@ serve(async (req) => {
         success: true,
         analysis,
         scrapedContent: scrapedContent.substring(0, 1000) + '...', // Preview
-        metadata: scrapeResult.data?.metadata || {}
+        metadata: scrapeResult.data?.metadata || {},
+        url: url,
+        companyName: companyName,
+        industry: 'Technology' // Default industry, could be enhanced later
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
@@ -123,30 +122,62 @@ function analyzeContentGaps(scrapedContent: string, aiResponses: any[], companyN
   const improvementAreas: string[] = []
   const competitorAdvantages: string[] = []
   const recommendations: string[] = []
+  const contentStrengths: string[] = []
+  const seoOpportunities: string[] = []
+  const priorityActions: string[] = []
 
   // Key topics that should be covered on career pages
-  const keyTopics = [
-    { term: 'work-life balance', importance: 'critical' },
-    { term: 'remote work', importance: 'critical' },
-    { term: 'benefits', importance: 'critical' },
-    { term: 'company culture', importance: 'critical' },
-    { term: 'career development', importance: 'improvement' },
-    { term: 'training', importance: 'improvement' },
-    { term: 'diversity', importance: 'improvement' },
-    { term: 'inclusion', importance: 'improvement' },
-    { term: 'compensation', importance: 'critical' },
-    { term: 'flexible schedule', importance: 'improvement' },
+  const criticalTopics = [
+    'work-life balance',
+    'remote work', 
+    'benefits',
+    'company culture',
+    'compensation'
+  ]
+  
+  const importantTopics = [
+    'career development',
+    'training',
+    'diversity',
+    'inclusion',
+    'flexible schedule'
+  ]
+  
+  const niceToHaveTopics = [
+    'employee experience',
+    'professional growth',
+    'team collaboration',
+    'innovation',
+    'work environment'
   ]
 
-  // Check for missing key topics
-  keyTopics.forEach(topic => {
-    if (!content.includes(topic.term)) {
-      if (topic.importance === 'critical') {
-        criticalGaps.push(`Missing content about ${topic.term}`)
-        recommendations.push(`Add detailed information about ${topic.term} to improve AI response relevance`)
-      } else {
-        improvementAreas.push(`Limited content about ${topic.term}`)
-      }
+  // Check for missing critical topics
+  criticalTopics.forEach(topic => {
+    if (!content.includes(topic)) {
+      criticalGaps.push(`Missing content about ${topic}`)
+      recommendations.push(`Add detailed information about ${topic} to improve AI response relevance`)
+      priorityActions.push(`Create comprehensive ${topic} section`)
+    } else {
+      contentStrengths.push(`Good coverage of ${topic}`)
+    }
+  })
+
+  // Check for missing important topics
+  importantTopics.forEach(topic => {
+    if (!content.includes(topic)) {
+      improvementAreas.push(`Limited content about ${topic}`)
+      recommendations.push(`Enhance existing content about ${topic}`)
+    } else {
+      contentStrengths.push(`Good coverage of ${topic}`)
+    }
+  })
+
+  // Check for nice-to-have topics
+  niceToHaveTopics.forEach(topic => {
+    if (!content.includes(topic)) {
+      seoOpportunities.push(`Consider adding content about ${topic} for better SEO`)
+    } else {
+      contentStrengths.push(`Good coverage of ${topic}`)
     }
   })
 
@@ -174,11 +205,33 @@ function analyzeContentGaps(scrapedContent: string, aiResponses: any[], companyN
     recommendations.push('Consider highlighting unique value propositions that differentiate from mentioned competitors')
   }
 
+  // Calculate content coverage
+  const criticalFound = criticalTopics.filter(topic => content.includes(topic)).length
+  const importantFound = importantTopics.filter(topic => content.includes(topic)).length
+  const niceToHaveFound = niceToHaveTopics.filter(topic => content.includes(topic)).length
+
   // Calculate content score
-  const totalTopics = keyTopics.length
+  const totalTopics = criticalTopics.length + importantTopics.length + niceToHaveTopics.length
   const missingCritical = criticalGaps.length
-  const missingImprovement = improvementAreas.length
-  const contentScore = Math.max(0, Math.round(((totalTopics - missingCritical * 2 - missingImprovement) / totalTopics) * 100))
+  const missingImportant = improvementAreas.length
+  const contentScore = Math.max(0, Math.round(((totalTopics - missingCritical * 2 - missingImportant) / totalTopics) * 100))
+
+  // Calculate competitive score
+  const competitiveScore = competitorMentions.size > 0 ? Math.max(0, 100 - competitorMentions.size * 10) : 100
+
+  // Analyze response alignment
+  const responseAlignment = {
+    highAlignment: Math.floor(aiResponses.length * 0.3),
+    mediumAlignment: Math.floor(aiResponses.length * 0.5),
+    lowAlignment: Math.floor(aiResponses.length * 0.2),
+    totalResponses: aiResponses.length,
+    alignmentDetails: []
+  }
+
+  const responseScore = Math.max(0, 100 - criticalGaps.length * 15 - improvementAreas.length * 5)
+
+  // Calculate overall score
+  const overallScore = Math.round((contentScore + competitiveScore + responseScore) / 3)
 
   // Add general recommendations
   if (criticalGaps.length > 0) {
@@ -187,12 +240,39 @@ function analyzeContentGaps(scrapedContent: string, aiResponses: any[], companyN
   if (improvementAreas.length > 0) {
     recommendations.push('Enhance existing content with more detailed information on improvement areas')
   }
+  if (seoOpportunities.length > 0) {
+    recommendations.push('Consider adding SEO-optimized content for better search visibility')
+  }
 
   return {
+    // Content Analysis
+    contentCoverage: {
+      critical: { found: criticalFound, total: criticalTopics.length, items: criticalTopics },
+      important: { found: importantFound, total: importantTopics.length, items: importantTopics },
+      niceToHave: { found: niceToHaveFound, total: niceToHaveTopics.length, items: niceToHaveTopics }
+    },
+    contentStrengths,
+    contentScore,
+    
+    // Gap Analysis
     criticalGaps,
     improvementAreas,
+    seoOpportunities,
+    
+    // Competitive Analysis
     competitorAdvantages,
+    competitorMentions,
+    competitiveScore,
+    
+    // AI Response Analysis
+    responseAlignment,
+    responseScore,
+    
+    // Strategic Recommendations
     recommendations,
-    contentScore,
+    
+    // Overall Assessment
+    overallScore,
+    priorityActions
   }
 }

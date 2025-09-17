@@ -4,10 +4,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Users, Calendar, Building2, LogOut } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
+import { RefreshCw, Users, Calendar, Building2, LogOut, FileText, Download, Brain } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { checkExistingPromptResponse, logger } from '@/lib/utils';
+import { TalentXProService } from '@/services/talentXProService';
+import { CompanyReportTab } from '@/components/admin/CompanyReportTab';
+import { CompanyReportTextTab } from '@/components/admin/CompanyReportTextTab';
+import { useAdminReportGeneration } from '@/hooks/useAdminReportGeneration';
 
 interface UserRow {
   id: string;
@@ -17,14 +23,46 @@ interface UserRow {
   last_updated: string | null;
   created_at: string;
   has_prompts: boolean;
+  has_talentx_prompts?: boolean;
   subscription_type?: string;
+  response_count?: number;
+}
+
+interface RefreshProgress {
+  currentPrompt: string;
+  currentModel: string;
+  completed: number;
+  total: number;
+  isRegularPrompt: boolean;
+}
+
+interface RefreshConfirmation {
+  userId: string;
+  userName: string;
+  isProUser: boolean;
+  regularPrompts: any[];
+  talentXPrompts: any[];
+  models: { name: string; fn: string }[];
+  selectedModels: { name: string; fn: string }[];
+  allPromptTypes: string[];
+  selectedPromptTypes: string[];
+  totalOperations: number;
 }
 
 export default function Admin() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshingUsers, setRefreshingUsers] = useState<Set<string>>(new Set());
+  const [refreshProgress, setRefreshProgress] = useState<RefreshProgress | null>(null);
+  const [currentRefreshUser, setCurrentRefreshUser] = useState<UserRow | null>(null);
+  const [confirmationData, setConfirmationData] = useState<RefreshConfirmation | null>(null);
+  const [executionData, setExecutionData] = useState<RefreshConfirmation | null>(null);
+  const [activeTab, setActiveTab] = useState<'users' | 'reports' | 'text-reports'>('users');
+  const [reportConfirmation, setReportConfirmation] = useState<{userId: string, userEmail: string, companyName: string} | null>(null);
+  const [aiThemesProgress, setAiThemesProgress] = useState<{userId: string, current: number, total: number, currentResponse: string} | null>(null);
+  const [isAnalyzingThemes, setIsAnalyzingThemes] = useState(false);
   const { signOut } = useAuth();
+  const { generateUserReport, isGenerating, generatingForUser } = useAdminReportGeneration();
 
   useEffect(() => {
     document.title = 'pX Admin';
@@ -52,6 +90,8 @@ export default function Admin() {
       }
       const completedUserIds = Object.keys(userIdToOnboarding);
 
+
+
       if (completedUserIds.length === 0) {
         setUsers([]);
         return;
@@ -63,6 +103,7 @@ export default function Admin() {
         .select('id,email,created_at,subscription_type')
         .in('id', completedUserIds)
         .order('created_at', { ascending: false });
+      
       if (profilesError) throw profilesError;
 
       // 3) Confirmed prompts per user (also used to compute last response)
@@ -79,8 +120,20 @@ export default function Admin() {
         promptIds.push(r.id);
       }
 
+      // 3.5) Check for TalentX Pro prompts (now in confirmed_prompts)
+      const { data: talentXPrompts, error: talentXError } = await supabase
+        .from('confirmed_prompts')
+        .select('user_id')
+        .eq('is_pro_prompt', true)
+        .in('user_id', completedUserIds);
+      if (talentXError) {
+        console.error('Error fetching TalentX prompts:', talentXError);
+      }
+      const usersWithTalentXPrompts = new Set<string>((talentXPrompts || []).map((r: any) => r.user_id));
+
       // 4) Latest prompt_responses per prompt, then reduce to per user
       const userIdToLastResponse: Record<string, string> = {};
+      const userIdToResponseCount: Record<string, number> = {};
       if (promptIds.length > 0) {
         const { data: responses, error: responsesError } = await supabase
           .from('prompt_responses')
@@ -90,8 +143,11 @@ export default function Admin() {
         if (responsesError) throw responsesError;
         for (const row of responses || []) {
           const uid = promptIdToUserId[row.confirmed_prompt_id as unknown as string];
-          if (uid && !userIdToLastResponse[uid]) {
-            userIdToLastResponse[uid] = row.created_at as unknown as string;
+          if (uid) {
+            if (!userIdToLastResponse[uid]) {
+              userIdToLastResponse[uid] = row.created_at as unknown as string;
+            }
+            userIdToResponseCount[uid] = (userIdToResponseCount[uid] || 0) + 1;
           }
         }
       }
@@ -104,6 +160,7 @@ export default function Admin() {
       const rows: UserRow[] = completedUserIds.map((uid: string) => {
         const ob = userIdToOnboarding[uid];
         const prof = profileMap[uid];
+        
         return {
           id: uid,
           email: prof?.email || '(no profile) ' + uid,
@@ -112,7 +169,9 @@ export default function Admin() {
           last_updated: userIdToLastResponse[uid] || null,
           created_at: prof?.created_at || ob?.created_at || new Date().toISOString(),
           has_prompts: usersWithPrompts.has(uid),
+          has_talentx_prompts: usersWithTalentXPrompts.has(uid),
           subscription_type: prof?.subscription_type || 'free',
+          response_count: userIdToResponseCount[uid] || 0,
         };
       });
 
@@ -125,14 +184,16 @@ export default function Admin() {
     }
   };
 
-  const refreshUserModels = async (userId: string) => {
+  const prepareRefresh = async (userId: string) => {
     try {
-      setRefreshingUsers(prev => new Set(prev).add(userId));
-
       const target = users.find(u => u.id === userId);
       if (!target) return;
 
-      const { data: confirmedPrompts, error: promptsError } = await supabase
+      // Check if user is Pro to determine which models to use
+      const isProUser = target.subscription_type === 'pro';
+
+      // Get all confirmed prompts (both regular and TalentX)
+      const { data: allPrompts, error: promptsError } = await supabase
         .from('confirmed_prompts')
         .select('*')
         .eq('is_active', true)
@@ -140,62 +201,282 @@ export default function Admin() {
 
       if (promptsError) throw promptsError;
 
-      if (!confirmedPrompts || confirmedPrompts.length === 0) {
+      // Separate regular and TalentX prompts for display purposes
+      const regularPrompts = allPrompts?.filter(p => !p.is_pro_prompt) || [];
+      const talentXPrompts = allPrompts?.filter(p => p.is_pro_prompt) || [];
+
+      // Check if there are any prompts to process
+      const totalPrompts = (allPrompts?.length || 0);
+      if (totalPrompts === 0) {
         toast.error('No active prompts found for this user');
         return;
       }
 
-      // Keep historical responses: do not delete old responses
+      // Define models based on subscription type
+      const freeModels = [
+        { name: 'openai', fn: 'test-prompt-openai' },
+        { name: 'perplexity', fn: 'test-prompt-perplexity' },
+        { name: 'google-ai-overviews', fn: 'test-prompt-google-ai-overviews' },
+      ];
 
-      const models = [
+      const proModels = [
         { name: 'openai', fn: 'test-prompt-openai' },
         { name: 'perplexity', fn: 'test-prompt-perplexity' },
         { name: 'gemini', fn: 'test-prompt-gemini' },
         { name: 'deepseek', fn: 'test-prompt-deepseek' },
         { name: 'google-ai-overviews', fn: 'test-prompt-google-ai-overviews' },
+        { name: 'claude', fn: 'test-prompt-claude' },
       ];
 
-      for (const prompt of confirmedPrompts) {
-        for (const model of models) {
-          try {
-            // First, get the raw response from the model-specific function
-            const { data: resp, error } = await supabase.functions.invoke(model.fn, {
-              body: { prompt: prompt.prompt_text }
-            });
-            
-            if (error || !(resp as any)?.response) {
-              if (error) {
-                logger.error(`${model.name} invocation error:`, error);
-              } else {
-                logger.error(`${model.name} no response data:`, resp);
-              }
-              continue;
-            }
+      const models = isProUser ? proModels : freeModels;
+      
+      // Get all unique prompt types from all prompts
+      const allPromptTypes = Array.from(new Set([
+        ...regularPrompts.map(p => p.prompt_type),
+        ...talentXPrompts.map(p => p.prompt_type)
+      ])).sort();
+      
+      const totalOperations = totalPrompts * models.length;
 
-            // Send through analyze-response, which stores with service role and enriches fields
-            const analyzeResult = await supabase.functions.invoke('analyze-response', {
-              body: {
-                response: (resp as any).response,
-                companyName: target.company_name,
-                promptType: (prompt as any).prompt_type,
-                perplexityCitations: model.name === 'perplexity' ? (resp as any).citations : null,
-                citations: model.name === 'google-ai-overviews' ? (resp as any).citations : null,
-                confirmed_prompt_id: prompt.id,
-                ai_model: model.name,
-                isTalentXPrompt: false
-              }
+      // Show confirmation modal
+      setConfirmationData({
+        userId,
+        userName: target.email,
+        isProUser,
+        regularPrompts,
+        talentXPrompts,
+        models,
+        selectedModels: models, // Initially all models are selected
+        allPromptTypes,
+        selectedPromptTypes: allPromptTypes, // Initially all prompt types are selected
+        totalOperations
+      });
+
+    } catch (e: any) {
+      console.error('Error preparing refresh:', e);
+      toast.error('Failed to prepare refresh data');
+    }
+  };
+
+  const toggleModelSelection = (modelName: string) => {
+    if (!confirmationData) return;
+    
+    const { models, selectedModels } = confirmationData;
+    const model = models.find(m => m.name === modelName);
+    if (!model) return;
+    
+    const isSelected = selectedModels.some(m => m.name === modelName);
+    const newSelectedModels = isSelected 
+      ? selectedModels.filter(m => m.name !== modelName)
+      : [...selectedModels, model];
+    
+    updateTotalOperations({ ...confirmationData, selectedModels: newSelectedModels });
+  };
+
+  const togglePromptTypeSelection = (promptType: string) => {
+    if (!confirmationData) return;
+    
+    const { selectedPromptTypes } = confirmationData;
+    const isSelected = selectedPromptTypes.includes(promptType);
+    const newSelectedPromptTypes = isSelected 
+      ? selectedPromptTypes.filter(pt => pt !== promptType)
+      : [...selectedPromptTypes, promptType];
+    
+    updateTotalOperations({ ...confirmationData, selectedPromptTypes: newSelectedPromptTypes });
+  };
+
+  const updateTotalOperations = (newData: RefreshConfirmation) => {
+    // Count prompts that match selected prompt types
+    const filteredRegularPrompts = newData.regularPrompts.filter(p => 
+      newData.selectedPromptTypes.includes(p.prompt_type)
+    );
+    const filteredTalentXPrompts = newData.talentXPrompts.filter(p => 
+      newData.selectedPromptTypes.includes(p.prompt_type)
+    );
+    
+    const totalFilteredPrompts = filteredRegularPrompts.length + filteredTalentXPrompts.length;
+    const newTotalOperations = totalFilteredPrompts * newData.selectedModels.length;
+    
+    setConfirmationData({
+      ...newData,
+      totalOperations: newTotalOperations
+    });
+  };
+
+  const selectAllModels = () => {
+    if (!confirmationData) return;
+    
+    updateTotalOperations({ 
+      ...confirmationData, 
+      selectedModels: [...confirmationData.models] 
+    });
+  };
+
+  const deselectAllModels = () => {
+    if (!confirmationData) return;
+    
+    updateTotalOperations({ 
+      ...confirmationData, 
+      selectedModels: [] 
+    });
+  };
+
+  const selectAllPromptTypes = () => {
+    if (!confirmationData) return;
+    
+    updateTotalOperations({ 
+      ...confirmationData, 
+      selectedPromptTypes: [...confirmationData.allPromptTypes] 
+    });
+  };
+
+  const deselectAllPromptTypes = () => {
+    if (!confirmationData) return;
+    
+    updateTotalOperations({ 
+      ...confirmationData, 
+      selectedPromptTypes: [] 
+    });
+  };
+
+  const executeRefresh = async () => {
+    if (!executionData) return;
+    
+    const { userId, regularPrompts, talentXPrompts, selectedModels: models, selectedPromptTypes, userName } = executionData;
+    
+    // Filter prompts by selected types
+    const filteredRegularPrompts = regularPrompts.filter(p => selectedPromptTypes.includes(p.prompt_type));
+    const filteredTalentXPrompts = talentXPrompts.filter(p => selectedPromptTypes.includes(p.prompt_type));
+    try {
+      setRefreshingUsers(prev => new Set(prev).add(userId));
+      
+      const target = users.find(u => u.id === userId);
+      if (!target) return;
+      
+      setCurrentRefreshUser(target);
+
+      // Use the data from executionData (already fetched)
+      const totalOperations = executionData.totalOperations;
+      let completedOperations = 0;
+
+      // Initialize progress
+      setRefreshProgress({
+        currentPrompt: '',
+        currentModel: '',
+        completed: 0,
+        total: totalOperations,
+        isRegularPrompt: true
+      });
+
+      // Process filtered regular confirmed prompts
+      if (filteredRegularPrompts && filteredRegularPrompts.length > 0) {
+        for (const prompt of filteredRegularPrompts) {
+          for (const model of models) {
+            // Update progress
+            setRefreshProgress({
+              currentPrompt: prompt.prompt_text.substring(0, 100) + '...',
+              currentModel: model.name.toUpperCase(),
+              completed: completedOperations,
+              total: totalOperations,
+              isRegularPrompt: true
             });
-            
-            if (analyzeResult.error) {
-              logger.error(`${model.name} analyze-response error:`, analyzeResult.error);
+            try {
+              // First, get the raw response from the model-specific function
+              const { data: resp, error } = await supabase.functions.invoke(model.fn, {
+                body: { prompt: prompt.prompt_text }
+              });
+              
+              if (error || !(resp as any)?.response) {
+                if (error) {
+                  logger.error(`${model.name} invocation error:`, error);
+                } else {
+                  logger.error(`${model.name} no response data:`, resp);
+                }
+                continue;
+              }
+
+              // Send through analyze-response, which stores with service role and enriches fields
+              const analyzeResult = await supabase.functions.invoke('analyze-response', {
+                body: {
+                  response: (resp as any).response,
+                  companyName: target.company_name,
+                  promptType: (prompt as any).prompt_type,
+                  perplexityCitations: model.name === 'perplexity' ? (resp as any).citations : null,
+                  citations: model.name === 'google-ai-overviews' ? (resp as any).citations : null,
+                  confirmed_prompt_id: prompt.id,
+                  ai_model: model.name,
+                  isTalentXPrompt: false
+                }
+              });
+              
+              if (analyzeResult.error) {
+                logger.error(`${model.name} analyze-response error:`, analyzeResult.error);
+              }
+            } catch (e) {
+              logger.error(`${model.name} unexpected error:`, e);
             }
-          } catch (e) {
-            logger.error(`${model.name} unexpected error:`, e);
+            
+            completedOperations++;
           }
         }
       }
 
-      toast.success(`Refreshed models for ${target.email}`);
+      // Process filtered TalentX Pro prompts
+      if (filteredTalentXPrompts.length > 0) {
+        for (const talentXPrompt of filteredTalentXPrompts) {
+          for (const model of models) {
+            // Update progress for TalentX prompts
+            setRefreshProgress({
+              currentPrompt: `TalentX ${talentXPrompt.prompt_type}: ${talentXPrompt.talentx_attribute_id}`,
+              currentModel: model.name.toUpperCase(),
+              completed: completedOperations,
+              total: totalOperations,
+              isRegularPrompt: false
+            });
+            try {
+              // First, get the raw response from the model-specific function
+              const { data: resp, error } = await supabase.functions.invoke(model.fn, {
+                body: { prompt: talentXPrompt.prompt_text }
+              });
+              
+              if (error || !(resp as any)?.response) {
+                if (error) {
+                  logger.error(`${model.name} TalentX invocation error:`, error);
+                } else {
+                  logger.error(`${model.name} TalentX no response data:`, resp);
+                }
+                continue;
+              }
+
+              // Send through analyze-response (TalentX prompts already have confirmed_prompt_id)
+              const analyzeResult = await supabase.functions.invoke('analyze-response', {
+                body: {
+                  response: (resp as any).response,
+                  companyName: target.company_name,
+                  promptType: talentXPrompt.prompt_type, // Already has the full prompt_type
+                  perplexityCitations: model.name === 'perplexity' ? (resp as any).citations : null,
+                  citations: model.name === 'google-ai-overviews' ? (resp as any).citations : null,
+                  confirmed_prompt_id: talentXPrompt.id, // Use the confirmed_prompts ID directly
+                  ai_model: model.name,
+                  isTalentXPrompt: true
+                }
+              });
+              
+              if (analyzeResult.error) {
+                logger.error(`${model.name} TalentX analyze-response error:`, analyzeResult.error);
+              }
+            } catch (e) {
+              logger.error(`${model.name} TalentX unexpected error:`, e);
+            }
+            
+            completedOperations++;
+          }
+        }
+      }
+
+      const promptCount = filteredRegularPrompts.length + filteredTalentXPrompts.length;
+      const modelCount = models.length;
+      toast.success(`Refreshed ${modelCount} models for ${promptCount} prompts for ${userName}`);
       await fetchUsers();
     } catch (e: any) {
       console.error('Error refreshing user models:', e);
@@ -206,6 +487,156 @@ export default function Admin() {
         next.delete(userId);
         return next;
       });
+      setRefreshProgress(null);
+      setCurrentRefreshUser(null);
+      setExecutionData(null);
+    }
+  };
+
+  const upgradeUserToPro = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ subscription_type: 'pro' })
+        .eq('id', userId)
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Error upgrading user to Pro:', error);
+        toast.error('Failed to upgrade user to Pro');
+        return;
+      }
+
+      // Get user's company info for TalentX prompts
+      const { data: onboardingData } = await supabase
+        .from('user_onboarding')
+        .select('company_name, industry')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (onboardingData) {
+        // Generate TalentX Pro prompts
+        try {
+          await TalentXProService.generateProPrompts(
+            userId, 
+            onboardingData.company_name || 'Your Company',
+            onboardingData.industry || 'Technology'
+          );
+          toast.success(`User ${data.email} upgraded to Pro with TalentX prompts!`);
+        } catch (talentXError) {
+          logger.error('Error generating TalentX prompts:', talentXError);
+          toast.success(`User ${data.email} upgraded to Pro! (TalentX prompts failed)`);
+        }
+      } else {
+        toast.success(`User ${data.email} upgraded to Pro!`);
+      }
+
+      await fetchUsers(); // Refresh the list to show the updated subscription type
+    } catch (e: any) {
+      logger.error('Error upgrading user to Pro:', e);
+      toast.error('Failed to upgrade user to Pro');
+    }
+  };
+
+  const runAIThemesAnalysis = async (userId: string) => {
+    try {
+      const target = users.find(u => u.id === userId);
+      if (!target) return;
+
+      setIsAnalyzingThemes(true);
+      setAiThemesProgress({
+        userId,
+        current: 0,
+        total: 0,
+        currentResponse: 'Preparing analysis...'
+      });
+
+      // Get user's responses for sentiment and competitive prompts
+      const { data: responses, error: responsesError } = await supabase
+        .from('prompt_responses')
+        .select(`
+          id,
+          response_text,
+          ai_model,
+          confirmed_prompts!inner(
+            prompt_type,
+            user_id,
+            prompt_text
+          )
+        `)
+        .eq('confirmed_prompts.user_id', userId)
+        .in('confirmed_prompts.prompt_type', ['sentiment', 'competitive', 'talentx_sentiment', 'talentx_competitive']);
+
+      if (responsesError) {
+        throw responsesError;
+      }
+
+      if (!responses || responses.length === 0) {
+        toast.error('No sentiment/competitive responses found for this user');
+        return;
+      }
+
+      setAiThemesProgress(prev => prev ? { ...prev, total: responses.length } : null);
+
+      // Clear existing themes for this user's responses
+      const responseIds = responses.map(r => r.id);
+      if (responseIds.length > 0) {
+        setAiThemesProgress(prev => prev ? { ...prev, currentResponse: 'Clearing existing themes...' } : null);
+        const { error: deleteError } = await supabase
+          .from('ai_themes')
+          .delete()
+          .in('response_id', responseIds);
+        
+        if (deleteError) {
+          console.warn('Error clearing existing themes:', deleteError);
+        }
+      }
+
+      // Process responses one by one
+      for (let i = 0; i < responses.length; i++) {
+        const response = responses[i];
+        const promptText = (response.confirmed_prompts as any)?.prompt_text || 'Unknown prompt';
+        const truncatedPrompt = promptText.length > 60 ? promptText.substring(0, 60) + '...' : promptText;
+        
+        setAiThemesProgress(prev => prev ? {
+          ...prev,
+          current: i + 1,
+          currentResponse: `Analyzing: ${truncatedPrompt}`
+        } : null);
+
+        try {
+          const { data, error } = await supabase.functions.invoke('ai-thematic-analysis', {
+            body: {
+              response_id: response.id,
+              company_name: target.company_name,
+              response_text: response.response_text,
+              ai_model: response.ai_model
+            }
+          });
+
+          if (error) {
+            console.error(`Error analyzing response ${response.id}:`, error);
+          }
+        } catch (error) {
+          console.error(`Error analyzing response ${response.id}:`, error);
+        }
+
+        // Small delay to show progress
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      setAiThemesProgress(prev => prev ? { ...prev, currentResponse: 'Analysis complete!' } : null);
+      toast.success(`AI themes analysis completed for ${target.email}`);
+      
+    } catch (e: any) {
+      console.error('Error running AI themes analysis:', e);
+      toast.error('Failed to run AI themes analysis');
+    } finally {
+      setIsAnalyzingThemes(false);
+      setAiThemesProgress(null);
     }
   };
 
@@ -226,13 +657,15 @@ export default function Admin() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold">Admin Panel</h1>
-          <p className="text-gray-600">View users and refresh their data</p>
+          <p className="text-gray-600">Manage users and generate company reports</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button onClick={fetchUsers} variant="outline">
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh List
-          </Button>
+          {activeTab === 'users' && (
+            <Button onClick={fetchUsers} variant="outline">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh List
+            </Button>
+          )}
           <Button onClick={signOut} variant="ghost" className="text-red-600 hover:text-red-700">
             <LogOut className="w-4 h-4 mr-2" />
             Log out
@@ -240,13 +673,43 @@ export default function Admin() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="w-5 h-5" /> Users ({users.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+      {/* Tab Navigation */}
+      <div className="flex space-x-1 mb-6">
+        <Button
+          variant={activeTab === 'users' ? 'default' : 'ghost'}
+          onClick={() => setActiveTab('users')}
+          className="flex items-center gap-2"
+        >
+          <Users className="w-4 h-4" />
+          Users
+        </Button>
+        <Button
+          variant={activeTab === 'reports' ? 'default' : 'ghost'}
+          onClick={() => setActiveTab('reports')}
+          className="flex items-center gap-2"
+        >
+          <FileText className="w-4 h-4" />
+          Company Reports
+        </Button>
+        <Button
+          variant={activeTab === 'text-reports' ? 'default' : 'ghost'}
+          onClick={() => setActiveTab('text-reports')}
+          className="flex items-center gap-2"
+        >
+          <FileText className="w-4 h-4" />
+          Text Reports
+        </Button>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'users' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5" /> Users ({users.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
@@ -254,8 +717,10 @@ export default function Admin() {
                 <TableHead>Company</TableHead>
                 <TableHead>Industry</TableHead>
                 <TableHead>Last Updated</TableHead>
+                <TableHead>Responses</TableHead>
                 <TableHead>Plan</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>TalentX</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -279,6 +744,12 @@ export default function Admin() {
                     </div>
                   </TableCell>
                   <TableCell>
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-gray-500" />
+                      <span className="font-medium">{u.response_count || 0}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={u.subscription_type === 'pro' ? 'default' : 'secondary'}>
                       {u.subscription_type === 'pro' ? 'Pro' : 'Free'}
                     </Badge>
@@ -289,15 +760,71 @@ export default function Admin() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Button
-                      onClick={() => refreshUserModels(u.id)}
-                      disabled={refreshingUsers.has(u.id) || !u.has_prompts}
-                      size="sm"
-                      variant="outline"
-                    >
-                      <RefreshCw className={`w-4 h-4 mr-2 ${refreshingUsers.has(u.id) ? 'animate-spin' : ''}`} />
-                      {refreshingUsers.has(u.id) ? 'Refreshing…' : 'Refresh Models'}
-                    </Button>
+                    {u.subscription_type === 'pro' ? (
+                      <Badge variant={u.has_talentx_prompts ? 'default' : 'secondary'}>
+                        {u.has_talentx_prompts ? 'Active' : 'None'}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-gray-500">
+                        N/A
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-2 flex-wrap">
+                      <Button
+                        onClick={() => prepareRefresh(u.id)}
+                        disabled={refreshingUsers.has(u.id) || !u.has_prompts}
+                        size="sm"
+                        variant="outline"
+                        title={u.subscription_type === 'pro' 
+                          ? 'Refresh all 6 LLM models + TalentX Pro prompts' 
+                          : 'Refresh 3 LLM models (Free plan)'}
+                      >
+                        <RefreshCw className={`w-4 h-4 mr-2 ${refreshingUsers.has(u.id) ? 'animate-spin' : ''}`} />
+                        {refreshingUsers.has(u.id) 
+                          ? 'Refreshing…' 
+                          : u.subscription_type === 'pro' 
+                            ? 'Refresh All Models' 
+                            : 'Refresh Models'}
+                      </Button>
+                      
+                      <Button
+                        onClick={() => setReportConfirmation({userId: u.id, userEmail: u.email, companyName: u.company_name})}
+                        disabled={isGenerating || !u.has_prompts}
+                        size="sm"
+                        variant="outline"
+                        className="border-blue-600 text-blue-600 hover:bg-blue-50"
+                        title="Download comprehensive PDF report for this user"
+                      >
+                        <Download className={`w-4 h-4 mr-2 ${generatingForUser === u.id ? 'animate-pulse' : ''}`} />
+                        {generatingForUser === u.id ? 'Generating...' : 'Download Report'}
+                      </Button>
+                      
+                      <Button
+                        onClick={() => runAIThemesAnalysis(u.id)}
+                        disabled={isAnalyzingThemes || !u.has_prompts}
+                        size="sm"
+                        variant="outline"
+                        className="border-purple-600 text-purple-600 hover:bg-purple-50"
+                        title="Run AI thematic analysis on user's sentiment/competitive responses"
+                      >
+                        <Brain className={`w-4 h-4 mr-2 ${aiThemesProgress?.userId === u.id ? 'animate-pulse' : ''}`} />
+                        {aiThemesProgress?.userId === u.id ? 'Analyzing...' : 'AI Themes'}
+                      </Button>
+                      
+                      {u.subscription_type !== 'pro' && (
+                        <Button
+                          onClick={() => upgradeUserToPro(u.id)}
+                          size="sm"
+                          variant="default"
+                          className="bg-green-600 hover:bg-green-700"
+                          title="Upgrade user to Pro subscription"
+                        >
+                          Upgrade to Pro
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -305,6 +832,348 @@ export default function Admin() {
           </Table>
         </CardContent>
       </Card>
+      )}
+
+      {/* Company Reports Tab */}
+      {activeTab === 'reports' && (
+        <CompanyReportTab />
+      )}
+
+      {/* Text Reports Tab */}
+      {activeTab === 'text-reports' && (
+        <CompanyReportTextTab />
+      )}
+
+      {/* Confirmation Modal */}
+      <Dialog open={confirmationData !== null} onOpenChange={() => setConfirmationData(null)}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Confirm Model Refresh</DialogTitle>
+          </DialogHeader>
+          
+          {confirmationData && (
+            <>
+              <div className="flex-1 overflow-y-auto space-y-6 pr-2">
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <div className="text-sm font-medium text-blue-900">
+                  <strong>User:</strong> {confirmationData.userName}
+                </div>
+                <div className="text-sm text-blue-700">
+                  <strong>Plan:</strong> {confirmationData.isProUser ? 'Pro' : 'Free'}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium">Models ({confirmationData.selectedModels.length}/{confirmationData.models.length})</h4>
+                    <div className="flex space-x-2">
+                      <button
+                        type="button"
+                        onClick={selectAllModels}
+                        className="text-xs text-blue-600 hover:text-blue-800 underline"
+                      >
+                        All
+                      </button>
+                      <span className="text-xs text-gray-400">|</span>
+                      <button
+                        type="button"
+                        onClick={deselectAllModels}
+                        className="text-xs text-red-600 hover:text-red-800 underline"
+                      >
+                        None
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {confirmationData.models.map((model) => {
+                      const isSelected = confirmationData.selectedModels.some(m => m.name === model.name);
+                      return (
+                        <div key={model.name} className="flex items-center space-x-2">
+                          <input
+                            type="checkbox"
+                            id={`model-${model.name}`}
+                            checked={isSelected}
+                            onChange={() => toggleModelSelection(model.name)}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                          <label 
+                            htmlFor={`model-${model.name}`}
+                            className={`text-sm cursor-pointer ${isSelected ? 'font-medium' : 'text-gray-600'}`}
+                          >
+                            {model.name.toUpperCase()}
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {confirmationData.selectedModels.length === 0 && (
+                    <div className="text-xs text-red-600 bg-red-50 p-2 rounded">
+                      ⚠️ Please select at least one model to refresh
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium">Prompt Types ({confirmationData.selectedPromptTypes.length}/{confirmationData.allPromptTypes.length})</h4>
+                    <div className="flex space-x-2">
+                      <button
+                        type="button"
+                        onClick={selectAllPromptTypes}
+                        className="text-xs text-blue-600 hover:text-blue-800 underline"
+                      >
+                        All
+                      </button>
+                      <span className="text-xs text-gray-400">|</span>
+                      <button
+                        type="button"
+                        onClick={deselectAllPromptTypes}
+                        className="text-xs text-red-600 hover:text-red-800 underline"
+                      >
+                        None
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    {confirmationData.allPromptTypes.map((promptType) => {
+                      const isSelected = confirmationData.selectedPromptTypes.includes(promptType);
+                      const displayName = promptType.replace('talentx_', '').replace(/_/g, ' ');
+                      return (
+                        <div key={promptType} className="flex items-center space-x-2">
+                          <input
+                            type="checkbox"
+                            id={`prompt-${promptType}`}
+                            checked={isSelected}
+                            onChange={() => togglePromptTypeSelection(promptType)}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                          <label 
+                            htmlFor={`prompt-${promptType}`}
+                            className={`text-sm cursor-pointer capitalize ${isSelected ? 'font-medium' : 'text-gray-600'}`}
+                          >
+                            {displayName}
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {confirmationData.selectedPromptTypes.length === 0 && (
+                    <div className="text-xs text-red-600 bg-red-50 p-2 rounded">
+                      ⚠️ Please select at least one prompt type
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="font-medium">Prompts to Process</h4>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    <div className="text-sm bg-gray-50 p-3 rounded">
+                      <strong>Total Prompts:</strong> {confirmationData.regularPrompts.length + confirmationData.talentXPrompts.length}
+                      <div className="text-xs text-gray-600 mt-2">
+                        <div>• Regular prompts: {confirmationData.regularPrompts.length}</div>
+                        {confirmationData.talentXPrompts.length > 0 && (
+                          <div>• TalentX prompts: {confirmationData.talentXPrompts.length}</div>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-600 mt-2 max-h-20 overflow-y-auto">
+                        {[...confirmationData.regularPrompts, ...confirmationData.talentXPrompts].slice(0, 5).map((p, i) => (
+                          <div key={i} className="truncate">
+                            • {p.prompt_text?.substring(0, 60) || `${p.talentx_attribute_id} (${p.prompt_type})`}...
+                          </div>
+                        ))}
+                        {(confirmationData.regularPrompts.length + confirmationData.talentXPrompts.length) > 5 && (
+                          <div className="text-xs text-gray-500">
+                            ...and {(confirmationData.regularPrompts.length + confirmationData.talentXPrompts.length) - 5} more
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-yellow-50 p-4 rounded-lg">
+                <div className="text-sm font-medium text-yellow-900">
+                  <strong>Total Operations:</strong> {confirmationData.totalOperations}
+                </div>
+                <div className="text-xs text-yellow-700 mt-1">
+                  This will make {confirmationData.totalOperations} API calls and may take several minutes to complete.
+                </div>
+              </div>
+            </div>
+
+            {/* Fixed buttons at bottom */}
+            <div className="flex justify-end space-x-3 pt-4 border-t bg-white">
+                <Button
+                  variant="outline"
+                  onClick={() => setConfirmationData(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (confirmationData.selectedModels.length === 0) {
+                      toast.error('Please select at least one model to refresh');
+                      return;
+                    }
+                    if (confirmationData.selectedPromptTypes.length === 0) {
+                      toast.error('Please select at least one prompt type to refresh');
+                      return;
+                    }
+                    setExecutionData(confirmationData);
+                    setConfirmationData(null);
+                    executeRefresh();
+                  }}
+                  disabled={refreshingUsers.size > 0 || confirmationData.selectedModels.length === 0 || confirmationData.selectedPromptTypes.length === 0}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400"
+                >
+                  {refreshingUsers.size > 0 ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                      Refreshing...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      Confirm Refresh ({confirmationData.selectedModels.length} models)
+                    </>
+                  )}
+                </Button>
+            </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Loading Modal */}
+      <Dialog open={refreshProgress !== null} onOpenChange={() => {}}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Refreshing Models</DialogTitle>
+          </DialogHeader>
+          
+          {refreshProgress && currentRefreshUser && (
+            <div className="space-y-4">
+              <div className="text-sm text-gray-600">
+                <strong>User:</strong> {currentRefreshUser.email}
+              </div>
+              
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Progress</span>
+                  <span>{refreshProgress.completed} / {refreshProgress.total}</span>
+                </div>
+                <Progress 
+                  value={(refreshProgress.completed / refreshProgress.total) * 100} 
+                  className="w-full"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <div className="text-sm">
+                  <strong>Current Model:</strong> {refreshProgress.currentModel}
+                </div>
+                <div className="text-sm">
+                  <strong>Prompt Type:</strong> {refreshProgress.isRegularPrompt ? 'Regular' : 'TalentX Pro'}
+                </div>
+                <div className="text-sm">
+                  <strong>Current Prompt:</strong>
+                  <div className="mt-1 p-2 bg-gray-50 rounded text-xs font-mono">
+                    {refreshProgress.currentPrompt}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="text-xs text-gray-500">
+                Remaining: {refreshProgress.total - refreshProgress.completed} operations
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Report Generation Confirmation Dialog */}
+      <Dialog open={!!reportConfirmation} onOpenChange={() => setReportConfirmation(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              Generate User Report
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-gray-600">
+              Generate a comprehensive PDF report for <strong>{reportConfirmation?.userEmail}</strong> 
+              ({reportConfirmation?.companyName})?
+            </p>
+            <p className="text-sm text-gray-500">
+              This will create a detailed AI perception analysis report including executive summary, 
+              competitor insights, key themes, sources analysis, and improvement opportunities.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <Button
+                variant="outline"
+                onClick={() => setReportConfirmation(null)}
+                disabled={isGenerating}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (reportConfirmation) {
+                    generateUserReport(reportConfirmation.userId, reportConfirmation.userEmail);
+                    setReportConfirmation(null);
+                  }
+                }}
+                disabled={isGenerating}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {isGenerating ? 'Generating...' : 'Generate Report'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Themes Analysis Progress Modal */}
+      <Dialog open={aiThemesProgress !== null} onOpenChange={() => {}}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Brain className="w-5 h-5" />
+              AI Themes Analysis
+            </DialogTitle>
+          </DialogHeader>
+          
+          {aiThemesProgress && (
+            <div className="space-y-4">
+              <div className="text-sm text-gray-600">
+                <strong>User:</strong> {users.find(u => u.id === aiThemesProgress.userId)?.email}
+              </div>
+              
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Progress</span>
+                  <span>{aiThemesProgress.current} / {aiThemesProgress.total}</span>
+                </div>
+                <Progress 
+                  value={(aiThemesProgress.current / aiThemesProgress.total) * 100} 
+                  className="w-full"
+                />
+              </div>
+              
+              <div className="text-sm">
+                <strong>Status:</strong> {aiThemesProgress.currentResponse}
+              </div>
+              
+              <div className="text-xs text-gray-500">
+                Analyzing sentiment and competitive responses for thematic insights...
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

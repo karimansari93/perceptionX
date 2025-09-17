@@ -9,6 +9,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
 import LLMLogo from "@/components/LLMLogo";
 import { getLLMDisplayName } from "@/config/llmLogos";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useSubscription } from "@/hooks/useSubscription";
 
 interface TimeBasedData {
   name: string;
@@ -22,9 +24,11 @@ interface CompetitorsTabProps {
   topCompetitors: { company: string; count: number }[];
   responses: any[];
   companyName: string;
+  searchResults?: any[];
 }
 
-export const CompetitorsTab = ({ topCompetitors, responses, companyName }: CompetitorsTabProps) => {
+export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchResults = [] }: CompetitorsTabProps) => {
+  const { isPro } = useSubscription();
   const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = useState(false);
   const [competitorSnippets, setCompetitorSnippets] = useState<{ snippet: string; full: string }[]>([]);
@@ -37,10 +41,179 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
   const [selectedSource, setSelectedSource] = useState<{ domain: string; count: number } | null>(null);
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
   const [showAllCompetitorSources, setShowAllCompetitorSources] = useState(false);
+  const [selectedSourceTypeFilter, setSelectedSourceTypeFilter] = useState<'all' | 'ai-responses' | 'search-results'>('all');
+  const [selectedPromptCategoryFilter, setSelectedPromptCategoryFilter] = useState<string>('all');
+  const [selectedCompetitorTypeFilter, setSelectedCompetitorTypeFilter] = useState<'all' | 'direct'>('all');
+
+  // Helper to check if a response is from a competitive prompt
+  const isCompetitivePrompt = (response: any): boolean => {
+    return response.confirmed_prompts?.prompt_type === 'competitive';
+  };
+
+  // Helper to check if a competitor is a direct competitor (mentioned in sentiment or competitive prompts)
+  const isDirectCompetitor = (competitorName: string): boolean => {
+    return responses.some(response => {
+      // Check if response is from sentiment or competitive prompt
+      const isSentimentPrompt = response.confirmed_prompts?.prompt_type === 'sentiment';
+      const isCompetitivePrompt = response.confirmed_prompts?.prompt_type === 'competitive';
+      
+      if (!isSentimentPrompt && !isCompetitivePrompt) {
+        return false;
+      }
+
+      // Check if competitor is mentioned in this response
+      if (response.competitor_mentions) {
+        const mentions = Array.isArray(response.competitor_mentions) 
+          ? response.competitor_mentions 
+          : JSON.parse(response.competitor_mentions as string || '[]');
+        return mentions.some((mention: any) => 
+          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
+        );
+      }
+      return false;
+    });
+  };
+
+  // Helper function to check if a competitor comes from search results
+  const isCompetitorFromSearchResults = (competitorName: string) => {
+    return searchResults.some(result => {
+      if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
+        const competitors = result.detectedCompetitors
+          .split(',')
+          .map((comp: string) => comp.trim().toLowerCase());
+        return competitors.includes(competitorName.toLowerCase());
+      }
+      return false;
+    });
+  };
+
+  // Helper function to check if a competitor comes from AI responses
+  const isCompetitorFromAIResponses = (competitorName: string) => {
+    return getFilteredResponses.some(response => {
+      if (response.competitor_mentions) {
+        const mentions = Array.isArray(response.competitor_mentions) 
+          ? response.competitor_mentions 
+          : JSON.parse(response.competitor_mentions as string || '[]');
+        return mentions.some((mention: any) => 
+          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
+        );
+      }
+      return false;
+    });
+  };
+
+  // Helper to get filtered responses based on the competitor type filter
+  const getFilteredResponses = useMemo(() => {
+    if (selectedCompetitorTypeFilter === 'all') {
+      return responses;
+    }
+    // For direct competitors, only include sentiment and competitive prompts
+    return responses.filter(response => {
+      const isSentimentPrompt = response.confirmed_prompts?.prompt_type === 'sentiment';
+      const isCompetitivePrompt = response.confirmed_prompts?.prompt_type === 'competitive';
+      return isSentimentPrompt || isCompetitivePrompt;
+    });
+  }, [responses, selectedCompetitorTypeFilter]);
+
+  const handleSourceTypeDropdownChange = (value: string) => {
+    if (value === 'all') {
+      setSelectedSourceTypeFilter('all');
+    } else {
+      setSelectedSourceTypeFilter(value as 'ai-responses' | 'search-results');
+    }
+  };
+
+  const handlePromptCategoryDropdownChange = (value: string) => {
+    setSelectedPromptCategoryFilter(value);
+  };
+
+  const handleCompetitorTypeDropdownChange = (value: string) => {
+    if (value === 'all') {
+      setSelectedCompetitorTypeFilter('all');
+    } else {
+      setSelectedCompetitorTypeFilter(value as 'direct');
+    }
+  };
+
+  // Helper function to get unique prompt categories from responses
+  const getUniquePromptCategories = useMemo(() => {
+    const categories = new Set<string>();
+    getFilteredResponses.forEach(response => {
+      if (response.confirmed_prompts?.prompt_category) {
+        categories.add(response.confirmed_prompts.prompt_category);
+      }
+    });
+    return Array.from(categories).sort();
+  }, [getFilteredResponses]);
+
+  // Helper function to check if a competitor comes from a specific prompt category
+  const isCompetitorFromPromptCategory = (competitorName: string, category: string) => {
+    return getFilteredResponses.some(response => {
+      if (response.competitor_mentions && response.confirmed_prompts?.prompt_category === category) {
+        const mentions = Array.isArray(response.competitor_mentions) 
+          ? response.competitor_mentions 
+          : JSON.parse(response.competitor_mentions as string || '[]');
+        return mentions.some((mention: any) => 
+          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
+        );
+      }
+      return false;
+    });
+  };
 
   // Helper to normalize competitor names
   const normalizeCompetitorName = (name: string): string => {
-    const lowerName = name.trim().toLowerCase();
+    const trimmedName = name.trim();
+    const lowerName = trimmedName.toLowerCase();
+    
+    // Check for excluded patterns first
+    const excludedPatterns = [
+      /^none$/i,
+      /^n\/a$/i,
+      /^na$/i,
+      /^null$/i,
+      /^undefined$/i,
+      /^none\.?$/i,
+      /^n\/a\.?$/i,
+      /^na\.?$/i,
+      /^null\.?$/i,
+      /^undefined\.?$/i,
+      /^none[,:;\)\]\}\-_]$/i,
+      /^n\/a[,:;\)\]\}\-_]$/i,
+      /^na[,:;\)\]\}\-_]$/i,
+      /^null[,:;\)\]\}\-_]$/i,
+      /^undefined[,:;\)\]\}\-_]$/i,
+      /^[0-9]+$/i, // Pure numbers
+      /^[^a-zA-Z0-9]+$/i, // Only special characters
+      /^[a-z]{1,2}$/i, // Single or double letter words (likely abbreviations that aren't company names)
+    ];
+    
+    // If the name matches any excluded pattern, return empty string
+    if (excludedPatterns.some(pattern => pattern.test(trimmedName))) {
+      return '';
+    }
+    
+    // Check for excluded words
+    const excludedWords = new Set([
+      'none', 'n/a', 'na', 'null', 'undefined', 'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;',
+      'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
+      'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_',
+      'null.', 'null,', 'null:', 'null;', 'null)', 'null]', 'null}', 'null-', 'null_',
+      'undefined.', 'undefined,', 'undefined:', 'undefined;', 'undefined)', 'undefined]', 'undefined}', 'undefined_',
+      'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;', 'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_',
+      'none', 'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
+      'na', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_'
+    ]);
+    
+    if (excludedWords.has(lowerName)) {
+      return '';
+    }
+    
+    // If name is too short or empty after trimming, return empty string
+    if (trimmedName.length <= 1) {
+      return '';
+    }
+    
     const aliases: { [key: string]: string } = {
       'amazon web services': 'AWS',
       'google cloud': 'GCP',
@@ -51,14 +224,14 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
         return aliases[alias];
       }
     }
-    return name.trim().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+    return trimmedName.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   };
 
   // Helper to get sources contributing to competitor mentions
   const getCompetitorSources = (competitorName: string) => {
     const sourceCounts: Record<string, number> = {};
     
-    responses.forEach(response => {
+    getFilteredResponses.forEach(response => {
       // Check if response mentions the competitor
       if (response.response_text?.toLowerCase().includes(competitorName.toLowerCase())) {
         // Parse citations from the response
@@ -86,6 +259,38 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
       .sort((a, b) => b.count - a.count);
   };
 
+  // Helper to determine competitor source (AI responses vs search results)
+  const getCompetitorSourceInfo = (competitorName: string) => {
+    const aiResponseCount = getFilteredResponses.filter(response => {
+      if (response.competitor_mentions) {
+        const mentions = Array.isArray(response.competitor_mentions) 
+          ? response.competitor_mentions 
+          : JSON.parse(response.competitor_mentions as string || '[]');
+        return mentions.some((mention: any) => 
+          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
+        );
+      }
+      return false;
+    }).length;
+
+    const searchResultCount = searchResults.filter(result => {
+      if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
+        const competitors = result.detectedCompetitors
+          .split(',')
+          .map((comp: string) => comp.trim().toLowerCase());
+        return competitors.includes(competitorName.toLowerCase());
+      }
+      return false;
+    }).length;
+
+    return {
+      aiResponseCount,
+      searchResultCount,
+      totalCount: aiResponseCount + searchResultCount,
+      sources: []
+    };
+  };
+
   // Helper to get favicon for a domain
   const getFavicon = (domain: string): string => {
     return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
@@ -102,10 +307,10 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
 
   // Helper to group responses by time period
   const groupResponsesByTimePeriod = useMemo(() => {
-    if (responses.length === 0) return { current: [], previous: [] };
+    if (getFilteredResponses.length === 0) return { current: [], previous: [] };
 
     // Sort responses by tested_at descending
-    const sortedResponses = [...responses].sort((a, b) => 
+    const sortedResponses = [...getFilteredResponses].sort((a, b) => 
       new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime()
     );
 
@@ -129,7 +334,7 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
     }
 
     return { current, previous };
-  }, [responses]);
+  }, [getFilteredResponses]);
 
   // Calculate time-based competitor data
   const timeBasedCompetitors = useMemo(() => {
@@ -205,17 +410,17 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
 
     // Sort by current count descending
     const result = timeBasedData
-      .sort((a, b) => b.current - a.current)
-      .slice(0, 8);
+      .sort((a, b) => b.current - a.current);
 
     return result;
   }, [groupResponsesByTimePeriod, companyName]);
 
-  // Calculate all-time competitor data
-  const allTimeCompetitors = useMemo(() => {
+  // Calculate all-time competitor data (unfiltered for filter counts)
+  const allTimeCompetitorsUnfiltered = useMemo(() => {
     // Get competitor counts across all time
     const competitorCounts: Record<string, number> = {};
     
+    // Count from AI responses (always include for unfiltered count)
     responses.forEach(response => {
       if (response.competitor_mentions) {
         const mentions = Array.isArray(response.competitor_mentions) 
@@ -235,18 +440,107 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
       }
     });
 
+    // Count from search results (always include for unfiltered count)
+    searchResults.forEach(result => {
+      if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
+        const competitors = result.detectedCompetitors
+          .split(',')
+          .map((comp: string) => comp.trim());
+        
+        competitors.forEach(competitor => {
+          const name = normalizeCompetitorName(competitor);
+          if (name && 
+              name.toLowerCase() !== companyName.toLowerCase() &&
+              name.length > 1) {
+            competitorCounts[name] = (competitorCounts[name] || 0) + 1;
+          }
+        });
+      }
+    });
+
     // Convert to array and sort by count descending
-    const result = Object.entries(competitorCounts)
+    return Object.entries(competitorCounts)
       .map(([competitor, count]) => ({
         name: competitor,
         count: count,
-        change: 0 // Will be updated after timeBasedCompetitors is calculated
+        change: 0
       }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
+      .sort((a, b) => b.count - a.count);
+  }, [responses, companyName, searchResults]);
 
-    return result;
-  }, [responses, companyName]);
+  // Calculate all-time competitor data (filtered by source type for counts only)
+  const allTimeCompetitors = useMemo(() => {
+    // Start with all competitors from unfiltered data
+    const allCompetitors = allTimeCompetitorsUnfiltered;
+    
+    // If source type filter is 'all', return all competitors with their total counts
+    if (selectedSourceTypeFilter === 'all') {
+      return allCompetitors;
+    }
+    
+    // For specific source types, recalculate counts based on filtered data
+    const competitorCounts: Record<string, number> = {};
+    
+    // Count from AI responses only
+    if (selectedSourceTypeFilter === 'ai-responses') {
+      getFilteredResponses.forEach(response => {
+        if (response.competitor_mentions) {
+          // Apply prompt category filter
+          if (selectedPromptCategoryFilter !== 'all' && 
+              response.confirmed_prompts?.prompt_category !== selectedPromptCategoryFilter) {
+            return;
+          }
+          
+          const mentions = Array.isArray(response.competitor_mentions) 
+            ? response.competitor_mentions 
+            : JSON.parse(response.competitor_mentions as string || '[]');
+          
+          mentions.forEach((mention: any) => {
+            if (mention.name) {
+              const name = normalizeCompetitorName(mention.name);
+              if (name && 
+                  name.toLowerCase() !== companyName.toLowerCase() &&
+                  name.length > 1) {
+                competitorCounts[name] = (competitorCounts[name] || 0) + 1;
+              }
+            }
+          });
+        }
+      });
+    }
+
+    // Count from search results only
+    if (selectedSourceTypeFilter === 'search-results') {
+      searchResults.forEach(result => {
+        if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
+          const competitors = result.detectedCompetitors
+            .split(',')
+            .map((comp: string) => comp.trim());
+          
+          competitors.forEach(competitor => {
+            const name = normalizeCompetitorName(competitor);
+            if (name && 
+                name.toLowerCase() !== companyName.toLowerCase() &&
+                name.length > 1) {
+              competitorCounts[name] = (competitorCounts[name] || 0) + 1;
+            }
+          });
+        }
+      });
+    }
+
+    // Map all competitors but update their counts based on the source filter
+    // Show all competitors, even those with 0 count from the selected source
+    return allCompetitors.map(competitor => ({
+      ...competitor,
+      count: competitorCounts[competitor.name] || 0
+    })).sort((a, b) => {
+      // Sort by the filtered count, but put competitors with 0 count at the end
+      if (a.count === 0 && b.count > 0) return 1;
+      if (b.count === 0 && a.count > 0) return -1;
+      return b.count - a.count;
+    });
+  }, [allTimeCompetitorsUnfiltered, getFilteredResponses, companyName, selectedSourceTypeFilter, selectedPromptCategoryFilter, searchResults]);
 
   // Merge change data into all-time competitors
   const allTimeCompetitorsWithChanges = useMemo(() => {
@@ -255,10 +549,32 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
       changeData.set(competitor.name, competitor.change);
     });
 
-    return allTimeCompetitors.map(competitor => ({
-      ...competitor,
-      change: changeData.get(competitor.name) || 0
-    }));
+    // Excluded competitors and words
+    const excludedCompetitors = new Set([
+      'glassdoor', 'indeed', 'ambitionbox', 'workday', 'linkedin', 'monster', 'careerbuilder', 'ziprecruiter',
+      'dice', 'angelist', 'wellfound', 'builtin', 'stackoverflow', 'github'
+    ]);
+    
+    const excludedWords = new Set([
+      'none', 'n/a', 'na', 'null', 'undefined', 'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;',
+      'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
+      'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_',
+      'null.', 'null,', 'null:', 'null;', 'null)', 'null]', 'null}', 'null-', 'null_',
+      'undefined.', 'undefined,', 'undefined:', 'undefined;', 'undefined)', 'undefined]', 'undefined}', 'undefined_',
+      'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;', 'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_',
+      'none', 'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
+      'na', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_'
+    ]);
+
+    return allTimeCompetitors
+      .filter(competitor => 
+        !excludedCompetitors.has(competitor.name.toLowerCase()) &&
+        !excludedWords.has(competitor.name.toLowerCase())
+      )
+      .map(competitor => ({
+        ...competitor,
+        change: changeData.get(competitor.name) || 0
+      }));
   }, [allTimeCompetitors, timeBasedCompetitors]);
 
   // Helper to extract snippets for a competitor from all responses
@@ -267,7 +583,7 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
     // Regex to match competitor name with optional bolding and punctuation after
     const competitorPattern = `(?:\\*\\*|__)?${competitor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(?:\\*\\*|__)?[\\s]*[:*\-]*`;
     const regex = new RegExp(`((?:\\S+\\s+){0,4})(${competitorPattern})`, 'gi');
-    responses.forEach(response => {
+    getFilteredResponses.forEach(response => {
       if (!response.response_text) return;
       let match;
       while ((match = regex.exec(response.response_text)) !== null) {
@@ -314,9 +630,27 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
 
   // Helper to get all full responses mentioning a competitor
   const getFullResponsesForCompetitor = (competitor: string) => {
-    const competitorPattern = `(?:\\*\\*|__)?${competitor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(?:\\*\\*|__)?[\\s]*[:*\-]*`;
-    const regex = new RegExp(competitorPattern, 'i');
-    return responses.filter(r => r.response_text && regex.test(r.response_text));
+    return responses.filter(response => {
+      // Check if competitor is mentioned in competitor_mentions field
+      if (response.competitor_mentions) {
+        const mentions = Array.isArray(response.competitor_mentions) 
+          ? response.competitor_mentions 
+          : JSON.parse(response.competitor_mentions as string || '[]');
+        const hasMention = mentions.some((mention: any) => 
+          mention.name && mention.name.toLowerCase() === competitor.toLowerCase()
+        );
+        if (hasMention) return true;
+      }
+      
+      // Also check if competitor is mentioned in response text
+      if (response.response_text) {
+        const competitorPattern = `(?:\\*\\*|__)?${competitor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(?:\\*\\*|__)?[\\s]*[:*\-]*`;
+        const regex = new RegExp(competitorPattern, 'i');
+        return regex.test(response.response_text);
+      }
+      
+      return false;
+    });
   };
 
   // Helper to highlight competitor name and remove other bold/italic
@@ -352,7 +686,18 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
       return;
     }
     // Build the prompt
-    const prompt = `Summarize the following AI responses about \"${selectedCompetitor}\" in one concise paragraph. Highlight what is said about ${selectedCompetitor}, and how this is different from ${companyName}. Focus on key themes, sentiment, and notable comparisons.\n\nResponses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\n---\n')}`;
+    const prompt = `Analyze employer brand perception of "${selectedCompetitor}" vs ${companyName} for talent acquisition. Format as 3-4 SHORT bullets (max 15 words each):
+
+• [${selectedCompetitor}'s employer brand strengths - max 15 words]
+• [Talent perception vs ${companyName} - max 15 words]
+• [Key employer reputation differences - max 15 words]
+• [Actionable HR insight for ${companyName} - max 15 words]
+
+Focus on: culture, benefits, career growth, work environment, compensation, employee experience, talent attraction, employer reputation.
+
+CRITICAL: Each bullet must be under 15 words and fit on one line.
+
+Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\n---\n')}`;
     // Get session and call Gemini endpoint
     const fetchSummary = async () => {
       try {
@@ -455,20 +800,98 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
 
   return (
     <div className="flex flex-col gap-6 w-full h-full">
+      {/* Filters - Only show for Pro users */}
+      {isPro && (
+        <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <Select
+            value={selectedCompetitorTypeFilter}
+            onValueChange={handleCompetitorTypeDropdownChange}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="All Competitors" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                <div className="flex items-center gap-2">
+                  <span>All Competitors</span>
+                  <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.length})</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="direct">
+                <div className="flex items-center gap-2">
+                  <span>Direct Competitors</span>
+                  <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isDirectCompetitor(c.name)).length})</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          
+          <Select
+            value={selectedSourceTypeFilter}
+            onValueChange={handleSourceTypeDropdownChange}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="All Sources" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                <div className="flex items-center gap-2">
+                  <span>All Sources</span>
+                  <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.length})</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="ai-responses">
+                <div className="flex items-center gap-2">
+                  <span>AI Responses</span>
+                  <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isCompetitorFromAIResponses(c.name)).length})</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="search-results">
+                <div className="flex items-center gap-2">
+                  <span>Search Results</span>
+                  <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isCompetitorFromSearchResults(c.name)).length})</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          {getUniquePromptCategories.length > 0 && (
+            <Select
+              value={selectedPromptCategoryFilter}
+              onValueChange={handlePromptCategoryDropdownChange}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="All Categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  <div className="flex items-center gap-2">
+                    <span>All Categories</span>
+                    <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.length})</span>
+                  </div>
+                </SelectItem>
+                {getUniquePromptCategories.map(category => (
+                  <SelectItem key={category} value={category}>
+                    <div className="flex items-center gap-2">
+                      <span>{category}</span>
+                      <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isCompetitorFromPromptCategory(c.name, category)).length})</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="flex-1 min-h-0">
         <Card className="shadow-sm border border-gray-200 h-full flex flex-col">
-          <CardHeader className="pb-4 flex-shrink-0">
-            <CardTitle className="text-xl font-semibold">Top Competitors</CardTitle>
-            <CardDescription className="text-base text-gray-600">
-              Companies most frequently mentioned alongside {companyName} in candidate searches
-            </CardDescription>
-          </CardHeader>
           <CardContent className="flex-1 min-h-0 overflow-hidden p-6">
             <div className="space-y-2 h-full overflow-y-auto relative">
               {allTimeCompetitorsWithChanges.length > 0 ? (
                 (() => {
                   const maxCount = Math.max(...allTimeCompetitorsWithChanges.map(c => c.count), 1);
+                  
                   return allTimeCompetitorsWithChanges.map((competitor, idx) => (
                     <div 
                       key={idx} 
@@ -483,7 +906,26 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
                   <div className="w-12 h-12 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
                     <span className="text-xl font-bold text-gray-400">🏢</span>
                   </div>
-                  <p className="text-sm">No competitor mentions found yet.</p>
+                  <p className="text-sm">
+                    {(() => {
+                      if (selectedCompetitorTypeFilter === 'direct') {
+                        return "No direct competitors found in sentiment or competitive prompts.";
+                      } else if (selectedSourceTypeFilter === 'ai-responses') {
+                        return "No competitors found in AI responses.";
+                      } else if (selectedSourceTypeFilter === 'search-results') {
+                        return "No competitors found in search results.";
+                      } else if (selectedPromptCategoryFilter !== 'all') {
+                        return `No competitors found in ${selectedPromptCategoryFilter} prompts.`;
+                      } else {
+                        return "No competitor mentions found yet.";
+                      }
+                    })()}
+                  </p>
+                  {(selectedCompetitorTypeFilter !== 'all' || selectedSourceTypeFilter !== 'all' || selectedPromptCategoryFilter !== 'all') && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      Try adjusting the filters to see more competitor mentions.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -506,7 +948,19 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
                 style={{ display: 'block' }}
               />
               <span>{selectedCompetitor}</span>
-              <Badge variant="secondary">{getFullResponsesForCompetitor(selectedCompetitor || '').length} mentions</Badge>
+              {(() => {
+                const sourceInfo = getCompetitorSourceInfo(selectedCompetitor || '');
+                return (
+                  <div className="flex gap-2">
+                    <Badge variant="secondary">{sourceInfo.totalCount} mentions</Badge>
+                    {sourceInfo.searchResultCount > 0 && (
+                      <Badge variant="outline" className="text-xs">
+                        {sourceInfo.searchResultCount} Search
+                      </Badge>
+                    )}
+                  </div>
+                );
+              })()}
             </DialogTitle>
           </DialogHeader>
           
@@ -556,8 +1010,16 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName }: Compe
                     <div className="text-red-600 text-sm py-2">{competitorSummaryError}</div>
                   ) : competitorSummary ? (
                     <>
-                      <div className="text-gray-800 text-base mb-3 whitespace-pre-line">
-                        <ReactMarkdown>{competitorSummary}</ReactMarkdown>
+                      <div className="text-gray-800 text-base mb-3">
+                        <ReactMarkdown 
+                          components={{
+                            p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                            ul: ({children}) => <ul className="space-y-1 list-disc list-inside">{children}</ul>,
+                            li: ({children}) => <li className="text-sm leading-tight">{children}</li>
+                          }}
+                        >
+                          {competitorSummary}
+                        </ReactMarkdown>
                       </div>
                       
                       {/* Sources section - matching PromptsModal style */}

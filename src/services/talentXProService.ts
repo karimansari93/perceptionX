@@ -41,17 +41,69 @@ export class TalentXProService {
       // Later, we can move this to a database function
       const prompts = this.generatePromptTemplates(companyName, industry);
       
-      // Insert prompts into database
+      // First, check if user already has TalentX prompts to avoid duplicates
+      const { data: existingPrompts, error: checkError } = await supabase
+        .from('confirmed_prompts')
+        .select('id')
+        .eq('user_id', userId)
+        .like('prompt_category', 'TalentX:%')
+        .limit(1);
+
+      if (checkError) {
+        console.error('Error checking existing TalentX prompts:', checkError);
+        throw checkError;
+      }
+
+      if (existingPrompts && existingPrompts.length > 0) {
+        console.log('User already has TalentX prompts, skipping generation');
+        // Return existing prompts instead of creating duplicates
+        const { data: existing, error: fetchError } = await supabase
+          .from('confirmed_prompts')
+          .select('*')
+          .eq('user_id', userId)
+          .like('prompt_category', 'TalentX:%')
+          .order('created_at', { ascending: true });
+
+        if (fetchError) throw fetchError;
+
+        return existing.map(prompt => ({
+          id: prompt.id,
+          userId: prompt.user_id,
+          companyName: companyName,
+          industry: industry,
+          attributeId: prompt.prompt_category?.replace('TalentX: ', '') || 'unknown',
+          promptType: prompt.prompt_type as 'sentiment' | 'competitive' | 'visibility',
+          promptText: prompt.prompt_text,
+          isGenerated: true,
+          createdAt: prompt.created_at,
+          updatedAt: prompt.updated_at || prompt.created_at
+        }));
+      }
+
+      // Get a valid onboarding_id for the user (required field)
+      const { data: onboardingData, error: onboardingError } = await supabase
+        .from('user_onboarding')
+        .select('id')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (onboardingError) {
+        console.error('Error fetching onboarding data:', onboardingError);
+        throw new Error('User must complete onboarding before generating TalentX prompts');
+      }
+
+      // Insert prompts with the current schema using standard prompt types
       const { data, error } = await supabase
-        .from('talentx_pro_prompts')
+        .from('confirmed_prompts')
         .insert(prompts.map(prompt => ({
           user_id: userId,
-          company_name: companyName,
-          industry: industry,
-          attribute_id: prompt.attributeId,
-          prompt_type: prompt.promptType,
+          onboarding_id: onboardingData.id, // Required field
           prompt_text: prompt.promptText,
-          is_generated: false
+          prompt_type: prompt.promptType, // Use standard types: 'sentiment', 'competitive', 'visibility'
+          prompt_category: `TalentX: ${prompt.attributeId}`,
+          is_active: true
         })))
         .select();
 
@@ -63,14 +115,14 @@ export class TalentXProService {
       return data.map(prompt => ({
         id: prompt.id,
         userId: prompt.user_id,
-        companyName: prompt.company_name,
-        industry: prompt.industry,
-        attributeId: prompt.attribute_id,
-        promptType: prompt.prompt_type,
+        companyName: companyName,
+        industry: industry,
+        attributeId: prompt.prompt_category?.replace('TalentX: ', '') || 'unknown',
+        promptType: prompt.prompt_type as 'sentiment' | 'competitive' | 'visibility',
         promptText: prompt.prompt_text,
-        isGenerated: prompt.is_generated,
+        isGenerated: true, // Always true since they're in confirmed_prompts
         createdAt: prompt.created_at,
-        updatedAt: prompt.updated_at
+        updatedAt: prompt.updated_at || prompt.created_at
       }));
     } catch (error) {
       console.error('Error in generateProPrompts:', error);
@@ -268,52 +320,8 @@ export class TalentXProService {
     userId: string,
     onboardingId: string
   ): Promise<void> {
-    try {
-      // Get all ungenerated Pro prompts for the user
-      const { data: proPrompts, error: fetchError } = await supabase
-        .from('talentx_pro_prompts')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_generated', false);
-
-      if (fetchError) {
-        console.error('Error fetching Pro prompts:', fetchError);
-        throw fetchError;
-      }
-
-      // Convert each prompt to a confirmed prompt
-      for (const prompt of proPrompts) {
-        const { error: insertError } = await supabase
-          .from('confirmed_prompts')
-          .insert({
-            onboarding_id: onboardingId,
-            prompt_text: prompt.prompt_text,
-            prompt_type: `talentx_${prompt.prompt_type}`,
-            talentx_attribute_id: prompt.attribute_id,
-            // talentx_prompt_type: prompt.prompt_type, // This field doesn't exist in the schema
-            is_pro_prompt: true
-          });
-
-        if (insertError) {
-          console.error('Error inserting confirmed prompt:', insertError);
-          throw insertError;
-        }
-
-        // Mark as generated
-        const { error: updateError } = await supabase
-          .from('talentx_pro_prompts')
-          .update({ is_generated: true })
-          .eq('id', prompt.id);
-
-        if (updateError) {
-          console.error('Error updating prompt status:', updateError);
-          throw updateError;
-        }
-      }
-    } catch (error) {
-      console.error('Error in convertToConfirmedPrompts:', error);
-      throw error;
-    }
+    // No longer needed - prompts are created directly in confirmed_prompts
+    console.log('convertToConfirmedPrompts is deprecated - prompts are now created directly in confirmed_prompts');
   }
 
   /**
@@ -322,10 +330,11 @@ export class TalentXProService {
   static async getProPrompts(userId: string): Promise<TalentXProPrompt[]> {
     try {
       const { data, error } = await supabase
-        .from('talentx_pro_prompts')
+        .from('confirmed_prompts')
         .select('*')
         .eq('user_id', userId)
-        .order('attribute_id', { ascending: true })
+        .like('prompt_category', 'TalentX:%')
+        .order('prompt_category', { ascending: true })
         .order('prompt_type', { ascending: true });
 
       if (error) {
@@ -336,14 +345,14 @@ export class TalentXProService {
       return data.map(prompt => ({
         id: prompt.id,
         userId: prompt.user_id,
-        companyName: prompt.company_name,
-        industry: prompt.industry,
-        attributeId: prompt.attribute_id,
-        promptType: prompt.prompt_type,
+        companyName: 'Generated', // Not stored in confirmed_prompts
+        industry: 'Generated', // Not stored in confirmed_prompts
+        attributeId: prompt.prompt_category?.replace('TalentX: ', '') || 'unknown',
+        promptType: prompt.prompt_type as 'sentiment' | 'competitive' | 'visibility',
         promptText: prompt.prompt_text,
-        isGenerated: prompt.is_generated,
+        isGenerated: true, // Always true since they're in confirmed_prompts
         createdAt: prompt.created_at,
-        updatedAt: prompt.updated_at
+        updatedAt: prompt.updated_at || prompt.created_at
       }));
     } catch (error) {
       console.error('Error in getProPrompts:', error);
@@ -373,11 +382,11 @@ export class TalentXProService {
             user_id,
             prompt_type,
             prompt_text,
-            talentx_attribute_id
+            prompt_category
           )
         `)
         .eq('confirmed_prompts.user_id', userId)
-        .like('confirmed_prompts.prompt_type', 'talentx_%')
+        .like('confirmed_prompts.prompt_category', 'TalentX:%')
         .not('talentx_analysis', 'eq', '{}')
         .order('created_at', { ascending: false });
 
@@ -409,8 +418,8 @@ export class TalentXProService {
 
       talentXResponses.forEach(response => {
         const promptType = response.confirmed_prompts.prompt_type;
-        const attributeId = response.confirmed_prompts.talentx_attribute_id || 
-                           promptType.replace('talentx_', '');
+        const attributeId = response.confirmed_prompts.prompt_category?.replace('TalentX: ', '') || 
+                           promptType.replace('talentx_', '').split('_')[1] || 'unknown';
         
         if (!aggregated[attributeId]) {
           aggregated[attributeId] = {
@@ -439,7 +448,7 @@ export class TalentXProService {
           sentiment_score: sentimentScore,
           response_text: response.response_text,
           ai_model: response.ai_model,
-          prompt_type: promptType.replace('talentx_', ''),
+          prompt_type: promptType,
           citations: response.citations,
           detected_competitors: response.detected_competitors,
           created_at: response.created_at
@@ -510,21 +519,12 @@ export class TalentXProService {
    */
   static async hasProPrompts(userId: string): Promise<boolean> {
     try {
-      // First, let's see ALL prompts in the table to understand the data
-      const { data: allPrompts, error: allError } = await supabase
-        .from('talentx_pro_prompts')
-        .select('user_id, company_name, industry, is_generated')
-        .limit(10);
-
-      if (allError) {
-        console.error('Error fetching all prompts:', allError);
-      }
-
-      // Now check for specific user
+      // Check for TalentX prompts in confirmed_prompts by looking for TalentX category
       const { count, error } = await supabase
-        .from('talentx_pro_prompts')
+        .from('confirmed_prompts')
         .select('*', { count: 'exact', head: true })
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .like('prompt_category', 'TalentX:%');
 
       if (error) {
         console.error('Error checking TalentX Pro prompts:', error);
@@ -542,32 +542,9 @@ export class TalentXProService {
    * Reset TalentX Pro prompts to ungenerated state for re-processing
    */
   static async resetProPrompts(userId: string): Promise<void> {
-    try {
-      // First, let's see what prompts exist for this user
-      const { data: existingPrompts, error: fetchError } = await supabase
-        .from('talentx_pro_prompts')
-        .select('*')
-        .eq('user_id', userId);
-
-      if (fetchError) {
-        console.error('Error fetching existing prompts:', fetchError);
-        throw fetchError;
-      }
-
-      // Now reset them
-      const { error } = await supabase
-        .from('talentx_pro_prompts')
-        .update({ is_generated: false })
-        .eq('user_id', userId);
-
-      if (error) {
-        console.error('Error resetting TalentX Pro prompts:', error);
-        throw error;
-      }
-    } catch (error) {
-      console.error('Error in resetProPrompts:', error);
-      throw error;
-    }
+    // No-op: TalentX prompts in confirmed_prompts don't have is_generated flag
+    // They are always considered "generated" since they're active prompts
+    console.log('Reset not needed for TalentX prompts in confirmed_prompts');
   }
 
   /**
@@ -576,9 +553,10 @@ export class TalentXProService {
   static async deleteProPrompts(userId: string): Promise<void> {
     try {
       const { error } = await supabase
-        .from('talentx_pro_prompts')
+        .from('confirmed_prompts')
         .delete()
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .like('prompt_category', 'TalentX:%');
 
       if (error) {
         console.error('Error deleting TalentX Pro prompts:', error);

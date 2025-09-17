@@ -5,6 +5,8 @@ import { getLLMDisplayName } from '@/config/llmLogos';
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useSubscription } from "@/hooks/useSubscription";
 
 interface ResponsesTabProps {
   responses: any[];
@@ -12,13 +14,14 @@ interface ResponsesTabProps {
 }
 
 const PROMPT_CATEGORIES = [
-  { label: "All", value: "all" },
+  { label: "All Prompts", value: "all" },
   { label: "Sentiment", value: "sentiment" },
   { label: "Visibility", value: "visibility" },
   { label: "Competitive", value: "competitive" },
 ];
 
 export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
+  const { isPro } = useSubscription();
   const [expandedRows, setExpandedRows] = useState<{ [key: string]: boolean }>({});
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [sentimentFilter, setSentimentFilter] = useState("all");
@@ -71,36 +74,41 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
 
   return (
     <div className="space-y-4">
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
-        <div className="flex items-center gap-2">
-          <label htmlFor="category-filter" className="text-sm font-medium text-gray-700">Filter by prompt type:</label>
-          <select
-            id="category-filter"
-            className="border rounded px-2 py-1 text-sm text-[#13274F]"
+      {/* Filters - Only show for Pro users */}
+      {isPro && (
+        <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3">
+          <Select
             value={categoryFilter}
-            onChange={e => setCategoryFilter(e.target.value)}
+            onValueChange={setCategoryFilter}
           >
-            {PROMPT_CATEGORIES.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <label htmlFor="sentiment-filter" className="text-sm font-medium text-gray-700">Filter by sentiment:</label>
-          <select
-            id="sentiment-filter"
-            className="border rounded px-2 py-1 text-sm text-[#13274F]"
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="All Prompts" />
+            </SelectTrigger>
+            <SelectContent>
+              {PROMPT_CATEGORIES.map(opt => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          <Select
             value={sentimentFilter}
-            onChange={e => setSentimentFilter(e.target.value)}
+            onValueChange={setSentimentFilter}
           >
-            <option value="all">All</option>
-            <option value="positive">Positive</option>
-            <option value="normal">Normal</option>
-            <option value="negative">Negative</option>
-          </select>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="All Sentiments" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Sentiments</SelectItem>
+              <SelectItem value="positive">Positive</SelectItem>
+              <SelectItem value="normal">Normal</SelectItem>
+              <SelectItem value="negative">Negative</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-      </div>
+      )}
 
       {/* Content */}
       {filteredResponses.length > 0 ? (

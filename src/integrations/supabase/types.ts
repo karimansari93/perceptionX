@@ -387,7 +387,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      prompt_type: ["sentiment", "visibility", "competitive"],
+      prompt_type: ["sentiment", "visibility", "competitive", "talentx_sentiment", "talentx_competitive", "talentx_visibility"],
     },
   },
 } as const

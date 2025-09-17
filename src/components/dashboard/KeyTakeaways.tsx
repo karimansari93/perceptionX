@@ -10,9 +10,24 @@ import { getCompetitorFavicon } from "@/utils/citationUtils";
 import ReactMarkdown from 'react-markdown';
 import { Skeleton } from "@/components/ui/skeleton";
 import LLMLogo from "@/components/LLMLogo";
-import { X, ExternalLink } from 'lucide-react';
+import { X, ExternalLink, Target, Award, Users, Heart, Shield, Lightbulb, Coffee, Crown, Lock, TrendingUp, Activity } from 'lucide-react';
 import { useNavigate } from "react-router-dom";
 import { useIsMobile } from "@/hooks/use-mobile";
+import type React from 'react';
+
+// Attribute icon mapping (shared style with Brand Pillars / ThematicAnalysis)
+const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  'mission-purpose': Target,
+  'rewards-recognition': Award,
+  'company-culture': Users,
+  'social-impact': Heart,
+  'inclusion': Shield,
+  'innovation': Lightbulb,
+  'wellbeing-balance': Coffee,
+  'leadership': Crown,
+  'security-perks': Lock,
+  'career-opportunities': TrendingUp
+};
 
 interface KeyTakeawaysProps {
   metrics: DashboardMetrics;
@@ -27,6 +42,11 @@ interface KeyTakeawaysProps {
   responses: any[];
   talentXProData?: any[];
   isPro?: boolean;
+  attributeInsights?: {
+    positive: { attribute: string; name: string; themes: any[]; avgScore: number }[];
+    negative: { attribute: string; name: string; themes: any[]; avgScore: number }[];
+  };
+  searchResults?: any[];
 }
 
 interface BaseInsight {
@@ -57,6 +77,7 @@ interface InsightWithTalentXAttribute extends BaseInsight {
     id: string;
     name: string;
     score: number;
+    themes?: any[];
   };
 }
 
@@ -70,7 +91,9 @@ export const KeyTakeaways = ({
   llmMentionRankings,
   responses,
   talentXProData = [],
-  isPro = false
+  isPro = false,
+  attributeInsights = { positive: [], negative: [] },
+  searchResults = []
 }: KeyTakeawaysProps) => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -83,6 +106,10 @@ export const KeyTakeaways = ({
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = useState(false);
   const [isLLMModalOpen, setIsLLMModalOpen] = useState(false);
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+  
+  // Theme modal states
+  const [selectedThemeAttribute, setSelectedThemeAttribute] = useState<string | null>(null);
+  const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
 
   // Competitor modal states (from CompetitorsTab)
   const [competitorSnippets, setCompetitorSnippets] = useState<{ snippet: string; full: string }[]>([]);
@@ -138,6 +165,16 @@ export const KeyTakeaways = ({
     // Open the ResponseDetailsModal for this specific prompt
     setSelectedPrompt(promptText);
     setIsPromptModalOpen(true);
+  };
+
+  const handleThemeAttributeClick = (attributeId: string) => {
+    setSelectedThemeAttribute(attributeId);
+    setIsThemeModalOpen(true);
+  };
+
+  const handleCloseThemeModal = () => {
+    setIsThemeModalOpen(false);
+    setSelectedThemeAttribute(null);
   };
 
   const getPromptResponses = (promptText: string) => {
@@ -357,9 +394,7 @@ export const KeyTakeaways = ({
     return {
       text: `${getSourceDisplayName(topSource.domain)} is your primary brand perception source`,
       type: "positive",
-      action: secondSource ? 
-        `Consider optimizing content from ${getSourceDisplayName(secondSource.domain)} as your secondary source` :
-        "Focus on diversifying your brand perception sources",
+      action: "Click to see detailed source analysis and optimization opportunities",
       sources
     };
   };
@@ -380,9 +415,7 @@ export const KeyTakeaways = ({
     return {
       text: `${topCompetitor.company} is most frequently compared to your brand`,
       type: "warning",
-      action: secondCompetitor ? 
-        `Also monitor mentions of ${secondCompetitor.company} as a secondary competitor` :
-        "Focus on differentiating from this primary competitor",
+      action: "Click to see detailed competitor analysis and differentiation strategies",
       competitor: topCompetitor.company
     };
   };
@@ -410,7 +443,7 @@ export const KeyTakeaways = ({
       type: positivePct >= 60 ? 'positive' : positivePct >= 40 ? 'neutral' : 'negative',
       action:
         themes.length > 0
-          ? 'Focus on amplifying positive themes and addressing negative ones.'
+          ? 'Click to explore detailed theme analysis and sentiment breakdown'
           : 'Encourage more feedback to surface key themes.',
       themes,
     };
@@ -497,7 +530,7 @@ export const KeyTakeaways = ({
       return {
         text: `${topAttribute.attributeName} is your strongest employer brand attribute`,
         type: "warning",
-        action: "Focus on improving perception scores across all attributes",
+        action: "Click to see detailed analysis and improvement strategies",
         attribute: {
           id: topAttribute.attributeId,
           name: topAttribute.attributeName,
@@ -509,7 +542,7 @@ export const KeyTakeaways = ({
     return {
       text: `${topAttribute.attributeName} is your strongest employer brand attribute`,
       type: "positive",
-      action: "Leverage this strength in recruitment and employer branding",
+      action: "Click to see how to leverage this strength in recruitment and employer branding",
       attribute: {
         id: topAttribute.attributeId,
         name: topAttribute.attributeName,
@@ -548,7 +581,7 @@ export const KeyTakeaways = ({
     return {
       text: `${lowestAttribute.attributeName} needs attention`,
       type: "warning",
-      action: "Develop strategies to improve perception in this area",
+      action: "Click to see specific improvement strategies and action plans",
       attribute: {
         id: lowestAttribute.attributeId,
         name: lowestAttribute.attributeName,
@@ -557,10 +590,71 @@ export const KeyTakeaways = ({
     };
   };
 
+  // AI Thematic Analysis insights
+  const getAIPositiveAttributeInsight = (): InsightWithTalentXAttribute | BaseInsight => {
+    if (attributeInsights.positive.length === 0) {
+      return {
+        text: 'No overwhelmingly positive attributes detected in AI analysis',
+        type: 'neutral',
+        action: 'Continue monitoring responses for positive themes'
+      };
+    }
+
+    const topAttribute = attributeInsights.positive[0];
+    // Get unique theme names and limit to first 3 for a concise summary
+    const uniqueThemes = [...new Set(topAttribute.themes.map(t => t.theme_name))];
+    const themeSummary = uniqueThemes.length > 3 
+      ? `${uniqueThemes.slice(0, 3).join(', ')} and ${uniqueThemes.length - 3} more themes`
+      : uniqueThemes.join(', ');
+
+    return {
+      text: `is overwhelmingly positive`,
+      type: 'positive',
+      action: `Click to see detailed themes and leverage this strength in your employer branding`,
+      attribute: {
+        id: topAttribute.attribute,
+        name: topAttribute.name,
+        score: topAttribute.avgScore
+      }
+    };
+  };
+
+  const getAINegativeAttributeInsight = (): InsightWithTalentXAttribute | BaseInsight => {
+    if (attributeInsights.negative.length === 0) {
+      return {
+        text: 'No overwhelmingly negative attributes detected in AI analysis',
+        type: 'neutral',
+        action: 'Continue monitoring responses for improvement opportunities'
+      };
+    }
+
+    const topAttribute = attributeInsights.negative[0];
+    // Get unique theme names and limit to first 3 for a concise summary
+    const uniqueThemes = [...new Set(topAttribute.themes.map(t => t.theme_name))];
+    const themeSummary = uniqueThemes.length > 3 
+      ? `${uniqueThemes.slice(0, 3).join(', ')} and ${uniqueThemes.length - 3} more themes`
+      : uniqueThemes.join(', ');
+
+    return {
+      text: `is perceived negatively and needs attention`,
+      type: 'negative',
+      action: `Click to see specific concerns and get actionable insights for improvement`,
+      attribute: {
+        id: topAttribute.attribute,
+        name: topAttribute.name,
+        score: topAttribute.avgScore
+      }
+    };
+  };
+
   const insights: Insight[] = [
     getBrandPerceptionInsight(),
     getCompetitiveInsight(),
     getAIMentionsInsight(),
+    // Add AI thematic analysis insights
+    getAIPositiveAttributeInsight(),
+    // Only show negative attribute insight if there are actually negative attributes
+    ...(attributeInsights.negative.length > 0 ? [getAINegativeAttributeInsight()] : []),
     // TalentX insights temporarily hidden until feature is fully launched
     // ...(isPro && talentXProData && talentXProData.length > 0 ? [
     //   getTopTalentXAttributeInsight(),
@@ -588,7 +682,7 @@ export const KeyTakeaways = ({
                 <div
                   key={index}
                   className={`flex flex-col gap-3 p-3 sm:p-4 rounded-lg bg-gray-50/80 hover:bg-gray-100/80 transition-colors duration-200 ${isEmpty ? 'py-2 sm:py-3' : ''} ${
-                    hasSources || hasCompetitor || hasLLM ? 'cursor-pointer' : ''
+                    hasSources || hasCompetitor || hasLLM || hasTalentXAttribute ? 'cursor-pointer' : ''
                   }`}
                   onClick={() => {
                     if (hasSources && insight.sources.length > 0) {
@@ -597,6 +691,8 @@ export const KeyTakeaways = ({
                       handleCompetitorClick(insight.competitor);
                     } else if (hasLLM) {
                       handleLLMClick(insight.llm);
+                    } else if (hasTalentXAttribute) {
+                      handleThemeAttributeClick(insight.attribute.id);
                     }
                   }}
                 >
@@ -716,19 +812,20 @@ export const KeyTakeaways = ({
                       ) : hasTalentXAttribute ? (
                         <div className="flex flex-col gap-2">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                              {insight.text.split(insight.attribute.name)[0]}
-                            </span>
                             <Badge 
                               variant="outline" 
                               className="flex items-center gap-1.5 bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors"
                             >
+                              {(() => {
+                                const Icon = ATTRIBUTE_ICONS[insight.attribute.id];
+                                return Icon ? <Icon className="w-3 h-3" /> : null;
+                              })()}
                               <span className="text-xs font-medium">
                                 {insight.attribute.name}
                               </span>
                             </Badge>
                             <span className="text-sm font-medium text-gray-900 leading-relaxed">
-                              {insight.text.split(insight.attribute.name)[1]}
+                              {insight.text}
                             </span>
                           </div>
                           <p className="text-xs text-gray-600 leading-relaxed pl-0 sm:pl-4">{insight.action}</p>
@@ -768,6 +865,7 @@ export const KeyTakeaways = ({
         onClose={handleCloseSourceModal}
         source={selectedSource}
         responses={getResponsesForSource(selectedSource.domain)}
+        searchResults={searchResults}
       />
     )}
 
@@ -1091,6 +1189,137 @@ export const KeyTakeaways = ({
         promptsData={[]}
       />
     )}
+
+    {/* Theme Attribute Modal */}
+    <Dialog open={isThemeModalOpen} onOpenChange={handleCloseThemeModal}>
+      <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {selectedThemeAttribute && (() => {
+              const IconComponent = ATTRIBUTE_ICONS[selectedThemeAttribute] || Activity;
+              const attributeData = attributeInsights.positive.find(a => a.attribute === selectedThemeAttribute) || 
+                                 attributeInsights.negative.find(a => a.attribute === selectedThemeAttribute);
+              return (
+                <>
+                  <IconComponent className="w-5 h-5" />
+                  {attributeData?.name || 'Attribute Details'}
+                </>
+              );
+            })()}
+          </DialogTitle>
+        </DialogHeader>
+        
+        {selectedThemeAttribute && (() => {
+          // Get all themes for the selected attribute from both positive and negative insights
+          const positiveAttribute = attributeInsights.positive.find(a => a.attribute === selectedThemeAttribute);
+          const negativeAttribute = attributeInsights.negative.find(a => a.attribute === selectedThemeAttribute);
+          
+          const allThemes = [
+            ...(positiveAttribute?.themes || []),
+            ...(negativeAttribute?.themes || [])
+          ];
+          
+          // Group themes by sentiment
+          const positiveThemes = allThemes.filter(theme => theme.sentiment === 'positive');
+          const negativeThemes = allThemes.filter(theme => theme.sentiment === 'negative');
+          const neutralThemes = allThemes.filter(theme => theme.sentiment === 'neutral');
+
+          return (
+            <div className="space-y-6">
+              {/* Summary */}
+              <div className="grid grid-cols-3 gap-4">
+                <div className="text-center p-3 bg-green-50 rounded-lg">
+                  <div className="text-2xl font-bold text-green-600">{positiveThemes.length}</div>
+                  <div className="text-sm text-green-700">Positive Themes</div>
+                </div>
+                <div className="text-center p-3 bg-red-50 rounded-lg">
+                  <div className="text-2xl font-bold text-red-600">{negativeThemes.length}</div>
+                  <div className="text-sm text-red-700">Negative Themes</div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-lg">
+                  <div className="text-2xl font-bold text-gray-600">{neutralThemes.length}</div>
+                  <div className="text-sm text-gray-700">Neutral Themes</div>
+                </div>
+              </div>
+
+              {/* All Themes */}
+              <div className="space-y-3">
+                {allThemes.map((theme, index) => {
+                  const getBadgeColor = (sentiment: string) => {
+                    switch (sentiment) {
+                      case 'positive':
+                        return 'bg-green-100 text-green-800';
+                      case 'negative':
+                        return 'bg-red-100 text-red-800';
+                      case 'neutral':
+                        return 'bg-gray-100 text-gray-800';
+                      default:
+                        return 'bg-gray-100 text-gray-800';
+                    }
+                  };
+
+                  const getBorderColor = (sentiment: string) => {
+                    switch (sentiment) {
+                      case 'positive':
+                        return 'border-green-500';
+                      case 'negative':
+                        return 'border-red-500';
+                      case 'neutral':
+                        return 'border-gray-500';
+                      default:
+                        return 'border-gray-500';
+                    }
+                  };
+
+                  return (
+                    <Card key={`${theme.theme_name}-${index}`} className={`border-l-4 ${getBorderColor(theme.sentiment)}`}>
+                      <CardContent className="p-4">
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-start">
+                            <h4 className="font-medium text-gray-900">{theme.theme_name}</h4>
+                            <span className={`text-xs px-2 py-1 rounded capitalize ${getBadgeColor(theme.sentiment)}`}>
+                              {theme.sentiment}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-600">{theme.theme_description}</p>
+                          {theme.keywords && theme.keywords.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {theme.keywords.map((keyword, idx) => (
+                                <span key={idx} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
+                                  {keyword}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {theme.context_snippets && theme.context_snippets.length > 0 && (
+                            <div className="mt-3">
+                              <h5 className="text-xs font-medium text-gray-700 mb-2">Context Snippets:</h5>
+                              <div className="space-y-1">
+                                {theme.context_snippets.map((snippet, idx) => (
+                                  <div key={idx} className="text-xs text-gray-600 bg-gray-50 p-2 rounded italic">
+                                    "{snippet}"
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+
+              {allThemes.length === 0 && (
+                <div className="text-center py-8 text-gray-500">
+                  No themes found for this attribute.
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </DialogContent>
+    </Dialog>
   </>
   );
 }; 

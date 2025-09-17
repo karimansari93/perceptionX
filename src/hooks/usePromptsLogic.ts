@@ -195,7 +195,9 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
         { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
         { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }, // Using Google AI Overviews during onboarding
+        { name: 'gemini', displayName: 'Gemini', functionName: 'test-prompt-gemini' },
         { name: 'deepseek', displayName: 'DeepSeek', functionName: 'test-prompt-deepseek' },
+        { name: 'claude', displayName: 'Claude', functionName: 'test-prompt-claude' },
         { name: 'google-ai-overviews', displayName: 'Google AI Overviews', functionName: 'test-prompt-google-ai-overviews' }
       ] : [
         { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
@@ -464,7 +466,9 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
     { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
     { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
     { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }, // Using Google AI Overviews during onboarding
+    { name: 'gemini', displayName: 'Gemini', functionName: 'test-prompt-gemini' },
     { name: 'deepseek', displayName: 'DeepSeek', functionName: 'test-prompt-deepseek' },
+    { name: 'claude', displayName: 'Claude', functionName: 'test-prompt-claude' },
     { name: 'google-ai-overviews', displayName: 'Google AI Overviews', functionName: 'test-prompt-google-ai-overviews' }
   ] : [
     { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
@@ -517,27 +521,24 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
           finalCitations = [...perplexityCitations, ...finalCitations];
         }
 
-        // Store the response with enhanced analysis
-        const { error: storeError } = await supabase
-          .from('prompt_responses')
-          .insert({
-            confirmed_prompt_id: confirmedPrompt.id,
-            ai_model: modelName,
-            response_text: responseData.response,
-            sentiment_score: sentimentData?.sentiment_score || 0,
-            sentiment_label: sentimentData?.sentiment_label || 'neutral',
-            citations: finalCitations,
-            company_mentioned: sentimentData?.company_mentioned || false,
-            mention_ranking: sentimentData?.mention_ranking || null,
-            competitor_mentions: sentimentData?.competitor_mentions || [],
-            first_mention_position: sentimentData?.first_mention_position || null,
-            total_words: responseData.response.split(' ').length,
-            visibility_score: sentimentData?.visibility_score || 0,
-            competitive_score: sentimentData?.competitive_score || 0,
+        // Store the response with enhanced analysis using safeStorePromptResponse
+        const { success, error: storeError } = await safeStorePromptResponse(supabase, {
+          confirmed_prompt_id: confirmedPrompt.id,
+          ai_model: modelName,
+          response_text: responseData.response,
+          sentiment_score: sentimentData?.sentiment_score || 0,
+          sentiment_label: sentimentData?.sentiment_label || 'neutral',
+          citations: finalCitations,
+          company_mentioned: sentimentData?.company_mentioned || false,
+          mention_ranking: sentimentData?.mention_ranking || null,
+          competitor_mentions: sentimentData?.competitor_mentions || [],
+          first_mention_position: sentimentData?.first_mention_position || null,
+          total_words: responseData.response.split(' ').length,
+          visibility_score: sentimentData?.visibility_score || 0,
+          competitive_score: sentimentData?.competitive_score || 0,
+        });
 
-          });
-
-        if (storeError) {
+        if (!success) {
           console.error(`Error storing ${modelName} response:`, storeError);
         }
       }

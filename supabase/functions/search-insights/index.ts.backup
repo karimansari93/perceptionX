@@ -1,0 +1,208 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+interface SearchResult {
+  id: string;
+  title: string;
+  link: string;
+  snippet: string;
+  position: number;
+  domain: string;
+  monthlySearchVolume?: number;
+  relatedSearches?: string[];
+  date: string;
+  searchTerm?: string;
+}
+
+interface KeywordsEverywhereResponse {
+  data: Array<{
+    keyword: string;
+    search_volume: number;
+    cpc: number;
+    competition: number;
+  }>;
+}
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    const { searchTerm, companyName } = await req.json()
+    
+    if (!searchTerm) {
+      return new Response(
+        JSON.stringify({ error: 'Missing searchTerm parameter' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const serpApiKey = Deno.env.get('SERP_API_KEY')
+    const keywordsEverywhereKey = Deno.env.get('KEYWORDS_EVERYWHERE_KEY')
+    
+    if (!serpApiKey) {
+      console.error('SerpAPI key not configured')
+      return new Response(
+        JSON.stringify({ error: 'SerpAPI key not configured' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    console.log(`Searching for: ${searchTerm}`)
+    
+    // Step 1: Get search results from SERP API
+    const searchUrl = `https://serpapi.com/search?engine=google&q=${encodeURIComponent(searchTerm)}&api_key=${serpApiKey}&num=10`
+    console.log('Search URL:', searchUrl)
+
+    const searchResponse = await fetch(searchUrl)
+    const searchData = await searchResponse.json()
+
+    if (!searchResponse.ok) {
+      console.error('SerpAPI error:', searchData)
+      throw new Error(searchData.error || 'Search API error')
+    }
+
+    if (!searchData.organic_results) {
+      console.error('Invalid response format:', searchData)
+      throw new Error('Invalid response format from search API')
+    }
+
+    // Step 2: Process search results
+    const results: SearchResult[] = searchData.organic_results.map((result: any, index: number) => {
+      const domain = new URL(result.link).hostname.replace('www.', '')
+      
+      return {
+        id: `result-${index + 1}`,
+        title: result.title || 'No title',
+        link: result.link,
+        snippet: result.snippet || 'No snippet available',
+        position: result.position || index + 1,
+        domain: domain,
+        date: new Date().toISOString()
+      }
+    })
+
+    // Step 3: Get related searches
+    const relatedSearches: string[] = []
+    if (searchData.related_searches) {
+      relatedSearches.push(...searchData.related_searches.map((search: any) => search.query))
+    }
+
+    // Step 4: Collect search insights for related search terms
+    const allSearchTerms = [searchTerm, ...relatedSearches.slice(0, 5)] // Limit to 5 related terms to avoid rate limits
+    const allResults: SearchResult[] = [...results]
+    
+    for (const term of allSearchTerms.slice(1)) { // Skip the first term (original) as we already have results
+      try {
+        console.log(`Searching for related term: ${term}`)
+        
+        const relatedSearchUrl = `https://serpapi.com/search?engine=google&q=${encodeURIComponent(term)}&api_key=${serpApiKey}&num=5`
+        const relatedSearchResponse = await fetch(relatedSearchUrl)
+        
+        if (relatedSearchResponse.ok) {
+          const relatedSearchData = await relatedSearchResponse.json()
+          
+          if (relatedSearchData.organic_results) {
+            const relatedResults: SearchResult[] = relatedSearchData.organic_results.map((result: any, index: number) => {
+              const domain = new URL(result.link).hostname.replace('www.', '')
+              
+              return {
+                id: `related-${term.replace(/\s+/g, '-')}-${index + 1}`,
+                title: result.title || 'No title',
+                link: result.link,
+                snippet: result.snippet || 'No snippet available',
+                position: result.position || index + 1,
+                domain: domain,
+                date: new Date().toISOString(),
+                searchTerm: term // Add the search term that generated this result
+              }
+            })
+            
+            allResults.push(...relatedResults)
+          }
+        }
+        
+        // Add a small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      } catch (error) {
+        console.error(`Error searching for related term "${term}":`, error)
+        // Continue with other terms
+      }
+    }
+
+    // Step 5: Get search volumes from Keywords Everywhere if available
+    if (keywordsEverywhereKey) {
+      try {
+        for (const keyword of allSearchTerms) {
+          const volumeUrl = `https://api.keywordseverywhere.com/v1/get_keyword_data?api_key=${keywordsEverywhereKey}&kw[]=${encodeURIComponent(keyword)}&currency=USD&dataSource=google&country=US`
+          
+          const volumeResponse = await fetch(volumeUrl)
+          if (volumeResponse.ok) {
+            const volumeData: KeywordsEverywhereResponse = await volumeResponse.json()
+            
+            if (volumeData.data && volumeData.data.length > 0) {
+              const keywordData = volumeData.data[0]
+              
+              // Update all results that match this keyword
+              allResults.forEach(result => {
+                if (result.searchTerm === keyword || 
+                    result.title.toLowerCase().includes(keyword.toLowerCase()) ||
+                    result.snippet.toLowerCase().includes(keyword.toLowerCase())) {
+                  result.monthlySearchVolume = keywordData.search_volume
+                }
+              })
+            }
+          }
+          
+          // Add a small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      } catch (error) {
+        console.error('Error fetching search volumes:', error)
+        // Continue without search volumes
+      }
+    }
+
+    // Step 6: Add related searches to the first result
+    if (allResults.length > 0 && relatedSearches.length > 0) {
+      allResults[0].relatedSearches = relatedSearches
+    }
+
+    return new Response(
+      JSON.stringify({ 
+        results: allResults,
+        searchTerm,
+        companyName,
+        totalResults: allResults.length,
+        relatedSearchesCount: relatedSearches.length,
+        searchedTerms: allSearchTerms
+      }),
+      { 
+        headers: { 
+          ...corsHeaders, 
+          'Content-Type': 'application/json' 
+        } 
+      }
+    )
+  } catch (error) {
+    console.error('Error in search-insights function:', error)
+    return new Response(
+      JSON.stringify({ 
+        error: error.message || 'Internal server error',
+        results: []
+      }),
+      { 
+        status: 500, 
+        headers: { 
+          ...corsHeaders, 
+          'Content-Type': 'application/json' 
+        } 
+      }
+    )
+  }
+})

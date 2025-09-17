@@ -2,176 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 
-// TalentX Analysis Service
-class TalentXAnalysisService {
-  static analyzeResponse(text: string, companyName: string): any[] {
-    const analyses: any[] = [];
-    const lowerText = text.toLowerCase();
-    const lowerCompany = companyName.toLowerCase();
-
-    // Define TalentX attributes
-    const talentXAttributes = [
-      {
-        id: 'mission-purpose',
-        name: 'Mission & Purpose',
-        keywords: ['mission', 'purpose', 'values', 'vision', 'meaningful', 'impact', 'change the world', 'make a difference']
-      },
-      {
-        id: 'rewards-recognition',
-        name: 'Rewards & Recognition',
-        keywords: ['salary', 'compensation', 'benefits', 'bonus', 'recognition', 'rewards', 'incentives', 'perks']
-      },
-      {
-        id: 'company-culture',
-        name: 'Company Culture',
-        keywords: ['culture', 'workplace', 'environment', 'atmosphere', 'values', 'team', 'collaboration', 'fun']
-      },
-      {
-        id: 'social-impact',
-        name: 'Social Impact',
-        keywords: ['social impact', 'community', 'charity', 'volunteering', 'sustainability', 'environmental', 'giving back']
-      },
-      {
-        id: 'inclusion',
-        name: 'Inclusion',
-        keywords: ['diversity', 'inclusion', 'equity', 'DEI', 'minority', 'women', 'LGBTQ', 'accessible']
-      },
-      {
-        id: 'innovation',
-        name: 'Innovation',
-        keywords: ['innovation', 'innovative', 'technology', 'cutting-edge', 'research', 'development', 'breakthrough']
-      },
-      {
-        id: 'wellbeing-balance',
-        name: 'Wellbeing & Balance',
-        keywords: ['work-life balance', 'wellbeing', 'wellness', 'flexible', 'remote', 'mental health', 'stress']
-      },
-      {
-        id: 'leadership',
-        name: 'Leadership',
-        keywords: ['leadership', 'management', 'executives', 'CEO', 'directors', 'managers', 'decision-making']
-      },
-      {
-        id: 'security-perks',
-        name: 'Security & Perks',
-        keywords: ['job security', 'stability', 'perks', 'amenities', 'office', 'food', 'gym', 'transportation']
-      },
-      {
-        id: 'career-opportunities',
-        name: 'Career Opportunities',
-        keywords: ['career', 'growth', 'development', 'advancement', 'promotion', 'learning', 'training', 'mentorship']
-      }
-    ];
-
-    talentXAttributes.forEach(attribute => {
-      const analysis = this.analyzeAttribute(text, lowerText, attribute, lowerCompany);
-      if (analysis.relevanceScore > 0.1) { // Only include relevant attributes
-        analyses.push(analysis);
-      }
-    });
-
-    return analyses.sort((a, b) => b.relevanceScore - a.relevanceScore);
-  }
-
-  private static analyzeAttribute(text: string, lowerText: string, attribute: any, companyName: string): any {
-    // Calculate relevance score based on keyword matches
-    const keywordMatches = attribute.keywords.filter((keyword: string) => 
-      lowerText.includes(keyword.toLowerCase())
-    );
-    const relevanceScore = Math.min(100, (keywordMatches.length / attribute.keywords.length) * 100);
-
-    // Calculate sentiment score for this attribute
-    const sentimentScore = this.calculateAttributeSentiment(lowerText, attribute);
-
-    // Count mentions
-    const mentionCount = keywordMatches.length;
-
-    // Extract relevant context
-    const context = this.extractAttributeContext(text, attribute.keywords);
-
-    // Calculate confidence based on relevance and context quality
-    const confidence = Math.min(1, (relevanceScore / 100) * (context.length > 0 ? 1 : 0.5));
-
-    return {
-      attributeId: attribute.id,
-      attributeName: attribute.name,
-      relevanceScore,
-      sentimentScore,
-      mentionCount,
-      context,
-      confidence
-    };
-  }
-
-  private static calculateAttributeSentiment(text: string, attribute: any): number {
-    // Attribute-specific sentiment analysis
-    const positiveWords = ['excellent', 'great', 'good', 'strong', 'positive', 'amazing', 'outstanding'];
-    const negativeWords = ['poor', 'bad', 'weak', 'negative', 'terrible', 'awful', 'disappointing'];
-
-    let positiveCount = 0;
-    let negativeCount = 0;
-
-    // Look for sentiment words near attribute keywords
-    attribute.keywords.forEach((keyword: string) => {
-      const keywordIndex = text.indexOf(keyword.toLowerCase());
-      if (keywordIndex !== -1) {
-        const contextStart = Math.max(0, keywordIndex - 100);
-        const contextEnd = Math.min(text.length, keywordIndex + keyword.length + 100);
-        const context = text.substring(contextStart, contextEnd);
-
-        positiveWords.forEach(word => {
-          if (context.includes(word)) positiveCount++;
-        });
-        negativeWords.forEach(word => {
-          if (context.includes(word)) negativeCount++;
-        });
-      }
-    });
-
-    if (positiveCount === 0 && negativeCount === 0) return 0;
-    
-    const total = positiveCount + negativeCount;
-    return (positiveCount - negativeCount) / total;
-  }
-
-  private static extractAttributeContext(text: string, keywords: string[]): string[] {
-    const contexts: string[] = [];
-    const lowerText = text.toLowerCase();
-
-    keywords.forEach(keyword => {
-      const keywordIndex = lowerText.indexOf(keyword.toLowerCase());
-      if (keywordIndex !== -1) {
-        const start = Math.max(0, keywordIndex - 150);
-        const end = Math.min(text.length, keywordIndex + keyword.length + 150);
-        const context = text.substring(start, end).trim();
-        if (context.length > 20) { // Only include substantial context
-          contexts.push(context);
-        }
-      }
-    });
-
-    return contexts.slice(0, 3); // Limit to 3 contexts per attribute
-  }
-
-  static getOverallTalentXScore(analyses: any[]): number {
-    if (analyses.length === 0) return 0;
-    
-    const weightedSum = analyses.reduce((sum, analysis) => {
-      return sum + (analysis.relevanceScore * analysis.sentimentScore);
-    }, 0);
-    
-    const totalRelevance = analyses.reduce((sum, analysis) => sum + analysis.relevanceScore, 0);
-    
-    return totalRelevance > 0 ? weightedSum / totalRelevance : 0;
-  }
-
-  static getTopAttributes(analyses: any[], count: number = 3): string[] {
-    return analyses
-      .sort((a, b) => b.relevanceScore - a.relevanceScore)
-      .slice(0, count)
-      .map(analysis => analysis.attributeName);
-  }
-}
+// TalentX Analysis Service removed - focusing on ai-themes only
 
 const supabase = createClient(
   // @ts-ignore: Deno.env.get() is not recognized by TypeScript but is available in Deno runtime
@@ -223,7 +54,7 @@ serve(async (req) => {
   try {
     // Parse request body
     const body = await req.json();
-    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, isTalentXPrompt, talentXAttributeId } = body;
+    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model } = body;
     
     // Handle citations from different LLMs
     let llmCitations = perplexityCitations || [];
@@ -290,90 +121,9 @@ serve(async (req) => {
 
 
 
-    // Handle TalentX Pro prompts differently
-    if (isTalentXPrompt && talentXAttributeId && confirmed_prompt_id) {
-      try {
-        // For TalentX prompts, we need to get the user_id from the talentx_pro_prompts table
-        // The confirmed_prompt_id is actually the talentx_pro_prompts.id
-        const { data: talentXPrompt, error: talentXError } = await supabase
-          .from('talentx_pro_prompts')
-          .select('user_id')
-          .eq('id', confirmed_prompt_id)
-          .single();
+    // TalentX functionality has been deprecated - removed for ai-themes focus
 
-        if (talentXError) {
-          console.error('Error fetching TalentX prompt user_id:', talentXError);
-          return new Response(
-            JSON.stringify({ 
-              error: 'TalentX prompt not found', 
-              details: talentXError 
-            }),
-            { status: 404, headers: corsHeaders }
-          );
-        }
-
-        if (talentXPrompt) {
-          // Calculate perception score for this specific attribute
-          const talentXAnalysis = result.talentx_analysis || [];
-          const attributeAnalysis = talentXAnalysis.find((analysis: any) => analysis.attributeId === talentXAttributeId);
-          
-          if (attributeAnalysis) {
-            // Store TalentX analysis in prompt_responses table
-            const talentXData = {
-              confirmed_prompt_id: confirmed_prompt_id,
-              ai_model: ai_model,
-              response_text: response,
-              sentiment_score: attributeAnalysis.sentimentScore,
-              citations: llmCitations || result.citations,
-              detected_competitors: result.detected_competitors,
-              talentx_analysis: {
-                attributeId: talentXAttributeId,
-                relevanceScore: attributeAnalysis.relevanceScore,
-                sentimentScore: attributeAnalysis.sentimentScore,
-                mentionCount: attributeAnalysis.mentionCount || 0,
-                confidence: attributeAnalysis.confidence || 0,
-                context: attributeAnalysis.context || []
-              },
-              talentx_scores: {
-                perception_score: attributeAnalysis.relevanceScore,
-                sentiment_score: attributeAnalysis.sentimentScore,
-                visibility_score: promptType === 'visibility' ? attributeAnalysis.relevanceScore : null,
-                competitive_score: promptType === 'competitive' ? attributeAnalysis.relevanceScore : null
-              }
-            };
-
-            // Insert or update TalentX response in prompt_responses
-            const { error: talentXError } = await supabase
-              .from('prompt_responses')
-              .upsert(talentXData, {
-                onConflict: 'confirmed_prompt_id,ai_model'
-              });
-
-            if (talentXError) {
-              console.error('Error storing TalentX analysis:', talentXError);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error in TalentX processing:', error);
-        // Don't fail the entire function if TalentX processing fails
-        // Continue with regular processing
-      }
-      
-      // For TalentX prompts, we've already stored the data above, so just return success
-      return new Response(
-        JSON.stringify({
-          success: true,
-          analysis: result,
-          message: 'TalentX analysis completed successfully'
-        }),
-        { headers: corsHeaders }
-      );
-    }
-
-    // For non-TalentX prompts, continue with regular processing
-
-    // Only insert into prompt_responses for non-TalentX prompts (prevent duplicates)
+    // Continue with regular processing
     try {
       // Check if a response already exists for this prompt and model (avoid 406 on zero rows)
       const { data: existingResponse, error: checkError } = await supabase
@@ -422,6 +172,49 @@ serve(async (req) => {
           );
         }
         promptResponse = inserted;
+
+        // Trigger AI thematic analysis for new responses during onboarding
+        try {
+          // First, get the onboarding_id from the confirmed prompt
+          const { data: promptData, error: promptError } = await supabase
+            .from('confirmed_prompts')
+            .select('onboarding_id')
+            .eq('id', confirmed_prompt_id)
+            .single();
+
+          if (promptError) {
+            console.warn('Error fetching prompt data:', promptError);
+            return;
+          }
+
+          // Then get the company name from user_onboarding
+          const { data: onboardingData, error: onboardingError } = await supabase
+            .from('user_onboarding')
+            .select('company_name')
+            .eq('id', promptData.onboarding_id)
+            .single();
+
+          if (!onboardingError && onboardingData?.company_name) {
+            console.log(`🚀 Triggering AI thematic analysis for response ${inserted.id} (${ai_model})`);
+            // Trigger AI thematic analysis asynchronously (don't wait for completion)
+            supabase.functions.invoke('ai-thematic-analysis', {
+              body: {
+                response_id: inserted.id,
+                company_name: onboardingData.company_name,
+                response_text: insertData.response_text,
+                ai_model: ai_model
+              }
+            }).catch(error => {
+              // Log error but don't fail the response storage
+              console.warn('❌ Failed to trigger AI thematic analysis:', error);
+            });
+          } else {
+            console.warn('⚠️ Cannot trigger AI thematic analysis: missing company name or onboarding data');
+          }
+        } catch (analysisError) {
+          // Log error but don't fail the response storage
+          console.warn('Error triggering AI thematic analysis:', analysisError);
+        }
       }
 
       return new Response(
@@ -535,15 +328,7 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
   const competitorCount = competitorMentions.length;
   const competitiveScore = Math.min(100, competitorCount * 20); // 20 points per competitor, max 100
 
-  // Add TalentX analysis
-  const talentXAnalyses = TalentXAnalysisService.analyzeResponse(text, companyName);
-  const overallTalentXScore = TalentXAnalysisService.getOverallTalentXScore(talentXAnalyses);
-  const topAttributes = TalentXAnalysisService.getTopAttributes(talentXAnalyses);
-  
-  const attributeScores: Record<string, number> = {};
-  talentXAnalyses.forEach(analysis => {
-    attributeScores[analysis.attributeId] = analysis.relevanceScore * analysis.sentimentScore;
-  });
+  // TalentX analysis removed - focus on ai-themes only
 
   return {
     sentiment_score: sentimentData.sentiment_score,
@@ -557,11 +342,11 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
     visibility_score: visibilityScore,
     competitive_score: competitiveScore,
     detected_competitors: detectedCompetitors,
-    talentx_analysis: talentXAnalyses,
+    talentx_analysis: [],
     talentx_scores: {
-      overall_score: overallTalentXScore,
-      top_attributes: topAttributes,
-      attribute_scores: attributeScores
+      overall_score: 0,
+      top_attributes: [],
+      attribute_scores: {}
     }
   };
 }
@@ -718,6 +503,14 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
   const mentions: CompetitorMention[] = [];
   const lowerCompany = companyName.toLowerCase();
   
+  // Excluded competitors and words
+  const excludedCompetitors = new Set([
+    'glassdoor', 'indeed', 'ambitionbox', 'workday', 'linkedin', 'monster', 'careerbuilder', 'ziprecruiter',
+    'dice', 'angelist', 'wellfound', 'builtin', 'stackoverflow', 'github'
+  ]);
+  
+  const excludedWords = new Set(['none', 'n/a', 'na']);
+  
   // Common company suffixes and patterns
   const companyPatterns = [
     /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Company|Technologies|Systems|Solutions|Software|Group|International|Global|Games|Entertainment|Studios)\b/g,
@@ -743,6 +536,11 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
 
       // Skip if it's a common word or too short
       if (companyName.length < 3 || /^(The|A|An)\s/i.test(companyName)) {
+        continue;
+      }
+
+      // Skip if it's an excluded competitor or word
+      if (excludedCompetitors.has(lowerCompanyName) || excludedWords.has(lowerCompanyName)) {
         continue;
       }
 
@@ -773,6 +571,11 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
       const lowerCompanyName = companyName.toLowerCase();
 
       if (lowerCompanyName === lowerCompany || foundCompanies.has(lowerCompanyName)) {
+        continue;
+      }
+
+      // Skip if it's an excluded competitor or word
+      if (excludedCompetitors.has(lowerCompanyName) || excludedWords.has(lowerCompanyName)) {
         continue;
       }
 

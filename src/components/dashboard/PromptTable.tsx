@@ -1,4 +1,4 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -6,18 +6,38 @@ import { PromptData } from "@/types/dashboard";
 import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useSubscription } from "@/hooks/useSubscription";
 
 interface PromptTableProps {
   prompts: PromptData[];
-  title: string;
-  description: string;
   onPromptClick: (promptText: string) => void;
 }
 
-export const PromptTable = ({ prompts, title, description, onPromptClick }: PromptTableProps) => {
+export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
+  const { isPro } = useSubscription();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const isMobile = useIsMobile();
+
+  // Helper function to map TalentX attribute IDs to user-friendly labels
+  const getTalentXCategoryLabel = (attributeId: string) => {
+    const labelMap: { [key: string]: string } = {
+      'mission-purpose': 'Mission & Purpose',
+      'rewards-recognition': 'Rewards & Recognition',
+      'company-culture': 'Company Culture',
+      'social-impact': 'Social Impact',
+      'inclusion': 'Inclusion',
+      'innovation': 'Innovation',
+      'wellbeing-balance': 'Wellbeing & Balance',
+      'leadership': 'Leadership',
+      'security-perks': 'Security & Perks',
+      'career-opportunities': 'Career Opportunities'
+    };
+    
+    return labelMap[attributeId] || attributeId
+      .replace('-', ' ')
+      .replace(/\b\w/g, l => l.toUpperCase());
+  };
 
   // Get unique types and categories for filter options
   const uniqueTypes = useMemo(() => {
@@ -35,14 +55,19 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
   const uniqueCategories = useMemo(() => {
     const categories = new Set<string>();
     prompts.forEach(prompt => {
-      if (prompt.isTalentXPrompt && prompt.talentXAttributeId) {
-        const attributeLabel = prompt.talentXAttributeId
-          .replace('-', ' ')
-          .replace(/\b\w/g, l => l.toUpperCase());
-        categories.add(attributeLabel);
+      // Use the category field directly from PromptData
+      let categoryLabel = prompt.category;
+      
+      // If it's a TalentX category, format it nicely
+      if (categoryLabel.startsWith('TalentX: ')) {
+        const attributeId = categoryLabel.replace('TalentX: ', '');
+        categoryLabel = getTalentXCategoryLabel(attributeId);
       } else {
-        categories.add('General');
+        // All non-TalentX categories should be classified as "General"
+        categoryLabel = 'General';
       }
+      
+      categories.add(categoryLabel);
     });
     return Array.from(categories).sort();
   }, [prompts]);
@@ -62,11 +87,15 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
       }
 
       // Category filter
-      let categoryLabel = 'General';
-      if (prompt.isTalentXPrompt && prompt.talentXAttributeId) {
-        categoryLabel = prompt.talentXAttributeId
-          .replace('-', ' ')
-          .replace(/\b\w/g, l => l.toUpperCase());
+      let categoryLabel = prompt.category;
+      
+      // If it's a TalentX category, format it nicely
+      if (categoryLabel.startsWith('TalentX: ')) {
+        const attributeId = categoryLabel.replace('TalentX: ', '');
+        categoryLabel = getTalentXCategoryLabel(attributeId);
+      } else {
+        // All non-TalentX categories should be classified as "General"
+        categoryLabel = 'General';
       }
       
       if (categoryFilter !== "all" && categoryLabel !== categoryFilter) {
@@ -186,58 +215,53 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
   };
 
   const getCategoryBadge = (prompt: PromptData) => {
-    if (prompt.isTalentXPrompt && prompt.talentXAttributeId) {
-      // Format the TalentX attribute ID for display
-      const attributeLabel = prompt.talentXAttributeId
-        .replace('-', ' ')
-        .replace(/\b\w/g, l => l.toUpperCase());
-      return <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">{attributeLabel}</Badge>;
+    let categoryLabel = prompt.category;
+    
+    // If it's a TalentX category, format it nicely
+    if (categoryLabel.startsWith('TalentX: ')) {
+      const attributeId = categoryLabel.replace('TalentX: ', '');
+      categoryLabel = getTalentXCategoryLabel(attributeId);
     } else {
-      // Regular prompts get "General" category
-      return <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">General</Badge>;
+      // All non-TalentX categories should be classified as "General"
+      categoryLabel = 'General';
     }
+    
+    return <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">{categoryLabel}</Badge>;
   };
 
   return (
-    <Card>
-      <CardHeader className="px-4 sm:px-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <CardTitle className="text-lg sm:text-xl">{title}</CardTitle>
-            <CardDescription className="text-sm">{description}</CardDescription>
-          </div>
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <Filter className="w-4 h-4 text-gray-500 flex-shrink-0" />
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="w-full sm:w-32">
-                  <SelectValue placeholder="Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  {uniqueTypes.map(type => (
-                    <SelectItem key={type} value={type}>{type}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger className="w-full sm:w-32">
-                  <SelectValue placeholder="Category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Categories</SelectItem>
-                  {uniqueCategories.map(category => (
-                    <SelectItem key={category} value={category}>{category}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+    <>
+      {/* Filters above the card - Only show for Pro users */}
+      {isPro && (
+        <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 mb-4">
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="All Types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              {uniqueTypes.map(type => (
+                <SelectItem key={type} value={type}>{type}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="All Categories" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {uniqueCategories.map(category => (
+                <SelectItem key={category} value={category}>{category}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      </CardHeader>
-      <CardContent className="px-4 sm:px-6">
+      )}
+
+      <Card>
+        <CardContent className="px-4 sm:px-6">
         {filteredPrompts.length > 0 ? (
           isMobile ? (
                          // Mobile-friendly card layout
@@ -399,10 +423,11 @@ export const PromptTable = ({ prompts, title, description, onPromptClick }: Prom
         ) : (
           <div className="text-center py-8 text-gray-500">
             <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-            <p>No {title.toLowerCase()} tracked yet.</p>
+            <p>No prompts tracked yet.</p>
           </div>
         )}
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </>
   );
 };

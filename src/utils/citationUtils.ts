@@ -118,7 +118,9 @@ const sourceNameToDomain: Record<string, string> = {
   'wsj': 'wsj.com',
   'nytimes': 'nytimes.com',
   'cnn': 'cnn.com',
-  'bbc': 'bbc.com'
+  'bbc': 'bbc.com',
+  'great place to work': 'greatplacetowork.com',
+  'built in': 'builtin.com'
 };
 
 export const enhanceCitations = (citations: any[]): EnhancedCitation[] => {
@@ -153,7 +155,14 @@ export const enhanceCitations = (citations: any[]): EnhancedCitation[] => {
           domain = sourceName;
         } else {
           // Try to construct domain from source name
-          domain = `${sourceName}.com`;
+          // Convert source name to valid domain format by removing spaces and special characters
+          const cleanSourceName = sourceName
+            .replace(/\s+/g, '') // Remove all spaces
+            .replace(/[^a-z0-9-]/g, '') // Remove special characters except hyphens
+            .replace(/-+/g, '-') // Replace multiple hyphens with single
+            .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+          
+          domain = `${cleanSourceName}.com`;
         }
         
         url = citation.url || '';

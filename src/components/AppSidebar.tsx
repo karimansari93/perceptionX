@@ -1,4 +1,4 @@
-import { BarChart3, FileText, MessageSquare, Search, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Target, Globe, Users, Lock } from "lucide-react";
+import { BarChart3, FileText, MessageSquare, Search, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lock, Lightbulb } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -39,6 +39,7 @@ const navigationGroups: NavigationGroup[] = [
       { title: "Overview", icon: BarChart3, section: "overview", group: "dashboard", route: "/dashboard" },
       { title: "Sources", icon: Globe, section: "sources", group: "dashboard", route: "/dashboard/sources" },
       { title: "Competitors", icon: Users, section: "competitors", group: "dashboard", route: "/dashboard/competitors" },
+      { title: "Themes", icon: Lightbulb, section: "thematic", group: "dashboard", route: "/dashboard/themes" },
     ]
   },
   {
@@ -46,16 +47,17 @@ const navigationGroups: NavigationGroup[] = [
     items: [
       { title: "Prompts", icon: MessageSquare, section: "prompts", group: "monitor", route: "/monitor" },
       { title: "Responses", icon: FileText, section: "responses", group: "monitor", route: "/monitor/responses" },
+      { title: "Search", icon: Search, section: "search", group: "monitor", route: "/monitor/search" },
     ]
   },
-  {
-    title: "Analyze",
-    items: [
-      { title: "TalentX", icon: Target, section: "talentx", comingSoon: true, group: "analyze", route: "/analyze" },
-      { title: "Answer Gaps", icon: Search, section: "answer-gaps", comingSoon: true, group: "analyze", route: "/analyze/answer-gaps" },
-      { title: "Reports", icon: TrendingUp, section: "reports", comingSoon: true, group: "analyze", route: "/analyze/reports" },
-    ]
-  }
+  // Temporarily hidden - Analyze section
+  // {
+  //   title: "Analyze",
+  //   items: [
+  //     { title: "Answer Gaps", icon: Search, section: "answer-gaps", group: "analyze", route: "/analyze/answer-gaps" },
+  //     { title: "Career Site", icon: Globe, section: "career-site", group: "analyze", route: "/analyze/career-site" },
+  //   ]
+  // }
 ];
 
 // Flatten all items for the collapsed sidebar
@@ -116,7 +118,7 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
                   <span className="absolute top-1 right-1 block w-2 h-2 rounded-full bg-gray-400" title="Coming Soon"></span>
                 )}
                 {item.requiresPro && !isPro && (
-                  <Lock className="absolute top-1 right-1 h-3 w-3 text-gray-400" title="Pro Feature" />
+                  <Lock className="absolute top-1 right-1 h-3 w-3 text-gray-400" />
                 )}
               </SidebarMenuButton>
             ))}
@@ -153,12 +155,13 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
                     <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
                       {group.title}
                     </h3>
-                    {group.title === "Analyze" && !isPro && (
+                    {/* Temporarily hidden - Analyze section Pro badge */}
+                    {/* {group.title === "Analyze" && !isPro && (
                       <Badge className="bg-[#0DBCBA] text-white px-1.5 py-0.5 text-[8px] font-bold flex items-center gap-1">
                         <Lock className="h-3 w-3" />
                         Pro
                       </Badge>
-                    )}
+                    )} */}
                   </div>
                 </div>
                 <SidebarMenu>

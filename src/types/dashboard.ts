@@ -50,6 +50,7 @@ export interface SentimentTrendData {
 export interface CitationCount {
   domain: string;
   count: number;
+  mediaType?: 'owned' | 'influenced' | 'organic' | 'competitive' | 'irrelevant';
 }
 
 export interface PromptData {

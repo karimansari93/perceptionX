@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useSubscription } from '@/hooks/useSubscription';
 import { UpgradeModal } from '@/components/upgrade/UpgradeModal';
+import { updatePromptText, isValidPromptUpdate } from '@/utils/promptUtils';
 
 function AccountSidebar({ activeSection, onSectionChange }) {
   const { state } = useSidebar();
@@ -76,6 +77,7 @@ export default function Account() {
   const [success, setSuccess] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [form, setForm] = useState({ company: '', industry: '', email: '' });
+  const [originalForm, setOriginalForm] = useState({ company: '', industry: '', email: '' });
 
   useEffect(() => {
     async function fetchData() {
@@ -89,11 +91,15 @@ export default function Account() {
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
-      setForm({
+      
+      const formData = {
         company: data?.company_name || '',
         industry: data?.industry || '',
         email: user.email || '',
-      });
+      };
+      
+      setForm(formData);
+      setOriginalForm(formData);
       setLoading(false);
     }
     fetchData();
@@ -101,6 +107,136 @@ export default function Account() {
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  // Function to update prompt texts when company or industry changes
+  const updatePromptTexts = async (oldCompany: string, newCompany: string, oldIndustry: string, newIndustry: string) => {
+    console.log('Starting prompt text updates...', {
+      oldCompany,
+      newCompany,
+      oldIndustry,
+      newIndustry,
+      userId: user?.id
+    });
+
+    try {
+      // Get all confirmed prompts for this user
+      const { data: prompts, error: promptsError } = await supabase
+        .from('confirmed_prompts')
+        .select('id, prompt_text, prompt_type, talentx_attribute_id')
+        .eq('user_id', user.id);
+
+      if (promptsError) {
+        console.error('Error fetching confirmed prompts:', promptsError);
+        return;
+      }
+
+      if (!prompts || prompts.length === 0) {
+        console.log('No confirmed prompts found for this user');
+        return;
+      }
+
+      // Update each prompt text using the utility function
+      console.log(`Found ${prompts.length} confirmed prompts to update`);
+      
+      const updatePromises = prompts.map(async (prompt) => {
+        const newPromptText = updatePromptText(
+          prompt.prompt_text,
+          oldCompany,
+          newCompany,
+          oldIndustry,
+          newIndustry
+        );
+
+        // Only update if the text actually changed
+        if (isValidPromptUpdate(prompt.prompt_text, newPromptText)) {
+          console.log(`Updating confirmed prompt ${prompt.id}:`, {
+            oldText: prompt.prompt_text.substring(0, 50) + '...',
+            newText: newPromptText.substring(0, 50) + '...',
+            oldCompany,
+            newCompany,
+            oldIndustry,
+            newIndustry
+          });
+
+          const { error: updateError } = await supabase
+            .from('confirmed_prompts')
+            .update({ prompt_text: newPromptText })
+            .eq('id', prompt.id);
+
+          if (updateError) {
+            console.error(`Error updating confirmed prompt ${prompt.id}:`, updateError);
+          } else {
+            console.log(`Successfully updated confirmed prompt ${prompt.id}`);
+          }
+        } else {
+          console.log(`Confirmed prompt ${prompt.id}: No changes needed`);
+        }
+      });
+
+      await Promise.all(updatePromises);
+
+      // Also update TalentX Pro prompts if user is Pro
+      if (isPro) {
+        console.log('Updating TalentX Pro prompts for Pro user...');
+        const { data: talentxPrompts, error: talentxError } = await supabase
+          .from('confirmed_prompts')
+          .select('id, prompt_text, prompt_category')
+          .eq('user_id', user.id)
+          .eq('is_pro_prompt', true);
+
+        if (talentxError) {
+          console.error('Error fetching TalentX prompts:', talentxError);
+        } else if (talentxPrompts && talentxPrompts.length > 0) {
+          console.log(`Found ${talentxPrompts.length} TalentX prompts to update`);
+          
+          const talentxUpdatePromises = talentxPrompts.map(async (prompt) => {
+            const newPromptText = updatePromptText(
+              prompt.prompt_text,
+              oldCompany,
+              newCompany,
+              oldIndustry,
+              newIndustry
+            );
+
+            // Prepare update object - for confirmed_prompts we only update prompt_text
+            const updateData: any = {};
+
+            // Only update prompt_text if it actually changed
+            if (isValidPromptUpdate(prompt.prompt_text, newPromptText)) {
+              updateData.prompt_text = newPromptText;
+              console.log(`Updating TalentX prompt ${prompt.id}:`, {
+                oldText: prompt.prompt_text.substring(0, 50) + '...',
+                newText: newPromptText.substring(0, 50) + '...',
+                oldCompany,
+                newCompany,
+                oldIndustry,
+                newIndustry
+              });
+
+              const { error: updateError } = await supabase
+                .from('confirmed_prompts')
+                .update(updateData)
+                .eq('id', prompt.id);
+
+              if (updateError) {
+                console.error(`Error updating TalentX prompt ${prompt.id}:`, updateError);
+              } else {
+                console.log(`Successfully updated TalentX prompt ${prompt.id}`);
+              }
+            } else {
+              console.log(`TalentX prompt ${prompt.id}: No changes needed for prompt text`);
+            }
+          });
+
+          await Promise.all(talentxUpdatePromises);
+        } else {
+          console.log('No TalentX prompts found for this user');
+        }
+      }
+    } catch (error) {
+      console.error('Error updating prompt texts:', error);
+    }
   };
 
   const handleSave = async (e) => {
@@ -114,26 +250,60 @@ export default function Account() {
     setSaving(true);
     setSuccess(false);
     try {
-      // Update onboarding data
-      const { error } = await supabase
+      // First, get the latest onboarding record ID
+      const { data: onboardingData, error: fetchError } = await supabase
+        .from('user_onboarding')
+        .select('id, company_name, industry')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (fetchError) {
+        console.error('Error fetching onboarding data:', fetchError);
+        toast.error('Failed to fetch current data');
+        setSaving(false);
+        return;
+      }
+
+      // Update onboarding data using the specific ID
+      const { error: updateError } = await supabase
         .from('user_onboarding')
         .update({ 
           company_name: form.company, 
           industry: form.industry 
         })
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1);
+        .eq('id', onboardingData.id);
 
-      if (error) {
-        console.error('Error updating data:', error);
+      if (updateError) {
+        console.error('Error updating onboarding data:', updateError);
         toast.error('Failed to save changes');
+        setSaving(false);
         return;
       }
 
+      // Update prompt texts if industry changed
+      const industryChanged = originalForm.industry !== form.industry;
+      const companyChanged = originalForm.company !== form.company;
+      
+      if (industryChanged || companyChanged) {
+        toast.info('Updating your prompts to reflect the new information...');
+        await updatePromptTexts(originalForm.company, form.company, originalForm.industry, form.industry);
+      }
+
+      // Update the original form to reflect the new saved state
+      setOriginalForm({ ...form });
+      
       setSaving(false);
       setSuccess(true);
-      setTimeout(() => setSuccess(false), 2000);
+      
+      if (industryChanged || companyChanged) {
+        toast.success('Company information and prompts updated successfully!');
+      } else {
+        toast.success('Changes saved successfully!');
+      }
+      
+      setTimeout(() => setSuccess(false), 3000);
     } catch (error) {
       console.error('Error in handleSave:', error);
       toast.error('Failed to save changes');
@@ -158,7 +328,7 @@ export default function Account() {
                 <CardTitle>Account & Settings</CardTitle>
                 <CardDescription>
                   {isPro 
-                    ? "Update your company and industry information." 
+                    ? "Update your company and industry information. Your existing prompts will be automatically updated to reflect changes." 
                     : "Pro subscription required to update account information."
                   }
                 </CardDescription>
@@ -222,6 +392,11 @@ export default function Account() {
                     {!canUpdateData && (
                       <p className="text-sm text-orange-600 mt-1">
                         Upgrade to Pro to edit industry information
+                      </p>
+                    )}
+                    {canUpdateData && (
+                      <p className="text-sm text-gray-500 mt-1">
+                        Changing your industry will automatically update your existing prompts to reflect the new industry.
                       </p>
                     )}
                   </div>

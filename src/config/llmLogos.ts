@@ -27,6 +27,11 @@ export const LLM_DOMAINS = {
   'llama-3.1-sonar-huge-128k-online': 'perplexity.ai',
   'google-ai-overviews': 'google.com',
   'ai-overviews': 'google.com',
+  'claude': 'anthropic.com',
+  'claude-3': 'anthropic.com',
+  'claude-3-opus': 'anthropic.com',
+  'claude-3-sonnet': 'anthropic.com',
+  'claude-3-haiku': 'anthropic.com',
 } as const;
 
 export type LLMModel = keyof typeof LLM_DOMAINS;
@@ -76,6 +81,11 @@ export const LLM_DISPLAY_NAMES = {
   'llama-3.1-sonar-large-128k-online': 'Perplexity',
   'google-ai-overviews': 'Google AI Overviews',
   'ai-overviews': 'Google AI Overviews',
+  'claude': 'Claude',
+  'claude-3': 'Claude',
+  'claude-3-opus': 'Claude',
+  'claude-3-sonnet': 'Claude',
+  'claude-3-haiku': 'Claude',
 };
 
 export function getLLMDisplayName(modelName: string): string {
