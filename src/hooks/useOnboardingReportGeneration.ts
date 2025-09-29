@@ -176,7 +176,7 @@ export const useOnboardingReportGeneration = () => {
       // Helper function to get favicon URL
       const getFaviconUrl = (domain: string): string => {
         const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-        return `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`;
+        return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`;
       };
 
       // Helper function to add favicon to chart

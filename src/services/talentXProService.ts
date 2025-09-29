@@ -483,7 +483,7 @@ export class TalentXProService {
           group.avgSentimentScore = allScores.reduce((sum: number, s: any) => sum + s.sentiment_score, 0) / allScores.length;
         }
 
-        // Calculate perception score using the same formula as dashboard: 40% sentiment + 35% visibility + 25% competitive
+        // Calculate perception score using the same formula as dashboard: 50% sentiment + 30% visibility + 20% recency
         const normalizedSentiment = Math.max(0, Math.min(100, (group.avgSentimentScore + 1) * 50));
         
         // Calculate visibility score from visibility analyses
@@ -492,17 +492,16 @@ export class TalentXProService {
           ? visibilityScores.reduce((sum: number, score: number) => sum + score, 0) / visibilityScores.length 
           : 0;
         
-        // Calculate competitive score from competitive analyses
-        const competitiveScores = group.competitiveAnalyses.map((s: any) => s.competitive_score || s.perception_score || 0);
-        const avgCompetitive = competitiveScores.length > 0 
-          ? competitiveScores.reduce((sum: number, score: number) => sum + score, 0) / competitiveScores.length 
-          : 0;
+        // Calculate recency score from all responses' citations
+        // For now, use a default recency score since we don't have direct access to recency data here
+        // In a real implementation, you'd fetch recency data from url_recency_cache based on citations
+        const avgRecency = 50; // Default recency score - this should be calculated from actual citation recency data
         
         // Apply the same weighted formula as dashboard
         group.perceptionScore = Math.round(
-          (normalizedSentiment * 0.4) +
-          (avgVisibility * 0.35) +
-          (avgCompetitive * 0.25)
+          (normalizedSentiment * 0.5) +
+          (avgVisibility * 0.3) +
+          (avgRecency * 0.2)
         );
         group.perceptionScore = Math.max(0, Math.min(100, group.perceptionScore));
       });

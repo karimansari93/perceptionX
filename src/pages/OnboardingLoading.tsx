@@ -381,11 +381,16 @@ export const OnboardingLoading = () => {
         // Wait for both to complete
         await Promise.all([promptsPromise, searchPromise]);
 
-        // Mark onboarding as complete
-        await supabase
-          .from('user_onboarding')
-          .update({ prompts_completed: true })
-          .eq('id', onboardingId);
+        // Mark onboarding as complete (gracefully handle missing field)
+        try {
+          await supabase
+            .from('user_onboarding')
+            .update({ prompts_completed: true })
+            .eq('id', onboardingId);
+        } catch (updateError) {
+          console.warn('Could not update prompts_completed field (may not exist in database):', updateError);
+          // Continue without failing the onboarding process
+        }
 
         // Verify data was stored by checking the database
         

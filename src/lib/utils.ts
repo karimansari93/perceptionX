@@ -153,7 +153,7 @@ export async function safeStorePromptResponse(
         return { success: false, error };
       }
 
-      // Trigger AI thematic analysis for new responses during onboarding
+      // Trigger AI thematic analysis and recency cache for new responses during onboarding
       if (data) {
         try {
           // First, get the onboarding_id from the confirmed prompt
@@ -176,8 +176,8 @@ export async function safeStorePromptResponse(
             .single();
 
           if (!onboardingError && onboardingData?.company_name) {
-            console.log(`🚀 Triggering AI thematic analysis for response ${data.id} (${responseData.ai_model})`);
             // Trigger AI thematic analysis asynchronously (don't wait for completion)
+            console.log(`🚀 Triggering AI thematic analysis for response ${data.id} (${responseData.ai_model})`);
             supabase.functions.invoke('ai-thematic-analysis', {
               body: {
                 response_id: data.id,
@@ -189,12 +189,75 @@ export async function safeStorePromptResponse(
               // Log error but don't fail the response storage
               console.warn('❌ Failed to trigger AI thematic analysis:', error);
             });
+
+            // Trigger recency cache extraction for citations
+            console.log(`🔍 Checking citations for response ${data.id}:`, {
+              hasCitations: !!responseData.citations,
+              isArray: Array.isArray(responseData.citations),
+              length: responseData.citations?.length || 0,
+              sampleCitation: responseData.citations?.[0]
+            });
+            
+            if (responseData.citations && Array.isArray(responseData.citations) && responseData.citations.length > 0) {
+              console.log(`📅 Triggering recency cache extraction for ${responseData.citations.length} citations from response ${data.id}`);
+              
+              // Extract URLs from citations for recency scoring
+              const citationsWithUrls = responseData.citations
+                .filter((citation: any) => {
+                  // Filter citations that have URLs
+                  if (typeof citation === 'string') {
+                    return citation.startsWith('http');
+                  } else if (citation && typeof citation === 'object') {
+                    return citation.url && citation.url.startsWith('http');
+                  }
+                  return false;
+                })
+                .map((citation: any) => {
+                  // Normalize citation format to extract URL
+                  if (typeof citation === 'string') {
+                    return {
+                      url: citation,
+                      domain: citation.replace(/^https?:\/\/(www\.)?/, '').split('/')[0],
+                      title: `Source from ${citation.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}`
+                    };
+                  } else if (citation && typeof citation === 'object') {
+                    return {
+                      url: citation.url,
+                      domain: citation.domain || citation.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0],
+                      title: citation.title || `Source from ${citation.domain || citation.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}`,
+                      sourceType: citation.sourceType || 'unknown'
+                    };
+                  }
+                  return null;
+                })
+                .filter(Boolean);
+
+              console.log(`🔗 Extracted ${citationsWithUrls.length} citations with URLs:`, citationsWithUrls.map(c => c.url));
+              
+              if (citationsWithUrls.length > 0) {
+                // Trigger recency cache extraction asynchronously (don't wait for completion)
+                console.log(`🚀 Calling extract-recency-scores edge function with ${citationsWithUrls.length} citations`);
+                supabase.functions.invoke('extract-recency-scores', {
+                  body: {
+                    citations: citationsWithUrls,
+                    user_id: data.id // Pass response ID for tracking
+                  }
+                }).then(response => {
+                  console.log('✅ Recency cache extraction completed:', response);
+                }).catch(error => {
+                  // Log error but don't fail the response storage
+                  console.warn('❌ Failed to trigger recency cache extraction:', error);
+                });
+              } else {
+                console.log('⚠️ No citations with valid URLs found, skipping recency extraction');
+              }
+            }
           } else {
-            console.warn('⚠️ Cannot trigger AI thematic analysis: missing company name or onboarding data');
+            console.warn('⚠️ Cannot trigger AI analysis: missing company name or onboarding data');
           }
         } catch (analysisError) {
           // Log error but don't fail the response storage
-          console.warn('Error triggering AI thematic analysis:', analysisError);
+          console.warn('Error triggering AI analysis:', analysisError);
         }
       }
 

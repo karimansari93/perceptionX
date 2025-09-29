@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { corsHeaders } from "../_shared/cors.ts"
 
 // Media classification logic (copied from sourceConfig.ts)
 const EMPLOYMENT_SOURCES: Record<string, any> = {
@@ -178,10 +179,6 @@ async function detectCompetitors(text: string, companyName: string): Promise<str
   }
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
 
 // Helper function to get volume data for search terms
 async function getVolumeData(
@@ -598,6 +595,40 @@ serve(async (req) => {
           console.error(`❌ Error storing search results:`, resultsError)
         } else {
           console.log(`✅ Stored ${resultsToInsert.length} search results`)
+          
+          // Trigger recency cache extraction for search result URLs
+          if (resultsToInsert.length > 0) {
+            try {
+              console.log(`📅 Triggering recency cache extraction for ${resultsToInsert.length} search result URLs`)
+              
+              // Extract URLs from search results for recency scoring
+              const citationsWithUrls = resultsToInsert
+                .filter(result => result.link && result.link.startsWith('http'))
+                .map(result => ({
+                  url: result.link,
+                  domain: result.domain,
+                  title: result.title,
+                  sourceType: 'search-results'
+                }))
+                .filter(Boolean);
+
+              if (citationsWithUrls.length > 0) {
+                // Trigger recency cache extraction asynchronously (don't wait for completion)
+                supabase.functions.invoke('extract-recency-scores', {
+                  body: {
+                    citations: citationsWithUrls,
+                    user_id: sessionId // Pass session ID for tracking
+                  }
+                }).catch(error => {
+                  // Log error but don't fail the search results storage
+                  console.warn('❌ Failed to trigger recency cache extraction for search results:', error)
+                });
+              }
+            } catch (recencyError) {
+              // Log error but don't fail the search results storage
+              console.warn('❌ Error triggering recency cache extraction:', recencyError)
+            }
+          }
         }
       }
 

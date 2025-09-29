@@ -6,10 +6,14 @@ import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { TalentXProService } from "@/services/talentXProService";
 import { useSubscription } from "@/hooks/useSubscription";
+import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
 
 export const useDashboardData = () => {
-  const { user: rawUser } = useAuth();
+  const { user: rawUser, clearSession } = useAuth();
   const { isPro } = useSubscription();
+  
+  // Debug flag - set to true only when debugging specific issues
+  const DEBUG_LOGS = false;
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
   const [responses, setResponses] = useState<PromptResponse[]>([]);
@@ -24,20 +28,55 @@ export const useDashboardData = () => {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchResultsLoading, setSearchResultsLoading] = useState(false);
   const [searchTermsData, setSearchTermsData] = useState<any[]>([]);
+  const [recencyData, setRecencyData] = useState<any[]>([]);
+  const [aiThemes, setAiThemes] = useState<any[]>([]);
+  const [isOnline, setIsOnline] = useState(networkMonitor.online);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [recencyDataError, setRecencyDataError] = useState<string | null>(null);
   const subscriptionRef = useRef<any>(null); // Track subscription instance
   const pollingRef = useRef<NodeJS.Timeout | null>(null); // Track polling interval
 
+  // Network status monitoring
+  useEffect(() => {
+    const removeListener = networkMonitor.addListener((online) => {
+      setIsOnline(online);
+      if (online) {
+        setConnectionError(null);
+        // Retry data fetching when connection is restored
+        if (user) {
+          fetchResponses();
+        }
+      } else {
+        setConnectionError('No internet connection. Please check your network.');
+      }
+    });
+
+    return removeListener;
+  }, [user]);
+
   const fetchResponses = useCallback(async () => {
-    if (!user) return;
+    if (!user) {
+      console.log('No user available, skipping fetchResponses');
+      return;
+    }
+    
+    // Check network status first
+    if (!isOnline) {
+      setConnectionError('No internet connection. Please check your network.');
+      return;
+    }
     
     try {
       setLoading(true);
       setCompetitorLoading(true);
+      setConnectionError(null);
       
-      const { data: userPrompts, error: promptsError } = await supabase
-        .from('confirmed_prompts')
-        .select('id, user_id, prompt_text')
-        .eq('user_id', user.id);
+      const { data: userPrompts, error: promptsError } = await retrySupabaseQuery(() =>
+        supabase
+          .from('confirmed_prompts')
+          .select('id, user_id, prompt_text')
+          .eq('user_id', user.id)
+      ) as { data: any[] | null; error: any };
 
       if (promptsError) {
         throw promptsError;
@@ -45,10 +84,12 @@ export const useDashboardData = () => {
 
       if (!userPrompts || userPrompts.length === 0) {
         // Let's check if there are any prompts without user_id
-        const { data: allPrompts, error: allPromptsError } = await supabase
-          .from('confirmed_prompts')
-          .select('id, user_id, prompt_text, onboarding_id')
-          .is('user_id', null);
+        const { data: allPrompts, error: allPromptsError } = await retrySupabaseQuery(() =>
+          supabase
+            .from('confirmed_prompts')
+            .select('id, user_id, prompt_text, onboarding_id')
+            .is('user_id', null)
+        ) as { data: any[] | null; error: any };
 
         if (allPromptsError) {
           // Silently handle error
@@ -73,18 +114,20 @@ export const useDashboardData = () => {
       const promptIds = userPrompts.map(p => p.id);
 
       // Fetch all responses including TalentX responses
-      const { data, error } = await supabase
-        .from('prompt_responses')
-        .select(`
-          *,
-          confirmed_prompts (
-            prompt_text,
-            prompt_category,
-            prompt_type
-          )
-        `)
-        .in('confirmed_prompt_id', promptIds)
-        .order('tested_at', { ascending: false });
+      const { data, error } = await retrySupabaseQuery(() =>
+        supabase
+          .from('prompt_responses')
+          .select(`
+            *,
+            confirmed_prompts (
+              prompt_text,
+              prompt_category,
+              prompt_type
+            )
+          `)
+          .in('confirmed_prompt_id', promptIds)
+          .order('tested_at', { ascending: false })
+      ) as { data: any[] | null; error: any };
 
       if (error) throw error;
       
@@ -164,26 +207,406 @@ export const useDashboardData = () => {
       
       setLoading(false);
       setCompetitorLoading(false);
-          } catch (error) {
-        // Silently handle error
+    } catch (error) {
+      console.error('Error in fetchResponses:', error);
+      
+      // Handle authentication errors specifically
+      if (error?.message?.includes('Invalid login credentials') || 
+          error?.message?.includes('Invalid Refresh Token') ||
+          error?.message?.includes('JWT') ||
+          error?.status === 401) {
+        console.log('Authentication error detected, clearing user session');
+        setConnectionError('Authentication expired. Please sign in again.');
+        clearSession(); // Clear the invalid session
+        
+        // Clear any stored auth data and reload to reset the app state
+        try {
+          localStorage.removeItem('sb-ofyjvfmcgtntwamkubui-auth-token');
+          sessionStorage.clear();
+          // Reload the page to reset the app state
+          setTimeout(() => {
+            window.location.reload();
+          }, 2000);
+        } catch (e) {
+          console.error('Error clearing auth data:', e);
+        }
+        
+        // Don't retry on auth errors
         setLoading(false);
         setCompetitorLoading(false);
+        return;
       }
-  }, [user]);
+      
+      setConnectionError('Failed to load data. Retrying...');
+      setLoading(false);
+      setCompetitorLoading(false);
+    }
+  }, [user, isOnline]);
+
+  const fetchRecencyData = useCallback(async () => {
+    if (!user) return;
+    
+    try {
+      // Clear any previous errors
+      setRecencyDataError(null);
+      
+      // Get all URLs from the user's citations first
+      const allCitations = responses.flatMap(r => parseCitations(r.citations)).filter(c => c.url);
+      const urls = allCitations.map(c => c.url);
+      
+      if (DEBUG_LOGS) console.log('🔍 Looking for recency data for', urls.length, 'citation URLs');
+      
+      if (urls.length === 0) {
+        setRecencyData([]);
+        return;
+      }
+      
+      // Process URLs in smaller batches to avoid URI length limits
+      const batchSize = 25; // Smaller batches to prevent URI length issues
+      const allMatches: any[] = [];
+      let batchProcessingFailed = false;
+      
+      // Process URLs in batches
+      for (let i = 0; i < urls.length; i += batchSize) {
+        const batch = urls.slice(i, i + batchSize);
+        
+        try {
+          // console.log(`🔄 Processing URL batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(urls.length/batchSize)} (${batch.length} URLs)`);
+          
+          const { data: batchMatches, error: batchError } = await retrySupabaseQuery(() =>
+            supabase
+              .from('url_recency_cache')
+              .select('url, recency_score')
+              .in('url', batch)
+              .not('recency_score', 'is', null)
+          ) as { data: any[] | null; error: any };
+          
+          if (batchError) {
+            console.error(`Error in batch ${Math.floor(i/batchSize) + 1}:`, batchError);
+            
+            // If this is a URI length error, try even smaller batches
+            if (batchError.message?.includes('uri too long') || 
+                batchError.message?.includes('request entity too large') ||
+                batchError.code === 'ERR_FAILED') {
+              // console.log('🔄 URI too long, trying individual URL queries...');
+              batchProcessingFailed = true;
+              break;
+            }
+            
+            // Continue with next batch for other errors
+            continue;
+          }
+          
+          if (batchMatches && batchMatches.length > 0) {
+            allMatches.push(...batchMatches);
+            // console.log(`✅ Batch ${Math.floor(i/batchSize) + 1}: Found ${batchMatches.length} matches`);
+          }
+          
+          // Small delay between batches to avoid overwhelming the server
+          if (i + batchSize < urls.length) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          
+        } catch (error) {
+          console.error(`Exception in batch ${Math.floor(i/batchSize) + 1}:`, error);
+          
+          // If this is a URI length error, try individual queries
+          if (error.message?.includes('uri too long') || 
+              error.message?.includes('request entity too large') ||
+              error.code === 'ERR_FAILED') {
+            // console.log('🔄 URI too long, trying individual URL queries...');
+            batchProcessingFailed = true;
+            break;
+          }
+          
+          // Continue with next batch for other errors
+          continue;
+        }
+      }
+      
+      // If batch processing failed due to URI length, try individual URL queries
+      if (batchProcessingFailed) {
+        // console.log('🔄 Falling back to individual URL queries...');
+        
+        for (const url of urls) {
+          try {
+            const { data: singleMatch, error: singleError } = await retrySupabaseQuery(() =>
+              supabase
+                .from('url_recency_cache')
+                .select('url, recency_score')
+                .eq('url', url)
+                .not('recency_score', 'is', null)
+                .single()
+            ) as { data: any | null; error: any };
+            
+            if (!singleError && singleMatch) {
+              allMatches.push(singleMatch);
+            }
+            
+            // Small delay between individual queries
+            await new Promise(resolve => setTimeout(resolve, 50));
+            
+          } catch (error) {
+            console.error(`Error querying individual URL ${url}:`, error);
+            continue;
+          }
+        }
+      }
+      
+      if (allMatches.length > 0) {
+        // console.log('✅ Found', allMatches.length, 'total URL matches across all batches');
+        setRecencyData(allMatches);
+        setRecencyDataError(null); // Clear any previous errors
+        return;
+      }
+      
+      // If no exact matches, try domain-based search as fallback
+      const domains = [...new Set(urls.map(url => {
+        try {
+          return new URL(url).hostname;
+        } catch {
+          return null;
+        }
+      }).filter(Boolean))];
+      
+      // console.log('🌐 No exact matches found, trying domain-based search for domains:', domains);
+      
+      // Process domains in batches too
+      const domainBatchSize = 10;
+      const allDomainMatches: any[] = [];
+      
+      for (let i = 0; i < domains.length; i += domainBatchSize) {
+        const domainBatch = domains.slice(i, i + domainBatchSize);
+        
+        try {
+          const { data: domainMatches, error: domainError } = await retrySupabaseQuery(() =>
+            supabase
+              .from('url_recency_cache')
+              .select('url, recency_score, domain')
+              .or(domainBatch.map(domain => `domain.eq.${domain}`).join(','))
+              .not('recency_score', 'is', null)
+              .limit(50)
+          ) as { data: any[] | null; error: any };
+          
+          if (domainError) {
+            console.error(`Error in domain batch ${Math.floor(i/domainBatchSize) + 1}:`, domainError);
+            continue;
+          }
+          
+          if (domainMatches && domainMatches.length > 0) {
+            allDomainMatches.push(...domainMatches);
+          }
+          
+        } catch (error) {
+          console.error(`Exception in domain batch ${Math.floor(i/domainBatchSize) + 1}:`, error);
+          continue;
+        }
+      }
+      
+      // console.log('🏢 Found', allDomainMatches.length, 'domain matches');
+      setRecencyData(allDomainMatches);
+      setRecencyDataError(null); // Clear any previous errors
+    } catch (error) {
+      console.error('Error in fetchRecencyData:', error);
+      setRecencyData([]);
+      
+      // Set specific error message for recency data
+      if (error.message?.includes('ERR_FAILED') || error.message?.includes('network')) {
+        setRecencyDataError('Unable to fetch recency data due to network issues. This may be due to a large number of URLs. The system will retry automatically.');
+      } else if (error.message?.includes('uri too long')) {
+        setRecencyDataError('Too many URLs to process at once. The system is working on a solution.');
+      } else {
+        setRecencyDataError('Failed to load recency data. Please try refreshing the page.');
+      }
+    }
+  }, [user, responses]);
+
+  const fetchAIThemes = useCallback(async () => {
+    if (!user || responses.length === 0) {
+      setAiThemes([]);
+      return;
+    }
+
+    try {
+      // Get response IDs for sentiment and competitive prompts (excluding visibility)
+      const relevantResponses = responses.filter(response => {
+        const promptType = response.confirmed_prompts?.prompt_type;
+        return promptType === 'sentiment' || 
+               promptType === 'competitive' || 
+               promptType === 'talentx_sentiment' || 
+               promptType === 'talentx_competitive';
+      });
+
+      const responseIds = relevantResponses.map(r => r.id);
+      
+      if (DEBUG_LOGS) console.log('🎯 Relevant responses for AI themes:', {
+        total_responses: responses.length,
+        relevant_responses: relevantResponses.length,
+        first_few_response_ids: responseIds.slice(0, 3),
+        prompt_types: relevantResponses.map(r => r.confirmed_prompts?.prompt_type).slice(0, 5),
+        sample_response_texts: relevantResponses.slice(0, 2).map(r => r.response_text?.substring(0, 100) + '...'),
+        current_user: user?.id,
+        current_company: companyName
+      });
+      
+      // CRITICAL DEBUG: Let's check if we have the specific response IDs from user's data
+      if (DEBUG_LOGS) {
+        const knownResponseIds = ['305cede8-8af3-4eae-8830-64bfd98431ae', '70d321ae-1b4a-4907-aac5-a577157e6881'];
+        console.log('🧐 Checking for known response IDs:', {
+          known_ids: knownResponseIds,
+          found_in_responses: knownResponseIds.filter(id => responseIds.includes(id)),
+          all_response_ids: responseIds
+        });
+      }
+      
+      if (responseIds.length === 0) {
+        console.log('⚠️ No relevant responses found for AI themes');
+        setAiThemes([]);
+        return;
+      }
+
+      // CRITICAL DEBUG: Let's test with a known working response ID first
+      if (DEBUG_LOGS) {
+        console.log('🔬 Testing direct query with known response ID...');
+        const { data: directTest, error: directError } = await retrySupabaseQuery(() =>
+          supabase
+            .from('ai_themes')
+            .select('*')
+            .eq('response_id', '305cede8-8af3-4eae-8830-64bfd98431ae')
+        ) as { data: any[] | null; error: any };
+          
+        console.log('🧪 Direct test result:', {
+          themes_found: directTest?.length || 0,
+          error: directError?.message || 'none',
+          sample_theme: directTest?.[0]
+        });
+      }
+
+      const { data, error } = await retrySupabaseQuery(() =>
+        supabase
+          .from('ai_themes')
+          .select('*')
+          .in('response_id', responseIds)
+          .order('created_at', { ascending: false })
+      ) as { data: any[] | null; error: any };
+
+      if (error) {
+        console.error('❌ Error fetching AI themes:', error);
+        
+        // Try a simple count query to see if AI themes exist at all
+        const { count, error: countError } = await supabase
+          .from('ai_themes')
+          .select('*', { count: 'exact', head: true });
+        
+        if (DEBUG_LOGS) console.log('📊 Total AI themes in database:', count, countError ? `(Error: ${countError.message})` : '');
+        
+        // Also try the exact same query as ThematicAnalysisTab
+        if (DEBUG_LOGS) {
+          console.log('🔍 Trying exact same query as ThematicAnalysisTab...');
+          const { data: testData, error: testError } = await supabase
+            .from('ai_themes')
+            .select('*')
+            .in('response_id', responseIds.slice(0, 5)) // Test with first 5 IDs
+            .order('created_at', { ascending: false });
+            
+          console.log('🧪 Test query result:', {
+            themes_found: testData?.length || 0,
+            error: testError?.message || 'none',
+            first_theme: testData?.[0]
+          });
+        }
+        
+        // Check if ANY AI themes exist for ANY response_id (debug)
+        const { data: anyThemes, error: anyError } = await supabase
+          .from('ai_themes')
+          .select('response_id, theme_name, sentiment_score')
+          .limit(5);
+          
+        if (DEBUG_LOGS) console.log('🔍 Sample AI themes in database:', {
+          count: anyThemes?.length || 0,
+          sample_response_ids: anyThemes?.map(t => t.response_id) || [],
+          vs_our_response_ids: responseIds.slice(0, 3),
+          any_matches: anyThemes?.some(t => responseIds.includes(t.response_id)) || false
+        });
+        
+        setAiThemes([]);
+        return;
+      }
+
+      if (DEBUG_LOGS) {
+        console.log('🔍 AI Themes fetched:', data?.length || 0, 'themes for', responseIds.length, 'responses');
+        if (data && data.length > 0) {
+          console.log('📊 Sample AI theme:', data[0]);
+        } else {
+          console.log('⚠️ No AI themes returned from main query. Response IDs used:', responseIds.slice(0, 10));
+        }
+      }
+      setAiThemes(data || []);
+    } catch (error) {
+      console.error('Error in fetchAIThemes:', error);
+      setAiThemes([]);
+    }
+  }, [user, responses]);
+
+  // Helper function to calculate AI-based sentiment for a response
+  const calculateAIBasedSentiment = useCallback((responseId: string) => {
+    const responseThemes = aiThemes.filter(theme => theme.response_id === responseId);
+    
+    if (responseThemes.length === 0) {
+      // Fallback to original sentiment if no AI themes available
+      const response = responses.find(r => r.id === responseId);
+      // console.log('⚠️ No AI themes found for response:', responseId, 'using original sentiment:', response?.sentiment_score);
+      return {
+        sentiment_score: response?.sentiment_score || 0,
+        sentiment_label: response?.sentiment_label || 'neutral'
+      };
+    }
+
+    // Calculate weighted average sentiment based on confidence scores
+    const totalConfidenceWeight = responseThemes.reduce((sum, theme) => sum + (theme.confidence_score || 0), 0);
+    
+    if (totalConfidenceWeight === 0) {
+      // If no confidence scores, use simple average
+      const avgSentiment = responseThemes.reduce((sum, theme) => sum + (theme.sentiment_score || 0), 0) / responseThemes.length;
+      const sentimentLabel = avgSentiment > 0.1 ? 'positive' : avgSentiment < -0.1 ? 'negative' : 'neutral';
+      return { sentiment_score: avgSentiment, sentiment_label: sentimentLabel };
+    }
+
+    // Weighted average by confidence score
+    const weightedSentiment = responseThemes.reduce((sum, theme) => {
+      return sum + ((theme.sentiment_score || 0) * (theme.confidence_score || 0));
+    }, 0) / totalConfidenceWeight;
+
+    const sentimentLabel = weightedSentiment > 0.1 ? 'positive' : weightedSentiment < -0.1 ? 'negative' : 'neutral';
+    
+    if (DEBUG_LOGS) console.log('✨ AI-based sentiment calculated for', responseId, ':', {
+      themes_count: responseThemes.length,
+      weighted_sentiment: weightedSentiment,
+      sentiment_label: sentimentLabel,
+      total_confidence: totalConfidenceWeight
+    });
+    
+    return { 
+      sentiment_score: weightedSentiment, 
+      sentiment_label: sentimentLabel 
+    };
+  }, [aiThemes, responses]);
 
   const fetchCompanyName = useCallback(async () => {
     if (!user) return;
     
-    console.log('🔍 fetchCompanyName called for user:', user.id);
+    // console.log('🔍 fetchCompanyName called for user:', user.id);
     
     try {
       // Get the most recent onboarding record
-      const { data, error } = await supabase
-        .from('user_onboarding')
-        .select('company_name')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1);
+      const { data, error } = await retrySupabaseQuery(() =>
+        supabase
+          .from('user_onboarding')
+          .select('company_name')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+      ) as { data: any[] | null; error: any };
 
       if (error) {
         console.log('❌ Error fetching company name:', error);
@@ -193,7 +616,7 @@ export const useDashboardData = () => {
 
       // If we have data, use the company name
       if (data && data.length > 0) {
-        console.log('✅ Company name fetched:', data[0].company_name);
+        // console.log('✅ Company name fetched:', data[0].company_name);
         setCompanyName(data[0].company_name);
       } else {
         console.log('⚠️ No company name data found');
@@ -236,40 +659,46 @@ export const useDashboardData = () => {
       setSearchResultsLoading(true);
       
       // Get the most recent search session for this company
-      const { data: sessionData, error: sessionError } = await supabase
-        .from('search_insights_sessions')
-        .select(`
-          id,
-          company_name,
-          initial_search_term,
-          total_results,
-          total_related_terms,
-          total_volume,
-          keywords_everywhere_available,
-          created_at
-        `)
-        .eq('company_name', companyName)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+      const { data: sessionData, error: sessionError } = await retrySupabaseQuery(() =>
+        supabase
+          .from('search_insights_sessions')
+          .select(`
+            id,
+            company_name,
+            initial_search_term,
+            total_results,
+            total_related_terms,
+            total_volume,
+            keywords_everywhere_available,
+            created_at
+          `)
+          .eq('company_name', companyName)
+          .order('created_at', { ascending: false })
+          .limit(1)
+      ) as { data: any[] | null; error: any };
 
-      if (sessionError && sessionError.code !== 'PGRST116') { // PGRST116 = no rows found
+      if (sessionError) {
         console.error('Error fetching search session:', sessionError);
         setSearchResults([]);
         return;
       }
 
-      if (!sessionData) {
+      // Get the first (and only) result if any exist
+      const session = sessionData && sessionData.length > 0 ? sessionData[0] : null;
+
+      if (!session) {
         setSearchResults([]);
         return;
       }
 
       // Get search results for this session
-      const { data: resultsData, error: resultsError } = await supabase
-        .from('search_insights_results')
-        .select('*')
-        .eq('session_id', sessionData.id)
-        .order('position', { ascending: true });
+      const { data: resultsData, error: resultsError } = await retrySupabaseQuery(() =>
+        supabase
+          .from('search_insights_results')
+          .select('*')
+          .eq('session_id', session.id)
+          .order('position', { ascending: true })
+      ) as { data: any[] | null; error: any };
 
       if (resultsError) {
         console.error('Error fetching search results:', resultsError);
@@ -329,7 +758,7 @@ export const useDashboardData = () => {
         });
 
       setSearchResults(processedResults);
-      console.log('🔍 Search results loaded:', processedResults.length, 'results');
+      if (DEBUG_LOGS) console.log('🔍 Search results loaded:', processedResults.length, 'results');
 
       // Process search terms data for ranking
       if (processedResults.length > 0) {
@@ -358,7 +787,7 @@ export const useDashboardData = () => {
           }))
           .sort((a, b) => b.monthlyVolume - a.monthlyVolume);
         
-        console.log('🔍 Search terms processed:', termsData.length, 'terms');
+        if (DEBUG_LOGS) console.log('🔍 Search terms processed:', termsData.length, 'terms');
         setSearchTermsData(termsData);
       }
     } catch (error) {
@@ -402,7 +831,7 @@ export const useDashboardData = () => {
 
   // Polling effect: only set up polling when loading is true and only one interval at a time
   useEffect(() => {
-    if (!user || !loading) {
+    if (!user || !loading || !isOnline) {
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
@@ -410,16 +839,19 @@ export const useDashboardData = () => {
       return;
     }
     if (pollingRef.current) return; // Already polling
+    
+    // Use debounced polling to prevent overwhelming the server
     pollingRef.current = setInterval(() => {
-      fetchResponses();
-    }, 2000);
+      queryDebouncer.debounce('fetchResponses', fetchResponses, 1000);
+    }, 3000); // Increased interval from 2s to 3s
+    
     return () => {
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
       }
     };
-  }, [user, loading, fetchResponses]);
+  }, [user, loading, isOnline, fetchResponses]);
 
   // Initial data fetch
   useEffect(() => {
@@ -431,6 +863,21 @@ export const useDashboardData = () => {
       }
     }
   }, [user, fetchResponses, fetchCompanyName, fetchTalentXProData, isPro]);
+
+  // Fetch recency data when responses change
+  useEffect(() => {
+    if (responses.length > 0) {
+      fetchRecencyData();
+    }
+  }, [responses, fetchRecencyData]);
+
+  // Fetch AI themes when responses change
+  useEffect(() => {
+    if (responses.length > 0) {
+      if (DEBUG_LOGS) console.log('🔄 fetchAIThemes triggered by responses change');
+      fetchAIThemes();
+    }
+  }, [responses, fetchAIThemes]);
 
   // Fetch search results when company name is available
   useEffect(() => {
@@ -545,12 +992,16 @@ export const useDashboardData = () => {
       
       const existing = acc.find(item => item.prompt === promptKey);
       
+      // Get AI-based sentiment for this response
+      const aiSentiment = calculateAIBasedSentiment(response.id);
+      
       // Extract visibility_score if present and numeric
       const visibilityScore = typeof response.visibility_score === 'number' ? response.visibility_score : undefined;
       
       if (existing) {
         existing.responses += 1;
-        existing.avgSentiment = (existing.avgSentiment + (response.sentiment_score || 0)) / 2;
+        // Use AI-based sentiment in average calculation
+        existing.avgSentiment = (existing.avgSentiment + aiSentiment.sentiment_score) / 2;
         // Add visibility score to array
         if (visibilityScore !== undefined) {
           existing.visibilityScores = existing.visibilityScores || [];
@@ -584,8 +1035,8 @@ export const useDashboardData = () => {
           category: response.confirmed_prompts?.prompt_category || '',
           type: response.confirmed_prompts?.prompt_type || 'sentiment',
           responses: 1,
-          avgSentiment: response.sentiment_score || 0,
-          sentimentLabel: response.sentiment_label || 'neutral',
+          avgSentiment: aiSentiment.sentiment_score, // Use AI-based sentiment
+          sentimentLabel: aiSentiment.sentiment_label, // Use AI-based sentiment label
           mentionRanking: response.mention_ranking || undefined,
           competitivePosition: response.mention_ranking || undefined,
           competitorMentions: response.competitor_mentions as string[] || undefined,
@@ -619,19 +1070,67 @@ export const useDashboardData = () => {
     }, []);
     
     return uniquePrompts;
-  }, [responses, talentXProPrompts]);
+  }, [responses, talentXProPrompts, calculateAIBasedSentiment]);
 
   const metrics: DashboardMetrics = useMemo(() => {
-    const averageSentiment = responses.length > 0 
-      ? responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length 
-      : 0;
+    // Calculate AI-based sentiment averages
+    const relevantResponses = responses.filter(response => {
+      const promptType = response.confirmed_prompts?.prompt_type;
+      return promptType === 'sentiment' || 
+             promptType === 'competitive' || 
+             promptType === 'talentx_sentiment' || 
+             promptType === 'talentx_competitive';
+    });
+
+    let averageSentiment = 0;
+    let positiveCount = 0;
+    let neutralCount = 0;
+    let negativeCount = 0;
+
+    if (aiThemes.length > 0 && relevantResponses.length > 0) {
+      // Use AI themes for sentiment calculation
+      if (DEBUG_LOGS) console.log('🤖 Using AI-based sentiment calculation with', aiThemes.length, 'themes for', relevantResponses.length, 'relevant responses');
+      
+      const responseSentiments = relevantResponses.map(response => {
+        return calculateAIBasedSentiment(response.id);
+      });
+
+      averageSentiment = responseSentiments.length > 0 
+        ? responseSentiments.reduce((sum, sentiment) => sum + sentiment.sentiment_score, 0) / responseSentiments.length 
+        : 0;
+
+      // Calculate sentiment counts based on AI themes
+      positiveCount = responseSentiments.filter(s => s.sentiment_score > 0.1).length;
+      neutralCount = responseSentiments.filter(s => s.sentiment_score >= -0.1 && s.sentiment_score <= 0.1).length;
+      negativeCount = responseSentiments.filter(s => s.sentiment_score < -0.1).length;
+      
+      if (DEBUG_LOGS) console.log('📊 AI-based metrics calculated:', {
+        averageSentiment,
+        positiveCount,
+        neutralCount,
+        negativeCount
+      });
+    } else {
+      // Fallback to original method if no AI themes available
+      // console.log('🔄 Falling back to original sentiment calculation - AI themes:', aiThemes.length, 'relevant responses:', relevantResponses.length);
+      
+      averageSentiment = responses.length > 0 
+        ? responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length 
+        : 0;
+
+      positiveCount = responses.filter(r => (r.sentiment_score || 0) > 0.1).length;
+      neutralCount = responses.filter(r => (r.sentiment_score || 0) >= -0.1 && (r.sentiment_score || 0) <= 0.1).length;
+      negativeCount = responses.filter(r => (r.sentiment_score || 0) < -0.1).length;
+      
+      // console.log('📊 Original metrics calculated:', {
+      //   averageSentiment,
+      //   positiveCount,
+      //   neutralCount,
+      //   negativeCount
+      // });
+    }
 
     const sentimentLabel = averageSentiment > 0.1 ? 'Positive' : averageSentiment < -0.1 ? 'Negative' : 'Neutral';
-    
-    // Calculate sentiment counts
-    const positiveCount = responses.filter(r => (r.sentiment_score || 0) > 0.1).length;
-    const neutralCount = responses.filter(r => (r.sentiment_score || 0) >= -0.1 && (r.sentiment_score || 0) <= 0.1).length;
-    const negativeCount = responses.filter(r => (r.sentiment_score || 0) < -0.1).length;
 
     let sentimentTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     let visibilityTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
@@ -649,22 +1148,40 @@ export const useDashboardData = () => {
         const previousUniqueDays = new Set(previousResponses.map(r => new Date(r.tested_at).toDateString()));
         const numPreviousDays = Math.max(1, previousUniqueDays.size);
 
-        // Calculate sentiment trend
-        const currentSentimentAvg = currentResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / currentResponses.length;
-        const previousSentimentTotal = previousResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0);
-        const previousSentimentAvg = previousSentimentTotal / previousResponses.length;
+        // Calculate sentiment trend using AI-based sentiment if available
+        let currentSentimentAvg: number;
+        let previousSentimentAvg: number;
+
+        if (aiThemes.length > 0) {
+          const currentAISentiments = currentResponses.map(r => calculateAIBasedSentiment(r.id));
+          const previousAISentiments = previousResponses.map(r => calculateAIBasedSentiment(r.id));
+          
+          currentSentimentAvg = currentAISentiments.length > 0 
+            ? currentAISentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / currentAISentiments.length
+            : 0;
+          
+          previousSentimentAvg = previousAISentiments.length > 0
+            ? previousAISentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / previousAISentiments.length
+            : 0;
+        } else {
+          // Fallback to original sentiment
+          currentSentimentAvg = currentResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / currentResponses.length;
+          const previousSentimentTotal = previousResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0);
+          previousSentimentAvg = previousSentimentTotal / previousResponses.length;
+        }
+
         const sentimentChange = currentSentimentAvg - previousSentimentAvg;
         sentimentTrendComparison = {
           value: Math.abs(Math.round(sentimentChange * 100)),
           direction: sentimentChange > 0.01 ? 'up' : sentimentChange < -0.01 ? 'down' : 'neutral'
         };
 
-        // Calculate visibility trend
-        const currentVisibilityScores = currentResponses.map(r => r.visibility_score).filter((v): v is number => typeof v === 'number');
-        const currentVisibilityAvg = currentVisibilityScores.length > 0 ? currentVisibilityScores.reduce((a, b) => a + b, 0) / currentVisibilityScores.length : 0;
+        // Calculate visibility trend using company_mentioned percentage
+        const currentMentionedCount = currentResponses.filter(r => r.company_mentioned === true).length;
+        const currentVisibilityAvg = currentResponses.length > 0 ? (currentMentionedCount / currentResponses.length) * 100 : 0;
         
-        const previousVisibilityScores = previousResponses.map(r => r.visibility_score).filter((v): v is number => typeof v === 'number');
-        const previousVisibilityAvg = previousVisibilityScores.length > 0 ? previousVisibilityScores.reduce((a, b) => a + b, 0) / previousVisibilityScores.length : 0;
+        const previousMentionedCount = previousResponses.filter(r => r.company_mentioned === true).length;
+        const previousVisibilityAvg = previousResponses.length > 0 ? (previousMentionedCount / previousResponses.length) * 100 : 0;
         
         const visibilityChange = currentVisibilityAvg - previousVisibilityAvg;
         visibilityTrendComparison = {
@@ -689,12 +1206,15 @@ export const useDashboardData = () => {
       responses.flatMap(r => parseCitations(r.citations).map((c: Citation) => c.domain).filter(Boolean))
     ).size;
 
-    // Calculate average visibility as the average of all numeric visibility_score values from all responses
-    const allVisibilityScores = responses
-      .map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined)
-      .filter((v): v is number => typeof v === 'number');
-    const averageVisibility = allVisibilityScores.length > 0
-      ? allVisibilityScores.reduce((sum, v) => sum + v, 0) / allVisibilityScores.length
+    // Calculate average visibility as the percentage of responses where company_mentioned is TRUE
+    const mentionedCount = responses.filter(r => r.company_mentioned === true).length;
+    const averageVisibility = responses.length > 0
+      ? (mentionedCount / responses.length) * 100
+      : 0;
+
+    // Calculate average relevance score
+    const averageRelevance = recencyData.length > 0 
+      ? recencyData.reduce((sum, item) => sum + (item.recency_score || 0), 0) / recencyData.length 
       : 0;
 
     // Calculate overall perception score
@@ -707,34 +1227,14 @@ export const useDashboardData = () => {
       // Visibility is already 0-100 scale
       const visibilityScore = averageVisibility;
       
-          // Calculate competitive score based on competitor mentions and positioning
-    const competitiveResponses = responses.filter(r => r.competitor_mentions);
-    const totalCompetitorMentions = competitiveResponses.reduce((sum, r) => {
-      const mentions = Array.isArray(r.competitor_mentions) 
-        ? r.competitor_mentions 
-        : JSON.parse(r.competitor_mentions as string || '[]');
-      return sum + mentions.length;
-    }, 0);
-      
-      // Calculate average mention ranking (lower is better)
-      const mentionRankings = responses
-        .map(r => r.mention_ranking)
-        .filter((r): r is number => typeof r === 'number');
-      const avgMentionRanking = mentionRankings.length > 0 
-        ? mentionRankings.reduce((sum, rank) => sum + rank, 0) / mentionRankings.length 
-        : 0;
-      
-      // Competitive score: higher when mentioned more and ranked better
-      const competitiveScore = Math.min(100, Math.max(0, 
-        (totalCompetitorMentions * 10) + // Bonus for being mentioned alongside competitors
-        (avgMentionRanking > 0 ? Math.max(0, 100 - (avgMentionRanking * 10)) : 50) // Better ranking = higher score
-      ));
+      // Relevance is already 0-100 scale
+      const relevanceScore = averageRelevance;
 
-      // Weighted formula: 40% sentiment + 35% visibility + 25% competitive
+      // Weighted formula: 50% sentiment + 30% visibility + 20% relevance (excluding competitive)
       const perceptionScore = Math.round(
-        (normalizedSentiment * 0.4) + 
-        (visibilityScore * 0.35) + 
-        (competitiveScore * 0.25)
+        (normalizedSentiment * 0.5) + 
+        (visibilityScore * 0.3) + 
+        (relevanceScore * 0.2)
       );
 
       // Determine label based on score
@@ -759,26 +1259,30 @@ export const useDashboardData = () => {
       uniqueDomains,
       totalResponses: responses.length,
       averageVisibility,
+      averageRelevance,
       positiveCount,
       neutralCount,
       negativeCount,
       perceptionScore,
       perceptionLabel
     };
-  }, [responses, promptsData]);
+  }, [responses, promptsData, recencyData, aiThemes, calculateAIBasedSentiment]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
     const trend = responses.reduce((acc: SentimentTrendData[], response) => {
       const date = new Date(response.tested_at).toLocaleDateString();
       const existing = acc.find(item => item.date === date);
       
+      // Get AI-based sentiment for this response
+      const aiSentiment = calculateAIBasedSentiment(response.id);
+      
       if (existing) {
-        existing.sentiment = (existing.sentiment + (response.sentiment_score || 0)) / 2;
+        existing.sentiment = (existing.sentiment + aiSentiment.sentiment_score) / 2;
         existing.count += 1;
       } else {
         acc.push({
           date,
-          sentiment: response.sentiment_score || 0,
+          sentiment: aiSentiment.sentiment_score,
           count: 1
         });
       }
@@ -788,7 +1292,7 @@ export const useDashboardData = () => {
     // Sort by date ascending
     trend.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     return trend.slice(-7); // get the last 7 days (latest at the end)
-  }, [responses]);
+  }, [responses, calculateAIBasedSentiment]);
 
   const topCitations: CitationCount[] = useMemo(() => {
     // Use enhanceCitations to get EnhancedCitation objects from responses
@@ -819,7 +1323,7 @@ export const useDashboardData = () => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 20);
 
-    console.log('🔍 Top citations calculated:', finalCitations.length, 'domains, search results:', searchResults.length);
+    // console.log('🔍 Top citations calculated:', finalCitations.length, 'domains, search results:', searchResults.length);
     return finalCitations;
   }, [responses, searchResults]);
 
@@ -847,13 +1351,11 @@ export const useDashboardData = () => {
         .filter(Boolean);
       const sentimentLabel = getMostCommonValue(sentimentLabels) || 'neutral';
       
-      // Calculate average visibility as the average of visibility_score for all responses
-      const visibilityScores = promptResponses
-        .map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined)
-        .filter((v): v is number => typeof v === 'number');
+      // Calculate average visibility as the percentage of responses where company_mentioned is TRUE
+      const mentionedCount = promptResponses.filter(r => r.company_mentioned === true).length;
       let averageVisibility: number | undefined = undefined;
-      if (visibilityScores.length > 0) {
-        averageVisibility = visibilityScores.reduce((sum, v) => sum + v, 0) / visibilityScores.length;
+      if (promptResponses.length > 0) {
+        averageVisibility = (mentionedCount / promptResponses.length) * 100;
       }
       
       return {
@@ -1018,7 +1520,7 @@ export const useDashboardData = () => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 20);
 
-    console.log('🔍 Top competitors calculated:', result.length, 'competitors, search results:', searchResults.length);
+    if (DEBUG_LOGS) console.log('🔍 Top competitors calculated:', result.length, 'competitors, search results:', searchResults.length);
     return result;
   }, [responses, searchResults, companyName, loading]);
 
@@ -1109,6 +1611,11 @@ export const useDashboardData = () => {
     searchResults,
     searchResultsLoading,
     searchTermsData,
-    fetchSearchResults
+    fetchSearchResults,
+    aiThemes, // Export AI themes for use in components
+    fetchAIThemes, // Export function to refresh AI themes
+    isOnline, // Network status
+    connectionError, // Connection error message
+    recencyDataError // Recency data specific error message
   };
 };

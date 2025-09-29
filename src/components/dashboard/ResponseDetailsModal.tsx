@@ -59,9 +59,9 @@ export const ResponseDetailsModal = ({
     }
   }, [responses]);
 
-  // Compute averages and sources
-  const avgSentiment = responses.length > 0 ? responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length : 0;
-  const avgSentimentLabel = avgSentiment > 0.1 ? "Positive" : avgSentiment < -0.1 ? "Negative" : "Neutral";
+  // Compute averages and sources - use AI-based sentiment from promptData if available
+  const avgSentiment = promptData?.avgSentiment ?? (responses.length > 0 ? responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length : 0);
+  const avgSentimentLabel = promptData?.sentimentLabel ?? (avgSentiment > 0.1 ? "Positive" : avgSentiment < -0.1 ? "Negative" : "Neutral");
   const brandMentionedPct = responses.length > 0 ? Math.round(responses.filter(r => r.company_mentioned).length / responses.length * 100) : 0;
 
   // Extract real sources (with URLs)
@@ -155,18 +155,36 @@ export const ResponseDetailsModal = ({
 
     const insights = [];
 
-    // Analyze sentiment consistency
-    const sentimentScores = responses.map(r => r.sentiment_score).filter(Boolean);
+    // Analyze sentiment consistency - use AI-based sentiment if available
+    const useAIBasedSentiment = promptData?.avgSentiment !== undefined;
+    const sentimentScores = useAIBasedSentiment 
+      ? [promptData!.avgSentiment] // Use single AI-based sentiment score
+      : responses.map(r => r.sentiment_score).filter(Boolean);
+    
     if (sentimentScores.length > 0) {
-      const avgSentiment = sentimentScores.reduce((a, b) => a + b!, 0) / sentimentScores.length;
-      const sentimentRange = Math.max(...sentimentScores) - Math.min(...sentimentScores);
+      const avgSentiment = useAIBasedSentiment 
+        ? promptData!.avgSentiment 
+        : sentimentScores.reduce((a, b) => a + b!, 0) / sentimentScores.length;
       
-      if (sentimentRange > 0.3) {
-        insights.push("High sentiment variation across models - consider standardizing messaging");
-      } else if (avgSentiment > 0.1) {
-        insights.push("Consistently positive sentiment across all models");
-      } else if (avgSentiment < -0.1) {
-        insights.push("Consistently negative sentiment across all models - may need attention");
+      if (useAIBasedSentiment) {
+        // AI-based sentiment analysis insights
+        if (avgSentiment > 0.1) {
+          insights.push("AI thematic analysis shows consistently positive sentiment across responses");
+        } else if (avgSentiment < -0.1) {
+          insights.push("AI thematic analysis indicates negative sentiment - may need attention");
+        } else {
+          insights.push("AI analysis shows neutral sentiment - opportunity for stronger positioning");
+        }
+      } else {
+        // Original sentiment analysis
+        const sentimentRange = Math.max(...sentimentScores) - Math.min(...sentimentScores);
+        if (sentimentRange > 0.3) {
+          insights.push("High sentiment variation across models - consider standardizing messaging");
+        } else if (avgSentiment > 0.1) {
+          insights.push("Consistently positive sentiment across all models");
+        } else if (avgSentiment < -0.1) {
+          insights.push("Consistently negative sentiment across all models - may need attention");
+        }
       }
     }
 
@@ -280,7 +298,7 @@ export const ResponseDetailsModal = ({
                    } else if (sentimentLabel && sentimentLabel.toLowerCase() === "negative") {
                      label = "Negative";
                    } else if (!sentimentLabel && responses.length > 0) {
-                     const avgSentiment = responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length;
+                     // Use the already calculated AI-based avgSentiment
                      if (avgSentiment > 0.1) {
                        label = "Positive";
                      } else if (avgSentiment < -0.1) {

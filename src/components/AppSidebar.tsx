@@ -105,7 +105,7 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
             <SidebarTrigger className="h-8 w-8" />
           </div>
           <nav className="flex flex-col items-center gap-2 flex-1 w-full mt-2">
-            {allNavigationItems.map((item) => (
+            {allNavigationItems.filter(item => item.group !== "monitor").map((item) => (
               <SidebarMenuButton
                 key={item.section}
                 isActive={activeSection === item.section}
@@ -148,7 +148,7 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
         </SidebarHeader>
         <SidebarContent className="flex-1">
           {navigationGroups.map((group, groupIndex) => (
-            <SidebarGroup key={group.title}>
+            <SidebarGroup key={group.title} className={group.title === "Monitoring" ? "hidden sm:block" : ""}>
               <SidebarGroupContent>
                 <div className="px-3 py-2">
                   <div className="flex items-center gap-2">

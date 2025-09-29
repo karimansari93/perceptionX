@@ -68,7 +68,7 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
               <div className="flex items-start gap-3">
                 <CheckCircle2 className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className="font-medium text-[#13274F]">Weekly Data Updates & Notifications</p>
+                  <p className="font-medium text-[#13274F]">Monthly Data Updates & Notifications</p>
                   <p className="text-sm text-[#183056]">
                     Stay informed with regular updates and automated notifications about new insights
                   </p>

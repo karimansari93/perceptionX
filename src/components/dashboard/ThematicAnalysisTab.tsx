@@ -388,18 +388,25 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                     // Determine quadrant based on ABSOLUTE thresholds using positive ratio
                     const isPositiveSentiment = positiveRatio >= POSITIVE_SENTIMENT_THRESHOLD;
                     const isNegativeSentiment = positiveRatio <= NEGATIVE_SENTIMENT_THRESHOLD;
+                    const isNeutralSentiment = positiveRatio > NEGATIVE_SENTIMENT_THRESHOLD && positiveRatio < POSITIVE_SENTIMENT_THRESHOLD;
                     const isHighVolume = yPosition < 50; // Top half of chart (high volume)
                     
-                    // Color based on absolute sentiment thresholds
-                    const quadrantColor = isPositiveSentiment && isHighVolume 
-                      ? 'bg-green-500' // Strengths (positive + high volume)
-                      : isPositiveSentiment && !isHighVolume
-                      ? 'bg-blue-500' // Opportunities (positive + low volume)
-                      : isNegativeSentiment && !isHighVolume
-                      ? 'bg-red-500' // Threats (negative + low volume)
-                      : isNegativeSentiment && isHighVolume
-                      ? 'bg-orange-500' // Weaknesses (negative + high volume)
-                      : 'bg-yellow-500'; // Neutral zone (40-60% sentiment)
+                    // Determine which quadrant the bubble is actually in based on position
+                    const isInStrengthsQuadrant = xPosition >= 50 && yPosition < 50; // Top-right
+                    const isInOpportunitiesQuadrant = xPosition >= 50 && yPosition >= 50; // Bottom-right
+                    const isInWeaknessesQuadrant = xPosition < 50 && yPosition < 50; // Top-left
+                    const isInThreatsQuadrant = xPosition < 50 && yPosition >= 50; // Bottom-left
+                    
+                    // Color based on actual quadrant position
+                    const quadrantColor = isInStrengthsQuadrant
+                      ? 'bg-green-500' // Strengths quadrant - always green
+                      : isInOpportunitiesQuadrant
+                      ? 'bg-blue-500' // Opportunities quadrant - always blue
+                      : isInWeaknessesQuadrant
+                      ? 'bg-orange-500' // Weaknesses quadrant - always orange
+                      : isInThreatsQuadrant
+                      ? 'bg-red-500' // Threats quadrant - always red
+                      : 'bg-yellow-500'; // Neutral zone (center)
 
                     return (
                       <div 
@@ -451,38 +458,56 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                       const minVolume = Math.min(...bubbleChartData.map(d => d.volume));
                       
                       // Use same fixed thresholds as chart
-                      const POSITIVE_SENTIMENT_THRESHOLD = 0.7; // 70% positive
+                      const POSITIVE_SENTIMENT_THRESHOLD = 0.6; // 60% positive
                       const NEGATIVE_SENTIMENT_THRESHOLD = 0.4; // 40% positive (60% negative/neutral)
                       
-                      // Calculate weighted sentiment score that factors in neutral sentiment (same as chart)
+                      // Calculate sentiment ratios using same logic as chart
                       const totalThemes = data.positiveCount + data.negativeCount + data.neutralCount;
-                      const weightedSentimentScore = (data.positiveCount * 1 + data.neutralCount * 0 + data.negativeCount * -1) / totalThemes;
-                      const normalizedSentimentScore = (weightedSentimentScore + 1) / 2;
+                      const positiveRatio = data.positiveCount / totalThemes;
                       
-                      // Calculate position to determine quadrant (same logic as chart)
+                      // Calculate x position based on sentiment ratio (same as chart)
+                      let xPosition;
+                      if (positiveRatio >= POSITIVE_SENTIMENT_THRESHOLD) {
+                        // Map 0.6-1.0 to 60%-90% (right side)
+                        xPosition = 60 + ((positiveRatio - POSITIVE_SENTIMENT_THRESHOLD) / (1.0 - POSITIVE_SENTIMENT_THRESHOLD)) * 30;
+                      } else if (positiveRatio <= NEGATIVE_SENTIMENT_THRESHOLD) {
+                        // Map 0.0-0.4 to 10%-40% (left side)
+                        xPosition = 10 + (positiveRatio / NEGATIVE_SENTIMENT_THRESHOLD) * 30;
+                      } else {
+                        // Map 0.4-0.6 to 40%-60% (neutral zone)
+                        xPosition = 40 + ((positiveRatio - NEGATIVE_SENTIMENT_THRESHOLD) / (POSITIVE_SENTIMENT_THRESHOLD - NEGATIVE_SENTIMENT_THRESHOLD)) * 20;
+                      }
+                      
                       const yPosition = 10 + ((maxVolume - data.volume) / (maxVolume - minVolume)) * 80;
                       
-                      const isPositiveSentiment = normalizedSentimentScore >= POSITIVE_SENTIMENT_THRESHOLD;
-                      const isNegativeSentiment = normalizedSentimentScore <= NEGATIVE_SENTIMENT_THRESHOLD;
+                      const isPositiveSentiment = positiveRatio >= POSITIVE_SENTIMENT_THRESHOLD;
+                      const isNegativeSentiment = positiveRatio <= NEGATIVE_SENTIMENT_THRESHOLD;
+                      const isNeutralSentiment = positiveRatio > NEGATIVE_SENTIMENT_THRESHOLD && positiveRatio < POSITIVE_SENTIMENT_THRESHOLD;
                       const isHighVolume = yPosition < 50; // Top half of chart
                       
-                      const quadrant = isPositiveSentiment && isHighVolume 
+                      // Determine which quadrant the bubble is actually in based on position
+                      const isInStrengthsQuadrant = xPosition >= 50 && yPosition < 50; // Top-right
+                      const isInOpportunitiesQuadrant = xPosition >= 50 && yPosition >= 50; // Bottom-right
+                      const isInWeaknessesQuadrant = xPosition < 50 && yPosition < 50; // Top-left
+                      const isInThreatsQuadrant = xPosition < 50 && yPosition >= 50; // Bottom-left
+                      
+                      const quadrant = isInStrengthsQuadrant
                         ? 'Strengths'
-                        : isPositiveSentiment && !isHighVolume
+                        : isInOpportunitiesQuadrant
                         ? 'Opportunities'
-                        : isNegativeSentiment && !isHighVolume
-                        ? 'Threats'
-                        : isNegativeSentiment && isHighVolume
+                        : isInWeaknessesQuadrant
                         ? 'Weaknesses'
+                        : isInThreatsQuadrant
+                        ? 'Threats'
                         : 'Neutral';
                         
-                      const quadrantColor = isPositiveSentiment && isHighVolume 
+                      const quadrantColor = isInStrengthsQuadrant
                         ? 'bg-green-100 border-green-300 text-green-800'
-                        : isPositiveSentiment && !isHighVolume
+                        : isInOpportunitiesQuadrant
                         ? 'bg-blue-100 border-blue-300 text-blue-800'
-                        : isNegativeSentiment && !isHighVolume
+                        : isInWeaknessesQuadrant
                         ? 'bg-orange-100 border-orange-300 text-orange-800'
-                        : isNegativeSentiment && isHighVolume
+                        : isInThreatsQuadrant
                         ? 'bg-red-100 border-red-300 text-red-800'
                         : 'bg-yellow-100 border-yellow-300 text-yellow-800';
 

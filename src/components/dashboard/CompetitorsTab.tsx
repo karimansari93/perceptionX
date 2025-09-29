@@ -44,20 +44,21 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
   const [selectedSourceTypeFilter, setSelectedSourceTypeFilter] = useState<'all' | 'ai-responses' | 'search-results'>('all');
   const [selectedPromptCategoryFilter, setSelectedPromptCategoryFilter] = useState<string>('all');
   const [selectedCompetitorTypeFilter, setSelectedCompetitorTypeFilter] = useState<'all' | 'direct'>('all');
+  const [forceRender, setForceRender] = useState(0);
 
   // Helper to check if a response is from a competitive prompt
   const isCompetitivePrompt = (response: any): boolean => {
     return response.confirmed_prompts?.prompt_type === 'competitive';
   };
 
-  // Helper to check if a competitor is a direct competitor (mentioned in sentiment or competitive prompts)
+  // Helper to check if a competitor is a direct competitor (mentioned only in competitive prompts)
   const isDirectCompetitor = (competitorName: string): boolean => {
     return responses.some(response => {
-      // Check if response is from sentiment or competitive prompt
-      const isSentimentPrompt = response.confirmed_prompts?.prompt_type === 'sentiment';
-      const isCompetitivePrompt = response.confirmed_prompts?.prompt_type === 'competitive';
+      // Check if response is from competitive prompt (including talentx_competitive)
+      const isCompetitivePrompt = response.confirmed_prompts?.prompt_type === 'competitive' || 
+                                 response.confirmed_prompts?.prompt_type === 'talentx_competitive';
       
-      if (!isSentimentPrompt && !isCompetitivePrompt) {
+      if (!isCompetitivePrompt) {
         return false;
       }
 
@@ -73,6 +74,7 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
       return false;
     });
   };
+
 
   // Helper function to check if a competitor comes from search results
   const isCompetitorFromSearchResults = (competitorName: string) => {
@@ -133,6 +135,7 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
     } else {
       setSelectedCompetitorTypeFilter(value as 'direct');
     }
+    setForceRender(prev => prev + 1);
   };
 
   // Helper function to get unique prompt categories from responses
@@ -409,11 +412,18 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
     });
 
     // Sort by current count descending
-    const result = timeBasedData
+    let result = timeBasedData
       .sort((a, b) => b.current - a.current);
 
+    // Apply direct competitors filter if selected
+    if (selectedCompetitorTypeFilter === 'direct') {
+      result = result.filter(competitor => 
+        isDirectCompetitor(competitor.name)
+      );
+    }
+
     return result;
-  }, [groupResponsesByTimePeriod, companyName]);
+  }, [groupResponsesByTimePeriod, companyName, selectedCompetitorTypeFilter]);
 
   // Calculate all-time competitor data (unfiltered for filter counts)
   const allTimeCompetitorsUnfiltered = useMemo(() => {
@@ -467,6 +477,7 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
       }))
       .sort((a, b) => b.count - a.count);
   }, [responses, companyName, searchResults]);
+
 
   // Calculate all-time competitor data (filtered by source type for counts only)
   const allTimeCompetitors = useMemo(() => {
@@ -566,16 +577,24 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
       'na', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_'
     ]);
 
-    return allTimeCompetitors
+    let filteredCompetitors = allTimeCompetitors
       .filter(competitor => 
         !excludedCompetitors.has(competitor.name.toLowerCase()) &&
         !excludedWords.has(competitor.name.toLowerCase())
-      )
-      .map(competitor => ({
-        ...competitor,
-        change: changeData.get(competitor.name) || 0
-      }));
-  }, [allTimeCompetitors, timeBasedCompetitors]);
+      );
+
+    // Apply direct competitors filter if selected
+    if (selectedCompetitorTypeFilter === 'direct') {
+      filteredCompetitors = filteredCompetitors.filter(competitor => 
+        isDirectCompetitor(competitor.name)
+      );
+    }
+
+    return filteredCompetitors.map(competitor => ({
+      ...competitor,
+      change: changeData.get(competitor.name) || 0
+    }));
+  }, [allTimeCompetitors, timeBasedCompetitors, selectedCompetitorTypeFilter]);
 
   // Helper to extract snippets for a competitor from all responses
   const getSnippetsForCompetitor = (competitor: string) => {
@@ -800,9 +819,10 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
 
   return (
     <div className="flex flex-col gap-6 w-full h-full">
-      {/* Filters - Only show for Pro users */}
+      {/* Sticky Header with Filters */}
       {isPro && (
-        <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="hidden sm:block sticky top-0 z-10 bg-white pb-2">
+          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <Select
             value={selectedCompetitorTypeFilter}
             onValueChange={handleCompetitorTypeDropdownChange}
@@ -880,6 +900,7 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
               </SelectContent>
             </Select>
           )}
+          </div>
         </div>
       )}
 
@@ -894,7 +915,7 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
                   
                   return allTimeCompetitorsWithChanges.map((competitor, idx) => (
                     <div 
-                      key={idx} 
+                      key={`${competitor.name}-${selectedCompetitorTypeFilter}-${forceRender}-${idx}`} 
                       className="cursor-pointer"
                     >
                       {renderAllTimeBar(competitor, maxCount)}
@@ -909,7 +930,7 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
                   <p className="text-sm">
                     {(() => {
                       if (selectedCompetitorTypeFilter === 'direct') {
-                        return "No direct competitors found in sentiment or competitive prompts.";
+                        return "No direct competitors found in competitive prompts.";
                       } else if (selectedSourceTypeFilter === 'ai-responses') {
                         return "No competitors found in AI responses.";
                       } else if (selectedSourceTypeFilter === 'search-results') {
@@ -953,11 +974,6 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
                 return (
                   <div className="flex gap-2">
                     <Badge variant="secondary">{sourceInfo.totalCount} mentions</Badge>
-                    {sourceInfo.searchResultCount > 0 && (
-                      <Badge variant="outline" className="text-xs">
-                        {sourceInfo.searchResultCount} Search
-                      </Badge>
-                    )}
                   </div>
                 );
               })()}

@@ -7,6 +7,7 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   signOut: () => Promise<void>;
+  clearSession: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -28,16 +29,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Set up auth state listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
+        console.log('Auth state change:', event, session?.user?.id);
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
+        
+        // Handle auth errors
+        if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+          console.log('Auth event:', event);
+        }
       }
     );
 
     // Check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        console.error('Error getting session:', error);
+        // Clear invalid session
+        setSession(null);
+        setUser(null);
+      } else {
+        setSession(session);
+        setUser(session?.user ?? null);
+      }
       setLoading(false);
     });
 
@@ -49,13 +63,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (error) {
       console.error('Error signing out:', error);
     }
+    // Clear local state even if signOut fails
+    setSession(null);
+    setUser(null);
+  };
+
+  const clearSession = () => {
+    setSession(null);
+    setUser(null);
   };
 
   const value = {
     user,
     session,
     loading,
-    signOut
+    signOut,
+    clearSession
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

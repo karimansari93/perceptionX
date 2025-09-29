@@ -263,19 +263,15 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       // Ensure we're in a valid state before navigating
       if (completedOperations > 0) {
         try {
-          // Update the onboarding record to mark prompts as completed
+          // Update the onboarding record to mark prompts as completed (gracefully handle missing field)
           const { error: updateError } = await supabase
             .from('user_onboarding')
             .update({ prompts_completed: true })
             .eq('id', onboardingRecord.id);
-
+          
           if (updateError) {
-            // If the error is about the column not existing, we can ignore it
-            // as the migration will handle it later
-            if (!updateError.message?.includes('column "prompts_completed" does not exist')) {
-              console.error('Error updating onboarding record:', updateError);
-              throw new Error('Failed to update onboarding status');
-            }
+            console.warn('Could not update prompts_completed field (may not exist in database):', updateError);
+            // Continue without failing the process
           }
 
           setTimeout(() => {

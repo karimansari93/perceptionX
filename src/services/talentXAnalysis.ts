@@ -100,16 +100,16 @@ export class TalentXAnalysisService {
     const normalizedSentiment = Math.max(0, Math.min(100, (sentimentScore + 1) * 50));
     
     // For regular TalentX analysis, we'll use relevance as a proxy for visibility
-    // and confidence as a proxy for competitive positioning
-    // This maintains consistency with the dashboard formula: 40% sentiment + 35% visibility + 25% competitive
+    // and use a default recency score since we don't have direct access to recency data here
+    // This maintains consistency with the dashboard formula: 50% sentiment + 30% visibility + 20% recency
     const visibilityScore = relevanceScore; // Relevance indicates how visible/mentioned the attribute is
-    const competitiveScore = confidence * 100; // Confidence indicates competitive positioning
+    const recencyScore = 50; // Default recency score - this should be calculated from actual citation recency data
     
     // Apply the same weighted formula as dashboard
     const perceptionScore = Math.round(
-      (normalizedSentiment * 0.4) +
-      (visibilityScore * 0.35) +
-      (competitiveScore * 0.25)
+      (normalizedSentiment * 0.5) +
+      (visibilityScore * 0.3) +
+      (recencyScore * 0.2)
     );
     
     return Math.max(0, Math.min(100, perceptionScore));

@@ -83,11 +83,21 @@ export const SearchTab = ({
     }
   }, [companyName, searchTerm]);
 
+  // Load stored search data when component mounts or company name changes
+  useEffect(() => {
+    if (companyName) {
+      console.log('🔍 Loading stored search data for company:', companyName);
+      loadStoredSearchData();
+    }
+  }, [companyName]);
+
   // Load stored search insights data
   const loadStoredSearchData = async () => {
     // Allow free users to load basic stored data
     
     try {
+      console.log('🔍 Searching for search sessions for company:', companyName);
+      
       // Get the most recent search session for this company
       const { data: sessionData, error: sessionError } = await supabase
         .from('search_insights_sessions')
@@ -103,38 +113,49 @@ export const SearchTab = ({
         `)
         .eq('company_name', companyName || '')
         .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
 
-      if (sessionError && sessionError.code !== 'PGRST116') { // PGRST116 = no rows found
-        console.error('Error fetching search session:', sessionError);
+      if (sessionError) {
+        console.error('❌ Error fetching search session:', sessionError);
         return;
       }
 
-      if (!sessionData) {
+      console.log('📊 Found search sessions:', sessionData?.length || 0, sessionData);
+
+      // Get the first (and only) result if any exist
+      const session = sessionData && sessionData.length > 0 ? sessionData[0] : null;
+
+      if (!session) {
+        console.log('⚠️ No search session found for company:', companyName);
         return;
       }
+
+      console.log('✅ Found search session:', session.id, 'for company:', session.company_name);
 
       // Get search results for this session
       const { data: resultsData, error: resultsError } = await supabase
         .from('search_insights_results')
         .select('*')
-        .eq('session_id', sessionData.id)
+        .eq('session_id', session.id)
         .order('position', { ascending: true });
 
       if (resultsError) {
-        console.error('Error fetching search results:', resultsError);
+        console.error('❌ Error fetching search results:', resultsError);
+      } else {
+        console.log('📊 Found search results:', resultsData?.length || 0);
       }
 
       // Get search terms for this session
       const { data: termsData, error: termsError } = await supabase
         .from('search_insights_terms')
         .select('*')
-        .eq('session_id', sessionData.id)
+        .eq('session_id', session.id)
         .order('monthly_volume', { ascending: false });
 
       if (termsError) {
-        console.error('Error fetching search terms:', termsError);
+        console.error('❌ Error fetching search terms:', termsError);
+      } else {
+        console.log('📊 Found search terms:', termsData?.length || 0);
       }
 
       // Process and deduplicate the data by URL
@@ -196,7 +217,7 @@ export const SearchTab = ({
 
       // Set the stored data
       setStoredSearchData({
-        session: sessionData,
+        session: session,
         results: processedResults,
         terms: processedTermsData
       });
@@ -204,11 +225,16 @@ export const SearchTab = ({
       // Also set the current search results and terms data for display
       setSearchResults(processedResults);
       setSearchTermsData(processedTermsData);
-      setSearchTerm(sessionData.initial_search_term);
+      setSearchTerm(session.initial_search_term);
 
+      console.log('✅ Successfully loaded stored search data:', {
+        resultsCount: processedResults.length,
+        termsCount: processedTermsData.length,
+        searchTerm: session.initial_search_term
+      });
 
     } catch (error) {
-      console.error('Error loading stored search data:', error);
+      console.error('❌ Error loading stored search data:', error);
     }
   };
 

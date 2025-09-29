@@ -246,7 +246,7 @@ export const Onboarding = () => {
     },
     {
       title: "Get your free audit",
-      description: "We'll collect data about how your company is perceived by candidates across multiple digital channels:",
+      description: "We'll collect data about how your company is perceived by candidates across multiple digital channels. It will include insights such as:",
       fields: [],
       isPromptsStep: true
     }

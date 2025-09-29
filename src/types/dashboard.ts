@@ -92,6 +92,7 @@ export interface DashboardMetrics {
   uniqueDomains: number;
   totalResponses: number;
   averageVisibility: number;
+  averageRelevance: number;
   positiveCount: number;
   neutralCount: number;
   negativeCount: number;

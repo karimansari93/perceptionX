@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ResponseItem } from "./ResponseItem";
 import { CitationCount } from "@/types/dashboard";
-import { ExternalLink, Check, X } from "lucide-react";
+import { ExternalLink, Check, X, Download } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS } from "@/utils/sourceConfig";
@@ -28,7 +28,8 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
   const [customMediaType, setCustomMediaType] = useState<string | null>(null);
 
   const getFavicon = (domain: string): string => {
-    return `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=32`;
+    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
+    return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`;
   };
 
   const parseAndEnhanceCitations = (citations: any) => {
@@ -82,6 +83,46 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
     }
     // Otherwise use the automatic categorization
     return categorizeSourceByMediaType(source.domain, responses, companyName);
+  };
+
+  // CSV download functionality
+  const generateCSV = () => {
+    if (!uniqueCitations || uniqueCitations.length === 0) {
+      return '';
+    }
+
+    const headers = ['Title', 'Description', 'URLs', 'URL Count', 'Mention Count', 'Domain', 'Media Type'];
+    const csvContent = [
+      headers.join(','),
+      ...uniqueCitations.map(citation => [
+        `"${(citation.title || '').replace(/"/g, '""')}"`,
+        `"${(citation.snippet || '').replace(/"/g, '""')}"`,
+        `"${citation.urls ? citation.urls.join('; ') : citation.url}"`,
+        citation.urlCount || 1,
+        citation.mentionCount || 1,
+        `"${citation.domain || source.domain}"`,
+        `"${citation.mediaType || getEffectiveMediaType()}"`
+      ].join(','))
+    ].join('\n');
+
+    return csvContent;
+  };
+
+  const downloadCSV = () => {
+    const csvContent = generateCSV();
+    if (!csvContent) {
+      return;
+    }
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${source.domain}-sources-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // Fetch all unique URLs for this domain from the database and search results
@@ -230,20 +271,22 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
         .select('id')
         .eq('company_name', companyName || '')
         .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
 
-      if (sessionError && sessionError.code !== 'PGRST116') {
+      if (sessionError) {
         console.error('Error fetching search session:', sessionError);
       }
 
+      // Get the first (and only) result if any exist
+      const session = sessionData && sessionData.length > 0 ? sessionData[0] : null;
+
       let searchData: any[] = [];
-      if (sessionData) {
+      if (session) {
         // Get all search results for this session and filter by domain
         const { data: allSearchResults, error: searchError } = await supabase
           .from('search_insights_results')
           .select('*')
-          .eq('session_id', sessionData.id);
+          .eq('session_id', session.id);
 
         if (searchError) {
           console.error('Error fetching search results:', searchError);
@@ -277,7 +320,98 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
         }
       });
 
-      return Array.from(citationsMap.values());
+      // Group citations by title first, then by URL
+      const titleGroups = new Map<string, any[]>();
+      
+      // Process all citations and group by title
+      Array.from(citationsMap.values()).forEach(citation => {
+        const title = citation.title?.trim() || 'Untitled';
+        
+        if (!titleGroups.has(title)) {
+          titleGroups.set(title, []);
+        }
+        
+        titleGroups.get(title)!.push(citation);
+      });
+      
+      // Process each title group
+      const groupedCitations = Array.from(titleGroups.entries()).map(([title, citations]) => {
+        // For each title group, combine all URLs and count total mentions
+        const allUrls = citations.map(c => c.url);
+        const uniqueUrls = [...new Set(allUrls)]; // Remove duplicate URLs within the same title group
+        
+        // Calculate total mention count for this title group
+        let totalMentionCount = 0;
+        
+        citations.forEach(citation => {
+          let mentionCount = 1; // Start with 1 for the current citation
+          
+          // Count additional mentions from all sources
+          // Check search results
+          searchResults.forEach(result => {
+            if (result.link === citation.url && result.mentionCount) {
+              mentionCount += result.mentionCount - 1; // Subtract 1 since we already counted it
+            }
+          });
+          
+          // Count mentions from prompt responses
+          promptData?.forEach(response => {
+            try {
+              let rawCitations = response.citations;
+              if (typeof rawCitations === 'string') {
+                try {
+                  rawCitations = JSON.parse(rawCitations);
+                } catch {
+                  return;
+                }
+              }
+              
+              if (Array.isArray(rawCitations)) {
+                rawCitations.forEach(citationItem => {
+                  let citationUrl = '';
+                  
+                  if (citationItem.url) {
+                    citationUrl = citationItem.url;
+                  } else if (citationItem.source && citationItem.url) {
+                    citationUrl = citationItem.url;
+                  }
+                  
+                  if (citationUrl === citation.url) {
+                    mentionCount += 1;
+                  }
+                });
+              }
+            } catch (error) {
+              console.error('Error counting citations:', error);
+            }
+          });
+          
+          // Count mentions from search results in database
+          searchData.forEach(result => {
+            if (result.link === citation.url) {
+              mentionCount += 1;
+            }
+          });
+          
+          totalMentionCount += mentionCount;
+        });
+        
+        // Use the first citation as the base, but include all URLs
+        const baseCitation = citations[0];
+        
+        return {
+          ...baseCitation,
+          title: title,
+          urls: uniqueUrls, // Array of all unique URLs for this title
+          urlCount: uniqueUrls.length, // Number of unique URLs
+          mentionCount: totalMentionCount, // Total mentions across all URLs
+          grouped: uniqueUrls.length > 1, // Flag to indicate if this is a grouped result
+          url: baseCitation.url // Keep the original URL for backward compatibility
+        };
+      });
+      
+      // Sort by mention count (most to least)
+      return groupedCitations.sort((a, b) => b.mentionCount - a.mentionCount);
     } catch (error) {
       console.error('Error fetching URLs for domain:', error);
       return [];
@@ -301,11 +435,23 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl w-[95vw] sm:w-auto max-h-[90vh]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <img src={getFavicon(source.domain)} alt="" className="w-5 h-5 object-contain" />
-            <span>{source.domain}</span>
-            <Badge variant="secondary">{source.count} citations</Badge>
-          </DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="flex items-center gap-2">
+              <img src={getFavicon(source.domain)} alt="" className="w-5 h-5 object-contain" />
+              <span>{source.domain}</span>
+              <Badge variant="secondary">{source.count} citations</Badge>
+            </DialogTitle>
+            <Button
+              onClick={downloadCSV}
+              disabled={!uniqueCitations || uniqueCitations.length === 0}
+              variant="outline"
+              size="sm"
+              className="hidden sm:flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              Download CSV
+            </Button>
+          </div>
           <DialogDescription>
             View detailed information about citations from {source.domain} including all cited URLs and their sources.
           </DialogDescription>
@@ -409,14 +555,21 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
                     {uniqueCitations.map((citation, index) => (
                       <div
                         key={index}
-                        className="p-3 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors group"
+                        className="relative p-3 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors group"
                       >
-                        <a
-                          href={citation.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block"
-                        >
+                        {/* Mention Count and URL Count Badges */}
+                        <div className="absolute top-2 right-2 flex gap-2">
+                          {citation.grouped && (
+                            <Badge variant="outline" className="text-xs">
+                              {citation.urlCount} URL{citation.urlCount > 1 ? 's' : ''}
+                            </Badge>
+                          )}
+                          <Badge variant="secondary" className="text-xs">
+                            {citation.mentionCount || 1}
+                          </Badge>
+                        </div>
+                        
+                        <div className="pr-24">
                           {/* Title */}
                           {citation.title && (
                             <h4 className="font-medium text-gray-900 group-hover:text-blue-600 transition-colors mb-1 line-clamp-2">
@@ -431,17 +584,47 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
                             </p>
                           )}
                           
-                          {/* Truncated URL */}
-                          <div className="flex items-center gap-2">
-                            <ExternalLink className="w-3 h-3 text-gray-400 group-hover:text-blue-500 flex-shrink-0" />
-                            <span className="text-xs text-blue-600 group-hover:text-blue-700 truncate">
-                              {citation.url.length > 80 
-                                ? citation.url.substring(0, 80) + '...' 
-                                : citation.url
-                              }
-                            </span>
+                          {/* URLs */}
+                          <div className="space-y-1">
+                            {citation.urls && citation.urls.length > 1 ? (
+                              // Multiple URLs - show them in a list
+                              <div className="space-y-1">
+                                {citation.urls.map((url, urlIndex) => (
+                                  <div key={urlIndex} className="flex items-center gap-2">
+                                    <ExternalLink className="w-3 h-3 text-gray-400 group-hover:text-blue-500 flex-shrink-0" />
+                                    <a
+                                      href={url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-xs text-blue-600 group-hover:text-blue-700 truncate hover:underline"
+                                    >
+                                      {url.length > 80 
+                                        ? url.substring(0, 80) + '...' 
+                                        : url
+                                      }
+                                    </a>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              // Single URL - show as before
+                              <div className="flex items-center gap-2">
+                                <ExternalLink className="w-3 h-3 text-gray-400 group-hover:text-blue-500 flex-shrink-0" />
+                                <a
+                                  href={citation.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 group-hover:text-blue-700 truncate hover:underline"
+                                >
+                                  {citation.url.length > 80 
+                                    ? citation.url.substring(0, 80) + '...' 
+                                    : citation.url
+                                  }
+                                </a>
+                              </div>
+                            )}
                           </div>
-                        </a>
+                        </div>
                       </div>
                     ))}
                   </div>

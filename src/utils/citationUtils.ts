@@ -38,7 +38,7 @@ export const getFavicon = (domain: string): string => {
   const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
   
   // Use a more reliable favicon service with better error handling
-  return `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`;
+  return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`;
 };
 
 export const getEmailDomainFavicon = (email: string): string => {

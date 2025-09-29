@@ -166,7 +166,8 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
   };
 
   const getFavicon = (domain: string): string => {
-    return `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=32`;
+    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
+    return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`;
   };
 
   // Helper to format domain to a human-friendly name
@@ -420,9 +421,9 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     const mediaTypeInfo = getMediaTypeInfo(mediaType);
     
     return (
-      <div className="flex items-center py-3 hover:bg-gray-50/50 transition-colors cursor-pointer rounded-lg px-3">
+      <div className="flex items-center py-3 hover:bg-gray-50/50 transition-colors cursor-pointer rounded-lg px-2 sm:px-3">
         {/* Source name, favicon, and media type badge */}
-        <div className="flex items-center space-x-3 min-w-0 w-1/3 sm:w-1/3 max-w-[140px] sm:max-w-[220px]">
+        <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1 sm:w-1/3 sm:max-w-[220px]">
           <Favicon domain={data.name} />
           <div className="min-w-0 flex items-center space-x-2">
             <span className="text-sm font-medium text-gray-900 truncate block" title={displayName}>
@@ -495,8 +496,8 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
           </div>
         </div>
         
-        {/* Bar chart - REDUCED WIDTH FOR MOBILE */}
-        <div className="flex-1 mx-2 sm:mx-4 bg-gray-200 rounded-full h-4 relative min-w-0 max-w-[120px] sm:max-w-none">
+        {/* Bar chart - HIDDEN ON MOBILE */}
+        <div className="hidden sm:flex flex-1 mx-2 sm:mx-4 bg-gray-200 rounded-full h-4 relative min-w-0 max-w-[120px] sm:max-w-none">
           <div
             className="h-4 rounded-full absolute left-0 top-0"
             style={{ 
@@ -507,15 +508,17 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
         </div>
         
         {/* Count and percentage */}
-        <div className="flex items-center min-w-[40px] sm:min-w-[60px] justify-end">
-          <span className="text-sm font-semibold text-gray-900">
-            {data.count}
-          </span>
-        </div>
-        <div className="flex items-center min-w-[40px] sm:min-w-[60px] justify-end">
-          <span className="text-xs text-gray-500">
-            {totalPercentage.toFixed(1)}%
-          </span>
+        <div className="flex items-center gap-2 sm:gap-4">
+          <div className="flex items-center min-w-[35px] sm:min-w-[60px] justify-end">
+            <span className="text-sm font-semibold text-gray-900">
+              {data.count}
+            </span>
+          </div>
+          <div className="flex items-center min-w-[45px] sm:min-w-[60px] justify-end">
+            <span className="text-xs text-gray-500">
+              {totalPercentage.toFixed(1)}%
+            </span>
+          </div>
         </div>
       </div>
     );
@@ -592,8 +595,8 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     <div className="flex flex-col gap-6 w-full h-full">
       {/* Sticky Header with Filters */}
       {isPro && (
-        <div className="sticky top-0 z-10 bg-white pb-4">
-          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-b border-gray-200 pb-4">
+        <div className="hidden sm:block sticky top-0 z-10 bg-white pb-2">
+          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {/* Source Type Filter Dropdown */}
             <Select
               value={selectedSourceTypeFilter}
@@ -684,7 +687,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       {/* Main Content with Tabs */}
       <div className="flex-1 min-h-0">
         <Card className="shadow-sm border border-gray-200 h-full flex flex-col">
-          <CardContent className="flex-1 min-h-0 overflow-hidden p-6">
+          <CardContent className="flex-1 min-h-0 overflow-hidden p-3 sm:p-6">
             <div className="space-y-2 h-full overflow-y-auto relative">
               {allTimeCitationsWithChanges.length > 0 ? (
                 (() => {

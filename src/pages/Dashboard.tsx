@@ -18,8 +18,9 @@ import { UpgradeModal } from "@/components/upgrade/UpgradeModal";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertTriangle, ChevronRight, LayoutDashboard, Lock, Globe, Users, TrendingUp, BarChart3, Activity } from "lucide-react";
+import { AlertTriangle, ChevronRight, LayoutDashboard, Lock, Globe, Users, TrendingUp, BarChart3, Activity, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { NetworkStatus } from "@/components/NetworkStatus";
 import { 
   OverviewSkeleton, 
   PromptsSkeleton, 
@@ -88,7 +89,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     searchResults,
     searchResultsLoading,
     searchTermsData,
-    fetchSearchResults
+    fetchSearchResults,
+    isOnline,
+    connectionError,
+    recencyDataError
   } = useDashboardData();
   const { isPro } = useSubscription();
 
@@ -184,6 +188,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         setActiveSection('responses');
       } else if (path === '/monitor/search') {
         setActiveSection('search');
+      } else if (path === '/monitor/career-site') {
+        setActiveSection('career-site');
       }
     } else if (path.startsWith('/analyze')) {
       setActiveGroup('analyze');
@@ -334,6 +340,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             topCompetitors={topCompetitors}
             responses={responses}
             companyName={companyName}
+            searchResults={searchResults}
           />
         );
         return competitorsContent;
@@ -454,6 +461,36 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         
         <div className="flex-1 overflow-auto w-full">
           <div className="p-6 w-full">
+            {/* Network Status Banner */}
+            <NetworkStatus 
+              isOnline={isOnline}
+              connectionError={connectionError}
+              onRetry={refreshData}
+              className="mb-4"
+            />
+            
+            {/* Recency Data Error Banner */}
+            {recencyDataError && (
+              <div className="mb-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                <div className="flex items-center">
+                  <AlertTriangle className="h-4 w-4 text-orange-600 mr-2" />
+                  <div className="flex-1">
+                    <p className="text-sm text-orange-800 font-medium">Relevance Data Issue</p>
+                    <p className="text-sm text-orange-700">{recencyDataError}</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={refreshData}
+                    className="ml-2 h-8 text-orange-600 border-orange-300 hover:bg-orange-100"
+                  >
+                    <RefreshCw className="h-3 w-3 mr-1" />
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            )}
+            
             <div className="mb-6">
               <div className="flex items-center justify-between">
                 <div>

@@ -143,6 +143,7 @@ export const MetricCard = ({
             <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
               <span>Sentiment</span>
               <span>Visibility</span>
+              <span>Relevance</span>
               <span>Competitive</span>
             </div>
             <div className="flex gap-1">
@@ -156,6 +157,12 @@ export const MetricCard = ({
                 <div 
                   className="h-full bg-blue-500 transition-all duration-300"
                   style={{ width: `${Math.min(100, Math.max(0, (typeof value === 'string' ? parseInt(value.split('/')[0]) : 0) * 0.35))}%` }}
+                />
+              </div>
+              <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-orange-500 transition-all duration-300"
+                  style={{ width: `${Math.min(100, Math.max(0, (typeof value === 'string' ? parseInt(value.split('/')[0]) : 0) * 0.0))}%` }}
                 />
               </div>
               <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">

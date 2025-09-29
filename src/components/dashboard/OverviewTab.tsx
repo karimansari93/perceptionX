@@ -11,6 +11,9 @@ import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/comp
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import LLMLogo from "@/components/LLMLogo";
 import { KeyTakeaways } from "./KeyTakeaways";
+import { SourcesSummaryCard } from "./SourcesSummaryCard";
+import { CompetitorsSummaryCard } from "./CompetitorsSummaryCard";
+import { AttributesSummaryCard } from "./AttributesSummaryCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { Favicon } from "@/components/ui/favicon";
@@ -150,7 +153,7 @@ export const OverviewTab = ({
       value: Math.round((metrics.averageSentiment + 1) * 50),
       trend: metrics.sentimentTrendComparison,
       color: 'green',
-      description: 'How positively your brand is perceived.'
+      description: 'How positively your brand is perceived based on AI thematic analysis.'
     },
     {
       title: 'Visibility',
@@ -158,18 +161,12 @@ export const OverviewTab = ({
       trend: metrics.visibilityTrendComparison,
       color: 'blue',
       description: 'How prominently your brand is mentioned.'
-    },
-    {
-      title: 'Competitive',
-      value: metrics.perceptionScore > 0 ? Math.round(metrics.perceptionScore * 0.25) : 0, // Approximation
-      trend: metrics.citationsTrendComparison, // Use citations trend as a placeholder for now
-      color: 'purple',
-      description: 'How well you are positioned vs competitors.'
     }
   ];
 
   const getFavicon = (domain: string): string => {
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
+    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
+    return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=16`;
   };
 
   // Helper to group responses by time period
@@ -877,20 +874,13 @@ export const OverviewTab = ({
         // Average visibility
         const visScores = group.map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined).filter((v): v is number => typeof v === 'number');
         const avgVisibility = visScores.length > 0 ? visScores.reduce((sum, v) => sum + v, 0) / visScores.length : 0;
-        // Competitive score
-        const competitiveResponses = group.filter(r => r.detected_competitors);
-        const totalCompetitorMentions = competitiveResponses.reduce((sum, r) => {
-          const competitors = r.detected_competitors?.split(',').filter(Boolean) || [];
-          return sum + competitors.length;
-        }, 0);
-        const mentionRankings = group.map(r => r.mention_ranking).filter((r): r is number => typeof r === 'number');
-        const avgMentionRanking = mentionRankings.length > 0 ? mentionRankings.reduce((sum, rank) => sum + rank, 0) / mentionRankings.length : 0;
-        const competitiveScore = Math.min(100, Math.max(0, (totalCompetitorMentions * 10) + (avgMentionRanking > 0 ? Math.max(0, 100 - (avgMentionRanking * 10)) : 50)));
-        // Weighted formula
+        // Average relevance (placeholder as relevance data might not be available per response)
+        const avgRelevance = 0;
+        // Weighted formula: 50% sentiment + 30% visibility + 20% relevance (excluding competitive)
         const perceptionScore = Math.round(
-          (normalizedSentiment * 0.4) +
-          (avgVisibility * 0.35) +
-          (competitiveScore * 0.25)
+          (normalizedSentiment * 0.5) +
+          (avgVisibility * 0.3) +
+          (avgRelevance * 0.2)
         );
         return {
           date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
@@ -920,7 +910,7 @@ export const OverviewTab = ({
               <div className="flex items-center gap-2 mb-2">
                 <CardTitle className="text-lg font-bold text-gray-700 tracking-wide">Score</CardTitle>
                 <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-pink-100 text-pink-700 border-pink-200">
-                  Beta
+                  BETA
                 </Badge>
                 <TooltipProvider>
                   <Tooltip>
@@ -989,7 +979,7 @@ export const OverviewTab = ({
             <div className="flex items-center gap-2 mb-2">
               <CardTitle className="text-lg font-bold text-gray-700">Score breakdown</CardTitle>
               <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-pink-100 text-pink-700 border-pink-200">
-                Beta
+                BETA
               </Badge>
               <TooltipProvider>
                 <Tooltip>
@@ -1021,17 +1011,17 @@ export const OverviewTab = ({
               <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{Math.round(metrics.averageVisibility)}%</span>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
-              <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Competitive</span>
+              <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Relevance</span>
               <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full bg-purple-500 transition-all duration-300" style={{ width: `${metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%` }} />
+                <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageRelevance)}%` }} />
               </div>
-              <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%</span>
+              <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{Math.round(metrics.averageRelevance)}%</span>
             </div>
           </CardContent>
         </Card>
       </div>
-      {/* Key Takeaways */}
-      <div>
+      {/* Key Takeaways - Temporarily Hidden */}
+      {/* <div>
         <KeyTakeaways 
           metrics={metrics}
           topCompetitors={normalizedTopCompetitors}
@@ -1044,6 +1034,35 @@ export const OverviewTab = ({
           attributeInsights={attributeInsights}
           searchResults={searchResults}
         />
+      </div> */}
+
+      {/* Summary Cards Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+        <div>
+          <SourcesSummaryCard 
+            topCitations={topCitations}
+            responses={responses}
+            companyName={companyName}
+            searchResults={searchResults}
+          />
+        </div>
+
+        <div>
+          <CompetitorsSummaryCard 
+            topCompetitors={normalizedTopCompetitors}
+            responses={responses}
+            companyName={companyName}
+            searchResults={searchResults}
+          />
+        </div>
+
+        <div className="lg:col-span-2 xl:col-span-1">
+          <AttributesSummaryCard 
+            talentXProData={talentXProData}
+            aiThemes={aiThemes}
+            companyName={companyName}
+          />
+        </div>
       </div>
 
 
@@ -1186,10 +1205,10 @@ export const OverviewTab = ({
                 Visibility
               </TabsTrigger>
               <TabsTrigger 
-                value="competitive"
+                value="relevance"
                 className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
               >
-                Competitive
+                Relevance
               </TabsTrigger>
             </TabsList>
             
@@ -1203,7 +1222,7 @@ export const OverviewTab = ({
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div className="text-center">
                       <div className="text-2xl font-bold text-green-600">{Math.round((metrics.averageSentiment + 1) * 50)}%</div>
                       <div className="text-sm text-gray-600">Sentiment</div>
@@ -1213,8 +1232,8 @@ export const OverviewTab = ({
                       <div className="text-sm text-gray-600">Visibility</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-purple-600">{metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%</div>
-                      <div className="text-sm text-gray-600">Competitive</div>
+                      <div className="text-2xl font-bold text-orange-600">{Math.round(metrics.averageRelevance)}%</div>
+                      <div className="text-sm text-gray-600">Relevance</div>
                     </div>
                   </div>
                   <div className="mt-4 pt-4 border-t border-gray-200">
@@ -1248,10 +1267,11 @@ export const OverviewTab = ({
                   <div>
                     <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
                     <ul className="text-sm text-gray-700 space-y-2 ml-4">
-                      <li>• How positively or negatively AI models perceive your brand</li>
-                      <li>• The emotional tone and sentiment in responses about your company</li>
+                      <li>• Advanced AI-powered thematic analysis of brand perception</li>
+                      <li>• Confidence-weighted sentiment scores from extracted themes</li>
                       <li>• Whether mentions are favorable, neutral, or unfavorable</li>
-                      <li>• The overall brand sentiment across different AI platforms</li>
+                      <li>• More accurate sentiment analysis beyond simple keyword matching</li>
+                      <li>• Context-aware understanding of how your brand is discussed</li>
                     </ul>
                   </div>
                 </CardContent>
@@ -1290,37 +1310,38 @@ export const OverviewTab = ({
               </Card>
             </TabsContent>
 
-            {/* Competitive Tab */}
-            <TabsContent value="competitive" className="space-y-4">
-              <Card className="border-l-4 border-l-purple-500">
+            {/* Relevance Tab */}
+            <TabsContent value="relevance" className="space-y-4">
+              <Card className="border-l-4 border-l-orange-500">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                    <div className="w-4 h-4 bg-purple-500 rounded-full"></div>
-                    Competitive Score
+                    <div className="w-4 h-4 bg-orange-500 rounded-full"></div>
+                    Relevance Score
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-3">
                     <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-purple-500 transition-all duration-300" style={{ width: `${metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%` }} />
+                      <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageRelevance)}%` }} />
                     </div>
                     <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
-                      {metrics.perceptionScore > 0 ? Math.round((metrics.perceptionScore + 0.0001) / 3) : 0}%
+                      {Math.round(metrics.averageRelevance)}%
                     </span>
                   </div>
                   <div>
                     <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
                     <ul className="text-sm text-gray-700 space-y-2 ml-4">
-                      <li>• How well you compete against other companies in your space</li>
-                      <li>• Your mention ranking compared to competitors</li>
-                      <li>• Whether you're mentioned alongside or instead of competitors</li>
-                      <li>• Your competitive positioning in the market</li>
-                      <li>• How often you're the preferred choice over alternatives</li>
+                      <li>• How recent and timely the content about your brand is</li>
+                      <li>• The freshness of information sources and citations</li>
+                      <li>• Whether AI responses reference up-to-date information</li>
+                      <li>• The recency of news, reviews, and mentions about your company</li>
+                      <li>• How current your brand's online presence appears to be</li>
                     </ul>
                   </div>
                 </CardContent>
               </Card>
             </TabsContent>
+
           </Tabs>
         </DialogContent>
       </Dialog>

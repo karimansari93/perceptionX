@@ -27,6 +27,22 @@ serve(async (req) => {
 
     console.log('Making request to Gemini API...')
 
+    // First, let's try to list available models to see what's actually available
+    console.log('Checking available models...');
+    const listModelsResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+      method: 'GET',
+      headers: {
+        'x-goog-api-key': geminiApiKey
+      }
+    });
+    
+    if (listModelsResponse.ok) {
+      const modelsData = await listModelsResponse.json();
+      console.log('Available models:', JSON.stringify(modelsData, null, 2));
+    } else {
+      console.log('Failed to list models:', listModelsResponse.status);
+    }
+
     const requestBody = {
       contents: [{
         parts: [{
@@ -41,7 +57,8 @@ serve(async (req) => {
 
     console.log('Gemini request body:', JSON.stringify(requestBody, null, 2));
 
-    const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent', {
+    // Try using gemini-2.5-flash-lite which should be more efficient
+    const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -53,7 +70,7 @@ serve(async (req) => {
     console.log('Gemini API response status:', geminiResponse.status)
     
     const data = await geminiResponse.json()
-    console.log('Gemini API response data:', data)
+    console.log('Gemini API response data:', JSON.stringify(data, null, 2))
     
     if (!geminiResponse.ok) {
       // Handle specific Gemini API errors
@@ -72,7 +89,22 @@ serve(async (req) => {
       throw new Error(data.error?.message || `Gemini API error: ${geminiResponse.status}`)
     }
 
-    const response = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated'
+    // Check if candidates exist and have content
+    if (!data.candidates || data.candidates.length === 0) {
+      console.log('No candidates in response:', data);
+      throw new Error('No candidates returned from Gemini API');
+    }
+
+    const candidate = data.candidates[0];
+    console.log('First candidate:', JSON.stringify(candidate, null, 2));
+
+    // Check if candidate has content
+    if (!candidate.content || !candidate.content.parts || candidate.content.parts.length === 0) {
+      console.log('No content parts in candidate:', candidate);
+      throw new Error('No content parts in Gemini response');
+    }
+
+    const response = candidate.content.parts[0].text || 'No response generated'
     console.log('Generated response:', response);
 
     return new Response(

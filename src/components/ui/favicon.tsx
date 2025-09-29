@@ -15,6 +15,7 @@ export const Favicon: React.FC<FaviconProps> = ({
 }) => {
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [currentSourceIndex, setCurrentSourceIndex] = useState(0);
 
   if (!domain) {
     return (
@@ -24,9 +25,18 @@ export const Favicon: React.FC<FaviconProps> = ({
     );
   }
 
-  const getFaviconUrl = (domain: string): string => {
+  const getFaviconUrls = (domain: string): string[] => {
     const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-    return `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`;
+    return [
+      // Primary: Google's favicon service
+      `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`,
+      // Fallback 1: DuckDuckGo favicon service
+      `https://icons.duckduckgo.com/ip3/${cleanDomain}.ico`,
+      // Fallback 2: Direct favicon.ico
+      `https://${cleanDomain}/favicon.ico`,
+      // Fallback 3: Alternative Google service
+      `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`,
+    ];
   };
 
   const getSizeClasses = (size: string): string => {
@@ -54,10 +64,21 @@ export const Favicon: React.FC<FaviconProps> = ({
   };
 
   const handleError = (event: React.SyntheticEvent<HTMLImageElement, Event>) => {
-    setHasError(true);
-    setIsLoading(false);
-    // Prevent the error from appearing in console
-    event.currentTarget.style.display = 'none';
+    const urls = getFaviconUrls(domain);
+    const nextIndex = currentSourceIndex + 1;
+    
+    if (nextIndex < urls.length) {
+      // Try next fallback source
+      setCurrentSourceIndex(nextIndex);
+      setIsLoading(true);
+      // Prevent the error from appearing in console
+      event.currentTarget.style.display = 'none';
+    } else {
+      // All sources failed, show fallback
+      setHasError(true);
+      setIsLoading(false);
+      event.currentTarget.style.display = 'none';
+    }
   };
 
   const handleLoad = () => {
@@ -75,9 +96,12 @@ export const Favicon: React.FC<FaviconProps> = ({
     );
   }
 
+  const urls = getFaviconUrls(domain);
+  const currentUrl = urls[currentSourceIndex];
+
   return (
     <img
-      src={getFaviconUrl(domain)}
+      src={currentUrl}
       alt={alt}
       className={`${getImageSizeClasses(size)} flex-shrink-0 object-contain ${className}`}
       onError={handleError}

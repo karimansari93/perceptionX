@@ -68,7 +68,7 @@ export const LastUpdated = ({ onRefresh, lastUpdated }: LastUpdatedProps) => {
             onClick={() => setShowUpgradeModal(true)}
           >
             <Crown className="w-3 h-3 mr-1" />
-            <span className="hidden sm:inline">Upgrade for weekly insights</span>
+            <span className="hidden sm:inline">Upgrade for extended access</span>
             <span className="sm:hidden">Upgrade</span>
           </Badge>
         )}
