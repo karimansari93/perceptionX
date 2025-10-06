@@ -10,9 +10,10 @@ import { PromptTable } from "./PromptTable";
 interface PromptsTabProps {
   promptsData: PromptData[];
   responses: PromptResponse[];
+  companyName?: string;
 }
 
-export const PromptsTab = ({ promptsData, responses }: PromptsTabProps) => {
+export const PromptsTab = ({ promptsData, responses, companyName = 'your company' }: PromptsTabProps) => {
   const [selectedPrompt, setSelectedPrompt] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -35,6 +36,14 @@ export const PromptsTab = ({ promptsData, responses }: PromptsTabProps) => {
 
   return (
     <div className="space-y-6">
+      {/* Main Section Header */}
+      <div className="space-y-2">
+        <h2 className="text-2xl font-bold text-gray-900">Prompts</h2>
+        <p className="text-gray-600">
+          Monitor and analyze {companyName}'s prompt performance across different AI models and track response quality.
+        </p>
+      </div>
+
       {/* Single Combined Table */}
       <PromptTable
         prompts={promptsData}

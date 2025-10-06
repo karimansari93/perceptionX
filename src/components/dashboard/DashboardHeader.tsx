@@ -4,6 +4,7 @@ import { ChevronRight, Wrench } from "lucide-react";
 import { LastUpdated } from "./LastUpdated";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { CompanySwitcher } from "./CompanySwitcher";
 
 interface DashboardHeaderProps {
   companyName: string;
@@ -13,16 +14,26 @@ interface DashboardHeaderProps {
   lastUpdated?: Date;
   onFixData?: () => Promise<void>;
   hasDataIssues?: boolean;
+  showAddCompanyModal?: boolean;
+  setShowAddCompanyModal?: (show: boolean) => void;
+  showUpgradeModal?: boolean;
+  setShowUpgradeModal?: (show: boolean) => void;
+  alwaysMounted?: boolean;
 }
 
-export const DashboardHeader = ({
+export const DashboardHeader = React.memo(({
   companyName,
   responsesCount,
   onRefresh,
   breadcrumbs,
   lastUpdated,
   onFixData,
-  hasDataIssues
+  hasDataIssues,
+  showAddCompanyModal,
+  setShowAddCompanyModal,
+  showUpgradeModal,
+  setShowUpgradeModal,
+  alwaysMounted
 }: DashboardHeaderProps) => {
   const isMobile = useIsMobile();
 
@@ -37,7 +48,7 @@ export const DashboardHeader = ({
               {breadcrumbs[0].icon && (
                 <span className="text-gray-500">{breadcrumbs[0].icon}</span>
               )}
-              <span className={`text-base font-light ${breadcrumbs[0].active ? "text-gray-700" : "text-gray-500"}`}>{breadcrumbs[0].label}</span>
+              <span className={`text-base font-light hidden sm:inline ${breadcrumbs[0].active ? "text-gray-700" : "text-gray-500"}`}>{breadcrumbs[0].label}</span>
             </span>
             {/* Render the rest of the breadcrumbs on desktop only */}
             {!isMobile && breadcrumbs.slice(1).map((crumb, idx) => (
@@ -48,9 +59,18 @@ export const DashboardHeader = ({
             ))}
           </div>
         )}
-        {/* Right side with LastUpdated component and debug button */}
+        {/* Right side with CompanySwitcher, LastUpdated component and debug button */}
         <div className="flex-1" />
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <CompanySwitcher 
+            variant="outline" 
+            showAddCompanyModal={showAddCompanyModal} 
+            setShowAddCompanyModal={setShowAddCompanyModal} 
+            showUpgradeModal={showUpgradeModal} 
+            setShowUpgradeModal={setShowUpgradeModal} 
+            alwaysMounted={alwaysMounted}
+            className={isMobile ? "min-w-[120px] text-xs" : ""}
+          />
           {hasDataIssues && onFixData && (
             <Button
               variant="outline"
@@ -59,7 +79,8 @@ export const DashboardHeader = ({
               className="text-orange-600 border-orange-200 hover:bg-orange-50"
             >
               <Wrench className="w-4 h-4 mr-2" />
-              Fix Data Issues
+              <span className="hidden sm:inline">Fix Data Issues</span>
+              <span className="sm:hidden">Fix</span>
             </Button>
           )}
           <LastUpdated onRefresh={onRefresh} lastUpdated={lastUpdated} />
@@ -67,4 +88,6 @@ export const DashboardHeader = ({
       </div>
     </header>
   );
-};
+});
+
+DashboardHeader.displayName = 'DashboardHeader';

@@ -8,6 +8,7 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { UpgradeModal } from "@/components/upgrade/UpgradeModal";
 import { supabase } from "@/integrations/supabase/client";
 import { Favicon } from "@/components/ui/favicon";
+import { useCompany } from "@/contexts/CompanyContext";
 
 // Media type colors and labels
 const MEDIA_TYPE_COLORS = {
@@ -68,6 +69,7 @@ export const SearchTab = ({
   searchTermsData: propSearchTermsData
 }: SearchTabProps) => {
   const { isPro } = useSubscription();
+  const { currentCompany } = useCompany();
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>(propSearchResults);
@@ -78,32 +80,31 @@ export const SearchTab = ({
 
   // Initialize search term when company name is available
   useEffect(() => {
-    if (companyName && !searchTerm) {
-      setSearchTerm(`${companyName} careers`);
+    if (currentCompany?.name && !searchTerm) {
+      setSearchTerm(`${currentCompany.name} careers`);
     }
-  }, [companyName, searchTerm]);
+  }, [currentCompany?.name, searchTerm]);
 
   // Load stored search data when component mounts or company name changes
-  useEffect(() => {
-    if (companyName) {
-      console.log('🔍 Loading stored search data for company:', companyName);
-      loadStoredSearchData();
-    }
-  }, [companyName]);
+  // DISABLED: Search data is now provided via props from useDashboardData hook
+  // useEffect(() => {
+  //   if (currentCompany?.id) {
+  //     loadStoredSearchData();
+  //   }
+  // }, [currentCompany?.id]);
 
   // Load stored search insights data
   const loadStoredSearchData = async () => {
     // Allow free users to load basic stored data
     
     try {
-      console.log('🔍 Searching for search sessions for company:', companyName);
-      
       // Get the most recent search session for this company
-      const { data: sessionData, error: sessionError } = await supabase
+      let { data: sessionData, error: sessionError } = await supabase
         .from('search_insights_sessions')
         .select(`
           id,
           company_name,
+          company_id,
           initial_search_term,
           total_results,
           total_related_terms,
@@ -111,51 +112,115 @@ export const SearchTab = ({
           keywords_everywhere_available,
           created_at
         `)
-        .eq('company_name', companyName || '')
+        .eq('company_id', currentCompany?.id)
         .order('created_at', { ascending: false })
         .limit(1);
+
+      // If no session found by company_id, try by company_name (for older data)
+      if (!sessionData || sessionData.length === 0) {
+        console.log('🔍 No session found by company_id, trying by company_name:', currentCompany?.name);
+        const { data: sessionDataByName, error: sessionErrorByName } = await supabase
+          .from('search_insights_sessions')
+          .select(`
+            id,
+            company_name,
+            company_id,
+            initial_search_term,
+            total_results,
+            total_related_terms,
+            total_volume,
+            keywords_everywhere_available,
+            created_at
+          `)
+          .eq('company_name', currentCompany?.name)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        
+        sessionData = sessionDataByName;
+        sessionError = sessionErrorByName;
+        console.log('🔍 Session found by company_name:', sessionData);
+      }
 
       if (sessionError) {
         console.error('❌ Error fetching search session:', sessionError);
         return;
       }
 
-      console.log('📊 Found search sessions:', sessionData?.length || 0, sessionData);
+      console.log('🔍 Search session query result:', {
+        sessionData: sessionData,
+        sessionDataLength: sessionData?.length,
+        error: sessionError
+      });
 
       // Get the first (and only) result if any exist
       const session = sessionData && sessionData.length > 0 ? sessionData[0] : null;
 
+      console.log('🔍 Session found:', {
+        session: session,
+        hasSession: !!session
+      });
+
       if (!session) {
-        console.log('⚠️ No search session found for company:', companyName);
+        console.log('❌ No search session found for company_id:', currentCompany?.id);
+        
+        // Debug: Let's check what search sessions exist in the database
+        console.log('🔍 Debug: Checking all search sessions in database...');
+        const { data: allSessions, error: allSessionsError } = await supabase
+          .from('search_insights_sessions')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(10);
+        
+        console.log('🔍 All search sessions in database:', {
+          allSessions: allSessions,
+          allSessionsLength: allSessions?.length,
+          error: allSessionsError
+        });
+        
+        // Debug: Let's also check what company_id we're looking for vs what's stored
+        console.log('🔍 Debug: Company ID comparison:', {
+          lookingFor: currentCompany?.id,
+          lookingForType: typeof currentCompany?.id,
+          storedCompanyIds: allSessions?.map(s => ({ id: s.company_id, type: typeof s.company_id, name: s.company_name }))
+        });
+        
         return;
       }
 
-      console.log('✅ Found search session:', session.id, 'for company:', session.company_name);
-
       // Get search results for this session
+      console.log('🔍 Querying search_insights_results for session_id:', session.id);
       const { data: resultsData, error: resultsError } = await supabase
         .from('search_insights_results')
         .select('*')
         .eq('session_id', session.id)
         .order('position', { ascending: true });
 
+      console.log('🔍 Search results query result:', {
+        resultsData: resultsData,
+        resultsDataLength: resultsData?.length,
+        error: resultsError
+      });
+
       if (resultsError) {
         console.error('❌ Error fetching search results:', resultsError);
-      } else {
-        console.log('📊 Found search results:', resultsData?.length || 0);
       }
 
       // Get search terms for this session
+      console.log('🔍 Querying search_insights_terms for session_id:', session.id);
       const { data: termsData, error: termsError } = await supabase
         .from('search_insights_terms')
         .select('*')
         .eq('session_id', session.id)
         .order('monthly_volume', { ascending: false });
 
+      console.log('🔍 Search terms query result:', {
+        termsData: termsData,
+        termsDataLength: termsData?.length,
+        error: termsError
+      });
+
       if (termsError) {
         console.error('❌ Error fetching search terms:', termsError);
-      } else {
-        console.log('📊 Found search terms:', termsData?.length || 0);
       }
 
       // Process and deduplicate the data by URL
@@ -230,7 +295,10 @@ export const SearchTab = ({
       console.log('✅ Successfully loaded stored search data:', {
         resultsCount: processedResults.length,
         termsCount: processedTermsData.length,
-        searchTerm: session.initial_search_term
+        searchTerm: session.initial_search_term,
+        sessionId: session.id,
+        sessionCompanyName: session.company_name,
+        sessionCompanyId: session.company_id
       });
 
     } catch (error) {
@@ -248,7 +316,7 @@ export const SearchTab = ({
   }, [propSearchTermsData]);
 
   const handleStartSearch = async () => {
-    if (!companyName) {
+    if (!currentCompany?.name) {
       console.error('❌ No company name provided for search');
       return;
     }
@@ -258,7 +326,8 @@ export const SearchTab = ({
       // Call the search insights function with combined search
       const { data, error } = await supabase.functions.invoke('search-insights', {
         body: {
-          companyName: companyName
+          companyName: currentCompany.name,
+          company_id: currentCompany.id
         }
       });
 
@@ -308,21 +377,21 @@ export const SearchTab = ({
       setSearchResults([
         {
           id: '1',
-          title: `${companyName} Careers - Join Our Team`,
-          link: `https://www.${companyName?.toLowerCase()}.com/careers`,
-          snippet: `Discover exciting career opportunities at ${companyName}. We're looking for talented individuals to join our growing team.`,
+          title: `${currentCompany?.name} Careers - Join Our Team`,
+          link: `https://www.${currentCompany?.name?.toLowerCase()}.com/careers`,
+          snippet: `Discover exciting career opportunities at ${currentCompany?.name}. We're looking for talented individuals to join our growing team.`,
           position: 1,
-          domain: `${companyName?.toLowerCase()}.com`,
+          domain: `${currentCompany?.name?.toLowerCase()}.com`,
           monthlySearchVolume: 1000,
-          relatedSearches: [`${companyName} jobs`, `${companyName} careers salary`, `${companyName} careers for freshers`],
+          relatedSearches: [`${currentCompany?.name} jobs`, `${currentCompany?.name} careers salary`, `${currentCompany?.name} careers for freshers`],
           date: new Date().toISOString()
         }
       ]);
       
       setSearchTermsData([
-        { term: `${companyName} careers`, monthlyVolume: 1000, resultsCount: 1 },
-        { term: `${companyName} jobs`, monthlyVolume: 800, resultsCount: 1 },
-        { term: `${companyName} careers salary`, monthlyVolume: 600, resultsCount: 1 }
+        { term: `${currentCompany?.name} careers`, monthlyVolume: 1000, resultsCount: 1 },
+        { term: `${currentCompany?.name} jobs`, monthlyVolume: 800, resultsCount: 1 },
+        { term: `${currentCompany?.name} careers salary`, monthlyVolume: 600, resultsCount: 1 }
       ]);
     } finally {
       setIsLoading(false);
@@ -342,8 +411,13 @@ export const SearchTab = ({
 
   return (
     <div className="space-y-6">
-
-
+      {/* Main Section Header */}
+      <div className="space-y-2">
+        <h2 className="text-2xl font-bold text-gray-900">Search</h2>
+        <p className="text-gray-600">
+          Explore search results and analyze how {companyName} appears in web searches across different platforms.
+        </p>
+      </div>
 
       {/* Combined Search Data */}
       {(searchResults.length > 0 || searchTermsData.length > 0) && (
@@ -545,8 +619,32 @@ export const SearchTab = ({
             <Search className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">No Search Insights Yet</h3>
             <p className="text-gray-500 mb-4">
-              Reach out to the team to get you started.
+              Generate search insights to analyze your company's career presence and competitor positioning.
             </p>
+            <div className="space-y-4">
+              <Button 
+                onClick={handleStartSearch}
+                disabled={isLoading || !currentCompany?.name}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Generating Search Insights...
+                  </>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4 mr-2" />
+                    Generate Search Insights
+                  </>
+                )}
+              </Button>
+              
+              <div className="text-xs text-gray-500">
+                <p>Company ID: {currentCompany?.id}</p>
+                <p>Company Name: {currentCompany?.name}</p>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}

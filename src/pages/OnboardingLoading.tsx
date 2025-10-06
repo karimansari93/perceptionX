@@ -17,7 +17,7 @@ interface LocationState {
 
 // Define the LLM models that will be tested
 const llmModels = [
-  { name: "OpenAI", model: "openai" },
+  { name: "ChatGPT", model: "openai" },
   { name: "Perplexity", model: "perplexity" },
   { name: "Google AI", model: "google-ai-overviews" },
   { name: "Search Insights", model: "search-insights" }
@@ -88,7 +88,34 @@ const getCountryContext = (country: string) => {
   return countryNames[country] || ` in ${country}`;
 };
 
-export const OnboardingLoading = () => {
+export // Helper function to wait for company creation
+const waitForCompany = async (onboardingId: string, maxAttempts = 10) => {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    
+    const { data, error } = await supabase
+      .from('user_onboarding')
+      .select('company_id')
+      .eq('id', onboardingId)
+      .single();
+    
+    if (error) {
+      console.error('❌ Error fetching onboarding data:', error);
+      throw new Error('Failed to get company information from onboarding record');
+    }
+    
+    if (data?.company_id) {
+      return data.company_id;
+    }
+    
+    // Wait with exponential backoff
+    const delay = 500 * (attempt + 1);
+    await new Promise(resolve => setTimeout(resolve, delay));
+  }
+  
+  throw new Error('Company creation timed out after maximum attempts');
+};
+
+const OnboardingLoading = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { onboardingId, companyName, industry, country } = location.state as LocationState;
@@ -124,8 +151,9 @@ export const OnboardingLoading = () => {
     // Start the actual AI testing process
     const startAITesting = async () => {
       try {
-        // Get country from database if not provided in state (backward compatibility)
+        // Get country from database if not provided in state
         let finalCountry = country;
+        
         if (!country) {
           const { data: onboardingData, error: onboardingError } = await supabase
             .from('user_onboarding')
@@ -139,6 +167,9 @@ export const OnboardingLoading = () => {
             finalCountry = 'GLOBAL';
           }
         }
+        
+      // Wait for company creation with simple polling
+      const companyId = await waitForCompany(onboardingId);
 
         // Check if prompts already exist for this onboarding session
         const { data: existingPrompts, error: checkError } = await supabase
@@ -203,7 +234,7 @@ export const OnboardingLoading = () => {
 
         // Define models to test
         const modelsToTest = [
-          { name: 'openai', displayName: 'OpenAI', functionName: 'test-prompt-openai' },
+          { name: 'openai', displayName: 'ChatGPT', functionName: 'test-prompt-openai' },
           { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
           { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }
         ];
@@ -300,6 +331,20 @@ export const OnboardingLoading = () => {
                   const googleAICitations = model.name === 'google-ai-overviews' ? responseData.citations : null;
                   
                   try {
+                    console.log('🔍 Calling analyze-response with:', {
+                      companyName,
+                      company_id: companyId,
+                      confirmed_prompt_id: confirmedPrompt.id,
+                      ai_model: model.name
+                    });
+                    
+                    // Safety check: Don't proceed if company_id is still null
+                    if (!companyId) {
+                      console.error('❌ Skipping analyze-response: company_id is null');
+                      logger.error(`Skipping analysis for ${model.name}: company_id is null`);
+                      continue; // Skip this response
+                    }
+                    
                     const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-response', {
                       body: {
                         response: responseData.response,
@@ -308,7 +353,8 @@ export const OnboardingLoading = () => {
                         perplexityCitations: perplexityCitations,
                         citations: googleAICitations,
                         confirmed_prompt_id: confirmedPrompt.id,
-                        ai_model: model.name
+                        ai_model: model.name,
+                        company_id: companyId
                       }
                     });
 
@@ -338,12 +384,20 @@ export const OnboardingLoading = () => {
         // Function to run search insights
         const runSearchInsights = async () => {
           try {
-            console.log('🔍 Starting search insights for company:', companyName);
             
             // Call the search insights function with combined search
+            
+            // Safety check: Don't proceed if company_id is still null
+            if (!companyId) {
+              console.error('❌ Skipping search-insights: company_id is null');
+              logger.log('Skipping search insights: company_id is null');
+              return; // Skip search insights
+            }
+            
             const { data: searchData, error: searchError } = await supabase.functions.invoke('search-insights', {
               body: {
-                companyName: companyName
+                companyName: companyName,
+                company_id: companyId
               }
             });
 
@@ -591,3 +645,5 @@ export const OnboardingLoading = () => {
     </div>
   );
 };
+
+export default OnboardingLoading;

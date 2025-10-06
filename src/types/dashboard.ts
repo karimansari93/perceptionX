@@ -3,6 +3,7 @@ import { Json } from "@/integrations/supabase/types";
 export interface PromptResponse {
   id: string;
   confirmed_prompt_id: string;
+  company_id: string;
   ai_model: string;
   response_text: string;
   sentiment_score: number | null;

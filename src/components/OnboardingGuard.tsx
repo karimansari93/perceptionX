@@ -46,34 +46,49 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
           return;
         }
 
-        // Check if user has basic onboarding data
-        const { data: onboardingData, error: onboardingError } = await supabase
-          .from('user_onboarding')
-          .select('*')
+        // NEW: Check if user belongs to any company (better indicator of onboarding)
+        const { data: companyMemberships, error: membershipError } = await supabase
+          .from('company_members')
+          .select('company_id')
           .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
           .limit(1);
+
+        if (membershipError) {
+          console.error('Error checking company membership:', membershipError);
+          // Fall back to old check if there's an error
+        } else if (companyMemberships && companyMemberships.length > 0) {
+          // User is a member of at least one company - they've completed onboarding
+          setHasOnboarding(true);
+          return;
+        }
+
+        // FALLBACK: Check if user has any completed onboarding (old method)
+        const { data: allOnboarding, error: onboardingError } = await supabase
+          .from('user_onboarding')
+          .select('id')
+          .eq('user_id', user.id);
 
         if (onboardingError) {
           console.error('Error fetching onboarding data:', onboardingError);
           return;
         }
 
-        // Check if user has confirmed prompts
-        if (onboardingData && onboardingData.length > 0) {
+        // Check if any of the onboarding records have responses
+        if (allOnboarding && allOnboarding.length > 0) {
+          const onboardingIds = allOnboarding.map(o => o.id);
+          
           const { data: promptsData, error: promptsError } = await supabase
             .from('confirmed_prompts')
-            .select('*')
-            .eq('onboarding_id', onboardingData[0].id);
+            .select('id')
+            .in('onboarding_id', onboardingIds);
 
           if (promptsError) {
             console.error('Error fetching confirmed prompts:', promptsError);
             return;
           }
 
-          // Check if user has completed onboarding
           if (promptsData && promptsData.length > 0) {
-            // Check if user has any responses
+            // Check if any prompts have responses
             const { data: responsesData, error: responsesError } = await supabase
               .from('prompt_responses')
               .select('id')
@@ -85,7 +100,6 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
               return;
             }
 
-            // User has completed onboarding if they have prompts and responses
             if (responsesData && responsesData.length > 0) {
               setHasOnboarding(true);
               return;
@@ -93,7 +107,7 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
           }
         }
 
-        // No basic onboarding data found
+        // No onboarding found
         setHasOnboarding(false);
       } catch (error) {
         console.error('Error in onboarding check:', error);
@@ -133,7 +147,11 @@ const OnboardingGuard: React.FC<OnboardingGuardProps> = ({
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <img
+            alt="Perception Logo"
+            className="object-contain h-12 w-12 mx-auto mb-4 animate-pulse"
+            src="/logos/PinkBadge.png"
+          />
           <p className="text-gray-600">Redirecting...</p>
         </div>
       </div>

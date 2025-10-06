@@ -6,7 +6,6 @@ export class CompanyReportTextService {
    */
   static async generateCompanyReport(companyId: string): Promise<{ success: boolean; report?: string; error?: string }> {
     try {
-      console.log('🚀 Calling edge function with companyId:', companyId);
       
       const { data, error } = await supabase.functions.invoke('company-report-text', {
         body: {

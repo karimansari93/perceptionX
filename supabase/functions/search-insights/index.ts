@@ -309,7 +309,7 @@ serve(async (req) => {
     const requestBody = await req.json()
     console.log('📥 Request body received:', JSON.stringify(requestBody, null, 2))
     
-    const { companyName } = requestBody
+    const { companyName, company_id } = requestBody
     
     if (!companyName) {
       console.log('❌ Missing companyName parameter. Request body:', requestBody)
@@ -554,6 +554,7 @@ serve(async (req) => {
         .insert({
           user_id: user.id,
           company_name: companyName || 'Unknown',
+          company_id: company_id,
           initial_search_term: `${companyName} careers + jobs`, // Combined search indicator
           total_results: allResults.length,
           total_related_terms: uniqueRelatedSearches.length,

@@ -2,8 +2,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PromptData } from "@/types/dashboard";
-import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter } from "lucide-react";
+import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter, HelpCircle } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -47,7 +48,18 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
       if (prompt.type.startsWith('talentx_')) {
         typeLabel = prompt.type.replace('talentx_', '');
       }
-      types.add(typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1));
+      
+      // Map to user-friendly labels
+      let displayLabel = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
+      if (typeLabel.toLowerCase() === 'sentiment') {
+        displayLabel = 'Employer';
+      } else if (typeLabel.toLowerCase() === 'visibility') {
+        displayLabel = 'Discovery';
+      } else if (typeLabel.toLowerCase() === 'competitive') {
+        displayLabel = 'Comparison';
+      }
+      
+      types.add(displayLabel);
     });
     return Array.from(types).sort();
   }, [prompts]);
@@ -80,7 +92,16 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
       if (prompt.type.startsWith('talentx_')) {
         typeLabel = prompt.type.replace('talentx_', '');
       }
-      const displayType = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
+      
+      // Map to user-friendly labels for filtering
+      let displayType = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
+      if (typeLabel.toLowerCase() === 'sentiment') {
+        displayType = 'Employer';
+      } else if (typeLabel.toLowerCase() === 'visibility') {
+        displayType = 'Discovery';
+      } else if (typeLabel.toLowerCase() === 'competitive') {
+        displayType = 'Comparison';
+      }
       
       if (typeFilter !== "all" && displayType !== typeFilter) {
         return false;
@@ -198,20 +219,27 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
       typeLabel = prompt.type.replace('talentx_', '');
     }
     
-    // Capitalize the first letter
-    typeLabel = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
-    
-    // Apply colors matching PromptSummaryCards
-    let badgeClass = "bg-gray-100 text-gray-800"; // default
+    // Map to user-friendly labels
+    let displayLabel = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
     if (typeLabel.toLowerCase() === 'sentiment') {
-      badgeClass = "bg-blue-100 text-blue-800";
+      displayLabel = 'Employer';
     } else if (typeLabel.toLowerCase() === 'visibility') {
-      badgeClass = "bg-green-100 text-green-800";
+      displayLabel = 'Discovery';
     } else if (typeLabel.toLowerCase() === 'competitive') {
-      badgeClass = "bg-purple-100 text-purple-800";
+      displayLabel = 'Comparison';
     }
     
-    return <Badge className={badgeClass}>{typeLabel}</Badge>;
+    // Apply colors matching PromptSummaryCards
+    let badgeClass = "bg-gray-100 text-gray-800 border-gray-200"; // default
+    if (typeLabel.toLowerCase() === 'sentiment') {
+      badgeClass = "bg-blue-100 text-blue-800 border-blue-200";
+    } else if (typeLabel.toLowerCase() === 'visibility') {
+      badgeClass = "bg-green-100 text-green-800 border-green-200";
+    } else if (typeLabel.toLowerCase() === 'competitive') {
+      badgeClass = "bg-purple-100 text-purple-800 border-purple-200";
+    }
+    
+    return <Badge variant="outline" className={badgeClass}>{displayLabel}</Badge>;
   };
 
   const getCategoryBadge = (prompt: PromptData) => {
@@ -260,16 +288,14 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
         </div>
       )}
 
-      <Card>
-        <CardContent className="px-4 sm:px-6">
-        {filteredPrompts.length > 0 ? (
-          isMobile ? (
-                         // Mobile-friendly card layout
-             <div className="space-y-4">
-              {filteredPrompts.map((prompt, index) => (
+      {filteredPrompts.length > 0 ? (
+        isMobile ? (
+          // Mobile-friendly card layout
+          <>
+            {filteredPrompts.map((prompt, index) => (
                                  <div
                    key={index}
-                   className="p-5 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                   className="p-5 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors mb-4 last:mb-0"
                    onClick={() => onPromptClick(prompt.prompt)}
                  >
                                      {/* Prompt text - full width on mobile */}
@@ -282,7 +308,7 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                                                         {/* Badges row - Type, Category, Sentiment */}
                    <div className="flex items-center gap-2 mb-3">
                      {getTypeBadge(prompt)}
-                     {getCategoryBadge(prompt)}
+                     {isPro && getCategoryBadge(prompt)}
                      {getSentimentPill(prompt.sentimentLabel)}
                    </div>
                    
@@ -338,18 +364,94 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                   </div>
                 </div>
               ))}
-            </div>
+            </>
           ) : (
             // Desktop table layout
-            <Table>
+            <Card>
+              <CardContent className="px-4 sm:px-6">
+                <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Prompt</TableHead>
-                  <TableHead className="text-center">Type</TableHead>
-                  <TableHead className="text-center">Category</TableHead>
-                  <TableHead className="text-center">Responses</TableHead>
-                  <TableHead className="text-center">Sentiment</TableHead>
-                  <TableHead className="text-center">Visibility</TableHead>
+                  <TableHead>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1 cursor-help">
+                          <span>Prompt</span>
+                          <HelpCircle className="w-3 h-3 text-gray-400" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>The question asked to AI models about your company</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TableHead>
+                  <TableHead className="text-center">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center justify-center gap-1 cursor-help">
+                          <span>Type</span>
+                          <HelpCircle className="w-3 h-3 text-gray-400" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Type of question: employer, discovery, or comparison</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TableHead>
+                  {isPro && (
+                    <TableHead className="text-center">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex items-center justify-center gap-1 cursor-help">
+                            <span>Category</span>
+                            <HelpCircle className="w-3 h-3 text-gray-400" />
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Topic area like culture, benefits, or career opportunities</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TableHead>
+                  )}
+                  <TableHead className="text-center">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center justify-center gap-1 cursor-help">
+                          <span>Responses</span>
+                          <HelpCircle className="w-3 h-3 text-gray-400" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Number of AI responses from different models</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TableHead>
+                  <TableHead className="text-center">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center justify-center gap-1 cursor-help">
+                          <span>Sentiment</span>
+                          <HelpCircle className="w-3 h-3 text-gray-400" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Overall emotional tone of AI responses</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TableHead>
+                  <TableHead className="text-center">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center justify-center gap-1 cursor-help">
+                          <span>Visibility</span>
+                          <HelpCircle className="w-3 h-3 text-gray-400" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>How often your company is mentioned in responses</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -367,9 +469,11 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                     <TableCell className="text-center">
                       {getTypeBadge(prompt)}
                     </TableCell>
-                    <TableCell className="text-center">
-                      {getCategoryBadge(prompt)}
-                    </TableCell>
+                    {isPro && (
+                      <TableCell className="text-center">
+                        {getCategoryBadge(prompt)}
+                      </TableCell>
+                    )}
                     <TableCell className="text-center">
                       <Badge variant="secondary">{prompt.responses}</Badge>
                     </TableCell>
@@ -417,17 +521,21 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                     </TableCell>
                   </TableRow>
                 ))}
-              </TableBody>
-            </Table>
+                </TableBody>
+                  </Table>
+              </CardContent>
+            </Card>
           )
         ) : (
-          <div className="text-center py-8 text-gray-500">
-            <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-            <p>No prompts tracked yet.</p>
-          </div>
+          <Card>
+            <CardContent className="px-4 sm:px-6">
+              <div className="text-center py-8 text-gray-500">
+                <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                <p>No prompts tracked yet.</p>
+              </div>
+            </CardContent>
+          </Card>
         )}
-        </CardContent>
-      </Card>
     </>
   );
 };

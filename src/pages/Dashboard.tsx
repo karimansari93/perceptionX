@@ -17,6 +17,7 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { UpgradeModal } from "@/components/upgrade/UpgradeModal";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { useCompany } from "@/contexts/CompanyContext";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertTriangle, ChevronRight, LayoutDashboard, Lock, Globe, Users, TrendingUp, BarChart3, Activity, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
 import LLMLogo from "@/components/LLMLogo";
 import { useSubscription } from "@/hooks/useSubscription";
 import { WelcomeProModal } from "@/components/upgrade/WelcomeProModal";
+import { AddCompanyModal } from "@/components/dashboard/AddCompanyModal";
 
 interface DatabaseOnboardingData {
   company_name: string;
@@ -50,8 +52,18 @@ interface PromptsModalOnboardingData {
 
 const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {}) => {
   const { user } = useAuth();
+  const { currentCompany } = useCompany();
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showWelcomeProModal, setShowWelcomeProModal] = useState(false);
+  // Use sessionStorage to persist modal state across tab switches
+  const [showAddCompanyModal, setShowAddCompanyModal] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('showAddCompanyModal');
+      return saved === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [activeTab, setActiveTab] = useState<'terms' | 'results'>('results');
   const [chartView, setChartView] = useState<'bubble' | 'bar'>('bubble');
 
@@ -67,11 +79,37 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
 
     return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
+
+  // Sync modal state with sessionStorage
+  useEffect(() => {
+    try {
+      if (showAddCompanyModal) {
+        sessionStorage.setItem('showAddCompanyModal', 'true');
+      } else {
+        sessionStorage.removeItem('showAddCompanyModal');
+      }
+    } catch (error) {
+      console.warn('Failed to sync modal state with sessionStorage:', error);
+    }
+  }, [showAddCompanyModal]);
+
+  // Cleanup sessionStorage on unmount
+  useEffect(() => {
+    return () => {
+      try {
+        sessionStorage.removeItem('showAddCompanyModal');
+      } catch (error) {
+        console.warn('Failed to cleanup modal state from sessionStorage:', error);
+      }
+    };
+  }, []);
   
   const {
     responses,
     loading,
     competitorLoading,
+    metricsLoading,
+    isFullyLoaded,
     companyName,
     metrics,
     sentimentTrend,
@@ -90,6 +128,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     searchResultsLoading,
     searchTermsData,
     fetchSearchResults,
+    aiThemes,
     isOnline,
     connectionError,
     recencyDataError
@@ -101,7 +140,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (companyName && searchResults.length === 0 && !searchResultsLoading) {
       fetchSearchResults();
     }
-  }, [companyName, searchResults.length, searchResultsLoading, fetchSearchResults]);
+  }, [companyName, searchResults.length, searchResultsLoading]); // Removed fetchSearchResults from deps
 
 
   const [answerGapsData, setAnswerGapsData] = useState<any>(null);
@@ -273,6 +312,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             talentXProData={talentXProData}
             isPro={isPro}
             searchResults={searchResults}
+            aiThemes={aiThemes}
           />
         </div>
       </div>
@@ -280,7 +320,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   };
 
   const renderActiveSection = () => {
-    if (loading) {
+    if (!isFullyLoaded) {
       switch (activeSection) {
         case "overview":
           return <OverviewSkeleton />;
@@ -297,9 +337,31 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       }
     }
 
-    // Show setup prompt if no responses and not loading
-    if (!loading && responses.length === 0 && !hasDataIssues) {
+    // Only show welcome screen if we have NO company at all
+    if (!isFullyLoaded && !companyName) {
       return renderSetupBlurredOverview();
+    }
+
+    // If we have a company but no responses yet, show analyzing state
+    if (!isFullyLoaded && responses.length === 0 && promptsData && promptsData.length > 0) {
+      return (
+        <div className="min-h-[600px] flex items-center justify-center">
+          <div className="text-center p-8 max-w-lg mx-auto">
+            <img
+              alt="Perception Logo"
+              className="object-contain h-16 w-16 mx-auto mb-4 animate-pulse"
+              src="/logos/PinkBadge.png"
+            />
+            <h2 className="text-2xl font-bold mb-4 text-gray-800">Analysis in Progress</h2>
+            <p className="text-gray-600 mb-2 leading-relaxed">
+              We're currently analyzing {companyName} across multiple AI platforms.
+            </p>
+            <p className="text-sm text-gray-500">
+              This process takes 2-3 minutes. You can check back shortly or refresh the page.
+            </p>
+          </div>
+        </div>
+      );
     }
 
     switch (activeSection) {
@@ -316,12 +378,13 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             talentXProData={talentXProData}
             isPro={isPro}
             searchResults={searchResults}
+            aiThemes={aiThemes}
           />
         );
       case "prompts":
-        return <PromptsTab promptsData={promptsData} responses={responses} />;
+        return <PromptsTab promptsData={promptsData} responses={responses} companyName={companyName} />;
       case "responses":
-        return <ResponsesTab responses={responses} parseCitations={parseCitations} />;
+        return <ResponsesTab responses={responses} parseCitations={parseCitations} companyName={companyName} />;
       case "search":
         return (
           <SearchTab 
@@ -333,7 +396,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           />
         );
       case "sources":
-        return <SourcesTab topCitations={topCitations} responses={responses} parseCitations={parseCitations} companyName={companyName} searchResults={searchResults} />;
+        return <SourcesTab key={companyName} topCitations={topCitations} responses={responses} parseCitations={parseCitations} companyName={companyName} searchResults={searchResults} currentCompanyId={currentCompany?.id} />;
       case "competitors":
         const competitorsContent = (
           <CompetitorsTab 
@@ -411,189 +474,78 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             talentXProData={talentXProData}
             isPro={isPro}
             searchResults={searchResults}
+            aiThemes={aiThemes}
           />
         );
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <LoadingSpinner />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Error</h2>
-          <p className="text-gray-600 mb-4">{error}</p>
-          <Button onClick={() => window.location.reload()}>
-            Try Again
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
+  // Always render the sidebar and main layout, only show loading in content area
   return (
     <div className="flex h-screen bg-gray-50 w-full">
-      <AppSidebar 
-        activeSection={activeSection} 
-        onSectionChange={handleSectionChange}
-      />
-      <SidebarInset className="flex-1 flex flex-col overflow-hidden w-full">
+      <AppSidebar activeSection={activeSection} onSectionChange={setActiveSection} />
+      <SidebarInset className="flex-1 flex flex-col">
         <DashboardHeader 
-          companyName={companyName}
+          companyName={companyName || ''}
           responsesCount={responses.length}
-          lastUpdated={lastUpdated}
           onRefresh={refreshData}
-          hasDataIssues={hasDataIssues}
-          onFixData={fixExistingPrompts}
           breadcrumbs={[
             { label: activeGroup.charAt(0).toUpperCase() + activeGroup.slice(1), active: false },
             { label: activeSection.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()), active: true }
           ]}
+          lastUpdated={lastUpdated}
+          onFixData={fixExistingPrompts}
+          hasDataIssues={hasDataIssues}
+          showAddCompanyModal={showAddCompanyModal}
+          setShowAddCompanyModal={setShowAddCompanyModal}
+          showUpgradeModal={showUpgradeModal}
+          setShowUpgradeModal={setShowUpgradeModal}
+          alwaysMounted={true}
         />
-        
-        <div className="flex-1 overflow-auto w-full">
-          <div className="p-6 w-full">
-            {/* Network Status Banner */}
-            <NetworkStatus 
-              isOnline={isOnline}
-              connectionError={connectionError}
-              onRetry={refreshData}
-              className="mb-4"
-            />
-            
-            {/* Recency Data Error Banner */}
-            {recencyDataError && (
-              <div className="mb-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
-                <div className="flex items-center">
-                  <AlertTriangle className="h-4 w-4 text-orange-600 mr-2" />
-                  <div className="flex-1">
-                    <p className="text-sm text-orange-800 font-medium">Relevance Data Issue</p>
-                    <p className="text-sm text-orange-700">{recencyDataError}</p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={refreshData}
-                    className="ml-2 h-8 text-orange-600 border-orange-300 hover:bg-orange-100"
-                  >
-                    <RefreshCw className="h-3 w-3 mr-1" />
-                    Retry
-                  </Button>
-                </div>
-              </div>
-            )}
-            
-            <div className="mb-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h1 className="text-3xl font-bold text-gray-900 whitespace-nowrap">
-                    {activeSection === "responses" ? "Responses" :
-                     activeSection === "prompts" ? "Prompts" :
-                     activeSection === "search" ? "Search Insights" :
-                     activeSection === "sources" ? "Sources" :
-                     activeSection === "competitors" ? "Competitors" :
-                     activeSection === "thematic" ? "Thematic Analysis" :
-                     activeSection === "answer-gaps" ? "Answer Gaps Analysis" :
-                     activeSection === "career-site" ? "Career Site Analysis" :
-                     activeSection === "reports" ? "Reports" : "Dashboard"}
-                  </h1>
-                  <div className="flex items-center justify-between">
-                    <p className="text-gray-600">
-                      {activeSection === "responses"
-                        ? "Manage and monitor all the individual responses for your prompts."
-                        : activeSection === "prompts"
-                        ? "Manage and monitor your AI prompts across different categories."
-                        : activeSection === "search"
-                        ? "Analyze search insights and competitor positioning for your company's career presence."
-                        : activeSection === "sources"
-                        ? "Analyze the sources influencing how AI sees your employer brand."
-                        : activeSection === "competitors"
-                        ? "Analyze the companies competing with you for talent."
-                        : activeSection === "thematic"
-                        ? "Extract and analyze key themes from your response data mapped to talent attributes."
-                        : activeSection === "answer-gaps"
-                        ? "Analyze and identify gaps in AI responses about your company."
-                        : activeSection === "career-site"
-                        ? "Analyze your career website content and identify gaps between what's published and what AI responses say."
-                        : activeSection === "reports"
-                        ? "Generate comprehensive reports about your AI perception and performance."
-                        : "Monitor and analyze your AI perception across different platforms and models."}
-                    </p>
-                    {activeSection === "search" && (searchResults.length > 0 || searchTermsData.length > 0) && (
-                      <div className="bg-gray-100 rounded-lg p-1 ml-4">
-                        <button
-                          onClick={() => setActiveTab('results')}
-                          className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
-                            activeTab === 'results'
-                              ? 'bg-white text-gray-900 shadow-sm'
-                              : 'text-gray-600 hover:text-gray-900'
-                          }`}
-                        >
-                          Results
-                        </button>
-                        <button
-                          onClick={() => setActiveTab('terms')}
-                          className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
-                            activeTab === 'terms'
-                              ? 'bg-white text-gray-900 shadow-sm'
-                              : 'text-gray-600 hover:text-gray-900'
-                          }`}
-                        >
-                          Terms
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {activeSection === "thematic" && (
-                  <div className="hidden md:flex bg-gray-100 rounded-lg p-1">
-                    <button
-                      onClick={() => setChartView('bubble')}
-                      className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
-                        chartView === 'bubble'
-                          ? 'bg-white text-gray-900 shadow-sm'
-                          : 'text-gray-600 hover:text-gray-900'
-                      }`}
-                    >
-                      <Activity className="w-4 h-4 inline mr-1" />
-                      SWOT
-                    </button>
-                    <button
-                      onClick={() => setChartView('bar')}
-                      className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
-                        chartView === 'bar'
-                          ? 'bg-white text-gray-900 shadow-sm'
-                          : 'text-gray-600 hover:text-gray-900'
-                      }`}
-                    >
-                      <BarChart3 className="w-4 h-4 inline mr-1" />
-                      Bar
-                    </button>
-                  </div>
-                )}
+        <div className="flex-1 overflow-auto">
+          {isLoading ? (
+            <div className="flex items-center justify-center min-h-[400px]">
+              <div className="text-center">
+                <img
+                  alt="Perception Logo"
+                  className="object-contain h-16 w-16 mx-auto mb-4 animate-pulse"
+                  src="/logos/PinkBadge.png"
+                />
+                <p className="text-gray-600">Loading...</p>
               </div>
             </div>
-            
-            {renderActiveSection()}
-          </div>
+          ) : error ? (
+            <div className="flex items-center justify-center min-h-[400px]">
+              <div className="text-center">
+                <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">Error</h2>
+                <p className="text-gray-600 mb-4">{error}</p>
+                <Button onClick={() => window.location.reload()}>
+                  Try Again
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="p-6">
+              {renderActiveSection()}
+            </div>
+          )}
         </div>
       </SidebarInset>
       
+      {/* Modals */}
+      <AddCompanyModal 
+        open={showAddCompanyModal}
+        onOpenChange={setShowAddCompanyModal}
+        alwaysMounted={true}
+      />
       <UpgradeModal 
-        open={showUpgradeModal} 
-        onOpenChange={setShowUpgradeModal} 
+        open={showUpgradeModal}
+        onOpenChange={setShowUpgradeModal}
       />
       <WelcomeProModal 
-        open={showWelcomeProModal} 
-        onOpenChange={setShowWelcomeProModal} 
+        open={showWelcomeProModal}
+        onOpenChange={setShowWelcomeProModal}
       />
     </div>
   );

@@ -19,9 +19,10 @@ interface SourceDetailsModalProps {
   responses: any[];
   companyName?: string;
   searchResults?: any[];
+  companyId?: string;
 }
 
-export const SourceDetailsModal = ({ isOpen, onClose, source, responses, companyName, searchResults = [] }: SourceDetailsModalProps) => {
+export const SourceDetailsModal = ({ isOpen, onClose, source, responses, companyName, searchResults = [], companyId }: SourceDetailsModalProps) => {
   const [uniqueCitations, setUniqueCitations] = useState<any[]>([]);
   const [loadingUrls, setLoadingUrls] = useState(false);
   const [editingMediaType, setEditingMediaType] = useState(false);
@@ -160,7 +161,11 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
       // Query all prompt_responses to find citations for this domain
       const { data: promptData, error: promptError } = await supabase
         .from('prompt_responses')
-        .select('citations')
+        .select(`
+          citations,
+          confirmed_prompts!inner(company_id)
+        `)
+        .eq('confirmed_prompts.company_id', companyId)
         .not('citations', 'is', null);
 
       if (promptError) {
@@ -264,44 +269,15 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
       });
       }
 
-      // Query search_insights_results to find citations for this domain
-      // First get the most recent search session for this company
-      const { data: sessionData, error: sessionError } = await supabase
-        .from('search_insights_sessions')
-        .select('id')
-        .eq('company_name', companyName || '')
-        .order('created_at', { ascending: false })
-        .limit(1);
+      // Use searchResults prop instead of querying database
+      // Filter search results by domain
+      const normalizedTargetDomain = domain.replace(/^www\./, '').toLowerCase();
+      const searchData = (searchResults || []).filter(result => {
+        const normalizedResultDomain = result.domain?.replace(/^www\./, '').toLowerCase();
+        return normalizedResultDomain === normalizedTargetDomain;
+      });
 
-      if (sessionError) {
-        console.error('Error fetching search session:', sessionError);
-      }
-
-      // Get the first (and only) result if any exist
-      const session = sessionData && sessionData.length > 0 ? sessionData[0] : null;
-
-      let searchData: any[] = [];
-      if (session) {
-        // Get all search results for this session and filter by domain
-        const { data: allSearchResults, error: searchError } = await supabase
-          .from('search_insights_results')
-          .select('*')
-          .eq('session_id', session.id);
-
-        if (searchError) {
-          console.error('Error fetching search results:', searchError);
-        } else {
-          // Filter by normalized domain comparison
-          const normalizedTargetDomain = domain.replace(/^www\./, '').toLowerCase();
-          searchData = (allSearchResults || []).filter(result => {
-            const normalizedResultDomain = result.domain?.replace(/^www\./, '').toLowerCase();
-            return normalizedResultDomain === normalizedTargetDomain;
-          });
-        }
-
-      }
-
-      // Process search results for this domain from database
+      // Process search results for this domain
       searchData.forEach(result => {
         if (result.link && result.title) {
           // Create a citation object that matches the expected format

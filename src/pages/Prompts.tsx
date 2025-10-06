@@ -61,7 +61,11 @@ const Prompts = () => {
     return (
       <div className="min-h-screen ..." style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <img
+            alt="Perception Logo"
+            className="object-contain h-16 w-16 mx-auto mb-4 animate-pulse"
+            src="/logos/PinkBadge.png"
+          />
           <p className="text-gray-600">Loading company info...</p>
         </div>
       </div>
@@ -102,7 +106,11 @@ const Prompts = () => {
     return (
       <div className="min-h-screen ..." style={{background: 'linear-gradient(to bottom right, #045962, #019dad)'}}>
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <img
+            alt="Perception Logo"
+            className="object-contain h-16 w-16 mx-auto mb-4 animate-pulse"
+            src="/logos/PinkBadge.png"
+          />
           <p className="text-gray-600">Setting up your prompts...</p>
         </div>
       </div>

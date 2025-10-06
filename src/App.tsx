@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { CompanyProvider } from "@/contexts/CompanyContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import OnboardingGuard from "@/components/OnboardingGuard";
 import Dashboard from "./pages/Dashboard";
@@ -18,7 +19,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { ErrorBoundary } from "react-error-boundary";
 import { usePageTracking } from "@/hooks/usePageTracking";
 import { Onboarding } from "@/pages/Onboarding";
-import { OnboardingLoading } from "@/pages/OnboardingLoading";
+import OnboardingLoading from "@/pages/OnboardingLoading";
 import Admin from "./pages/Admin";
 import AdminRoute from "./components/AdminRoute";
 import GoogleOneTapCallback from "@/components/GoogleOneTapCallback";
@@ -28,6 +29,9 @@ const queryClient = new QueryClient({
     queries: {
       retry: 1,
       staleTime: 5 * 60 * 1000, // 5 minutes
+      refetchOnWindowFocus: false, // Don't refetch when tab regains focus
+      refetchOnMount: false, // Don't refetch when component mounts
+      refetchOnReconnect: false, // Don't refetch when internet reconnects
     },
   },
 });
@@ -65,9 +69,10 @@ const App = () => (
         <BrowserRouter>
           <PageTracker />
           <AuthProvider>
-            <Toaster />
-            <Sonner />
-            <Routes>
+            <CompanyProvider>
+              <Toaster />
+              <Sonner />
+              <Routes>
               <Route path="/" element={<Auth />} />
               <Route path="/auth" element={<Auth />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
@@ -235,6 +240,7 @@ const App = () => (
               } />
               <Route path="*" element={<NotFound />} />
             </Routes>
+            </CompanyProvider>
           </AuthProvider>
         </BrowserRouter>
       </TooltipProvider>

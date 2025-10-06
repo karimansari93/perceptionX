@@ -108,15 +108,15 @@
     font-family: 'Geologica', sans-serif;
   }
 
-  /* Remove yellow selection highlight */
+  /* Visible text selection highlight with brand colors */
   ::selection {
-    background-color: transparent !important;
-    color: inherit !important;
+    background-color: hsl(var(--accent)) !important;
+    color: hsl(var(--accent-foreground)) !important;
   }
 
   ::-moz-selection {
-    background-color: transparent !important;
-    color: inherit !important;
+    background-color: hsl(var(--accent)) !important;
+    color: hsl(var(--accent-foreground)) !important;
   }
 
   /* Remove all focus outlines */

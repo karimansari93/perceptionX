@@ -181,11 +181,11 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
       /^na\.?$/i,
       /^null\.?$/i,
       /^undefined\.?$/i,
-      /^none[,:;\)\]\}\-_]$/i,
-      /^n\/a[,:;\)\]\}\-_]$/i,
-      /^na[,:;\)\]\}\-_]$/i,
-      /^null[,:;\)\]\}\-_]$/i,
-      /^undefined[,:;\)\]\}\-_]$/i,
+      /^none[,:;\)\]}\-_]$/i,
+      /^n\/a[,:;\)\]}\-_]$/i,
+      /^na[,:;\)\]}\-_]$/i,
+      /^null[,:;\)\]}\-_]$/i,
+      /^undefined[,:;\)\]}\-_]$/i,
       /^[0-9]+$/i, // Pure numbers
       /^[^a-zA-Z0-9]+$/i, // Only special characters
       /^[a-z]{1,2}$/i, // Single or double letter words (likely abbreviations that aren't company names)
@@ -705,16 +705,27 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
       return;
     }
     // Build the prompt
-    const prompt = `Analyze employer brand perception of "${selectedCompetitor}" vs ${companyName} for talent acquisition. Format as 3-4 SHORT bullets (max 15 words each):
+    const prompt = `Analyze ${selectedCompetitor}'s employer brand perception for talent acquisition.
+
+OUTPUT ONLY THE BULLETS BELOW - NO INTRODUCTION, NO EXPLANATION, JUST THE BULLETS:
 
 • [${selectedCompetitor}'s employer brand strengths - max 15 words]
-• [Talent perception vs ${companyName} - max 15 words]
-• [Key employer reputation differences - max 15 words]
-• [Actionable HR insight for ${companyName} - max 15 words]
+
+• [How talent perceives ${selectedCompetitor} - max 15 words]
+
+• [Key employer reputation factors - max 15 words]
+
+• [Notable employer brand characteristics - max 15 words]
 
 Focus on: culture, benefits, career growth, work environment, compensation, employee experience, talent attraction, employer reputation.
 
-CRITICAL: Each bullet must be under 15 words and fit on one line.
+CRITICAL: 
+- DO NOT include any introductory text like "Here's an analysis..." or similar
+- OUTPUT ONLY THE BULLET POINTS with a blank line between each bullet
+- Each bullet must be under 15 words and fit on one line
+- Start your response directly with the first bullet point
+- Put each bullet on a NEW LINE separated by a blank line
+- Focus ONLY on ${selectedCompetitor}, do not compare to ${companyName}
 
 Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\n---\n')}`;
     // Get session and call Gemini endpoint
@@ -736,7 +747,20 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
         });
         const data = await res.json();
         if (data.response) {
-          setCompetitorSummary(data.response.trim());
+          // Strip any introductory text before the first bullet point
+          let cleanedResponse = data.response.trim();
+          const firstBulletIndex = cleanedResponse.search(/^[•\-\*]/m);
+          if (firstBulletIndex > 0) {
+            cleanedResponse = cleanedResponse.substring(firstBulletIndex);
+          }
+          
+          // Ensure each bullet is on its own line
+          // Replace instances where bullets run together (• text • text) with proper line breaks
+          cleanedResponse = cleanedResponse
+            .replace(/([^\n])\s*([•\-\*])\s+/g, '$1\n\n$2 ')  // Add double line break before bullets
+            .trim();
+          
+          setCompetitorSummary(cleanedResponse);
         } else {
           setCompetitorSummaryError(data.error || "No summary generated.");
         }
@@ -819,6 +843,14 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
 
   return (
     <div className="flex flex-col gap-6 w-full h-full">
+      {/* Main Section Header */}
+      <div className="space-y-2">
+        <h2 className="text-2xl font-bold text-gray-900">Competitors</h2>
+        <p className="text-gray-600">
+          Track competitor mentions and analyze how {companyName} compares in AI responses and search results.
+        </p>
+      </div>
+
       {/* Sticky Header with Filters */}
       {isPro && (
         <div className="hidden sm:block sticky top-0 z-10 bg-white pb-2">

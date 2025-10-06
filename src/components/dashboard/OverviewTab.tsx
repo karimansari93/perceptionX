@@ -51,6 +51,7 @@ interface OverviewTabProps {
   talentXProData?: any[]; // Add TalentX Pro data
   isPro?: boolean; // Add Pro subscription status
   searchResults?: any[]; // Add search results
+  aiThemes?: AITheme[]; // Add AI themes as prop
 }
 
 interface TimeBasedData {
@@ -79,26 +80,25 @@ const normalizeCompetitorName = (name: string): string => {
 export const OverviewTab = ({ 
   metrics, 
   topCitations, 
-  topCompetitors, 
+  topCompetitors,
   responses,
   competitorLoading = false,
   companyName, // <-- Add this
   llmMentionRankings,
   talentXProData = [],
   isPro = false,
-  searchResults = []
+  searchResults = [],
+  aiThemes = []
 }: OverviewTabProps) => {
   const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = useState(false);
   const [competitorSnippets, setCompetitorSnippets] = useState<{ snippet: string; full: string }[]>([]);
   const [expandedSnippetIdx, setExpandedSnippetIdx] = useState<number | null>(null);
-  const [aiThemes, setAiThemes] = useState<AITheme[]>([]);
   const [competitorSummary, setCompetitorSummary] = useState<string>("");
   const [loadingCompetitorSummary, setLoadingCompetitorSummary] = useState(false);
   const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
   const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = useState(false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
   const [isScoreBreakdownModalOpen, setIsScoreBreakdownModalOpen] = useState(false);
 
   // Responsive check
@@ -110,39 +110,6 @@ export const OverviewTab = ({
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Fetch AI themes for thematic analysis insights
-  useEffect(() => {
-    const fetchAIThemes = async () => {
-      if (!responses.length) return;
-
-      try {
-        // Filter responses to only include sentiment and competitive prompts (excluding visibility)
-        const filteredResponses = responses.filter(response => {
-          const promptType = response.confirmed_prompts?.prompt_type;
-          return promptType === 'sentiment' || 
-                 promptType === 'competitive' || 
-                 promptType === 'talentx_sentiment' || 
-                 promptType === 'talentx_competitive';
-        });
-
-        const responseIds = filteredResponses.map(r => r.id);
-        if (responseIds.length === 0) return;
-
-        const { data, error } = await supabase
-          .from('ai_themes')
-          .select('*')
-          .in('response_id', responseIds)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-        setAiThemes(data || []);
-      } catch (error) {
-        console.error('Error fetching AI themes:', error);
-      }
-    };
-
-    fetchAIThemes();
-  }, [responses]);
 
 
 
@@ -901,6 +868,14 @@ export const OverviewTab = ({
 
   return (
     <div className="flex flex-col gap-8 w-full">
+      {/* Main Section Header */}
+      <div className="space-y-2">
+        <h2 className="text-2xl font-bold text-gray-900">Overview</h2>
+        <p className="text-gray-600">
+          Get a comprehensive view of {companyName}'s AI perception metrics, performance trends, and key insights.
+        </p>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
         {/* Perception Score Card */}
         <Card className="bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col justify-between hover:shadow-md transition-shadow duration-200 p-0 relative overflow-hidden h-full min-h-[240px]">
@@ -977,7 +952,7 @@ export const OverviewTab = ({
         >
           <CardHeader className="pb-2 pt-6 px-4 sm:px-8 flex-shrink-0">
             <div className="flex items-center gap-2 mb-2">
-              <CardTitle className="text-lg font-bold text-gray-700">Score breakdown</CardTitle>
+              <CardTitle className="text-lg font-bold text-gray-700">Breakdown</CardTitle>
               <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-pink-100 text-pink-700 border-pink-200">
                 BETA
               </Badge>

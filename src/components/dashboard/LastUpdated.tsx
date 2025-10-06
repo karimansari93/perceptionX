@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { RefreshCw, Clock, Crown } from "lucide-react";
@@ -34,11 +34,12 @@ export const LastUpdated = ({ onRefresh, lastUpdated }: LastUpdatedProps) => {
     }
   };
 
-  const formatLastUpdated = (date?: Date) => {
-    if (!date) return 'Never';
+  // Memoize the formatted time to prevent constant re-renders
+  const formattedTime = useMemo(() => {
+    if (!lastUpdated) return 'Never';
     
     const now = new Date();
-    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
+    const diffInMinutes = Math.floor((now.getTime() - lastUpdated.getTime()) / (1000 * 60));
     
     if (diffInMinutes < 1) return 'Just now';
     if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
@@ -49,16 +50,17 @@ export const LastUpdated = ({ onRefresh, lastUpdated }: LastUpdatedProps) => {
     const diffInDays = Math.floor(diffInHours / 24);
     if (diffInDays < 7) return `${diffInDays}d ago`;
     
-    return date.toLocaleDateString();
-  };
+    return lastUpdated.toLocaleDateString();
+  }, [lastUpdated]);
+
 
   return (
     <>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3">
         <div className="flex items-center gap-2 text-sm text-gray-600">
           <Clock className="w-4 h-4" />
-          <span className="hidden sm:inline">Last collected: {formatLastUpdated(lastUpdated)}</span>
-          <span className="sm:hidden">{formatLastUpdated(lastUpdated)}</span>
+          <span className="hidden sm:inline">Last collected: {formattedTime}</span>
+          <span className="sm:hidden">{formattedTime}</span>
         </div>
         
         {!isPro && (

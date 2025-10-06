@@ -313,6 +313,13 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
 
   return (
     <div className="space-y-6">
+      {/* Main Section Header */}
+      <div className="space-y-2">
+        <h2 className="text-2xl font-bold text-gray-900">Thematic Analysis</h2>
+        <p className="text-gray-600">
+          Analyze themes and sentiment patterns in AI responses to understand {companyName}'s employer brand perception.
+        </p>
+      </div>
 
       {/* Error Display */}
       {analysisError && (

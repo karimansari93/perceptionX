@@ -191,18 +191,10 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       }
 
       // Define which models to test based on subscription status
-      const modelsToTest = isProUser ? [
-        { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
+      const modelsToTest = [
+        { name: 'openai', displayName: 'ChatGPT', functionName: 'test-prompt-openai' },
         { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
-        { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }, // Using Google AI Overviews during onboarding
-        { name: 'gemini', displayName: 'Gemini', functionName: 'test-prompt-gemini' },
-        { name: 'deepseek', displayName: 'DeepSeek', functionName: 'test-prompt-deepseek' },
-        { name: 'claude', displayName: 'Claude', functionName: 'test-prompt-claude' },
-        { name: 'google-ai-overviews', displayName: 'Google AI Overviews', functionName: 'test-prompt-google-ai-overviews' }
-      ] : [
-        { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
-        { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
-        { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' } // Using Google AI Overviews during onboarding
+        { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }
       ];
 
       // Now run the testing/monitoring process for all prompts
@@ -380,7 +372,8 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
             promptType: confirmedPrompt.prompt_type,
             perplexityCitations: perplexityCitations,
             confirmed_prompt_id: confirmedPrompt.id,
-            ai_model: modelName
+            ai_model: modelName,
+            company_id: confirmedPrompt.company_id
           }
         });
 
@@ -458,18 +451,10 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
   }
 
   // Define which models to test based on subscription status
-  const modelsToTest = isProUser ? [
-    { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
+  const modelsToTest = [
+    { name: 'openai', displayName: 'ChatGPT', functionName: 'test-prompt-openai' },
     { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
-    { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }, // Using Google AI Overviews during onboarding
-    { name: 'gemini', displayName: 'Gemini', functionName: 'test-prompt-gemini' },
-    { name: 'deepseek', displayName: 'DeepSeek', functionName: 'test-prompt-deepseek' },
-    { name: 'claude', displayName: 'Claude', functionName: 'test-prompt-claude' },
-    { name: 'google-ai-overviews', displayName: 'Google AI Overviews', functionName: 'test-prompt-google-ai-overviews' }
-  ] : [
-    { name: 'openai', displayName: getLLMDisplayName('openai'), functionName: 'test-prompt-openai' },
-    { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
-    { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' } // Using Google AI Overviews during onboarding
+    { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }
   ];
 
   // Calculate total operations for progress tracking
@@ -503,7 +488,8 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
               perplexityCitations: perplexityCitations,
               citations: googleAICitations, // Pass Google AI citations separately
               confirmed_prompt_id: confirmedPrompt.id,
-              ai_model: modelName
+              ai_model: modelName,
+              company_id: confirmedPrompt.company_id
             }
           });
 
@@ -561,7 +547,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
 };
 
 // Helper function to format country names properly
-const formatCountryForPrompt = (countryCode: string): string => {
+export const formatCountryForPrompt = (countryCode: string): string => {
   // Countries that need "the" article
   const countriesWithThe = [
     'US', 'AE', 'GB', 'NL', 'PH', 'VA', 'CZ', 'DO', 'GA', 'GM',
@@ -631,7 +617,7 @@ const formatCountryForPrompt = (countryCode: string): string => {
 };
 
 // Helper function to generate prompts from onboarding data
-const generatePromptsFromData = (onboardingData: OnboardingData, isProUser: boolean = false): GeneratedPrompt[] => {
+export const generatePromptsFromData = (onboardingData: OnboardingData, isProUser: boolean = false): GeneratedPrompt[] => {
   const { companyName, industry, country } = onboardingData;
   
   // Determine if we should include location-specific prompts

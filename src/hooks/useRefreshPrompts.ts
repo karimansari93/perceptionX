@@ -178,6 +178,7 @@ export const useRefreshPrompts = () => {
                       citations: model.model === 'google-ai-overviews' ? responseData.citations : null,
                       confirmed_prompt_id: confirmedPrompt.id,
                       ai_model: model.model,
+                      company_id: confirmedPrompt.company_id,
                       isTalentXPrompt: false
                     }
                   });
@@ -292,6 +293,7 @@ export const useRefreshPrompts = () => {
                             citations: model.model === 'google-ai-overviews' ? responseData.citations : null,
                             confirmed_prompt_id: talentXPrompt.id,
                             ai_model: model.model,
+                            company_id: talentXPrompt.company_id,
                             isTalentXPrompt: true,
                             talentXAttributeId: talentXPrompt.talentx_attribute_id
                           }

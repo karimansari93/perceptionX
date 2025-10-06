@@ -13,7 +13,15 @@ interface SubscriptionData {
 
 export const useSubscription = () => {
   const { user } = useAuth();
-  const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
+  const [subscription, setSubscription] = useState<SubscriptionData | null>(() => {
+    // Initialize from cache if available to prevent flash
+    try {
+      const cached = sessionStorage.getItem('user_subscription');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   const [loading, setLoading] = useState(true);
 
   const fetchSubscription = async () => {
@@ -54,68 +62,143 @@ export const useSubscription = () => {
           if (createError) {
             console.error('Error creating profile:', createError);
             // Set default values if profile creation fails
-            setSubscription({
-              subscription_type: 'free',
+            const defaultSubscriptionData = {
+              subscription_type: 'free' as SubscriptionType,
               prompts_used: 0,
               subscription_start_date: null
-            });
+            };
+            setSubscription(defaultSubscriptionData);
+            // Cache the default subscription data
+            try {
+              sessionStorage.setItem('user_subscription', JSON.stringify(defaultSubscriptionData));
+            } catch (error) {
+              console.warn('Failed to cache default subscription data:', error);
+            }
           } else {
-            setSubscription({
+            const subscriptionData = {
               subscription_type: newProfile.subscription_type || 'free',
               prompts_used: newProfile.prompts_used || 0,
               subscription_start_date: newProfile.subscription_start_date
-            });
+            };
+            setSubscription(subscriptionData);
+            // Cache the subscription data
+            try {
+              sessionStorage.setItem('user_subscription', JSON.stringify(subscriptionData));
+            } catch (error) {
+              console.warn('Failed to cache subscription data:', error);
+            }
           }
         } else {
           console.error('Error fetching profile:', error);
           throw error;
         }
       } else {
-        setSubscription({
+        const subscriptionData = {
           subscription_type: data.subscription_type || 'free',
           prompts_used: data.prompts_used || 0,
           subscription_start_date: data.subscription_start_date
-        });
+        };
+        setSubscription(subscriptionData);
+        // Cache the subscription data
+        try {
+          sessionStorage.setItem('user_subscription', JSON.stringify(subscriptionData));
+        } catch (error) {
+          console.warn('Failed to cache subscription data:', error);
+        }
       }
     } catch (error) {
       console.error('Error fetching subscription from profiles:', error);
       // Set default values on any error
-      setSubscription({
-        subscription_type: 'free',
+      const errorSubscriptionData = {
+        subscription_type: 'free' as SubscriptionType,
         prompts_used: 0,
         subscription_start_date: null
-      });
+      };
+      setSubscription(errorSubscriptionData);
+      // Cache the error subscription data
+      try {
+        sessionStorage.setItem('user_subscription', JSON.stringify(errorSubscriptionData));
+      } catch (cacheError) {
+        console.warn('Failed to cache error subscription data:', cacheError);
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchSubscription();
+    if (user) {
+      fetchSubscription();
+    } else {
+      // Clear cache when user logs out
+      try {
+        sessionStorage.removeItem('user_subscription');
+      } catch (error) {
+        console.warn('Failed to clear subscription cache:', error);
+      }
+      setSubscription(null);
+      setLoading(false);
+    }
   }, [user]);
 
   const isPro = subscription?.subscription_type === 'pro';
+  const isEnterprise = subscription?.subscription_type === 'enterprise';
   const isFree = subscription?.subscription_type === 'free';
 
-  const canUpdateData = isPro; // Pro users can update their data
-  const canAddPrompt = isPro || (subscription?.prompts_used || 0) < 3;
-  const canRefreshData = isPro; // Pro users can refresh data
-  const canAccessAdvancedFeatures = isPro;
+  const canUpdateData = isPro || isEnterprise; // Pro and Enterprise users can update their data
+  const canAddPrompt = isPro || isEnterprise || (subscription?.prompts_used || 0) < 5; // Updated to 5 for free tier
+  const canRefreshData = isPro || isEnterprise; // Pro and Enterprise users can refresh data
+  const canAccessAdvancedFeatures = isPro || isEnterprise;
 
   const getLimits = () => {
+    if (isEnterprise) {
+      return {
+        prompts: -1, // unlimited
+        companies: -1, // unlimited
+        teamMembers: -1, // unlimited
+        projects: -1, // unlimited
+        features: [
+          'Unlimited prompts',
+          'Unlimited companies',
+          'Unlimited users',
+          'Monthly data updates',
+          'Company reports & analytics',
+          'All AI models',
+          'Priority support',
+          'Regular strategy calls',
+          'Custom reporting',
+          'Dedicated success manager'
+        ]
+      };
+    }
     if (isPro) {
       return {
         prompts: -1, // unlimited
+        companies: 10,
         teamMembers: 5,
         projects: 10,
-        features: ['Unlimited prompts', 'Advanced analytics', 'Priority support', 'Team collaboration']
+        features: [
+          'Full company insights',
+          '10 companies at once',
+          'Monthly data updates',
+          'Company reports & analytics',
+          'All AI models',
+          'Priority support'
+        ]
       };
     }
     return {
-      prompts: 3,
+      prompts: 5,
+      companies: 3,
       teamMembers: 1,
       projects: 1,
-      features: ['Basic prompts', 'Dashboard access']
+      features: [
+        'Basic company insights',
+        'Up to 5 prompts per month',
+        'Up to 3 companies',
+        'Dashboard access',
+        'Basic analytics'
+      ]
     };
   };
 
@@ -123,6 +206,7 @@ export const useSubscription = () => {
     subscription,
     loading,
     isPro,
+    isEnterprise,
     isFree,
     canUpdateData,
     canAddPrompt,

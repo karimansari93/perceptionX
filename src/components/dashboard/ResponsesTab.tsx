@@ -11,6 +11,7 @@ import { useSubscription } from "@/hooks/useSubscription";
 interface ResponsesTabProps {
   responses: any[];
   parseCitations: (citations: any) => any[];
+  companyName?: string;
 }
 
 const PROMPT_CATEGORIES = [
@@ -20,7 +21,7 @@ const PROMPT_CATEGORIES = [
   { label: "Competitive", value: "competitive" },
 ];
 
-export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
+export const ResponsesTab = ({ responses, companyName = 'your company' }: ResponsesTabProps) => {
   const { isPro } = useSubscription();
   const [expandedRows, setExpandedRows] = useState<{ [key: string]: boolean }>({});
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -74,6 +75,14 @@ export const ResponsesTab = ({ responses }: ResponsesTabProps) => {
 
   return (
     <div className="space-y-4">
+      {/* Main Section Header */}
+      <div className="space-y-2">
+        <h2 className="text-2xl font-bold text-gray-900">Responses</h2>
+        <p className="text-gray-600">
+          Review individual AI responses about {companyName}, analyze sentiment patterns, and track performance across different prompts.
+        </p>
+      </div>
+
       {/* Filters - Only show for Pro users */}
       {isPro && (
         <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3">

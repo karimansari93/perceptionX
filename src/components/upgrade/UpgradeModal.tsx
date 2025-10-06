@@ -1,13 +1,26 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, CheckCircle2, CreditCard, Loader2 } from "lucide-react";
+import { Calendar, Check, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { StripeService } from "@/services/stripe";
 
 interface UpgradeModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+}
+
+interface PricingTier {
+  name: string;
+  price: string;
+  priceUnit: string;
+  description: string;
+  features: string[];
+  buttonText: string;
+  buttonVariant: "default" | "outline" | "secondary";
+  popular?: boolean;
+  action: () => void;
+  disabled?: boolean;
 }
 
 export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
@@ -39,106 +52,153 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
     window.open('https://meetings-eu1.hubspot.com/karim-al-ansari', '_blank');
   };
 
+  const handleContactSales = () => {
+    window.open('https://meetings-eu1.hubspot.com/karim-al-ansari', '_blank');
+  };
+
+  const pricingTiers: PricingTier[] = [
+    {
+      name: "Free",
+      price: "$0",
+      priceUnit: "/month",
+      description: "You're here — great start!",
+      features: [
+        "Basic company insights",
+        "5 prompts per month",
+        "Up to 3 companies",
+        "Dashboard access",
+        "Basic analytics"
+      ],
+      buttonText: "Current Plan",
+      buttonVariant: "outline",
+      action: () => {},
+      disabled: true
+    },
+    {
+      name: "Pro",
+      price: "$199",
+      priceUnit: "/month",
+      description: "More companies, more insights, more results",
+      features: [
+        "Full company insights",
+        "10 companies at once",
+        "Monthly data updates",
+        "Company reports & analytics",
+        "All AI models",
+        "Priority support"
+      ],
+      buttonText: "Upgrade Now",
+      buttonVariant: "default",
+      popular: true,
+      action: handleUpgrade
+    },
+    {
+      name: "Enterprise",
+      price: "Custom",
+      priceUnit: "",
+      description: "Built for teams that scale",
+      features: [
+        "Everything in Pro",
+        "Unlimited users",
+        "Unlimited companies",
+        "Priority support",
+        "Regular strategy calls",
+        "Custom reporting",
+        "Dedicated success manager"
+      ],
+      buttonText: "Chat with us",
+      buttonVariant: "outline",
+      action: handleContactSales
+    }
+  ];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <div className="flex items-center justify-between">
-            <DialogTitle className="text-2xl font-bold text-[#13274F]">PerceptionX Pro</DialogTitle>
-            <Badge variant="secondary" className="bg-[#DB5E89] text-white font-semibold">Limited Time</Badge>
+      <DialogContent className="w-[95vw] max-w-4xl max-h-[95vh] overflow-y-auto mx-2 sm:mx-0">
+        <DialogHeader className="px-4 sm:px-6">
+          <div className="text-center">
+            <DialogTitle className="text-2xl sm:text-3xl font-bold text-[#13274F] mb-3 font-geologica">
+              Upgrade Your Plan
+            </DialogTitle>
+            <p className="text-gray-600 text-base sm:text-lg px-2 font-medium font-jakarta">
+              Unlock deeper reputation insights with Pro and Enterprise accounts
+            </p>
           </div>
         </DialogHeader>
 
-        <div className="space-y-6 py-4">
-          {/* Benefits Section */}
-          <div className="space-y-4">
-            <h3 className="font-semibold text-[#13274F]">What's included:</h3>
-            <div className="space-y-3">
-              <div className="flex items-start gap-3">
-              </div>
-              <div className="flex items-start gap-3">
-                <CheckCircle2 className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="font-medium text-[#13274F]">Full AI Coverage</p>
-                  <p className="text-sm text-[#183056]">
-                    Access to all AI models for comprehensive employer reputation analysis
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <CheckCircle2 className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="font-medium text-[#13274F]">Monthly Data Updates & Notifications</p>
-                  <p className="text-sm text-[#183056]">
-                    Stay informed with regular updates and automated notifications about new insights
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <CheckCircle2 className="w-5 h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium text-[#13274F]">All TalentX Pro Prompts</p>
-                    <Badge variant="secondary" className="bg-[#183056] text-white text-xs px-2 py-0.5">Coming Soon</Badge>
-                  </div>
-                  <p className="text-sm text-[#183056]">
-                    Access to 30 specialized prompts for comprehensive talent attraction analysis across 10 key attributes
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
+        <div className="py-4 sm:py-6 px-4 sm:px-6">
           {/* Error Message */}
           {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 sm:mb-6">
               <p className="text-sm text-red-700">{error}</p>
             </div>
           )}
 
-          {/* CTA Section */}
-          <div className="bg-[#EBECED] rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-semibold text-[#13274F]">Pro Plan - Beta Pricing</p>
-                <div className="flex items-center gap-2">
-                  <p className="text-sm text-[#183056] line-through">$199/month</p>
-                  <p className="text-lg font-bold text-[#0DBCBA]">$99/month</p>
-                  <Badge variant="secondary" className="bg-[#DB5E89] text-white text-xs">50% OFF</Badge>
-                </div>
-                <p className="text-xs text-[#DB5E89] font-medium mt-1">⚡ Limited time beta pricing</p>
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <Button
-                onClick={handleUpgrade}
-                disabled={loading}
-                className="w-full bg-[#DB5E89] text-white hover:bg-[#C54A7A] font-semibold"
+          {/* Pricing Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+            {pricingTiers.map((tier, index) => (
+              <div
+                key={tier.name}
+                className={`relative rounded-2xl border-2 p-4 sm:p-6 transition-all duration-200 hover:shadow-xl flex flex-col ${
+                  tier.popular
+                    ? 'border-[#DB5E89] bg-gradient-to-b from-[#DB5E89]/5 to-white shadow-lg'
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}
               >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <CreditCard className="w-4 h-4 mr-2" />
-                    Get Early Access Now
-                  </>
+                {tier.popular && (
+                  <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+                    <Badge className="bg-[#DB5E89] text-white px-4 py-1 text-sm font-semibold">
+                      Popular
+                    </Badge>
+                  </div>
                 )}
-              </Button>
-              
-              <Button
-                onClick={handleBookDemo}
-                variant="outline"
-                className="w-full border-[#0DBCBA] text-[#0DBCBA] hover:bg-[#0DBCBA] hover:text-white"
-              >
-                <Calendar className="w-4 h-4 mr-2" />
-                Book a Demo
-              </Button>
-            </div>
+
+                <div className="text-center mb-4 sm:mb-6">
+                  <h3 className="text-lg sm:text-xl font-bold text-[#13274F] mb-3">{tier.name}</h3>
+                  <div className="mb-3">
+                    <span className="text-2xl sm:text-3xl font-bold text-[#13274F]">{tier.price}</span>
+                    {tier.priceUnit && (
+                      <span className="text-lg sm:text-xl text-gray-400 ml-1">{tier.priceUnit}</span>
+                    )}
+                  </div>
+                  <p className="text-gray-600 text-xs sm:text-sm font-medium">{tier.description}</p>
+                </div>
+
+                <div className="space-y-2 sm:space-y-3 mb-4 sm:mb-6 flex-grow">
+                  {tier.features.map((feature, featureIndex) => (
+                    <div key={featureIndex} className="flex items-start gap-2 sm:gap-3">
+                      <Check className="w-4 h-4 sm:w-5 sm:h-5 text-[#0DBCBA] mt-0.5 flex-shrink-0" />
+                      <span className="text-xs sm:text-sm text-gray-500 leading-relaxed font-light">{feature}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <Button
+                  onClick={tier.action}
+                  disabled={tier.disabled || loading}
+                  variant={tier.buttonVariant}
+                  className={`w-full font-semibold h-10 sm:h-12 mt-auto text-sm sm:text-base ${
+                    tier.popular
+                      ? 'bg-[#DB5E89] text-white hover:bg-[#C54A7A]'
+                      : tier.name === "Enterprise"
+                      ? 'border-[#0DBCBA] text-[#0DBCBA] hover:bg-[#0DBCBA] hover:text-white'
+                      : ''
+                  }`}
+                >
+                  {loading && tier.name === "Pro" ? (
+                    <>
+                      <Loader2 className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2 animate-spin" />
+                      <span className="hidden sm:inline">Processing...</span>
+                      <span className="sm:hidden">Processing</span>
+                    </>
+                  ) : (
+                    <span className="truncate">{tier.buttonText}</span>
+                  )}
+                </Button>
+              </div>
+            ))}
           </div>
+
         </div>
       </DialogContent>
     </Dialog>

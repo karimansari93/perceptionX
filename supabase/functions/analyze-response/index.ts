@@ -54,7 +54,7 @@ serve(async (req) => {
   try {
     // Parse request body
     const body = await req.json();
-    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model } = body;
+    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, company_id } = body;
     
     // Handle citations from different LLMs
     let llmCitations = perplexityCitations || [];
@@ -113,7 +113,8 @@ serve(async (req) => {
       total_words: result.total_words,
       visibility_score: result.visibility_score,
       competitive_score: result.competitive_score,
-      detected_competitors: result.detected_competitors
+      detected_competitors: result.detected_competitors,
+      company_id: company_id
       // Removed talentx_analysis and talentx_scores as they don't exist in the table
     };
 

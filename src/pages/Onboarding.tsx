@@ -18,6 +18,7 @@ import { HelpCircle, LogOut } from "lucide-react";
 // Define the actual database schema we're working with
 interface UserOnboarding {
   user_id: string;
+  organization_name: string;
   company_name: string;
   industry: string;
   job_function?: string | null;
@@ -31,6 +32,7 @@ interface UserOnboarding {
 
 interface OnboardingData {
   display_name: string;
+  organization_name: string;
   company_name: string;
   industry: string;
   job_function: string;
@@ -59,6 +61,7 @@ export const Onboarding = () => {
   const TOTAL_STEPS = 4;
   const [onboardingData, setOnboardingData] = useState<OnboardingData>({
     display_name: "",
+    organization_name: "",
     company_name: "",
     industry: "",
     job_function: "",
@@ -199,7 +202,7 @@ export const Onboarding = () => {
     },
     {
       title: "Your details",
-      description: "We'd like to know your name and role.",
+      description: "We'd like to know your name, role, and organization.",
       fields: [
         ...(needsDisplayName ? [{
           label: "Your Name",
@@ -214,6 +217,13 @@ export const Onboarding = () => {
           placeholder: "e.g., Employer Branding Specialist, Talent Acquisition Manager",
           value: onboardingData.job_function,
           onChange: (value: string) => setOnboardingData(prev => ({ ...prev, job_function: value }))
+        },
+        {
+          label: "Organization Name",
+          type: "text",
+          placeholder: "e.g., Acme Corp, Your Agency Name",
+          value: onboardingData.organization_name,
+          onChange: (value: string) => setOnboardingData(prev => ({ ...prev, organization_name: value }))
         }
       ]
     },
@@ -259,11 +269,11 @@ export const Onboarding = () => {
       return;
     }
 
-    // Step 1: validate user details (name if needed, job function always)
+    // Step 1: validate user details (name if needed, job function and organization always)
     if (onboardingStep === 1) {
       const requiredFields = needsDisplayName 
-        ? [onboardingData.display_name, onboardingData.job_function]
-        : [onboardingData.job_function];
+        ? [onboardingData.display_name, onboardingData.job_function, onboardingData.organization_name]
+        : [onboardingData.job_function, onboardingData.organization_name];
       
       if (requiredFields.some(field => !field.trim())) {
         toast.error('Please fill in all required fields before continuing');
@@ -307,6 +317,7 @@ export const Onboarding = () => {
             // Create new onboarding record
             const newRecord: UserOnboarding = {
               user_id: user?.id,
+              organization_name: onboardingData.organization_name,
               company_name: onboardingData.company_name,
               industry: onboardingData.industry,
               job_function: onboardingData.job_function || null,
@@ -361,6 +372,7 @@ export const Onboarding = () => {
       navigate('/onboarding/loading', { 
         state: { 
           onboardingId: onboardingId,
+          organizationName: onboardingData.organization_name,
           companyName: onboardingData.company_name,
           industry: onboardingData.industry,
           country: onboardingData.country
@@ -812,6 +824,7 @@ export const Onboarding = () => {
                             navigate('/onboarding/loading', { 
                               state: { 
                                 onboardingId: onboardingId,
+                                organizationName: onboardingData.organization_name,
                                 companyName: onboardingData.company_name,
                                 industry: onboardingData.industry,
                                 country: onboardingData.country

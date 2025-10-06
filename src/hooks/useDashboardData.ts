@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useCompany } from "@/contexts/CompanyContext";
 import { PromptResponse, DashboardMetrics, SentimentTrendData, CitationCount, PromptData, Citation, CompetitorMention, LLMMentionRanking } from "@/types/dashboard";
 import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
@@ -10,15 +11,17 @@ import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonit
 
 export const useDashboardData = () => {
   const { user: rawUser, clearSession } = useAuth();
+  const { currentCompany, loading: companyLoading } = useCompany();
   const { isPro } = useSubscription();
   
   // Debug flag - set to true only when debugging specific issues
-  const DEBUG_LOGS = false;
+  const DEBUG_LOGS = true;
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
   const [responses, setResponses] = useState<PromptResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [competitorLoading, setCompetitorLoading] = useState(false);
+  const [metricsLoading, setMetricsLoading] = useState(false);
   const [companyName, setCompanyName] = useState('');
   const [hasDataIssues, setHasDataIssues] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
@@ -34,17 +37,17 @@ export const useDashboardData = () => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [recencyDataError, setRecencyDataError] = useState<string | null>(null);
   const subscriptionRef = useRef<any>(null); // Track subscription instance
-  const pollingRef = useRef<NodeJS.Timeout | null>(null); // Track polling interval
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);   // Track polling interval
 
-  // Network status monitoring
+  // Network status monitoring - FIXED
   useEffect(() => {
     const removeListener = networkMonitor.addListener((online) => {
       setIsOnline(online);
       if (online) {
         setConnectionError(null);
-        // Retry data fetching when connection is restored
-        if (user) {
-          fetchResponses();
+        // Only trigger refetch if we have user and company
+        if (user?.id && currentCompany?.id) {
+          setShouldRefetch(true); // Force refetch
         }
       } else {
         setConnectionError('No internet connection. Please check your network.');
@@ -52,11 +55,10 @@ export const useDashboardData = () => {
     });
 
     return removeListener;
-  }, [user]);
+  }, [user?.id, currentCompany?.id]); // Only IDs
 
   const fetchResponses = useCallback(async () => {
-    if (!user) {
-      console.log('No user available, skipping fetchResponses');
+    if (!user || !currentCompany) {
       return;
     }
     
@@ -66,6 +68,7 @@ export const useDashboardData = () => {
       return;
     }
     
+    
     try {
       setLoading(true);
       setCompetitorLoading(true);
@@ -74,46 +77,30 @@ export const useDashboardData = () => {
       const { data: userPrompts, error: promptsError } = await retrySupabaseQuery(() =>
         supabase
           .from('confirmed_prompts')
-          .select('id, user_id, prompt_text')
-          .eq('user_id', user.id)
+          .select('id, user_id, prompt_text, company_id')
+          .eq('company_id', currentCompany.id)
       ) as { data: any[] | null; error: any };
 
       if (promptsError) {
+        console.error('🔍 Error fetching prompts:', promptsError);
         throw promptsError;
       }
 
       if (!userPrompts || userPrompts.length === 0) {
-        // Let's check if there are any prompts without user_id
-        const { data: allPrompts, error: allPromptsError } = await retrySupabaseQuery(() =>
-          supabase
-            .from('confirmed_prompts')
-            .select('id, user_id, prompt_text, onboarding_id')
-            .is('user_id', null)
-        ) as { data: any[] | null; error: any };
-
-        if (allPromptsError) {
-          // Silently handle error
-        } else {
-          // If we found prompts without user_id, set data issues flag
-          if (allPrompts && allPrompts.length > 0) {
-            setHasDataIssues(true);
-            await fixExistingPrompts();
-            return; // Exit early, fixExistingPrompts will call fetchResponses again
-          }
-        }
-
+        // No prompts found for this company - this is expected for new companies
         setResponses([]);
         setLoading(false);
         setCompetitorLoading(false);
         return;
       }
 
+
       // Clear data issues flag if we found prompts
       setHasDataIssues(false);
 
       const promptIds = userPrompts.map(p => p.id);
 
-      // Fetch all responses including TalentX responses
+      // Fetch all responses including TalentX responses for this company
       const { data, error } = await retrySupabaseQuery(() =>
         supabase
           .from('prompt_responses')
@@ -125,7 +112,7 @@ export const useDashboardData = () => {
               prompt_type
             )
           `)
-          .in('confirmed_prompt_id', promptIds)
+          .eq('company_id', currentCompany.id)
           .order('tested_at', { ascending: false })
       ) as { data: any[] | null; error: any };
 
@@ -146,16 +133,17 @@ export const useDashboardData = () => {
                   user_id,
                   prompt_type,
                   prompt_text,
-                  talentx_attribute_id
+                  talentx_attribute_id,
+                  company_id
                 )
               `)
-              .eq('confirmed_prompts.user_id', user.id)
+              .eq('confirmed_prompts.company_id', currentCompany.id)
               .like('confirmed_prompts.prompt_type', 'talentx_%')
               .not('talentx_analysis', 'eq', '{}')
               .order('created_at', { ascending: false });
 
             if (talentXError) {
-              // Silently handle error
+              console.error('Error fetching TalentX responses:', talentXError);
             } else if (talentXResponses && talentXResponses.length > 0) {
               // Convert TalentX responses to PromptResponse format
               const talentXResponsesFormatted: PromptResponse[] = talentXResponses.map(response => {
@@ -169,6 +157,7 @@ export const useDashboardData = () => {
                 return {
                   id: response.id,
                   confirmed_prompt_id: response.confirmed_prompt_id,
+                  company_id: response.confirmed_prompts.company_id,
                   ai_model: response.ai_model,
                   response_text: response.response_text,
                   sentiment_score: response.sentiment_score,
@@ -191,7 +180,8 @@ export const useDashboardData = () => {
               allResponses = [...allResponses, ...talentXResponsesFormatted];
             }
         } catch (error) {
-          // Silently handle error
+          console.error('Error fetching TalentX responses:', error);
+          // Continue with regular responses even if TalentX fails
         }
       }
       
@@ -200,7 +190,8 @@ export const useDashboardData = () => {
       // Set lastUpdated to the most recent response collection time
       if (allResponses.length > 0) {
         const mostRecentResponse = allResponses[0]; // Already sorted by tested_at desc
-        setLastUpdated(new Date(mostRecentResponse.tested_at));
+        const lastUpdatedDate = new Date(mostRecentResponse.tested_at);
+        setLastUpdated(lastUpdatedDate);
       } else {
         setLastUpdated(undefined);
       }
@@ -215,7 +206,6 @@ export const useDashboardData = () => {
           error?.message?.includes('Invalid Refresh Token') ||
           error?.message?.includes('JWT') ||
           error?.status === 401) {
-        console.log('Authentication error detected, clearing user session');
         setConnectionError('Authentication expired. Please sign in again.');
         clearSession(); // Clear the invalid session
         
@@ -241,7 +231,7 @@ export const useDashboardData = () => {
       setLoading(false);
       setCompetitorLoading(false);
     }
-  }, [user, isOnline]);
+  }, [user, currentCompany, isOnline]);
 
   const fetchRecencyData = useCallback(async () => {
     if (!user) return;
@@ -450,36 +440,20 @@ export const useDashboardData = () => {
       });
       
       // CRITICAL DEBUG: Let's check if we have the specific response IDs from user's data
-      if (DEBUG_LOGS) {
-        const knownResponseIds = ['305cede8-8af3-4eae-8830-64bfd98431ae', '70d321ae-1b4a-4907-aac5-a577157e6881'];
-        console.log('🧐 Checking for known response IDs:', {
-          known_ids: knownResponseIds,
-          found_in_responses: knownResponseIds.filter(id => responseIds.includes(id)),
-          all_response_ids: responseIds
-        });
-      }
       
       if (responseIds.length === 0) {
-        console.log('⚠️ No relevant responses found for AI themes');
         setAiThemes([]);
         return;
       }
 
       // CRITICAL DEBUG: Let's test with a known working response ID first
       if (DEBUG_LOGS) {
-        console.log('🔬 Testing direct query with known response ID...');
         const { data: directTest, error: directError } = await retrySupabaseQuery(() =>
           supabase
             .from('ai_themes')
             .select('*')
             .eq('response_id', '305cede8-8af3-4eae-8830-64bfd98431ae')
         ) as { data: any[] | null; error: any };
-          
-        console.log('🧪 Direct test result:', {
-          themes_found: directTest?.length || 0,
-          error: directError?.message || 'none',
-          sample_theme: directTest?.[0]
-        });
       }
 
       const { data, error } = await retrySupabaseQuery(() =>
@@ -502,7 +476,6 @@ export const useDashboardData = () => {
         
         // Also try the exact same query as ThematicAnalysisTab
         if (DEBUG_LOGS) {
-          console.log('🔍 Trying exact same query as ThematicAnalysisTab...');
           const { data: testData, error: testError } = await supabase
             .from('ai_themes')
             .select('*')
@@ -534,12 +507,6 @@ export const useDashboardData = () => {
       }
 
       if (DEBUG_LOGS) {
-        console.log('🔍 AI Themes fetched:', data?.length || 0, 'themes for', responseIds.length, 'responses');
-        if (data && data.length > 0) {
-          console.log('📊 Sample AI theme:', data[0]);
-        } else {
-          console.log('⚠️ No AI themes returned from main query. Response IDs used:', responseIds.slice(0, 10));
-        }
       }
       setAiThemes(data || []);
     } catch (error) {
@@ -593,41 +560,13 @@ export const useDashboardData = () => {
   }, [aiThemes, responses]);
 
   const fetchCompanyName = useCallback(async () => {
-    if (!user) return;
-    
-    // console.log('🔍 fetchCompanyName called for user:', user.id);
-    
-    try {
-      // Get the most recent onboarding record
-      const { data, error } = await retrySupabaseQuery(() =>
-        supabase
-          .from('user_onboarding')
-          .select('company_name')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-      ) as { data: any[] | null; error: any };
-
-      if (error) {
-        console.log('❌ Error fetching company name:', error);
-        setCompanyName('');
-        return;
-      }
-
-      // If we have data, use the company name
-      if (data && data.length > 0) {
-        // console.log('✅ Company name fetched:', data[0].company_name);
-        setCompanyName(data[0].company_name);
-      } else {
-        console.log('⚠️ No company name data found');
-        setCompanyName('');
-      }
-    } catch (error) {
-      console.log('❌ Exception fetching company name:', error);
-      // Silently handle error
+    if (!currentCompany) {
       setCompanyName('');
+      return;
     }
-  }, [user]);
+    
+    setCompanyName(currentCompany.name);
+  }, [currentCompany]);
 
   const fetchTalentXProData = useCallback(async () => {
     if (!user || !isPro) {
@@ -638,19 +577,39 @@ export const useDashboardData = () => {
 
     try {
       setTalentXProLoading(true);
-      const data = await TalentXProService.getAggregatedProAnalysis(user.id);
+      const data = await TalentXProService.getAggregatedProAnalysis(user.id, currentCompany?.id);
       setTalentXProData(data);
     } catch (error) {
-      // Silently handle error
+      console.error('Error fetching TalentX Pro data:', error);
       setTalentXProData([]);
     } finally {
       setTalentXProLoading(false);
     }
-  }, [user, isPro]);
+  }, [user, currentCompany, isPro]);
+
+  // Cache for search results to prevent duplicate requests
+  const searchResultsCache = useRef<{
+    companyId: string | null;
+    timestamp: number;
+    data: any[];
+  }>({ companyId: null, timestamp: 0, data: [] });
 
   const fetchSearchResults = useCallback(async () => {
-    if (!user || !companyName) {
+    if (!user || !currentCompany) {
       setSearchResults([]);
+      setSearchResultsLoading(false);
+      return;
+    }
+
+    // Check cache first - if we have recent data for this company, use it
+    const now = Date.now();
+    const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+    if (
+      searchResultsCache.current.companyId === currentCompany.id &&
+      (now - searchResultsCache.current.timestamp) < CACHE_DURATION &&
+      searchResultsCache.current.data.length > 0
+    ) {
+      setSearchResults(searchResultsCache.current.data);
       setSearchResultsLoading(false);
       return;
     }
@@ -672,7 +631,7 @@ export const useDashboardData = () => {
             keywords_everywhere_available,
             created_at
           `)
-          .eq('company_name', companyName)
+          .eq('company_id', currentCompany.id)
           .order('created_at', { ascending: false })
           .limit(1)
       ) as { data: any[] | null; error: any };
@@ -738,6 +697,7 @@ export const useDashboardData = () => {
           snippet: item.result.snippet,
           position: item.result.position,
           domain: item.result.domain,
+          company_id: currentCompany.id, // Add company_id to each search result
           monthlySearchVolume: item.result.monthly_search_volume,
           mediaType: item.result.media_type,
           companyMentioned: item.result.company_mentioned,
@@ -758,6 +718,14 @@ export const useDashboardData = () => {
         });
 
       setSearchResults(processedResults);
+      
+      // Cache the results
+      searchResultsCache.current = {
+        companyId: currentCompany.id,
+        timestamp: now,
+        data: processedResults
+      };
+      
       if (DEBUG_LOGS) console.log('🔍 Search results loaded:', processedResults.length, 'results');
 
       // Process search terms data for ranking
@@ -798,40 +766,40 @@ export const useDashboardData = () => {
     }
   }, [user, companyName]);
 
-  // Real-time subscription effect (only once per user session)
+  // Real-time subscription - FIXED
   useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return;
+    
     if (subscriptionRef.current) {
-      // Clean up any existing subscription before creating a new one
       subscriptionRef.current.unsubscribe();
       subscriptionRef.current = null;
     }
+    
     const subscription = supabase
       .channel('prompt_responses_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'prompt_responses'
-        },
-        (payload) => {
-          fetchResponses();
-        }
-      )
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'prompt_responses'
+      }, (payload) => {
+        // Force refetch on changes
+        setShouldRefetch(true);
+      })
       .subscribe();
+      
     subscriptionRef.current = subscription;
+    
     return () => {
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe();
         subscriptionRef.current = null;
       }
     };
-  }, [user, fetchResponses]);
+  }, [user?.id]);
 
   // Polling effect: only set up polling when loading is true and only one interval at a time
   useEffect(() => {
-    if (!user || !loading || !isOnline) {
+    if (!user?.id || !loading || !isOnline) {
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
@@ -842,7 +810,11 @@ export const useDashboardData = () => {
     
     // Use debounced polling to prevent overwhelming the server
     pollingRef.current = setInterval(() => {
-      queryDebouncer.debounce('fetchResponses', fetchResponses, 1000);
+      // Only poll if tab is still visible
+      if (!document.hidden) {
+        // Force refetch instead of calling function directly
+        setShouldRefetch(true);
+      }
     }, 3000); // Increased interval from 2s to 3s
     
     return () => {
@@ -851,25 +823,69 @@ export const useDashboardData = () => {
         pollingRef.current = null;
       }
     };
-  }, [user, loading, isOnline, fetchResponses]);
+  }, [user?.id, loading, isOnline]); // Only depend on IDs and primitive values, not the function
 
-  // Initial data fetch
+  // Add refs to track initial loading state
+  const hasInitiallyLoadedRef = useRef(false);
+  const currentCompanyIdRef = useRef(currentCompany?.id);
+  const [shouldRefetch, setShouldRefetch] = useState(false);
+  const [isSwitchingCompany, setIsSwitchingCompany] = useState(false);
+
+  // Update the ref when company changes
   useEffect(() => {
-    if (user) {
+    if (currentCompany?.id !== currentCompanyIdRef.current) {
+      // Set switching flag to prevent stale data from being used
+      setIsSwitchingCompany(true);
+      
+      hasInitiallyLoadedRef.current = false;
+      currentCompanyIdRef.current = currentCompany?.id;
+      
+      // Clear all data immediately when switching companies
+      setResponses([]);
+      setAiThemes([]);
+      setSearchResults([]);
+      setSearchTermsData([]);
+      setTalentXProData([]);
+      setTalentXProPrompts([]);
+      setRecencyData([]);
+      setLastUpdated(undefined);
+      
+      // Clear search results cache when switching companies
+      searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
+    }
+  }, [currentCompany?.id, responses.length, searchResults.length]);
+
+  // Initial data fetch - only run when user or company ID actually changes, or when shouldRefetch is true
+  useEffect(() => {
+    if (user && currentCompany && (!hasInitiallyLoadedRef.current || shouldRefetch)) {
+      hasInitiallyLoadedRef.current = true;
+      setShouldRefetch(false); // Reset the refetch flag
+      
+      // Fetch fresh data for the new company
       fetchResponses();
       fetchCompanyName();
       if (isPro) {
         fetchTalentXProData();
+        fetchSearchResults();
       }
+      
+      // Don't clear the switching flag here - let it be cleared when data is actually loaded
     }
-  }, [user, fetchResponses, fetchCompanyName, fetchTalentXProData, isPro]);
+  }, [user?.id, currentCompany?.id, isPro, shouldRefetch]);
+
+  // Clear switching flag when data is actually loaded
+  useEffect(() => {
+    if (isSwitchingCompany && (responses.length > 0 || searchResults.length > 0)) {
+      setIsSwitchingCompany(false);
+    }
+  }, [isSwitchingCompany, responses.length, searchResults.length]);
 
   // Fetch recency data when responses change
   useEffect(() => {
     if (responses.length > 0) {
       fetchRecencyData();
     }
-  }, [responses, fetchRecencyData]);
+  }, [responses.length]); // Only depend on responses length, not the function
 
   // Fetch AI themes when responses change
   useEffect(() => {
@@ -877,22 +893,42 @@ export const useDashboardData = () => {
       if (DEBUG_LOGS) console.log('🔄 fetchAIThemes triggered by responses change');
       fetchAIThemes();
     }
-  }, [responses, fetchAIThemes]);
+  }, [responses.length]); // Only depend on responses length, not the function
 
-  // Fetch search results when company name is available
+  // Track when metrics are ready (depends on responses, AI themes, and recency data)
   useEffect(() => {
-    if (user && isPro && companyName) {
+    if (loading) {
+      setMetricsLoading(true);
+    } else if (responses.length > 0) {
+      // Check if we have the required data for metrics calculation
+      const hasRequiredData = responses.length > 0 && 
+        (aiThemes.length > 0 || responses.some(r => r.sentiment_score !== undefined)) &&
+        (recencyData.length > 0 || recencyDataError); // Wait for recency data or error
+      
+      if (hasRequiredData) {
+        setMetricsLoading(false);
+      }
+    } else {
+      setMetricsLoading(false);
+    }
+  }, [loading, responses.length, aiThemes.length, recencyData.length, recencyDataError]);
+
+  // Comprehensive loading state that includes all critical data
+  const isFullyLoaded = useMemo(() => {
+    return !loading && !metricsLoading && !competitorLoading;
+  }, [loading, metricsLoading, competitorLoading]);
+
+  // Fetch search results when company is available
+  useEffect(() => {
+    if (user && isPro && currentCompany) {
       fetchSearchResults();
     }
-  }, [user, isPro, companyName, fetchSearchResults]);
+  }, [user?.id, isPro, currentCompany?.id]); // Only depend on IDs, not the function
 
   const refreshData = useCallback(async () => {
-    await fetchResponses();
-    if (isPro) {
-      await fetchTalentXProData();
-      await fetchSearchResults();
-    }
-  }, [fetchResponses, fetchTalentXProData, fetchSearchResults, isPro]);
+    // Force refetch by setting the state
+    setShouldRefetch(true);
+  }, []);
 
   const parseCitations = useCallback((citations: any): Citation[] => {
     if (!citations) return [];
@@ -924,7 +960,7 @@ export const useDashboardData = () => {
           .eq('is_pro_prompt', true);
 
         if (error) {
-          // Silently handle error
+          console.error('Error fetching TalentX Pro prompts:', error);
           setTalentXProPrompts([]);
           return;
         }
@@ -975,7 +1011,7 @@ export const useDashboardData = () => {
           setTalentXProPrompts([]);
         }
       } catch (error) {
-        // Silently handle error
+        console.error('Error in fetchTalentXProPrompts:', error);
         setTalentXProPrompts([]);
       }
     };
@@ -1295,8 +1331,24 @@ export const useDashboardData = () => {
   }, [responses, calculateAIBasedSentiment]);
 
   const topCitations: CitationCount[] = useMemo(() => {
-    // Use enhanceCitations to get EnhancedCitation objects from responses
-    const allCitations = responses.flatMap(r => enhanceCitations(parseCitations(r.citations)));
+    // If no current company, return empty array
+    if (!currentCompany?.id) {
+      return [];
+    }
+
+    // If we're switching companies, return empty array to prevent stale data
+    if (isSwitchingCompany) {
+      return [];
+    }
+
+    // CRITICAL: Filter responses and search results by current company ID
+    // This ensures we only count citations from the currently selected company
+    const currentCompanyResponses = responses.filter(r => r.company_id === currentCompany.id);
+    const currentCompanySearchResults = searchResults.filter(r => r.company_id === currentCompany.id);
+
+
+    // Use enhanceCitations to get EnhancedCitation objects from filtered responses
+    const allCitations = currentCompanyResponses.flatMap(r => enhanceCitations(parseCitations(r.citations)));
     // Only keep citations that are real websites
     const websiteCitations = allCitations.filter(citation => citation.type === 'website' && citation.url);
 
@@ -1308,8 +1360,8 @@ export const useDashboardData = () => {
       return acc;
     }, {});
 
-    // Add search result domains to citation counts
-    searchResults.forEach(result => {
+    // Add search result domains to citation counts (from filtered search results)
+    currentCompanySearchResults.forEach(result => {
       const domain = result.domain;
       if (domain) {
         // Count each search result as a citation (mentionCount represents how many search terms found this domain)
@@ -1322,10 +1374,9 @@ export const useDashboardData = () => {
       .map(([domain, count]) => ({ domain, count: count as number }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 20);
-
-    // console.log('🔍 Top citations calculated:', finalCitations.length, 'domains, search results:', searchResults.length);
+    
     return finalCitations;
-  }, [responses, searchResults]);
+  }, [responses, searchResults, currentCompany?.name, currentCompany?.id, isSwitchingCompany]);
 
   const getMostCommonValue = (arr: string[]): string | null => {
     if (!arr.length) return null;
@@ -1563,7 +1614,7 @@ export const useDashboardData = () => {
         .limit(1);
 
       if (onboardingError) {
-        // Silently handle error
+        console.error('Error fetching user onboarding:', onboardingError);
         return;
       }
 
@@ -1578,14 +1629,14 @@ export const useDashboardData = () => {
           .is('user_id', null);
 
         if (updateError) {
-          // Silently handle error
+          console.error('Error updating confirmed prompts:', updateError);
         } else {
           // Refresh the data after fixing
           fetchResponses();
         }
       }
     } catch (error) {
-      // Silently handle error
+      console.error('Error in fixMissingUserIds:', error);
     }
   }, [user, fetchResponses]);
 
@@ -1593,6 +1644,8 @@ export const useDashboardData = () => {
     responses,
     loading,
     competitorLoading,
+    metricsLoading,
+    isFullyLoaded,
     companyName,
     metrics,
     sentimentTrend,

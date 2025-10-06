@@ -73,4 +73,4 @@ serve(async (req) => {
       }
     )
   }
-}) 
+})

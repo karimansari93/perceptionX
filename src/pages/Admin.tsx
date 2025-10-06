@@ -6,19 +6,23 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { RefreshCw, Users, Calendar, Building2, LogOut, FileText, Download, Brain, Clock, TestTube, AlertCircle, CheckCircle, ChevronDown, Search } from 'lucide-react';
+import { RefreshCw, Users, Calendar, Building2, LogOut, FileText, Download, Brain, Clock, TestTube, AlertCircle, CheckCircle, ChevronDown, Search, Briefcase } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { checkExistingPromptResponse, logger } from '@/lib/utils';
 import { TalentXProService } from '@/services/talentXProService';
 import { CompanyReportTab } from '@/components/admin/CompanyReportTab';
 import { CompanyReportTextTab } from '@/components/admin/CompanyReportTextTab';
+import { CompanyManagementTab } from '@/components/admin/CompanyManagementTab';
+import { OrganizationManagementTab } from '@/components/admin/OrganizationManagementTab';
 import { useAdminReportGeneration } from '@/hooks/useAdminReportGeneration';
 
 interface UserRow {
   id: string;
   email: string;
+  organization_name: string;
   company_name: string;
+  company_id: string;
   industry: string;
   last_updated: string | null;
   created_at: string;
@@ -57,8 +61,8 @@ export default function Admin() {
   const [currentRefreshUser, setCurrentRefreshUser] = useState<UserRow | null>(null);
   const [confirmationData, setConfirmationData] = useState<RefreshConfirmation | null>(null);
   const [executionData, setExecutionData] = useState<RefreshConfirmation | null>(null);
-  const [activeTab, setActiveTab] = useState<'users' | 'reports' | 'text-reports' | 'recency-test' | 'search-insights'>('users');
-  const [reportConfirmation, setReportConfirmation] = useState<{userId: string, userEmail: string, companyName: string} | null>(null);
+  const [activeTab, setActiveTab] = useState<'users' | 'reports' | 'text-reports' | 'recency-test' | 'search-insights' | 'companies' | 'organizations'>('users');
+  const [reportConfirmation, setReportConfirmation] = useState<{userId: string, userEmail: string, organizationName: string, companyName: string} | null>(null);
   const [aiThemesProgress, setAiThemesProgress] = useState<{userId: string, current: number, total: number, currentResponse: string} | null>(null);
   const [isAnalyzingThemes, setIsAnalyzingThemes] = useState(false);
   const [recencyTestResults, setRecencyTestResults] = useState<any[]>([]);
@@ -237,7 +241,8 @@ export default function Admin() {
       
       const { data, error } = await supabase.functions.invoke('search-insights', {
         body: {
-          companyName: selectedUser.company_name
+          companyName: selectedUser.company_name,
+          company_id: selectedUser.company_id
         }
       });
       
@@ -350,7 +355,7 @@ export default function Admin() {
       // 1) Get completed onboarding records (latest per user)
       const { data: allOnboardings, error: onboardingError } = await supabase
         .from('user_onboarding')
-        .select('user_id, company_name, industry, created_at')
+        .select('user_id, organization_name, company_name, company_id, industry, created_at')
         .not('company_name', 'is', null)
         .not('industry', 'is', null)
         .order('created_at', { ascending: false });
@@ -380,14 +385,16 @@ export default function Admin() {
       // 3) Confirmed prompts per user (also used to compute last response)
       const { data: prompts, error: promptsError } = await supabase
         .from('confirmed_prompts')
-        .select('user_id, id')
+        .select('user_id, id, company_id')
         .in('user_id', completedUserIds);
       if (promptsError) throw promptsError;
       const usersWithPrompts = new Set<string>((prompts || []).map((r: any) => r.user_id));
       const promptIdToUserId: Record<string, string> = {};
+      const promptIdToCompanyId: Record<string, string> = {};
       const promptIds: string[] = [];
       for (const r of prompts || []) {
         promptIdToUserId[r.id] = r.user_id;
+        promptIdToCompanyId[r.id] = r.company_id;
         promptIds.push(r.id);
       }
 
@@ -435,7 +442,9 @@ export default function Admin() {
         return {
           id: uid,
           email: prof?.email || '(no profile) ' + uid,
+          organization_name: ob?.organization_name || ob?.company_name || '—',
           company_name: ob?.company_name || '—',
+          company_id: ob?.company_id || '—',
           industry: ob?.industry || '—',
           last_updated: userIdToLastResponse[uid] || null,
           created_at: prof?.created_at || ob?.created_at || new Date().toISOString(),
@@ -676,6 +685,7 @@ export default function Admin() {
                   citations: model.name === 'google-ai-overviews' ? (resp as any).citations : null,
                   confirmed_prompt_id: prompt.id,
                   ai_model: model.name,
+                  company_id: promptIdToCompanyId[prompt.id],
                   isTalentXPrompt: false
                 }
               });
@@ -729,6 +739,7 @@ export default function Admin() {
                   citations: model.name === 'google-ai-overviews' ? (resp as any).citations : null,
                   confirmed_prompt_id: talentXPrompt.id, // Use the confirmed_prompts ID directly
                   ai_model: model.name,
+                  company_id: promptIdToCompanyId[talentXPrompt.id],
                   isTalentXPrompt: true
                 }
               });
@@ -782,7 +793,7 @@ export default function Admin() {
       // Get user's company info for TalentX prompts
       const { data: onboardingData } = await supabase
         .from('user_onboarding')
-        .select('company_name, industry')
+        .select('organization_name, company_name, company_id, industry')
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .limit(1)
@@ -986,6 +997,22 @@ export default function Admin() {
           <Search className="w-4 h-4" />
           Search Insights
         </Button>
+        <Button
+          variant={activeTab === 'organizations' ? 'default' : 'ghost'}
+          onClick={() => setActiveTab('organizations')}
+          className="flex items-center gap-2"
+        >
+          <Building2 className="w-4 h-4" />
+          Organizations
+        </Button>
+        <Button
+          variant={activeTab === 'companies' ? 'default' : 'ghost'}
+          onClick={() => setActiveTab('companies')}
+          className="flex items-center gap-2"
+        >
+          <Briefcase className="w-4 h-4" />
+          Companies
+        </Button>
       </div>
 
       {/* Tab Content */}
@@ -1001,6 +1028,7 @@ export default function Admin() {
             <TableHeader>
               <TableRow>
                 <TableHead>Email</TableHead>
+                <TableHead>Organization</TableHead>
                 <TableHead>Company</TableHead>
                 <TableHead>Industry</TableHead>
                 <TableHead>Last Updated</TableHead>
@@ -1015,6 +1043,12 @@ export default function Admin() {
               {users.map((u) => (
                 <TableRow key={u.id}>
                   <TableCell className="font-medium">{u.email}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Building2 className="w-4 h-4 text-blue-500" />
+                      {u.organization_name}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <Building2 className="w-4 h-4 text-gray-500" />
@@ -1077,7 +1111,7 @@ export default function Admin() {
                       </Button>
                       
                       <Button
-                        onClick={() => setReportConfirmation({userId: u.id, userEmail: u.email, companyName: u.company_name})}
+                        onClick={() => setReportConfirmation({userId: u.id, userEmail: u.email, organizationName: u.organization_name, companyName: u.company_name})}
                         disabled={isGenerating || !u.has_prompts}
                         size="sm"
                         variant="outline"
@@ -1758,7 +1792,10 @@ export default function Admin() {
           <div className="space-y-4">
             <p className="text-gray-600">
               Generate a comprehensive PDF report for <strong>{reportConfirmation?.userEmail}</strong> 
-              ({reportConfirmation?.companyName})?
+              <br />
+              <span className="text-sm text-gray-500">
+                Organization: {reportConfirmation?.organizationName} | Company: {reportConfirmation?.companyName}
+              </span>
             </p>
             <p className="text-sm text-gray-500">
               This will create a detailed AI perception analysis report including executive summary, 
@@ -1929,6 +1966,12 @@ export default function Admin() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Organizations Management Tab */}
+      {activeTab === 'organizations' && <OrganizationManagementTab />}
+
+      {/* Companies Management Tab */}
+      {activeTab === 'companies' && <CompanyManagementTab />}
     </div>
   );
 }

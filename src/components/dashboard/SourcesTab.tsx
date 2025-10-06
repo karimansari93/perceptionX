@@ -6,7 +6,7 @@ import { SourceDetailsModal } from "./SourceDetailsModal";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Favicon } from "@/components/ui/favicon";
-import { categorizeSourceByMediaType, getMediaTypeInfo, testOwnedMediaLogic, MEDIA_TYPE_DESCRIPTIONS } from "@/utils/sourceConfig";
+import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS } from "@/utils/sourceConfig";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -27,10 +27,37 @@ interface SourcesTabProps {
   parseCitations: (citations: any) => any[];
   companyName?: string;
   searchResults?: any[];
+  currentCompanyId?: string;
 }
 
-export const SourcesTab = ({ topCitations, responses, parseCitations, companyName, searchResults = [] }: SourcesTabProps) => {
+export const SourcesTab = ({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId }: SourcesTabProps) => {
   const { isPro } = useSubscription();
+  
+  // CRITICAL: Filter topCitations to only include domains that appear in responses for the current company
+  // This is a defensive filter to ensure we never show cross-company data
+  const filteredTopCitations = useMemo(() => {
+    if (!companyName) return topCitations;
+    
+    return topCitations.filter(citation => {
+      // Check if any response cites this domain
+      const hasCompanyResponse = responses.some(response => {
+        try {
+          const citations = typeof response.citations === 'string' 
+            ? JSON.parse(response.citations) 
+            : response.citations;
+          return Array.isArray(citations) && citations.some((c: any) => c.domain === citation.domain);
+        } catch {
+          return false;
+        }
+      });
+      
+      // Also check search results
+      const hasSearchResult = searchResults.some(result => result.domain === citation.domain);
+      
+      return hasCompanyResponse || hasSearchResult;
+    });
+  }, [topCitations, responses, searchResults, companyName]);
+  
   const [selectedSource, setSelectedSource] = useState<CitationCount | null>(null);
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
   const [showAllSources] = useState(true);
@@ -281,15 +308,15 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
 
   // Calculate all-time citation data with change indicators
   const allTimeCitations = useMemo(() => {
-    // Use the topCitations prop instead of recalculating
-    const result = topCitations.map(citation => ({
+    // Use the filteredTopCitations instead of topCitations to ensure company-specific data
+    const result = filteredTopCitations.map(citation => ({
       name: citation.domain,
       count: citation.count,
       change: 0 // Will be updated after timeBasedCitations is calculated
     }));
 
     return result;
-  }, [topCitations]);
+  }, [filteredTopCitations, topCitations.length, responses.length, searchResults.length, companyName]);
 
   // Calculate source counts by data type
   const sourceCountsByType = useMemo(() => {
@@ -593,6 +620,14 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
 
   return (
     <div className="flex flex-col gap-6 w-full h-full">
+      {/* Main Section Header */}
+      <div className="space-y-2">
+        <h2 className="text-2xl font-bold text-gray-900">Sources</h2>
+        <p className="text-gray-600">
+          Discover where {companyName} is mentioned across the web and analyze source performance over time.
+        </p>
+      </div>
+
       {/* Sticky Header with Filters */}
       {isPro && (
         <div className="hidden sm:block sticky top-0 z-10 bg-white pb-2">
@@ -722,6 +757,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
           responses={getResponsesForSource(selectedSource.domain)}
           companyName={companyName}
           searchResults={searchResults}
+          companyId={currentCompanyId}
         />
       )}
     </div>

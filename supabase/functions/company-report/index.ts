@@ -172,13 +172,11 @@ serve(async (req) => {
 
 async function generateCompanyReport(companyId: string): Promise<CompanyReportData | null> {
   try {
-    // Get company information
+    // Get company information from companies table
     const { data: companyData, error: companyError } = await supabase
-      .from('user_onboarding')
-      .select('company_name, industry')
-      .eq('user_id', companyId)
-      .order('created_at', { ascending: false })
-      .limit(1)
+      .from('companies')
+      .select('name, industry')
+      .eq('id', companyId)
       .single();
 
     if (companyError || !companyData) {
@@ -186,18 +184,17 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
       return null;
     }
 
-    // Get all responses for this company
+    // Get all responses for this company using company_id
     const { data: responses, error: responsesError } = await supabase
       .from('prompt_responses')
       .select(`
         *,
         confirmed_prompts!inner(
-          user_id,
           prompt_type,
           prompt_category
         )
       `)
-      .eq('confirmed_prompts.user_id', companyId)
+      .eq('company_id', companyId)
       .order('created_at', { ascending: false });
 
     if (responsesError || !responses || responses.length === 0) {
