@@ -114,13 +114,13 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       },
       {
         id: 'visibility-1',
-        text: `What companies offer the best career opportunities in the ${industry} industry${locationSuffix}?`,
-        category: 'Industry Leaders',
+        text: `What is the best company to work for in the ${industry} industry${locationSuffix}?`,
+        category: 'Industry Visibility',
         type: 'visibility'
       },
       {
         id: 'competitive-1',
-        text: `How does working at ${companyName} compare to other companies in the ${industry} industry${locationSuffix}?`,
+        text: `How does working at ${companyName} compare to other companies?`,
         category: 'Competitive Analysis',
         type: 'competitive'
       }
@@ -634,13 +634,13 @@ export const generatePromptsFromData = (onboardingData: OnboardingData, isProUse
     },
     {
       id: 'visibility-1',
-      text: `What companies offer the best career opportunities in the ${industry} industry${locationSuffix}?`,
-      category: 'Industry Leaders',
+      text: `What is the best company to work for in the ${industry} industry${locationSuffix}?`,
+      category: 'Industry Visibility',
       type: 'visibility'
     },
     {
       id: 'competitive-1',
-      text: `How does working at ${companyName} compare to other companies in the ${industry} industry${locationSuffix}?`,
+      text: `How does working at ${companyName} compare to other companies?`,
       category: 'Competitive Analysis',
       type: 'competitive'
     }

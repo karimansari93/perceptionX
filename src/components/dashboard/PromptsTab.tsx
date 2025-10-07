@@ -6,6 +6,8 @@ import { ResponseDetailsModal } from "./ResponseDetailsModal";
 import { PromptResponse } from "@/types/dashboard";
 import { PromptSummaryCards } from "./PromptSummaryCards";
 import { PromptTable } from "./PromptTable";
+import { UpgradeBanner } from "./UpgradeBanner";
+import { useSubscription } from "@/hooks/useSubscription";
 
 interface PromptsTabProps {
   promptsData: PromptData[];
@@ -16,6 +18,7 @@ interface PromptsTabProps {
 export const PromptsTab = ({ promptsData, responses, companyName = 'your company' }: PromptsTabProps) => {
   const [selectedPrompt, setSelectedPrompt] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const { isPro } = useSubscription();
 
 
 
@@ -34,6 +37,10 @@ export const PromptsTab = ({ promptsData, responses, companyName = 'your company
     return matchingResponses;
   };
 
+  // Calculate current vs total prompts
+  const currentPrompts = promptsData.length;
+  const totalPrompts = 33; // 33 total prompts available (3 base + 30 TalentX prompts)
+
   return (
     <div className="space-y-6">
       {/* Main Section Header */}
@@ -43,6 +50,15 @@ export const PromptsTab = ({ promptsData, responses, companyName = 'your company
           Monitor and analyze {companyName}'s prompt performance across different AI models and track response quality.
         </p>
       </div>
+
+      {/* Upgrade Banner - Only show for non-Pro users */}
+      {!isPro && (
+        <UpgradeBanner 
+          currentPrompts={currentPrompts}
+          totalPrompts={totalPrompts}
+          companyName={companyName}
+        />
+      )}
 
       {/* Single Combined Table */}
       <PromptTable
