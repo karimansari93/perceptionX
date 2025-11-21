@@ -61,7 +61,8 @@ export default function UserMenu() {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
+        {/* Hidden for now - Account & Settings and Usage & Plans pages */}
+        {/* <DropdownMenuItem asChild>
           <Link to="/account">
             <User className="mr-2 h-4 w-4" />
             <span>Account & Settings</span>
@@ -73,7 +74,7 @@ export default function UserMenu() {
             <span>Usage & Plans</span>
           </Link>
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
+        <DropdownMenuSeparator /> */}
         <DropdownMenuItem onClick={handleSignOut} className="text-red-600 hover:text-red-700">
           <LogOut className="mr-2 h-4 w-4" />
           <span>Sign Out</span>

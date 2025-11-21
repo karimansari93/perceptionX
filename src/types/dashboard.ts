@@ -6,22 +6,23 @@ export interface PromptResponse {
   company_id: string;
   ai_model: string;
   response_text: string;
-  sentiment_score: number | null;
-  sentiment_label: string | null;
   citations: Json | null;
   tested_at: string;
   company_mentioned: boolean | null;
   mention_ranking: number | null;
-  competitor_mentions: Json | null;
+  detected_competitors: string | null;
   confirmed_prompts: {
     prompt_text: string;
     prompt_category: string;
+    prompt_theme?: string | null;
     prompt_type?: string;
+    industry_context?: string;
+    job_function_context?: string | null;
+    location_context?: string | null;
   };
   first_mention_position?: number;
   total_words?: number;
 
-  visibility_score?: number;
   talentx_analysis?: any[];
   talentx_scores?: {
     overall_score: number;
@@ -58,17 +59,22 @@ export interface PromptData {
   prompt: string;
   category: string;
   type: string;
+  industryContext?: string;
+  jobFunctionContext?: string;
+  locationContext?: string;
+  promptCategory?: string;
+  promptTheme?: string;
   responses: number;
   avgSentiment: number;
   sentimentLabel: string;
   mentionRanking?: number;
   competitivePosition?: number;
-  competitorMentions?: string[];
+  detectedCompetitors?: string;
   averageVisibility?: number;
   totalWords?: number;
   firstMentionPosition?: number;
   visibilityScores?: number[];
-  // TalentX Pro prompt fields
+  // Experience prompt fields
   isTalentXPrompt?: boolean;
   talentXAttributeId?: string;
   talentXPromptType?: string;

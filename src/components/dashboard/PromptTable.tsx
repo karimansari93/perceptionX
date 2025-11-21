@@ -8,6 +8,7 @@ import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter, HelpCir
 import { useState, useMemo } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSubscription } from "@/hooks/useSubscription";
+import { getCompetitorFavicon } from "@/utils/citationUtils";
 
 interface PromptTableProps {
   prompts: PromptData[];
@@ -20,24 +21,14 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const isMobile = useIsMobile();
 
-  // Helper function to map TalentX attribute IDs to user-friendly labels
-  const getTalentXCategoryLabel = (attributeId: string) => {
-    const labelMap: { [key: string]: string } = {
-      'mission-purpose': 'Mission & Purpose',
-      'rewards-recognition': 'Rewards & Recognition',
-      'company-culture': 'Company Culture',
-      'social-impact': 'Social Impact',
-      'inclusion': 'Inclusion',
-      'innovation': 'Innovation',
-      'wellbeing-balance': 'Wellbeing & Balance',
-      'leadership': 'Leadership',
-      'security-perks': 'Security & Perks',
-      'career-opportunities': 'Career Opportunities'
-    };
-    
-    return labelMap[attributeId] || attributeId
-      .replace('-', ' ')
-      .replace(/\b\w/g, l => l.toUpperCase());
+  // Helper function to format kebab-case attribute IDs to Title Case
+  const formatAttributeName = (name: string): string => {
+    if (!name || name === 'General') return name;
+    // Convert kebab-case to Title Case with spaces
+    return name
+      .split('-')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
   };
 
   // Get unique types and categories for filter options
@@ -67,19 +58,12 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
   const uniqueCategories = useMemo(() => {
     const categories = new Set<string>();
     prompts.forEach(prompt => {
-      // Use the category field directly from PromptData
-      let categoryLabel = prompt.category;
-      
-      // If it's a TalentX category, format it nicely
-      if (categoryLabel.startsWith('TalentX: ')) {
-        const attributeId = categoryLabel.replace('TalentX: ', '');
-        categoryLabel = getTalentXCategoryLabel(attributeId);
-      } else {
-        // All non-TalentX categories should be classified as "General"
-        categoryLabel = 'General';
-      }
-      
-      categories.add(categoryLabel);
+      // ONLY use promptTheme from confirmed_prompts for theme name
+      // If blank, it = General
+      const categoryLabel = prompt.promptTheme || 'General';
+      // Format attribute names (kebab-case to Title Case)
+      const formattedLabel = formatAttributeName(categoryLabel);
+      categories.add(formattedLabel);
     });
     return Array.from(categories).sort();
   }, [prompts]);
@@ -107,19 +91,13 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
         return false;
       }
 
-      // Category filter
-      let categoryLabel = prompt.category;
+      // Theme filter - ONLY use promptTheme from confirmed_prompts
+      // If blank, it = General
+      const categoryLabel = prompt.promptTheme || 'General';
+      // Format attribute names (kebab-case to Title Case) for comparison
+      const formattedLabel = formatAttributeName(categoryLabel);
       
-      // If it's a TalentX category, format it nicely
-      if (categoryLabel.startsWith('TalentX: ')) {
-        const attributeId = categoryLabel.replace('TalentX: ', '');
-        categoryLabel = getTalentXCategoryLabel(attributeId);
-      } else {
-        // All non-TalentX categories should be classified as "General"
-        categoryLabel = 'General';
-      }
-      
-      if (categoryFilter !== "all" && categoryLabel !== categoryFilter) {
+      if (categoryFilter !== "all" && formattedLabel !== categoryFilter) {
         return false;
       }
 
@@ -145,7 +123,9 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
   const getCompetitiveScore = (prompt: PromptData) => {
     // Calculate competitive score based on relative positioning and mentions
     const baseScore = prompt.competitivePosition ? (1 / prompt.competitivePosition) * 100 : 0;
-    const mentionBonus = prompt.competitorMentions ? prompt.competitorMentions.length * 10 : 0;
+    const mentionBonus = prompt.detectedCompetitors 
+      ? prompt.detectedCompetitors.split(',').filter(c => c.trim().length > 0).length * 10 
+      : 0;
     return Math.min(100, baseScore + mentionBonus);
   };
 
@@ -243,18 +223,71 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
   };
 
   const getCategoryBadge = (prompt: PromptData) => {
-    let categoryLabel = prompt.category;
+    // ONLY use promptTheme from confirmed_prompts for theme name
+    // If blank, it = General
+    const categoryLabel = prompt.promptTheme || 'General';
+    // Format attribute names (kebab-case to Title Case)
+    const formattedLabel = formatAttributeName(categoryLabel);
     
-    // If it's a TalentX category, format it nicely
-    if (categoryLabel.startsWith('TalentX: ')) {
-      const attributeId = categoryLabel.replace('TalentX: ', '');
-      categoryLabel = getTalentXCategoryLabel(attributeId);
-    } else {
-      // All non-TalentX categories should be classified as "General"
-      categoryLabel = 'General';
+    return <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">{formattedLabel}</Badge>;
+  };
+
+  const getCompetitorsDisplay = (prompt: PromptData) => {
+    if (!prompt.detectedCompetitors) {
+      return <span className="text-xs text-gray-400">None</span>;
     }
     
-    return <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">{categoryLabel}</Badge>;
+    const competitors = prompt.detectedCompetitors
+      .split(',')
+      .map((comp: string) => comp.trim())
+      .filter((comp: string) => comp.length > 0);
+    
+    if (competitors.length === 0) {
+      return <span className="text-xs text-gray-400">None</span>;
+    }
+    
+    const maxToShow = 1;
+    const extraCount = competitors.length - maxToShow;
+    
+    return (
+      <div className="flex flex-wrap gap-1 justify-center items-center">
+        {competitors.slice(0, maxToShow).map((name: string, idx: number) => {
+          const faviconUrl = getCompetitorFavicon(name);
+          const initials = name.charAt(0).toUpperCase();
+          
+          return (
+            <Badge key={idx} variant="secondary" className="text-xs flex items-center gap-1.5 px-2 py-0.5 bg-gray-100 text-gray-700">
+              <div className="w-3 h-3 flex-shrink-0 bg-gray-100 rounded flex items-center justify-center">
+                {faviconUrl ? (
+                  <img 
+                    src={faviconUrl} 
+                    alt={`${name} favicon`}
+                    className="w-full h-full rounded object-contain"
+                    onError={(e) => {
+                      // Fallback to initials if favicon fails to load
+                      e.currentTarget.style.display = 'none';
+                      const fallback = e.currentTarget.nextElementSibling as HTMLElement;
+                      if (fallback) fallback.style.display = 'flex';
+                    }}
+                    style={{ display: 'block' }}
+                  />
+                ) : null}
+                <span 
+                  className="text-[8px] font-bold text-gray-600"
+                  style={{ display: faviconUrl ? 'none' : 'flex' }}
+                >
+                  {initials}
+                </span>
+              </div>
+              <span className="truncate max-w-[120px]" title={name}>{name}</span>
+            </Badge>
+          );
+        })}
+        {extraCount > 0 && (
+          <Badge variant="secondary" className="text-xs bg-gray-100 text-gray-700">+{extraCount} more</Badge>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -276,10 +309,10 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
           
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="All Categories" />
+              <SelectValue placeholder="All Themes" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Categories</SelectItem>
+              <SelectItem value="all">All Themes</SelectItem>
               {uniqueCategories.map(category => (
                 <SelectItem key={category} value={category}>{category}</SelectItem>
               ))}
@@ -305,61 +338,37 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                      </p>
                    </div>
                   
-                                                        {/* Badges row - Type, Category, Sentiment */}
-                   <div className="flex items-center gap-2 mb-3">
-                     {getTypeBadge(prompt)}
-                     {isPro && getCategoryBadge(prompt)}
-                     {getSentimentPill(prompt.sentimentLabel)}
-                   </div>
+                                                        {/* Badges row - Type, Theme */}
+                  <div className="flex items-center gap-2 mb-3">
+                    {getTypeBadge(prompt)}
+                    {isPro && getCategoryBadge(prompt)}
+                  </div>
                    
                    {/* Responses row */}
                    <div className="flex items-center gap-2 mb-3">
-                     <Badge variant="secondary" className="text-xs">{prompt.responses} responses</Badge>
+                     <Badge variant="secondary" className="text-xs bg-gray-100 text-gray-700">{prompt.responses} responses</Badge>
                    </div>
                   
-                  {/* Visibility score - full width */}
-                  <div className="mt-3 pt-3 border-t border-gray-100">
+                  {/* Visibility score and Competitors - full width */}
+                  <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-500">Visibility:</span>
-                      {Array.isArray(prompt.visibilityScores) && prompt.visibilityScores.length > 0 ? (
-                        (() => {
-                          const avgVisibility = prompt.visibilityScores!.reduce((sum, score) => sum + score, 0) / prompt.visibilityScores!.length;
-                          return (
-                            <div className="flex items-center gap-2">
-                              <svg width="16" height="16" viewBox="0 0 20 20">
-                                <circle
-                                  cx="10"
-                                  cy="10"
-                                  r="8"
-                                  fill="none"
-                                  stroke="#e5e7eb"
-                                  strokeWidth="2"
-                                />
-                                <circle
-                                  cx="10"
-                                  cy="10"
-                                  r="8"
-                                  fill="none"
-                                  stroke={
-                                    avgVisibility >= 95 ? '#22c55e' :
-                                    avgVisibility >= 60 ? '#4ade80' :
-                                    avgVisibility > 0 ? '#fde047' :
-                                    '#e5e7eb'
-                                  }
-                                  strokeWidth="2"
-                                  strokeDasharray={2 * Math.PI * 8}
-                                  strokeDashoffset={2 * Math.PI * 8 * (1 - avgVisibility / 100)}
-                                  strokeLinecap="round"
-                                  style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
-                                />
-                              </svg>
-                              <span className="text-xs font-medium text-gray-900">{Math.round(avgVisibility)}%</span>
-                            </div>
-                          );
-                        })()
-                      ) : (
-                        <span className="text-xs text-gray-400">N/A</span>
-                      )}
+                      {(() => {
+                        // Determine if company is mentioned based on visibility scores or averageVisibility
+                        const isCompanyMentioned = Array.isArray(prompt.visibilityScores) && prompt.visibilityScores.length > 0
+                          ? prompt.visibilityScores.some(score => score > 0)
+                          : (prompt.averageVisibility && prompt.averageVisibility > 0);
+                        
+                        return (
+                          <Badge className={isCompanyMentioned ? 'bg-[#06b6d4] text-white' : 'bg-gray-100 text-gray-800'}>
+                            {isCompanyMentioned ? 'Yes' : 'No'}
+                          </Badge>
+                        );
+                      })()}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500">Competitors:</span>
+                      {getCompetitorsDisplay(prompt)}
                     </div>
                   </div>
                 </div>
@@ -368,8 +377,9 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
           ) : (
             // Desktop table layout
             <Card>
-              <CardContent className="px-4 sm:px-6">
-                <Table>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>
@@ -403,12 +413,12 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <div className="flex items-center justify-center gap-1 cursor-help">
-                            <span>Category</span>
+                            <span>Theme</span>
                             <HelpCircle className="w-3 h-3 text-gray-400" />
                           </div>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>Topic area like culture, benefits, or career opportunities</p>
+                          <p>Specific theme or topic area from the prompt</p>
                         </TooltipContent>
                       </Tooltip>
                     </TableHead>
@@ -430,12 +440,12 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center justify-center gap-1 cursor-help">
-                          <span>Sentiment</span>
+                          <span>Visibility</span>
                           <HelpCircle className="w-3 h-3 text-gray-400" />
                         </div>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>Overall emotional tone of AI responses</p>
+                        <p>How often your company is mentioned in responses</p>
                       </TooltipContent>
                     </Tooltip>
                   </TableHead>
@@ -443,12 +453,12 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center justify-center gap-1 cursor-help">
-                          <span>Visibility</span>
+                          <span>Competitors</span>
                           <HelpCircle className="w-3 h-3 text-gray-400" />
                         </div>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>How often your company is mentioned in responses</p>
+                        <p>Competitors mentioned in AI responses</p>
                       </TooltipContent>
                     </Tooltip>
                   </TableHead>
@@ -462,9 +472,9 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                     onClick={() => onPromptClick(prompt.prompt)}
                   >
                     <TableCell className="font-medium max-w-md">
-                      <div className="truncate" title={prompt.prompt}>
-                        {prompt.prompt}
-                      </div>
+                  <div className="truncate" title={prompt.prompt}>
+                    {prompt.prompt}
+                  </div>
                     </TableCell>
                     <TableCell className="text-center">
                       {getTypeBadge(prompt)}
@@ -475,54 +485,30 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                       </TableCell>
                     )}
                     <TableCell className="text-center">
-                      <Badge variant="secondary">{prompt.responses}</Badge>
+                      <Badge variant="secondary" className="bg-gray-100 text-gray-700">{prompt.responses}</Badge>
                     </TableCell>
                     <TableCell className="text-center">
-                      {getSentimentPill(prompt.sentimentLabel)}
+                      {(() => {
+                        // Determine if company is mentioned based on visibility scores or averageVisibility
+                        const isCompanyMentioned = Array.isArray(prompt.visibilityScores) && prompt.visibilityScores.length > 0
+                          ? prompt.visibilityScores.some(score => score > 0)
+                          : (prompt.averageVisibility && prompt.averageVisibility > 0);
+                        
+                        return (
+                          <Badge className={isCompanyMentioned ? 'bg-[#06b6d4] text-white' : 'bg-gray-100 text-gray-800'}>
+                            {isCompanyMentioned ? 'Yes' : 'No'}
+                          </Badge>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="text-center">
-                      {Array.isArray(prompt.visibilityScores) && prompt.visibilityScores.length > 0 ? (
-                        (() => {
-                          const avgVisibility = prompt.visibilityScores!.reduce((sum, score) => sum + score, 0) / prompt.visibilityScores!.length;
-                          return (
-                            <div className="flex items-center gap-1 justify-center">
-                              <svg width="20" height="20" viewBox="0 0 20 20" className="-ml-1">
-                                <circle
-                                  cx="10"
-                                  cy="10"
-                                  r="8"
-                                  fill="none"
-                                  stroke="#e5e7eb"
-                                  strokeWidth="2"
-                                />
-                                <circle
-                                  cx="10"
-                                  cy="10"
-                                  r="8"
-                                  fill="none"
-                                  stroke={
-                                    avgVisibility >= 95 ? '#22c55e' :
-                                    avgVisibility >= 60 ? '#4ade80' :
-                                    avgVisibility > 0 ? '#fde047' :
-                                    '#e5e7eb'
-                                  }
-                                  strokeWidth="2"
-                                  strokeDasharray={2 * Math.PI * 8}
-                                  strokeDashoffset={2 * Math.PI * 8 * (1 - avgVisibility / 100)}
-                                  strokeLinecap="round"
-                                  style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
-                                />
-                              </svg>
-                              <span className="text-xs font-regular text-gray-900">{Math.round(avgVisibility)}%</span>
-                            </div>
-                          );
-                        })()
-                      ) : 'N/A'}
+                      {getCompetitorsDisplay(prompt)}
                     </TableCell>
                   </TableRow>
                 ))}
                 </TableBody>
                   </Table>
+                </div>
               </CardContent>
             </Card>
           )

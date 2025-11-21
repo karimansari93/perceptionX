@@ -30,33 +30,164 @@ interface SourcesTabProps {
   currentCompanyId?: string;
 }
 
+// Helper function to normalize domains for consistent counting
+const normalizeDomain = (domain: string): string => {
+  if (!domain) return '';
+  return domain.trim().toLowerCase().replace(/^www\./, '');
+};
+
 export const SourcesTab = ({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId }: SourcesTabProps) => {
   const { isPro } = useSubscription();
   
-  // CRITICAL: Filter topCitations to only include domains that appear in responses for the current company
-  // This is a defensive filter to ensure we never show cross-company data
-  const filteredTopCitations = useMemo(() => {
-    if (!companyName) return topCitations;
+  // Filter responses and searchResults by currentCompanyId to ensure we only show sources for the current company
+  const filteredResponses = useMemo(() => {
+    if (!currentCompanyId) return responses;
+    return responses.filter(response => response.company_id === currentCompanyId);
+  }, [responses, currentCompanyId]);
+
+  const filteredSearchResults = useMemo(() => {
+    if (!currentCompanyId) return searchResults;
+    return searchResults.filter(result => result.company_id === currentCompanyId);
+  }, [searchResults, currentCompanyId]);
+  
+  // Helper to extract domain from citation (handles different citation formats)
+  const extractDomainFromCitation = (citation: any): string | null => {
+    // If citation has domain field, use it (Perplexity format)
+    if (citation.domain) {
+      return citation.domain;
+    }
     
-    return topCitations.filter(citation => {
-      // Check if any response cites this domain
-      const hasCompanyResponse = responses.some(response => {
-        try {
-          const citations = typeof response.citations === 'string' 
-            ? JSON.parse(response.citations) 
-            : response.citations;
-          return Array.isArray(citations) && citations.some((c: any) => c.domain === citation.domain);
-        } catch {
-          return false;
+    // Handle Google AI Overviews format - source field contains domain name
+    if (citation.source) {
+      const source = citation.source.toLowerCase().trim();
+      
+      // Map common source names to domains
+      const sourceToDomainMap: Record<string, string> = {
+        'blind': 'www.teamblind.com',
+        'teamblind': 'www.teamblind.com',
+        'indeed': 'www.indeed.com',
+        'glassdoor': 'www.glassdoor.com',
+        'linkedin': 'www.linkedin.com',
+        'youtube': 'www.youtube.com',
+        'great place to work': 'www.greatplacetowork.com',
+        'greatplacetowork': 'www.greatplacetowork.com',
+        'comparably': 'www.comparably.com',
+        'ambitionbox': 'www.ambitionbox.com',
+        'repvue': 'www.repvue.com',
+        'built in': 'builtin.com',
+        'builtin': 'builtin.com',
+        'g2': 'www.g2.com',
+        'inhersight': 'www.inhersight.com',
+        'business because': 'www.businessbecause.com',
+        'businessbecause': 'www.businessbecause.com',
+        'ziprecruiter': 'www.ziprecruiter.com',
+        'snowflake careers': 'careers.snowflake.com',
+        'careers.snowflake.com': 'careers.snowflake.com',
+        'reddit': 'www.reddit.com',
+        'quora': 'www.quora.com',
+        'microsoft': 'www.microsoft.com',
+        'databricks': 'www.databricks.com',
+        'cloudera': 'www.cloudera.com',
+        'snowflake': 'www.snowflake.com',
+        'forbes': 'www.forbes.com',
+        'business insider': 'www.businessinsider.com',
+        'medium': 'medium.com',
+        'management consulted': 'managementconsulted.com'
+      };
+      
+      // Check if source maps to a known domain
+      if (sourceToDomainMap[source]) {
+        return sourceToDomainMap[source];
+      }
+      
+      // If source already looks like a domain (contains a dot), use it
+      if (source.includes('.')) {
+        return source;
+      }
+    }
+    
+    // Otherwise, try to extract from URL
+    if (citation.url) {
+      try {
+        const url = new URL(citation.url);
+        return url.hostname;
+      } catch {
+        // If URL parsing fails, try regex extraction
+        const match = citation.url.match(/^https?:\/\/([^\/]+)/);
+        return match ? match[1] : null;
+      }
+    }
+    
+    return null;
+  };
+
+  // Calculate citation counts directly from prompt_responses for AI responses
+  const aiResponseCitations = useMemo(() => {
+    const citationCounts: Record<string, number> = {};
+    
+    filteredResponses.forEach(response => {
+      try {
+        const citations = typeof response.citations === 'string' 
+          ? JSON.parse(response.citations) 
+          : response.citations;
+        
+        if (Array.isArray(citations)) {
+          citations.forEach((citation: any) => {
+            const domain = extractDomainFromCitation(citation);
+            if (domain) {
+              const normalizedDomain = normalizeDomain(domain);
+              if (normalizedDomain) {
+                citationCounts[normalizedDomain] = (citationCounts[normalizedDomain] || 0) + 1;
+              }
+            }
+          });
         }
-      });
-      
-      // Also check search results
-      const hasSearchResult = searchResults.some(result => result.domain === citation.domain);
-      
-      return hasCompanyResponse || hasSearchResult;
+      } catch {
+        // Ignore parsing errors
+      }
     });
-  }, [topCitations, responses, searchResults, companyName]);
+    
+    return Object.entries(citationCounts)
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [filteredResponses]);
+
+  // Calculate citation counts from search results
+  const searchResultCitations = useMemo(() => {
+    const citationCounts: Record<string, number> = {};
+    
+    filteredSearchResults.forEach(result => {
+      if (result.domain) {
+        const normalizedDomain = normalizeDomain(result.domain);
+        if (normalizedDomain) {
+          citationCounts[normalizedDomain] = (citationCounts[normalizedDomain] || 0) + (result.mentionCount || 1);
+        }
+      }
+    });
+    
+    return Object.entries(citationCounts)
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [filteredSearchResults]);
+
+  // Combine both sources for "all" view
+  const allSourcesCitations = useMemo(() => {
+    const combinedCounts: Record<string, number> = {};
+    
+    // Add AI response citations
+    aiResponseCitations.forEach(({ domain, count }) => {
+      combinedCounts[domain] = (combinedCounts[domain] || 0) + count;
+    });
+    
+    // Add search result citations
+    searchResultCitations.forEach(({ domain, count }) => {
+      combinedCounts[domain] = (combinedCounts[domain] || 0) + count;
+    });
+    
+    return Object.entries(combinedCounts)
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [aiResponseCitations, searchResultCitations]);
   
   const [selectedSource, setSelectedSource] = useState<CitationCount | null>(null);
   const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
@@ -146,17 +277,22 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
 
   // Helper function to check if a domain comes from search results
   const isDomainFromSearchResults = (domain: string) => {
-    return searchResults.some(result => result.domain === domain);
+    const normalizedDomain = normalizeDomain(domain);
+    return filteredSearchResults.some(result => normalizeDomain(result.domain) === normalizedDomain);
   };
 
   // Helper function to check if a domain comes from AI responses
   const isDomainFromAIResponses = (domain: string) => {
-    return responses.some(response => {
+    const normalizedDomain = normalizeDomain(domain);
+    return filteredResponses.some(response => {
       try {
         const citations = typeof response.citations === 'string' 
           ? JSON.parse(response.citations) 
           : response.citations;
-        return Array.isArray(citations) && citations.some((c: any) => c.domain === domain);
+        return Array.isArray(citations) && citations.some((c: any) => {
+          const citationDomain = extractDomainFromCitation(c);
+          return citationDomain && normalizeDomain(citationDomain) === normalizedDomain;
+        });
       } catch {
         return false;
       }
@@ -177,13 +313,17 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
   };
 
   const getResponsesForSource = (domain: string) => {
-    // Get responses that cite this domain
-    const citationResponses = responses.filter(response => {
+    // Get responses that cite this domain (normalized)
+    const normalizedDomain = normalizeDomain(domain);
+    const citationResponses = filteredResponses.filter(response => {
       try {
         const citations = typeof response.citations === 'string' 
           ? JSON.parse(response.citations) 
           : response.citations;
-        return Array.isArray(citations) && citations.some((c: any) => c.domain === domain);
+        return Array.isArray(citations) && citations.some((c: any) => {
+          const citationDomain = extractDomainFromCitation(c);
+          return citationDomain && normalizeDomain(citationDomain) === normalizedDomain;
+        });
       } catch {
         return false;
       }
@@ -204,10 +344,10 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
 
   // Helper to group responses by time period
   const groupResponsesByTimePeriod = useMemo(() => {
-    if (responses.length === 0) return { current: [], previous: [] };
+    if (filteredResponses.length === 0) return { current: [], previous: [] };
 
     // Sort responses by tested_at descending
-    const sortedResponses = [...responses].sort((a, b) => 
+    const sortedResponses = [...filteredResponses].sort((a, b) => 
       new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime()
     );
 
@@ -231,7 +371,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     }
 
     return { current, previous };
-  }, [responses]);
+  }, [filteredResponses]);
 
   // Calculate time-based citation data
   const timeBasedCitations = useMemo(() => {
@@ -252,8 +392,12 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     current.forEach(response => {
       const citations = parseCitations(response.citations);
       citations.forEach((citation: any) => {
-        if (citation.domain) {
-          currentCitations[citation.domain] = (currentCitations[citation.domain] || 0) + 1;
+        const domain = extractDomainFromCitation(citation);
+        if (domain) {
+          const normalizedDomain = normalizeDomain(domain);
+          if (normalizedDomain) {
+            currentCitations[normalizedDomain] = (currentCitations[normalizedDomain] || 0) + 1;
+          }
         }
       });
     });
@@ -266,8 +410,12 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     previous.forEach(response => {
       const citations = parseCitations(response.citations);
       citations.forEach((citation: any) => {
-        if (citation.domain) {
-          previousCitations[citation.domain] = (previousCitations[citation.domain] || 0) + 1;
+        const domain = extractDomainFromCitation(citation);
+        if (domain) {
+          const normalizedDomain = normalizeDomain(domain);
+          if (normalizedDomain) {
+            previousCitations[normalizedDomain] = (previousCitations[normalizedDomain] || 0) + 1;
+          }
         }
       });
     });
@@ -306,36 +454,104 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     return result;
   }, [groupResponsesByTimePeriod]);
 
-  // Calculate all-time citation data with change indicators
+  // Get the appropriate citation source based on filter, with company_mentioned filtering applied
   const allTimeCitations = useMemo(() => {
-    // Use the filteredTopCitations instead of topCitations to ensure company-specific data
-    const result = filteredTopCitations.map(citation => ({
+    let sourceCitations;
+    
+    // If company mentioned filter is active and not on search-results, recalculate counts from filtered responses
+    if (selectedCompanyMentionedFilter !== 'all' && selectedSourceTypeFilter !== 'search-results') {
+      const filteredCounts: Record<string, number> = {};
+      
+      // Recalculate counts from responses based on company_mentioned filter
+      filteredResponses.forEach(response => {
+        // Check if this response matches the company_mentioned filter
+        const matchesFilter = selectedCompanyMentionedFilter === 'mentioned' 
+          ? response.company_mentioned === true 
+          : response.company_mentioned === false || response.company_mentioned == null;
+        
+        if (!matchesFilter) return;
+        
+        try {
+          const citations = typeof response.citations === 'string' 
+            ? JSON.parse(response.citations) 
+            : response.citations;
+          
+          if (Array.isArray(citations)) {
+            citations.forEach((citation: any) => {
+              const domain = extractDomainFromCitation(citation);
+              if (domain) {
+                const normalizedDomain = normalizeDomain(domain);
+                if (normalizedDomain) {
+                  filteredCounts[normalizedDomain] = (filteredCounts[normalizedDomain] || 0) + 1;
+                }
+              }
+            });
+          }
+        } catch {
+          // Ignore parsing errors
+        }
+      });
+      
+      // If source type filter is 'all' and company mentioned filter is 'not-mentioned', 
+      // also include search results (they don't have company_mentioned field, so treat as not-mentioned)
+      if (selectedSourceTypeFilter === 'all' && selectedCompanyMentionedFilter === 'not-mentioned') {
+        filteredSearchResults.forEach(result => {
+          if (result.domain) {
+            const normalizedDomain = normalizeDomain(result.domain);
+            if (normalizedDomain) {
+              filteredCounts[normalizedDomain] = (filteredCounts[normalizedDomain] || 0) + (result.mentionCount || 1);
+            }
+          }
+        });
+      }
+      
+      // Convert to array format, only including sources with counts > 0
+      // This ensures that when filtering by "company IS mentioned", we only show sources
+      // that actually have citations from responses where company_mentioned = true
+      sourceCitations = Object.entries(filteredCounts)
+        .filter(([_, count]) => count > 0) // Only include sources with counts > 0
+        .map(([domain, count]) => ({ domain, count }))
+        .sort((a, b) => b.count - a.count);
+    } else {
+      // No company mentioned filter, use the standard citation sources
+      if (selectedSourceTypeFilter === 'ai-responses') {
+        sourceCitations = aiResponseCitations;
+      } else if (selectedSourceTypeFilter === 'search-results') {
+        sourceCitations = searchResultCitations;
+      } else {
+        sourceCitations = allSourcesCitations;
+      }
+    }
+    
+    return sourceCitations.map(citation => ({
       name: citation.domain,
       count: citation.count,
       change: 0 // Will be updated after timeBasedCitations is calculated
     }));
-
-    return result;
-  }, [filteredTopCitations, topCitations.length, responses.length, searchResults.length, companyName]);
+  }, [aiResponseCitations, searchResultCitations, allSourcesCitations, selectedSourceTypeFilter, selectedCompanyMentionedFilter, filteredResponses, filteredSearchResults]);
 
   // Calculate source counts by data type
   const sourceCountsByType = useMemo(() => {
     const counts: Record<string, { ai: number; search: number; total: number }> = {};
     
     // Count AI response citations
-    responses.forEach(response => {
+    filteredResponses.forEach(response => {
       try {
         const citations = typeof response.citations === 'string' 
           ? JSON.parse(response.citations) 
           : response.citations;
         if (Array.isArray(citations)) {
           citations.forEach((citation: any) => {
-            if (citation.domain) {
-              if (!counts[citation.domain]) {
-                counts[citation.domain] = { ai: 0, search: 0, total: 0 };
+            const domain = extractDomainFromCitation(citation);
+            if (domain) {
+              const normalizedDomain = normalizeDomain(domain);
+              if (normalizedDomain) {
+                if (!counts[normalizedDomain]) {
+                  counts[normalizedDomain] = { ai: 0, search: 0, total: 0 };
+                }
+                counts[normalizedDomain].ai += 1;
+                counts[normalizedDomain].total += 1;
               }
-              counts[citation.domain].ai += 1;
-              counts[citation.domain].total += 1;
             }
           });
         }
@@ -345,45 +561,27 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     });
     
     // Count search result citations
-    searchResults.forEach(result => {
+    filteredSearchResults.forEach(result => {
       if (result.domain) {
-        if (!counts[result.domain]) {
-          counts[result.domain] = { ai: 0, search: 0, total: 0 };
+        const normalizedDomain = normalizeDomain(result.domain);
+        if (normalizedDomain) {
+          if (!counts[normalizedDomain]) {
+            counts[normalizedDomain] = { ai: 0, search: 0, total: 0 };
+          }
+          counts[normalizedDomain].search += (result.mentionCount || 1);
+          counts[normalizedDomain].total += (result.mentionCount || 1);
         }
-        counts[result.domain].search += (result.mentionCount || 1);
-        counts[result.domain].total += (result.mentionCount || 1);
       }
     });
     
     return counts;
-  }, [responses, searchResults]);
+  }, [filteredResponses, filteredSearchResults]);
 
-  // Get sources to display based on showAllSources state, media type filter, and source type filter
+
+  // Get sources to display based on showAllSources state, media type filter, and company mentioned filter
+  // When filters are applied, we need to recalculate counts to ensure percentages are correct
   const displayedSources = useMemo(() => {
     let sources = allTimeCitations;
-    
-    // Apply source type filter and adjust counts
-    if (selectedSourceTypeFilter !== 'all') {
-      sources = sources.filter(citation => {
-        if (selectedSourceTypeFilter === 'ai-responses') {
-          return isDomainFromAIResponses(citation.name);
-        } else if (selectedSourceTypeFilter === 'search-results') {
-          return isDomainFromSearchResults(citation.name);
-        }
-        return true;
-      }).map(citation => {
-        // Adjust count based on selected source type
-        const counts = sourceCountsByType[citation.name];
-        if (counts) {
-          if (selectedSourceTypeFilter === 'ai-responses') {
-            return { ...citation, count: counts.ai };
-          } else if (selectedSourceTypeFilter === 'search-results') {
-            return { ...citation, count: counts.search };
-          }
-        }
-        return citation;
-      });
-    }
     
     // Apply media type filter if selected
     if (selectedMediaTypeFilter) {
@@ -394,18 +592,55 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       });
     }
     
-    // Apply company mentioned filter if selected
-    if (selectedCompanyMentionedFilter !== 'all') {
-      sources = sources.filter(citation => {
-        const hasMentions = hasDomainCompanyMentions(citation.name);
-        if (selectedCompanyMentionedFilter === 'mentioned') {
-          return hasMentions;
-        } else if (selectedCompanyMentionedFilter === 'not-mentioned') {
-          return !hasMentions;
+    // If company mentioned filter is active AND media type filter is also applied,
+    // we need to recalculate counts because media type filtering might have changed which sources are shown
+    if (selectedCompanyMentionedFilter !== 'all' && selectedSourceTypeFilter !== 'search-results' && selectedMediaTypeFilter) {
+      // Recalculate counts for the filtered sources to ensure accuracy
+      const recalculatedCounts: Record<string, number> = {};
+      const filteredSourceDomains = new Set(sources.map(s => normalizeDomain(s.name)));
+      
+      filteredResponses.forEach(response => {
+        // Check if this response matches the company_mentioned filter
+        const matchesFilter = selectedCompanyMentionedFilter === 'mentioned' 
+          ? response.company_mentioned === true 
+          : response.company_mentioned === false || response.company_mentioned == null;
+        
+        if (!matchesFilter) return;
+        
+        try {
+          const citations = typeof response.citations === 'string' 
+            ? JSON.parse(response.citations) 
+            : response.citations;
+          
+          if (Array.isArray(citations)) {
+            citations.forEach((citation: any) => {
+              const domain = extractDomainFromCitation(citation);
+              if (domain) {
+                const normalizedDomain = normalizeDomain(domain);
+                if (normalizedDomain && filteredSourceDomains.has(normalizedDomain)) {
+                  recalculatedCounts[normalizedDomain] = (recalculatedCounts[normalizedDomain] || 0) + 1;
+                }
+              }
+            });
+          }
+        } catch {
+          // Ignore parsing errors
         }
-        return true;
       });
+      
+      // Update source counts with recalculated values
+      sources = sources.map(source => {
+        const normalizedName = normalizeDomain(source.name);
+        const newCount = recalculatedCounts[normalizedName] || 0;
+        return {
+          ...source,
+          count: newCount
+        };
+      }).filter(source => source.count > 0); // Remove sources with 0 counts
     }
+    
+    // Filter out any sources with 0 counts (shouldn't happen, but safety check)
+    sources = sources.filter(source => source.count > 0);
     
     // Sort by count descending after applying filters
     sources = sources.sort((a, b) => b.count - a.count);
@@ -415,7 +650,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     }
     // Show first 20 sources
     return sources.slice(0, 20);
-  }, [allTimeCitations, showAllSources, selectedMediaTypeFilter, selectedSourceTypeFilter, selectedCompanyMentionedFilter, responses, companyName, searchResults, sourceCountsByType, customMediaTypes]);
+  }, [allTimeCitations, showAllSources, selectedMediaTypeFilter, selectedSourceTypeFilter, selectedCompanyMentionedFilter, filteredResponses, companyName, customMediaTypes]);
 
   // Merge change data into all-time citations
   const allTimeCitationsWithChanges = useMemo(() => {
@@ -430,12 +665,11 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     }));
   }, [displayedSources, timeBasedCitations]);
 
-  const renderAllTimeBar = (data: { name: string; count: number; change?: number }, maxCount: number) => {
+  const renderAllTimeBar = (data: { name: string; count: number; change?: number }, maxCount: number, totalCitations: number) => {
     // Calculate the actual percentage width
     const percentage = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
     
-    // Calculate percentage of total citations
-    const totalCitations = allTimeCitationsWithChanges.reduce((sum, citation) => sum + citation.count, 0);
+    // Calculate percentage of total citations in the CURRENT filtered dataset
     const totalPercentage = totalCitations > 0 ? (data.count / totalCitations) * 100 : 0;
     
     // Truncate labels to 15 characters
@@ -553,61 +787,111 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
 
   // Add source type summary
   const sourceTypeSummary = useMemo(() => {
+    const aiDomains = new Set(aiResponseCitations.map(c => c.domain));
+    const searchDomains = new Set(searchResultCitations.map(c => c.domain));
+    
     const summary = {
       ai: { count: 0, totalCitations: 0 },
       search: { count: 0, totalCitations: 0 },
       both: { count: 0, totalCitations: 0 }
     };
     
-    Object.entries(sourceCountsByType).forEach(([domain, counts]) => {
-      const isFromSearch = counts.search > 0;
-      const isFromAI = counts.ai > 0;
-      
-      if (isFromSearch && isFromAI) {
-        summary.both.count++;
-        summary.both.totalCitations += counts.total;
-      } else if (isFromSearch) {
-        summary.search.count++;
-        summary.search.totalCitations += counts.search;
-      } else if (isFromAI) {
+    // Count AI-only sources
+    aiResponseCitations.forEach(citation => {
+      if (!searchDomains.has(citation.domain)) {
         summary.ai.count++;
-        summary.ai.totalCitations += counts.ai;
+        summary.ai.totalCitations += citation.count;
+      }
+    });
+    
+    // Count search-only sources
+    searchResultCitations.forEach(citation => {
+      if (!aiDomains.has(citation.domain)) {
+        summary.search.count++;
+        summary.search.totalCitations += citation.count;
+      }
+    });
+    
+    // Count sources in both
+    aiResponseCitations.forEach(citation => {
+      if (searchDomains.has(citation.domain)) {
+        summary.both.count++;
+        const aiCount = citation.count;
+        const searchCitation = searchResultCitations.find(c => c.domain === citation.domain);
+        const searchCount = searchCitation?.count || 0;
+        summary.both.totalCitations += aiCount + searchCount;
       }
     });
     
     return summary;
-  }, [sourceCountsByType]);
+  }, [aiResponseCitations, searchResultCitations]);
 
-  // Add company mentioned summary for debugging
+  // Add company mentioned summary (only relevant for AI responses)
   const companyMentionedSummary = useMemo(() => {
+    if (selectedSourceTypeFilter === 'search-results') {
+      // Company mentioned filter doesn't apply to search results
+      return {
+        mentioned: 0,
+        notMentioned: 0,
+        total: 0
+      };
+    }
+    
     const mentionedDomains = new Set<string>();
     const notMentionedDomains = new Set<string>();
     
-    allTimeCitations.forEach(citation => {
-      const hasMentions = hasDomainCompanyMentions(citation.name);
-      if (hasMentions) {
-        mentionedDomains.add(citation.name);
-      } else {
-        notMentionedDomains.add(citation.name);
+    // Count domains based on responses
+    filteredResponses.forEach(response => {
+      try {
+        const citations = typeof response.citations === 'string' 
+          ? JSON.parse(response.citations) 
+          : response.citations;
+        
+        if (Array.isArray(citations)) {
+          citations.forEach((citation: any) => {
+            const domain = extractDomainFromCitation(citation);
+            if (domain) {
+              const normalizedDomain = normalizeDomain(domain);
+              if (normalizedDomain) {
+                if (response.company_mentioned === true) {
+                  mentionedDomains.add(normalizedDomain);
+                } else {
+                  notMentionedDomains.add(normalizedDomain);
+                }
+              }
+            }
+          });
+        }
+      } catch {
+        // Ignore parsing errors
       }
     });
     
+    // A domain could appear in both sets if it has mixed mentions
+    // For the summary, we want unique domains in each category
+    const totalUniqueDomains = new Set([...mentionedDomains, ...notMentionedDomains]);
     
     return {
       mentioned: mentionedDomains.size,
       notMentioned: notMentionedDomains.size,
-      total: allTimeCitations.length
+      total: totalUniqueDomains.size
     };
-  }, [allTimeCitations]);
+  }, [selectedSourceTypeFilter, filteredResponses]);
 
-  // Add media type summary section - always show all media types regardless of filter
+  // Add media type summary section - calculated based on current source filter
   const mediaTypeSummary = useMemo(() => {
     const summary: Record<string, { count: number; totalCitations: number }> = {};
     
-    // Use allTimeCitations (unfiltered) to calculate summary, not displayedSources
-    allTimeCitations.forEach(citation => {
-      const sourceResponses = getResponsesForSource(citation.name);
-      const mediaType = getEffectiveMediaType(citation.name, sourceResponses);
+    // Use the appropriate source based on filter
+    const sourcesToAnalyze = selectedSourceTypeFilter === 'ai-responses' 
+      ? aiResponseCitations 
+      : selectedSourceTypeFilter === 'search-results'
+      ? searchResultCitations
+      : allSourcesCitations;
+    
+    sourcesToAnalyze.forEach(citation => {
+      const sourceResponses = getResponsesForSource(citation.domain);
+      const mediaType = getEffectiveMediaType(citation.domain, sourceResponses);
       if (!summary[mediaType]) {
         summary[mediaType] = { count: 0, totalCitations: 0 };
       }
@@ -616,7 +900,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     });
     
     return summary;
-  }, [allTimeCitations, responses, companyName, customMediaTypes]);
+  }, [selectedSourceTypeFilter, aiResponseCitations, searchResultCitations, allSourcesCitations, filteredResponses, companyName, customMediaTypes]);
 
   return (
     <div className="flex flex-col gap-6 w-full h-full">
@@ -727,13 +1011,16 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
               {allTimeCitationsWithChanges.length > 0 ? (
                 (() => {
                   const maxCount = Math.max(...allTimeCitationsWithChanges.map(c => c.count), 1);
+                  // Calculate total citations from the CURRENT filtered dataset
+                  // This ensures percentages add up to 100% for the active filters
+                  const totalCitations = allTimeCitationsWithChanges.reduce((sum, citation) => sum + citation.count, 0);
                   return allTimeCitationsWithChanges.map((citation, idx) => (
                     <div 
                       key={idx} 
                       onClick={() => handleSourceClick({ domain: citation.name, count: citation.count })}
                       className="cursor-pointer"
                     >
-                      {renderAllTimeBar(citation, maxCount)}
+                      {renderAllTimeBar(citation, maxCount, totalCitations)}
                     </div>
                   ));
                 })()
@@ -756,7 +1043,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
           source={selectedSource}
           responses={getResponsesForSource(selectedSource.domain)}
           companyName={companyName}
-          searchResults={searchResults}
+          searchResults={filteredSearchResults}
           companyId={currentCompanyId}
         />
       )}

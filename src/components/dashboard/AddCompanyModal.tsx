@@ -11,7 +11,7 @@ import { useCompany } from '@/contexts/CompanyContext';
 import { useSubscription } from '@/hooks/useSubscription';
 import { toast } from 'sonner';
 import { generatePromptsFromData } from '@/hooks/usePromptsLogic';
-import { Star } from 'lucide-react';
+import { Star, RefreshCw } from 'lucide-react';
 
 // Custom AI model logo component
 const AIModelLogo = ({ modelName, size = 'lg' }: { modelName: string; size?: 'sm' | 'md' | 'lg' }) => {
@@ -60,6 +60,9 @@ interface AddCompanyModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   alwaysMounted?: boolean;
+  existingCompanyName?: string;
+  existingIndustry?: string;
+  mode?: 'new' | 'add-location';
 }
 
 interface ProgressInfo {
@@ -95,14 +98,37 @@ const waitForCompany = async (onboardingId: string, maxAttempts = 10) => {
   throw new Error('Company creation timed out after maximum attempts');
 };
 
-export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: AddCompanyModalProps) => {
+export const AddCompanyModal = ({ 
+  open, 
+  onOpenChange, 
+  alwaysMounted = false,
+  existingCompanyName,
+  existingIndustry,
+  mode = 'new'
+}: AddCompanyModalProps) => {
   const { user } = useAuth();
   const { refreshCompanies, switchCompany } = useCompany();
   const { isPro } = useSubscription();
   const [companyName, setCompanyName] = useState('');
   const [industry, setIndustry] = useState('');
   const [country, setCountry] = useState('GLOBAL');
+
+  // Initialize form when modal opens or props change
+  useEffect(() => {
+    if (open) {
+      if (mode === 'add-location' && existingCompanyName && existingIndustry) {
+        setCompanyName(existingCompanyName);
+        setIndustry(existingIndustry);
+        setCountry('GLOBAL');
+      } else {
+        setCompanyName('');
+        setIndustry('');
+        setCountry('GLOBAL');
+      }
+    }
+  }, [open, mode, existingCompanyName, existingIndustry]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isCollectingSearchInsights, setIsCollectingSearchInsights] = useState(false);
   const [progress, setProgress] = useState<ProgressInfo>({
     currentPrompt: '',
     currentModel: '',
@@ -113,9 +139,9 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
   // No need for company limit checks here - the modal should only be opened when user is allowed to add a company
 
   const handleClose = () => {
-    // Prevent closing during analysis
-    if (isAnalyzing) {
-      toast.error('Please wait for the analysis to complete before closing.');
+    // Prevent closing during analysis or search insights collection
+    if (isAnalyzing || isCollectingSearchInsights) {
+      toast.error('Please wait for the process to complete before closing.');
       return;
     }
     
@@ -123,6 +149,7 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
     setIndustry('');
     setCountry('GLOBAL');
     setIsAnalyzing(false);
+    setIsCollectingSearchInsights(false);
     setProgress({
       currentPrompt: '',
       currentModel: '',
@@ -133,13 +160,13 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
   };
 
   const handleOpenChange = (newOpen: boolean) => {
-    // ONLY prevent closing during analysis - everything else is user intent
-    if (!newOpen && isAnalyzing) {
-      toast.error('Please wait for the analysis to complete before closing.');
+    // Prevent closing during analysis or search insights collection
+    if (!newOpen && (isAnalyzing || isCollectingSearchInsights)) {
+      toast.error('Please wait for the process to complete before closing.');
       return;
     }
     
-    // Allow ALL other user actions - no more "smart" detection
+    // Allow closing if not in progress
     if (!newOpen) {
       handleClose();
     } else {
@@ -189,16 +216,71 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
         country
       }, isPro);
 
+      // 3.5. Translate prompts if country is not GLOBAL and language is not English
+      let finalPrompts = generatedPrompts;
+      if (country && country !== 'GLOBAL') {
+        // Check if country uses English (no translation needed)
+        const englishSpeakingCountries = ['US', 'GB', 'CA', 'AU', 'NZ', 'IE', 'ZA', 'IN', 'SG', 'MY', 'PH', 'HK', 'AE', 'SA'];
+        const needsTranslation = !englishSpeakingCountries.includes(country);
+        
+        if (needsTranslation) {
+          try {
+            console.log(`🌍 Translating ${generatedPrompts.length} prompts for country: ${country}`);
+            const promptTexts = generatedPrompts.map(p => p.text);
+            
+            const { data: translationData, error: translationError } = await supabase.functions.invoke('translate-prompts', {
+              body: {
+                prompts: promptTexts,
+                countryCode: country
+              }
+            });
+
+            if (!translationError && translationData?.translatedPrompts) {
+              // Map translated prompts back to the original prompt structure
+              finalPrompts = generatedPrompts.map((prompt, index) => ({
+                ...prompt,
+                text: translationData.translatedPrompts[index] || prompt.text
+              }));
+              console.log(`✅ Translated prompts to ${translationData.targetLanguage}`);
+            } else {
+              console.warn('⚠️ Translation failed, using original prompts:', translationError);
+            }
+          } catch (translationException) {
+            console.warn('⚠️ Translation exception, using original prompts:', translationException);
+          }
+        } else {
+          console.log(`✅ Country ${country} uses English, skipping translation`);
+        }
+      }
+
       // 4. Insert prompts
-      const promptsToInsert = generatedPrompts.map(prompt => ({
-        onboarding_id: onboardingData.id,
-        user_id: user.id,
-        company_id: newCompany.id,
-        prompt_text: prompt.text,
-        prompt_category: prompt.category,
-        prompt_type: prompt.type,
-        is_active: true
-      }));
+      const promptsToInsert = finalPrompts.map(prompt => {
+        // Extract talentx_attribute_id if this is a TalentX prompt
+        // Format: talentx-{attributeId}-{type}
+        let talentxAttributeId = null;
+        if (prompt.id.startsWith('talentx-')) {
+          // Remove 'talentx-' prefix and get the attributeId (everything before the last '-')
+          const parts = prompt.id.replace('talentx-', '').split('-');
+          // Remove the last part (which is the type: sentiment/competitive/visibility)
+          parts.pop();
+          talentxAttributeId = parts.join('-');
+        }
+
+        return {
+          onboarding_id: onboardingData.id,
+          user_id: user.id,
+          company_id: newCompany.id,
+          prompt_text: prompt.text,
+        prompt_category: prompt.promptCategory,
+        prompt_theme: prompt.promptTheme,
+          prompt_type: prompt.type,
+          talentx_attribute_id: talentxAttributeId,
+          industry_context: prompt.industryContext || industry,
+          job_function_context: prompt.jobFunctionContext || null,
+          location_context: prompt.locationContext || null,
+          is_active: true
+        };
+      });
 
       const { error: insertError } = await supabase
         .from('confirmed_prompts')
@@ -222,20 +304,51 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
       const models = [
         { name: 'openai', functionName: 'test-prompt-openai', displayName: 'ChatGPT' },
         { name: 'perplexity', functionName: 'test-prompt-perplexity', displayName: 'Perplexity' },
-        { name: 'google-ai-overviews', functionName: 'test-prompt-google-ai-overviews', displayName: 'Google AI' },
+        { name: 'google-ai-overviews', functionName: 'test-prompt-google-ai-overviews', displayName: 'Google AI' }
+        // Bing Copilot temporarily disabled - not working
       ];
 
-      const totalOperations = confirmedPrompts.length * models.length + 1;
+      // 7. Run search insights FIRST
+      setIsCollectingSearchInsights(true);
+      const runSearchInsights = async () => {
+        try {
+          console.log(`🌍 Running search insights for company with country: ${country || 'GLOBAL'}`);
+          const { error: searchError } = await supabase.functions.invoke('search-insights', {
+            body: {
+              companyName: companyName,
+              company_id: newCompany.id,
+              onboarding_id: onboardingData.id // Pass onboarding_id for reliable country lookup
+            }
+          });
+
+          if (searchError) {
+            console.error('❌ Search insights error:', searchError);
+          } else {
+            console.log(`✅ Search insights completed for ${companyName} (country: ${country || 'GLOBAL'})`);
+          }
+          
+        } catch (searchException) {
+          console.error('Exception during search insights:', searchException);
+        }
+      };
+
+      // Wait for search insights to complete
+      await runSearchInsights();
+      
+      // Transition to LLM analysis phase
+      setIsCollectingSearchInsights(false);
+
+      // 8. Run AI analysis
+      const totalOperations = confirmedPrompts.length * models.length;
       let completedOperations = 0;
 
       setProgress({
-        currentPrompt: 'Starting analysis...',
+        currentPrompt: 'Starting AI analysis...',
         currentModel: '',
         completed: 0,
         total: totalOperations,
       });
 
-      // 7. Run AI analysis
       const runAIPrompts = async () => {
         for (const prompt of confirmedPrompts) {
           for (const model of models) {
@@ -290,34 +403,10 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
         }
       };
 
-      // Run search insights (silently in background)
-      const runSearchInsights = async () => {
-        try {
-          const { error: searchError } = await supabase.functions.invoke('search-insights', {
-            body: {
-              companyName: companyName,
-              company_id: newCompany.id
-            }
-          });
+      // Run AI prompts
+      await runAIPrompts();
 
-          if (searchError) {
-            console.error('❌ Search insights error:', searchError);
-          }
-          
-          completedOperations++;
-          setProgress(prev => ({ ...prev, completed: completedOperations }));
-          
-        } catch (searchException) {
-          console.error('Exception during search insights:', searchException);
-          completedOperations++;
-          setProgress(prev => ({ ...prev, completed: completedOperations }));
-        }
-      };
-
-      // Run both in parallel
-      await Promise.all([runAIPrompts(), runSearchInsights()]);
-
-      // 8. Success
+      // 9. Success
       toast.success('Company analysis complete!');
 
       // Refresh companies to load the new company into context
@@ -365,10 +454,61 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
       console.error('Error analyzing company:', error);
       toast.error('Failed to analyze company');
       setIsAnalyzing(false);
+      setIsCollectingSearchInsights(false);
     }
   };
 
-  // Loading state
+  // Loading state - Search insights phase
+  if (isAnalyzing && isCollectingSearchInsights) {
+    return (
+      <Dialog 
+        open={open} 
+        onOpenChange={(newOpen) => {
+          // Completely block any close attempts during analysis
+          if (!newOpen && isAnalyzing) {
+            return;
+          }
+        }}
+        modal={true}
+        {...(alwaysMounted && { forceMount: true })}
+      >
+        <DialogContent 
+          className="max-w-md" 
+          onInteractOutside={(e) => {
+            e.preventDefault();
+          }}
+          onEscapeKeyDown={(e) => {
+            e.preventDefault();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Collecting Data for {companyName}</DialogTitle>
+            <DialogDescription>
+              We're collecting traditional search results first
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <div className="flex justify-center">
+              <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                <svg className="w-6 h-6 text-blue-600 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+              </div>
+            </div>
+
+            <div className="bg-blue-50 p-3 rounded-lg">
+              <p className="text-sm text-blue-700 text-center">
+                Gathering search insights from traditional search engines...
+              </p>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  // Loading state - LLM analysis phase
   if (isAnalyzing && progress.total > 0) {
     const progressPercent = (progress.completed / progress.total) * 100;
     
@@ -437,18 +577,34 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
       <DialogContent 
         className="max-w-md"
         onPointerDownOutside={(e) => {
-          if (isAnalyzing) {
+          if (isAnalyzing || isCollectingSearchInsights) {
             e.preventDefault();
           }
         }}
       >
         <DialogHeader>
-          <DialogTitle>Add New Company</DialogTitle>
+          <DialogTitle>
+            {mode === 'add-location' ? 'Add Location for Company' : 'Add New Company'}
+          </DialogTitle>
           <DialogDescription>
-            We'll scan AI to uncover what people really think about working there.
+            {mode === 'add-location' 
+              ? 'Add a new location for this company. We\'ll scan AI to uncover what people really think about working there in this location.'
+              : 'We\'ll scan AI to uncover what people really think about working there.'}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 mt-4">
+          {/* Progress Banner - Show when collecting search insights */}
+          {isCollectingSearchInsights && (
+            <div className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700 border border-blue-200">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>
+                  Collecting search results and response data... This may take a minute.
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Company limit checks are handled before opening the modal */}
 
           <div className="space-y-2">
@@ -458,7 +614,8 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
               placeholder="e.g., Tesla"
               value={companyName}
               onChange={(e) => setCompanyName(e.target.value)}
-              disabled={isAnalyzing}
+              disabled={isAnalyzing || mode === 'add-location'}
+              className={mode === 'add-location' ? 'bg-gray-100 cursor-not-allowed' : ''}
             />
           </div>
           <div className="space-y-2">
@@ -468,7 +625,8 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
               placeholder="e.g., Software"
               value={industry}
               onChange={(e) => setIndustry(e.target.value)}
-              disabled={isAnalyzing}
+              disabled={isAnalyzing || mode === 'add-location'}
+              className={mode === 'add-location' ? 'bg-gray-100 cursor-not-allowed' : ''}
             />
           </div>
           <div className="space-y-2">
@@ -592,19 +750,19 @@ export const AddCompanyModal = ({ open, onOpenChange, alwaysMounted = false }: A
             <Button
               variant="outline"
               onClick={handleClose}
-              disabled={isAnalyzing}
+              disabled={isAnalyzing || isCollectingSearchInsights}
             >
               Cancel
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={isAnalyzing || !companyName.trim() || !industry.trim()}
+              disabled={isAnalyzing || isCollectingSearchInsights || !companyName.trim() || !industry.trim()}
               className="bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600"
             >
-              {isAnalyzing ? (
+              {(isAnalyzing || isCollectingSearchInsights) ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                  Analyzing...
+                  {isCollectingSearchInsights ? 'Collecting data...' : 'Analyzing...'}
                 </>
               ) : (
                 <>

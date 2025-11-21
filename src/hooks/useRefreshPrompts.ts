@@ -6,11 +6,16 @@ import { getLLMDisplayName } from '@/config/llmLogos';
 import { useSubscription } from '@/hooks/useSubscription';
 import { safeStorePromptResponse, checkExistingPromptResponse } from '@/lib/utils';
 
-interface RefreshProgress {
+export interface RefreshProgress {
   currentPrompt: string;
   currentModel: string;
   completed: number;
   total: number;
+}
+
+interface RefreshOptions {
+  modelType?: string;
+  promptIds?: string[];
 }
 
 export const useRefreshPrompts = () => {
@@ -19,7 +24,8 @@ export const useRefreshPrompts = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [progress, setProgress] = useState<RefreshProgress | null>(null);
 
-  const refreshAllPrompts = async (companyName: string, modelType?: string) => {
+  const refreshAllPrompts = async (companyName: string, options: RefreshOptions = {}) => {
+    const { modelType, promptIds } = options;
     if (!user) {
       toast.error('You must be logged in to refresh prompts');
       return;
@@ -42,12 +48,18 @@ export const useRefreshPrompts = () => {
         console.error('Failed to fetch onboarding data:', onboardingError);
       }
 
-      // Get all active confirmed prompts for the current user only
-      const { data: confirmedPrompts, error: promptsError } = await supabase
+      // Get active confirmed prompts to refresh
+      let promptQuery = supabase
         .from('confirmed_prompts')
         .select('*')
         .eq('is_active', true)
-        .eq('user_id', user.id); // Filter by current user
+        .eq('user_id', user.id);
+
+      if (promptIds && promptIds.length > 0) {
+        promptQuery = promptQuery.in('id', promptIds);
+      }
+
+      const { data: confirmedPrompts, error: promptsError } = await promptQuery;
 
       if (promptsError) {
         console.error('Failed to fetch confirmed prompts:', promptsError);
@@ -96,11 +108,12 @@ export const useRefreshPrompts = () => {
           modelsToTest.push({ name: 'Google AI Overviews', function: 'test-prompt-google-ai-overviews', model: 'google-ai-overviews' });
         }
       }
-      if (!modelType || modelType === 'claude') {
-        if (isPro) { // Only Pro users can test with Claude
-          modelsToTest.push({ name: 'Claude', function: 'test-prompt-claude', model: 'claude' });
-        }
-      }
+      // Bing Copilot temporarily disabled - not working
+      // if (!modelType || modelType === 'bing-copilot') {
+      //   if (isPro || allowedModelsForFree.includes('bing-copilot')) {
+      //     modelsToTest.push({ name: 'Bing Copilot', function: 'test-prompt-bing-copilot', model: 'bing-copilot' });
+      //   }
+      // }
 
       // Check if any models are available for testing
       if (modelsToTest.length === 0) {
@@ -112,11 +125,15 @@ export const useRefreshPrompts = () => {
         return;
       }
 
-      // Calculate total operations including TalentX Pro prompts for Pro users
+      // Calculate total operations
+      // When promptIds are provided (targeted refresh), only count those specific prompts
+      // When promptIds is empty (full refresh), count all prompts + TalentX prompts for Pro users
       let totalOperations = confirmedPrompts.length * modelsToTest.length;
       
-      // If user is Pro, add TalentX Pro prompts to the total (now in confirmed_prompts)
-      if (isPro) {
+      console.log(`[Refresh] Prompt count: ${confirmedPrompts.length}, Models: ${modelsToTest.length}, Targeted: ${promptIds ? promptIds.length : 'all'}`);
+      
+      // Only include TalentX Pro prompts in full refresh mode (when no specific promptIds are given)
+      if (isPro && (!promptIds || promptIds.length === 0)) {
         const { data: talentXPrompts, error: talentXError } = await supabase
           .from('confirmed_prompts')
           .select('*')
@@ -128,8 +145,11 @@ export const useRefreshPrompts = () => {
           console.error('Error fetching TalentX Pro prompts:', talentXError);
         } else if (talentXPrompts) {
           totalOperations += talentXPrompts.length * modelsToTest.length;
+          console.log(`[Refresh] Added ${talentXPrompts.length} TalentX prompts for full refresh`);
         }
       }
+      
+      console.log(`[Refresh] Total operations: ${totalOperations} (${confirmedPrompts.length} prompts × ${modelsToTest.length} models)`);
 
       let completed = 0;
       setProgress(prev => prev ? { ...prev, total: totalOperations } : null);
@@ -190,15 +210,17 @@ export const useRefreshPrompts = () => {
                     confirmed_prompt_id: confirmedPrompt.id,
                     ai_model: model.model,
                     response_text: responseData.response,
-                    sentiment_score: 0,
+                    // Sentiment analysis now handled by AI themes
+                    // No need to store basic sentiment_score
                     sentiment_label: 'neutral',
                     citations: responseData.citations || [],
                     company_mentioned: false,
                     mention_ranking: null,
-                    competitor_mentions: [],
+                    detected_competitors: '',
                     first_mention_position: null,
                     total_words: responseData.response.split(' ').length,
-                    visibility_score: 0,
+                    // Visibility now calculated from company_mentioned boolean
+                    // No need to store visibility_score
                     competitive_score: 0,
                   };
 
@@ -219,12 +241,7 @@ export const useRefreshPrompts = () => {
                   citations: responseData.citations || [],
                   company_mentioned: false,
                   mention_ranking: null,
-                  competitor_mentions: [],
-                  first_mention_position: null,
-                  total_words: responseData.response.split(' ').length,
-                  visibility_score: 0,
-                  competitive_score: 0,
-                  detected_competitors: ''
+                  detected_competitors: '',
                 };
 
                 const { success, error: storeError } = await safeStorePromptResponse(supabase, fallbackData);
@@ -243,8 +260,8 @@ export const useRefreshPrompts = () => {
         }
       }
 
-      // If user is Pro, also refresh TalentX Pro prompts (now in confirmed_prompts)
-      if (isPro) {
+      // If user is Pro, also refresh TalentX Pro prompts (only in full refresh mode)
+      if (isPro && (!promptIds || promptIds.length === 0)) {
         const { data: talentXPrompts, error: talentXError } = await supabase
           .from('confirmed_prompts')
           .select('*')
@@ -322,7 +339,7 @@ export const useRefreshPrompts = () => {
         }
       }
 
-      const finalText = isPro ? 'all prompts and TalentX Pro prompts' : 'all prompts';
+      const finalText = isPro ? 'all prompts and experience prompts' : 'all prompts';
               // Refreshed successfully - no toast needed
 
     } catch (error) {

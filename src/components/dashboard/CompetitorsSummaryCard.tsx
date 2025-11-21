@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, ExternalLink } from 'lucide-react';
+import { TrendingUp, TrendingDown, ExternalLink } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
@@ -11,13 +11,15 @@ interface CompetitorsSummaryCardProps {
   responses: any[];
   companyName: string;
   searchResults?: any[];
+  perceptionScoreTrend?: any[];
 }
 
 export const CompetitorsSummaryCard = ({ 
   topCompetitors, 
   responses, 
   companyName, 
-  searchResults = [] 
+  searchResults = [],
+  perceptionScoreTrend = []
 }: CompetitorsSummaryCardProps) => {
   const navigate = useNavigate();
 
@@ -87,7 +89,62 @@ export const CompetitorsSummaryCard = ({
     return trimmedName.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   };
 
-  // Get top 5 competitors for the summary
+  // Calculate competitor trends between latest and previous periods
+  const competitorTrends = useMemo(() => {
+    if (perceptionScoreTrend.length < 2) return {};
+    
+    const latestPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 1];
+    const previousPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 2];
+    
+    // Get responses for each period
+    const latestResponses = responses.filter(r => {
+      const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
+      return responseDate === latestPeriod.fullDate;
+    });
+    
+    const previousResponses = responses.filter(r => {
+      const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
+      return responseDate === previousPeriod.fullDate;
+    });
+    
+    // Calculate competitor mention counts for each period
+    const getCompetitorCounts = (responseList: any[]) => {
+      const counts: { [key: string]: number } = {};
+      responseList.forEach(response => {
+        try {
+          const competitorMentions = typeof response.detected_competitors === 'string' 
+            ? response.detected_competitors.split(',').map(c => c.trim()).filter(c => c.length > 0)
+            : [];
+          if (Array.isArray(competitorMentions)) {
+            competitorMentions.forEach((c: any) => {
+              if (c.name) {
+                const normalizedName = normalizeCompetitorName(c.name);
+                counts[normalizedName] = (counts[normalizedName] || 0) + 1;
+              }
+            });
+          }
+        } catch {
+          // Ignore invalid competitor mentions
+        }
+      });
+      return counts;
+    };
+    
+    const latestCounts = getCompetitorCounts(latestResponses);
+    const previousCounts = getCompetitorCounts(previousResponses);
+    
+    // Calculate changes
+    const trends: { [key: string]: number } = {};
+    Object.keys(latestCounts).forEach(competitor => {
+      const latest = latestCounts[competitor] || 0;
+      const previous = previousCounts[competitor] || 0;
+      trends[competitor] = latest - previous;
+    });
+    
+    return trends;
+  }, [perceptionScoreTrend, responses]);
+
+  // Get top 5 competitors for the summary with trend data
   const topCompetitorsFiltered = useMemo(() => {
     // Excluded competitors and words
     const excludedCompetitors = new Set([
@@ -104,9 +161,10 @@ export const CompetitorsSummaryCard = ({
       .slice(0, 5)
       .map(competitor => ({
         ...competitor,
-        displayName: normalizeCompetitorName(competitor.company)
+        displayName: normalizeCompetitorName(competitor.company),
+        trendChange: competitorTrends[normalizeCompetitorName(competitor.company)] || 0
       }));
-  }, [topCompetitors, companyName]);
+  }, [topCompetitors, companyName, competitorTrends]);
 
   const renderCompetitorItem = (competitor: any) => {
     // Get favicon URL for competitor
@@ -144,11 +202,20 @@ export const CompetitorsSummaryCard = ({
           </span>
         </div>
         
-        {/* Count */}
-        <div className="flex items-center min-w-[30px] justify-end">
+        {/* Count and trend */}
+        <div className="flex items-center gap-1 min-w-[30px] justify-end">
           <span className="text-xs font-semibold text-gray-900">
             {competitor.count}
           </span>
+          {competitor.trendChange !== 0 && (
+            <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+              competitor.trendChange > 0 ? 'text-green-600' : 'text-red-600'
+            }`}>
+              {competitor.trendChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
+              {competitor.trendChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+              <span className="whitespace-nowrap">{Math.abs(competitor.trendChange)}</span>
+            </span>
+          )}
         </div>
       </div>
     );

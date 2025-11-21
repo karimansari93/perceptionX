@@ -207,3 +207,66 @@ export const groupCitationsByDomain = (citations: EnhancedCitation[]): Map<strin
   
   return grouped;
 };
+
+// Normalizes a URL for grouping: domain + path (no query/hash, lowercased, trims trailing slash, no www, no protocol)
+export function normalizePageKey(urlLike: string): string {
+  try {
+    let clean = urlLike.trim();
+    if (!/^https?:\/\//.test(clean)) clean = 'https://' + clean;
+    const u = new URL(clean);
+    let host = u.hostname.replace(/^www\./, '').toLowerCase();
+    let path = u.pathname.replace(/\/$/, '').toLowerCase();
+    return `${host}${path}`;
+  } catch {
+    // Fallback if not valid URL
+    return urlLike.trim().toLowerCase();
+  }
+}
+
+/**
+ * Aggregate most mentioned unique pages by normalized domain+path, not strict URL.
+ * @param rawCitations (flat array)
+ * @returns Array: [{title, url, domain, mentionCount, snippet?}]
+ */
+export function getMostMentionedPages(rawCitations: any[], max?: number) {
+  // Map of pageKey => array of {title, url, domain, snippet, mentionCount}
+  const pageMap = new Map<string, {titles: {[t:string]:number}, urls: string[], domain?: string, snippets: {[s:string]:number}, mentionCount: number}>();
+
+  for (const citation of rawCitations) {
+    const url = citation?.url || citation?.link;
+    if (!url) continue;
+    const pageKey = normalizePageKey(url);
+    const title = citation.title || '';
+    const domain = citation.domain || (citation.source && typeof citation.source === 'string' ? citation.source : undefined);
+    const snippet = citation.snippet || '';
+
+    if (!pageMap.has(pageKey)) {
+      pageMap.set(pageKey, {titles: {}, urls: [url], domain, snippets: {}, mentionCount: 1});
+      if (title) pageMap.get(pageKey)!.titles[title] = 1;
+      if (snippet) pageMap.get(pageKey)!.snippets[snippet] = 1;
+    } else {
+      const p = pageMap.get(pageKey)!;
+      p.urls.push(url);
+      p.mentionCount++;
+      if (title) p.titles[title] = (p.titles[title] || 0) + 1;
+      if (snippet) p.snippets[snippet] = (p.snippets[snippet] || 0) + 1;
+    }
+  }
+
+  // Convert to final output array
+  let arr = Array.from(pageMap.entries()).map(([key, val]) => {
+    // Most common title/snippet
+    const bestTitle = Object.entries(val.titles).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+    const bestSnippet = Object.entries(val.snippets).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+    return {
+      title: bestTitle,
+      url: val.urls[0],
+      domain: val.domain,
+      snippet: bestSnippet,
+      mentionCount: val.mentionCount
+    }
+  }).sort((a, b) => b.mentionCount - a.mentionCount);
+
+  if (max && arr.length > max) arr = arr.slice(0, max);
+  return arr;
+}

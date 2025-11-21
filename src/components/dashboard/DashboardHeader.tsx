@@ -5,6 +5,8 @@ import { LastUpdated } from "./LastUpdated";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { CompanySwitcher } from "./CompanySwitcher";
+import { LocationFilter } from "./LocationFilter";
+import type { RefreshProgress } from "@/hooks/useRefreshPrompts";
 
 interface DashboardHeaderProps {
   companyName: string;
@@ -19,6 +21,11 @@ interface DashboardHeaderProps {
   showUpgradeModal?: boolean;
   setShowUpgradeModal?: (show: boolean) => void;
   alwaysMounted?: boolean;
+  isRefreshing?: boolean;
+  refreshProgress?: RefreshProgress | null;
+  selectedLocation?: string | null;
+  onLocationChange?: (location: string | null) => void;
+  onAddLocation?: () => void;
 }
 
 export const DashboardHeader = React.memo(({
@@ -33,7 +40,12 @@ export const DashboardHeader = React.memo(({
   setShowAddCompanyModal,
   showUpgradeModal,
   setShowUpgradeModal,
-  alwaysMounted
+  alwaysMounted,
+  isRefreshing,
+  refreshProgress,
+  selectedLocation,
+  onLocationChange,
+  onAddLocation,
 }: DashboardHeaderProps) => {
   const isMobile = useIsMobile();
 
@@ -59,9 +71,17 @@ export const DashboardHeader = React.memo(({
             ))}
           </div>
         )}
-        {/* Right side with CompanySwitcher, LastUpdated component and debug button */}
+        {/* Right side with LocationFilter, CompanySwitcher, LastUpdated component and debug button */}
         <div className="flex-1" />
         <div className="flex items-center gap-2 sm:gap-3">
+          {onLocationChange && (
+            <LocationFilter 
+              selectedLocation={selectedLocation || null}
+              onLocationChange={onLocationChange}
+              onAddLocation={onAddLocation}
+              className={isMobile ? "min-w-[120px]" : ""}
+            />
+          )}
           <CompanySwitcher 
             variant="outline" 
             showAddCompanyModal={showAddCompanyModal} 
@@ -69,6 +89,7 @@ export const DashboardHeader = React.memo(({
             showUpgradeModal={showUpgradeModal} 
             setShowUpgradeModal={setShowUpgradeModal} 
             alwaysMounted={alwaysMounted}
+            locationFilter={selectedLocation || undefined}
             className={isMobile ? "min-w-[120px] text-xs" : ""}
           />
           {hasDataIssues && onFixData && (
@@ -86,6 +107,11 @@ export const DashboardHeader = React.memo(({
           <LastUpdated onRefresh={onRefresh} lastUpdated={lastUpdated} />
         </div>
       </div>
+      {isRefreshing && refreshProgress && (
+        <div className="px-4 sm:px-8 py-2 text-sm text-blue-700 bg-blue-50 border-t border-blue-100">
+          Collecting responses: {refreshProgress.completed}/{refreshProgress.total} operations…
+        </div>
+      )}
     </header>
   );
 });

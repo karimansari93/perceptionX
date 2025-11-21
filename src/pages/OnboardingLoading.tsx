@@ -20,6 +20,7 @@ const llmModels = [
   { name: "ChatGPT", model: "openai" },
   { name: "Perplexity", model: "perplexity" },
   { name: "Google AI", model: "google-ai-overviews" },
+  { name: "Bing Copilot", model: "bing-copilot" },
   { name: "Search Insights", model: "search-insights" }
 ];
 
@@ -195,24 +196,30 @@ const OnboardingLoading = () => {
               onboarding_id: onboardingId,
               user_id: (await supabase.auth.getUser()).data.user?.id,
               prompt_text: `How is ${companyName} as an employer${countryContext}?`,
-              prompt_category: 'Employer Reputation',
+              prompt_category: 'General',
+              prompt_theme: 'General',
               prompt_type: 'sentiment',
+              industry_context: industry,
               is_active: true
             },
             {
               onboarding_id: onboardingId,
               user_id: (await supabase.auth.getUser()).data.user?.id,
               prompt_text: `What is the best company to work for in the ${industry} industry${countryContext}?`,
-              prompt_category: 'Industry Visibility',
+              prompt_category: 'General',
+              prompt_theme: 'General',
               prompt_type: 'visibility',
+              industry_context: industry,
               is_active: true
             },
             {
               onboarding_id: onboardingId,
               user_id: (await supabase.auth.getUser()).data.user?.id,
-              prompt_text: `How does working at ${companyName} compare to other companies in the ${industry} industry${countryContext}?`,
-              prompt_category: 'Competitive Analysis',
+              prompt_text: `How does working at ${companyName} compare to other companies${countryContext}?`,
+              prompt_category: 'General',
+              prompt_theme: 'General',
               prompt_type: 'competitive',
+              industry_context: industry,
               is_active: true
             }
           ];
@@ -237,6 +244,7 @@ const OnboardingLoading = () => {
           { name: 'openai', displayName: 'ChatGPT', functionName: 'test-prompt-openai' },
           { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
           { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }
+          // Bing Copilot temporarily disabled - not working
         ];
 
         const totalOperations = confirmedPrompts.length * modelsToTest.length + 1; // +1 for search insights

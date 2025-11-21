@@ -8,14 +8,13 @@ import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { TalentXProService } from "@/services/talentXProService";
 import { useSubscription } from "@/hooks/useSubscription";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
+import { parseCompetitors } from "@/utils/competitorUtils";
 
 export const useDashboardData = () => {
   const { user: rawUser, clearSession } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
   const { isPro } = useSubscription();
   
-  // Debug flag - set to true only when debugging specific issues
-  const DEBUG_LOGS = true;
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
   const [responses, setResponses] = useState<PromptResponse[]>([]);
@@ -32,7 +31,10 @@ export const useDashboardData = () => {
   const [searchResultsLoading, setSearchResultsLoading] = useState(false);
   const [searchTermsData, setSearchTermsData] = useState<any[]>([]);
   const [recencyData, setRecencyData] = useState<any[]>([]);
+  const [recencyDataLoading, setRecencyDataLoading] = useState(false);
   const [aiThemes, setAiThemes] = useState<any[]>([]);
+  const [aiThemesLoading, setAiThemesLoading] = useState(false);
+  const [activePrompts, setActivePrompts] = useState<any[]>([]);
   const [isOnline, setIsOnline] = useState(networkMonitor.online);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [recencyDataError, setRecencyDataError] = useState<string | null>(null);
@@ -77,16 +79,21 @@ export const useDashboardData = () => {
       const { data: userPrompts, error: promptsError } = await retrySupabaseQuery(() =>
         supabase
           .from('confirmed_prompts')
-          .select('id, user_id, prompt_text, company_id')
+          .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, is_pro_prompt, talentx_attribute_id')
           .eq('company_id', currentCompany.id)
       ) as { data: any[] | null; error: any };
 
       if (promptsError) {
         console.error('🔍 Error fetching prompts:', promptsError);
-        throw promptsError;
+        // Provide more user-friendly error message
+        if (promptsError.message?.includes('permission') || promptsError.message?.includes('policy')) {
+          throw new Error('You don\'t have permission to view prompts for this company. Please contact support if you believe this is an error.');
+        }
+        throw new Error('Unable to load prompts. Please refresh the page or try again later.');
       }
 
       if (!userPrompts || userPrompts.length === 0) {
+        setActivePrompts([]);
         // No prompts found for this company - this is expected for new companies
         setResponses([]);
         setLoading(false);
@@ -94,13 +101,16 @@ export const useDashboardData = () => {
         return;
       }
 
+      setActivePrompts(userPrompts);
+
 
       // Clear data issues flag if we found prompts
       setHasDataIssues(false);
 
       const promptIds = userPrompts.map(p => p.id);
 
-      // Fetch all responses including TalentX responses for this company
+      // Fetch all responses for this company
+      // With historical tracking enabled, we get ALL responses (multiple per prompt+model)
       const { data, error } = await retrySupabaseQuery(() =>
         supabase
           .from('prompt_responses')
@@ -109,7 +119,10 @@ export const useDashboardData = () => {
             confirmed_prompts (
               prompt_text,
               prompt_category,
-              prompt_type
+              prompt_theme,
+              prompt_type,
+              industry_context,
+              talentx_attribute_id
             )
           `)
           .eq('company_id', currentCompany.id)
@@ -118,14 +131,15 @@ export const useDashboardData = () => {
 
       if (error) throw error;
       
-      // All responses are now in the main prompt_responses table
+      // For trend analysis, we need ALL responses, not just the latest
+      // This preserves historical data for score trend calculations
       let allResponses = data || [];
       
       // If user is Pro, fetch TalentX perception scores and convert them to PromptResponse format
       if (isPro) {
         try {
             // Fetch TalentX responses from prompt_responses table joined with confirmed_prompts
-            const { data: talentXResponses, error: talentXError } = await supabase
+            const { data: talentXResponsesRaw, error: talentXError } = await supabase
               .from('prompt_responses')
               .select(`
                 *,
@@ -134,13 +148,23 @@ export const useDashboardData = () => {
                   prompt_type,
                   prompt_text,
                   talentx_attribute_id,
-                  company_id
+                  company_id,
+                  industry_context
                 )
               `)
               .eq('confirmed_prompts.company_id', currentCompany.id)
               .like('confirmed_prompts.prompt_type', 'talentx_%')
-              .not('talentx_analysis', 'eq', '{}')
-              .order('created_at', { ascending: false });
+              .order('tested_at', { ascending: false });
+            
+            // Filter to get only latest TalentX responses per prompt+model
+            const talentXLatestMap = new Map<string, any>();
+            (talentXResponsesRaw || []).forEach(response => {
+              const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
+              if (!talentXLatestMap.has(key)) {
+                talentXLatestMap.set(key, response);
+              }
+            });
+            const talentXResponses = Array.from(talentXLatestMap.values());
 
             if (talentXError) {
               console.error('Error fetching TalentX responses:', talentXError);
@@ -163,15 +187,16 @@ export const useDashboardData = () => {
                   sentiment_score: response.sentiment_score,
                   sentiment_label: response.sentiment_score > 0.1 ? 'positive' : response.sentiment_score < -0.1 ? 'negative' : 'neutral',
                   citations: response.citations,
-                  tested_at: response.created_at,
+                  tested_at: response.tested_at || response.updated_at || response.created_at,
                   company_mentioned: true, // TalentX responses are always about the company
                   mention_ranking: 1, // Default to 1 since it's about the company
-                  competitor_mentions: response.detected_competitors,
+                  detected_competitors: response.detected_competitors,
 
                   confirmed_prompts: {
                     prompt_text: promptText,
                     prompt_category: `TalentX: ${attributeId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
-                    prompt_type: promptType.replace('talentx_', '')
+                    prompt_type: promptType.replace('talentx_', ''),
+                    industry_context: response.confirmed_prompts.industry_context
                   }
                 };
               });
@@ -189,8 +214,8 @@ export const useDashboardData = () => {
       
       // Set lastUpdated to the most recent response collection time
       if (allResponses.length > 0) {
-        const mostRecentResponse = allResponses[0]; // Already sorted by tested_at desc
-        const lastUpdatedDate = new Date(mostRecentResponse.tested_at);
+        const mostRecentResponse = allResponses[0]; // Already sorted by updated_at desc
+        const lastUpdatedDate = new Date(mostRecentResponse.tested_at || mostRecentResponse.updated_at || mostRecentResponse.created_at);
         setLastUpdated(lastUpdatedDate);
       } else {
         setLastUpdated(undefined);
@@ -227,7 +252,16 @@ export const useDashboardData = () => {
         return;
       }
       
-      setConnectionError('Failed to load data. Retrying...');
+      // Provide more specific error messages
+      if (error?.message?.includes('network') || error?.message?.includes('fetch')) {
+        setConnectionError('Network error. Please check your internet connection and try again.');
+      } else if (error?.message?.includes('timeout')) {
+        setConnectionError('Request timed out. The server may be busy. Please try again in a moment.');
+      } else if (error?.message?.includes('permission') || error?.message?.includes('policy')) {
+        setConnectionError('Permission denied. Please ensure you have access to this company\'s data.');
+      } else {
+        setConnectionError('Unable to load data. Please refresh the page or try again later.');
+      }
       setLoading(false);
       setCompetitorLoading(false);
     }
@@ -239,30 +273,32 @@ export const useDashboardData = () => {
     try {
       // Clear any previous errors
       setRecencyDataError(null);
+      setRecencyDataLoading(true);
       
       // Get all URLs from the user's citations first
       const allCitations = responses.flatMap(r => parseCitations(r.citations)).filter(c => c.url);
       const urls = allCitations.map(c => c.url);
-      
-      if (DEBUG_LOGS) console.log('🔍 Looking for recency data for', urls.length, 'citation URLs');
       
       if (urls.length === 0) {
         setRecencyData([]);
         return;
       }
       
+      // Limit URLs to process initially to prevent long blocking (process first 100)
+      // Remaining URLs can be processed in background if needed
+      const maxUrlsToProcess = 100;
+      const urlsToProcess = urls.slice(0, maxUrlsToProcess);
+      
       // Process URLs in smaller batches to avoid URI length limits
-      const batchSize = 25; // Smaller batches to prevent URI length issues
+      const batchSize = 50; // Increased from 25 to 50 for better performance
       const allMatches: any[] = [];
       let batchProcessingFailed = false;
       
       // Process URLs in batches
-      for (let i = 0; i < urls.length; i += batchSize) {
-        const batch = urls.slice(i, i + batchSize);
+      for (let i = 0; i < urlsToProcess.length; i += batchSize) {
+        const batch = urlsToProcess.slice(i, i + batchSize);
         
         try {
-          // console.log(`🔄 Processing URL batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(urls.length/batchSize)} (${batch.length} URLs)`);
-          
           const { data: batchMatches, error: batchError } = await retrySupabaseQuery(() =>
             supabase
               .from('url_recency_cache')
@@ -278,7 +314,6 @@ export const useDashboardData = () => {
             if (batchError.message?.includes('uri too long') || 
                 batchError.message?.includes('request entity too large') ||
                 batchError.code === 'ERR_FAILED') {
-              // console.log('🔄 URI too long, trying individual URL queries...');
               batchProcessingFailed = true;
               break;
             }
@@ -289,12 +324,11 @@ export const useDashboardData = () => {
           
           if (batchMatches && batchMatches.length > 0) {
             allMatches.push(...batchMatches);
-            // console.log(`✅ Batch ${Math.floor(i/batchSize) + 1}: Found ${batchMatches.length} matches`);
           }
           
-          // Small delay between batches to avoid overwhelming the server
-          if (i + batchSize < urls.length) {
-            await new Promise(resolve => setTimeout(resolve, 100));
+          // Small delay between batches to prevent overwhelming the server
+          if (i + batchSize < urlsToProcess.length) {
+            await new Promise(resolve => setTimeout(resolve, 25));
           }
           
         } catch (error) {
@@ -304,7 +338,6 @@ export const useDashboardData = () => {
           if (error.message?.includes('uri too long') || 
               error.message?.includes('request entity too large') ||
               error.code === 'ERR_FAILED') {
-            // console.log('🔄 URI too long, trying individual URL queries...');
             batchProcessingFailed = true;
             break;
           }
@@ -316,9 +349,9 @@ export const useDashboardData = () => {
       
       // If batch processing failed due to URI length, try individual URL queries
       if (batchProcessingFailed) {
-        // console.log('🔄 Falling back to individual URL queries...');
-        
-        for (const url of urls) {
+        // Limit individual queries too (first 50 only)
+        const maxIndividualQueries = 50;
+        for (const url of urlsToProcess.slice(0, maxIndividualQueries)) {
           try {
             const { data: singleMatch, error: singleError } = await retrySupabaseQuery(() =>
               supabase
@@ -334,7 +367,7 @@ export const useDashboardData = () => {
             }
             
             // Small delay between individual queries
-            await new Promise(resolve => setTimeout(resolve, 50));
+            await new Promise(resolve => setTimeout(resolve, 10));
             
           } catch (error) {
             console.error(`Error querying individual URL ${url}:`, error);
@@ -344,22 +377,20 @@ export const useDashboardData = () => {
       }
       
       if (allMatches.length > 0) {
-        // console.log('✅ Found', allMatches.length, 'total URL matches across all batches');
         setRecencyData(allMatches);
         setRecencyDataError(null); // Clear any previous errors
         return;
       }
       
       // If no exact matches, try domain-based search as fallback
-      const domains = [...new Set(urls.map(url => {
+      // Use the same limited URL set
+      const domains = [...new Set(urlsToProcess.map(url => {
         try {
           return new URL(url).hostname;
         } catch {
           return null;
         }
       }).filter(Boolean))];
-      
-      // console.log('🌐 No exact matches found, trying domain-based search for domains:', domains);
       
       // Process domains in batches too
       const domainBatchSize = 10;
@@ -393,7 +424,6 @@ export const useDashboardData = () => {
         }
       }
       
-      // console.log('🏢 Found', allDomainMatches.length, 'domain matches');
       setRecencyData(allDomainMatches);
       setRecencyDataError(null); // Clear any previous errors
     } catch (error) {
@@ -402,22 +432,28 @@ export const useDashboardData = () => {
       
       // Set specific error message for recency data
       if (error.message?.includes('ERR_FAILED') || error.message?.includes('network')) {
-        setRecencyDataError('Unable to fetch recency data due to network issues. This may be due to a large number of URLs. The system will retry automatically.');
+        setRecencyDataError('Unable to fetch relevance data due to network issues. The system will retry automatically.');
       } else if (error.message?.includes('uri too long')) {
-        setRecencyDataError('Too many URLs to process at once. The system is working on a solution.');
+        setRecencyDataError('Processing a large number of sources. This may take a moment...');
+      } else if (error.message?.includes('timeout')) {
+        setRecencyDataError('Relevance data is taking longer than expected. Please wait...');
       } else {
-        setRecencyDataError('Failed to load recency data. Please try refreshing the page.');
+        setRecencyDataError('Relevance data is being processed. This may take a moment.');
       }
+    } finally {
+      setRecencyDataLoading(false);
     }
   }, [user, responses]);
 
   const fetchAIThemes = useCallback(async () => {
     if (!user || responses.length === 0) {
       setAiThemes([]);
+      setAiThemesLoading(false);
       return;
     }
 
     try {
+      setAiThemesLoading(true);
       // Get response IDs for sentiment and competitive prompts (excluding visibility)
       const relevantResponses = responses.filter(response => {
         const promptType = response.confirmed_prompts?.prompt_type;
@@ -429,135 +465,161 @@ export const useDashboardData = () => {
 
       const responseIds = relevantResponses.map(r => r.id);
       
-      if (DEBUG_LOGS) console.log('🎯 Relevant responses for AI themes:', {
-        total_responses: responses.length,
-        relevant_responses: relevantResponses.length,
-        first_few_response_ids: responseIds.slice(0, 3),
-        prompt_types: relevantResponses.map(r => r.confirmed_prompts?.prompt_type).slice(0, 5),
-        sample_response_texts: relevantResponses.slice(0, 2).map(r => r.response_text?.substring(0, 100) + '...'),
-        current_user: user?.id,
-        current_company: companyName
-      });
-      
-      // CRITICAL DEBUG: Let's check if we have the specific response IDs from user's data
-      
       if (responseIds.length === 0) {
         setAiThemes([]);
         return;
       }
 
-      // CRITICAL DEBUG: Let's test with a known working response ID first
-      if (DEBUG_LOGS) {
-        const { data: directTest, error: directError } = await retrySupabaseQuery(() =>
-          supabase
-            .from('ai_themes')
-            .select('*')
-            .eq('response_id', '305cede8-8af3-4eae-8830-64bfd98431ae')
-        ) as { data: any[] | null; error: any };
+      // Process response IDs in batches to avoid URI length limits
+      // Supabase .in() queries can fail if the array is too large
+      const batchSize = 100; // Process 100 response IDs at a time
+      const allThemes: any[] = [];
+      let batchProcessingFailed = false;
+
+      // Process response IDs in batches
+      for (let i = 0; i < responseIds.length; i += batchSize) {
+        const batch = responseIds.slice(i, i + batchSize);
+        
+        try {
+          const { data: batchThemes, error: batchError } = await retrySupabaseQuery(() =>
+            supabase
+              .from('ai_themes')
+              .select('*')
+              .in('response_id', batch)
+              .order('created_at', { ascending: false })
+          ) as { data: any[] | null; error: any };
+
+          if (batchError) {
+            console.error(`Error fetching AI themes batch ${Math.floor(i/batchSize) + 1}:`, batchError);
+            
+            // If this is a URI length error, try even smaller batches
+            if (batchError.message?.includes('uri too long') || 
+                batchError.message?.includes('request entity too large') ||
+                batchError.code === 'ERR_FAILED') {
+              batchProcessingFailed = true;
+              break;
+            }
+            
+            // Continue with next batch for other errors
+            continue;
+          }
+
+          if (batchThemes && batchThemes.length > 0) {
+            allThemes.push(...batchThemes);
+          }
+
+          // Small delay between batches to avoid rate limiting
+          if (i + batchSize < responseIds.length) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+
+        } catch (error) {
+          console.error(`Error in AI themes batch ${Math.floor(i/batchSize) + 1}:`, error);
+          continue;
+        }
       }
 
-      const { data, error } = await retrySupabaseQuery(() =>
-        supabase
-          .from('ai_themes')
-          .select('*')
-          .in('response_id', responseIds)
-          .order('created_at', { ascending: false })
-      ) as { data: any[] | null; error: any };
+      // If batching failed, try individual queries as fallback
+      if (batchProcessingFailed && allThemes.length === 0) {
+        console.warn('Batch processing failed, trying individual queries for AI themes...');
+        for (const responseId of responseIds.slice(0, 50)) { // Limit to first 50 to avoid too many requests
+          try {
+            const { data: singleTheme, error: singleError } = await retrySupabaseQuery(() =>
+              supabase
+                .from('ai_themes')
+                .select('*')
+                .eq('response_id', responseId)
+            ) as { data: any[] | null; error: any };
 
-      if (error) {
-        console.error('❌ Error fetching AI themes:', error);
-        
-        // Try a simple count query to see if AI themes exist at all
-        const { count, error: countError } = await supabase
-          .from('ai_themes')
-          .select('*', { count: 'exact', head: true });
-        
-        if (DEBUG_LOGS) console.log('📊 Total AI themes in database:', count, countError ? `(Error: ${countError.message})` : '');
-        
-        // Also try the exact same query as ThematicAnalysisTab
-        if (DEBUG_LOGS) {
-          const { data: testData, error: testError } = await supabase
-            .from('ai_themes')
-            .select('*')
-            .in('response_id', responseIds.slice(0, 5)) // Test with first 5 IDs
-            .order('created_at', { ascending: false });
-            
-          console.log('🧪 Test query result:', {
-            themes_found: testData?.length || 0,
-            error: testError?.message || 'none',
-            first_theme: testData?.[0]
-          });
+            if (!singleError && singleTheme) {
+              allThemes.push(...singleTheme);
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 25));
+          } catch (error) {
+            console.error(`Error fetching themes for response ${responseId}:`, error);
+          }
         }
-        
-        // Check if ANY AI themes exist for ANY response_id (debug)
-        const { data: anyThemes, error: anyError } = await supabase
-          .from('ai_themes')
-          .select('response_id, theme_name, sentiment_score')
-          .limit(5);
-          
-        if (DEBUG_LOGS) console.log('🔍 Sample AI themes in database:', {
-          count: anyThemes?.length || 0,
-          sample_response_ids: anyThemes?.map(t => t.response_id) || [],
-          vs_our_response_ids: responseIds.slice(0, 3),
-          any_matches: anyThemes?.some(t => responseIds.includes(t.response_id)) || false
-        });
-        
+      }
+
+      // Check if we got any themes
+      if (batchProcessingFailed && allThemes.length === 0) {
+        console.error('❌ Failed to fetch AI themes after batching. Response IDs count:', responseIds.length);
         setAiThemes([]);
         return;
       }
-
-      if (DEBUG_LOGS) {
-      }
-      setAiThemes(data || []);
+      
+      setAiThemes(allThemes);
     } catch (error) {
       console.error('Error in fetchAIThemes:', error);
       setAiThemes([]);
+    } finally {
+      setAiThemesLoading(false);
     }
   }, [user, responses]);
 
-  // Helper function to calculate AI-based sentiment for a response
-  const calculateAIBasedSentiment = useCallback((responseId: string) => {
-    const responseThemes = aiThemes.filter(theme => theme.response_id === responseId);
+  // Memoized cache of sentiment calculations per response ID
+  // This prevents recalculating sentiment for the same response multiple times
+  // Only counts themes from responses that belong to the current company
+  const sentimentCache = useMemo(() => {
+    const cache = new Map<string, { sentiment_score: number; sentiment_label: string }>();
     
-    if (responseThemes.length === 0) {
-      // Fallback to original sentiment if no AI themes available
-      const response = responses.find(r => r.id === responseId);
-      // console.log('⚠️ No AI themes found for response:', responseId, 'using original sentiment:', response?.sentiment_score);
-      return {
-        sentiment_score: response?.sentiment_score || 0,
-        sentiment_label: response?.sentiment_label || 'neutral'
-      };
-    }
-
-    // Calculate weighted average sentiment based on confidence scores
-    const totalConfidenceWeight = responseThemes.reduce((sum, theme) => sum + (theme.confidence_score || 0), 0);
+    // Create a Set of response IDs from the current company's responses
+    // This ensures we only count themes from responses belonging to the current company
+    const companyResponseIds = new Set(responses.map(r => r.id));
     
-    if (totalConfidenceWeight === 0) {
-      // If no confidence scores, use simple average
-      const avgSentiment = responseThemes.reduce((sum, theme) => sum + (theme.sentiment_score || 0), 0) / responseThemes.length;
-      const sentimentLabel = avgSentiment > 0.1 ? 'positive' : avgSentiment < -0.1 ? 'negative' : 'neutral';
-      return { sentiment_score: avgSentiment, sentiment_label: sentimentLabel };
-    }
-
-    // Weighted average by confidence score
-    const weightedSentiment = responseThemes.reduce((sum, theme) => {
-      return sum + ((theme.sentiment_score || 0) * (theme.confidence_score || 0));
-    }, 0) / totalConfidenceWeight;
-
-    const sentimentLabel = weightedSentiment > 0.1 ? 'positive' : weightedSentiment < -0.1 ? 'negative' : 'neutral';
+    // Filter themes to only include those from the current company's responses
+    const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
     
-    if (DEBUG_LOGS) console.log('✨ AI-based sentiment calculated for', responseId, ':', {
-      themes_count: responseThemes.length,
-      weighted_sentiment: weightedSentiment,
-      sentiment_label: sentimentLabel,
-      total_confidence: totalConfidenceWeight
+    // Group themes by response_id for efficient processing
+    const themesByResponseId = new Map<string, typeof aiThemes>();
+    companyThemes.forEach(theme => {
+      if (!themesByResponseId.has(theme.response_id)) {
+        themesByResponseId.set(theme.response_id, []);
+      }
+      themesByResponseId.get(theme.response_id)!.push(theme);
     });
     
-    return { 
-      sentiment_score: weightedSentiment, 
-      sentiment_label: sentimentLabel 
-    };
+    // Calculate sentiment for each response ID once
+    themesByResponseId.forEach((responseThemes, responseId) => {
+      const positiveThemes = responseThemes.filter(theme => theme.sentiment_score > 0.1).length;
+      const negativeThemes = responseThemes.filter(theme => theme.sentiment_score < -0.1).length;
+      const totalThemes = positiveThemes + negativeThemes;
+      
+      if (totalThemes === 0) {
+        // All themes are neutral
+        cache.set(responseId, { sentiment_score: 0, sentiment_label: 'neutral' });
+        return;
+      }
+      
+      // Sentiment score is the ratio of positive themes (0-1 scale)
+      const sentimentRatio = positiveThemes / totalThemes;
+      const sentimentLabel = sentimentRatio > 0.6 ? 'positive' : sentimentRatio < 0.4 ? 'negative' : 'neutral';
+      
+      cache.set(responseId, { 
+        sentiment_score: sentimentRatio, 
+        sentiment_label: sentimentLabel 
+      });
+    });
+    
+    return cache;
   }, [aiThemes, responses]);
+
+  // Helper function to calculate AI-based sentiment for a response
+  // Now uses the memoized cache for O(1) lookup instead of recalculating
+  const calculateAIBasedSentiment = useCallback((responseId: string) => {
+    // Check cache first
+    const cached = sentimentCache.get(responseId);
+    if (cached) {
+      return cached;
+    }
+    
+    // No AI themes available for this response - return neutral sentiment
+    return {
+      sentiment_score: 0,
+      sentiment_label: 'neutral'
+    };
+  }, [sentimentCache]);
 
   const fetchCompanyName = useCallback(async () => {
     if (!currentCompany) {
@@ -725,8 +787,6 @@ export const useDashboardData = () => {
         timestamp: now,
         data: processedResults
       };
-      
-      if (DEBUG_LOGS) console.log('🔍 Search results loaded:', processedResults.length, 'results');
 
       // Process search terms data for ranking
       if (processedResults.length > 0) {
@@ -755,7 +815,6 @@ export const useDashboardData = () => {
           }))
           .sort((a, b) => b.monthlyVolume - a.monthlyVolume);
         
-        if (DEBUG_LOGS) console.log('🔍 Search terms processed:', termsData.length, 'terms');
         setSearchTermsData(termsData);
       }
     } catch (error) {
@@ -764,7 +823,7 @@ export const useDashboardData = () => {
     } finally {
       setSearchResultsLoading(false);
     }
-  }, [user, companyName]);
+  }, [user, currentCompany?.id]);
 
   // Real-time subscription - FIXED
   useEffect(() => {
@@ -890,33 +949,36 @@ export const useDashboardData = () => {
   // Fetch AI themes when responses change
   useEffect(() => {
     if (responses.length > 0) {
-      if (DEBUG_LOGS) console.log('🔄 fetchAIThemes triggered by responses change');
       fetchAIThemes();
     }
   }, [responses.length]); // Only depend on responses length, not the function
 
-  // Track when metrics are ready (depends on responses, AI themes, and recency data)
+  // Track when metrics are ready (depends on responses and AI themes)
+  // Recency data is non-blocking - dashboard can show without it
   useEffect(() => {
     if (loading) {
       setMetricsLoading(true);
     } else if (responses.length > 0) {
-      // Check if we have the required data for metrics calculation
-      const hasRequiredData = responses.length > 0 && 
-        (aiThemes.length > 0 || responses.some(r => r.sentiment_score !== undefined)) &&
-        (recencyData.length > 0 || recencyDataError); // Wait for recency data or error
-      
-      if (hasRequiredData) {
-        setMetricsLoading(false);
-      }
+      // Don't wait for recency data - it can load in the background
+      // Only wait for responses and AI themes (which should be fast)
+      // If AI themes haven't loaded yet but we have responses, still show dashboard
+      // The metrics will update when AI themes arrive
+      setMetricsLoading(false);
     } else {
       setMetricsLoading(false);
     }
-  }, [loading, responses.length, aiThemes.length, recencyData.length, recencyDataError]);
+  }, [loading, responses.length]);
 
   // Comprehensive loading state that includes all critical data
+  // Wait for recency data if we have responses (since it affects relevance scores)
   const isFullyLoaded = useMemo(() => {
-    return !loading && !metricsLoading && !competitorLoading;
-  }, [loading, metricsLoading, competitorLoading]);
+    const baseLoaded = !loading && !metricsLoading && !competitorLoading;
+    // If we have responses, also wait for recency data to prevent score changes
+    if (responses.length > 0) {
+      return baseLoaded && !recencyDataLoading;
+    }
+    return baseLoaded;
+  }, [loading, metricsLoading, competitorLoading, recencyDataLoading, responses.length]);
 
   // Fetch search results when company is available
   useEffect(() => {
@@ -973,14 +1035,17 @@ export const useDashboardData = () => {
               r.talentx_analysis?.some((analysis: any) => analysis.attributeId === prompt.talentx_attribute_id)
             );
             
-            // Extract visibility scores from responses
-            const visibilityScores = matchingResponses
-              .map(r => r.visibility_score)
-              .filter((score): score is number => typeof score === 'number');
+            // Calculate visibility from company_mentioned boolean
+            const visibilityPercentage = matchingResponses.length > 0 
+              ? (matchingResponses.filter(r => r.company_mentioned === true).length / matchingResponses.length) * 100
+              : 0;
             
-            // Calculate average sentiment from responses
+            // Calculate average sentiment from AI themes (if available)
             const avgSentiment = matchingResponses.length > 0 
-              ? matchingResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / matchingResponses.length 
+              ? matchingResponses.reduce((sum, r) => {
+                  const aiSentiment = calculateAIBasedSentiment(r.id);
+                  return sum + aiSentiment.sentiment_score;
+                }, 0) / matchingResponses.length
               : 0;
             
             // Determine sentiment label
@@ -990,16 +1055,21 @@ export const useDashboardData = () => {
             
             return {
               prompt: prompt.prompt_text,
-              category: `TalentX: ${prompt.talentx_attribute_id.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
+              category: prompt.prompt_theme || 'General',
               type: prompt.prompt_type as any,
+              industryContext: prompt.industry_context || undefined,
+              jobFunctionContext: prompt.job_function_context || undefined,
+              locationContext: prompt.location_context || undefined,
+              promptCategory: prompt.prompt_category || undefined,
+              promptTheme: prompt.prompt_theme || 'General',
               responses: matchingResponses.length > 0 ? 1 : 0, // Mark as having responses if any exist
               avgSentiment: avgSentiment,
               sentimentLabel: sentimentLabel,
               mentionRanking: undefined,
               competitivePosition: undefined,
               competitorMentions: undefined,
-              averageVisibility: visibilityScores.length > 0 ? visibilityScores.reduce((sum, score) => sum + score, 0) / visibilityScores.length : undefined,
-              visibilityScores: visibilityScores,
+              averageVisibility: visibilityPercentage,
+              visibilityScores: [visibilityPercentage],
               isTalentXPrompt: true,
               talentXAttributeId: prompt.talentx_attribute_id,
               talentXPromptType: prompt.prompt_type.replace('talentx_', '') // Remove prefix for display
@@ -1031,13 +1101,37 @@ export const useDashboardData = () => {
       // Get AI-based sentiment for this response
       const aiSentiment = calculateAIBasedSentiment(response.id);
       
-      // Extract visibility_score if present and numeric
-      const visibilityScore = typeof response.visibility_score === 'number' ? response.visibility_score : undefined;
+      // Extract visibility from company_mentioned boolean
+      const visibilityScore = typeof response.company_mentioned === 'boolean' ? (response.company_mentioned ? 100 : 0) : undefined;
       
       if (existing) {
         existing.responses += 1;
         // Use AI-based sentiment in average calculation
         existing.avgSentiment = (existing.avgSentiment + aiSentiment.sentiment_score) / 2;
+        if (!existing.industryContext && response.confirmed_prompts?.industry_context) {
+          existing.industryContext = response.confirmed_prompts.industry_context;
+        }
+        if (!existing.jobFunctionContext && response.confirmed_prompts?.job_function_context) {
+          existing.jobFunctionContext = response.confirmed_prompts.job_function_context;
+        }
+        if (!existing.locationContext && response.confirmed_prompts?.location_context) {
+          existing.locationContext = response.confirmed_prompts.location_context;
+        }
+        if (!existing.promptCategory && response.confirmed_prompts?.prompt_category) {
+          existing.promptCategory = response.confirmed_prompts.prompt_category || undefined;
+        }
+        if (!existing.promptTheme && response.confirmed_prompts?.prompt_theme) {
+          const theme = response.confirmed_prompts.prompt_theme || undefined;
+          existing.promptTheme = theme;
+          if (theme) {
+            existing.category = theme;
+          }
+        }
+        // Update talentXAttributeId from confirmed_prompts if not already set
+        const talentXAttrId = (response.confirmed_prompts as any)?.talentx_attribute_id;
+        if (!existing.talentXAttributeId && talentXAttrId) {
+          existing.talentXAttributeId = talentXAttrId;
+        }
         // Add visibility score to array
         if (visibilityScore !== undefined) {
           existing.visibilityScores = existing.visibilityScores || [];
@@ -1053,9 +1147,9 @@ export const useDashboardData = () => {
         }
         // Update competitive metrics
         if (response.confirmed_prompts?.prompt_type === 'competitive' || response.confirmed_prompts?.prompt_type === 'talentx_competitive') {
-          if (response.competitor_mentions) {
-            const mentions = response.competitor_mentions as string[];
-            existing.competitorMentions = [...new Set([...(existing.competitorMentions || []), ...mentions])];
+          if (response.detected_competitors) {
+            const mentions = response.detected_competitors.split(',').map(m => m.trim()).filter(m => m.length > 0);
+            existing.detectedCompetitors = mentions.join(',');
           }
           // Calculate competitive position based on mention order
           if (response.mention_ranking) {
@@ -1066,16 +1160,23 @@ export const useDashboardData = () => {
         }
       } else {
         const talentXAnalysis = response.talentx_analysis?.[0];
+        const promptCategoryValue = response.confirmed_prompts?.prompt_category || 'General';
+        const promptThemeValue = response.confirmed_prompts?.prompt_theme || 'General';
         acc.push({
           prompt: promptKey || '',
-          category: response.confirmed_prompts?.prompt_category || '',
+          category: promptThemeValue,
           type: response.confirmed_prompts?.prompt_type || 'sentiment',
+          industryContext: response.confirmed_prompts?.industry_context || undefined,
+          jobFunctionContext: response.confirmed_prompts?.job_function_context || undefined,
+          locationContext: response.confirmed_prompts?.location_context || undefined,
+          promptCategory: promptCategoryValue,
+          promptTheme: promptThemeValue,
           responses: 1,
           avgSentiment: aiSentiment.sentiment_score, // Use AI-based sentiment
           sentimentLabel: aiSentiment.sentiment_label, // Use AI-based sentiment label
           mentionRanking: response.mention_ranking || undefined,
           competitivePosition: response.mention_ranking || undefined,
-          competitorMentions: response.competitor_mentions as string[] || undefined,
+          detectedCompetitors: response.detected_competitors || undefined,
           averageVisibility: (response.confirmed_prompts?.prompt_type === 'visibility' || response.confirmed_prompts?.prompt_type === 'talentx_visibility') ? (response.company_mentioned ? 100 : 0) : undefined,
           visibilityScores: visibilityScore !== undefined ? [visibilityScore] : [],
           // Add TalentX-specific fields if it's a TalentX response
@@ -1104,9 +1205,41 @@ export const useDashboardData = () => {
       }
       return acc;
     }, []);
+
+    const promptsWithActive = [...uniquePrompts];
+
+    activePrompts.forEach(prompt => {
+      if (prompt.is_pro_prompt) {
+        return;
+      }
+
+      const existing = promptsWithActive.find(item => item.prompt === prompt.prompt_text);
+      if (!existing) {
+        promptsWithActive.push({
+          prompt: prompt.prompt_text,
+          category: prompt.prompt_theme || 'General',
+          type: prompt.prompt_type || 'sentiment',
+          industryContext: prompt.industry_context || undefined,
+          jobFunctionContext: prompt.job_function_context || undefined,
+          locationContext: prompt.location_context || undefined,
+          promptCategory: prompt.prompt_category || undefined,
+          promptTheme: prompt.prompt_theme || undefined,
+          responses: 0,
+          avgSentiment: 0,
+          sentimentLabel: 'neutral',
+          mentionRanking: undefined,
+          competitivePosition: undefined,
+          detectedCompetitors: undefined,
+          averageVisibility: (prompt.prompt_type === 'visibility') ? 0 : undefined,
+          totalWords: undefined,
+          firstMentionPosition: undefined,
+          visibilityScores: [],
+        });
+      }
+    });
     
-    return uniquePrompts;
-  }, [responses, talentXProPrompts, calculateAIBasedSentiment]);
+    return promptsWithActive;
+  }, [responses, talentXProPrompts, calculateAIBasedSentiment, activePrompts]);
 
   const metrics: DashboardMetrics = useMemo(() => {
     // Calculate AI-based sentiment averages
@@ -1125,48 +1258,35 @@ export const useDashboardData = () => {
 
     if (aiThemes.length > 0 && relevantResponses.length > 0) {
       // Use AI themes for sentiment calculation
-      if (DEBUG_LOGS) console.log('🤖 Using AI-based sentiment calculation with', aiThemes.length, 'themes for', relevantResponses.length, 'relevant responses');
+      // Calculate overall positive ratio directly from all themes (not averaged across responses)
+      const companyResponseIds = new Set(relevantResponses.map(r => r.id));
+      const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
       
+      const positiveThemes = companyThemes.filter(theme => theme.sentiment_score > 0.1).length;
+      const negativeThemes = companyThemes.filter(theme => theme.sentiment_score < -0.1).length;
+      const totalNonNeutralThemes = positiveThemes + negativeThemes;
+      
+      // Calculate overall positive ratio (0-1 scale)
+      averageSentiment = totalNonNeutralThemes > 0 
+        ? positiveThemes / totalNonNeutralThemes 
+        : 0;
+
+      // Calculate sentiment counts based on AI themes (ratio-based)
       const responseSentiments = relevantResponses.map(response => {
         return calculateAIBasedSentiment(response.id);
       });
-
-      averageSentiment = responseSentiments.length > 0 
-        ? responseSentiments.reduce((sum, sentiment) => sum + sentiment.sentiment_score, 0) / responseSentiments.length 
-        : 0;
-
-      // Calculate sentiment counts based on AI themes
-      positiveCount = responseSentiments.filter(s => s.sentiment_score > 0.1).length;
-      neutralCount = responseSentiments.filter(s => s.sentiment_score >= -0.1 && s.sentiment_score <= 0.1).length;
-      negativeCount = responseSentiments.filter(s => s.sentiment_score < -0.1).length;
-      
-      if (DEBUG_LOGS) console.log('📊 AI-based metrics calculated:', {
-        averageSentiment,
-        positiveCount,
-        neutralCount,
-        negativeCount
-      });
+      positiveCount = responseSentiments.filter(s => s.sentiment_score > 0.6).length;
+      neutralCount = responseSentiments.filter(s => s.sentiment_score >= 0.4 && s.sentiment_score <= 0.6).length;
+      negativeCount = responseSentiments.filter(s => s.sentiment_score < 0.4).length;
     } else {
-      // Fallback to original method if no AI themes available
-      // console.log('🔄 Falling back to original sentiment calculation - AI themes:', aiThemes.length, 'relevant responses:', relevantResponses.length);
-      
-      averageSentiment = responses.length > 0 
-        ? responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length 
-        : 0;
-
-      positiveCount = responses.filter(r => (r.sentiment_score || 0) > 0.1).length;
-      neutralCount = responses.filter(r => (r.sentiment_score || 0) >= -0.1 && (r.sentiment_score || 0) <= 0.1).length;
-      negativeCount = responses.filter(r => (r.sentiment_score || 0) < -0.1).length;
-      
-      // console.log('📊 Original metrics calculated:', {
-      //   averageSentiment,
-      //   positiveCount,
-      //   neutralCount,
-      //   negativeCount
-      // });
+      // No AI themes available - use neutral sentiment as fallback
+      averageSentiment = 0; // Neutral sentiment when no AI themes available
+      positiveCount = 0;
+      neutralCount = responses.length;
+      negativeCount = 0;
     }
 
-    const sentimentLabel = averageSentiment > 0.1 ? 'Positive' : averageSentiment < -0.1 ? 'Negative' : 'Neutral';
+    const sentimentLabel = averageSentiment > 0.6 ? 'Positive' : averageSentiment < 0.4 ? 'Negative' : 'Neutral';
 
     let sentimentTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     let visibilityTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
@@ -1200,16 +1320,15 @@ export const useDashboardData = () => {
             ? previousAISentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / previousAISentiments.length
             : 0;
         } else {
-          // Fallback to original sentiment
-          currentSentimentAvg = currentResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / currentResponses.length;
-          const previousSentimentTotal = previousResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0);
-          previousSentimentAvg = previousSentimentTotal / previousResponses.length;
+          // No fallback to original sentiment - use neutral when no AI themes
+          currentSentimentAvg = 0;
+          previousSentimentAvg = 0;
         }
 
         const sentimentChange = currentSentimentAvg - previousSentimentAvg;
         sentimentTrendComparison = {
           value: Math.abs(Math.round(sentimentChange * 100)),
-          direction: sentimentChange > 0.01 ? 'up' : sentimentChange < -0.01 ? 'down' : 'neutral'
+          direction: sentimentChange > 0.05 ? 'up' : sentimentChange < -0.05 ? 'down' : 'neutral'
         };
 
         // Calculate visibility trend using company_mentioned percentage
@@ -1248,17 +1367,20 @@ export const useDashboardData = () => {
       ? (mentionedCount / responses.length) * 100
       : 0;
 
-    // Calculate average relevance score
-    const averageRelevance = recencyData.length > 0 
-      ? recencyData.reduce((sum, item) => sum + (item.recency_score || 0), 0) / recencyData.length 
+    // Calculate average relevance score (ignoring null scores)
+    const validRecencyScores = recencyData.filter(item => 
+      item.recency_score !== null && item.recency_score !== undefined
+    );
+    const averageRelevance = validRecencyScores.length > 0 
+      ? validRecencyScores.reduce((sum, item) => sum + item.recency_score, 0) / validRecencyScores.length 
       : 0;
 
     // Calculate overall perception score
     const calculatePerceptionScore = () => {
       if (responses.length === 0) return { score: 0, label: 'No Data' };
 
-      // Normalize sentiment to 0-100 scale (sentiment is typically -1 to 1)
-      const normalizedSentiment = Math.max(0, Math.min(100, (averageSentiment + 1) * 50));
+      // Convert sentiment ratio (0-1) to 0-100 scale
+      const normalizedSentiment = Math.max(0, Math.min(100, averageSentiment * 100));
       
       // Visibility is already 0-100 scale
       const visibilityScore = averageVisibility;
@@ -1418,7 +1540,7 @@ export const useDashboardData = () => {
         sentimentLabel,
         mentionRanking: promptResponses[0]?.mention_ranking,
         competitivePosition: promptResponses[0]?.competitive_position,
-        competitorMentions: promptResponses[0]?.competitor_mentions,
+        detectedCompetitors: promptResponses[0]?.detected_competitors,
         averageVisibility
       };
     });
@@ -1464,7 +1586,7 @@ export const useDashboardData = () => {
         sentimentLabel,
         mentionRanking: firstResponse.mention_ranking,
         competitivePosition: firstResponse.competitive_position,
-        competitorMentions: firstResponse.competitor_mentions,
+        detectedCompetitors: firstResponse.detected_competitors,
         averageVisibility: firstResponse.visibility_score,
         isTalentXPrompt: true,
         talentXAttributeId: talentXAnalysis?.attributeId,
@@ -1480,64 +1602,12 @@ export const useDashboardData = () => {
     
     const competitorCounts: Record<string, number> = {};
     
-    // Excluded competitors and words
-    const excludedCompetitors = new Set([
-      'glassdoor', 'indeed', 'ambitionbox', 'workday', 'linkedin', 'monster', 'careerbuilder', 'ziprecruiter',
-      'dice', 'angelist', 'wellfound', 'builtin', 'stackoverflow', 'github'
-    ]);
-    
-    const excludedWords = new Set([
-      'none', 'n/a', 'na', 'null', 'undefined', 'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;',
-      'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
-      'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_',
-      'null.', 'null,', 'null:', 'null;', 'null)', 'null]', 'null}', 'null-', 'null_',
-      'undefined.', 'undefined,', 'undefined:', 'undefined;', 'undefined)', 'undefined]', 'undefined}', 'undefined-', 'undefined_',
-      'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;', 'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_',
-      'none', 'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
-      'na', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_'
-    ]);
-    
-    // Additional patterns to exclude
-    const excludedPatterns = [
-      /^none$/i,
-      /^n\/a$/i,
-      /^na$/i,
-      /^null$/i,
-      /^undefined$/i,
-      /^none\.?$/i,
-      /^n\/a\.?$/i,
-      /^na\.?$/i,
-      /^null\.?$/i,
-      /^undefined\.?$/i,
-      /^none[,:;\)\]\}\-_]$/i,
-      /^n\/a[,:;\)\]\}\-_]$/i,
-      /^na[,:;\)\]\}\-_]$/i,
-      /^null[,:;\)\]\}\-_]$/i,
-      /^undefined[,:;\)\]\}\-_]$/i,
-      /^[0-9]+$/i, // Pure numbers
-      /^[^a-zA-Z0-9]+$/i, // Only special characters
-      /^[a-z]{1,2}$/i, // Single or double letter words (likely abbreviations that aren't company names)
-    ];
-    
     // Process competitors from AI responses
     responses.forEach(response => {
-      if (response.competitor_mentions) {
-        const mentions = Array.isArray(response.competitor_mentions) 
-          ? response.competitor_mentions 
-          : JSON.parse(response.competitor_mentions as string || '[]');
-        
-        mentions.forEach((mention: any) => {
-          if (mention.name) {
-            const name = mention.name.trim();
-            if (name && 
-                name.toLowerCase() !== companyName.toLowerCase() &&
-                name.length > 1 &&
-                !excludedCompetitors.has(name.toLowerCase()) &&
-                !excludedWords.has(name.toLowerCase()) &&
-                !excludedPatterns.some(pattern => pattern.test(name))) {
-              competitorCounts[name] = (competitorCounts[name] || 0) + 1;
-            }
-          }
+      if (response.detected_competitors) {
+        const validCompetitors = parseCompetitors(response.detected_competitors, companyName);
+        validCompetitors.forEach(competitor => {
+          competitorCounts[competitor] = (competitorCounts[competitor] || 0) + 1;
         });
       }
     });
@@ -1545,23 +1615,11 @@ export const useDashboardData = () => {
     // Process competitors from search results
     searchResults.forEach(result => {
       if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
-        const competitors = result.detectedCompetitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0);
-        
-        competitors.forEach(competitor => {
-          const name = competitor.trim();
-          if (name && 
-              name.toLowerCase() !== companyName.toLowerCase() &&
-              name.length > 1 &&
-              !excludedCompetitors.has(name.toLowerCase()) &&
-              !excludedWords.has(name.toLowerCase()) &&
-              !excludedPatterns.some(pattern => pattern.test(name))) {
-            // Weight search result competitors by mention count (how many search terms found this domain)
-            const weight = result.mentionCount || 1;
-            competitorCounts[name] = (competitorCounts[name] || 0) + weight;
-          }
+        const validCompetitors = parseCompetitors(result.detectedCompetitors, companyName);
+        validCompetitors.forEach(competitor => {
+          // Weight search result competitors by mention count (how many search terms found this domain)
+          const weight = result.mentionCount || 1;
+          competitorCounts[competitor] = (competitorCounts[competitor] || 0) + weight;
         });
       }
     });
@@ -1571,7 +1629,6 @@ export const useDashboardData = () => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 20);
 
-    if (DEBUG_LOGS) console.log('🔍 Top competitors calculated:', result.length, 'competitors, search results:', searchResults.length);
     return result;
   }, [responses, searchResults, companyName, loading]);
 
@@ -1640,6 +1697,77 @@ export const useDashboardData = () => {
     }
   }, [user, fetchResponses]);
 
+  // Function to fetch historical responses for a specific time range
+  // Enables time period comparison features in the dashboard
+  const fetchHistoricalResponses = useCallback(async (startDate: Date, endDate: Date) => {
+    if (!user || !currentCompany) {
+      return [];
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('prompt_responses')
+        .select(`
+          *,
+          confirmed_prompts (
+            prompt_text,
+            prompt_category,
+            prompt_type
+          )
+        `)
+        .eq('company_id', currentCompany.id)
+        .gte('tested_at', startDate.toISOString())
+        .lte('tested_at', endDate.toISOString())
+        .order('tested_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Filter to get only the latest response for each prompt+model in this time range
+      const latestInRangeMap = new Map<string, any>();
+      (data || []).forEach(response => {
+        const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
+        if (!latestInRangeMap.has(key)) {
+          latestInRangeMap.set(key, response);
+        }
+      });
+
+      return Array.from(latestInRangeMap.values());
+    } catch (error) {
+      console.error('Error fetching historical responses:', error);
+      return [];
+    }
+  }, [user, currentCompany]);
+
+  // Function to get all unique collection dates for this company
+  // Useful for showing a timeline or date selector for comparisons
+  const fetchCollectionDates = useCallback(async () => {
+    if (!user || !currentCompany) {
+      return [];
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('prompt_responses')
+        .select('tested_at')
+        .eq('company_id', currentCompany.id)
+        .order('tested_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Get unique dates (just the date part, not time)
+      const uniqueDates = new Set<string>();
+      (data || []).forEach(response => {
+        const date = new Date(response.tested_at).toISOString().split('T')[0];
+        uniqueDates.add(date);
+      });
+
+      return Array.from(uniqueDates).sort().reverse();
+    } catch (error) {
+      console.error('Error fetching collection dates:', error);
+      return [];
+    }
+  }, [user, currentCompany]);
+
   return {
     responses,
     loading,
@@ -1667,8 +1795,13 @@ export const useDashboardData = () => {
     fetchSearchResults,
     aiThemes, // Export AI themes for use in components
     fetchAIThemes, // Export function to refresh AI themes
+    fetchHistoricalResponses, // Fetch responses for a specific time range
+    fetchCollectionDates, // Get all collection dates for timeline/comparison
     isOnline, // Network status
     connectionError, // Connection error message
-    recencyDataError // Recency data specific error message
+    recencyDataError, // Recency data specific error message
+    recencyData, // Export recency data for components
+    recencyDataLoading, // Loading state for recency data
+    aiThemesLoading // Loading state for AI themes
   };
 };

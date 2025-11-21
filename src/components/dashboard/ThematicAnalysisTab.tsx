@@ -16,10 +16,18 @@ import {
   Coffee,
   Crown,
   Lock,
-  TrendingUp
+  TrendingUp,
+  FileText,
+  MessageSquare,
+  ClipboardList,
+  MessageCircle,
+  UserCheck,
+  Briefcase
 } from 'lucide-react';
 import { PromptResponse } from '@/types/dashboard';
 import { supabase } from '@/integrations/supabase/client';
+import { TALENTX_ATTRIBUTES } from '@/config/talentXAttributes';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface ThematicAnalysisTabProps {
   responses: PromptResponse[];
@@ -45,6 +53,7 @@ interface AITheme {
 
 // Icon mapping for TalentX attributes
 const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  // Employee Experience
   'mission-purpose': Target,
   'rewards-recognition': Award,
   'company-culture': Users,
@@ -54,7 +63,14 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
   'wellbeing-balance': Coffee,
   'leadership': Crown,
   'security-perks': Lock,
-  'career-opportunities': TrendingUp
+  'career-opportunities': TrendingUp,
+  // Candidate Experience
+  'application-process': FileText,
+  'candidate-communication': MessageSquare,
+  'interview-experience': ClipboardList,
+  'candidate-feedback': MessageCircle,
+  'onboarding-experience': UserCheck,
+  'overall-candidate-experience': Briefcase
 };
 
 export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChartView }: ThematicAnalysisTabProps) => {
@@ -63,23 +79,83 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [selectedAttribute, setSelectedAttribute] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [experienceType, setExperienceType] = useState<'employee' | 'candidate'>('employee');
+  const [selectedIndustry, setSelectedIndustry] = useState<string>('all');
+  const [selectedFunction, setSelectedFunction] = useState<string>('all');
+  const [selectedPromptType, setSelectedPromptType] = useState<'all' | 'sentiment' | 'competitive'>('all');
   const [analysisProgress, setAnalysisProgress] = useState({
     current: 0,
     total: 0,
     currentResponse: '',
     isVisible: false
   });
+  const [showAllThemeSources, setShowAllThemeSources] = useState<Record<string, boolean>>({});
+
+  // Extract unique industries and functions from responses for filter options
+  const { industries, functions } = useMemo(() => {
+    const industrySet = new Set<string>();
+    const functionSet = new Set<string>();
+    
+    responses.forEach(response => {
+      const industry = response.confirmed_prompts?.industry_context;
+      const jobFunction = response.confirmed_prompts?.job_function_context;
+      
+      if (industry) industrySet.add(industry);
+      if (jobFunction) functionSet.add(jobFunction);
+    });
+    
+    return {
+      industries: Array.from(industrySet).sort(),
+      functions: Array.from(functionSet).sort()
+    };
+  }, [responses]);
 
   // Filter responses to only include sentiment and competitive prompts (excluding visibility)
+  // Also filter by prompt_category based on experienceType, industry, function, and prompt type
   const filteredResponses = useMemo(() => {
     return responses.filter(response => {
       const promptType = response.confirmed_prompts?.prompt_type;
-      return promptType === 'sentiment' || 
-             promptType === 'competitive' || 
-             promptType === 'talentx_sentiment' || 
-             promptType === 'talentx_competitive';
+      const promptCategory = response.confirmed_prompts?.prompt_category;
+      const industry = response.confirmed_prompts?.industry_context;
+      const jobFunction = response.confirmed_prompts?.job_function_context;
+      
+      // First, filter by prompt type (sentiment/competitive only, exclude visibility)
+      const isValidType = promptType === 'sentiment' || 
+                          promptType === 'competitive' || 
+                          promptType === 'talentx_sentiment' || 
+                          promptType === 'talentx_competitive';
+      
+      if (!isValidType) return false;
+      
+      // Filter by selected prompt type (sentiment/competitive)
+      if (selectedPromptType !== 'all') {
+        if (selectedPromptType === 'sentiment') {
+          // Only include sentiment prompts (both regular and talentx)
+          if (promptType !== 'sentiment' && promptType !== 'talentx_sentiment') return false;
+        } else if (selectedPromptType === 'competitive') {
+          // Only include competitive prompts (both regular and talentx)
+          if (promptType !== 'competitive' && promptType !== 'talentx_competitive') return false;
+        }
+      }
+      
+      // Then, filter by prompt_category based on experienceType
+      if (experienceType === 'employee') {
+        // Employee Experience: only include Employee Experience prompts
+        if (promptCategory !== 'Employee Experience') return false;
+      } else {
+        // Candidate Experience: only include Candidate Experience prompts
+        if (promptCategory !== 'Candidate Experience') return false;
+      }
+      
+      // Filter by industry if selected
+      if (selectedIndustry !== 'all' && industry !== selectedIndustry) return false;
+      
+      // Filter by function if selected
+      if (selectedFunction !== 'all' && jobFunction !== selectedFunction) return false;
+      
+      return true;
     });
-  }, [responses]);
+  }, [responses, experienceType, selectedIndustry, selectedFunction, selectedPromptType]);
 
   // Fetch AI themes from database
   const fetchAIThemes = async () => {
@@ -176,6 +252,97 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
     }
   };
 
+  // Filter themes based on experience type
+  const filteredThemes = useMemo(() => {
+    // Candidate Experience attribute IDs
+    const candidateExperienceIds = [
+      'application-process',
+      'candidate-communication',
+      'interview-experience',
+      'candidate-feedback',
+      'onboarding-experience',
+      'overall-candidate-experience'
+    ];
+
+    return aiThemes.filter(theme => {
+      const attributeId = theme.talentx_attribute_id;
+      
+      if (experienceType === 'candidate') {
+        // Show only Candidate Experience attributes
+        return candidateExperienceIds.includes(attributeId);
+      } else {
+        // Show only Employee Experience attributes (everything except Candidate Experience)
+        return !candidateExperienceIds.includes(attributeId);
+      }
+    });
+  }, [aiThemes, experienceType]);
+
+  // Check if candidate experience exists
+  const hasCandidateExperience = useMemo(() => {
+    const candidateExperienceIds = [
+      'application-process',
+      'candidate-communication',
+      'interview-experience',
+      'candidate-feedback',
+      'onboarding-experience',
+      'overall-candidate-experience'
+    ];
+    return aiThemes.some(theme => candidateExperienceIds.includes(theme.talentx_attribute_id));
+  }, [aiThemes]);
+
+  // Helper to get favicon for a domain
+  const getFavicon = (domain: string): string => {
+    return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
+  };
+
+  // Helper to format domain to a human-friendly name
+  const getSourceDisplayName = (domain: string) => {
+    // Remove www. and domain extension
+    let name = domain.replace(/^www\./, "");
+    name = name.replace(/\.(com|org|net|io|co|edu|gov|info|biz|us|uk|ca|au|in|de|fr|jp|ru|ch|it|nl|se|no|es|mil|tv|me|ai|ly|app|site|online|tech|dev|xyz|pro|club|store|blog|io|co|us|ca|uk|au|in|de|fr|jp|ru|ch|it|nl|se|no|es|mil|tv|me|ai|ly|app|site|online|tech|dev|xyz|pro|club|store|blog)(\.[a-z]{2})?$/, "");
+    // Capitalize first letter
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  };
+
+  // Helper to get sources for a theme
+  const getThemeSources = (theme: AITheme) => {
+    const sourceData: Record<string, { count: number; url: string | null }> = {};
+    
+    // Find the response associated with this theme
+    const response = responses.find(r => r.id === theme.response_id);
+    
+    if (response) {
+      // Parse citations from the response
+      try {
+        const citations = typeof response.citations === 'string' 
+          ? JSON.parse(response.citations) 
+          : response.citations;
+        
+        if (Array.isArray(citations)) {
+          citations.forEach((citation: any) => {
+            if (citation.domain) {
+              if (!sourceData[citation.domain]) {
+                sourceData[citation.domain] = { count: 0, url: null };
+              }
+              sourceData[citation.domain].count += 1;
+              // Store the first URL found for this domain
+              if (!sourceData[citation.domain].url && citation.url) {
+                sourceData[citation.domain].url = citation.url;
+              }
+            }
+          });
+        }
+      } catch {
+        // Skip invalid citations
+      }
+    }
+    
+    // Convert to array and sort by count
+    return Object.entries(sourceData)
+      .map(([domain, data]) => ({ domain, count: data.count, url: data.url }))
+      .sort((a, b) => b.count - a.count);
+  };
+
   // Group AI themes by TalentX attribute and sort for bar chart
   const themeData = useMemo(() => {
     const attributeMap = new Map<string, { 
@@ -193,7 +360,7 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
     const responseAttributeMap = new Map<string, Set<string>>(); // attribute -> response_ids
     const attributeSentimentMap = new Map<string, Map<string, number>>(); // attribute -> sentiment -> count
     
-    aiThemes.forEach(theme => {
+    filteredThemes.forEach(theme => {
       const key = theme.talentx_attribute_id;
       
       // Initialize response tracking for this attribute
@@ -262,13 +429,13 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
     return Array.from(attributeMap.values())
       .sort((a, b) => b.count - a.count)
       .slice(0, 10); // Top 10 attributes
-  }, [aiThemes]);
+  }, [filteredThemes]);
 
   // Process data for bubble chart (attributes as data points, sentiment ratio vs volume)
   const bubbleChartData = useMemo(() => {
     return themeData.map(attribute => {
       // Find the attribute ID from the first theme that matches this attribute
-      const firstTheme = aiThemes.find(theme => theme.talentx_attribute_name === attribute.name);
+      const firstTheme = filteredThemes.find(theme => theme.talentx_attribute_name === attribute.name);
       return {
         attributeName: attribute.name,
         attributeId: firstTheme?.talentx_attribute_id || 'unknown',
@@ -281,7 +448,7 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
         themes: attribute.themes
       };
     });
-  }, [themeData, aiThemes]);
+  }, [themeData, filteredThemes]);
 
   const maxCount = themeData.length > 0 ? Math.max(...themeData.map(t => t.count)) : 1;
 
@@ -291,19 +458,21 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
         <CardContent className="p-6">
           <div className="text-center">
             <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Sentiment/Competitive Data</h3>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              No {experienceType === 'employee' ? 'Employee' : 'Candidate'} Experience Data
+            </h3>
             <p className="text-gray-600">
-              You need responses from sentiment or competitive prompts to run thematic analysis.
+              You need responses from {experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} sentiment or competitive prompts to run thematic analysis.
             </p>
             <div className="mt-4 text-sm text-gray-500">
               <p>This analysis focuses on:</p>
               <ul className="list-disc list-inside mt-2 space-y-1">
-                <li>Sentiment prompts</li>
-                <li>Competitive prompts</li>
-                <li>TalentX sentiment prompts</li>
-                <li>TalentX competitive prompts</li>
+                <li>{experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} sentiment prompts</li>
+                <li>{experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} competitive prompts</li>
+                <li>TalentX {experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} sentiment prompts</li>
+                <li>TalentX {experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} competitive prompts</li>
               </ul>
-              <p className="mt-2">Visibility prompts are excluded from this analysis.</p>
+              <p className="mt-2">Visibility prompts and {experienceType === 'employee' ? 'Candidate Experience' : 'Employee Experience'} prompts are excluded from this analysis.</p>
             </div>
           </div>
         </CardContent>
@@ -314,11 +483,92 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
   return (
     <div className="space-y-6">
       {/* Main Section Header */}
-      <div className="space-y-2">
-        <h2 className="text-2xl font-bold text-gray-900">Thematic Analysis</h2>
-        <p className="text-gray-600">
-          Analyze themes and sentiment patterns in AI responses to understand {companyName}'s employer brand perception.
-        </p>
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold text-gray-900">Thematic Analysis</h2>
+          <p className="text-gray-600">
+            Analyze themes and sentiment patterns to understand {companyName}'s employer brand perception.
+          </p>
+        </div>
+        
+        {/* Filters */}
+        <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {/* Experience Type Filter - only show if candidate experience exists */}
+          {hasCandidateExperience && (
+            <Select value={experienceType} onValueChange={(value) => setExperienceType(value as 'employee' | 'candidate')}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Employee Experience" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="employee">Employee Experience</SelectItem>
+                <SelectItem value="candidate">Candidate Experience</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+          
+          {/* Prompt Type Filter */}
+          <Select value={selectedPromptType} onValueChange={(value) => setSelectedPromptType(value as 'all' | 'sentiment' | 'competitive')}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="All Prompt Types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Prompt Types</SelectItem>
+              <SelectItem value="sentiment">Employer (Sentiment)</SelectItem>
+              <SelectItem value="competitive">Competitive</SelectItem>
+            </SelectContent>
+          </Select>
+          
+          {/* Industry Filter */}
+          {industries.length > 0 && (
+            <Select value={selectedIndustry} onValueChange={setSelectedIndustry}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="All Industries" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Industries</SelectItem>
+                {industries.map((industry) => (
+                  <SelectItem key={industry} value={industry}>
+                    {industry}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          
+          {/* Function Filter */}
+          {functions.length > 0 && (
+            <Select value={selectedFunction} onValueChange={setSelectedFunction}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="All Functions" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Functions</SelectItem>
+                {functions.map((func) => (
+                  <SelectItem key={func} value={func}>
+                    {func}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          
+          {/* Reset Filters Button */}
+          {(selectedIndustry !== 'all' || selectedFunction !== 'all' || selectedPromptType !== 'all' || (hasCandidateExperience && experienceType !== 'employee')) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setSelectedIndustry('all');
+                setSelectedFunction('all');
+                setSelectedPromptType('all');
+                setExperienceType('employee');
+              }}
+              className="w-full sm:col-span-2 lg:col-span-1"
+            >
+              Reset Filters
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Error Display */}
@@ -330,7 +580,28 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
         </Card>
       )}
 
+      {/* Empty State for Selected Experience Type */}
+      {filteredThemes.length === 0 && aiThemes.length > 0 && (
+        <Card>
+          <CardContent className="p-6">
+            <div className="text-center">
+              <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                No {experienceType === 'candidate' ? 'Candidate' : 'Employee'} Experience Themes Found
+              </h3>
+              <p className="text-gray-600">
+                No themes have been identified for {experienceType === 'candidate' ? 'candidate experience' : 'employee experience'} attributes yet.
+              </p>
+              <p className="text-sm text-gray-500 mt-2">
+                Try running the AI analysis or switch to {experienceType === 'candidate' ? 'Employee' : 'Candidate'} Experience to see themes.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Charts */}
+      {filteredThemes.length > 0 && (
       <>
         {/* Bubble Chart (Default) */}
         {chartView === 'bubble' && (
@@ -410,9 +681,9 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                       : isInOpportunitiesQuadrant
                       ? 'bg-blue-500' // Opportunities quadrant - always blue
                       : isInWeaknessesQuadrant
-                      ? 'bg-orange-500' // Weaknesses quadrant - always orange
+                      ? 'bg-red-500' // Weaknesses quadrant - always red
                       : isInThreatsQuadrant
-                      ? 'bg-red-500' // Threats quadrant - always red
+                      ? 'bg-orange-500' // Threats quadrant - always orange
                       : 'bg-yellow-500'; // Neutral zone (center)
 
                     return (
@@ -513,9 +784,9 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                         : isInOpportunitiesQuadrant
                         ? 'bg-blue-100 border-blue-300 text-blue-800'
                         : isInWeaknessesQuadrant
-                        ? 'bg-orange-100 border-orange-300 text-orange-800'
-                        : isInThreatsQuadrant
                         ? 'bg-red-100 border-red-300 text-red-800'
+                        : isInThreatsQuadrant
+                        ? 'bg-orange-100 border-orange-300 text-orange-800'
                         : 'bg-yellow-100 border-yellow-300 text-yellow-800';
 
                       const IconComponent = ATTRIBUTE_ICONS[data.attributeId] || Activity;
@@ -563,8 +834,8 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                     const negativePercentage = totalThemes > 0 ? (attribute.negativeCount / totalThemes) * percentage : 0;
                     const neutralPercentage = totalThemes > 0 ? (attribute.neutralCount / totalThemes) * percentage : 0;
                     
-                    // Find the attribute ID from the AI themes
-                    const attributeTheme = aiThemes.find(theme => theme.talentx_attribute_name === attribute.name);
+                    // Find the attribute ID from the filtered themes
+                    const attributeTheme = filteredThemes.find(theme => theme.talentx_attribute_name === attribute.name);
                     const attributeId = attributeTheme?.talentx_attribute_id;
 
                     return (
@@ -628,6 +899,7 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
             </Card>
           )}
       </>
+      )}
 
       {/* Analysis Progress Modal */}
       {analysisProgress.isVisible && (
@@ -681,8 +953,8 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
           </DialogHeader>
           
           {selectedAttribute && (() => {
-            // Get all themes for the selected attribute
-            const attributeThemes = aiThemes.filter(theme => theme.talentx_attribute_id === selectedAttribute);
+            // Get all themes for the selected attribute (filtered by experience type)
+            const attributeThemes = filteredThemes.filter(theme => theme.talentx_attribute_id === selectedAttribute);
             
             // Group themes by sentiment
             const positiveThemes = attributeThemes.filter(theme => theme.sentiment === 'positive');
@@ -769,6 +1041,55 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                                 </div>
                               </div>
                             )}
+                            
+                            {/* Sources section - matching CompetitorsTab style */}
+                            {(() => {
+                              const themeSources = getThemeSources(theme);
+                              const showAll = showAllThemeSources[theme.id] || false;
+                              const topSources = showAll ? themeSources : themeSources.slice(0, 5);
+                              const hasMoreSources = themeSources.length > 5;
+                              
+                              return themeSources.length > 0 ? (
+                                <div className="flex flex-wrap items-center gap-2 mt-3">
+                                  <span className="text-xs text-gray-500">Sources:</span>
+                                  {topSources.map((source, index) => (
+                                    <div
+                                      key={index}
+                                      onClick={() => {
+                                        if (source.url) {
+                                          window.open(source.url, '_blank', 'noopener,noreferrer');
+                                        }
+                                      }}
+                                      className={`inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200 ${source.url ? 'cursor-pointer' : 'cursor-default'}`}
+                                    >
+                                      <img
+                                        src={getFavicon(source.domain)}
+                                        alt=""
+                                        className="w-4 h-4 mr-1 rounded"
+                                        style={{ background: '#fff', display: 'block' }}
+                                        onError={e => { e.currentTarget.style.display = 'none'; }}
+                                      />
+                                      {getSourceDisplayName(source.domain)}
+                                      <span className="ml-1 text-gray-500">({source.count})</span>
+                                    </div>
+                                  ))}
+                                  {hasMoreSources && (
+                                    <button
+                                      onClick={() => setShowAllThemeSources(prev => ({
+                                        ...prev,
+                                        [theme.id]: !showAll
+                                      }))}
+                                      className="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded transition-colors font-medium"
+                                    >
+                                      {showAll
+                                        ? `Show Less` 
+                                        : `+${themeSources.length - 5} more`
+                                      }
+                                    </button>
+                                  )}
+                                </div>
+                              ) : null;
+                            })()}
                           </div>
                         </CardContent>
                       </Card>

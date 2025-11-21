@@ -13,11 +13,7 @@ const supabase = createClient(
 
 
 
-interface CompetitorMention {
-  name: string;
-  ranking: number | null;
-  context: string;
-}
+// Sentiment analysis is now handled by AI themes - no need for basic keyword analysis
 
 interface Citation {
   domain?: string;
@@ -26,23 +22,9 @@ interface Citation {
 }
 
 interface AnalysisResult {
-  sentiment_score: number;
-  sentiment_label: string;
   citations: Citation[];
   company_mentioned: boolean;
-  mention_ranking: number | null;
-  competitor_mentions: CompetitorMention[];
-  first_mention_position: number | null;
-  total_words: number;
-  visibility_score: number;
-  competitive_score: number;
   detected_competitors: string;
-  talentx_analysis: any[];
-  talentx_scores: {
-    overall_score: number;
-    top_attributes: string[];
-    attribute_scores: Record<string, number>;
-  };
 }
 
 
@@ -58,7 +40,7 @@ serve(async (req) => {
     
     // Handle citations from different LLMs
     let llmCitations = perplexityCitations || [];
-    if (ai_model === 'google-ai-overviews' && body.citations) {
+    if ((ai_model === 'google-ai-overviews' || ai_model === 'bing-copilot') && body.citations) {
       llmCitations = body.citations;
     }
 
@@ -103,19 +85,13 @@ serve(async (req) => {
       confirmed_prompt_id,
       ai_model,
       response_text: response,
-      sentiment_score: result.sentiment_score,
-      sentiment_label: result.sentiment_label,
       citations: llmCitations,
       company_mentioned: result.company_mentioned,
-      mention_ranking: result.mention_ranking,
-      competitor_mentions: result.competitor_mentions,
-      first_mention_position: result.first_mention_position,
-      total_words: result.total_words,
-      visibility_score: result.visibility_score,
-      competitive_score: result.competitive_score,
       detected_competitors: result.detected_competitors,
       company_id: company_id
-      // Removed talentx_analysis and talentx_scores as they don't exist in the table
+      // Removed all unnecessary columns: sentiment_score, sentiment_label, visibility_score, 
+      // first_mention_position, total_words, competitive_score, detected_competitors, mention_ranking,
+      // talentx_* columns
     };
 
 
@@ -126,68 +102,36 @@ serve(async (req) => {
 
     // Continue with regular processing
     try {
-      // Check if a response already exists for this prompt and model (avoid 406 on zero rows)
-      const { data: existingResponse, error: checkError } = await supabase
+      // ALWAYS INSERT new responses to preserve historical data
+      // This allows tracking changes over time and comparing different refresh periods
+      const { data: inserted, error: insertError } = await supabase
         .from('prompt_responses')
-        .select('id')
-        .eq('confirmed_prompt_id', confirmed_prompt_id)
-        .eq('ai_model', ai_model)
-        .maybeSingle();
+        .insert(insertData)
+        .select()
+        .single();
 
-      if (checkError) {
-        console.error('Error checking existing response:', checkError);
+      if (insertError) {
+        console.error('Error storing analysis:', insertError);
         return new Response(
-          JSON.stringify({ error: 'Failed to check existing response', details: checkError }),
+          JSON.stringify({ error: 'Failed to store analysis', details: insertError }),
           { status: 500, headers: corsHeaders }
         );
       }
+      
+      const promptResponse = inserted;
 
-      let promptResponse;
-      if (existingResponse) {
-        const { data: updated, error: updateError } = await supabase
-          .from('prompt_responses')
-          .update(insertData)
-          .eq('id', existingResponse.id)
-          .select()
-          .single();
-        if (updateError) {
-          console.error('Error updating existing response:', updateError);
-          return new Response(
-            JSON.stringify({ error: 'Failed to update existing response', details: updateError }),
-            { status: 500, headers: corsHeaders }
-          );
-        }
-        promptResponse = updated;
-      } else {
-        const { data: inserted, error: insertError } = await supabase
-          .from('prompt_responses')
-          .insert(insertData)
-          .select()
+      // Trigger AI thematic analysis for new responses
+      try {
+        // First, get the onboarding_id from the confirmed prompt
+        const { data: promptData, error: promptError } = await supabase
+          .from('confirmed_prompts')
+          .select('onboarding_id')
+          .eq('id', confirmed_prompt_id)
           .single();
 
-        if (insertError) {
-          console.error('Error storing analysis:', insertError);
-          return new Response(
-            JSON.stringify({ error: 'Failed to store analysis', details: insertError }),
-            { status: 500, headers: corsHeaders }
-          );
-        }
-        promptResponse = inserted;
-
-        // Trigger AI thematic analysis for new responses during onboarding
-        try {
-          // First, get the onboarding_id from the confirmed prompt
-          const { data: promptData, error: promptError } = await supabase
-            .from('confirmed_prompts')
-            .select('onboarding_id')
-            .eq('id', confirmed_prompt_id)
-            .single();
-
-          if (promptError) {
-            console.warn('Error fetching prompt data:', promptError);
-            return;
-          }
-
+        if (promptError) {
+          console.warn('Error fetching prompt data:', promptError);
+        } else {
           // Then get the company name from user_onboarding
           const { data: onboardingData, error: onboardingError } = await supabase
             .from('user_onboarding')
@@ -212,10 +156,10 @@ serve(async (req) => {
           } else {
             console.warn('⚠️ Cannot trigger AI thematic analysis: missing company name or onboarding data');
           }
-        } catch (analysisError) {
-          // Log error but don't fail the response storage
-          console.warn('Error triggering AI thematic analysis:', analysisError);
         }
+      } catch (analysisError) {
+        // Log error but don't fail the response storage
+        console.warn('Error triggering AI thematic analysis:', analysisError);
       }
 
       return new Response(
@@ -252,18 +196,11 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
     throw new Error('Company name is required for analysis');
   }
 
-  // Get basic analysis
-  const basicAnalysis = performEnhancedBasicAnalysis(text, companyName, promptType);
-  
-  // Get sentiment analysis
-  const sentimentData = analyzeSentiment(text);
-  
   // Get company mention data
   const companyMentionData = detectCompanyMention(text, companyName);
 
   // Competitor detection: use LLM edge function output only
   let detectedCompetitors = '';
-  let competitorMentions: CompetitorMention[] = [];
 
   try {
     const competitorResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/detect-competitors`, {
@@ -292,153 +229,31 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
         // Keep tokens that look like proper names (has uppercase letter)
         .filter(n => /[A-Z]/.test(n))
         // Remove generic words
-        .filter(n => !stopwords.has(n.toLowerCase()));
+        .filter(n => !stopwords.has(n.toLowerCase()))
+        .slice(0, 5); // Limit to 5 competitors
 
-      const uniqueLower = Array.from(new Set(names.map(n => n.toLowerCase())));
-      const llmMentions: CompetitorMention[] = uniqueLower.map(lower => {
-        const original = names.find(n => n.toLowerCase() === lower) || lower;
-        return {
-          name: original,
-          ranking: detectEnhancedRanking(text, original),
-          context: extractContext(text, original)
-        } as CompetitorMention;
-      });
-
-      competitorMentions = llmMentions;
-      detectedCompetitors = competitorMentions.map(m => m.name).join(', ');
+      detectedCompetitors = names.join(', ');
     } else {
       // Edge function failed; do not fallback to local
-      competitorMentions = [];
       detectedCompetitors = '';
     }
   } catch (err) {
     // Network/edge error; do not fallback to local
     console.error('detect-competitors failed:', err);
-    competitorMentions = [];
     detectedCompetitors = '';
   }
-  
-  // Calculate visibility score based on company mention position and frequency
-  const totalWords = text.split(/\s+/).length;
-  const firstMentionPosition = basicAnalysis.first_mention_position ?? null;
-  const visibilityScore = firstMentionPosition !== null 
-    ? Math.max(0, 100 - (firstMentionPosition / totalWords) * 100)
-    : 0;
-  
-  // Calculate competitive score based on competitor mentions
-  const competitorCount = competitorMentions.length;
-  const competitiveScore = Math.min(100, competitorCount * 20); // 20 points per competitor, max 100
 
-  // TalentX analysis removed - focus on ai-themes only
+  // Extract citations from the response text
+  const citations = extractCitationsFromText(text);
 
   return {
-    sentiment_score: sentimentData.sentiment_score,
-    sentiment_label: sentimentData.sentiment_label,
-    citations: basicAnalysis.citations,
+    citations: citations,
     company_mentioned: companyMentionData.mentioned,
-    mention_ranking: companyMentionData.ranking,
-    competitor_mentions: competitorMentions,
-    first_mention_position: firstMentionPosition,
-    total_words: totalWords,
-    visibility_score: visibilityScore,
-    competitive_score: competitiveScore,
-    detected_competitors: detectedCompetitors,
-    talentx_analysis: [],
-    talentx_scores: {
-      overall_score: 0,
-      top_attributes: [],
-      attribute_scores: {}
-    }
+    detected_competitors: detectedCompetitors
   };
 }
 
-function performEnhancedBasicAnalysis(responseText: string, companyName: string, promptType: string): AnalysisResult {
-  // Add null checks
-  if (!responseText || !companyName) {
-    return {
-      sentiment_score: 0,
-      sentiment_label: 'neutral',
-      citations: [],
-      company_mentioned: false,
-      mention_ranking: null,
-      competitor_mentions: [],
-      first_mention_position: null,
-      total_words: 0,
-      visibility_score: 0,
-      competitive_score: 0,
-      detected_competitors: "",
-      talentx_analysis: [],
-      talentx_scores: {
-        overall_score: 0,
-        top_attributes: [],
-        attribute_scores: {}
-      }
-    };
-  }
-  
-  // Basic sentiment analysis based on keywords
-  const positiveWords = ['excellent', 'great', 'good', 'strong', 'successful', 'leader', 'innovative', 'quality', 'best', 'top', 'outstanding', 'superior', 'leading']
-  const negativeWords = ['poor', 'bad', 'weak', 'failed', 'struggle', 'decline', 'issues', 'problems', 'worst', 'inferior', 'lacking']
-  
-  const lowerResponse = responseText.toLowerCase()
-  const positiveCount = positiveWords.filter(word => lowerResponse.includes(word)).length
-  const negativeCount = negativeWords.filter(word => lowerResponse.includes(word)).length
-  
-  let sentimentScore = 0
-  if (positiveCount > negativeCount) sentimentScore = Math.min(0.7, positiveCount * 0.1)
-  else if (negativeCount > positiveCount) sentimentScore = Math.max(-0.7, -negativeCount * 0.1)
-  
-  const sentimentLabel = sentimentScore > 0.1 ? 'positive' : sentimentScore < -0.1 ? 'negative' : 'neutral'
-  
-  // Enhanced company mention detection
-  const companyDetection = detectEnhancedCompanyMention(responseText, companyName)
-  
-  // Enhanced ranking detection for visibility prompts
-  let mentionRanking: number | null = null
-  if (promptType === 'visibility') {
-    mentionRanking = detectEnhancedRanking(responseText, companyName)
-  }
-  
-  // Enhanced competitor detection
-  const competitorMentions: CompetitorMention[] = detectEnhancedCompetitors(responseText, companyName)
-  
-  // Calculate visibility score
-  const totalWords = responseText.split(/\s+/).length;
-  const visibilityScore = companyDetection.first_mention_position !== null 
-    ? Math.max(0, 100 - (companyDetection.first_mention_position / totalWords) * 100)
-    : 0;
-  
-  // Calculate competitive score
-  const competitiveScore = competitorMentions.reduce((score, mention) => {
-    if (mention.ranking !== null) {
-      return score + (100 - (mention.ranking * 10));
-    }
-    return score;
-  }, 0) / Math.max(1, competitorMentions.length);
-
-  // Extract citations from the response text
-  const citations = extractCitationsFromText(responseText);
-  
-  return {
-    sentiment_score: sentimentScore,
-    sentiment_label: sentimentLabel,
-    citations: citations,
-    company_mentioned: companyDetection.mentioned,
-    mention_ranking: mentionRanking,
-    competitor_mentions: competitorMentions,
-    total_words: totalWords,
-    first_mention_position: companyDetection.first_mention_position,
-    visibility_score: visibilityScore,
-    competitive_score: competitiveScore,
-    detected_competitors: "",
-    talentx_analysis: [],
-    talentx_scores: {
-      overall_score: 0,
-      top_attributes: [],
-      attribute_scores: {}
-    }
-  }
-}
+// Sentiment analysis is now handled by AI themes - no need for basic keyword analysis
 
 function detectEnhancedCompanyMention(text: string, companyName: string) {
   // Add null checks
@@ -654,40 +469,12 @@ function extractCitationsFromText(text: string): Citation[] {
   return citations;
 }
 
-function extractContext(text: string, competitor: string): string {
-  const lowerText = text.toLowerCase()
-  const lowerCompetitor = competitor.toLowerCase()
-  const index = lowerText.indexOf(lowerCompetitor)
-  
-  if (index === -1) return ''
-  
-  const start = Math.max(0, index - 50)
-  const end = Math.min(text.length, index + competitor.length + 50)
-  return text.substring(start, end).trim()
-}
-
-function analyzeSentiment(text: string): { sentiment_score: number; sentiment_label: string } {
-  // Basic sentiment analysis implementation
-  const positiveWords = ['excellent', 'great', 'good', 'strong', 'successful', 'leader', 'innovative', 'quality', 'best', 'top', 'outstanding', 'superior', 'leading']
-  const negativeWords = ['poor', 'bad', 'weak', 'failed', 'struggle', 'decline', 'issues', 'problems', 'worst', 'inferior', 'lacking']
-  
-  const lowerText = text.toLowerCase()
-  const positiveCount = positiveWords.filter(word => lowerText.includes(word)).length
-  const negativeCount = negativeWords.filter(word => lowerText.includes(word)).length
-  
-  let sentimentScore = 0
-  if (positiveCount > negativeCount) sentimentScore = Math.min(0.7, positiveCount * 0.1)
-  else if (negativeCount > positiveCount) sentimentScore = Math.max(-0.7, -negativeCount * 0.1)
-  
-  const sentimentLabel = sentimentScore > 0.1 ? 'positive' : sentimentScore < -0.1 ? 'negative' : 'neutral'
-  
-  return { sentiment_score: sentimentScore, sentiment_label: sentimentLabel }
-}
+// Sentiment analysis is now handled by AI themes - no need for basic keyword analysis
 
 function detectCompanyMention(text: string, companyName: string): { mentioned: boolean; ranking: number | null } {
   // Basic company mention detection implementation
   const mentioned = text.toLowerCase().includes(companyName.toLowerCase())
-  const ranking = detectEnhancedRanking(text, companyName)
+  const ranking = null // We don't calculate ranking anymore
   
   return { mentioned, ranking }
 }

@@ -11,41 +11,158 @@ export type Database = {
     Tables: {
       confirmed_prompts: {
         Row: {
-          created_at: string
           id: string
-          is_active: boolean
-          onboarding_id: string
-          prompt_category: string
-          prompt_text: string
-          prompt_type: Database["public"]["Enums"]["prompt_type"] | null
+          created_at: string
+          onboarding_id: string | null
           user_id: string | null
+          company_id: string | null
+          created_by: string | null
+          prompt_text: string
+          prompt_category: string
+          prompt_type: Database["public"]["Enums"]["prompt_type"] | null
+          talentx_attribute_id: string | null
+          is_active: boolean
+          is_pro_prompt: boolean | null
+          industry_context: string | null
+          job_function_context: string | null
+          location_context: string | null
+          prompt_theme: string | null
         }
         Insert: {
-          created_at?: string
           id?: string
-          is_active?: boolean
-          onboarding_id: string
-          prompt_category: string
-          prompt_text: string
-          prompt_type?: Database["public"]["Enums"]["prompt_type"] | null
+          created_at?: string
+          onboarding_id?: string | null
           user_id?: string | null
+          company_id?: string | null
+          created_by?: string | null
+          prompt_text: string
+          prompt_category: string
+          prompt_type?: Database["public"]["Enums"]["prompt_type"] | null
+          talentx_attribute_id?: string | null
+          is_active?: boolean
+          is_pro_prompt?: boolean | null
+          industry_context?: string | null
+          job_function_context?: string | null
+          location_context?: string | null
+          prompt_theme?: string | null
         }
         Update: {
-          created_at?: string
           id?: string
-          is_active?: boolean
-          onboarding_id?: string
-          prompt_category?: string
-          prompt_text?: string
-          prompt_type?: Database["public"]["Enums"]["prompt_type"] | null
+          created_at?: string
+          onboarding_id?: string | null
           user_id?: string | null
+          company_id?: string | null
+          created_by?: string | null
+          prompt_text?: string
+          prompt_category?: string
+          prompt_type?: Database["public"]["Enums"]["prompt_type"] | null
+          talentx_attribute_id?: string | null
+          is_active?: boolean
+          is_pro_prompt?: boolean | null
+          industry_context?: string | null
+          job_function_context?: string | null
+          location_context?: string | null
+          prompt_theme?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "confirmed_prompts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "confirmed_prompts_onboarding_id_fkey"
             columns: ["onboarding_id"]
             isOneToOne: false
             referencedRelation: "user_onboarding"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      company_industries: {
+        Row: {
+          id: string
+          company_id: string
+          industry: string
+          created_at: string
+          created_by: string | null
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          industry: string
+          created_at?: string
+          created_by?: string | null
+        }
+        Update: {
+          id?: string
+          company_id?: string
+          industry?: string
+          created_at?: string
+          created_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_industries_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "company_industries_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      companies: {
+        Row: {
+          id: string
+          name: string
+          industry: string
+          company_size: string | null
+          competitors: string[] | null
+          settings: Json | null
+          created_at: string
+          updated_at: string
+          created_by: string | null
+          website: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          industry: string
+          company_size?: string | null
+          competitors?: string[] | null
+          settings?: Json | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          website?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          industry?: string
+          company_size?: string | null
+          competitors?: string[] | null
+          settings?: Json | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+          website?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "companies_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
         ]
@@ -88,7 +205,7 @@ export type Database = {
           ai_model: string
           citations: Json | null
           company_mentioned: boolean | null
-          competitor_mentions: Json | null
+          detected_competitors: string | null
           confirmed_prompt_id: string
           created_at: string
           id: string
@@ -102,7 +219,7 @@ export type Database = {
           ai_model: string
           citations?: Json | null
           company_mentioned?: boolean | null
-          competitor_mentions?: Json | null
+          detected_competitors?: string | null
           confirmed_prompt_id: string
           created_at?: string
           id?: string
@@ -116,7 +233,7 @@ export type Database = {
           ai_model?: string
           citations?: Json | null
           company_mentioned?: boolean | null
-          competitor_mentions?: Json | null
+          detected_competitors?: string | null
           confirmed_prompt_id?: string
           created_at?: string
           id?: string
@@ -267,7 +384,18 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      admin_delete_company: {
+        Args: {
+          p_company_id: string
+          p_organization_id: string
+        }
+        Returns: {
+          company_id: string
+          organization_id: string
+          company_name: string
+          deleted_counts: Json
+        }[]
+      }
     }
     Enums: {
       prompt_type: "sentiment" | "visibility" | "competitive"

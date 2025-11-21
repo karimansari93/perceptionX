@@ -28,14 +28,14 @@ export const Favicon: React.FC<FaviconProps> = ({
   const getFaviconUrls = (domain: string): string[] => {
     const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
     return [
-      // Primary: Google's favicon service
-      `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`,
+      // Primary: More reliable Google favicon service
+      `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`,
       // Fallback 1: DuckDuckGo favicon service
       `https://icons.duckduckgo.com/ip3/${cleanDomain}.ico`,
       // Fallback 2: Direct favicon.ico
       `https://${cleanDomain}/favicon.ico`,
-      // Fallback 3: Alternative Google service
-      `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`,
+      // Fallback 3: Alternative Google service (less reliable)
+      `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`,
     ];
   };
 
@@ -71,7 +71,7 @@ export const Favicon: React.FC<FaviconProps> = ({
       // Try next fallback source
       setCurrentSourceIndex(nextIndex);
       setIsLoading(true);
-      // Prevent the error from appearing in console
+      // Hide the failed image
       event.currentTarget.style.display = 'none';
     } else {
       // All sources failed, show fallback
@@ -100,15 +100,19 @@ export const Favicon: React.FC<FaviconProps> = ({
   const currentUrl = urls[currentSourceIndex];
 
   return (
-    <img
-      src={currentUrl}
-      alt={alt}
-      className={`${getImageSizeClasses(size)} flex-shrink-0 object-contain ${className}`}
-      onError={handleError}
-      onLoad={handleLoad}
-      style={{ 
-        display: isLoading ? 'none' : 'block'
-      }}
-    />
+    <div className={`relative ${getSizeClasses(size)} ${className}`}>
+      {isLoading && (
+        <div className={`absolute inset-0 bg-gray-100 rounded flex items-center justify-center ${getSizeClasses(size)}`}>
+          <span className={`font-medium text-gray-400 ${getTextSizeClasses(size)}`}>•</span>
+        </div>
+      )}
+      <img
+        src={currentUrl}
+        alt={alt}
+        className={`${getImageSizeClasses(size)} flex-shrink-0 object-contain ${isLoading ? 'opacity-0' : 'opacity-100'} transition-opacity`}
+        onError={handleError}
+        onLoad={handleLoad}
+      />
+    </div>
   );
 }; 

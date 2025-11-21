@@ -374,7 +374,7 @@ export class TalentXProService {
   static async getAggregatedProAnalysis(userId: string, companyId?: string): Promise<any[]> {
     try {
       // Fetch TalentX responses from prompt_responses table joined with confirmed_prompts
-      const { data: talentXResponses, error } = await supabase
+      let query = supabase
         .from('prompt_responses')
         .select(`
           *,
@@ -387,9 +387,14 @@ export class TalentXProService {
           )
         `)
         .eq('confirmed_prompts.user_id', userId)
-        .eq('confirmed_prompts.company_id', companyId)
-        .like('confirmed_prompts.prompt_category', 'TalentX:%')
-        .not('talentx_analysis', 'eq', '{}')
+        .like('confirmed_prompts.prompt_category', 'TalentX:%');
+      
+      // Only filter by company_id if it's provided
+      if (companyId) {
+        query = query.eq('confirmed_prompts.company_id', companyId);
+      }
+      
+      const { data: talentXResponses, error } = await query
         .order('created_at', { ascending: false });
 
       if (error) {

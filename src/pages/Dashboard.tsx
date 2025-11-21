@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { SidebarProvider, SidebarInset, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
@@ -34,6 +34,8 @@ import LLMLogo from "@/components/LLMLogo";
 import { useSubscription } from "@/hooks/useSubscription";
 import { WelcomeProModal } from "@/components/upgrade/WelcomeProModal";
 import { AddCompanyModal } from "@/components/dashboard/AddCompanyModal";
+import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 interface DatabaseOnboardingData {
   company_name: string;
@@ -52,7 +54,8 @@ interface PromptsModalOnboardingData {
 
 const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {}) => {
   const { user } = useAuth();
-  const { currentCompany } = useCompany();
+  const { currentCompany, loading: companyLoading } = useCompany();
+  const hasInitiallyLoaded = useRef(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showWelcomeProModal, setShowWelcomeProModal] = useState(false);
   // Use sessionStorage to persist modal state across tab switches
@@ -66,6 +69,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   });
   const [activeTab, setActiveTab] = useState<'terms' | 'results'>('results');
   const [chartView, setChartView] = useState<'bubble' | 'bar'>('bubble');
+  const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
+  const [showAddLocationModal, setShowAddLocationModal] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const { isRefreshing, progress: refreshProgress, refreshAllPrompts } = useRefreshPrompts();
 
   // Set chart view based on screen size - 'bar' on mobile, 'bubble' (SWOT) on desktop
   useEffect(() => {
@@ -131,7 +138,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     aiThemes,
     isOnline,
     connectionError,
-    recencyDataError
+    recencyDataError,
+    recencyData,
+    recencyDataLoading,
+    aiThemesLoading
   } = useDashboardData();
   const { isPro } = useSubscription();
 
@@ -152,11 +162,26 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
 
 
   const [onboardingData, setOnboardingData] = useState<PromptsModalOnboardingData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [onboardingId, setOnboardingId] = useState<string | null>(null);
   const [isNewUser, setIsNewUser] = useState(false);
   const [hasDismissedPromptsModal, setHasDismissedPromptsModal] = useState(false);
+
+  // Track when initial load is complete
+  useEffect(() => {
+    if (!companyLoading && !loading && !isLoading && (currentCompany !== undefined)) {
+      // Small delay to ensure everything is settled
+      const timer = setTimeout(() => {
+        hasInitiallyLoaded.current = true;
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [companyLoading, loading, isLoading, currentCompany]);
+
+  // Show loading screen during initial load
+  const isInitialLoading = useMemo(() => {
+    return companyLoading || (!hasInitiallyLoaded.current && (loading || isLoading));
+  }, [companyLoading, loading, isLoading]);
 
   // Check if user is new (less than 24 hours old)
   useEffect(() => {
@@ -313,6 +338,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             isPro={isPro}
             searchResults={searchResults}
             aiThemes={aiThemes}
+            recencyData={recencyData}
+            recencyDataLoading={recencyDataLoading}
+            aiThemesLoading={aiThemesLoading}
           />
         </div>
       </div>
@@ -379,10 +407,27 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             isPro={isPro}
             searchResults={searchResults}
             aiThemes={aiThemes}
+            recencyData={recencyData}
+            recencyDataLoading={recencyDataLoading}
+            aiThemesLoading={aiThemesLoading}
           />
         );
       case "prompts":
-        return <PromptsTab promptsData={promptsData} responses={responses} companyName={companyName} />;
+        return (
+          <PromptsTab
+            promptsData={promptsData}
+            responses={responses}
+            companyName={companyName}
+            onRefresh={refreshData}
+            onRefreshPrompts={async (ids, name) => {
+              const targetName = name || companyName || currentCompany?.name;
+              if (!targetName || ids.length === 0) return;
+              await refreshAllPrompts(targetName, { promptIds: ids });
+            }}
+            isRefreshing={isRefreshing}
+            refreshProgress={refreshProgress}
+          />
+        );
       case "responses":
         return <ResponsesTab responses={responses} parseCitations={parseCitations} companyName={companyName} />;
       case "search":
@@ -403,7 +448,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             topCompetitors={topCompetitors}
             responses={responses}
             companyName={companyName}
-            searchResults={searchResults}
+            searchResults={searchResults.filter(r => r.company_id === currentCompany?.id)}
           />
         );
         return competitorsContent;
@@ -475,10 +520,18 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             isPro={isPro}
             searchResults={searchResults}
             aiThemes={aiThemes}
+            recencyData={recencyData}
+            recencyDataLoading={recencyDataLoading}
+            aiThemesLoading={aiThemesLoading}
           />
         );
     }
   };
+
+  // Show full loading screen during initial load
+  if (isInitialLoading) {
+    return <LoadingScreen />;
+  }
 
   // Always render the sidebar and main layout, only show loading in content area
   return (
@@ -501,6 +554,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           showUpgradeModal={showUpgradeModal}
           setShowUpgradeModal={setShowUpgradeModal}
           alwaysMounted={true}
+          isRefreshing={isRefreshing}
+          refreshProgress={refreshProgress}
+          selectedLocation={selectedLocation}
+          onLocationChange={setSelectedLocation}
+          onAddLocation={() => setShowAddLocationModal(true)}
         />
         <div className="flex-1 overflow-auto">
           {isLoading ? (
@@ -525,6 +583,22 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 </Button>
               </div>
             </div>
+          ) : connectionError ? (
+            <div className="flex items-center justify-center min-h-[400px]">
+              <div className="text-center max-w-md">
+                <AlertTriangle className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">Connection Issue</h2>
+                <p className="text-gray-600 mb-4">{connectionError}</p>
+                <div className="flex gap-3 justify-center">
+                  <Button onClick={refreshData} variant="outline">
+                    Retry
+                  </Button>
+                  <Button onClick={() => window.location.reload()}>
+                    Refresh Page
+                  </Button>
+                </div>
+              </div>
+            </div>
           ) : (
             <div className="p-6">
               {renderActiveSection()}
@@ -538,6 +612,14 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         open={showAddCompanyModal}
         onOpenChange={setShowAddCompanyModal}
         alwaysMounted={true}
+      />
+      <AddCompanyModal 
+        open={showAddLocationModal}
+        onOpenChange={setShowAddLocationModal}
+        alwaysMounted={true}
+        existingCompanyName={currentCompany?.name}
+        existingIndustry={currentCompany?.industry}
+        mode="add-location"
       />
       <UpgradeModal 
         open={showUpgradeModal}

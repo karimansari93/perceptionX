@@ -184,8 +184,9 @@ async function generateCompanyTextReport(companyId: string): Promise<string> {
     // Process competitor mentions
     const competitorMap = new Map();
     responses.forEach(response => {
-      if (response.competitor_mentions && Array.isArray(response.competitor_mentions)) {
-        response.competitor_mentions.forEach((competitor: string) => {
+      if (response.detected_competitors && response.detected_competitors.trim()) {
+        const competitors = response.detected_competitors.split(',').map(c => c.trim()).filter(c => c.length > 0);
+        competitors.forEach((competitor: string) => {
           if (!competitorMap.has(competitor)) {
             competitorMap.set(competitor, { competitor, frequency: 0, sentiment: 0 });
           }

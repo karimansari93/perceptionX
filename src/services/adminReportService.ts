@@ -270,7 +270,7 @@ export class AdminReportService {
         sentimentLabel,
         mentionRanking: promptResponses[0]?.mention_ranking,
         competitivePosition: promptResponses[0]?.competitive_position,
-        competitorMentions: promptResponses[0]?.competitor_mentions,
+        detectedCompetitors: promptResponses[0]?.detected_competitors,
         averageVisibility
       };
     });
@@ -278,8 +278,8 @@ export class AdminReportService {
 
   private static calculateTopCompetitors(responses: any[]): any[] {
     const competitorMentions = responses
-      .filter(r => r.competitor_mentions)
-      .map(r => r.competitor_mentions)
+      .filter(r => r.detected_competitors)
+      .map(r => r.detected_competitors)
       .flat();
 
     const competitorCounts = competitorMentions.reduce((acc: Record<string, number>, mention: any) => {
@@ -317,6 +317,7 @@ export class AdminReportService {
       'openai': 'OpenAI GPT-4',
       'perplexity': 'Perplexity AI',
       'google-ai-overviews': 'Google AI',
+      'bing-copilot': 'Bing Copilot',
       'search-insights': 'Search Insights',
       'claude': 'Claude AI',
       'gemini': 'Google Gemini'

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Building2, Users, UserPlus, Plus, Briefcase, X } from 'lucide-react';
+import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar } from 'lucide-react';
 
 interface Organization {
   id: string;
@@ -26,38 +26,43 @@ interface User {
   email: string;
 }
 
-interface Company {
+interface OrganizationMember {
   id: string;
-  name: string;
-  industry: string;
+  user_id: string;
+  email: string;
+  role: string;
+  joined_at: string;
 }
 
 export const OrganizationManagementTab = () => {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [filteredOrganizations, setFilteredOrganizations] = useState<Organization[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [companies, setCompanies] = useState<Company[]>([]);
+  const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
+  const [orgMembers, setOrgMembers] = useState<OrganizationMember[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   
   // Modals
   const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
-  const [showAssignUserModal, setShowAssignUserModal] = useState(false);
-  const [showAssignCompanyModal, setShowAssignCompanyModal] = useState(false);
-  
-  // Selected items
-  const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
-  const [selectedUser, setSelectedUser] = useState('');
-  const [selectedCompany, setSelectedCompany] = useState('');
-  const [selectedRole, setSelectedRole] = useState<'owner' | 'admin' | 'member'>('member');
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [showMembersModal, setShowMembersModal] = useState(false);
   
   // Form data
   const [orgName, setOrgName] = useState('');
   const [orgDescription, setOrgDescription] = useState('');
+  const [selectedUser, setSelectedUser] = useState('');
+  const [selectedRole, setSelectedRole] = useState<'owner' | 'admin' | 'member'>('member');
   const [creating, setCreating] = useState(false);
-  const [assigning, setAssigning] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    filterOrganizations();
+  }, [organizations, searchQuery]);
 
   const loadData = async () => {
     setLoading(true);
@@ -88,6 +93,7 @@ export const OrganizationManagementTab = () => {
       }));
 
       setOrganizations(orgsWithCounts);
+      setFilteredOrganizations(orgsWithCounts);
 
       // Load all users
       const { data: usersData, error: usersError } = await supabase
@@ -98,25 +104,62 @@ export const OrganizationManagementTab = () => {
       if (usersError) throw usersError;
       setUsers(usersData || []);
 
-      // Load all companies
-      const { data: companiesDataFull, error: companiesError } = await supabase
-        .from('companies')
-        .select('id, name, industry')
-        .order('name', { ascending: true });
-
-      console.log('Companies loaded:', companiesDataFull?.length, 'Error:', companiesError);
-      
-      if (companiesError) {
-        console.error('Error loading companies:', companiesError);
-        throw companiesError;
-      }
-      setCompanies(companiesDataFull || []);
-
     } catch (error) {
       console.error('Error loading data:', error);
       toast.error('Failed to load data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const filterOrganizations = () => {
+    if (!searchQuery) {
+      setFilteredOrganizations(organizations);
+      return;
+    }
+
+    const query = searchQuery.toLowerCase();
+    const filtered = organizations.filter(org =>
+      org.name.toLowerCase().includes(query) ||
+      (org.description && org.description.toLowerCase().includes(query))
+    );
+    setFilteredOrganizations(filtered);
+  };
+
+  const loadOrgMembers = async (orgId: string) => {
+    try {
+      const { data: membersData, error: membersError } = await supabase
+        .from('organization_members')
+        .select('id, user_id, role, created_at')
+        .eq('organization_id', orgId);
+
+      if (membersError) throw membersError;
+
+      // Fetch profiles separately
+      if (membersData && membersData.length > 0) {
+        const userIds = membersData.map(m => m.user_id);
+        const { data: profilesData, error: profilesError } = await supabase
+          .from('profiles')
+          .select('id, email')
+          .in('id', userIds);
+
+        if (profilesError) throw profilesError;
+
+        const members = membersData.map(member => ({
+          id: member.id,
+          user_id: member.user_id,
+          email: profilesData?.find(p => p.id === member.user_id)?.email || 'Unknown',
+          role: member.role,
+          joined_at: member.created_at
+        }));
+
+        setOrgMembers(members);
+      } else {
+        setOrgMembers([]);
+      }
+    } catch (error) {
+      console.error('Error loading members:', error);
+      toast.error('Failed to load organization members');
     }
   };
 
@@ -128,14 +171,12 @@ export const OrganizationManagementTab = () => {
 
     setCreating(true);
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('organizations')
         .insert({
           name: orgName,
           description: orgDescription || null
-        })
-        .select()
-        .single();
+        });
 
       if (error) throw error;
 
@@ -152,179 +193,195 @@ export const OrganizationManagementTab = () => {
     }
   };
 
-  const handleAssignUser = async () => {
+  const handleAddUser = async () => {
     if (!selectedOrg || !selectedUser) {
-      toast.error('Please select both an organization and a user');
+      toast.error('Please select both organization and user');
       return;
     }
 
-    setAssigning(true);
+    setAdding(true);
     try {
-      // Check if already assigned
-      const { data: existing } = await supabase
-        .from('organization_members')
-        .select('id')
-        .eq('user_id', selectedUser)
-        .eq('organization_id', selectedOrg.id)
-        .single();
-
-      if (existing) {
-        toast.error('User is already a member of this organization');
-        setAssigning(false);
-        return;
-      }
-
       const { error } = await supabase
         .from('organization_members')
         .insert({
-          user_id: selectedUser,
           organization_id: selectedOrg.id,
+          user_id: selectedUser,
           role: selectedRole
         });
 
       if (error) throw error;
 
-      toast.success('User assigned to organization');
-      setShowAssignUserModal(false);
+      toast.success('User added to organization successfully');
+      setShowAddUserModal(false);
       setSelectedUser('');
+      setSelectedRole('member');
       loadData();
+      if (showMembersModal) {
+        loadOrgMembers(selectedOrg.id);
+      }
     } catch (error) {
-      console.error('Error assigning user:', error);
-      toast.error('Failed to assign user');
+      console.error('Error adding user:', error);
+      toast.error('Failed to add user to organization');
     } finally {
-      setAssigning(false);
+      setAdding(false);
     }
   };
 
-  const handleAssignCompany = async () => {
-    if (!selectedOrg || !selectedCompany) {
-      toast.error('Please select both an organization and a company');
-      return;
-    }
-
-    setAssigning(true);
-    try {
-      // Check if already assigned
-      const { data: existing } = await supabase
-        .from('organization_companies')
-        .select('id')
-        .eq('company_id', selectedCompany)
-        .eq('organization_id', selectedOrg.id)
-        .single();
-
-      if (existing) {
-        toast.error('Company is already assigned to this organization');
-        setAssigning(false);
-        return;
-      }
-
-      const { error } = await supabase
-        .from('organization_companies')
-        .insert({
-          company_id: selectedCompany,
-          organization_id: selectedOrg.id
-        });
-
-      if (error) throw error;
-
-      toast.success('Company assigned to organization');
-      setShowAssignCompanyModal(false);
-      setSelectedCompany('');
-      loadData();
-    } catch (error) {
-      console.error('Error assigning company:', error);
-      toast.error('Failed to assign company');
-    } finally {
-      setAssigning(false);
-    }
+  const handleViewMembers = (org: Organization) => {
+    setSelectedOrg(org);
+    loadOrgMembers(org.id);
+    setShowMembersModal(true);
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center p-12">Loading...</div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <RefreshCw className="h-12 w-12 animate-spin text-pink mx-auto mb-4" />
+          <p className="text-nightsky/60">Loading organizations...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
-      {/* Header with Create button */}
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Organizations</h2>
-        <Button onClick={() => setShowCreateOrgModal(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Create Organization
-        </Button>
+        <div>
+          <h1 className="text-3xl font-headline font-bold text-nightsky">Organizations</h1>
+          <p className="text-nightsky/60 mt-2">Manage your organizations and their members</p>
+        </div>
+        <div className="flex gap-3">
+          <Button onClick={loadData} variant="outline" className="border-silver">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+          <Button onClick={() => setShowCreateOrgModal(true)} className="bg-pink hover:bg-pink/90">
+            <Plus className="h-4 w-4 mr-2" />
+            Create Organization
+          </Button>
+        </div>
       </div>
 
-      {/* Organizations List */}
-      <Card>
+      {/* Search */}
+      <Card className="border-none shadow-md">
+        <CardContent className="pt-6">
+          <div className="space-y-2">
+            <Label className="text-nightsky">Search Organizations</Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-nightsky/40" />
+              <Input
+                placeholder="Search by name or description..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="border-silver pl-10"
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Organizations Table */}
+      <Card className="border-none shadow-md">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5" />
-            All Organizations ({organizations.length})
+          <CardTitle className="text-nightsky">
+            {filteredOrganizations.length} {filteredOrganizations.length === 1 ? 'Organization' : 'Organizations'}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {organizations.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No organizations yet. Create one to get started!</p>
+          {filteredOrganizations.length === 0 ? (
+            <div className="text-center py-12">
+              <Briefcase className="h-16 w-16 text-silver mx-auto mb-4" />
+              <p className="text-lg font-medium text-nightsky mb-2">No organizations found</p>
+              <p className="text-sm text-nightsky/60 mb-4">
+                {searchQuery 
+                  ? 'Try adjusting your search'
+                  : 'Create your first organization to get started'
+                }
+              </p>
+              {!searchQuery && (
+                <Button onClick={() => setShowCreateOrgModal(true)} className="bg-pink hover:bg-pink/90">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Organization
+                </Button>
+              )}
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Organization Name</TableHead>
+                  <TableHead>Organization ID</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Members</TableHead>
                   <TableHead>Companies</TableHead>
                   <TableHead>Created</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {organizations.map(org => (
+                {filteredOrganizations.map(org => (
                   <TableRow key={org.id}>
-                    <TableCell className="font-medium">{org.name}</TableCell>
-                    <TableCell className="text-sm text-gray-500">
-                      {org.description || '-'}
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Briefcase className="h-4 w-4 text-nightsky/60" />
+                        <span className="font-medium text-nightsky">{org.name}</span>
+                      </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary">
-                        <Users className="h-3 w-3 mr-1" />
-                        {org.member_count || 0}
-                      </Badge>
+                      <span className="text-sm text-nightsky/60 font-mono">{org.id}</span>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">
-                        <Briefcase className="h-3 w-3 mr-1" />
-                        {org.company_count || 0}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-gray-500">
-                      {new Date(org.created_at).toLocaleDateString()}
+                      {org.description ? (
+                        <span className="text-sm text-nightsky/70">{org.description}</span>
+                      ) : (
+                        <span className="text-sm text-nightsky/40 italic">No description</span>
+                      )}
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
+                      <div className="flex items-center gap-2">
+                        <Users className="h-4 w-4 text-teal" />
+                        <Badge variant="outline" className="border-teal/30 text-teal bg-teal/5">
+                          {org.member_count || 0}
+                        </Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-nightsky/60" />
+                        <Badge variant="outline" className="border-nightsky/30 text-nightsky bg-nightsky/5">
+                          {org.company_count || 0}
+                        </Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2 text-nightsky/60 text-sm">
+                        <Calendar className="h-4 w-4" />
+                        {new Date(org.created_at).toLocaleDateString()}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-2 justify-end">
                         <Button
-                          variant="outline"
+                          onClick={() => handleViewMembers(org)}
                           size="sm"
-                          onClick={() => {
-                            setSelectedOrg(org);
-                            setShowAssignUserModal(true);
-                          }}
+                          variant="outline"
+                          className="border-silver"
                         >
-                          <UserPlus className="h-4 w-4 mr-1" />
-                          Add User
+                          <Eye className="h-4 w-4 mr-2" />
+                          View Members
                         </Button>
                         <Button
-                          variant="outline"
-                          size="sm"
                           onClick={() => {
                             setSelectedOrg(org);
-                            setShowAssignCompanyModal(true);
+                            setShowAddUserModal(true);
                           }}
+                          size="sm"
+                          className="bg-teal hover:bg-teal/90"
                         >
-                          <Briefcase className="h-4 w-4 mr-1" />
-                          Add Company
+                          <UserPlus className="h-4 w-4 mr-2" />
+                          Add User
                         </Button>
                       </div>
                     </TableCell>
@@ -340,30 +397,30 @@ export const OrganizationManagementTab = () => {
       <Dialog open={showCreateOrgModal} onOpenChange={setShowCreateOrgModal}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Create New Organization</DialogTitle>
-            <DialogDescription>
-              Create an organization to manage users and companies
-            </DialogDescription>
+            <DialogTitle className="text-nightsky">Create New Organization</DialogTitle>
+            <DialogDescription>Add a new organization to your system</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Organization Name *</Label>
+              <Label className="text-nightsky">Organization Name *</Label>
               <Input
-                placeholder="e.g., Hanson Search Agency"
+                placeholder="Enter organization name"
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
+                className="border-silver"
               />
             </div>
             <div className="space-y-2">
-              <Label>Description (optional)</Label>
+              <Label className="text-nightsky">Description</Label>
               <Textarea
-                placeholder="What does this organization do?"
+                placeholder="Enter organization description (optional)"
                 value={orgDescription}
                 onChange={(e) => setOrgDescription(e.target.value)}
                 rows={3}
+                className="border-silver"
               />
             </div>
-            <div className="flex gap-2 justify-end">
+            <div className="flex gap-2 justify-end pt-4">
               <Button
                 variant="outline"
                 onClick={() => {
@@ -371,10 +428,15 @@ export const OrganizationManagementTab = () => {
                   setOrgName('');
                   setOrgDescription('');
                 }}
+                className="border-silver"
               >
                 Cancel
               </Button>
-              <Button onClick={handleCreateOrg} disabled={creating || !orgName.trim()}>
+              <Button 
+                onClick={handleCreateOrg} 
+                disabled={creating || !orgName.trim()}
+                className="bg-pink hover:bg-pink/90"
+              >
                 {creating ? 'Creating...' : 'Create Organization'}
               </Button>
             </div>
@@ -382,35 +444,38 @@ export const OrganizationManagementTab = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Assign User Modal */}
-      <Dialog open={showAssignUserModal} onOpenChange={setShowAssignUserModal}>
+      {/* Add User Modal */}
+      <Dialog open={showAddUserModal} onOpenChange={setShowAddUserModal}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Assign User to {selectedOrg?.name}</DialogTitle>
+            <DialogTitle className="text-nightsky">Add User to Organization</DialogTitle>
             <DialogDescription>
-              Add a team member to this organization
+              Add a user to {selectedOrg?.name}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Select User</Label>
+              <Label className="text-nightsky">User *</Label>
               <Select value={selectedUser} onValueChange={setSelectedUser}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a user" />
+                <SelectTrigger className="border-silver">
+                  <SelectValue placeholder="Select a user" />
                 </SelectTrigger>
                 <SelectContent>
                   {users.map(user => (
                     <SelectItem key={user.id} value={user.id}>
-                      {user.email}
+                      <div className="flex items-center gap-2">
+                        <Mail className="h-4 w-4 text-nightsky/60" />
+                        {user.email}
+                      </div>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Role</Label>
+              <Label className="text-nightsky">Role *</Label>
               <Select value={selectedRole} onValueChange={(value: any) => setSelectedRole(value)}>
-                <SelectTrigger>
+                <SelectTrigger className="border-silver">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -420,61 +485,96 @@ export const OrganizationManagementTab = () => {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex gap-2 justify-end">
+            <div className="flex gap-2 justify-end pt-4">
               <Button
                 variant="outline"
                 onClick={() => {
-                  setShowAssignUserModal(false);
+                  setShowAddUserModal(false);
                   setSelectedUser('');
+                  setSelectedRole('member');
                 }}
+                className="border-silver"
               >
                 Cancel
               </Button>
-              <Button onClick={handleAssignUser} disabled={assigning || !selectedUser}>
-                {assigning ? 'Assigning...' : 'Assign User'}
+              <Button 
+                onClick={handleAddUser} 
+                disabled={adding || !selectedUser}
+                className="bg-teal hover:bg-teal/90"
+              >
+                {adding ? 'Adding...' : 'Add User'}
               </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Assign Company Modal */}
-      <Dialog open={showAssignCompanyModal} onOpenChange={setShowAssignCompanyModal}>
-        <DialogContent className="max-w-md">
+      {/* View Members Modal */}
+      <Dialog open={showMembersModal} onOpenChange={setShowMembersModal}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Assign Company to {selectedOrg?.name}</DialogTitle>
+            <DialogTitle className="text-nightsky">Organization Members</DialogTitle>
             <DialogDescription>
-              Add a client/company to this organization
+              Members of {selectedOrg?.name}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Select Company</Label>
-              <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a company" />
-                </SelectTrigger>
-                <SelectContent>
-                  {companies.map(company => (
-                    <SelectItem key={company.id} value={company.id}>
-                      {company.name} ({company.industry})
-                    </SelectItem>
+            {orgMembers.length === 0 ? (
+              <div className="text-center py-8 text-nightsky/60">
+                <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No members in this organization yet</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Joined</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {orgMembers.map(member => (
+                    <TableRow key={member.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Mail className="h-4 w-4 text-nightsky/60" />
+                          {member.email}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={member.role === 'owner' ? 'default' : 'secondary'} className={
+                          member.role === 'owner' ? 'bg-pink' : 
+                          member.role === 'admin' ? 'bg-teal' : 'bg-nightsky/20 text-nightsky'
+                        }>
+                          {member.role}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-nightsky/60">
+                        {new Date(member.joined_at).toLocaleDateString()}
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex gap-2 justify-end">
+                </TableBody>
+              </Table>
+            )}
+            <div className="flex justify-between pt-4">
               <Button
-                variant="outline"
                 onClick={() => {
-                  setShowAssignCompanyModal(false);
-                  setSelectedCompany('');
+                  setShowAddUserModal(true);
                 }}
+                size="sm"
+                className="bg-teal hover:bg-teal/90"
               >
-                Cancel
+                <UserPlus className="h-4 w-4 mr-2" />
+                Add User
               </Button>
-              <Button onClick={handleAssignCompany} disabled={assigning || !selectedCompany}>
-                {assigning ? 'Assigning...' : 'Assign Company'}
+              <Button
+                onClick={() => setShowMembersModal(false)}
+                variant="outline"
+                className="border-silver"
+              >
+                Close
               </Button>
             </div>
           </div>
@@ -483,3 +583,5 @@ export const OrganizationManagementTab = () => {
     </div>
   );
 };
+
+

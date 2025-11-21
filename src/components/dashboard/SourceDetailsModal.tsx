@@ -4,13 +4,14 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ResponseItem } from "./ResponseItem";
 import { CitationCount } from "@/types/dashboard";
-import { ExternalLink, Check, X, Download } from "lucide-react";
+import { ExternalLink, Check, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS } from "@/utils/sourceConfig";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+// Removed chart imports since we're rendering custom bars like SourcesTab
 
 interface SourceDetailsModalProps {
   isOpen: boolean;
@@ -86,45 +87,6 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
     return categorizeSourceByMediaType(source.domain, responses, companyName);
   };
 
-  // CSV download functionality
-  const generateCSV = () => {
-    if (!uniqueCitations || uniqueCitations.length === 0) {
-      return '';
-    }
-
-    const headers = ['Title', 'Description', 'URLs', 'URL Count', 'Mention Count', 'Domain', 'Media Type'];
-    const csvContent = [
-      headers.join(','),
-      ...uniqueCitations.map(citation => [
-        `"${(citation.title || '').replace(/"/g, '""')}"`,
-        `"${(citation.snippet || '').replace(/"/g, '""')}"`,
-        `"${citation.urls ? citation.urls.join('; ') : citation.url}"`,
-        citation.urlCount || 1,
-        citation.mentionCount || 1,
-        `"${citation.domain || source.domain}"`,
-        `"${citation.mediaType || getEffectiveMediaType()}"`
-      ].join(','))
-    ].join('\n');
-
-    return csvContent;
-  };
-
-  const downloadCSV = () => {
-    const csvContent = generateCSV();
-    if (!csvContent) {
-      return;
-    }
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `${source.domain}-sources-${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
 
   // Fetch all unique URLs for this domain from the database and search results
   const fetchAllUrlsForDomain = async (domain: string) => {
@@ -202,15 +164,51 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
               citationUrl = citation.url;
             } else if (citation.source) {
               // Google AI Overviews format
-              // Handle source names that might contain spaces or special characters
-              let cleanSourceName = citation.source.toLowerCase().trim();
+              const source = citation.source.toLowerCase().trim();
               
-              // Check if source already looks like a domain (contains a dot)
-              if (cleanSourceName.includes('.')) {
+              // Map common source names to domains
+              const sourceToDomainMap: Record<string, string> = {
+                'blind': 'www.teamblind.com',
+                'teamblind': 'www.teamblind.com',
+                'indeed': 'www.indeed.com',
+                'glassdoor': 'www.glassdoor.com',
+                'linkedin': 'www.linkedin.com',
+                'youtube': 'www.youtube.com',
+                'great place to work': 'www.greatplacetowork.com',
+                'greatplacetowork': 'www.greatplacetowork.com',
+                'comparably': 'www.comparably.com',
+                'ambitionbox': 'www.ambitionbox.com',
+                'repvue': 'www.repvue.com',
+                'built in': 'builtin.com',
+                'builtin': 'builtin.com',
+                'g2': 'www.g2.com',
+                'inhersight': 'www.inhersight.com',
+                'business because': 'www.businessbecause.com',
+                'businessbecause': 'www.businessbecause.com',
+                'ziprecruiter': 'www.ziprecruiter.com',
+                'snowflake careers': 'careers.snowflake.com',
+                'careers.snowflake.com': 'careers.snowflake.com',
+                'reddit': 'www.reddit.com',
+                'quora': 'www.quora.com',
+                'microsoft': 'www.microsoft.com',
+                'databricks': 'www.databricks.com',
+                'cloudera': 'www.cloudera.com',
+                'snowflake': 'www.snowflake.com',
+                'forbes': 'www.forbes.com',
+                'business insider': 'www.businessinsider.com',
+                'medium': 'medium.com',
+                'management consulted': 'managementconsulted.com'
+              };
+              
+              // Check if source maps to a known domain
+              if (sourceToDomainMap[source]) {
+                citationDomain = sourceToDomainMap[source];
+              } else if (source.includes('.')) {
                 // If source already looks like a domain, use it as-is
-                citationDomain = cleanSourceName.replace(/^www\./, '');
+                citationDomain = source;
               } else {
-                // Handle specific known cases
+                // Fallback: try to convert source name to domain
+                let cleanSourceName = source;
                 if (cleanSourceName === 'great place to work') {
                   cleanSourceName = 'greatplacetowork';
                 } else if (cleanSourceName === 'built in') {
@@ -223,7 +221,6 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
                     .replace(/-+/g, '-') // Replace multiple hyphens with single
                     .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
                 }
-                
                 citationDomain = `${cleanSourceName}.com`;
               }
               
@@ -240,15 +237,19 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
             }
             
             // Check if this citation matches our target domain
-            // For Google AI Overviews, we need to handle different source formats
+            // Normalize both domains for comparison (remove www prefix and convert to lowercase)
+            const normalizeDomain = (d: string) => d.trim().toLowerCase().replace(/^www\./, '');
+            const normalizedTargetDomain = normalizeDomain(domain);
+            const normalizedCitationDomain = normalizeDomain(citationDomain);
+            
             let isMatch = false;
             
-            if (citationDomain === domain) {
+            if (normalizedCitationDomain === normalizedTargetDomain) {
               isMatch = true;
             } else if (citation.source) {
               // Handle cases where source might be "Glassdoor" but domain is "glassdoor.com"
               const sourceLower = citation.source.toLowerCase();
-              const domainLower = domain.toLowerCase();
+              const domainLower = normalizedTargetDomain.toLowerCase();
               
               if (sourceLower === domainLower || 
                   sourceLower === domainLower.replace(/^www\./, '') ||
@@ -411,23 +412,11 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl w-[95vw] sm:w-auto max-h-[90vh]">
         <DialogHeader>
-          <div className="flex items-center justify-between">
-            <DialogTitle className="flex items-center gap-2">
-              <img src={getFavicon(source.domain)} alt="" className="w-5 h-5 object-contain" />
-              <span>{source.domain}</span>
-              <Badge variant="secondary">{source.count} citations</Badge>
-            </DialogTitle>
-            <Button
-              onClick={downloadCSV}
-              disabled={!uniqueCitations || uniqueCitations.length === 0}
-              variant="outline"
-              size="sm"
-              className="hidden sm:flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              Download CSV
-            </Button>
-          </div>
+          <DialogTitle className="flex items-center gap-2">
+            <img src={getFavicon(source.domain)} alt="" className="w-5 h-5 object-contain" />
+            <span>{source.domain}</span>
+            <Badge variant="secondary">{source.count} citations</Badge>
+          </DialogTitle>
           <DialogDescription>
             View detailed information about citations from {source.domain} including all cited URLs and their sources.
           </DialogDescription>
@@ -515,7 +504,7 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
             </Card>
 
 
-            {/* URLs List */}
+            {/* Cited Sources Card */}
             <Card>
               <CardHeader>
                 <CardTitle>Cited Sources</CardTitle>
@@ -544,7 +533,6 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
                             {citation.mentionCount || 1}
                           </Badge>
                         </div>
-                        
                         <div className="pr-24">
                           {/* Title */}
                           {citation.title && (
@@ -552,18 +540,15 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
                               {citation.title}
                             </h4>
                           )}
-                          
                           {/* Snippet */}
                           {citation.snippet && (
                             <p className="text-sm text-gray-600 mb-2 line-clamp-2">
                               {citation.snippet}
                             </p>
                           )}
-                          
                           {/* URLs */}
                           <div className="space-y-1">
                             {citation.urls && citation.urls.length > 1 ? (
-                              // Multiple URLs - show them in a list
                               <div className="space-y-1">
                                 {citation.urls.map((url, urlIndex) => (
                                   <div key={urlIndex} className="flex items-center gap-2">
@@ -575,7 +560,7 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
                                       className="text-xs text-blue-600 group-hover:text-blue-700 truncate hover:underline"
                                     >
                                       {url.length > 80 
-                                        ? url.substring(0, 80) + '...' 
+                                        ? url.substring(0, 80) + '...'
                                         : url
                                       }
                                     </a>
@@ -583,7 +568,6 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
                                 ))}
                               </div>
                             ) : (
-                              // Single URL - show as before
                               <div className="flex items-center gap-2">
                                 <ExternalLink className="w-3 h-3 text-gray-400 group-hover:text-blue-500 flex-shrink-0" />
                                 <a
@@ -593,7 +577,7 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
                                   className="text-xs text-blue-600 group-hover:text-blue-700 truncate hover:underline"
                                 >
                                   {citation.url.length > 80 
-                                    ? citation.url.substring(0, 80) + '...' 
+                                    ? citation.url.substring(0, 80) + '...'
                                     : citation.url
                                   }
                                 </a>

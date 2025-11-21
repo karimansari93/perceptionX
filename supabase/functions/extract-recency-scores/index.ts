@@ -13,8 +13,8 @@ interface CitationWithRecency {
   url?: string;
   publicationDate?: string;
   recencyScore: number | null; // null = N/A
-  extractionMethod: 'url-pattern' | 'firecrawl-json' | 'firecrawl-html' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'problematic-domain';
-  sourceType?: 'perplexity' | 'google-ai-overviews' | 'search-results';
+  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'problematic-domain';
+  sourceType?: 'perplexity' | 'google-ai-overviews' | 'bing-copilot' | 'search-results';
 }
 
 interface CachedUrl {
@@ -32,7 +32,6 @@ async function getCachedUrls(urls: string[]): Promise<Map<string, CachedUrl>> {
   const cacheMap = new Map<string, CachedUrl>();
   
   // Process URLs in batches to avoid URI length limits
-  // Use smaller batches for very large datasets to be extra safe
   const batchSize = urls.length > 500 ? 25 : 50;
   
   for (let i = 0; i < urls.length; i += batchSize) {
@@ -46,7 +45,7 @@ async function getCachedUrls(urls: string[]): Promise<Map<string, CachedUrl>> {
       
       if (error) {
         console.error(`Error fetching cached URLs for batch ${Math.floor(i/batchSize) + 1}:`, error);
-        continue; // Continue with next batch
+        continue;
       }
       
       data?.forEach((item: CachedUrl) => {
@@ -57,7 +56,7 @@ async function getCachedUrls(urls: string[]): Promise<Map<string, CachedUrl>> {
       
     } catch (err) {
       console.error(`Error in cache batch ${Math.floor(i/batchSize) + 1}:`, err);
-      continue; // Continue with next batch
+      continue;
     }
   }
   
@@ -105,33 +104,127 @@ serve(async (req) => {
       console.log('FIRECRAWL_API_KEY not found, will use URL pattern matching only');
     }
 
-    const results: CitationWithRecency[] = [];
     const startTime = Date.now();
-    const maxProcessingTime = 110000; // 110 seconds max (optimized for unlimited citations)
+    const maxProcessingTime = 110000;
     let firecrawlRequestCount = 0;
     let consecutiveFirecrawlErrors = 0;
     let rateLimitHit = false;
     let problematicDomainCount = 0;
     
-    console.log(`Starting to process ${citations.length} citations (NO LIMIT - processing ALL URLs with intelligent caching)`);
+    console.log(`Starting to process ${citations.length} citations with intelligent caching and deduplication`);
     
-    // Step 1: Extract all URLs and check cache
-    const citationUrls = citations
-      .map(c => c.url || c.link)
-      .filter((url): url is string => !!url);
+    // Step 1: Deduplicate URLs within this batch
+    const urlToCitations = new Map<string, typeof citations>();
+    const uniqueUrls: string[] = [];
     
-    console.log(`Looking up ${citationUrls.length} URLs in cache (using batched queries to avoid URI limits)`);
-    const cachedUrls = await getCachedUrls(citationUrls);
-    console.log(`Cache lookup complete: Found ${cachedUrls.size} cached URLs out of ${citationUrls.length} total`);
+    for (const citation of citations) {
+      const url = citation.url || citation.link;
+      if (url) {
+        if (!urlToCitations.has(url)) {
+          urlToCitations.set(url, []);
+          uniqueUrls.push(url);
+        }
+        urlToCitations.get(url)!.push(citation);
+      }
+    }
     
-    // Step 2: Process citations - use cache when available, analyze when not
-    const urlsToAnalyze: typeof citations = [];
+    console.log(`Deduplication: ${citations.length} citations reduced to ${uniqueUrls.length} unique URLs`);
+    
+    // Step 2: Check cache for unique URLs
+    console.log(`Looking up ${uniqueUrls.length} unique URLs in cache`);
+    const cachedUrls = await getCachedUrls(uniqueUrls);
+    console.log(`Cache lookup complete: Found ${cachedUrls.size} cached URLs`);
+    
+    // Step 3: Build results map for unique URLs
+    const urlResults = new Map<string, CitationWithRecency>();
+    const urlsToAnalyze: string[] = [];
+    
+    for (const url of uniqueUrls) {
+      const cached = cachedUrls.get(url);
+      if (cached) {
+        // Use cached result
+        urlResults.set(url, {
+          domain: cached.domain,
+          url: cached.url,
+          publicationDate: cached.publication_date || undefined,
+          recencyScore: cached.recency_score,
+          extractionMethod: 'cache-hit',
+        });
+        console.log(`Cache hit: ${cached.domain}`);
+      } else {
+        // Need to analyze this URL
+        urlsToAnalyze.push(url);
+      }
+    }
+    
+    console.log(`Cache hits: ${urlResults.size}, URLs to analyze: ${urlsToAnalyze.length}`);
+    
+    // Step 4: Analyze unique URLs not in cache
+    for (let i = 0; i < urlsToAnalyze.length; i++) {
+      const url = urlsToAnalyze[i];
+      
+      // Check timeout
+      if (Date.now() - startTime > maxProcessingTime) {
+        console.log(`Timeout approaching after processing ${i} URLs, stopping`);
+        break;
+      }
+      
+      // Get first citation for this URL to extract metadata
+      const citationsForUrl = urlToCitations.get(url) || [];
+      const firstCitation = citationsForUrl[0];
+      
+      // Skip Firecrawl if necessary
+      const skipFirecrawl = rateLimitHit || consecutiveFirecrawlErrors >= 3 || (urlsToAnalyze.length > 200 && firecrawlRequestCount > 50);
+      
+      const result = await extractRecencyScore(firstCitation, firecrawlApiKey, testMode, skipFirecrawl);
+      urlResults.set(url, result);
+      
+      // Track problematic domains
+      if (result.extractionMethod === 'problematic-domain') {
+        problematicDomainCount++;
+      }
+      
+      // Store in cache
+      if (result.extractionMethod !== 'rate-limit-hit') {
+        await storeCachedUrl(result);
+      }
+      
+      // Track Firecrawl usage
+      if (!skipFirecrawl && !testMode && firecrawlApiKey) {
+        if (result.extractionMethod === 'firecrawl-metadata' || result.extractionMethod === 'firecrawl-relative' || result.extractionMethod === 'firecrawl-absolute') {
+          firecrawlRequestCount++;
+          consecutiveFirecrawlErrors = 0;
+        } else if (result.extractionMethod === 'not-found') {
+          const isTimeout = result.publicationDate === undefined;
+          if (!isTimeout) {
+            consecutiveFirecrawlErrors++;
+            if (consecutiveFirecrawlErrors >= 5) {
+              console.log(`Too many consecutive Firecrawl failures (${consecutiveFirecrawlErrors}), switching to URL patterns only`);
+            }
+          }
+        } else if (result.extractionMethod === 'rate-limit-hit') {
+          rateLimitHit = true;
+          console.log('Rate limit detected, switching to URL patterns only');
+        }
+      }
+      
+      console.log(`[${i + 1}/${urlsToAnalyze.length}] ${result.domain} - ${result.extractionMethod} (Firecrawl: ${firecrawlRequestCount})`);
+      
+      // Add delay
+      if (!testMode && i < urlsToAnalyze.length - 1) {
+        const baseDelay = urlsToAnalyze.length > 100 ? 500 : urlsToAnalyze.length > 50 ? 750 : 1000;
+        const delay = result.extractionMethod === 'problematic-domain' ? Math.min(200, baseDelay) : baseDelay;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    // Step 5: Map results back to all citations (including duplicates)
+    const results: CitationWithRecency[] = [];
     
     for (const citation of citations) {
       const url = citation.url || citation.link;
       
       if (!url) {
-        // No URL - return not-found result
         results.push({
           domain: citation.domain || 'unknown',
           title: citation.title,
@@ -143,82 +236,24 @@ serve(async (req) => {
         continue;
       }
       
-      const cached = cachedUrls.get(url);
-      if (cached) {
-        // Use cached result
+      const urlResult = urlResults.get(url);
+      if (urlResult) {
+        // Add citation-specific fields back
         results.push({
-          domain: cached.domain,
+          ...urlResult,
           title: citation.title,
-          url: cached.url,
-          publicationDate: cached.publication_date || undefined,
-          recencyScore: cached.recency_score,
-          extractionMethod: 'cache-hit',
           sourceType: citation.sourceType
         });
-        console.log(`Cache hit: ${cached.domain} - ${cached.extraction_method}`);
       } else {
-        // Need to analyze this URL
-        urlsToAnalyze.push(citation);
-      }
-    }
-    
-    console.log(`Cache hits: ${results.length}, URLs to analyze: ${urlsToAnalyze.length}`);
-    
-    // Step 3: Analyze URLs not in cache
-    for (let i = 0; i < urlsToAnalyze.length; i++) {
-      const citation = urlsToAnalyze[i];
-      
-      // Check if we're running out of time
-      if (Date.now() - startTime > maxProcessingTime) {
-        console.log(`Timeout approaching after processing ${i} new citations, stopping`);
-        break;
-      }
-      
-      // Skip Firecrawl if we've hit rate limits, too many consecutive errors, or processing very large batch
-      const skipFirecrawl = rateLimitHit || consecutiveFirecrawlErrors >= 3 || (urlsToAnalyze.length > 200 && firecrawlRequestCount > 50);
-      
-      const result = await extractRecencyScore(citation, firecrawlApiKey, testMode, skipFirecrawl);
-      results.push(result);
-      
-      // Track problematic domains
-      if (result.extractionMethod === 'problematic-domain') {
-        problematicDomainCount++;
-      }
-      
-      // Store result in cache (only if we actually analyzed it)
-      if (result.extractionMethod !== 'rate-limit-hit') {
-        await storeCachedUrl(result);
-      }
-      
-      // Track Firecrawl usage and errors
-      if (!skipFirecrawl && !testMode && firecrawlApiKey) {
-        if (result.extractionMethod === 'firecrawl-json' || result.extractionMethod === 'firecrawl-html') {
-          firecrawlRequestCount++;
-          consecutiveFirecrawlErrors = 0; // Reset error count on success
-        } else if (result.extractionMethod === 'not-found') {
-          // Only count as error if it's not a timeout (timeouts are expected for slow sites)
-          const isTimeout = result.publicationDate === undefined; // Timeout results don't set publicationDate
-          if (!isTimeout) {
-            consecutiveFirecrawlErrors++;
-            if (consecutiveFirecrawlErrors >= 5) { // Increased threshold since timeouts don't count
-              console.log(`Too many consecutive Firecrawl failures (${consecutiveFirecrawlErrors}), switching to URL patterns only`);
-            }
-          }
-        } else if (result.extractionMethod === 'rate-limit-hit') {
-          rateLimitHit = true;
-          console.log('Rate limit detected, switching to URL patterns only for all remaining citations');
-        }
-      }
-      
-      console.log(`Analyzed citation ${i + 1}/${urlsToAnalyze.length}: ${result.domain} - ${result.extractionMethod} (Firecrawl requests: ${firecrawlRequestCount})`);
-      
-      // Add delay to avoid rate limits (but shorter for problematic domains since we skip them)
-      if (!testMode && i < urlsToAnalyze.length - 1) {
-        // Dynamic delay: faster for large batches, slower for small batches to respect rate limits
-        // Even faster for problematic domains since we skip Firecrawl entirely
-        const baseDelay = urlsToAnalyze.length > 100 ? 500 : urlsToAnalyze.length > 50 ? 750 : 1000;
-        const delay = result.extractionMethod === 'problematic-domain' ? Math.min(200, baseDelay) : baseDelay;
-        await new Promise(resolve => setTimeout(resolve, delay));
+        // URL wasn't processed (timeout)
+        results.push({
+          domain: citation.domain || extractDomainFromUrl(url),
+          title: citation.title,
+          url: url,
+          recencyScore: null,
+          extractionMethod: 'timeout',
+          sourceType: citation.sourceType
+        });
       }
     }
 
@@ -228,6 +263,8 @@ serve(async (req) => {
         results,
         summary: {
           total: results.length,
+          uniqueUrls: uniqueUrls.length,
+          duplicatesAvoided: citations.length - uniqueUrls.length,
           withDates: results.filter(r => r.recencyScore !== null).length,
           withoutDates: results.filter(r => r.recencyScore === null).length,
           cacheHits: results.filter(r => r.extractionMethod === 'cache-hit').length,
@@ -283,7 +320,7 @@ async function extractRecencyScore(
 
   // Check if this is a problematic domain that we should skip Firecrawl for
   if (isProblematicDomain(url)) {
-    console.log(`Skipping Firecrawl for problematic domain: ${extractDomainFromUrl(url)} - will only try URL pattern`);
+    console.log(`Skipping Firecrawl for problematic domain: ${extractDomainFromUrl(url)}`);
     return {
       domain: citation.domain || extractDomainFromUrl(url),
       title: citation.title,
@@ -294,54 +331,23 @@ async function extractRecencyScore(
     };
   }
 
-  // Method 2: Try Firecrawl JSON extraction (if not skipped, not in test mode and API key available)
+  // Method 2: Try Firecrawl scraping with metadata + markdown (if not skipped, not in test mode and API key available)
   if (!testMode && firecrawlApiKey && !skipFirecrawl) {
     try {
       const firecrawlDate = await extractDateWithFirecrawl(url, firecrawlApiKey);
-      if (firecrawlDate) {
+      if (firecrawlDate.date) {
         return {
           domain: citation.domain || extractDomainFromUrl(url),
           title: citation.title,
           url: url,
-          publicationDate: firecrawlDate,
-          recencyScore: calculateRecencyScore(firecrawlDate),
-          extractionMethod: 'firecrawl-json',
+          publicationDate: firecrawlDate.date,
+          recencyScore: calculateRecencyScore(firecrawlDate.date),
+          extractionMethod: firecrawlDate.method,
           sourceType: citation.sourceType
         };
       }
     } catch (error) {
-      console.log(`Firecrawl JSON extraction failed for ${url}:`, error);
-      // Check if it's a rate limit error
-      if (error.message?.includes('429')) {
-        return {
-          domain: citation.domain || extractDomainFromUrl(url),
-          title: citation.title,
-          url: url,
-          recencyScore: null,
-          extractionMethod: 'rate-limit-hit',
-          sourceType: citation.sourceType
-        };
-      }
-    }
-  }
-
-  // Method 3: Try Firecrawl HTML scraping (if not skipped, not in test mode and API key available)
-  if (!testMode && firecrawlApiKey && !skipFirecrawl) {
-    try {
-      const scrapedDate = await scrapeDateWithFirecrawl(url, firecrawlApiKey);
-      if (scrapedDate) {
-        return {
-          domain: citation.domain || extractDomainFromUrl(url),
-          title: citation.title,
-          url: url,
-          publicationDate: scrapedDate,
-          recencyScore: calculateRecencyScore(scrapedDate),
-          extractionMethod: 'firecrawl-html',
-          sourceType: citation.sourceType
-        };
-      }
-    } catch (error) {
-      console.log(`Firecrawl HTML scraping failed for ${url}:`, error);
+      console.log(`Firecrawl extraction failed for ${url}:`, error);
       // Check if it's a rate limit error
       if (error.message?.includes('429')) {
         return {
@@ -368,6 +374,12 @@ async function extractRecencyScore(
 }
 
 function extractDateFromUrl(url: string): string | null {
+  // Helper to validate year is reasonable (web content dates)
+  const isValidYear = (year: string): boolean => {
+    const yearNum = parseInt(year, 10);
+    return yearNum >= 1990 && yearNum <= 2050; // Reasonable range for web content
+  };
+
   const patterns = [
     // YYYY/MM/DD or YYYY-MM-DD
     /(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/,
@@ -386,19 +398,24 @@ function extractDateFromUrl(url: string): string | null {
     if (match) {
       if (pattern === patterns[0]) { // YYYY/MM/DD or YYYY-MM-DD
         const [, year, month, day] = match;
+        if (!isValidYear(year)) continue;
         return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
       } else if (pattern === patterns[1]) { // YYYY/MM or YYYY-MM
         const [, year, month] = match;
+        if (!isValidYear(year)) continue;
         return `${year}-${month.padStart(2, '0')}-01`;
       } else if (pattern === patterns[2]) { // YYYY
         const [, year] = match;
+        if (!isValidYear(year)) continue;
         return `${year}-01-01`;
       } else if (pattern === patterns[3]) { // Month DD, YYYY (full month names)
         const [, month, day, year] = match;
+        if (!isValidYear(year)) continue;
         const monthNum = new Date(`${month} 1, 2000`).getMonth() + 1;
         return `${year}-${monthNum.toString().padStart(2, '0')}-${day.padStart(2, '0')}`;
       } else if (pattern === patterns[4]) { // Month DD, YYYY (abbreviated month names)
         const [, month, day, year] = match;
+        if (!isValidYear(year)) continue;
         const monthNum = getMonthNumber(month);
         if (monthNum) {
           return `${year}-${monthNum.toString().padStart(2, '0')}-${day.padStart(2, '0')}`;
@@ -410,117 +427,177 @@ function extractDateFromUrl(url: string): string | null {
   return null;
 }
 
-async function extractDateWithFirecrawl(url: string, apiKey: string): Promise<string | null> {
+// Parse relative dates like "1 yr ago", "yesterday", etc.
+// Parse Reddit-specific date format: • 2y ago, • 6mo ago, etc.
+function parseRedditDate(text: string): string | null {
+  // Look for Reddit timestamp pattern: • 2y ago, • 6mo ago, etc.
+  const redditPattern = /•\s*(\d+)(y|mo|d|h|m)\s*ago/i;
+  const match = text.match(redditPattern);
+  
+  if (match) {
+    const value = parseInt(match[1]);
+    const unit = match[2].toLowerCase();
+    
+    const now = new Date();
+    let targetDate = new Date(now);
+    
+    switch (unit) {
+      case 'y': 
+        targetDate.setFullYear(now.getFullYear() - value); 
+        break;
+      case 'mo': 
+        targetDate.setMonth(now.getMonth() - value); 
+        break;
+      case 'd': 
+        targetDate.setDate(now.getDate() - value); 
+        break;
+      case 'h': 
+        targetDate.setHours(now.getHours() - value); 
+        break;
+      case 'm': 
+        targetDate.setMinutes(now.getMinutes() - value); 
+        break;
+    }
+    
+    return targetDate.toISOString().split('T')[0];
+  }
+  
+  return null;
+}
+
+function parseRelativeDate(text: string): string | null {
+  const now = new Date();
+  
+  // "1 yr ago", "2 years ago"
+  let match = text.match(/(\d+)\s*(?:yr|year)s?\s*ago/i);
+  if (match) {
+    const years = parseInt(match[1], 10);
+    const date = new Date(now);
+    date.setFullYear(date.getFullYear() - years);
+    return date.toISOString().split('T')[0];
+  }
+  
+  // "8mo ago", "3 months ago"
+  match = text.match(/(\d+)\s*(?:mo|month)s?\s*ago/i);
+  if (match) {
+    const months = parseInt(match[1], 10);
+    const date = new Date(now);
+    date.setMonth(date.getMonth() - months);
+    return date.toISOString().split('T')[0];
+  }
+  
+  // "5d ago", "10 days ago"
+  match = text.match(/(\d+)\s*(?:d|day)s?\s*ago/i);
+  if (match) {
+    const days = parseInt(match[1], 10);
+    const date = new Date(now);
+    date.setDate(date.getDate() - days);
+    return date.toISOString().split('T')[0];
+  }
+  
+  // "2w ago", "3 weeks ago"
+  match = text.match(/(\d+)\s*(?:w|week)s?\s*ago/i);
+  if (match) {
+    const weeks = parseInt(match[1], 10);
+    const date = new Date(now);
+    date.setDate(date.getDate() - (weeks * 7));
+    return date.toISOString().split('T')[0];
+  }
+  
+  // "yesterday"
+  if (/yesterday/i.test(text)) {
+    const date = new Date(now);
+    date.setDate(date.getDate() - 1);
+    return date.toISOString().split('T')[0];
+  }
+  
+  // "today"
+  if (/today/i.test(text)) {
+    return now.toISOString().split('T')[0];
+  }
+  
+  return null;
+}
+
+async function extractDateWithFirecrawl(url: string, apiKey: string): Promise<{ date: string | null; method: 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' }> {
   try {
-    // Use v2 scrape endpoint with prompt-only JSON mode
+    // Single scrape with markdown format (1 credit)
     const response = await fetch('https://api.firecrawl.dev/v2/scrape', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
-        body: JSON.stringify({
-          url: url,
-          formats: [{
-            type: 'json',
-            prompt: 'Find the publication date or review date on this page. Look for patterns like "Mar 14, 2022", "March 14, 2022", "2022-03-14", or similar date formats. Return the date in YYYY-MM-DD format. If no date is found, return null.'
-          }],
-          onlyMainContent: true,
-          timeout: 30000 // 30 second timeout
-        })
+      body: JSON.stringify({
+        url: url,
+        formats: ['markdown'], // Only markdown, NOT json (saves 4 credits!)
+        onlyMainContent: true,
+        timeout: 30000
+      })
     });
 
     if (!response.ok) {
       if (response.status === 408) {
-        console.log(`Firecrawl timeout (408) for ${url}, this is normal for slow websites`);
-        return null;
+        console.log(`Firecrawl timeout (408) for ${url}`);
+        return { date: null, method: 'firecrawl-metadata' };
       }
       if (response.status === 429) {
         console.log(`Firecrawl rate limit (429) for ${url}`);
-        return null;
+        throw new Error('429');
       }
       console.log(`Firecrawl API error: ${response.status} for ${url}`);
-      return null;
+      return { date: null, method: 'firecrawl-metadata' };
     }
 
     const data = await response.json();
     
-    if (data.success && data.data?.json) {
-      // The LLM will return the date in various formats, try to extract it
-      const jsonData = data.data.json;
+    // STEP 1: Check metadata (comes FREE with every scrape!)
+    if (data.data?.metadata) {
+      const metadata = data.data.metadata;
       
-      // Look for common date field names
-      const dateFields = ['publicationDate', 'date', 'publishedDate', 'publishDate', 'createdDate'];
-      let extractedDate = null;
+      // Try common metadata fields
+      const dateFields = [
+        metadata.publishedTime,
+        metadata.modifiedTime,
+        metadata.ogPublishedTime,
+        metadata['article:published_time'],
+        metadata.datePublished,
+        metadata['og:published_time']
+      ];
       
       for (const field of dateFields) {
-        if (jsonData[field]) {
-          extractedDate = jsonData[field];
-          break;
-        }
-      }
-      
-      // If no specific field found, look for any string that looks like a date
-      if (!extractedDate) {
-        for (const [key, value] of Object.entries(jsonData)) {
-          if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-            extractedDate = value;
-            break;
+        if (field) {
+          try {
+            const date = new Date(field);
+            if (!isNaN(date.getTime())) {
+              console.log(`Found date in metadata: ${field}`);
+              return { date: date.toISOString().split('T')[0], method: 'firecrawl-metadata' };
+            }
+          } catch (e) {
+            continue;
           }
         }
       }
-      
-      if (extractedDate) {
-        // Try to parse and format the date
-        const date = new Date(extractedDate);
-        if (!isNaN(date.getTime())) {
-          return date.toISOString().split('T')[0];
-        }
-      }
     }
     
-    return null;
-  } catch (error) {
-    console.error('Firecrawl extraction error:', error);
-    return null;
-  }
-}
-
-async function scrapeDateWithFirecrawl(url: string, apiKey: string): Promise<string | null> {
-  try {
-    const response = await fetch('https://api.firecrawl.dev/v2/scrape', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-        body: JSON.stringify({
-          url: url,
-          formats: ['markdown'], // Use markdown for better date extraction
-          onlyMainContent: true,
-          timeout: 30000 // 30 second timeout
-        })
-    });
-
-    if (!response.ok) {
-      if (response.status === 408) {
-        console.log(`Firecrawl timeout (408) for ${url}, this is normal for slow websites`);
-        return null;
-      }
-      if (response.status === 429) {
-        console.log(`Firecrawl rate limit (429) for ${url}`);
-        return null;
-      }
-      console.log(`Firecrawl API error: ${response.status} for ${url}`);
-      return null;
-    }
-
-    const data = await response.json();
     const markdown = data.data?.markdown;
-    
-    if (!markdown) return null;
+    if (!markdown) return { date: null, method: 'firecrawl-metadata' };
 
-    // Look for date patterns in markdown (like "Mar 14, 2022")
+    // STEP 2: Try Reddit-specific date patterns first (more reliable for Reddit)
+    const redditDate = parseRedditDate(markdown);
+    if (redditDate) {
+      console.log(`Found Reddit date in markdown: ${redditDate}`);
+      return { date: redditDate, method: 'firecrawl-reddit' };
+    }
+
+    // STEP 3: Try relative date patterns (e.g., "1 yr ago", "yesterday")
+    const relativeDate = parseRelativeDate(markdown);
+    if (relativeDate) {
+      console.log(`Found relative date in markdown: ${relativeDate}`);
+      return { date: relativeDate, method: 'firecrawl-relative' };
+    }
+
+    // STEP 3: Look for absolute date patterns in markdown
     const datePatterns = [
       // Month DD, YYYY (e.g., "Mar 14, 2022")
       /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2}),?\s+(\d{4})/i,
@@ -529,8 +606,6 @@ async function scrapeDateWithFirecrawl(url: string, apiKey: string): Promise<str
       // YYYY-MM-DD
       /(\d{4})-(\d{1,2})-(\d{1,2})/,
       // MM/DD/YYYY
-      /(\d{1,2})\/(\d{1,2})\/(\d{4})/,
-      // DD/MM/YYYY
       /(\d{1,2})\/(\d{1,2})\/(\d{4})/
     ];
 
@@ -548,25 +623,28 @@ async function scrapeDateWithFirecrawl(url: string, apiKey: string): Promise<str
         } else if (pattern === datePatterns[2]) { // YYYY-MM-DD
           const [, year, month, day] = match;
           dateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-        } else if (pattern === datePatterns[3] || pattern === datePatterns[4]) { // MM/DD/YYYY or DD/MM/YYYY
-          const [, part1, part2, year] = match;
-          // Assume MM/DD/YYYY for now
-          dateStr = `${year}-${part1.padStart(2, '0')}-${part2.padStart(2, '0')}`;
+        } else if (pattern === datePatterns[3]) { // MM/DD/YYYY
+          const [, month, day, year] = match;
+          dateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
         }
         
         if (dateStr) {
           const date = new Date(dateStr);
           if (!isNaN(date.getTime())) {
-            return date.toISOString().split('T')[0];
+            console.log(`Found absolute date in markdown: ${dateStr}`);
+            return { date: date.toISOString().split('T')[0], method: 'firecrawl-absolute' };
           }
         }
       }
     }
 
-    return null;
+    return { date: null, method: 'firecrawl-absolute' };
   } catch (error) {
-    console.error('Firecrawl scraping error:', error);
-    return null;
+    console.error('Firecrawl extraction error:', error);
+    if (error.message === '429') {
+      throw error;
+    }
+    return { date: null, method: 'firecrawl-metadata' };
   }
 }
 
@@ -630,8 +708,7 @@ function isProblematicDomain(url: string): boolean {
     'www.facebook.com',
     'twitter.com',
     'x.com',
-    'reddit.com',
-    'www.reddit.com',
+    // Removed reddit.com - Reddit has consistent date format that can be parsed
     'yelp.com',
     'www.yelp.com',
     'comparably.com',

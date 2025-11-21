@@ -173,19 +173,19 @@ export const Onboarding = () => {
         {
           id: 'sentiment-1',
           text: `How is ${onboardingDataForPrompts.companyName} as an employer${countryContext}?`,
-          category: 'Employer Reputation',
+          category: 'General',
           type: 'sentiment'
         },
         {
           id: 'visibility-1',
           text: `What is the best company to work for in the ${onboardingDataForPrompts.industry} industry${countryContext}?`,
-          category: 'Industry Visibility',
+          category: 'General',
           type: 'visibility'
         },
         {
           id: 'competitive-1',
-          text: `How does working at ${onboardingDataForPrompts.companyName} compare to other companies?`,
-          category: 'Competitive Analysis',
+          text: `How does working at ${onboardingDataForPrompts.companyName} compare to other companies${countryContext}?`,
+          category: 'General',
           type: 'competitive'
         }
       ];

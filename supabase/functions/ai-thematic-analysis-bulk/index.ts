@@ -63,6 +63,42 @@ const TALENTX_ATTRIBUTES = [
     name: 'Career Opportunities',
     description: 'Career growth and development opportunities',
     keywords: ['career', 'growth', 'development', 'advancement', 'promotion', 'learning', 'training', 'mentorship']
+  },
+  {
+    id: 'application-process',
+    name: 'Application Process',
+    description: 'Candidate experience during the application and hiring workflow',
+    keywords: ['application', 'apply', 'job application', 'application process', 'hiring process', 'recruitment', 'applying', 'ATS', 'screening']
+  },
+  {
+    id: 'candidate-communication',
+    name: 'Candidate Communication',
+    description: 'Quality and cadence of communication with candidates',
+    keywords: ['communication', 'recruiter', 'updates', 'candidate communication', 'recruiter communication', 'feedback', 'response', 'status updates', 'follow-up']
+  },
+  {
+    id: 'interview-experience',
+    name: 'Interview Experience',
+    description: 'Structure and quality of candidate interviews',
+    keywords: ['interview', 'interviewing', 'interview process', 'interview experience', 'interviewer', 'interview questions', 'panel interview', 'technical interview']
+  },
+  {
+    id: 'candidate-feedback',
+    name: 'Candidate Feedback',
+    description: 'Feedback provided to candidates after interviews or applications',
+    keywords: ['feedback', 'candidate feedback', 'interview feedback', 'application feedback', 'response', 'rejection', 'offer feedback', 'communication outcome']
+  },
+  {
+    id: 'onboarding-experience',
+    name: 'Onboarding Experience',
+    description: 'New hire onboarding and orientation experience',
+    keywords: ['onboarding', 'new hire', 'orientation', 'onboarding process', 'first day', 'new employee', 'training', 'welcome', 'orientation program']
+  },
+  {
+    id: 'overall-candidate-experience',
+    name: 'Overall Candidate Experience',
+    description: 'End-to-end perception of the candidate journey',
+    keywords: ['candidate experience', 'candidate journey', 'recruitment experience', 'hiring experience', 'overall experience', 'candidate reputation', 'talent brand']
   }
 ];
 
@@ -278,11 +314,17 @@ Analyze the following response about "${companyName}" and identify specific them
    - leadership: Leadership
    - security-perks: Security & Perks
    - career-opportunities: Career Opportunities
+   - application-process: Application Process
+   - candidate-communication: Candidate Communication
+   - interview-experience: Interview Experience
+   - candidate-feedback: Candidate Feedback
+   - onboarding-experience: Onboarding Experience
+   - overall-candidate-experience: Overall Candidate Experience
 6. Provide a confidence score from 0 to 1
 7. Extract relevant keywords
 8. Provide 1-2 context snippets from the response that support this theme
 
-Focus on themes that would be relevant to potential employees evaluating this company as a workplace. Look for both positive and negative themes.
+Focus on themes that would be relevant to potential employees or candidates evaluating this company. Look for both positive and negative themes.
 
 Response to analyze:
 "${responseText}"

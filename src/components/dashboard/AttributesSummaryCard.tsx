@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, ExternalLink, Target, Award, Users, Heart, Shield, Lightbulb, Coffee, Crown, Lock } from 'lucide-react';
+import { TrendingUp, TrendingDown, ExternalLink, Target, Award, Users, Heart, Shield, Lightbulb, Coffee, Crown, Lock } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
@@ -10,6 +10,7 @@ interface AttributesSummaryCardProps {
   talentXProData?: any[];
   aiThemes?: any[];
   companyName?: string;
+  perceptionScoreTrend?: any[];
 }
 
 // Attribute icon mapping (shared with KeyTakeaways)
@@ -29,9 +30,52 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
 export const AttributesSummaryCard = ({ 
   talentXProData = [], 
   aiThemes = [], 
-  companyName 
+  companyName,
+  perceptionScoreTrend = []
 }: AttributesSummaryCardProps) => {
   const navigate = useNavigate();
+
+  // Calculate theme trends between latest and previous periods
+  const themeTrends = useMemo(() => {
+    if (perceptionScoreTrend.length < 2) return {};
+    
+    const latestPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 1];
+    const previousPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 2];
+    
+    // Get responses for each period
+    const latestResponses = aiThemes.filter(theme => {
+      const responseDate = new Date(theme.created_at).toISOString().split('T')[0];
+      return responseDate === latestPeriod.fullDate;
+    });
+    
+    const previousResponses = aiThemes.filter(theme => {
+      const responseDate = new Date(theme.created_at).toISOString().split('T')[0];
+      return responseDate === previousPeriod.fullDate;
+    });
+    
+    // Calculate theme counts for each period
+    const getThemeCounts = (themeList: any[]) => {
+      const counts: { [key: string]: number } = {};
+      themeList.forEach(theme => {
+        const attributeId = theme.talentx_attribute_id;
+        counts[attributeId] = (counts[attributeId] || 0) + 1;
+      });
+      return counts;
+    };
+    
+    const latestCounts = getThemeCounts(latestResponses);
+    const previousCounts = getThemeCounts(previousResponses);
+    
+    // Calculate changes
+    const trends: { [key: string]: number } = {};
+    Object.keys(latestCounts).forEach(attributeId => {
+      const latest = latestCounts[attributeId] || 0;
+      const previous = previousCounts[attributeId] || 0;
+      trends[attributeId] = latest - previous;
+    });
+    
+    return trends;
+  }, [perceptionScoreTrend, aiThemes]);
 
   // Calculate most mentioned attributes from AI themes with SWOT categorization
   const mostMentionedThemes = useMemo(() => {
@@ -98,12 +142,13 @@ export const AttributesSummaryCard = ({
           negativeCount: data.negativeCount,
           neutralCount: data.neutralCount,
           avgSentimentScore: data.avgSentimentScore,
-          swotCategory
+          swotCategory,
+          trendChange: themeTrends[attributeId] || 0
         };
       })
       .sort((a, b) => b.count - a.count)
       .slice(0, 5); // Top 5 most mentioned
-  }, [aiThemes]);
+  }, [aiThemes, themeTrends]);
 
   const renderAttributeItem = (attribute: any) => {
     const IconComponent = ATTRIBUTE_ICONS[attribute.id] || Target;
@@ -143,11 +188,20 @@ export const AttributesSummaryCard = ({
           </div>
         </div>
         
-        {/* Count */}
-        <div className="flex items-center min-w-[30px] justify-end">
+        {/* Count and trend */}
+        <div className="flex items-center gap-1 min-w-[30px] justify-end">
           <span className="text-xs font-semibold text-gray-900">
             {attribute.count}
           </span>
+          {attribute.trendChange !== 0 && (
+            <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+              attribute.trendChange > 0 ? 'text-green-600' : 'text-red-600'
+            }`}>
+              {attribute.trendChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
+              {attribute.trendChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+              <span className="whitespace-nowrap">{Math.abs(attribute.trendChange)}</span>
+            </span>
+          )}
         </div>
       </div>
     );

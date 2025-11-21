@@ -14,7 +14,7 @@ interface CitationWithRecency {
   publicationDate?: string;
   recencyScore: number | null; // null = N/A
   extractionMethod: 'url-pattern' | 'firecrawl-json' | 'firecrawl-html' | 'not-found';
-  sourceType?: 'perplexity' | 'google-ai-overviews' | 'search-results';
+  sourceType?: 'perplexity' | 'google-ai-overviews' | 'bing-copilot' | 'search-results';
 }
 
 serve(async (req) => {

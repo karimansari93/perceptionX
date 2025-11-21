@@ -50,7 +50,8 @@ const llmModels = [
   { name: "Perplexity", model: "perplexity" },
   { name: "Google AI", model: "google-ai" },
   { name: "DeepSeek", model: "deepseek" },
-  { name: "Google AI Overviews", model: "google-ai-overviews" }
+  { name: "Google AI Overviews", model: "google-ai-overviews" },
+  { name: "Bing Copilot", model: "bing-copilot" }
 ];
 
 export const LoadingModal = ({ 

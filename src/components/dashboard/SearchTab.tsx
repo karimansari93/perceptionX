@@ -9,6 +9,7 @@ import { UpgradeModal } from "@/components/upgrade/UpgradeModal";
 import { supabase } from "@/integrations/supabase/client";
 import { Favicon } from "@/components/ui/favicon";
 import { useCompany } from "@/contexts/CompanyContext";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // Media type colors and labels
 const MEDIA_TYPE_COLORS = {
@@ -118,7 +119,6 @@ export const SearchTab = ({
 
       // If no session found by company_id, try by company_name (for older data)
       if (!sessionData || sessionData.length === 0) {
-        console.log('🔍 No session found by company_id, trying by company_name:', currentCompany?.name);
         const { data: sessionDataByName, error: sessionErrorByName } = await supabase
           .from('search_insights_sessions')
           .select(`
@@ -138,7 +138,6 @@ export const SearchTab = ({
         
         sessionData = sessionDataByName;
         sessionError = sessionErrorByName;
-        console.log('🔍 Session found by company_name:', sessionData);
       }
 
       if (sessionError) {
@@ -146,78 +145,30 @@ export const SearchTab = ({
         return;
       }
 
-      console.log('🔍 Search session query result:', {
-        sessionData: sessionData,
-        sessionDataLength: sessionData?.length,
-        error: sessionError
-      });
-
       // Get the first (and only) result if any exist
       const session = sessionData && sessionData.length > 0 ? sessionData[0] : null;
 
-      console.log('🔍 Session found:', {
-        session: session,
-        hasSession: !!session
-      });
-
       if (!session) {
-        console.log('❌ No search session found for company_id:', currentCompany?.id);
-        
-        // Debug: Let's check what search sessions exist in the database
-        console.log('🔍 Debug: Checking all search sessions in database...');
-        const { data: allSessions, error: allSessionsError } = await supabase
-          .from('search_insights_sessions')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(10);
-        
-        console.log('🔍 All search sessions in database:', {
-          allSessions: allSessions,
-          allSessionsLength: allSessions?.length,
-          error: allSessionsError
-        });
-        
-        // Debug: Let's also check what company_id we're looking for vs what's stored
-        console.log('🔍 Debug: Company ID comparison:', {
-          lookingFor: currentCompany?.id,
-          lookingForType: typeof currentCompany?.id,
-          storedCompanyIds: allSessions?.map(s => ({ id: s.company_id, type: typeof s.company_id, name: s.company_name }))
-        });
-        
         return;
       }
 
       // Get search results for this session
-      console.log('🔍 Querying search_insights_results for session_id:', session.id);
       const { data: resultsData, error: resultsError } = await supabase
         .from('search_insights_results')
         .select('*')
         .eq('session_id', session.id)
         .order('position', { ascending: true });
 
-      console.log('🔍 Search results query result:', {
-        resultsData: resultsData,
-        resultsDataLength: resultsData?.length,
-        error: resultsError
-      });
-
       if (resultsError) {
         console.error('❌ Error fetching search results:', resultsError);
       }
 
       // Get search terms for this session
-      console.log('🔍 Querying search_insights_terms for session_id:', session.id);
       const { data: termsData, error: termsError } = await supabase
         .from('search_insights_terms')
         .select('*')
         .eq('session_id', session.id)
         .order('monthly_volume', { ascending: false });
-
-      console.log('🔍 Search terms query result:', {
-        termsData: termsData,
-        termsDataLength: termsData?.length,
-        error: termsError
-      });
 
       if (termsError) {
         console.error('❌ Error fetching search terms:', termsError);
@@ -291,15 +242,6 @@ export const SearchTab = ({
       setSearchResults(processedResults);
       setSearchTermsData(processedTermsData);
       setSearchTerm(session.initial_search_term);
-
-      console.log('✅ Successfully loaded stored search data:', {
-        resultsCount: processedResults.length,
-        termsCount: processedTermsData.length,
-        searchTerm: session.initial_search_term,
-        sessionId: session.id,
-        sessionCompanyName: session.company_name,
-        sessionCompanyId: session.company_id
-      });
 
     } catch (error) {
       console.error('❌ Error loading stored search data:', error);
@@ -412,70 +354,87 @@ export const SearchTab = ({
   return (
     <div className="space-y-6">
       {/* Main Section Header */}
-      <div className="space-y-2">
-        <h2 className="text-2xl font-bold text-gray-900">Search</h2>
-        <p className="text-gray-600">
-          Explore search results and analyze how {companyName} appears in web searches across different platforms.
-        </p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold text-gray-900">Search</h2>
+          <p className="text-gray-600">
+            Explore traditional search results and analyze how {companyName} appears in web searches across different platforms.
+          </p>
+        </div>
+        {(searchResults.length > 0 || searchTermsData.length > 0) && (
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => setActiveTab(value as 'results' | 'terms')}
+            className="w-full sm:w-auto"
+          >
+            <TabsList className="grid w-full grid-cols-2 sm:w-auto">
+              <TabsTrigger value="results">Search Results</TabsTrigger>
+              <TabsTrigger value="terms">Search Terms</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
       </div>
 
       {/* Combined Search Data */}
       {(searchResults.length > 0 || searchTermsData.length > 0) && (
         <Card>
-          <CardContent>
+          <CardContent className="p-0">
             {activeTab === 'results' && searchResults.length > 0 && (
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Mentions</TableHead>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Domain</TableHead>
-                      <TableHead>Media Type</TableHead>
-                      <TableHead>Search Term</TableHead>
-                      <TableHead>Monthly Volume</TableHead>
+                      <TableHead className="w-12">Rank</TableHead>
+                      <TableHead className="w-48">Title</TableHead>
+                      <TableHead className="w-32">Domain</TableHead>
+                      <TableHead className="w-32">Search Term</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {searchResults.map((result) => (
+                    {(() => {
+                      // Sort by mention count (descending), then by position (ascending)
+                      const sortedResults = [...searchResults].sort((a, b) => {
+                        // First sort by mention count (descending)
+                        const aMentions = a.mentionCount || 1;
+                        const bMentions = b.mentionCount || 1;
+                        if (bMentions !== aMentions) {
+                          return bMentions - aMentions;
+                        }
+                        // Then by position (ascending)
+                        return (a.position || 100) - (b.position || 100);
+                      });
+                      
+                      return sortedResults.map((result, index) => (
                       <TableRow 
                         key={result.id}
                         className="cursor-pointer hover:bg-gray-50 transition-colors"
                         onClick={() => window.open(result.link, '_blank', 'noopener,noreferrer')}
                       >
-                        <TableCell>
-                          <Badge variant="default" className="text-xs">
-                            {result.mentionCount || 1}
+                        <TableCell className="w-12">
+                          <Badge variant="outline" className="font-mono text-xs bg-gray-50 text-gray-700 border-gray-300">
+                            {index + 1}
                           </Badge>
                         </TableCell>
-                        <TableCell>
-                          <div className="max-w-xs">
+                        <TableCell className="w-48 overflow-hidden">
+                          <div className="min-w-0">
                             <p className="font-medium text-sm truncate" title={result.title}>
                               {result.title}
                             </p>
-                            <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                            <p className="text-xs text-gray-500 mt-1 line-clamp-1" title={result.snippet}>
                               {result.snippet}
                             </p>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Favicon domain={result.domain} size="sm" />
-                            <span className="text-sm font-medium text-gray-900" title={result.domain}>
-                              {result.domain.length > 15 ? `${result.domain.substring(0, 15)}...` : result.domain}
+                        <TableCell className="w-32 overflow-hidden">
+                          <div className="flex items-center gap-1 min-w-0">
+                            <Favicon domain={result.domain} size="sm" className="shrink-0" />
+                            <span className="text-sm font-medium text-gray-900 truncate min-w-0" title={result.domain}>
+                              {result.domain}
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <Badge 
-                            variant="outline" 
-                            className={`text-xs ${result.mediaType ? MEDIA_TYPE_COLORS[result.mediaType] : 'bg-gray-100 text-gray-800 border-gray-200'}`}
-                          >
-                            {result.mediaType ? MEDIA_TYPE_LABELS[result.mediaType] : 'Unknown'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-nowrap gap-2">
+                        <TableCell className="w-32 overflow-hidden">
+                          <div className="min-w-0">
                             {(() => {
                               const searchTerms = (result.allSearchTerms || result.searchTerm || searchTerm)
                                 .split(',')
@@ -486,37 +445,32 @@ export const SearchTab = ({
                               const extraCount = searchTerms.length - maxToShow;
                               
                               return (
-                                <>
+                                <div className="flex items-center gap-1 min-w-0">
                                   {searchTerms.slice(0, maxToShow).map((term, idx) => (
-                                    <span key={idx} className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">
+                                    <span key={idx} className="px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 truncate" title={term}>
                                       {term}
                                     </span>
                                   ))}
                                   {extraCount > 0 && (
-                                    <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">
-                                      +{extraCount} more
+                                    <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 whitespace-nowrap">
+                                      +{extraCount}
                                     </span>
                                   )}
-                                </>
+                                </div>
                               );
                             })()}
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1">
-                            <TrendingUp className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm">{formatSearchVolume(result.monthlySearchVolume)}</span>
-                          </div>
-                        </TableCell>
                       </TableRow>
-                    ))}
+                      ));
+                    })()}
                   </TableBody>
                 </Table>
               </div>
             )}
             
             {activeTab === 'terms' && searchTermsData.length > 0 && (
-              <div className="overflow-x-auto">
+              <div className="w-full overflow-hidden">
                 <Table>
                   <TableHeader>
                     <TableRow>

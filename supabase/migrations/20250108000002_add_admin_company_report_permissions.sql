@@ -6,13 +6,14 @@ CREATE OR REPLACE FUNCTION is_admin()
 RETURNS BOOLEAN AS $$
 BEGIN
   -- Check if the current user's email is in the admin list
-  -- You can modify this to use a proper admin table or role-based system
+  -- SECURITY DEFINER allows this function to bypass RLS when checking profiles
   RETURN EXISTS (
     SELECT 1 FROM profiles 
     WHERE id = auth.uid() 
-    AND email IN (
+    AND LOWER(email) IN (
       'admin@perceptionx.com',
-      'karim@perceptionx.com'
+      'karim@perceptionx.com',
+      'karim@perceptionx.ai'
       -- Add more admin emails as needed
     )
   );
@@ -47,4 +48,20 @@ CREATE POLICY "Admins can view all confirmed prompts" ON confirmed_prompts
 
 -- Grant admin access to view all profiles
 CREATE POLICY "Admins can view all profiles" ON profiles
+  FOR SELECT USING (is_admin());
+
+-- Grant admin access to view all organizations
+CREATE POLICY "Admins can view all organizations" ON organizations
+  FOR SELECT USING (is_admin());
+
+-- Grant admin access to view all organization members
+CREATE POLICY "Admins can view all organization members" ON organization_members
+  FOR SELECT USING (is_admin());
+
+-- Grant admin access to view all organization companies
+CREATE POLICY "Admins can view all organization companies" ON organization_companies
+  FOR SELECT USING (is_admin());
+
+-- Grant admin access to view all companies
+CREATE POLICY "Admins can view all companies" ON companies
   FOR SELECT USING (is_admin());

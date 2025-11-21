@@ -52,6 +52,9 @@ interface OverviewTabProps {
   isPro?: boolean; // Add Pro subscription status
   searchResults?: any[]; // Add search results
   aiThemes?: AITheme[]; // Add AI themes as prop
+  recencyData?: any[]; // Add recency data for relevance calculation
+  recencyDataLoading?: boolean; // Loading state for recency data
+  aiThemesLoading?: boolean; // Loading state for AI themes
 }
 
 interface TimeBasedData {
@@ -88,7 +91,10 @@ export const OverviewTab = ({
   talentXProData = [],
   isPro = false,
   searchResults = [],
-  aiThemes = []
+  aiThemes = [],
+  recencyData = [],
+  recencyDataLoading = false,
+  aiThemesLoading = false
 }: OverviewTabProps) => {
   const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = useState(false);
@@ -110,6 +116,68 @@ export const OverviewTab = ({
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  // Helper function to calculate AI-based sentiment for a response (similar to useDashboardData)
+  // Only counts themes from responses that belong to the current company
+  const calculateAIBasedSentiment = useMemo(() => {
+    // Build a cache of sentiment calculations per response ID
+    const cache = new Map<string, { sentiment_score: number; sentiment_label: string }>();
+    
+    // Create a Set of response IDs from the current company's responses
+    // This ensures we only count themes from responses belonging to the current company
+    const companyResponseIds = new Set(responses.map(r => r.id));
+    
+    if (aiThemes.length === 0) {
+      // Return a function that always returns neutral if no themes
+      return (responseId: string) => {
+        return { sentiment_score: 0, sentiment_label: 'neutral' };
+      };
+    }
+    
+    // Filter themes to only include those from the current company's responses
+    const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
+    
+    // Group themes by response_id for efficient processing
+    const themesByResponseId = new Map<string, AITheme[]>();
+    companyThemes.forEach(theme => {
+      if (!themesByResponseId.has(theme.response_id)) {
+        themesByResponseId.set(theme.response_id, []);
+      }
+      themesByResponseId.get(theme.response_id)!.push(theme);
+    });
+    
+    // Calculate sentiment for each response ID once
+    themesByResponseId.forEach((responseThemes, responseId) => {
+      const positiveThemes = responseThemes.filter(theme => theme.sentiment_score > 0.1).length;
+      const negativeThemes = responseThemes.filter(theme => theme.sentiment_score < -0.1).length;
+      const totalThemes = positiveThemes + negativeThemes;
+      
+      if (totalThemes === 0) {
+        // All themes are neutral
+        cache.set(responseId, { sentiment_score: 0, sentiment_label: 'neutral' });
+        return;
+      }
+      
+      // Sentiment score is the ratio of positive themes (0-1 scale)
+      const sentimentRatio = positiveThemes / totalThemes;
+      const sentimentLabel = sentimentRatio > 0.6 ? 'positive' : sentimentRatio < 0.4 ? 'negative' : 'neutral';
+      
+      cache.set(responseId, { 
+        sentiment_score: sentimentRatio, 
+        sentiment_label: sentimentLabel 
+      });
+    });
+    
+    // Return a function that looks up from cache
+    return (responseId: string) => {
+      const cached = cache.get(responseId);
+      if (cached) {
+        return cached;
+      }
+      // No AI themes available for this response - return neutral sentiment
+      return { sentiment_score: 0, sentiment_label: 'neutral' };
+    };
+  }, [aiThemes, responses]);
+
 
 
 
@@ -117,7 +185,7 @@ export const OverviewTab = ({
   const breakdowns = [
     {
       title: 'Sentiment',
-      value: Math.round((metrics.averageSentiment + 1) * 50),
+      value: Math.round(metrics.averageSentiment * 100), // Convert ratio (0-1) to percentage (0-100)
       trend: metrics.sentimentTrendComparison,
       color: 'green',
       description: 'How positively your brand is perceived based on AI thematic analysis.'
@@ -822,40 +890,142 @@ export const OverviewTab = ({
     },
   } satisfies ChartConfig
 
-  // Compute perception score trend by date
+  // Compute perception score trend based on confirmed_prompts and tested_at dates
+  // This groups responses by collection period (tested_at) and calculates scores for each period
   const perceptionScoreTrend = useMemo(() => {
     if (!responses || responses.length === 0) return [];
-    // Group responses by date
-    const grouped: Record<string, any[]> = {};
+    
+    // Helper to parse citations
+    const parseCitations = (citations: any) => {
+      if (!citations) return [];
+      try {
+        return typeof citations === 'string' ? JSON.parse(citations) : citations;
+      } catch {
+        return [];
+      }
+    };
+    
+    // Build a map of URL to recency_score for quick lookup
+    const recencyMap = new Map<string, number>();
+    recencyData.forEach(item => {
+      if (item.url && item.recency_score !== null && item.recency_score !== undefined) {
+        recencyMap.set(item.url, item.recency_score);
+      }
+    });
+    
+    // Step 1: Get all unique tested_at dates (collection periods)
+    const uniqueDates = new Set<string>();
     responses.forEach(r => {
       const date = new Date(r.tested_at).toISOString().split('T')[0];
-      if (!grouped[date]) grouped[date] = [];
-      grouped[date].push(r);
+      uniqueDates.add(date);
     });
-    // For each date, calculate perception score using the same formula as in useDashboardData
-    return Object.entries(grouped)
-      .map(([date, group]) => {
-        // Average sentiment
-        const avgSentiment = group.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / group.length;
-        const normalizedSentiment = Math.max(0, Math.min(100, (avgSentiment + 1) * 50));
-        // Average visibility
-        const visScores = group.map(r => typeof r.visibility_score === 'number' ? r.visibility_score : undefined).filter((v): v is number => typeof v === 'number');
-        const avgVisibility = visScores.length > 0 ? visScores.reduce((sum, v) => sum + v, 0) / visScores.length : 0;
-        // Average relevance (placeholder as relevance data might not be available per response)
-        const avgRelevance = 0;
-        // Weighted formula: 50% sentiment + 30% visibility + 20% relevance (excluding competitive)
-        const perceptionScore = Math.round(
-          (normalizedSentiment * 0.5) +
-          (avgVisibility * 0.3) +
-          (avgRelevance * 0.2)
-        );
-        return {
-          date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          score: perceptionScore
-        };
-      })
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [responses]);
+    
+    
+    // Step 2: For each collection period, get the latest response per prompt+model combination
+    const collectionPeriods = Array.from(uniqueDates).map(date => {
+      // Get all responses from this date
+      const dateResponses = responses.filter(r => {
+        const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
+        return responseDate === date;
+      });
+      
+      
+      // For this collection period, get unique prompt+model combinations
+      // This ensures we're comparing the same set of prompts across periods
+      const promptModelMap = new Map<string, any>();
+      dateResponses.forEach(r => {
+        const key = `${r.confirmed_prompt_id}_${r.ai_model}`;
+        // Only keep if this is the latest for this prompt+model on this date
+        if (!promptModelMap.has(key) || 
+            new Date(r.tested_at).getTime() > new Date(promptModelMap.get(key).tested_at).getTime()) {
+          promptModelMap.set(key, r);
+        }
+      });
+      
+      const periodResponses = Array.from(promptModelMap.values());
+      
+      // Filter for sentiment and competitive responses only for score calculation
+      const relevantResponses = periodResponses.filter(r => {
+        const promptType = r.confirmed_prompts?.prompt_type;
+        return promptType === 'sentiment' || 
+               promptType === 'competitive' || 
+               promptType === 'talentx_sentiment' || 
+               promptType === 'talentx_competitive';
+      });
+      
+      // Calculate AI-based sentiment for this period
+      // Use overall positive ratio directly from themes (not averaged across responses)
+      let avgSentiment = 0;
+      if (relevantResponses.length > 0 && aiThemes.length > 0) {
+        // Get themes for this period's responses
+        const periodResponseIds = new Set(periodResponses.map(r => r.id));
+        const periodThemes = aiThemes.filter(theme => periodResponseIds.has(theme.response_id));
+        
+        const positiveThemes = periodThemes.filter(theme => theme.sentiment_score > 0.1).length;
+        const negativeThemes = periodThemes.filter(theme => theme.sentiment_score < -0.1).length;
+        const totalNonNeutralThemes = positiveThemes + negativeThemes;
+        
+        // Calculate overall positive ratio (0-1 scale)
+        avgSentiment = totalNonNeutralThemes > 0 
+          ? positiveThemes / totalNonNeutralThemes 
+          : 0;
+      } else if (relevantResponses.length > 0) {
+        // Fallback to direct sentiment_score if no AI themes
+        avgSentiment = relevantResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / relevantResponses.length;
+      }
+      // Convert ratio (0-1) to percentage (0-100)
+      const normalizedSentiment = Math.max(0, Math.min(100, avgSentiment * 100));
+      
+      // Calculate visibility (percentage of responses where company was mentioned)
+      const mentionedCount = periodResponses.filter(r => r.company_mentioned === true).length;
+      const avgVisibility = periodResponses.length > 0 
+        ? (mentionedCount / periodResponses.length) * 100 
+        : 0;
+      
+      // Calculate relevance from recency data
+      // Get all citations from responses in this period and match to recency data
+      const periodCitations = periodResponses.flatMap(r => parseCitations(r.citations));
+      const recencyScores: number[] = [];
+      
+      periodCitations.forEach((citation: any) => {
+        const url = citation.url || citation.link;
+        if (url && recencyMap.has(url)) {
+          const score = recencyMap.get(url)!;
+          recencyScores.push(score);
+        }
+      });
+      
+      const avgRelevance = recencyScores.length > 0
+        ? recencyScores.reduce((sum, score) => sum + score, 0) / recencyScores.length
+        : 0;
+      
+      // Weighted formula: 50% sentiment + 30% visibility + 20% relevance
+      const perceptionScore = Math.round(
+        (normalizedSentiment * 0.5) +
+        (avgVisibility * 0.3) +
+        (avgRelevance * 0.2)
+      );
+      
+      
+      return {
+        date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        fullDate: date,
+        score: perceptionScore,
+        responseCount: periodResponses.length,
+        promptCount: promptModelMap.size,
+        sentiment: Math.round(normalizedSentiment),
+        visibility: Math.round(avgVisibility),
+        relevance: Math.round(avgRelevance)
+      };
+    });
+    
+    // Step 3: Sort by date ascending
+    const sorted = collectionPeriods.sort((a, b) => 
+      new Date(a.fullDate).getTime() - new Date(b.fullDate).getTime()
+    );
+    
+    return sorted;
+  }, [responses, aiThemes, recencyData, calculateAIBasedSentiment]);
 
   // Prepare chart data for LLM mentions
   const llmMentionChartData = useMemo(() => {
@@ -883,7 +1053,7 @@ export const OverviewTab = ({
           <div className="flex flex-row items-start justify-between px-8 pt-6 pb-1 z-10">
             <div className="flex flex-col items-start">
               <div className="flex items-center gap-2 mb-2">
-                <CardTitle className="text-lg font-bold text-gray-700 tracking-wide">Score</CardTitle>
+                <CardTitle className="text-lg font-bold text-gray-700 tracking-wide">EPS</CardTitle>
                 <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-pink-100 text-pink-700 border-pink-200">
                   BETA
                 </Badge>
@@ -895,55 +1065,72 @@ export const OverviewTab = ({
                       </span>
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      Your perception score is an aggregate of sentiment, visibility and competitive scores.
+                The Employer Perception Score is an aggregate of sentiment, visibility and competitive scores.      
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               </div>
               <div className="flex items-end gap-3 mb-1 mt-2">
-                <span className="text-6xl font-extrabold text-gray-900 drop-shadow-sm leading-none">{metrics.perceptionScore}</span>
-                <span className={`ml-4 flex items-center gap-1 text-xl font-semibold ${metrics.sentimentTrendComparison.direction === 'up' ? 'text-green-600' : metrics.sentimentTrendComparison.direction === 'down' ? 'text-red-600' : 'text-gray-400'}`}
-                  style={{marginBottom: 6}}>
-                  {metrics.sentimentTrendComparison.direction === 'up' && <TrendingUp className="w-5 h-5" />} 
-                  {metrics.sentimentTrendComparison.direction === 'down' && <TrendingDown className="w-5 h-5" />} 
-                  {metrics.sentimentTrendComparison.direction === 'neutral' && null}
-                  {metrics.sentimentTrendComparison.direction !== 'neutral' && `${metrics.sentimentTrendComparison.value}%`}
+                <span className="text-6xl font-extrabold text-gray-900 drop-shadow-sm leading-none">
+                  {perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1].score : metrics.perceptionScore}
                 </span>
+                {perceptionScoreTrend.length > 1 && (() => {
+                  const latestScore = perceptionScoreTrend[perceptionScoreTrend.length - 1].score;
+                  const previousScore = perceptionScoreTrend[perceptionScoreTrend.length - 2].score;
+                  const change = latestScore - previousScore;
+                  const direction = change > 0 ? 'up' : change < 0 ? 'down' : 'neutral';
+                  
+                  return (
+                    <span className={`ml-4 flex items-center gap-1 text-xl font-semibold ${direction === 'up' ? 'text-green-600' : direction === 'down' ? 'text-red-600' : 'text-gray-400'}`}
+                  style={{marginBottom: 6}}>
+                      {direction === 'up' && <TrendingUp className="w-5 h-5" />} 
+                      {direction === 'down' && <TrendingDown className="w-5 h-5" />} 
+                      {Math.abs(change)}
+                </span>
+                  );
+                })()}
               </div>
             </div>
             {/* Badge in top right */}
             <div className="flex items-start">
-              <span className={`px-3 py-1 rounded-full text-base font-semibold mt-1 ${metrics.perceptionScore >= 80 ? 'bg-green-100 text-green-800' : metrics.perceptionScore >= 65 ? 'bg-blue-100 text-blue-800' : metrics.perceptionScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{metrics.perceptionLabel}</span>
+              <span className={`px-3 py-1 rounded-full text-base font-semibold mt-1 ${(() => {
+                const currentScore = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1].score : metrics.perceptionScore;
+                return currentScore >= 80 ? 'bg-green-100 text-green-800' : currentScore >= 65 ? 'bg-blue-100 text-blue-800' : currentScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800';
+              })()}`}>{metrics.perceptionLabel}</span>
             </div>
           </div>
           {/* Bottom: Chart, visually anchored */}
-          <div className="w-full flex-1 flex items-end" style={{ minHeight: 0 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart 
-                data={perceptionScoreTrend.length > 1 ? perceptionScoreTrend : [
-                  { date: 'Start', score: metrics.perceptionScore },
-                  { date: 'Today', score: metrics.perceptionScore }
-                ]} 
-                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-              >
+           <div className="w-full flex-1 flex items-end" style={{ minHeight: 0 }}>
+             <div className="w-full" style={{ height: '60px' }}>
+               <ChartContainer config={{ score: { label: "Score", color: "#0DBCBA" } }} className="w-full h-full">
+                 <AreaChart 
+                   data={perceptionScoreTrend.length > 1 ? perceptionScoreTrend : [
+                     { date: 'Start', score: metrics.perceptionScore, fullDate: new Date().toISOString(), responseCount: responses.length },
+                     { date: 'Today', score: metrics.perceptionScore, fullDate: new Date().toISOString(), responseCount: responses.length }
+                   ]} 
+                   width={undefined}
+                   height={60}
+                   margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
+                 >
                 <defs>
                   <linearGradient id="colorPerceptionBg" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#0DBCBA" stopOpacity={0.18}/>
                     <stop offset="100%" stopColor="#0DBCBA" stopOpacity={0.04}/>
                   </linearGradient>
                 </defs>
-                <Area 
-                  type="monotone" 
-                  dataKey="score" 
-                  stroke="#0DBCBA" 
-                  strokeWidth={3} 
-                  fill="url(#colorPerceptionBg)" 
-                  dot={false} 
-                  isAnimationActive={false} 
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+                 <Area 
+                   type="monotone" 
+                   dataKey="score" 
+                   stroke="#0DBCBA" 
+                   strokeWidth={3} 
+                   fill="url(#colorPerceptionBg)" 
+                   dot={false}
+                   isAnimationActive={false} 
+                 />
+                 </AreaChart>
+               </ChartContainer>
+             </div>
+           </div>
         </Card>
         {/* Score Breakdown Card */}
         <Card 
@@ -971,27 +1158,87 @@ export const OverviewTab = ({
             </div>
           </CardHeader>
           <CardContent className="px-4 sm:px-8 pb-4 flex-1 flex flex-col justify-center">
+            {(() => {
+              // Get latest and previous period data
+              const latestPeriod = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1] : null;
+              const previousPeriod = perceptionScoreTrend.length > 1 ? perceptionScoreTrend[perceptionScoreTrend.length - 2] : null;
+              
+              // Calculate changes
+              const sentimentChange = latestPeriod && previousPeriod ? latestPeriod.sentiment - previousPeriod.sentiment : 0;
+              const visibilityChange = latestPeriod && previousPeriod ? latestPeriod.visibility - previousPeriod.visibility : 0;
+              const relevanceChange = latestPeriod && previousPeriod ? latestPeriod.relevance - previousPeriod.relevance : 0;
+              
+              // Use latest period data if available, otherwise fall back to metrics
+              const currentSentiment = latestPeriod ? latestPeriod.sentiment : Math.round(metrics.averageSentiment * 100);
+              const currentVisibility = latestPeriod ? latestPeriod.visibility : Math.round(metrics.averageVisibility);
+              // For relevance, if latestPeriod exists but relevance is 0, it might mean no data for that period
+              // In that case, fall back to the overall average relevance from metrics (if available)
+              // Only use period relevance if it's > 0, or if overall relevance is also 0 (meaning legitimately 0%)
+              const currentRelevance = latestPeriod 
+                ? (latestPeriod.relevance > 0 || metrics.averageRelevance === 0 
+                    ? latestPeriod.relevance 
+                    : Math.round(metrics.averageRelevance))
+                : Math.round(metrics.averageRelevance);
+              
+              return (
+                <>
             <div className="flex items-center gap-2 sm:gap-3 mb-6">
               <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Sentiment</span>
               <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${Math.round((metrics.averageSentiment + 1) * 50)}%` }} />
+                      <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${currentSentiment}%` }} />
               </div>
-              <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{Math.round((metrics.averageSentiment + 1) * 50)}%</span>
+                    <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
+                      <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentSentiment}%</span>
+                      {previousPeriod && sentimentChange !== 0 && (
+                        <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                          sentimentChange > 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {sentimentChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
+                          {sentimentChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                          <span className="whitespace-nowrap">{Math.abs(sentimentChange)}</span>
+                        </span>
+                      )}
+                    </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 mb-6">
               <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Visibility</span>
               <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageVisibility)}%` }} />
+                      <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${currentVisibility}%` }} />
               </div>
-              <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{Math.round(metrics.averageVisibility)}%</span>
+                    <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
+                      <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentVisibility}%</span>
+                      {previousPeriod && visibilityChange !== 0 && (
+                        <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                          visibilityChange > 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {visibilityChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
+                          {visibilityChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                          <span className="whitespace-nowrap">{Math.abs(visibilityChange)}</span>
+                        </span>
+                      )}
+                    </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
               <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Relevance</span>
               <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageRelevance)}%` }} />
+                      <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${currentRelevance}%` }} />
               </div>
-              <span className="ml-1 sm:ml-2 text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{Math.round(metrics.averageRelevance)}%</span>
+                    <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
+                      <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentRelevance}%</span>
+                      {previousPeriod && relevanceChange !== 0 && (
+                        <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                          relevanceChange > 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {relevanceChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
+                          {relevanceChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                          <span className="whitespace-nowrap">{Math.abs(relevanceChange)}</span>
+                        </span>
+                      )}
             </div>
+                  </div>
+                </>
+              );
+            })()}
           </CardContent>
         </Card>
       </div>
@@ -1019,6 +1266,7 @@ export const OverviewTab = ({
             responses={responses}
             companyName={companyName}
             searchResults={searchResults}
+            perceptionScoreTrend={perceptionScoreTrend}
           />
         </div>
 
@@ -1028,6 +1276,7 @@ export const OverviewTab = ({
             responses={responses}
             companyName={companyName}
             searchResults={searchResults}
+            perceptionScoreTrend={perceptionScoreTrend}
           />
         </div>
 
@@ -1036,6 +1285,7 @@ export const OverviewTab = ({
             talentXProData={talentXProData}
             aiThemes={aiThemes}
             companyName={companyName}
+            perceptionScoreTrend={perceptionScoreTrend}
           />
         </div>
       </div>
@@ -1199,7 +1449,7 @@ export const OverviewTab = ({
                 <CardContent>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-green-600">{Math.round((metrics.averageSentiment + 1) * 50)}%</div>
+                      <div className="text-2xl font-bold text-green-600">{Math.round(metrics.averageSentiment * 100)}%</div>
                       <div className="text-sm text-gray-600">Sentiment</div>
                     </div>
                     <div className="text-center">
@@ -1233,10 +1483,10 @@ export const OverviewTab = ({
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-3">
                     <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${Math.round((metrics.averageSentiment + 1) * 50)}%` }} />
+                      <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageSentiment * 100)}%` }} />
                     </div>
                     <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
-                      {Math.round((metrics.averageSentiment + 1) * 50)}%
+                      {Math.round(metrics.averageSentiment * 100)}%
                     </span>
                   </div>
                   <div>

@@ -107,10 +107,12 @@ export class FirecrawlService {
     // Analyze competitor mentions in AI responses
     const competitorMentions = new Set<string>();
     aiResponses.forEach(response => {
-      if (response.competitor_mentions) {
-        const mentions = Array.isArray(response.competitor_mentions) 
-          ? response.competitor_mentions 
-          : JSON.parse(response.competitor_mentions as string || '[]');
+      if (response.detected_competitors) {
+        const mentions = response.detected_competitors
+          .split(',')
+          .map((comp: string) => comp.trim())
+          .filter((comp: string) => comp.length > 0)
+          .map((comp: string) => ({ name: comp }));
         mentions.forEach((mention: any) => {
           const name = typeof mention === 'string' ? mention : mention.name;
           if (name && name !== companyName) {

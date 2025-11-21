@@ -184,14 +184,14 @@ function analyzeContentGaps(scrapedContent: string, aiResponses: any[], companyN
   // Analyze competitor mentions in AI responses
   const competitorMentions = new Set<string>()
   aiResponses.forEach(response => {
-    if (response.competitor_mentions) {
+    if (response.detected_competitors) {
       try {
-        const mentions = typeof response.competitor_mentions === 'string' 
-          ? JSON.parse(response.competitor_mentions) 
-          : response.competitor_mentions
-        mentions.forEach((mention: any) => {
-          if (mention.company && mention.company !== companyName) {
-            competitorMentions.add(mention.company)
+        const competitors = typeof response.detected_competitors === 'string' 
+          ? response.detected_competitors.split(',').map(c => c.trim()).filter(c => c.length > 0)
+          : [];
+        competitors.forEach((competitor: string) => {
+          if (competitor && competitor !== companyName) {
+            competitorMentions.add(competitor);
           }
         })
       } catch (e) {

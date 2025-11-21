@@ -94,7 +94,7 @@ export default function Usage() {
 
   const handleRefresh = async (modelType?: string) => {
     if (!companyName) return;
-    await refreshAllPrompts(companyName, modelType);
+    await refreshAllPrompts(companyName, { modelType });
   };
 
   const handleResetTalentX = async () => {
@@ -135,8 +135,8 @@ export default function Usage() {
   const limits = getLimits();
   const usageData = {
     prompts: subscription?.prompts_used || 0,
-    teamMembers: 1, // TODO: implement team member tracking
-    projects: 1, // TODO: implement project tracking
+    teamMembers: 1, // Team member tracking - coming soon
+    projects: 1, // Project tracking - coming soon
   };
 
   return (

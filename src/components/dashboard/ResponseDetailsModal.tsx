@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink, Lightbulb, Building2, MessageSquare } from "lucide-react";
+import { ExternalLink, Lightbulb, Building2, MessageSquare, RefreshCw, Languages } from "lucide-react";
 import LLMLogo from "@/components/LLMLogo";
 import { PromptResponse, PromptData } from "@/types/dashboard";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -15,6 +15,9 @@ import ReactMarkdown from 'react-markdown';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { supabase } from "@/integrations/supabase/client";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
+import type { RefreshProgress } from "@/hooks/useRefreshPrompts";
 
 interface ResponseDetailsModalProps {
   isOpen: boolean;
@@ -23,6 +26,10 @@ interface ResponseDetailsModalProps {
   responses: PromptResponse[];
   promptsData?: PromptData[];
   showMarkdownCheatSheet?: boolean;
+  companyName?: string;
+  onRefreshPrompt?: (promptIds: string[], companyName: string) => Promise<void>;
+  isRefreshing?: boolean;
+  refreshProgress?: RefreshProgress | null;
 }
 
 export const ResponseDetailsModal = ({ 
@@ -31,7 +38,11 @@ export const ResponseDetailsModal = ({
   promptText, 
   responses,
   promptsData = [],
-  showMarkdownCheatSheet = false
+  showMarkdownCheatSheet = false,
+  companyName,
+  onRefreshPrompt,
+  isRefreshing = false,
+  refreshProgress = null
 }: ResponseDetailsModalProps) => {
   const [selectedResponse, setSelectedResponse] = useState<PromptResponse | null>(
     responses.length > 0 ? responses[0] : null
@@ -40,13 +51,46 @@ export const ResponseDetailsModal = ({
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryCache, setSummaryCache] = useState<{ [prompt: string]: string }>({});
+  const [isRefreshingPrompt, setIsRefreshingPrompt] = useState(false);
+  const [translatedSummary, setTranslatedSummary] = useState<string>("");
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [isNonEnglish, setIsNonEnglish] = useState(false);
   const isMobile = useIsMobile();
+  const { user } = useAuth();
 
   // Find the matching PromptData for this promptText
   const promptData = promptsData.find ? promptsData.find(p => p.prompt === promptText) : undefined;
   const sentimentLabel = promptData?.sentimentLabel;
   const visibilityScores = promptData?.visibilityScores;
   const avgVisibility = visibilityScores && visibilityScores.length > 0 ? visibilityScores.reduce((sum, score) => sum + score, 0) / visibilityScores.length : (responses.length > 0 ? responses.reduce((sum, r) => sum + (r.company_mentioned ? 100 : 0), 0) / responses.length : 0);
+  
+  // Extract competitors from promptData or aggregate from responses
+  const getCompetitors = () => {
+    // First try to get from promptData
+    if (promptData?.detectedCompetitors) {
+      return promptData.detectedCompetitors
+        .split(',')
+        .map((comp: string) => comp.trim())
+        .filter((comp: string) => comp.length > 0);
+    }
+    
+    // Otherwise aggregate from responses
+    const competitorSet = new Set<string>();
+    responses.forEach(response => {
+      if (response.detected_competitors) {
+        const competitors = response.detected_competitors
+          .split(',')
+          .map((comp: string) => comp.trim())
+          .filter((comp: string) => comp.length > 0);
+        competitors.forEach(comp => competitorSet.add(comp));
+      }
+    });
+    
+    return Array.from(competitorSet);
+  };
+  
+  const competitors = getCompetitors();
 
 
 
@@ -60,7 +104,7 @@ export const ResponseDetailsModal = ({
   }, [responses]);
 
   // Compute averages and sources - use AI-based sentiment from promptData if available
-  const avgSentiment = promptData?.avgSentiment ?? (responses.length > 0 ? responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / responses.length : 0);
+  const avgSentiment = promptData?.avgSentiment ?? 0; // No fallback to removed sentiment_score
   const avgSentimentLabel = promptData?.sentimentLabel ?? (avgSentiment > 0.1 ? "Positive" : avgSentiment < -0.1 ? "Negative" : "Neutral");
   const brandMentionedPct = responses.length > 0 ? Math.round(responses.filter(r => r.company_mentioned).length / responses.length * 100) : 0;
 
@@ -159,12 +203,12 @@ export const ResponseDetailsModal = ({
     const useAIBasedSentiment = promptData?.avgSentiment !== undefined;
     const sentimentScores = useAIBasedSentiment 
       ? [promptData!.avgSentiment] // Use single AI-based sentiment score
-      : responses.map(r => r.sentiment_score).filter(Boolean);
+      : []; // No fallback to removed sentiment_score
     
     if (sentimentScores.length > 0) {
       const avgSentiment = useAIBasedSentiment 
         ? promptData!.avgSentiment 
-        : sentimentScores.reduce((a, b) => a + b!, 0) / sentimentScores.length;
+        : 0; // No fallback calculation
       
       if (useAIBasedSentiment) {
         // AI-based sentiment analysis insights
@@ -211,7 +255,7 @@ export const ResponseDetailsModal = ({
     }
 
     // Analyze competitor mentions
-    const competitorMentions = responses.filter(r => r.competitor_mentions).length;
+    const competitorMentions = responses.filter(r => r.detected_competitors).length;
     if (competitorMentions > 0) {
       insights.push(`${competitorMentions} models mentioned competitors - review competitive positioning`);
     }
@@ -227,10 +271,174 @@ export const ResponseDetailsModal = ({
     });
     return Array.from(models);
   }
+
+  // Extract company name from prompt text if not provided
+  const extractedCompanyName = companyName || (() => {
+    // Try to extract company name from visibility prompts like "which companies in X industry mention Y?"
+    const mentionPattern = /mention\s+([A-Z][a-zA-Z\s&]+?)(?:\s+in|,|\?|$)/i;
+    const match = promptText.match(mentionPattern);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+    
+    // Try patterns like "about [Company]" or "regarding [Company]"
+    const aboutPattern = /(?:about|regarding|for)\s+([A-Z][a-zA-Z\s&]+?)(?:\s+in|,|\?|$)/i;
+    const aboutMatch = promptText.match(aboutPattern);
+    if (aboutMatch && aboutMatch[1]) {
+      return aboutMatch[1].trim();
+    }
+    
+    return null;
+  })();
+
+  // Get snippets where company is mentioned
+  const getCompanyMentionSnippets = () => {
+    if (!extractedCompanyName) return [];
+    
+    const snippets: { snippet: string; model: string; full: string }[] = [];
+    const companyLower = extractedCompanyName.toLowerCase();
+    
+    // Find responses where company is mentioned
+    const mentionedResponses = responses.filter(r => r.company_mentioned === true);
+    
+    mentionedResponses.forEach(response => {
+      if (!response.response_text) return;
+      
+      const text = response.response_text;
+      const textLower = text.toLowerCase();
+      
+      // Find all occurrences of company name (case-insensitive)
+      const companyPattern = new RegExp(
+        `(?:\\b)${extractedCompanyName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(?:\\b)`,
+        'gi'
+      );
+      
+      let match;
+      while ((match = companyPattern.exec(text)) !== null) {
+        const matchIndex = match.index;
+        
+        // Get context: 30 characters before and 100 characters after
+        const start = Math.max(0, matchIndex - 30);
+        const end = Math.min(text.length, matchIndex + match[0].length + 100);
+        
+        let snippet = text.slice(start, end);
+        
+        // Highlight the company name in the snippet
+        const highlightRegex = new RegExp(
+          `(${extractedCompanyName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')})`,
+          'gi'
+        );
+        
+        // Add ellipsis if not at start/end
+        if (start > 0) snippet = '...' + snippet;
+        if (end < text.length) snippet = snippet + '...';
+        
+        snippets.push({
+          snippet: snippet.trim(),
+          model: response.ai_model || 'Unknown',
+          full: response.response_text
+        });
+        
+        // Only get first mention per response to avoid duplicates
+        break;
+      }
+    });
+    
+    return snippets;
+  };
+
+  const companyMentionSnippets = getCompanyMentionSnippets();
+  
+  // Detect if text is non-English and translate it
+  const detectAndTranslate = async (text: string) => {
+    if (!text || !user) return;
+    
+    setIsTranslating(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setIsTranslating(false);
+        return;
+      }
+
+      // First, detect if the text is non-English
+      const detectPrompt = `Detect the language of the following text. Respond with only "English" if it's English, or the language name if it's not English (e.g., "Spanish", "French", "German", etc.). Only respond with the language name, nothing else.\n\nText: "${text.substring(0, 500)}"`;
+
+      const detectResponse = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-openai", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ prompt: detectPrompt })
+      });
+
+      if (!detectResponse.ok) {
+        setIsTranslating(false);
+        return;
+      }
+
+      const detectData = await detectResponse.json();
+      const detectedLanguage = detectData.response?.trim() || "";
+      
+      if (detectedLanguage.toLowerCase() === "english" || !detectedLanguage) {
+        setIsNonEnglish(false);
+        setIsTranslating(false);
+        return;
+      }
+
+      setIsNonEnglish(true);
+
+      // Translate to English
+      const translatePrompt = `Translate the following text to English. Preserve the meaning, tone, and structure. Keep company names, industry names, and proper nouns unchanged.\n\nOriginal text (${detectedLanguage}): "${text}"\n\nEnglish translation:`;
+
+      const translateResponse = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-openai", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ prompt: translatePrompt })
+      });
+
+      if (!translateResponse.ok) {
+        setIsTranslating(false);
+        return;
+      }
+
+      const translateData = await translateResponse.json();
+      if (translateData.response) {
+        setTranslatedSummary(translateData.response.trim());
+      }
+    } catch (error) {
+      console.error("Translation error:", error);
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  // Reset translation state when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setTranslatedSummary("");
+      setIsNonEnglish(false);
+      setShowTranslation(false);
+      setIsTranslating(false);
+    }
+  }, [isOpen]);
+
+  // Detect language when summary changes
+  useEffect(() => {
+    if (summary && summary.length > 0 && !translatedSummary && isOpen && user) {
+      detectAndTranslate(summary);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary, isOpen, user]);
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl h-[85vh] sm:h-[90vh] flex flex-col w-full mx-auto">
-        <DialogHeader className="pb-3 sm:pb-4 flex-shrink-0">
+      <DialogContent className={`max-w-4xl ${companyMentionSnippets.length > 0 ? 'h-[90vh] sm:h-[95vh]' : 'h-[85vh] sm:h-[90vh]'} flex flex-col w-full mx-auto p-0`}>
+        <DialogHeader className="pb-3 sm:pb-4 flex-shrink-0 px-6 pt-6">
           <div className="flex-1">
             <DialogTitle className="text-base sm:text-lg font-semibold mb-2 text-[#13274F] leading-tight text-left">
               {promptText}
@@ -240,6 +448,22 @@ export const ResponseDetailsModal = ({
             </DialogDescription>
           </div>
         </DialogHeader>
+        
+        {/* Progress Banner */}
+        {isRefreshing && refreshProgress && (
+          <div className="px-6 py-2 text-sm text-blue-700 bg-blue-50 border-b border-blue-100 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              <span>
+                Collecting responses: {refreshProgress.completed}/{refreshProgress.total} operations
+                {refreshProgress.currentModel && ` • ${refreshProgress.currentModel}`}
+                {refreshProgress.currentPrompt && ` • ${refreshProgress.currentPrompt.substring(0, 40)}...`}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <ScrollArea className="flex-1 px-6 pb-6">
 
         {/* Show summary card for all responses (including single TalentX responses) */}
         {responses.length === 0 ? (
@@ -259,16 +483,57 @@ export const ResponseDetailsModal = ({
                 <div className="text-center py-8 text-gray-500">
                   <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-300" />
                   <p className="text-lg font-medium mb-2">No responses yet</p>
-                  <p className="text-sm">
+                  <p className="text-sm mb-4">
                     This prompt hasn't been tested yet. Responses will appear here once the prompt is analyzed.
                   </p>
+                  {onRefreshPrompt && (
+                    <Button
+                      onClick={async () => {
+                        if (!user || !companyName) {
+                          toast.error('Unable to refresh prompt');
+                          return;
+                        }
+
+                        setIsRefreshingPrompt(true);
+                        try {
+                          // Find the prompt ID from the database
+                          const { data: promptData, error } = await supabase
+                            .from('confirmed_prompts')
+                            .select('id')
+                            .eq('prompt_text', promptText)
+                            .eq('user_id', user.id)
+                            .eq('is_active', true)
+                            .limit(1)
+                            .single();
+
+                          if (error || !promptData) {
+                            toast.error('Could not find prompt to refresh');
+                            return;
+                          }
+
+                          await onRefreshPrompt([promptData.id], companyName);
+                          toast.success('Prompt refresh started. Responses will appear shortly.');
+                        } catch (error) {
+                          console.error('Error refreshing prompt:', error);
+                          toast.error('Failed to refresh prompt');
+                        } finally {
+                          setIsRefreshingPrompt(false);
+                        }
+                      }}
+                      disabled={isRefreshingPrompt}
+                      className="mt-2"
+                    >
+                      <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshingPrompt ? 'animate-spin' : ''}`} />
+                      {isRefreshingPrompt ? 'Refreshing...' : 'Refresh Responses'}
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
           </div>
         ) : (
           <>
-                         {/* MODELS, SENTIMENT & VISIBILITY ROW - with labels above values */}
+                         {/* MODELS, SENTIMENT, VISIBILITY & COMPETITORS ROW - with labels above values */}
              <div className="flex flex-row gap-3 sm:gap-8 mt-1 mb-3 sm:mb-1 w-full overflow-x-auto">
                {/* Models */}
                <div className="flex flex-col items-start min-w-[120px] flex-shrink-0">
@@ -314,44 +579,80 @@ export const ResponseDetailsModal = ({
                <div className="flex flex-col items-start min-w-[90px] flex-shrink-0">
                  <span className="text-xs text-gray-400 font-medium mb-1">Visibility</span>
                  <span className="flex items-center gap-1">
-                   <svg width="20" height="20" viewBox="0 0 20 20" className="-ml-1">
-                     <circle
-                       cx="10"
-                       cy="10"
-                       r="8"
-                       fill="none"
-                       stroke="#e5e7eb"
-                       strokeWidth="2"
-                     />
-                     <circle
-                       cx="10"
-                       cy="10"
-                       r="8"
-                       fill="none"
-                       stroke={
-                         avgVisibility >= 95 ? '#22c55e' :
-                         avgVisibility >= 60 ? '#4ade80' :
-                         avgVisibility > 0 ? '#fde047' :
-                         '#e5e7eb'
-                       }
-                       strokeWidth="2"
-                       strokeDasharray={2 * Math.PI * 8}
-                       strokeDashoffset={2 * Math.PI * 8 * (1 - avgVisibility / 100)}
-                       strokeLinecap="round"
-                       style={{ transition: 'stroke-dashoffset 0.4s, stroke 0.4s' }}
-                     />
-                   </svg>
-                   <span className="text-xs font-regular text-gray-900">{Math.round(avgVisibility)}%</span>
+                   <Badge className={brandMentionedPct > 0 ? 'bg-[#06b6d4] text-white' : 'bg-gray-100 text-gray-800'}>
+                     {brandMentionedPct > 0 ? 'Yes' : 'No'}
+                   </Badge>
                  </span>
                </div>
              </div>
+             
+             {/* Competitors Row - Show all competitors */}
+             {competitors.length > 0 && (
+               <div className="mt-3 mb-3 border-t border-gray-200 pt-3">
+                 <div className="flex flex-col items-start">
+                   <span className="text-xs text-gray-400 font-medium mb-2">Competitors</span>
+                   <div className="flex flex-wrap gap-1 w-full">
+                     {competitors.map((name: string, idx: number) => (
+                       <Badge key={idx} variant="secondary" className="text-xs">{name}</Badge>
+                     ))}
+                   </div>
+                 </div>
+               </div>
+             )}
+             
+             {/* Company Mention Snippets */}
+             {brandMentionedPct > 0 && companyMentionSnippets.length > 0 && extractedCompanyName && (
+               <div className="mt-4 mb-4 border-t border-gray-200 pt-4">
+                 <div className="flex items-center gap-2 mb-3">
+                   <Building2 className="w-4 h-4 text-[#06b6d4]" />
+                   <span className="text-sm font-semibold text-gray-900">
+                     Where {extractedCompanyName} is mentioned:
+                   </span>
+                 </div>
+                 <div className="space-y-3">
+                   {companyMentionSnippets.slice(0, 3).map((item, idx) => (
+                     <div key={idx} className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                       <div className="flex items-center gap-2 mb-2">
+                         <LLMLogo modelName={item.model} size="sm" />
+                         <span className="text-xs font-medium text-gray-700">{getLLMDisplayName(item.model)}</span>
+                       </div>
+                       <p className="text-sm text-gray-800 leading-relaxed">
+                         {item.snippet.split(new RegExp(`(${extractedCompanyName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi')).map((part, i) => 
+                           part.toLowerCase() === extractedCompanyName.toLowerCase() ? (
+                             <span key={i} className="bg-yellow-200 font-semibold">{part}</span>
+                           ) : part
+                         )}
+                       </p>
+                     </div>
+                   ))}
+                   {companyMentionSnippets.length > 3 && (
+                     <div className="text-xs text-gray-500 text-center pt-2">
+                       +{companyMentionSnippets.length - 3} more mention{companyMentionSnippets.length - 3 !== 1 ? 's' : ''}
+                     </div>
+                   )}
+                 </div>
+               </div>
+             )}
             <div className="flex-1 min-h-0">
               <Card className="h-full flex flex-col">
                 <CardHeader className="pb-2 flex-shrink-0">
-                  <CardTitle className="text-base font-semibold text-[#13274F]">Summary</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base font-semibold text-[#13274F]">Summary</CardTitle>
+                    {isNonEnglish && !isTranslating && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowTranslation(!showTranslation)}
+                        className="text-xs"
+                      >
+                        <Languages className="w-3 h-3 mr-1" />
+                        {showTranslation ? 'Show Original' : 'See Translation'}
+                      </Button>
+                    )}
+                  </div>
                 </CardHeader>
-                <CardContent className="flex-1 p-4 overflow-hidden">
-                  <ScrollArea className="h-[300px] sm:h-[400px] w-full">
+                <CardContent className="flex-1 p-4">
+                  <div className="w-full">
                     {loadingSummary ? (
                       <div className="w-full">
                         <Skeleton className="h-6 w-3/4 mb-2" />
@@ -363,8 +664,14 @@ export const ResponseDetailsModal = ({
                       <div className="text-red-600 text-sm py-2">{summaryError}</div>
                     ) : (
                       <>
+                        {isTranslating && (
+                          <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            <span>Detecting language...</span>
+                          </div>
+                        )}
                         <div className="text-gray-800 text-sm sm:text-base mb-3 whitespace-pre-line leading-relaxed">
-                          <ReactMarkdown>{summary}</ReactMarkdown>
+                          <ReactMarkdown>{showTranslation && translatedSummary ? translatedSummary : summary}</ReactMarkdown>
                         </div>
                         {uniqueSources.length > 0 ? (
                           <div className="flex flex-wrap items-center gap-2 mt-2">
@@ -395,7 +702,7 @@ export const ResponseDetailsModal = ({
                         )}
                       </>
                     )}
-                  </ScrollArea>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -485,6 +792,7 @@ export const ResponseDetailsModal = ({
             </div>
           </div>
         )}
+        </ScrollArea>
       </DialogContent>
     </Dialog>
   );

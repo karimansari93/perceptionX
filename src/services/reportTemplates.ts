@@ -53,8 +53,8 @@ export class ReportTemplates {
     
     // Extract competitor mentions from responses
     const competitorMentions = responses
-      .filter(r => r.competitor_mentions)
-      .map(r => r.competitor_mentions)
+      .filter(r => r.detected_competitors)
+      .map(r => r.detected_competitors)
       .flat();
     
     const competitorCounts = competitorMentions.reduce((acc: Record<string, number>, mention: any) => {
@@ -251,10 +251,12 @@ Ready to transform your AI visibility? Upgrade to PerceptionX Pro today and turn
       data.responses.filter(r => r.mention_ranking).length || 0;
     
     const competitorMentions = data.responses.reduce((acc, response) => {
-      if (response.competitor_mentions) {
-        const mentions = Array.isArray(response.competitor_mentions) 
-          ? response.competitor_mentions 
-          : JSON.parse(response.competitor_mentions as string || '[]');
+      if (response.detected_competitors) {
+        const mentions = response.detected_competitors
+          .split(',')
+          .map((comp: string) => comp.trim())
+          .filter((comp: string) => comp.length > 0)
+          .map((comp: string) => ({ name: comp }));
         mentions.forEach((mention: any) => {
           const name = typeof mention === 'string' ? mention : mention.name;
           if (name) {

@@ -63,6 +63,42 @@ const TALENTX_ATTRIBUTES = [
     name: 'Career Opportunities',
     description: 'Career growth and development opportunities',
     keywords: ['career', 'growth', 'development', 'advancement', 'promotion', 'learning', 'training', 'mentorship']
+  },
+  {
+    id: 'application-process',
+    name: 'Application Process',
+    description: 'Candidate experience during the application and hiring workflow',
+    keywords: ['application', 'apply', 'job application', 'application process', 'hiring process', 'recruitment', 'applying', 'ATS', 'screening']
+  },
+  {
+    id: 'candidate-communication',
+    name: 'Candidate Communication',
+    description: 'Quality and cadence of communication with candidates',
+    keywords: ['communication', 'recruiter', 'updates', 'candidate communication', 'recruiter communication', 'feedback', 'response', 'status updates', 'follow-up']
+  },
+  {
+    id: 'interview-experience',
+    name: 'Interview Experience',
+    description: 'Structure and quality of candidate interviews',
+    keywords: ['interview', 'interviewing', 'interview process', 'interview experience', 'interviewer', 'interview questions', 'panel interview', 'technical interview']
+  },
+  {
+    id: 'candidate-feedback',
+    name: 'Candidate Feedback',
+    description: 'Feedback provided to candidates after interviews or applications',
+    keywords: ['feedback', 'candidate feedback', 'interview feedback', 'application feedback', 'response', 'rejection', 'offer feedback', 'communication outcome']
+  },
+  {
+    id: 'onboarding-experience',
+    name: 'Onboarding Experience',
+    description: 'New hire onboarding and orientation experience',
+    keywords: ['onboarding', 'new hire', 'orientation', 'onboarding process', 'first day', 'new employee', 'training', 'welcome', 'orientation program']
+  },
+  {
+    id: 'overall-candidate-experience',
+    name: 'Overall Candidate Experience',
+    description: 'End-to-end perception of the candidate journey',
+    keywords: ['candidate experience', 'candidate journey', 'recruitment experience', 'hiring experience', 'overall experience', 'candidate reputation', 'talent brand']
   }
 ];
 
@@ -90,7 +126,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { response_id, company_name, response_text, ai_model } = body;
+    const { response_id, company_name, response_text, ai_model, force = false } = body;
 
     // Validate required fields
     if (!response_id) {
@@ -129,7 +165,7 @@ serve(async (req) => {
     }
 
     // If themes already exist, optionally skip or replace
-    if (existingThemes && existingThemes.length > 0) {
+    if (existingThemes && existingThemes.length > 0 && !force) {
       console.log(`Themes already exist for response ${response_id}. Skipping analysis.`);
       return new Response(
         JSON.stringify({ 
@@ -139,6 +175,23 @@ serve(async (req) => {
         }),
         { headers: corsHeaders }
       );
+    }
+
+    // If force is true and themes exist, delete them first
+    if (existingThemes && existingThemes.length > 0 && force) {
+      console.log(`Force mode: Deleting ${existingThemes.length} existing themes for response ${response_id}`);
+      const { error: deleteError } = await supabase
+        .from('ai_themes')
+        .delete()
+        .eq('response_id', response_id);
+      
+      if (deleteError) {
+        console.error('Error deleting existing themes:', deleteError);
+        return new Response(
+          JSON.stringify({ error: 'Failed to delete existing themes', details: deleteError }),
+          { status: 500, headers: corsHeaders }
+        );
+      }
     }
 
     // Analyze themes using OpenAI
@@ -213,7 +266,11 @@ async function analyzeThemesWithOpenAI(responseText: string, companyName: string
   const prompt = `
 You are an expert in analyzing company responses to extract meaningful themes about employer branding and talent perception. 
 
-Analyze the following response about "${companyName}" and identify specific themes that relate to talent attraction and employer branding. For each theme you identify:
+Analyze the following response about "${companyName}" and identify specific themes that relate to talent attraction and employer branding. 
+
+CRITICAL: Only extract themes about "${companyName}" itself. Do NOT extract themes about competitors or other companies mentioned in the response. Focus exclusively on themes, perceptions, and information about "${companyName}".
+
+For each theme you identify:
 
 1. Provide a clear, concise theme name
 2. Write a brief description of the theme
@@ -230,6 +287,12 @@ Analyze the following response about "${companyName}" and identify specific them
    - leadership: Leadership (management quality, executive decisions, leadership style, management practices)
    - security-perks: Security & Perks (job security, office amenities, food, gym, transportation benefits)
    - career-opportunities: Career Opportunities (growth, advancement, learning, training, mentorship, promotions)
+   - application-process: Application Process (ease, clarity, and speed of applying or moving through the hiring funnel)
+   - candidate-communication: Candidate Communication (responsiveness, clarity, and helpfulness of recruiter/company updates)
+   - interview-experience: Interview Experience (structure, fairness, difficulty, panel behavior, logistics)
+   - candidate-feedback: Candidate Feedback (quality and timeliness of interview or application feedback)
+   - onboarding-experience: Onboarding Experience (new hire orientation, training, first-week experience)
+   - overall-candidate-experience: Overall Candidate Experience (holistic perception of the end-to-end candidate journey)
 
 IMPORTANT CLASSIFICATION RULES:
 - Company Culture should ONLY be used for themes about workplace atmosphere, team dynamics, cultural practices, and work environment
@@ -237,13 +300,17 @@ IMPORTANT CLASSIFICATION RULES:
 - Values and mission belong to "Mission & Purpose", not "Company Culture"
 - Benefits and compensation belong to "Rewards & Recognition", not "Company Culture"
 - Work-life balance belongs to "Wellbeing & Balance", not "Company Culture"
+- Candidate journey topics (application steps, recruiter updates, interview logistics, feedback, onboarding, overall candidate perception) must use the dedicated candidate experience attributes above rather than employee experience categories
 6. Provide a confidence score from 0 to 1
 7. Extract relevant keywords
 8. Provide 1-2 context snippets from the response that support this theme
 
-Focus on themes that would be relevant to potential employees evaluating this company as a workplace. Look for both positive and negative themes.
+Focus on themes that would be relevant to potential employees evaluating "${companyName}" as a workplace. Look for both positive and negative themes.
 
-CRITICAL: Be extremely careful with Company Culture classification. Only use it for themes specifically about workplace atmosphere, team dynamics, and cultural practices. When in doubt, choose a more specific category.
+CRITICAL INSTRUCTIONS:
+1. Only analyze themes about "${companyName}" - ignore any mentions of competitors or other companies
+2. Be extremely careful with Company Culture classification. Only use it for themes specifically about workplace atmosphere, team dynamics, and cultural practices. When in doubt, choose a more specific category.
+3. If the response primarily discusses competitors or other companies without substantial information about "${companyName}", return an empty array.
 
 Response to analyze:
 "${responseText}"

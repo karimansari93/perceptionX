@@ -90,10 +90,64 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     promptTemplate: 'What career opportunities does {companyName} offer?',
     category: 'Career',
     isProOnly: false // This is available in free plan
+  },
+  {
+    id: 'application-process',
+    name: 'Application Process',
+    description: 'Candidate experience during the application process',
+    keywords: ['application', 'apply', 'job application', 'application process', 'hiring process', 'recruitment', 'applying'],
+    promptTemplate: 'How is the application process at {companyName}?',
+    category: 'Candidate Experience',
+    isProOnly: true
+  },
+  {
+    id: 'candidate-communication',
+    name: 'Communication',
+    description: 'Recruiter and candidate communication quality',
+    keywords: ['communication', 'recruiter', 'updates', 'candidate communication', 'recruiter communication', 'feedback', 'response'],
+    promptTemplate: 'How do candidates feel about receiving updates from {companyName}?',
+    category: 'Candidate Experience',
+    isProOnly: true
+  },
+  {
+    id: 'interview-experience',
+    name: 'Interview',
+    description: 'Candidate interview experience and process',
+    keywords: ['interview', 'interviewing', 'interview process', 'interview experience', 'interviewer', 'interview questions'],
+    promptTemplate: 'How do candidates describe their interview experience at {companyName}?',
+    category: 'Candidate Experience',
+    isProOnly: true
+  },
+  {
+    id: 'candidate-feedback',
+    name: 'Feedback',
+    description: 'Feedback provided to candidates after interviews or applications',
+    keywords: ['feedback', 'candidate feedback', 'interview feedback', 'application feedback', 'response', 'notification'],
+    promptTemplate: 'How do candidates rate the feedback from {companyName} after interviews or applications?',
+    category: 'Candidate Experience',
+    isProOnly: true
+  },
+  {
+    id: 'onboarding-experience',
+    name: 'Onboarding',
+    description: 'New hire onboarding experience',
+    keywords: ['onboarding', 'new hire', 'orientation', 'onboarding process', 'first day', 'new employee', 'training'],
+    promptTemplate: 'How do new hires feel about onboarding at {companyName}?',
+    category: 'Candidate Experience',
+    isProOnly: true
+  },
+  {
+    id: 'overall-candidate-experience',
+    name: 'Overall Experience',
+    description: 'Overall candidate journey and reputation',
+    keywords: ['candidate experience', 'candidate journey', 'recruitment experience', 'hiring experience', 'overall experience', 'candidate reputation'],
+    promptTemplate: 'How do candidates perceive the overall journey at {companyName}?',
+    category: 'Candidate Experience',
+    isProOnly: true
   }
 ];
 
-// TalentX Prompt Templates for Pro Users (30 prompts total)
+// TalentX Prompt Templates for Pro Users (48 prompts total: 30 original + 18 Candidate Experience)
 export const TALENTX_PROMPT_TEMPLATES = [
   // Mission & Purpose (3 prompts)
   {
@@ -263,6 +317,108 @@ export const TALENTX_PROMPT_TEMPLATES = [
     attributeId: 'career-opportunities',
     type: 'visibility',
     prompt: 'What companies in {industry} are most recognized for exceptional career development and progression opportunities?'
+  },
+
+  // Application Process (3 prompts)
+  {
+    attributeId: 'application-process',
+    type: 'sentiment',
+    prompt: 'How is the application process at {companyName}?'
+  },
+  {
+    attributeId: 'application-process',
+    type: 'competitive',
+    prompt: 'How does the application process at {companyName} compare to other employers in {industry}?'
+  },
+  {
+    attributeId: 'application-process',
+    type: 'visibility',
+    prompt: 'What companies in {industry} have the best application process?'
+  },
+
+  // Communication (3 prompts)
+  {
+    attributeId: 'candidate-communication',
+    type: 'sentiment',
+    prompt: 'How do candidates feel about receiving updates from {companyName}?'
+  },
+  {
+    attributeId: 'candidate-communication',
+    type: 'competitive',
+    prompt: 'How does recruiter communication at {companyName} compare to other companies in {industry}?'
+  },
+  {
+    attributeId: 'candidate-communication',
+    type: 'visibility',
+    prompt: 'What companies in {industry} are recognized for strong candidate communication?'
+  },
+
+  // Interview (3 prompts)
+  {
+    attributeId: 'interview-experience',
+    type: 'sentiment',
+    prompt: 'How do candidates describe their interview experience at {companyName}?'
+  },
+  {
+    attributeId: 'interview-experience',
+    type: 'competitive',
+    prompt: 'How does the interview process at {companyName} compare to other companies in {industry}?'
+  },
+  {
+    attributeId: 'interview-experience',
+    type: 'visibility',
+    prompt: 'What companies in {industry} have the best interview experience?'
+  },
+
+  // Feedback (3 prompts)
+  {
+    attributeId: 'candidate-feedback',
+    type: 'sentiment',
+    prompt: 'How do candidates rate the feedback from {companyName} after interviews or applications?'
+  },
+  {
+    attributeId: 'candidate-feedback',
+    type: 'competitive',
+    prompt: 'How does candidate feedback at {companyName} compare to other employers in {industry}?'
+  },
+  {
+    attributeId: 'candidate-feedback',
+    type: 'visibility',
+    prompt: 'What companies in {industry} are known for providing valuable candidate feedback?'
+  },
+
+  // Onboarding (3 prompts)
+  {
+    attributeId: 'onboarding-experience',
+    type: 'sentiment',
+    prompt: 'How do new hires feel about onboarding at {companyName}?'
+  },
+  {
+    attributeId: 'onboarding-experience',
+    type: 'competitive',
+    prompt: 'How does onboarding at {companyName} compare to other organizations in {industry}?'
+  },
+  {
+    attributeId: 'onboarding-experience',
+    type: 'visibility',
+    prompt: 'What companies in {industry} have the best onboarding experience?'
+  },
+
+  // Overall Experience (3 prompts)
+  {
+    attributeId: 'overall-candidate-experience',
+    type: 'sentiment',
+    prompt: 'How do candidates perceive the overall journey at {companyName}?'
+  },
+  {
+    attributeId: 'overall-candidate-experience',
+    type: 'competitive',
+    prompt: 'Does {companyName} stand out for candidate experience in {industry}?'
+  },
+  {
+    attributeId: 'overall-candidate-experience',
+    type: 'visibility',
+    prompt: 'What companies in {industry} have the best overall candidate reputation?'
   }
 ];
 

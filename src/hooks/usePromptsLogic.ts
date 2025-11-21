@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { getLLMDisplayName } from '@/config/llmLogos';
-import { TALENTX_ATTRIBUTES, getProOnlyAttributes, getFreeAttributes } from '@/config/talentXAttributes';
+import { TALENTX_ATTRIBUTES, getProOnlyAttributes, getFreeAttributes, generateTalentXPrompts } from '@/config/talentXAttributes';
 import { useSubscription } from '@/hooks/useSubscription';
 import { logger, sanitizeInput, safeStorePromptResponse, checkExistingPromptResponse } from '@/lib/utils';
 
@@ -13,6 +13,8 @@ interface OnboardingData {
   industry: string;
   country?: string;
   job_function?: string;
+  jobFunction?: string;
+  customLocation?: string;
 }
 
 interface GeneratedPrompt {
@@ -20,6 +22,11 @@ interface GeneratedPrompt {
   text: string;
   category: string;
   type: 'sentiment' | 'visibility' | 'competitive' | 'talentx';
+  industryContext?: string;
+  jobFunctionContext?: string;
+  locationContext?: string;
+  promptCategory: 'General' | 'Employee Experience' | 'Candidate Experience';
+  promptTheme: string;
 }
 
 export interface ProgressInfo {
@@ -98,34 +105,18 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
     if (!onboardingData) {
       return;
     }
-    const { companyName, industry, country } = onboardingData;
-    
-    // Determine if we should include location-specific prompts
-    const hasLocation = country && country !== 'GLOBAL';
-    const formattedCountry = hasLocation ? formatCountryForPrompt(country) : '';
-    const locationSuffix = hasLocation ? ` in ${formattedCountry}` : '';
-    
-    let generatedPrompts: GeneratedPrompt[] = [
+    const generated = generatePromptsFromData(
       {
-        id: 'sentiment-1',
-        text: `How is ${companyName} as an employer${hasLocation ? ` in ${formattedCountry}` : ''}?`,
-        category: 'Employer Reputation',
-        type: 'sentiment'
+        companyName: onboardingData.companyName,
+        industry: onboardingData.industry,
+        country: onboardingData.country,
+        jobFunction: onboardingData.jobFunction || onboardingData.job_function,
       },
-      {
-        id: 'visibility-1',
-        text: `What is the best company to work for in the ${industry} industry${locationSuffix}?`,
-        category: 'Industry Visibility',
-        type: 'visibility'
-      },
-      {
-        id: 'competitive-1',
-        text: `How does working at ${companyName} compare to other companies?`,
-        category: 'Competitive Analysis',
-        type: 'competitive'
-      }
-    ];
-    setPrompts(generatedPrompts);
+      isPro
+    );
+
+    // For onboarding preview we only need the core prompts
+    setPrompts(generated.slice(0, 3));
   };
 
   const confirmAndStartMonitoring = async () => {
@@ -195,6 +186,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         { name: 'openai', displayName: 'ChatGPT', functionName: 'test-prompt-openai' },
         { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
         { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }
+        // Bing Copilot temporarily disabled - not working
       ];
 
       // Now run the testing/monitoring process for all prompts
@@ -348,8 +340,9 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         throw new Error(`Invalid response format from ${modelName}`);
       }
       
-      // Handle citations from Perplexity responses
+      // Handle citations from Perplexity and Google AI Overviews responses
       const perplexityCitations = functionName === 'test-prompt-perplexity' ? responseData.citations : null;
+      const googleAICitations = functionName === 'test-prompt-google-ai-overviews' ? responseData.citations : null;
       
       // Check if response already exists for this prompt and model
       const responseExists = await checkExistingPromptResponse(
@@ -371,6 +364,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
             companyName: onboardingRecord?.company_name || onboardingData?.companyName,
             promptType: confirmedPrompt.prompt_type,
             perplexityCitations: perplexityCitations,
+            citations: googleAICitations, // Pass Google AI citations
             confirmed_prompt_id: confirmedPrompt.id,
             ai_model: modelName,
             company_id: confirmedPrompt.company_id
@@ -430,15 +424,70 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
   }
 
   // Generate prompts based on onboarding data and subscription status
-  const promptsToInsert = generatePromptsFromData(onboardingData, isProUser).map(prompt => ({
-    onboarding_id: onboardingRecord.id,
-    user_id: user.id,
-    prompt_text: prompt.text,
-    prompt_category: prompt.category,
-    prompt_type: prompt.type,
-    talentx_attribute_id: prompt.type === 'talentx' ? prompt.id.replace('talentx-', '') : null,
-    is_active: true
-  }));
+  let generatedPrompts = generatePromptsFromData(onboardingData, isProUser);
+  
+  // Translate prompts if country is not GLOBAL and language is not English
+  if (onboardingData.country && onboardingData.country !== 'GLOBAL') {
+    // Check if country uses English (no translation needed)
+    const englishSpeakingCountries = ['US', 'GB', 'CA', 'AU', 'NZ', 'IE', 'ZA', 'IN', 'SG', 'MY', 'PH', 'HK', 'AE', 'SA'];
+    const needsTranslation = !englishSpeakingCountries.includes(onboardingData.country);
+    
+    if (needsTranslation) {
+      try {
+        console.log(`🌍 Translating ${generatedPrompts.length} prompts for country: ${onboardingData.country}`);
+        const promptTexts = generatedPrompts.map(p => p.text);
+        
+        const { data: translationData, error: translationError } = await supabase.functions.invoke('translate-prompts', {
+          body: {
+            prompts: promptTexts,
+            countryCode: onboardingData.country
+          }
+        });
+
+        if (!translationError && translationData?.translatedPrompts) {
+          // Map translated prompts back to the original prompt structure
+          generatedPrompts = generatedPrompts.map((prompt, index) => ({
+            ...prompt,
+            text: translationData.translatedPrompts[index] || prompt.text
+          }));
+          console.log(`✅ Translated prompts to ${translationData.targetLanguage}`);
+        } else {
+          console.warn('⚠️ Translation failed, using original prompts:', translationError);
+        }
+      } catch (translationException) {
+        console.warn('⚠️ Translation exception, using original prompts:', translationException);
+      }
+    } else {
+      console.log(`✅ Country ${onboardingData.country} uses English, skipping translation`);
+    }
+  }
+  
+  const promptsToInsert = generatedPrompts.map(prompt => {
+    // Extract talentx_attribute_id if this is a TalentX prompt
+    // Format: talentx-{attributeId}-{type}
+    let talentxAttributeId = null;
+    if (prompt.id.startsWith('talentx-')) {
+      // Remove 'talentx-' prefix and get the attributeId (everything before the last '-')
+      const parts = prompt.id.replace('talentx-', '').split('-');
+      // Remove the last part (which is the type: sentiment/competitive/visibility)
+      parts.pop();
+      talentxAttributeId = parts.join('-');
+    }
+
+    return {
+      onboarding_id: onboardingRecord.id,
+      user_id: user.id,
+      prompt_text: prompt.text,
+      prompt_category: prompt.promptCategory,
+      prompt_theme: prompt.promptTheme,
+      prompt_type: prompt.type,
+      talentx_attribute_id: talentxAttributeId,
+      industry_context: prompt.industryContext || onboardingData.industry,
+      job_function_context: prompt.jobFunctionContext || null,
+      location_context: prompt.locationContext || null,
+      is_active: true
+    };
+  });
 
   const { data: confirmedPrompts, error: insertError } = await supabase
     .from('confirmed_prompts')
@@ -454,7 +503,8 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
   const modelsToTest = [
     { name: 'openai', displayName: 'ChatGPT', functionName: 'test-prompt-openai' },
     { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
-    { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' }
+    { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' },
+    { name: 'bing-copilot', displayName: 'Bing Copilot', functionName: 'test-prompt-bing-copilot' }
   ];
 
   // Calculate total operations for progress tracking
@@ -474,9 +524,10 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
       if (functionError) {
         console.error(`${functionName} edge function error:`, functionError);
       } else if (responseData?.response) {
-        // Handle citations from Perplexity and Google AI Overviews responses
+        // Handle citations from Perplexity, Google AI Overviews, and Bing Copilot responses
         const perplexityCitations = functionName === 'test-prompt-perplexity' ? responseData.citations : null;
         const googleAICitations = functionName === 'test-prompt-google-ai-overviews' ? responseData.citations : null;
+        const bingCopilotCitations = functionName === 'test-prompt-bing-copilot' ? responseData.citations : null;
         
         // Analyze sentiment and extract citations with enhanced visibility support
         const { data: sentimentData, error: sentimentError } = await supabase.functions
@@ -486,7 +537,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
               companyName: onboardingRecord?.company_name || onboardingData.companyName,
               promptType: confirmedPrompt.prompt_type,
               perplexityCitations: perplexityCitations,
-              citations: googleAICitations, // Pass Google AI citations separately
+              citations: googleAICitations, // Pass Google AI citations
               confirmed_prompt_id: confirmedPrompt.id,
               ai_model: modelName,
               company_id: confirmedPrompt.company_id
@@ -502,23 +553,26 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
         if (perplexityCitations && perplexityCitations.length > 0) {
           finalCitations = [...perplexityCitations, ...finalCitations];
         }
+        // Also add Google AI citations if present
+        if (googleAICitations && googleAICitations.length > 0) {
+          finalCitations = [...googleAICitations, ...finalCitations];
+        }
 
         // Store the response with enhanced analysis using safeStorePromptResponse
+        // SKIP recency extraction during onboarding loop (will batch at end)
         const { success, error: storeError } = await safeStorePromptResponse(supabase, {
           confirmed_prompt_id: confirmedPrompt.id,
           ai_model: modelName,
           response_text: responseData.response,
-          sentiment_score: sentimentData?.sentiment_score || 0,
-          sentiment_label: sentimentData?.sentiment_label || 'neutral',
+          // Sentiment analysis now handled by AI themes
+          // No need to store basic sentiment_score
+          // Sentiment analysis now handled by AI themes
+          // No need to store basic sentiment_score
           citations: finalCitations,
           company_mentioned: sentimentData?.company_mentioned || false,
           mention_ranking: sentimentData?.mention_ranking || null,
-          competitor_mentions: sentimentData?.competitor_mentions || [],
-          first_mention_position: sentimentData?.first_mention_position || null,
-          total_words: responseData.response.split(' ').length,
-          visibility_score: sentimentData?.visibility_score || 0,
-          competitive_score: sentimentData?.competitive_score || 0,
-        });
+          detected_competitors: sentimentData?.detected_competitors || '',
+        }, true); // ✅ Skip recency extraction during loop
 
         if (!success) {
           console.error(`Error storing ${modelName} response:`, storeError);
@@ -541,6 +595,70 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
       await testWithModel(confirmedPrompt, model.functionName, model.name);
       completedOperations++;
     }
+  }
+
+  // ✅ BATCHED RECENCY EXTRACTION - After all responses are stored
+  console.log('🎯 All responses stored, now extracting recency scores in one batch...');
+  
+  try {
+    // Fetch all citations from all responses for this onboarding
+    const { data: allResponses } = await supabase
+      .from('prompt_responses')
+      .select('citations')
+      .in('confirmed_prompt_id', confirmedPrompts.map(p => p.id));
+
+    // Extract and flatten all citations with URLs
+    const allCitations = allResponses?.flatMap(r => {
+      if (!r.citations || !Array.isArray(r.citations)) return [];
+      
+      return r.citations
+        .filter((citation: any) => {
+          // Filter citations that have URLs
+          if (typeof citation === 'string') {
+            return citation.startsWith('http');
+          } else if (citation && typeof citation === 'object') {
+            return citation.url && citation.url.startsWith('http');
+          }
+          return false;
+        })
+        .map((citation: any) => {
+          // Normalize citation format
+          if (typeof citation === 'string') {
+            return {
+              url: citation,
+              domain: citation.replace(/^https?:\/\/(www\.)?/, '').split('/')[0],
+              title: `Source from ${citation.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}`
+            };
+          } else if (citation && typeof citation === 'object') {
+            return {
+              url: citation.url,
+              domain: citation.domain || citation.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0],
+              title: citation.title || `Source from ${citation.domain || citation.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}`,
+              sourceType: citation.sourceType || 'unknown'
+            };
+          }
+          return null;
+        })
+        .filter(Boolean);
+    }) || [];
+
+    console.log(`📊 Batched extraction: Found ${allCitations.length} total citations from all responses`);
+
+    if (allCitations.length > 0) {
+      // Trigger recency extraction ONCE for all citations (async, non-blocking)
+      supabase.functions.invoke('extract-recency-scores', {
+        body: { citations: allCitations }
+      }).then(response => {
+        console.log('✅ Batched recency extraction completed:', response.data?.summary);
+      }).catch(error => {
+        console.warn('❌ Batched recency extraction failed:', error);
+      });
+    } else {
+      console.log('⚠️ No citations with URLs found in onboarding responses');
+    }
+  } catch (batchError) {
+    console.warn('Error in batched recency extraction:', batchError);
+    // Don't fail onboarding if recency extraction fails
   }
 
   return confirmedPrompts;
@@ -616,59 +734,233 @@ export const formatCountryForPrompt = (countryCode: string): string => {
   return needsThe ? `the ${countryName}` : countryName;
 };
 
+const appendPromptContext = (text: string, jobFunction?: string, location?: string, promptType?: 'sentiment' | 'visibility' | 'competitive' | 'talentx') => {
+  const trimmedText = text.trim();
+  const lowerText = trimmedText.toLowerCase();
+  
+  // Special handling for competitive prompts with job functions
+  if (promptType === 'competitive' && jobFunction) {
+    // Remove industry context and replace with "hiring {jobFunction}"
+    // Pattern: "in {industry}" -> "hiring {jobFunction}"
+    // Pattern: "in the {industry} industry" -> "hiring {jobFunction}"
+    
+    // Handle "Does {companyName} stand out for X in {industry}?" -> "among companies hiring {jobFunction}"
+    if (lowerText.includes('stand out') && lowerText.includes(' in ')) {
+      const industryMatch = trimmedText.match(/ in ([^?]+)\?/i);
+      if (industryMatch) {
+        return trimmedText.replace(/ in [^?]+\?/i, ` among companies hiring ${jobFunction}?`);
+      }
+    }
+    
+    // Handle "How does X compare to other companies/employers/organizations in {industry}?"
+    // Replace "in {industry}" or "in the {industry} industry" with "hiring {jobFunction}"
+    const industryPatterns = [
+      / in the [^?]+\?/gi,  // "in the {industry} industry?"
+      / in [^?]+\?/gi,       // "in {industry}?"
+    ];
+    
+    let result = trimmedText;
+    for (const pattern of industryPatterns) {
+      if (pattern.test(result)) {
+        // Replace the industry part with "hiring {jobFunction}"
+        result = result.replace(pattern, ` hiring ${jobFunction}?`);
+        break;
+      }
+    }
+    
+    // If location is also provided, add it after the job function
+    if (location) {
+      const locationLower = location.toLowerCase();
+      if (!result.toLowerCase().includes(locationLower)) {
+        result = result.replace(/\?$/, ` in ${location}?`);
+      }
+    }
+    
+    return result;
+  }
+  
+  // Special handling for visibility prompts with job functions
+  if (promptType === 'visibility' && jobFunction) {
+    // Remove industry context from visibility prompts when job function is present
+    // Pattern: "What companies in {industry} are known for X?" -> "What companies are known for X for {jobFunction}?"
+    // Pattern: "What companies in the {industry} industry are known for X?" -> "What companies are known for X for {jobFunction}?"
+    
+    let result = trimmedText;
+    
+    // Pattern 1: Remove "in the {industry} industry" (more specific, handle first)
+    // Match: "in the Technology industry" -> remove it
+    result = result.replace(/\s+in\s+the\s+[a-zA-Z\s]+\s+industry/gi, '');
+    
+    // Pattern 2: Remove "in {industry}" - be very specific to only match industry names
+    // Look for "companies in {word(s)}" followed by "are" or "have"
+    // Use a more precise pattern that captures the structure: "companies in X are/have"
+    const companiesInPattern = /(companies)\s+in\s+([a-zA-Z\s]+?)\s+(are|have|is|were|was|do|does|can|could|will|would)\s+/i;
+    const match = result.match(companiesInPattern);
+    if (match) {
+      // Reconstruct: "companies" + "are/have" + rest
+      result = result.replace(companiesInPattern, `$1 $3 `);
+    } else {
+      // Fallback: try simpler pattern if the above didn't match
+      // Match "in {word}" that appears before common verbs (limit to 1-3 words for industry name)
+      result = result.replace(/\s+in\s+([a-zA-Z]+(?:\s+[a-zA-Z]+){0,2})\s+(are|have|is|were|was|do|does|can|could|will|would)\s+/gi, ' $2 ');
+    }
+    
+    // Clean up any double spaces
+    result = result.replace(/\s+/g, ' ').trim();
+    
+    // Ensure we still have a question mark at the end
+    if (!result.endsWith('?')) {
+      result = result + '?';
+    }
+    
+    // Add "for {jobFunction}" if not already present
+    const jobLower = jobFunction.toLowerCase();
+    if (!result.toLowerCase().includes(jobLower)) {
+      // Insert "for {jobFunction}" before the final question mark
+      result = result.replace(/\?$/, ` for ${jobFunction}?`);
+    }
+    
+    // If location is also provided, add it after the job function
+    if (location) {
+      const locationLower = location.toLowerCase();
+      if (!result.toLowerCase().includes(locationLower)) {
+        result = result.replace(/\?$/, ` in ${location}?`);
+      }
+    }
+    
+    return result.trim();
+  }
+  
+  // Default behavior for non-competitive/visibility prompts or prompts without job functions
+  const contextParts: string[] = [];
+
+  if (jobFunction) {
+    const jobLower = jobFunction.toLowerCase();
+    if (!lowerText.includes(jobLower)) {
+      contextParts.push(`for ${jobFunction}`);
+    }
+  }
+
+  if (location) {
+    const locationLower = location.toLowerCase();
+    if (!lowerText.includes(locationLower)) {
+      contextParts.push(`in ${location}`);
+    }
+  }
+
+  if (contextParts.length === 0) {
+    return text;
+  }
+
+  const contextSuffix = ` ${contextParts.join(' ')}`;
+
+  if (trimmedText.endsWith('?')) {
+    return trimmedText.replace(/\?$/, `${contextSuffix}?`);
+  }
+
+  if (trimmedText.endsWith('.')) {
+    return trimmedText.replace(/\.$/, `${contextSuffix}.`);
+  }
+
+  return `${trimmedText}${contextSuffix}`;
+};
+
 // Helper function to generate prompts from onboarding data
 export const generatePromptsFromData = (onboardingData: OnboardingData, isProUser: boolean = false): GeneratedPrompt[] => {
   const { companyName, industry, country } = onboardingData;
-  
-  // Determine if we should include location-specific prompts
-  const hasLocation = country && country !== 'GLOBAL';
-  const formattedCountry = hasLocation ? formatCountryForPrompt(country) : '';
-  const locationSuffix = hasLocation ? ` in ${formattedCountry}` : '';
-  
+  const jobFunction = onboardingData.jobFunction || onboardingData.job_function || undefined;
+  const customLocation = onboardingData.customLocation;
+
+  const hasCountryLocation = country && country !== 'GLOBAL';
+  const formattedCountry = hasCountryLocation ? formatCountryForPrompt(country) : '';
+
+  const locationForBasePrompts = customLocation || (hasCountryLocation ? formattedCountry : undefined);
+  const locationContextValue = customLocation || undefined;
+
   const basePrompts: GeneratedPrompt[] = [
     {
       id: 'sentiment-1',
-      text: `How is ${companyName} as an employer${hasLocation ? ` in ${formattedCountry}` : ''}?`,
-      category: 'Employer Reputation',
-      type: 'sentiment'
+      text: `How is ${companyName} as an employer?`,
+      category: 'General',
+      type: 'sentiment' as const,
+      industryContext: industry,
+      jobFunctionContext: jobFunction,
+      locationContext: locationContextValue,
+      promptCategory: 'General' as const,
+      promptTheme: 'General'
     },
     {
       id: 'visibility-1',
-      text: `What is the best company to work for in the ${industry} industry${locationSuffix}?`,
-      category: 'Industry Visibility',
-      type: 'visibility'
+      text: `What is the best company to work for in the ${industry} industry?`,
+      category: 'General',
+      type: 'visibility' as const,
+      industryContext: industry,
+      jobFunctionContext: jobFunction,
+      locationContext: locationContextValue,
+      promptCategory: 'General' as const,
+      promptTheme: 'General'
     },
     {
       id: 'competitive-1',
       text: `How does working at ${companyName} compare to other companies?`,
-      category: 'Competitive Analysis',
-      type: 'competitive'
+      category: 'General',
+      type: 'competitive' as const,
+      industryContext: industry,
+      jobFunctionContext: jobFunction,
+      locationContext: locationContextValue,
+      promptCategory: 'General' as const,
+      promptTheme: 'General'
     }
-  ];
+  ].map(prompt => ({
+    ...prompt,
+    text: appendPromptContext(prompt.text, jobFunction, locationForBasePrompts, prompt.type),
+  }));
 
   // Only add TalentX prompts for Pro users
   if (isProUser) {
     const talentXPrompts: GeneratedPrompt[] = [];
     
-    // Include free attributes for Pro users
-    const freeAttributes = getFreeAttributes();
-    freeAttributes.forEach(attr => {
-      talentXPrompts.push({
-        id: `talentx-${attr.id}`,
-        text: attr.promptTemplate.replace('{companyName}', companyName),
-        category: `TalentX: ${attr.category}`,
-        type: 'talentx' as const
-      });
-    });
+    // Use the TALENTX_PROMPT_TEMPLATES system to generate all 30 prompts (3 per attribute)
+    const templates = generateTalentXPrompts(companyName, industry);
+    templates.forEach(template => {
+      const attribute = template.attribute;
+      const isCandidateExperience = attribute?.category === 'Candidate Experience';
 
-    // Add pro-only attributes
-    const proAttributes = getProOnlyAttributes();
-    proAttributes.forEach(attr => {
+      const candidateThemeOverrides: Record<string, string> = {
+        'candidate-communication': 'Candidate Communication',
+        'interview-experience': 'Interview Experience',
+        'application-process': 'Application Process',
+        'onboarding-experience': 'Onboarding Experience',
+        'candidate-feedback': 'Candidate Feedback',
+        'overall-candidate-experience': 'Overall Candidate Experience',
+      };
+
+      const theme = attribute
+        ? isCandidateExperience
+          ? candidateThemeOverrides[attribute.id] || attribute.name || 'Candidate Experience'
+          : attribute.category || attribute.name || 'Employee Experience'
+        : 'General';
+
+      const promptCategoryValue: 'Employee Experience' | 'Candidate Experience' =
+        isCandidateExperience ? 'Candidate Experience' : 'Employee Experience';
+
+      const textWithContext = appendPromptContext(
+        template.prompt,
+        jobFunction,
+        locationForBasePrompts, // Use locationForBasePrompts which includes formatted country
+        template.type as 'sentiment' | 'competitive' | 'visibility'
+      );
+
       talentXPrompts.push({
-        id: `talentx-${attr.id}`,
-        text: attr.promptTemplate.replace('{companyName}', companyName),
-        category: `TalentX: ${attr.category}`,
-        type: 'talentx' as const
+        id: `talentx-${template.attributeId}-${template.type}`,
+        text: textWithContext,
+        category: theme,
+        type: template.type as 'sentiment' | 'competitive' | 'visibility',
+        industryContext: industry,
+        jobFunctionContext: jobFunction,
+        locationContext: locationContextValue,
+        promptCategory: promptCategoryValue,
+        promptTheme: theme
       });
     });
 
