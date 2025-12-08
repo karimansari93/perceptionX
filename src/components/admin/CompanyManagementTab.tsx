@@ -347,6 +347,13 @@ export const CompanyManagementTab = () => {
       ])).sort();
       console.log('All prompt types:', allPromptTypes);
 
+      // Get all unique prompt categories (default to 'General' if null/undefined)
+      const allPromptCategories = Array.from(new Set([
+        ...regularPrompts.map(p => p.prompt_category || 'General'),
+        ...talentXPrompts.map(p => p.prompt_category || 'General')
+      ])).sort();
+      console.log('All prompt categories:', allPromptCategories);
+
       const totalOperations = totalPrompts * models.length;
       console.log('Total operations:', totalOperations);
 
@@ -363,6 +370,8 @@ export const CompanyManagementTab = () => {
         selectedModels: models,
         allPromptTypes,
         selectedPromptTypes: allPromptTypes,
+        allPromptCategories,
+        selectedPromptCategories: allPromptCategories,
         totalOperations
       };
       console.log('Confirmation data:', confirmData);
@@ -398,12 +407,25 @@ export const CompanyManagementTab = () => {
     updateTotalOperations({ ...confirmationData, selectedPromptTypes: newSelectedTypes });
   };
 
+  const togglePromptCategorySelection = (promptCategory: string) => {
+    if (!confirmationData) return;
+    
+    const isSelected = confirmationData.selectedPromptCategories.includes(promptCategory);
+    const newSelectedCategories = isSelected
+      ? confirmationData.selectedPromptCategories.filter((c: string) => c !== promptCategory)
+      : [...confirmationData.selectedPromptCategories, promptCategory];
+    
+    updateTotalOperations({ ...confirmationData, selectedPromptCategories: newSelectedCategories });
+  };
+
   const updateTotalOperations = (newData: any) => {
     const filteredRegularPrompts = newData.regularPrompts.filter((p: any) => 
-      newData.selectedPromptTypes.includes(p.prompt_type)
+      newData.selectedPromptTypes.includes(p.prompt_type) &&
+      newData.selectedPromptCategories.includes(p.prompt_category || 'General')
     );
     const filteredTalentXPrompts = newData.talentXPrompts.filter((p: any) => 
-      newData.selectedPromptTypes.includes(p.prompt_type)
+      newData.selectedPromptTypes.includes(p.prompt_type) &&
+      newData.selectedPromptCategories.includes(p.prompt_category || 'General')
     );
     
     const totalFilteredPrompts = filteredRegularPrompts.length + filteredTalentXPrompts.length;
@@ -435,22 +457,38 @@ export const CompanyManagementTab = () => {
     updateTotalOperations({ ...confirmationData, selectedPromptTypes: [] });
   };
 
+  const selectAllPromptCategories = () => {
+    if (!confirmationData) return;
+    updateTotalOperations({ ...confirmationData, selectedPromptCategories: [...confirmationData.allPromptCategories] });
+  };
+
+  const deselectAllPromptCategories = () => {
+    if (!confirmationData) return;
+    updateTotalOperations({ ...confirmationData, selectedPromptCategories: [] });
+  };
+
   const executeRefresh = async () => {
     if (!confirmationData || isRefreshing) return;
 
-    if (confirmationData.selectedModels.length === 0 || confirmationData.selectedPromptTypes.length === 0) {
-      toast.error('Please select at least one model and one prompt type');
+    if (confirmationData.selectedModels.length === 0 || confirmationData.selectedPromptTypes.length === 0 || confirmationData.selectedPromptCategories.length === 0) {
+      toast.error('Please select at least one model, one prompt type, and one prompt category');
       return;
     }
 
     setIsRefreshing(true);
     
     try {
-      const { regularPrompts, talentXPrompts, selectedModels, selectedPromptTypes, companyId, companyName } = confirmationData;
+      const { regularPrompts, talentXPrompts, selectedModels, selectedPromptTypes, selectedPromptCategories, companyId, companyName } = confirmationData;
       
-      // Filter prompts by selected types
-      const filteredRegularPrompts = regularPrompts.filter((p: any) => selectedPromptTypes.includes(p.prompt_type));
-      const filteredTalentXPrompts = talentXPrompts.filter((p: any) => selectedPromptTypes.includes(p.prompt_type));
+      // Filter prompts by selected types and categories
+      const filteredRegularPrompts = regularPrompts.filter((p: any) => 
+        selectedPromptTypes.includes(p.prompt_type) &&
+        selectedPromptCategories.includes(p.prompt_category || 'General')
+      );
+      const filteredTalentXPrompts = talentXPrompts.filter((p: any) => 
+        selectedPromptTypes.includes(p.prompt_type) &&
+        selectedPromptCategories.includes(p.prompt_category || 'General')
+      );
       
       const totalOperations = (filteredRegularPrompts.length + filteredTalentXPrompts.length) * selectedModels.length;
       let completedOperations = 0;
@@ -874,7 +912,7 @@ export const CompanyManagementTab = () => {
 
       {/* Refresh Confirmation Modal */}
       <Dialog open={confirmationData !== null} onOpenChange={() => setConfirmationData(null)}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Confirm Model Refresh</DialogTitle>
           </DialogHeader>
@@ -891,7 +929,7 @@ export const CompanyManagementTab = () => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <h4 className="font-medium">Models ({confirmationData.selectedModels.length}/{confirmationData.models.length})</h4>
@@ -994,6 +1032,56 @@ export const CompanyManagementTab = () => {
                   </div>
 
                   <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-medium">Prompt Categories ({confirmationData.selectedPromptCategories.length}/{confirmationData.allPromptCategories.length})</h4>
+                      <div className="flex space-x-2">
+                        <button
+                          type="button"
+                          onClick={selectAllPromptCategories}
+                          className="text-xs text-blue-600 hover:text-blue-800 underline"
+                        >
+                          All
+                        </button>
+                        <span className="text-xs text-gray-400">|</span>
+                        <button
+                          type="button"
+                          onClick={deselectAllPromptCategories}
+                          className="text-xs text-red-600 hover:text-red-800 underline"
+                        >
+                          None
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {confirmationData.allPromptCategories.map((promptCategory: string) => {
+                        const isSelected = confirmationData.selectedPromptCategories.includes(promptCategory);
+                        return (
+                          <div key={promptCategory} className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              id={`category-${promptCategory}`}
+                              checked={isSelected}
+                              onChange={() => togglePromptCategorySelection(promptCategory)}
+                              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                            />
+                            <label 
+                              htmlFor={`category-${promptCategory}`}
+                              className={`text-sm cursor-pointer ${isSelected ? 'font-medium' : 'text-gray-600'}`}
+                            >
+                              {promptCategory}
+                            </label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {confirmationData.selectedPromptCategories.length === 0 && (
+                      <div className="text-xs text-red-600 bg-red-50 p-2 rounded">
+                        ⚠️ Please select at least one prompt category
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-3">
                     <h4 className="font-medium">Prompts to Process</h4>
                     <div className="space-y-2 max-h-48 overflow-y-auto">
                       <div className="text-sm bg-gray-50 p-3 rounded">
@@ -1029,7 +1117,7 @@ export const CompanyManagementTab = () => {
                 </Button>
                 <Button
                   onClick={executeRefresh}
-                  disabled={isRefreshing || confirmationData.selectedModels.length === 0 || confirmationData.selectedPromptTypes.length === 0}
+                  disabled={isRefreshing || confirmationData.selectedModels.length === 0 || confirmationData.selectedPromptTypes.length === 0 || confirmationData.selectedPromptCategories.length === 0}
                   className="bg-pink hover:bg-pink/90"
                 >
                   {isRefreshing ? (

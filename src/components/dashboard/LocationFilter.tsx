@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useCompany } from '@/contexts/CompanyContext';
 import { getCountryFlag } from '@/utils/countryFlags';
-import { Globe, ChevronDown, Check, Plus } from 'lucide-react';
+import { Globe, ChevronDown, Check, Plus, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // Country code to display name mapping (from AddCompanyModal)
@@ -81,11 +81,17 @@ interface LocationFilterProps {
 }
 
 export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocation, className }: LocationFilterProps) => {
-  const { currentCompany, userCompanies, switchCompany } = useCompany();
+  const { currentCompany, userCompanies, switchCompany, loading } = useCompany();
   const [isOpen, setIsOpen] = useState(false);
 
   // Get unique countries from user's companies
+  // CRITICAL: Only compute locations when not loading to prevent showing stale data
   const availableLocations = useMemo(() => {
+    // Don't compute locations while loading - prevents showing stale data from previous session
+    if (loading) {
+      return [];
+    }
+
     const locations = new Set<string>();
     
     userCompanies.forEach(company => {
@@ -100,10 +106,11 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
     return Array.from(locations).sort((a, b) => {
       return getCountryName(a).localeCompare(getCountryName(b));
     });
-  }, [userCompanies]);
+  }, [userCompanies, loading]);
 
-  // Don't show filter if there are no locations (only GLOBAL)
-  if (availableLocations.length === 0) {
+  // Always show the filter if onAddLocation is provided (user can add locations)
+  // Only hide if there are no locations AND no way to add locations
+  if (availableLocations.length === 0 && !onAddLocation) {
     return null;
   }
 
@@ -180,68 +187,71 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-[200px]">
-        <DropdownMenuLabel>Filter by Location</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() => handleLocationSelect(null)}
-          className="cursor-pointer flex items-center justify-between"
-        >
-          <div className="flex items-center gap-2">
-            {!selectedLocation ? (
-              <Check className="h-4 w-4 text-[#13274F]" />
-            ) : (
-              <div className="h-4 w-4" />
-            )}
-            <Globe className="h-4 w-4" />
-            <span className={cn(
-              'text-sm',
-              !selectedLocation && 'font-semibold text-[#13274F]'
-            )}>
-              Global
-            </span>
-          </div>
-        </DropdownMenuItem>
-        {availableLocations.map(location => {
-          const isSelected = selectedLocation === location;
-          const locationName = getCountryName(location);
-          const locationFlag = location !== 'GLOBAL' ? getCountryFlag(location) : null;
-          
-          return (
-            <DropdownMenuItem
-              key={location}
-              onClick={() => handleLocationSelect(location)}
-              className="cursor-pointer flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2">
-                {isSelected && <Check className="h-4 w-4 text-[#13274F]" />}
-                {!isSelected && <div className="h-4 w-4" />}
-                {locationFlag ? (
-                  <span className="text-base leading-none">{locationFlag}</span>
-                ) : (
-                  <Globe className="h-4 w-4" />
-                )}
-                <span className={cn(
-                  'text-sm',
-                  isSelected && 'font-semibold text-[#13274F]'
-                )}>
-                  {locationName}
-                </span>
-              </div>
-            </DropdownMenuItem>
-          );
-        })}
-        {onAddLocation && (
+        <DropdownMenuLabel>
+          {availableLocations.length > 0 ? 'Filter by Location' : 'Locations'}
+        </DropdownMenuLabel>
+        {availableLocations.length > 0 && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => {
-                setIsOpen(false);
-                onAddLocation();
-              }}
-              className="cursor-pointer text-[#13274F] hover:text-[#0DBCBA] hover:bg-[#13274F]/5"
+              onClick={() => handleLocationSelect(null)}
+              className="cursor-pointer flex items-center justify-between"
             >
-              <Plus className="h-4 w-4 mr-2" />
-              <span className="font-medium">Add Location</span>
+              <div className="flex items-center gap-2">
+                {!selectedLocation ? (
+                  <Check className="h-4 w-4 text-[#13274F]" />
+                ) : (
+                  <div className="h-4 w-4" />
+                )}
+                <Globe className="h-4 w-4" />
+                <span className={cn(
+                  'text-sm',
+                  !selectedLocation && 'font-semibold text-[#13274F]'
+                )}>
+                  Global
+                </span>
+              </div>
+            </DropdownMenuItem>
+            {availableLocations.map(location => {
+              const isSelected = selectedLocation === location;
+              const locationName = getCountryName(location);
+              const locationFlag = location !== 'GLOBAL' ? getCountryFlag(location) : null;
+              
+              return (
+                <DropdownMenuItem
+                  key={location}
+                  onClick={() => handleLocationSelect(location)}
+                  className="cursor-pointer flex items-center justify-between"
+                >
+                  <div className="flex items-center gap-2">
+                    {isSelected && <Check className="h-4 w-4 text-[#13274F]" />}
+                    {!isSelected && <div className="h-4 w-4" />}
+                    {locationFlag ? (
+                      <span className="text-base leading-none">{locationFlag}</span>
+                    ) : (
+                      <Globe className="h-4 w-4" />
+                    )}
+                    <span className={cn(
+                      'text-sm',
+                      isSelected && 'font-semibold text-[#13274F]'
+                    )}>
+                      {locationName}
+                    </span>
+                  </div>
+                </DropdownMenuItem>
+              );
+            })}
+          </>
+        )}
+        {onAddLocation && (
+          <>
+            {availableLocations.length > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuItem
+              disabled
+              className="cursor-not-allowed opacity-50 font-medium"
+            >
+              <Lock className="h-4 w-4 mr-2" />
+              <span>Add Location</span>
             </DropdownMenuItem>
           </>
         )}

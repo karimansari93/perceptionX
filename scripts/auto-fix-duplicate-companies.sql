@@ -111,3 +111,4 @@ GROUP BY c.id, c.name, c.industry
 HAVING COUNT(DISTINCT uo.id) > 1
 ORDER BY onboarding_count DESC;
 
+

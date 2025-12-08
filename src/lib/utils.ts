@@ -1,9 +1,6 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
-}
+import { extractSourceUrl, extractDomain } from "@/utils/citationUtils"
 
 // Production-safe logging utility with security considerations
 export const logger = {
@@ -33,6 +30,10 @@ export const logger = {
     }
   }
 };
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
 
 // Security utilities
 export const sanitizeInput = (input: string): string => {
@@ -80,13 +81,13 @@ export async function checkExistingPromptResponse(
       .maybeSingle();
 
     if (error) {
-      console.error('Error checking existing prompt response:', error);
+      logger.error('Error checking existing prompt response:', error);
       return false;
     }
 
     return !!data;
   } catch (error) {
-    console.error('Exception checking existing prompt response:', error);
+    logger.error('Exception checking existing prompt response:', error);
     return false;
   }
 }
@@ -130,7 +131,7 @@ export async function safeStorePromptResponse(
         .single();
 
       if (error) {
-        console.error('Error updating existing prompt response:', error);
+        logger.error('Error updating existing prompt response:', error);
         return { success: false, error };
       }
 
@@ -144,7 +145,7 @@ export async function safeStorePromptResponse(
         .single();
 
       if (error) {
-        console.error('Error inserting new prompt response:', error);
+        logger.error('Error inserting new prompt response:', error);
         return { success: false, error };
       }
 
@@ -159,7 +160,7 @@ export async function safeStorePromptResponse(
             .single();
 
           if (promptError) {
-            console.warn('Error fetching prompt data:', promptError);
+            logger.warn('Error fetching prompt data:', promptError);
             return { success: true, data };
           }
 
@@ -172,7 +173,7 @@ export async function safeStorePromptResponse(
 
           if (!onboardingError && onboardingData?.company_name) {
             // Trigger AI thematic analysis asynchronously (don't wait for completion)
-            console.log(`🚀 Triggering AI thematic analysis for response ${data.id} (${responseData.ai_model})`);
+            logger.log(`🚀 Triggering AI thematic analysis for response ${data.id} (${responseData.ai_model})`);
             supabase.functions.invoke('ai-thematic-analysis', {
               body: {
                 response_id: data.id,
@@ -182,12 +183,12 @@ export async function safeStorePromptResponse(
               }
             }).catch(error => {
               // Log error but don't fail the response storage
-              console.warn('❌ Failed to trigger AI thematic analysis:', error);
+              logger.warn('❌ Failed to trigger AI thematic analysis:', error);
             });
 
             // Trigger recency cache extraction for citations (unless skipped for batching)
             if (!skipRecencyExtraction) {
-              console.log(`🔍 Checking citations for response ${data.id}:`, {
+              logger.log(`🔍 Checking citations for response ${data.id}:`, {
                 hasCitations: !!responseData.citations,
                 isArray: Array.isArray(responseData.citations),
                 length: responseData.citations?.length || 0,
@@ -195,7 +196,7 @@ export async function safeStorePromptResponse(
               });
               
               if (responseData.citations && Array.isArray(responseData.citations) && responseData.citations.length > 0) {
-                console.log(`📅 Triggering recency cache extraction for ${responseData.citations.length} citations from response ${data.id}`);
+                logger.log(`📅 Triggering recency cache extraction for ${responseData.citations.length} citations from response ${data.id}`);
                 
                 // Extract URLs from citations for recency scoring
                 const citationsWithUrls = responseData.citations
@@ -211,16 +212,18 @@ export async function safeStorePromptResponse(
                   .map((citation: any) => {
                     // Normalize citation format to extract URL
                     if (typeof citation === 'string') {
+                      const sourceUrl = extractSourceUrl(citation);
                       return {
-                        url: citation,
-                        domain: citation.replace(/^https?:\/\/(www\.)?/, '').split('/')[0],
-                        title: `Source from ${citation.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}`
+                        url: sourceUrl,
+                        domain: extractDomain(sourceUrl),
+                        title: `Source from ${extractDomain(sourceUrl)}`
                       };
                     } else if (citation && typeof citation === 'object') {
+                      const sourceUrl = citation.url ? extractSourceUrl(citation.url) : '';
                       return {
-                        url: citation.url,
-                        domain: citation.domain || citation.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0],
-                        title: citation.title || `Source from ${citation.domain || citation.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}`,
+                        url: sourceUrl,
+                        domain: citation.domain || (sourceUrl ? extractDomain(sourceUrl) : ''),
+                        title: citation.title || `Source from ${citation.domain || (sourceUrl ? extractDomain(sourceUrl) : 'unknown')}`,
                         sourceType: citation.sourceType || 'unknown'
                       };
                     }
@@ -228,42 +231,42 @@ export async function safeStorePromptResponse(
                   })
                   .filter(Boolean);
 
-                console.log(`🔗 Extracted ${citationsWithUrls.length} citations with URLs:`, citationsWithUrls.map(c => c.url));
+                logger.log(`🔗 Extracted ${citationsWithUrls.length} citations with URLs:`, citationsWithUrls.map(c => c.url));
                 
                 if (citationsWithUrls.length > 0) {
                   // Trigger recency cache extraction asynchronously (don't wait for completion)
-                  console.log(`🚀 Calling extract-recency-scores edge function with ${citationsWithUrls.length} citations`);
+                  logger.log(`🚀 Calling extract-recency-scores edge function with ${citationsWithUrls.length} citations`);
                   supabase.functions.invoke('extract-recency-scores', {
                     body: {
                       citations: citationsWithUrls,
                       user_id: data.id // Pass response ID for tracking
                     }
                   }).then(response => {
-                    console.log('✅ Recency cache extraction completed:', response);
+                    logger.log('✅ Recency cache extraction completed:', response);
                   }).catch(error => {
                     // Log error but don't fail the response storage
-                    console.warn('❌ Failed to trigger recency cache extraction:', error);
+                    logger.warn('❌ Failed to trigger recency cache extraction:', error);
                   });
                 } else {
-                  console.log('⚠️ No citations with valid URLs found, skipping recency extraction');
+                  logger.log('⚠️ No citations with valid URLs found, skipping recency extraction');
                 }
               }
             } else {
-              console.log('⏭️ Skipping recency extraction (will be batched at end of onboarding)');
+              logger.log('⏭️ Skipping recency extraction (will be batched at end of onboarding)');
             }
           } else {
-            console.warn('⚠️ Cannot trigger AI analysis: missing company name or onboarding data');
+            logger.warn('⚠️ Cannot trigger AI analysis: missing company name or onboarding data');
           }
         } catch (analysisError) {
           // Log error but don't fail the response storage
-          console.warn('Error triggering AI analysis:', analysisError);
+          logger.warn('Error triggering AI analysis:', analysisError);
         }
       }
 
       return { success: true, data };
     }
   } catch (error) {
-    console.error('Exception in safeStorePromptResponse:', error);
+    logger.error('Exception in safeStorePromptResponse:', error);
     return { success: false, error };
   }
 }

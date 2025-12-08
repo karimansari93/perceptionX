@@ -7,3 +7,4 @@ ADD COLUMN IF NOT EXISTS company_mentioned BOOLEAN DEFAULT false;
 CREATE INDEX IF NOT EXISTS idx_search_insights_results_company_mentioned 
 ON search_insights_results(company_mentioned);
 
+

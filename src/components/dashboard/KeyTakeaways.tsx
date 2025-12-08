@@ -13,6 +13,7 @@ import LLMLogo from "@/components/LLMLogo";
 import { X, ExternalLink, Target, Award, Users, Heart, Shield, Lightbulb, Coffee, Crown, Lock, TrendingUp, Activity } from 'lucide-react';
 import { useNavigate } from "react-router-dom";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { logger } from "@/lib/utils";
 import type React from 'react';
 
 // Attribute icon mapping (shared style with Brand Pillars / ThematicAnalysis)
@@ -316,7 +317,7 @@ export const KeyTakeaways = ({
 
         setCompetitorSummary(summary);
       } catch (error) {
-        console.error('Error generating competitor summary:', error);
+        logger.error('Error generating competitor summary:', error);
         setCompetitorSummaryError('Failed to generate summary. Please try again.');
       } finally {
         setLoadingCompetitorSummary(false);

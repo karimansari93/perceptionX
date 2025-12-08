@@ -9,7 +9,6 @@ import { ResponsesTab } from "@/components/dashboard/ResponsesTab";
 import { SourcesTab } from "@/components/dashboard/SourcesTab";
 import { CompetitorsTab } from "@/components/dashboard/CompetitorsTab";
 import { AnswerGapsTab } from "@/components/dashboard/AnswerGapsTab";
-import { CareerSiteAnalysisTab } from "@/components/dashboard/CareerSiteAnalysisTab";
 import { SearchTab } from "@/components/dashboard/SearchTab";
 import { ThematicAnalysisTab } from "@/components/dashboard/ThematicAnalysisTab";
 import { ReportGenerator } from "@/components/dashboard/ReportGenerator";
@@ -36,6 +35,8 @@ import { WelcomeProModal } from "@/components/upgrade/WelcomeProModal";
 import { AddCompanyModal } from "@/components/dashboard/AddCompanyModal";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
+import { usePersistedState } from "@/hooks/usePersistedState";
 
 interface DatabaseOnboardingData {
   company_name: string;
@@ -55,7 +56,8 @@ interface PromptsModalOnboardingData {
 const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {}) => {
   const { user } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
-  const hasInitiallyLoaded = useRef(false);
+  // Persist initial load state so we don't show loading screen on every navigation
+  const [hasInitiallyLoaded, setHasInitiallyLoaded] = usePersistedState<boolean>('dashboard.hasInitiallyLoaded', false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showWelcomeProModal, setShowWelcomeProModal] = useState(false);
   // Use sessionStorage to persist modal state across tab switches
@@ -73,6 +75,12 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const [showAddLocationModal, setShowAddLocationModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const { isRefreshing, progress: refreshProgress, refreshAllPrompts } = useRefreshPrompts();
+  const { 
+    isCollecting: isCollectingData, 
+    collectionStatus, 
+    progress: collectionProgress, 
+    resumeCollection 
+  } = useCompanyDataCollection();
 
   // Set chart view based on screen size - 'bar' on mobile, 'bubble' (SWOT) on desktop
   useEffect(() => {
@@ -172,16 +180,22 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (!companyLoading && !loading && !isLoading && (currentCompany !== undefined)) {
       // Small delay to ensure everything is settled
       const timer = setTimeout(() => {
-        hasInitiallyLoaded.current = true;
+        setHasInitiallyLoaded(true);
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [companyLoading, loading, isLoading, currentCompany]);
+  }, [companyLoading, loading, isLoading, currentCompany, setHasInitiallyLoaded]);
 
   // Show loading screen during initial load
+  // Only show loading if we haven't loaded before OR if company is actually loading
   const isInitialLoading = useMemo(() => {
-    return companyLoading || (!hasInitiallyLoaded.current && (loading || isLoading));
-  }, [companyLoading, loading, isLoading]);
+    // If we've loaded before, only show loading if company is actively loading
+    if (hasInitiallyLoaded) {
+      return companyLoading;
+    }
+    // First time load - show loading while data is being fetched
+    return companyLoading || loading || isLoading;
+  }, [companyLoading, loading, isLoading, hasInitiallyLoaded]);
 
   // Check if user is new (less than 24 hours old)
   useEffect(() => {
@@ -192,6 +206,30 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       setIsNewUser(hoursSinceCreation < 24);
     }
   }, [user?.created_at]);
+
+  // Auto-resume incomplete data collection
+  const resumeCollectionRef = useRef(resumeCollection);
+  useEffect(() => {
+    resumeCollectionRef.current = resumeCollection;
+  }, [resumeCollection]);
+
+  useEffect(() => {
+    if (collectionStatus && !isCollectingData && currentCompany?.id === collectionStatus.companyId) {
+      console.log('[Dashboard] Auto-resuming collection for company:', collectionStatus.companyId);
+      // Small delay to ensure page is fully loaded
+      const timer = setTimeout(() => {
+        console.log('[Dashboard] Calling resumeCollection');
+        resumeCollectionRef.current();
+      }, 2000);
+      return () => clearTimeout(timer);
+    } else {
+      console.log('[Dashboard] Not auto-resuming:', {
+        hasStatus: !!collectionStatus,
+        isCollecting: isCollectingData,
+        companyMatch: currentCompany?.id === collectionStatus?.companyId
+      });
+    }
+  }, [collectionStatus?.companyId, isCollectingData, currentCompany?.id]);
 
   // Fetch onboarding data
   useEffect(() => {
@@ -252,8 +290,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         setActiveSection('responses');
       } else if (path === '/monitor/search') {
         setActiveSection('search');
-      } else if (path === '/monitor/career-site') {
-        setActiveSection('career-site');
       }
     } else if (path.startsWith('/analyze')) {
       setActiveGroup('analyze');
@@ -263,8 +299,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         setActiveSection('thematic');
       } else if (path === '/analyze/answer-gaps') {
         setActiveSection('answer-gaps');
-      } else if (path === '/analyze/career-site') {
-        setActiveSection('career-site');
       } else if (path === '/analyze/reports') {
         setActiveSection('reports');
       }
@@ -298,8 +332,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         navigate('/analyze/thematic');
       } else if (section === 'answer-gaps') {
         navigate('/analyze/answer-gaps');
-      } else if (section === 'career-site') {
-        navigate('/analyze/career-site');
       } else if (section === 'reports') {
         navigate('/analyze/reports');
       }
@@ -463,8 +495,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         );
       case "answer-gaps":
         return <AnswerGapsTab />;
-      case "career-site":
-        return <CareerSiteAnalysisTab />;
       case "reports":
         const reportsContent = (
           <ReportGenerator
@@ -554,8 +584,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           showUpgradeModal={showUpgradeModal}
           setShowUpgradeModal={setShowUpgradeModal}
           alwaysMounted={true}
-          isRefreshing={isRefreshing}
-          refreshProgress={refreshProgress}
+          isRefreshing={isRefreshing || isCollectingData}
+          refreshProgress={isCollectingData ? collectionProgress : refreshProgress}
           selectedLocation={selectedLocation}
           onLocationChange={setSelectedLocation}
           onAddLocation={() => setShowAddLocationModal(true)}

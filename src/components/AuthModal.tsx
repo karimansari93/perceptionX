@@ -129,7 +129,7 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
           .eq('id', unlinkedRecords[0].id);
 
         if (linkError) {
-          console.error('Error linking onboarding record:', linkError);
+          logger.error('Error linking onboarding record:', linkError);
         }
       } else {
         // Create new onboarding record for the user
@@ -145,11 +145,11 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
           .insert(newRecord);
 
         if (createError) {
-          console.error('Error creating onboarding record:', createError);
+          logger.error('Error creating onboarding record:', createError);
         }
       }
     } catch (error) {
-      console.error('Error in linkOnboardingToUser:', error);
+      logger.error('Error in linkOnboardingToUser:', error);
     }
   };
 
@@ -214,7 +214,7 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
         });
       }
     } catch (error: any) {
-      console.error('Auth error:', error);
+      logger.error('Auth error:', error);
       toast.error(error.message || 'An error occurred');
     } finally {
       setLoading(false);

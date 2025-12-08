@@ -190,3 +190,4 @@ COMMENT ON FUNCTION identify_duplicate_companies IS 'Identifies companies that i
 COMMENT ON FUNCTION fix_duplicate_company IS 'Creates a new company for a duplicate onboarding record and reassigns all related data';
 COMMENT ON VIEW duplicate_companies_view IS 'Shows all companies that have duplicate onboarding records (should be separate companies)';
 
+

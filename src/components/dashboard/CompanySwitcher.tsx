@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useSubscription } from '@/hooks/useSubscription';
-import { Building2, Check, ChevronDown, Star, Plus } from 'lucide-react';
+import { Building2, Check, ChevronDown, Star, Plus, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Favicon } from '@/components/ui/favicon';
@@ -165,8 +165,12 @@ export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyMo
   return (
     <>
     <DropdownMenu 
-      open={isOpen} 
-      onOpenChange={setIsOpen}
+      open={loading ? false : isOpen} 
+      onOpenChange={(open) => {
+        if (!loading) {
+          setIsOpen(open);
+        }
+      }}
       {...(alwaysMounted && { forceMount: true })}
     >
       <DropdownMenuTrigger asChild>
@@ -189,7 +193,15 @@ export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyMo
       <DropdownMenuContent align="start" className="w-[250px]">
         <DropdownMenuLabel>Your Companies</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {displayCompanies.map((company) => {
+        {loading ? (
+          <DropdownMenuItem disabled className="cursor-not-allowed">
+            <div className="flex items-center gap-2 w-full">
+              <Building2 className="h-4 w-4 text-gray-400 animate-pulse" />
+              <span className="text-sm text-gray-500">Loading companies...</span>
+            </div>
+          </DropdownMenuItem>
+        ) : (
+          displayCompanies.map((company) => {
           const isDefault = company.is_default === true;
           const isCurrent = company.id === currentCompany?.id;
           
@@ -234,15 +246,20 @@ export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyMo
               </div>
             </DropdownMenuItem>
           );
-        })}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={handleAddNewCompany}
-          className="cursor-pointer text-[#13274F] hover:text-[#0DBCBA] hover:bg-[#13274F]/5"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          <span className="font-medium">Add New Company</span>
-        </DropdownMenuItem>
+        })
+        )}
+        {!loading && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled
+              className="cursor-not-allowed opacity-50"
+            >
+              <Lock className="h-4 w-4 mr-2" />
+              <span className="font-medium">Add New Company</span>
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
     </>

@@ -110,7 +110,7 @@ const Auth = () => {
             .limit(1);
 
           if (onboardingError) {
-            console.error('Error checking onboarding status:', onboardingError);
+            logger.error('Error checking onboarding status:', onboardingError);
             // If we can't check, default to dashboard
             navigate('/dashboard', { 
               state: { 
@@ -136,7 +136,7 @@ const Auth = () => {
             .limit(1);
 
           if (promptsError) {
-            console.error('Error checking confirmed prompts:', promptsError);
+            logger.error('Error checking confirmed prompts:', promptsError);
             // If we can't check, default to dashboard
             navigate('/dashboard', { 
               state: { 
@@ -160,7 +160,7 @@ const Auth = () => {
             });
           }
         } catch (onboardingCheckError) {
-          console.error('Error checking onboarding status:', onboardingCheckError);
+          logger.error('Error checking onboarding status:', onboardingCheckError);
           // If we can't check, default to dashboard
           navigate('/dashboard', { 
             state: { 
@@ -209,7 +209,7 @@ const Auth = () => {
           .eq('id', unlinkedRecords[0].id);
 
         if (linkError) {
-          console.error('Error linking onboarding record:', linkError);
+          logger.error('Error linking onboarding record:', linkError);
         }
       } else {
         // Create new onboarding record for the user
@@ -225,11 +225,11 @@ const Auth = () => {
           .insert(newRecord);
 
         if (createError) {
-          console.error('Error creating onboarding record:', createError);
+          logger.error('Error creating onboarding record:', createError);
         }
       }
     } catch (error) {
-      console.error('Error in linkOnboardingToUser:', error);
+      logger.error('Error in linkOnboardingToUser:', error);
     }
   };
 
@@ -252,7 +252,7 @@ const Auth = () => {
         });
 
         if (error) {
-          console.error('Password reset error:', error);
+          logger.error('Password reset error:', error);
           if (error.message.includes('500') || error.message.includes('Internal Server Error')) {
             toast.error('Email service is currently unavailable. Please try again later or contact support.');
           } else {
@@ -302,7 +302,7 @@ const Auth = () => {
               .limit(1);
 
             if (onboardingError) {
-              console.error('Error checking onboarding status:', onboardingError);
+              logger.error('Error checking onboarding status:', onboardingError);
               // If we can't check, default to dashboard
               navigate('/dashboard');
               return;
@@ -323,7 +323,7 @@ const Auth = () => {
               .limit(1);
 
             if (promptsError) {
-              console.error('Error checking confirmed prompts:', promptsError);
+              logger.error('Error checking confirmed prompts:', promptsError);
               // If we can't check, default to dashboard
               navigate('/dashboard');
               return;
@@ -337,7 +337,7 @@ const Auth = () => {
               navigate('/dashboard');
             }
                   } catch (onboardingCheckError) {
-          console.error('Error checking onboarding status:', onboardingCheckError);
+          logger.error('Error checking onboarding status:', onboardingCheckError);
           // If we can't check, default to dashboard
           navigate('/dashboard');
         } finally {
@@ -489,7 +489,8 @@ const Auth = () => {
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
                 {/* Google and Microsoft Login Buttons and Divider only for login/signup, not password reset */}
-                {!isPasswordReset && (
+                {/* Hidden per user request */}
+                {false && !isPasswordReset && (
                   <>
                     <GoogleMaterialButton
                       onClick={handleGoogleAuth}
@@ -578,17 +579,20 @@ const Auth = () => {
                       Back to {isLogin ? 'sign in' : 'sign up'}
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsLogin(!isLogin);
-                        setIsPasswordReset(false);
-                      }}
-                      className="text-sm text-pink-500 hover:underline font-bold"
-                      style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
-                    >
-                      {isLogin ? "Not member yet? Create an account" : 'Already have an account? Sign in'}
-                    </button>
+                    // Hidden per user request
+                    false && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsLogin(!isLogin);
+                          setIsPasswordReset(false);
+                        }}
+                        className="text-sm text-pink-500 hover:underline font-bold"
+                        style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
+                      >
+                        {isLogin ? "Not member yet? Create an account" : 'Already have an account? Sign in'}
+                      </button>
+                    )
                   )}
                 </div>
               </form>

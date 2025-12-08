@@ -11,6 +11,7 @@ import LLMLogo from "@/components/LLMLogo";
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSubscription } from "@/hooks/useSubscription";
+import { usePersistedState } from "@/hooks/usePersistedState";
 
 interface TimeBasedData {
   name: string;
@@ -29,24 +30,26 @@ interface CompetitorsTabProps {
 
 export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchResults = [] }: CompetitorsTabProps) => {
   const { isPro } = useSubscription();
-  const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
-  const [isCompetitorModalOpen, setIsCompetitorModalOpen] = useState(false);
+  // Modal states - persisted
+  const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('competitorsTab.selectedCompetitor', null);
+  const [isCompetitorModalOpen, setIsCompetitorModalOpen] = usePersistedState<boolean>('competitorsTab.isCompetitorModalOpen', false);
   const [competitorSnippets, setCompetitorSnippets] = useState<{ snippet: string; full: string }[]>([]);
   const [expandedSnippetIdx, setExpandedSnippetIdx] = useState<number | null>(null);
   const [competitorSummary, setCompetitorSummary] = useState<string>("");
   const [loadingCompetitorSummary, setLoadingCompetitorSummary] = useState(false);
   const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
-  const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = useState(false);
+  const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = usePersistedState<boolean>('competitorsTab.isMentionsDrawerOpen', false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
-  const [selectedSource, setSelectedSource] = useState<{ domain: string; count: number } | null>(null);
-  const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
+  const [selectedSource, setSelectedSource] = usePersistedState<{ domain: string; count: number } | null>('competitorsTab.selectedSource', null);
+  const [isSourceModalOpen, setIsSourceModalOpen] = usePersistedState<boolean>('competitorsTab.isSourceModalOpen', false);
   const [showAllCompetitorSources, setShowAllCompetitorSources] = useState(false);
-  const [selectedSourceTypeFilter, setSelectedSourceTypeFilter] = useState<'all' | 'ai-responses' | 'search-results'>('all');
-  const [selectedPromptCategoryFilter, setSelectedPromptCategoryFilter] = useState<string>('all');
-  const [selectedCompetitorTypeFilter, setSelectedCompetitorTypeFilter] = useState<'all' | 'direct'>('all');
-  const [selectedIndustryFilter, setSelectedIndustryFilter] = useState<string>('all');
-  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = useState<string>('all');
-  const [selectedLocationFilter, setSelectedLocationFilter] = useState<string>('all');
+  // Filter states - persisted
+  const [selectedSourceTypeFilter, setSelectedSourceTypeFilter] = usePersistedState<'all' | 'ai-responses' | 'search-results'>('competitorsTab.selectedSourceTypeFilter', 'all');
+  const [selectedPromptCategoryFilter, setSelectedPromptCategoryFilter] = usePersistedState<string>('competitorsTab.selectedPromptCategoryFilter', 'all');
+  const [selectedCompetitorTypeFilter, setSelectedCompetitorTypeFilter] = usePersistedState<'all' | 'direct'>('competitorsTab.selectedCompetitorTypeFilter', 'all');
+  const [selectedIndustryFilter, setSelectedIndustryFilter] = usePersistedState<string>('competitorsTab.selectedIndustryFilter', 'all');
+  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('competitorsTab.selectedJobFunctionFilter', 'all');
+  const [selectedLocationFilter, setSelectedLocationFilter] = usePersistedState<string>('competitorsTab.selectedLocationFilter', 'all');
   const [forceRender, setForceRender] = useState(0);
 
   // Helper to check if a response is from a competitive prompt
@@ -741,11 +744,32 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
       );
     }
 
+    // Filter by job function - only show competitors mentioned in the selected job function
+    if (selectedJobFunctionFilter !== 'all') {
+      filteredCompetitors = filteredCompetitors.filter(competitor => 
+        competitor.count > 0 && isCompetitorFromJobFunction(competitor.name, selectedJobFunctionFilter)
+      );
+    }
+
+    // Filter by industry - only show competitors mentioned in the selected industry
+    if (selectedIndustryFilter !== 'all') {
+      filteredCompetitors = filteredCompetitors.filter(competitor => 
+        competitor.count > 0 && isCompetitorFromIndustry(competitor.name, selectedIndustryFilter)
+      );
+    }
+
+    // Filter by location - only show competitors mentioned in the selected location
+    if (selectedLocationFilter !== 'all') {
+      filteredCompetitors = filteredCompetitors.filter(competitor => 
+        competitor.count > 0 && isCompetitorFromLocation(competitor.name, selectedLocationFilter)
+      );
+    }
+
     return filteredCompetitors.map(competitor => ({
       ...competitor,
       change: changeData.get(competitor.name) || 0
     }));
-  }, [allTimeCompetitors, timeBasedCompetitors, selectedCompetitorTypeFilter]);
+  }, [allTimeCompetitors, timeBasedCompetitors, selectedCompetitorTypeFilter, selectedJobFunctionFilter, selectedIndustryFilter, selectedLocationFilter]);
 
   // Helper to extract snippets for a competitor from all responses
   const getSnippetsForCompetitor = (competitor: string) => {
@@ -1007,7 +1031,7 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
       {/* Sticky Header with Filters */}
       {isPro && (
         <div className="hidden sm:block sticky top-0 z-10 bg-white pb-2">
-          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
           <Select
             value={selectedCompetitorTypeFilter}
             onValueChange={handleCompetitorTypeDropdownChange}
@@ -1111,7 +1135,7 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
               </SelectContent>
             </Select>
           )}
-          {getUniqueJobFunctions.length > 1 && (
+          {getUniqueJobFunctions.length > 0 && (
             <Select
               value={selectedJobFunctionFilter}
               onValueChange={handleJobFunctionFilterChange}

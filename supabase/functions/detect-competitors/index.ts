@@ -15,26 +15,53 @@ serve(async (req) => {
   try {
     const { response, companyName } = await req.json();
 
-    if (!response || !companyName) {
+    if (!response) {
       return new Response(
-        JSON.stringify({ error: 'response and companyName are required' }),
+        JSON.stringify({ error: 'response is required' }),
         { status: 400, headers: corsHeaders }
       );
     }
 
-    // Call OpenAI to detect competitors
-    const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a helpful assistant that identifies company names from text.
+    // Determine if this is for industry-wide extraction (no companyName) or competitor detection
+    const isIndustryWide = !companyName || companyName.trim() === '';
+
+    // Call OpenAI to detect companies
+    const systemPrompt = isIndustryWide
+      ? `You are a helpful assistant that identifies ALL company names mentioned in text.
+Return ONLY a comma-separated list of ALL company names mentioned in the text, nothing else.
+
+IMPORTANT FORMAT RULES:
+- Return ONLY the company names separated by commas, nothing else
+- Do not include any explanatory text, prefixes, or suffixes
+- Use proper company name capitalization (e.g., "IBM" not "Ibm", "Salesforce" not "salesforce")
+- Include ALL companies mentioned, not just competitors
+- If no companies are found, return an empty string
+- Do not include phrases like "None" or "No companies found"
+
+Do NOT include:
+- Job boards (Glassdoor, Indeed, AmbitionBox, LinkedIn, Monster, CareerBuilder, ZipRecruiter, etc.)
+- Review sites (Trustpilot, G2, Capterra, etc.)
+- News sources (Reuters, Bloomberg, etc.)
+- Social media platforms (Twitter, Facebook, etc.)
+- Information aggregators (Crunchbase, PitchBook, etc.)
+- Market research firms (Gartner, Forrester, etc.)
+- Industry associations or organizations
+- Government agencies or regulatory bodies
+- Educational institutions
+- Consulting firms or agencies
+- The word "None" or any variation of it
+
+Example valid responses:
+"IBM, Salesforce, Oracle, Microsoft"
+"Procter & Gamble, Unilever, Nestlé, Coca-Cola"
+"" (empty string if no companies found)
+
+Example invalid responses:
+"None"
+"No companies found"
+"Companies include: IBM, Salesforce"
+"Some companies are IBM, Salesforce"`
+      : `You are a helpful assistant that identifies company names from text.
 Return ONLY a comma-separated list of company names that are direct competitors or alternatives to "${companyName}" in the same industry or market.
 
 IMPORTANT FORMAT RULES:
@@ -73,15 +100,32 @@ Example invalid responses:
 "None"
 "No competitors found"
 "Competitors include: IBM, Salesforce"
-"Some competitors are IBM, Salesforce"`
+"Some competitors are IBM, Salesforce"`;
+
+    const userPrompt = isIndustryWide
+      ? `In the following text, identify ALL company names that are mentioned. Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`
+      : `In the following text, identify all company names that are mentioned as competitors or alternatives to "${companyName}". Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`;
+
+    const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-3.5-turbo',
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
           },
           {
             role: 'user',
-            content: `In the following text, identify all company names that are mentioned as competitors or alternatives to "${companyName}". Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`
+            content: userPrompt
           }
         ],
         temperature: 0.2,
-        max_tokens: 100
+        max_tokens: 200 // Increased for industry-wide (more companies)
       })
     });
 

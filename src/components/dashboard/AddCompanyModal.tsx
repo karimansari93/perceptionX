@@ -11,7 +11,7 @@ import { useCompany } from '@/contexts/CompanyContext';
 import { useSubscription } from '@/hooks/useSubscription';
 import { toast } from 'sonner';
 import { generatePromptsFromData } from '@/hooks/usePromptsLogic';
-import { Star, RefreshCw } from 'lucide-react';
+import { Star, RefreshCw, Lock } from 'lucide-react';
 
 // Custom AI model logo component
 const AIModelLogo = ({ modelName, size = 'lg' }: { modelName: string; size?: 'sm' | 'md' | 'lg' }) => {
@@ -188,10 +188,12 @@ export const AddCompanyModal = ({
     // Company limit check is handled before opening the modal
 
     setIsAnalyzing(true);
+    let onboardingData: any = null;
+    let companyId: string | null = null;
 
     try {
       // 1. Create onboarding record
-      const { data: onboardingData, error: onboardingError } = await supabase
+      const { data: onboarding, error: onboardingError } = await supabase
         .from('user_onboarding')
         .insert({
           user_id: user.id,
@@ -204,10 +206,21 @@ export const AddCompanyModal = ({
         .single();
 
       if (onboardingError) throw onboardingError;
+      onboardingData = onboarding;
 
       // 2. Wait for company creation
-      const companyId = await waitForCompany(onboardingData.id);
+      companyId = await waitForCompany(onboardingData.id);
       const newCompany = { id: companyId };
+
+      // 2.5. Initialize collection status in database
+      await supabase
+        .from('companies')
+        .update({
+          data_collection_status: 'pending',
+          data_collection_started_at: new Date().toISOString(),
+          onboarding_id: onboardingData.id
+        })
+        .eq('id', companyId);
 
       // 3. Generate prompts
       const generatedPrompts = generatePromptsFromData({
@@ -310,6 +323,13 @@ export const AddCompanyModal = ({
 
       // 7. Run search insights FIRST
       setIsCollectingSearchInsights(true);
+      
+      // Update status to collecting_search_insights
+      await supabase
+        .from('companies')
+        .update({ data_collection_status: 'collecting_search_insights' })
+        .eq('id', companyId);
+
       const runSearchInsights = async () => {
         try {
           console.log(`🌍 Running search insights for company with country: ${country || 'GLOBAL'}`);
@@ -337,9 +357,25 @@ export const AddCompanyModal = ({
       
       // Transition to LLM analysis phase
       setIsCollectingSearchInsights(false);
-
-      // 8. Run AI analysis
+      
+      // 8. Calculate total operations BEFORE updating status
       const totalOperations = confirmedPrompts.length * models.length;
+      
+      // Update status to collecting_llm_data
+      await supabase
+        .from('companies')
+        .update({ 
+          data_collection_status: 'collecting_llm_data',
+          data_collection_progress: {
+            currentPrompt: 'Starting AI analysis...',
+            currentModel: '',
+            completed: 0,
+            total: totalOperations
+          }
+        })
+        .eq('id', companyId);
+
+      // 9. Run AI analysis
       let completedOperations = 0;
 
       setProgress({
@@ -353,12 +389,20 @@ export const AddCompanyModal = ({
         for (const prompt of confirmedPrompts) {
           for (const model of models) {
             try {
-              setProgress({
+              const currentProgress = {
                 currentPrompt: prompt.prompt_text.substring(0, 100) + '...',
                 currentModel: model.displayName,
                 completed: completedOperations,
                 total: totalOperations,
-              });
+              };
+
+              setProgress(currentProgress);
+
+              // Update progress in database
+              await supabase
+                .from('companies')
+                .update({ data_collection_progress: currentProgress })
+                .eq('id', companyId);
 
               const { data: responseData, error: functionError } = await supabase.functions.invoke(model.functionName, {
                 body: { prompt: prompt.prompt_text }
@@ -393,7 +437,19 @@ export const AddCompanyModal = ({
               }
 
               completedOperations++;
-              setProgress(prev => ({ ...prev, completed: completedOperations }));
+              const updatedProgress = {
+                currentPrompt: prompt.prompt_text.substring(0, 100) + '...',
+                currentModel: model.displayName,
+                completed: completedOperations,
+                total: totalOperations,
+              };
+              setProgress(updatedProgress);
+
+              // Update progress in database
+              await supabase
+                .from('companies')
+                .update({ data_collection_progress: updatedProgress })
+                .eq('id', companyId);
 
             } catch (error) {
               console.error(`Error testing ${model.name}:`, error);
@@ -405,6 +461,16 @@ export const AddCompanyModal = ({
 
       // Run AI prompts
       await runAIPrompts();
+
+      // Mark collection as completed
+      await supabase
+        .from('companies')
+        .update({
+          data_collection_status: 'completed',
+          data_collection_completed_at: new Date().toISOString(),
+          data_collection_progress: null
+        })
+        .eq('id', companyId);
 
       // 9. Success
       toast.success('Company analysis complete!');
@@ -455,6 +521,18 @@ export const AddCompanyModal = ({
       toast.error('Failed to analyze company');
       setIsAnalyzing(false);
       setIsCollectingSearchInsights(false);
+      
+      // Mark collection as failed if we have a companyId
+      if (companyId) {
+        try {
+          await supabase
+            .from('companies')
+            .update({ data_collection_status: 'failed' })
+            .eq('id', companyId);
+        } catch (updateError) {
+          console.error('Error updating collection status to failed:', updateError);
+        }
+      }
     }
   };
 
@@ -630,9 +708,12 @@ export const AddCompanyModal = ({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="country">Country</Label>
-            <Select value={country} onValueChange={setCountry} disabled={isAnalyzing}>
-              <SelectTrigger id="country">
+            <Label htmlFor="country" className="flex items-center gap-2">
+              {mode === 'add-location' ? 'Country/Location *' : 'Country'}
+              <Lock className="h-4 w-4 opacity-50" />
+            </Label>
+            <Select value={country} onValueChange={setCountry} disabled={true}>
+              <SelectTrigger id="country" className={mode === 'add-location' ? 'cursor-not-allowed opacity-50' : 'cursor-not-allowed opacity-50'}>
                 <SelectValue placeholder="Select a country" />
               </SelectTrigger>
               <SelectContent>

@@ -7,12 +7,13 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Users, RefreshCw, Mail, Building2, Briefcase, Calendar, Search } from 'lucide-react';
+import { Users, RefreshCw, Mail, Building2, Briefcase, Calendar, Search, Crown, Loader2 } from 'lucide-react';
 
 interface UserRow {
   id: string;
   email: string;
   created_at: string;
+  subscription_type?: 'free' | 'pro' | null;
   organizations: {
     id: string;
     name: string;
@@ -25,6 +26,7 @@ export const UsersTab = () => {
   const [filteredUsers, setFilteredUsers] = useState<UserRow[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [upgradingUserId, setUpgradingUserId] = useState<string | null>(null);
 
   useEffect(() => {
     loadUsers();
@@ -37,10 +39,10 @@ export const UsersTab = () => {
   const loadUsers = async () => {
     setLoading(true);
     try {
-      // Get all users
+      // Get all users with subscription status
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
-        .select('id, email, created_at')
+        .select('id, email, created_at, subscription_type')
         .order('created_at', { ascending: false });
 
       if (profilesError) throw profilesError;
@@ -95,6 +97,31 @@ export const UsersTab = () => {
     setFilteredUsers(filtered);
   };
 
+  const handleUpgradeToPro = async (userId: string) => {
+    setUpgradingUserId(userId);
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-upgrade-user', {
+        body: { userId }
+      });
+
+      if (error) {
+        console.error('Error upgrading user:', error);
+        toast.error(`Failed to upgrade user: ${error.message || 'Unknown error'}`);
+        return;
+      }
+
+      toast.success(data?.message || 'User upgraded to Pro successfully!');
+      
+      // Reload users to refresh subscription status
+      await loadUsers();
+    } catch (error: any) {
+      console.error('Error upgrading user:', error);
+      toast.error(`Failed to upgrade user: ${error.message || 'Unknown error'}`);
+    } finally {
+      setUpgradingUserId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -121,7 +148,7 @@ export const UsersTab = () => {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card className="border-none shadow-md">
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
@@ -131,6 +158,22 @@ export const UsersTab = () => {
               <div>
                 <p className="text-2xl font-bold text-nightsky">{users.length}</p>
                 <p className="text-sm text-nightsky/60">Total Users</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-none shadow-md">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="bg-pink/10 p-3 rounded-lg">
+                <Crown className="h-6 w-6 text-pink" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-nightsky">
+                  {users.filter(u => u.subscription_type === 'pro').length}
+                </p>
+                <p className="text-sm text-nightsky/60">Pro Users</p>
               </div>
             </div>
           </CardContent>
@@ -208,54 +251,101 @@ export const UsersTab = () => {
               <TableHeader>
                 <TableRow>
                   <TableHead>Email</TableHead>
+                  <TableHead>Subscription</TableHead>
                   <TableHead>Organizations</TableHead>
                   <TableHead>Joined</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredUsers.map(user => (
-                  <TableRow key={user.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Mail className="h-4 w-4 text-nightsky/60" />
-                        <span className="font-medium text-nightsky">{user.email}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {user.organizations.length === 0 ? (
-                        <Badge variant="outline" className="border-red-300 text-red-600 bg-red-50">
-                          No organization
-                        </Badge>
-                      ) : (
-                        <div className="flex flex-wrap gap-2">
-                          {user.organizations.map(org => (
-                            <div key={org.id} className="flex items-center gap-1">
-                              <Badge 
-                                variant="outline" 
-                                className="border-teal/30 text-teal bg-teal/5"
-                              >
-                                <Briefcase className="h-3 w-3 mr-1" />
-                                {org.name}
-                              </Badge>
-                              <Badge 
-                                variant="secondary" 
-                                className="text-xs bg-nightsky/10 text-nightsky"
-                              >
-                                {org.role}
-                              </Badge>
-                            </div>
-                          ))}
+                {filteredUsers.map(user => {
+                  const isPro = user.subscription_type === 'pro';
+                  const isUpgrading = upgradingUserId === user.id;
+                  
+                  return (
+                    <TableRow key={user.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Mail className="h-4 w-4 text-nightsky/60" />
+                          <span className="font-medium text-nightsky">{user.email}</span>
                         </div>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-nightsky/60 text-sm">
-                        <Calendar className="h-4 w-4" />
-                        {new Date(user.created_at).toLocaleDateString()}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                      <TableCell>
+                        <Badge 
+                          variant={isPro ? 'default' : 'outline'}
+                          className={isPro 
+                            ? 'bg-pink text-white border-pink' 
+                            : 'border-silver text-nightsky/70'
+                          }
+                        >
+                          {isPro ? (
+                            <>
+                              <Crown className="h-3 w-3 mr-1" />
+                              Pro
+                            </>
+                          ) : (
+                            'Free'
+                          )}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {user.organizations.length === 0 ? (
+                          <Badge variant="outline" className="border-red-300 text-red-600 bg-red-50">
+                            No organization
+                          </Badge>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {user.organizations.map(org => (
+                              <div key={org.id} className="flex items-center gap-1">
+                                <Badge 
+                                  variant="outline" 
+                                  className="border-teal/30 text-teal bg-teal/5"
+                                >
+                                  <Briefcase className="h-3 w-3 mr-1" />
+                                  {org.name}
+                                </Badge>
+                                <Badge 
+                                  variant="secondary" 
+                                  className="text-xs bg-nightsky/10 text-nightsky"
+                                >
+                                  {org.role}
+                                </Badge>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2 text-nightsky/60 text-sm">
+                          <Calendar className="h-4 w-4" />
+                          {new Date(user.created_at).toLocaleDateString()}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {!isPro && (
+                          <Button
+                            onClick={() => handleUpgradeToPro(user.id)}
+                            disabled={isUpgrading}
+                            size="sm"
+                            className="bg-pink hover:bg-pink/90"
+                          >
+                            {isUpgrading ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Upgrading...
+                              </>
+                            ) : (
+                              <>
+                                <Crown className="h-4 w-4 mr-2" />
+                                Upgrade to Pro
+                              </>
+                            )}
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

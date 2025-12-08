@@ -10,6 +10,7 @@ import { Plus } from "lucide-react";
 import { useCompany } from "@/contexts/CompanyContext";
 import { AddIndustryPromptModal } from "./AddIndustryPromptModal";
 import type { RefreshProgress } from "@/hooks/useRefreshPrompts";
+import { usePersistedState } from "@/hooks/usePersistedState";
 
 interface PromptsTabProps {
   promptsData: PromptData[];
@@ -30,9 +31,10 @@ export const PromptsTab = ({
   isRefreshing,
   refreshProgress,
 }: PromptsTabProps) => {
-  const [selectedPrompt, setSelectedPrompt] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isAddPromptModalOpen, setIsAddPromptModalOpen] = useState(false);
+  // Modal states - persisted
+  const [selectedPrompt, setSelectedPrompt] = usePersistedState<string | null>('promptsTab.selectedPrompt', null);
+  const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('promptsTab.isModalOpen', false);
+  const [isAddPromptModalOpen, setIsAddPromptModalOpen] = usePersistedState<boolean>('promptsTab.isAddPromptModalOpen', false);
   const { isPro } = useSubscription();
   const { currentCompany } = useCompany();
 
@@ -100,17 +102,22 @@ export const PromptsTab = ({
         />
 
         {/* Response Details Modal */}
-        <ResponseDetailsModal
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          promptText={selectedPrompt || ""}
-          responses={selectedPrompt ? getPromptResponses(selectedPrompt) : []}
-          promptsData={promptsData}
-          companyName={companyName}
-          onRefreshPrompt={onRefreshPrompts}
-          isRefreshing={isRefreshing}
-          refreshProgress={refreshProgress}
-        />
+        {selectedPrompt && (
+          <ResponseDetailsModal
+            isOpen={isModalOpen}
+            onClose={() => {
+              setIsModalOpen(false);
+              // Keep selectedPrompt so it can be restored
+            }}
+            promptText={selectedPrompt}
+            responses={getPromptResponses(selectedPrompt)}
+            promptsData={promptsData}
+            companyName={companyName}
+            onRefreshPrompt={onRefreshPrompts}
+            isRefreshing={isRefreshing}
+            refreshProgress={refreshProgress}
+          />
+        )}
       </div>
 
       {currentCompany && (

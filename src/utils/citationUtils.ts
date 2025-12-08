@@ -12,10 +12,57 @@ export interface EnhancedCitation {
   favicon?: string;
 }
 
+/**
+ * Extracts the actual source URL from Google Translate URLs.
+ * If the URL is a Google Translate URL, extracts the 'u' parameter value.
+ * Otherwise, returns the original URL.
+ */
+export const extractSourceUrl = (url: string): string => {
+  if (!url || typeof url !== 'string') return url;
+  
+  try {
+    const urlObj = new URL(url.trim());
+    
+    // Check if this is a Google Translate URL
+    if (urlObj.hostname.includes('translate.google') || 
+        urlObj.hostname.includes('translate.googleusercontent')) {
+      // Extract the 'u' parameter which contains the actual source URL
+      const sourceUrl = urlObj.searchParams.get('u');
+      if (sourceUrl) {
+        // Decode the URL if it's encoded
+        try {
+          return decodeURIComponent(sourceUrl);
+        } catch {
+          return sourceUrl;
+        }
+      }
+    }
+    
+    // Not a Google Translate URL, return original
+    return url.trim();
+  } catch {
+    // If URL parsing fails, try to extract 'u' parameter manually
+    const uParamMatch = url.match(/[?&]u=([^&]+)/);
+    if (uParamMatch) {
+      try {
+        return decodeURIComponent(uParamMatch[1]);
+      } catch {
+        return uParamMatch[1];
+      }
+    }
+    
+    // Return original URL if we can't parse it
+    return url.trim();
+  }
+};
+
 export const extractDomain = (url: string): string => {
   try {
+    // First extract the actual source URL if it's a Google Translate URL
+    const sourceUrl = extractSourceUrl(url);
+    
     // Handle various URL formats
-    let cleanUrl = url.trim();
+    let cleanUrl = sourceUrl.trim();
     
     // Add protocol if missing
     if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
@@ -134,14 +181,17 @@ export const enhanceCitations = (citations: any[]): EnhancedCitation[] => {
     // Handle different citation formats from different LLMs
     if (typeof citation === 'string') {
       // String citation (URL)
-      domain = extractDomain(citation);
-      url = citation.startsWith('http') ? citation : '';
+      // Extract actual source URL if it's a Google Translate URL
+      url = extractSourceUrl(citation);
+      domain = extractDomain(url);
+      url = url.startsWith('http') ? url : '';
     } else if (citation && typeof citation === 'object') {
       // Object citation
       if (citation.domain) {
         // Perplexity format: { domain: "glassdoor.com", url: "..." }
         domain = citation.domain;
-        url = citation.url || '';
+        // Extract actual source URL if it's a Google Translate URL
+        url = citation.url ? extractSourceUrl(citation.url) : '';
         title = citation.title || '';
       } else if (citation.source) {
         // Google AI format: { source: "Glassdoor", url: "..." }
@@ -165,12 +215,14 @@ export const enhanceCitations = (citations: any[]): EnhancedCitation[] => {
           domain = `${cleanSourceName}.com`;
         }
         
-        url = citation.url || '';
+        // Extract actual source URL if it's a Google Translate URL
+        url = citation.url ? extractSourceUrl(citation.url) : '';
         title = citation.title || '';
       } else if (citation.url) {
+        // Extract actual source URL if it's a Google Translate URL
+        url = extractSourceUrl(citation.url);
         // Extract domain from URL if no domain/source field
-        domain = extractDomain(citation.url);
-        url = citation.url;
+        domain = extractDomain(url);
         title = citation.title || '';
       }
     }
@@ -211,7 +263,8 @@ export const groupCitationsByDomain = (citations: EnhancedCitation[]): Map<strin
 // Normalizes a URL for grouping: domain + path (no query/hash, lowercased, trims trailing slash, no www, no protocol)
 export function normalizePageKey(urlLike: string): string {
   try {
-    let clean = urlLike.trim();
+    // Extract actual source URL if it's a Google Translate URL
+    let clean = extractSourceUrl(urlLike.trim());
     if (!/^https?:\/\//.test(clean)) clean = 'https://' + clean;
     const u = new URL(clean);
     let host = u.hostname.replace(/^www\./, '').toLowerCase();
@@ -233,8 +286,10 @@ export function getMostMentionedPages(rawCitations: any[], max?: number) {
   const pageMap = new Map<string, {titles: {[t:string]:number}, urls: string[], domain?: string, snippets: {[s:string]:number}, mentionCount: number}>();
 
   for (const citation of rawCitations) {
-    const url = citation?.url || citation?.link;
+    let url = citation?.url || citation?.link;
     if (!url) continue;
+    // Extract actual source URL if it's a Google Translate URL
+    url = extractSourceUrl(url);
     const pageKey = normalizePageKey(url);
     const title = citation.title || '';
     const domain = citation.domain || (citation.source && typeof citation.source === 'string' ? citation.source : undefined);

@@ -6,7 +6,8 @@ import {
   Users, 
   Briefcase, 
   LogOut,
-  MessageSquare
+  MessageSquare,
+  Trophy
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -43,6 +44,12 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
       label: 'Companies',
       icon: Building2,
       description: 'Manage company data'
+    },
+    {
+      id: 'visibility-rankings',
+      label: 'Visibility Rankings',
+      icon: Trophy,
+      description: 'Calculate & view rankings'
     },
     {
       id: 'data-chat',

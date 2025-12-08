@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { MetricCard } from "./MetricCard";
 import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dashboard";
 import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown } from 'lucide-react';
+import { usePersistedState } from "@/hooks/usePersistedState";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ReactMarkdown from 'react-markdown';
@@ -17,6 +18,7 @@ import { AttributesSummaryCard } from "./AttributesSummaryCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { Favicon } from "@/components/ui/favicon";
+import { extractSourceUrl } from "@/utils/citationUtils";
 import {
   ChartContainer,
   ChartTooltip,
@@ -96,16 +98,17 @@ export const OverviewTab = ({
   recencyDataLoading = false,
   aiThemesLoading = false
 }: OverviewTabProps) => {
-  const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
-  const [isCompetitorModalOpen, setIsCompetitorModalOpen] = useState(false);
+  // Modal states - persisted
+  const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('overviewTab.selectedCompetitor', null);
+  const [isCompetitorModalOpen, setIsCompetitorModalOpen] = usePersistedState<boolean>('overviewTab.isCompetitorModalOpen', false);
   const [competitorSnippets, setCompetitorSnippets] = useState<{ snippet: string; full: string }[]>([]);
   const [expandedSnippetIdx, setExpandedSnippetIdx] = useState<number | null>(null);
   const [competitorSummary, setCompetitorSummary] = useState<string>("");
   const [loadingCompetitorSummary, setLoadingCompetitorSummary] = useState(false);
   const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
-  const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = useState(false);
+  const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = usePersistedState<boolean>('overviewTab.isMentionsDrawerOpen', false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
-  const [isScoreBreakdownModalOpen, setIsScoreBreakdownModalOpen] = useState(false);
+  const [isScoreBreakdownModalOpen, setIsScoreBreakdownModalOpen] = usePersistedState<boolean>('overviewTab.isScoreBreakdownModalOpen', false);
 
   // Responsive check
   const [isMobile, setIsMobile] = useState(false);
@@ -988,10 +991,14 @@ export const OverviewTab = ({
       const recencyScores: number[] = [];
       
       periodCitations.forEach((citation: any) => {
-        const url = citation.url || citation.link;
-        if (url && recencyMap.has(url)) {
-          const score = recencyMap.get(url)!;
-          recencyScores.push(score);
+        const originalUrl = citation.url || citation.link;
+        if (originalUrl) {
+          // Extract actual source URL if it's a Google Translate URL
+          const url = extractSourceUrl(originalUrl);
+          if (recencyMap.has(url)) {
+            const score = recencyMap.get(url)!;
+            recencyScores.push(score);
+          }
         }
       });
       
@@ -999,11 +1006,17 @@ export const OverviewTab = ({
         ? recencyScores.reduce((sum, score) => sum + score, 0) / recencyScores.length
         : 0;
       
+      // Round values first so they match what's displayed in the breakdown
+      const roundedSentiment = Math.round(normalizedSentiment);
+      const roundedVisibility = Math.round(avgVisibility);
+      const roundedRelevance = Math.round(avgRelevance);
+      
       // Weighted formula: 50% sentiment + 30% visibility + 20% relevance
+      // Use rounded values so EPS matches what's shown in the breakdown card
       const perceptionScore = Math.round(
-        (normalizedSentiment * 0.5) +
-        (avgVisibility * 0.3) +
-        (avgRelevance * 0.2)
+        (roundedSentiment * 0.5) +
+        (roundedVisibility * 0.3) +
+        (roundedRelevance * 0.2)
       );
       
       
@@ -1013,9 +1026,9 @@ export const OverviewTab = ({
         score: perceptionScore,
         responseCount: periodResponses.length,
         promptCount: promptModelMap.size,
-        sentiment: Math.round(normalizedSentiment),
-        visibility: Math.round(avgVisibility),
-        relevance: Math.round(avgRelevance)
+        sentiment: roundedSentiment,
+        visibility: roundedVisibility,
+        relevance: roundedRelevance
       };
     });
     
@@ -1171,14 +1184,21 @@ export const OverviewTab = ({
               // Use latest period data if available, otherwise fall back to metrics
               const currentSentiment = latestPeriod ? latestPeriod.sentiment : Math.round(metrics.averageSentiment * 100);
               const currentVisibility = latestPeriod ? latestPeriod.visibility : Math.round(metrics.averageVisibility);
-              // For relevance, if latestPeriod exists but relevance is 0, it might mean no data for that period
-              // In that case, fall back to the overall average relevance from metrics (if available)
-              // Only use period relevance if it's > 0, or if overall relevance is also 0 (meaning legitimately 0%)
-              const currentRelevance = latestPeriod 
-                ? (latestPeriod.relevance > 0 || metrics.averageRelevance === 0 
-                    ? latestPeriod.relevance 
-                    : Math.round(metrics.averageRelevance))
-                : Math.round(metrics.averageRelevance);
+              
+              // For relevance, always use the overall average from metrics since it's calculated from all recency data
+              // The period-specific relevance may only include a subset of citations, so the overall average is more accurate
+              const currentRelevance = Math.round(metrics.averageRelevance);
+              
+              // Debug logging
+              if (process.env.NODE_ENV === 'development') {
+                console.log('[Relevance Debug] OverviewTab - Relevance calculation:', {
+                  latestPeriodRelevance: latestPeriod?.relevance,
+                  metricsAverageRelevance: metrics.averageRelevance,
+                  currentRelevance,
+                  hasLatestPeriod: !!latestPeriod,
+                  note: 'Using overall average relevance for consistency'
+                });
+              }
               
               return (
                 <>
@@ -1447,26 +1467,40 @@ export const OverviewTab = ({
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-green-600">{Math.round(metrics.averageSentiment * 100)}%</div>
-                      <div className="text-sm text-gray-600">Sentiment</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-blue-600">{Math.round(metrics.averageVisibility)}%</div>
-                      <div className="text-sm text-gray-600">Visibility</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-orange-600">{Math.round(metrics.averageRelevance)}%</div>
-                      <div className="text-sm text-gray-600">Relevance</div>
-                    </div>
-                  </div>
-                  <div className="mt-4 pt-4 border-t border-gray-200">
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-gray-900">{metrics.perceptionScore}</div>
-                      <div className="text-sm text-gray-600">Overall Perception Score</div>
-                    </div>
-                  </div>
+                  {(() => {
+                    // Get latest period data (same logic as Breakdown Card)
+                    const latestPeriod = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1] : null;
+                    const currentSentiment = latestPeriod ? latestPeriod.sentiment : Math.round(metrics.averageSentiment * 100);
+                    const currentVisibility = latestPeriod ? latestPeriod.visibility : Math.round(metrics.averageVisibility);
+                    // For relevance, always use the overall average from metrics for consistency
+                    const currentRelevance = Math.round(metrics.averageRelevance);
+                    const currentPerceptionScore = latestPeriod ? latestPeriod.score : metrics.perceptionScore;
+                    
+                    return (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                          <div className="text-center">
+                            <div className="text-2xl font-bold text-green-600">{currentSentiment}%</div>
+                            <div className="text-sm text-gray-600">Sentiment</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-2xl font-bold text-blue-600">{currentVisibility}%</div>
+                            <div className="text-sm text-gray-600">Visibility</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-2xl font-bold text-orange-600">{currentRelevance}%</div>
+                            <div className="text-sm text-gray-600">Relevance</div>
+                          </div>
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                          <div className="text-center">
+                            <div className="text-3xl font-bold text-gray-900">{currentPerceptionScore}</div>
+                            <div className="text-sm text-gray-600">Overall Perception Score</div>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -1481,24 +1515,34 @@ export const OverviewTab = ({
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageSentiment * 100)}%` }} />
-                    </div>
-                    <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
-                      {Math.round(metrics.averageSentiment * 100)}%
-                    </span>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
-                    <ul className="text-sm text-gray-700 space-y-2 ml-4">
-                      <li>• Advanced AI-powered thematic analysis of brand perception</li>
-                      <li>• Confidence-weighted sentiment scores from extracted themes</li>
-                      <li>• Whether mentions are favorable, neutral, or unfavorable</li>
-                      <li>• More accurate sentiment analysis beyond simple keyword matching</li>
-                      <li>• Context-aware understanding of how your brand is discussed</li>
-                    </ul>
-                  </div>
+                  {(() => {
+                    // Use the same logic as Breakdown Card for consistency
+                    const latestPeriod = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1] : null;
+                    const currentSentiment = latestPeriod ? latestPeriod.sentiment : Math.round(metrics.averageSentiment * 100);
+                    
+                    return (
+                      <>
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${currentSentiment}%` }} />
+                          </div>
+                          <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
+                            {currentSentiment}%
+                          </span>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
+                          <ul className="text-sm text-gray-700 space-y-2 ml-4">
+                            <li>• Advanced AI-powered thematic analysis of brand perception</li>
+                            <li>• Confidence-weighted sentiment scores from extracted themes</li>
+                            <li>• Whether mentions are favorable, neutral, or unfavorable</li>
+                            <li>• More accurate sentiment analysis beyond simple keyword matching</li>
+                            <li>• Context-aware understanding of how your brand is discussed</li>
+                          </ul>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -1513,24 +1557,34 @@ export const OverviewTab = ({
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageVisibility)}%` }} />
-                    </div>
-                    <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
-                      {Math.round(metrics.averageVisibility)}%
-                    </span>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
-                    <ul className="text-sm text-gray-700 space-y-2 ml-4">
-                      <li>• How prominently your brand appears in AI responses</li>
-                      <li>• The frequency and prominence of mentions across platforms</li>
-                      <li>• Whether you're mentioned early or late in responses</li>
-                      <li>• Your brand's recognition and recall value</li>
-                      <li>• How easily AI models can find and reference your company</li>
-                    </ul>
-                  </div>
+                  {(() => {
+                    // Use the same logic as Breakdown Card for consistency
+                    const latestPeriod = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1] : null;
+                    const currentVisibility = latestPeriod ? latestPeriod.visibility : Math.round(metrics.averageVisibility);
+                    
+                    return (
+                      <>
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${currentVisibility}%` }} />
+                          </div>
+                          <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
+                            {currentVisibility}%
+                          </span>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
+                          <ul className="text-sm text-gray-700 space-y-2 ml-4">
+                            <li>• How prominently your brand appears in AI responses</li>
+                            <li>• The frequency and prominence of mentions across platforms</li>
+                            <li>• Whether you're mentioned early or late in responses</li>
+                            <li>• Your brand's recognition and recall value</li>
+                            <li>• How easily AI models can find and reference your company</li>
+                          </ul>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -1545,24 +1599,35 @@ export const OverviewTab = ({
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${Math.round(metrics.averageRelevance)}%` }} />
-                    </div>
-                    <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
-                      {Math.round(metrics.averageRelevance)}%
-                    </span>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
-                    <ul className="text-sm text-gray-700 space-y-2 ml-4">
-                      <li>• How recent and timely the content about your brand is</li>
-                      <li>• The freshness of information sources and citations</li>
-                      <li>• Whether AI responses reference up-to-date information</li>
-                      <li>• The recency of news, reviews, and mentions about your company</li>
-                      <li>• How current your brand's online presence appears to be</li>
-                    </ul>
-                  </div>
+                  {(() => {
+                    // Use the same logic as Breakdown Card for consistency
+                    // For relevance, always use the overall average from metrics since it's calculated from all recency data
+                    // The period-specific relevance may only include a subset of citations, so the overall average is more accurate
+                    const currentRelevance = Math.round(metrics.averageRelevance);
+                    
+                    return (
+                      <>
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${currentRelevance}%` }} />
+                          </div>
+                          <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
+                            {currentRelevance}%
+                          </span>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
+                          <ul className="text-sm text-gray-700 space-y-2 ml-4">
+                            <li>• How recent and timely the content about your brand is</li>
+                            <li>• The freshness of information sources and citations</li>
+                            <li>• Whether AI responses reference up-to-date information</li>
+                            <li>• The recency of news, reviews, and mentions about your company</li>
+                            <li>• How current your brand's online presence appears to be</li>
+                          </ul>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             </TabsContent>

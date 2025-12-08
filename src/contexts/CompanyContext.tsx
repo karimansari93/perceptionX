@@ -60,7 +60,7 @@ const isAdminUser = (email: string | undefined): boolean => {
 };
 
 export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [currentCompany, setCurrentCompany] = useState<Company | null>(null);
   const [userCompanies, setUserCompanies] = useState<Company[]>([]);
   const [userMemberships, setUserMemberships] = useState<CompanyMembership[]>([]);
@@ -68,7 +68,15 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Fetch user's companies through organization membership
   const fetchUserCompanies = useCallback(async () => {
+    // CRITICAL: Wait for auth to be fully loaded before fetching companies
+    // This prevents race conditions where user data is fetched before auth context is ready
+    if (authLoading) {
+      console.log('🔍 Auth still loading, waiting...');
+      return;
+    }
+
     if (!user) {
+      // Clear all state immediately when user is null
       setCurrentCompany(null);
       setUserCompanies([]);
       setUserMemberships([]);
@@ -121,6 +129,8 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
 
           // Fetch countries for all companies
+          // Note: For admin, we don't filter by user_id since admins should see all companies
+          // But we still need to be careful about the query structure
           let countriesMap = new Map<string, string | null>();
           if (companyIds.length > 0) {
             const { data: countriesData, error: countriesError } = await supabase
@@ -315,11 +325,13 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
 
             // Fetch countries for these companies from user_onboarding
+            // CRITICAL: Filter by user_id to ensure we only get countries for this user's companies
             let countriesMap = new Map<string, string | null>();
             if (companyIds.length > 0) {
               const { data: countriesData, error: countriesError } = await supabase
                 .from('user_onboarding')
                 .select('company_id, country')
+                .eq('user_id', user.id) // CRITICAL: Filter by user_id to prevent seeing other users' data
                 .in('company_id', companyIds)
                 .not('company_id', 'is', null)
                 .order('created_at', { ascending: false });
@@ -468,11 +480,13 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
 
           // Fetch countries for these companies from user_onboarding
+          // CRITICAL: Filter by user_id to ensure we only get countries for this user's companies
           let countriesMap = new Map<string, string | null>();
           if (companyIds.length > 0) {
             const { data: countriesData, error: countriesError } = await supabase
               .from('user_onboarding')
               .select('company_id, country')
+              .eq('user_id', user.id) // CRITICAL: Filter by user_id to prevent seeing other users' data
               .in('company_id', companyIds)
               .not('company_id', 'is', null)
               .order('created_at', { ascending: false });
@@ -579,10 +593,24 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [user]);
 
-  // Load companies when user changes
+  // CRITICAL: Clear state immediately when user changes to prevent stale data
   useEffect(() => {
-    fetchUserCompanies();
-  }, [fetchUserCompanies]);
+    if (!user && !authLoading) {
+      // User logged out or auth cleared - immediately clear all company data
+      setCurrentCompany(null);
+      setUserCompanies([]);
+      setUserMemberships([]);
+      setLoading(false);
+    }
+  }, [user, authLoading]);
+
+  // Load companies when user changes or auth finishes loading
+  useEffect(() => {
+    // Only fetch if auth is fully loaded and user exists
+    if (!authLoading) {
+      fetchUserCompanies();
+    }
+  }, [fetchUserCompanies, authLoading]);
 
   const switchCompany = useCallback(async (companyId: string) => {
     console.log('🔍 switchCompany called with ID:', companyId);
@@ -679,11 +707,13 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 .in('id', companyIds);
 
               // Fetch countries for these companies
+              // CRITICAL: Filter by user_id to ensure we only get countries for this user's companies
               let countriesMap = new Map<string, string | null>();
               if (companyIds.length > 0) {
                 const { data: countriesData } = await supabase
                   .from('user_onboarding')
                   .select('company_id, country')
+                  .eq('user_id', user.id) // CRITICAL: Filter by user_id to prevent seeing other users' data
                   .in('company_id', companyIds)
                   .not('company_id', 'is', null)
                   .order('created_at', { ascending: false });

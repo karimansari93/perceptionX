@@ -44,12 +44,6 @@ supabase functions deploy company-report-text --project-ref ofyjvfmcgtntwamkubui
 echo "Deploying ai-thematic-analysis-bulk function..."
 supabase functions deploy ai-thematic-analysis-bulk --project-ref ofyjvfmcgtntwamkubui
 
-echo "Deploying crawl-career-site function..."
-supabase functions deploy crawl-career-site --project-ref ofyjvfmcgtntwamkubui
-
-echo "Deploying analyze-crawled-content function..."
-supabase functions deploy analyze-crawled-content --project-ref ofyjvfmcgtntwamkubui
-
 echo "Deploying extract-recency-scores function..."
 supabase functions deploy extract-recency-scores --project-ref ofyjvfmcgtntwamkubui
 

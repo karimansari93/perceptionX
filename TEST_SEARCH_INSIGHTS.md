@@ -172,3 +172,4 @@ GROUP BY s.id, s.company_id, s.company_name, s.total_results, s.created_at
 ORDER BY s.created_at DESC;
 ```
 
+

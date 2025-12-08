@@ -83,3 +83,4 @@ export function parseCompetitors(competitorsString: string, companyName: string)
     .filter(comp => isValidCompetitor(comp, companyName));
 }
 
+

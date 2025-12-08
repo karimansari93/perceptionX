@@ -136,3 +136,4 @@ Once verification is complete, remove the debug component by:
 2. Removing the debug component JSX (lines ~1244-1254)
 3. Optionally removing `companyId` prop if not needed elsewhere
 
+

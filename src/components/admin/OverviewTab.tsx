@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Building2, Users, Briefcase, TrendingUp, Database, Activity } from 'lucide-react';
 import { toast } from 'sonner';
+import { logger } from '@/lib/utils';
 
 interface SystemStats {
   totalOrganizations: number;
@@ -77,7 +78,7 @@ export const OverviewTab = () => {
         recentActivity: recentCount || 0
       });
     } catch (error) {
-      console.error('Error loading stats:', error);
+      logger.error('Error loading stats:', error);
       toast.error('Failed to load system statistics');
     } finally {
       setLoading(false);

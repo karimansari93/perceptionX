@@ -5,6 +5,7 @@ import { Eye, Target, MessageSquare, ExternalLink } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { logger } from '@/lib/utils';
 
 interface PromptGap {
   id: string;
@@ -152,7 +153,7 @@ export const AnswerGapsTab = () => {
       setGaps(groupedGaps);
       
     } catch (error) {
-      console.error('Error loading answer gaps:', error);
+      logger.error('Error loading answer gaps:', error);
       toast({
         title: "Error",
         description: "Failed to load answer gaps data",

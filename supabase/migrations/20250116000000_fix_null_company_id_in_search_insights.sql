@@ -74,3 +74,4 @@ BEGIN
   RAISE NOTICE '  Terms: %', terms_null_count;
 END $$;
 
+

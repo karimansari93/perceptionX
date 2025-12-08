@@ -36,7 +36,7 @@ serve(async (req) => {
   try {
     // Parse request body
     const body = await req.json();
-    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, company_id } = body;
+    const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, company_id, for_index } = body;
     
     // Handle citations from different LLMs
     let llmCitations = perplexityCitations || [];
@@ -81,7 +81,7 @@ serve(async (req) => {
     const result = await analyzeResponse(response, companyName, promptType);
 
     // Prepare data for insert
-    const insertData = {
+    const insertData: any = {
       confirmed_prompt_id,
       ai_model,
       response_text: response,
@@ -93,6 +93,11 @@ serve(async (req) => {
       // first_mention_position, total_words, competitive_score, detected_competitors, mention_ranking,
       // talentx_* columns
     };
+
+    // Add for_index if provided
+    if (for_index !== undefined) {
+      insertData.for_index = for_index;
+    }
 
 
 
@@ -230,7 +235,7 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
         .filter(n => /[A-Z]/.test(n))
         // Remove generic words
         .filter(n => !stopwords.has(n.toLowerCase()))
-        .slice(0, 5); // Limit to 5 competitors
+        .slice(0, 10); // Limit to 10 competitors
 
       detectedCompetitors = names.join(', ');
     } else {
@@ -410,6 +415,50 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
   return mentions;
 }
 
+/**
+ * Extracts the actual source URL from Google Translate URLs.
+ * If the URL is a Google Translate URL, extracts the 'u' parameter value.
+ * Otherwise, returns the original URL.
+ */
+function extractSourceUrl(url: string): string {
+  if (!url || typeof url !== 'string') return url;
+  
+  try {
+    const urlObj = new URL(url.trim());
+    
+    // Check if this is a Google Translate URL
+    if (urlObj.hostname.includes('translate.google') || 
+        urlObj.hostname.includes('translate.googleusercontent')) {
+      // Extract the 'u' parameter which contains the actual source URL
+      const sourceUrl = urlObj.searchParams.get('u');
+      if (sourceUrl) {
+        // Decode the URL if it's encoded
+        try {
+          return decodeURIComponent(sourceUrl);
+        } catch {
+          return sourceUrl;
+        }
+      }
+    }
+    
+    // Not a Google Translate URL, return original
+    return url.trim();
+  } catch {
+    // If URL parsing fails, try to extract 'u' parameter manually
+    const uParamMatch = url.match(/[?&]u=([^&]+)/);
+    if (uParamMatch) {
+      try {
+        return decodeURIComponent(uParamMatch[1]);
+      } catch {
+        return uParamMatch[1];
+      }
+    }
+    
+    // Return original URL if we can't parse it
+    return url.trim();
+  }
+}
+
 function extractCitationsFromText(text: string): Citation[] {
   const citations: Citation[] = [];
   
@@ -418,7 +467,9 @@ function extractCitationsFromText(text: string): Citation[] {
   let match;
   
   while ((match = urlPattern.exec(text)) !== null) {
-    const url = match[0];
+    const originalUrl = match[0];
+    // Extract actual source URL if it's a Google Translate URL
+    const url = extractSourceUrl(originalUrl);
     const domain = new URL(url).hostname.replace('www.', '');
     
     citations.push({

@@ -40,6 +40,8 @@ export const useDashboardData = () => {
   const [recencyDataError, setRecencyDataError] = useState<string | null>(null);
   const subscriptionRef = useRef<any>(null); // Track subscription instance
   const pollingRef = useRef<NodeJS.Timeout | null>(null);   // Track polling interval
+  const recencyDataCacheRef = useRef<{ responseIdsHash: string; data: any[] } | null>(null); // Cache recency data
+  const previousResponseIdsRef = useRef<string>(''); // Track previous response IDs to detect changes
 
   // Network status monitoring - FIXED
   useEffect(() => {
@@ -122,6 +124,8 @@ export const useDashboardData = () => {
               prompt_theme,
               prompt_type,
               industry_context,
+              job_function_context,
+              location_context,
               talentx_attribute_id
             )
           `)
@@ -149,7 +153,9 @@ export const useDashboardData = () => {
                   prompt_text,
                   talentx_attribute_id,
                   company_id,
-                  industry_context
+                  industry_context,
+                  job_function_context,
+                  location_context
                 )
               `)
               .eq('confirmed_prompts.company_id', currentCompany.id)
@@ -196,7 +202,9 @@ export const useDashboardData = () => {
                     prompt_text: promptText,
                     prompt_category: `TalentX: ${attributeId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
                     prompt_type: promptType.replace('talentx_', ''),
-                    industry_context: response.confirmed_prompts.industry_context
+                    industry_context: response.confirmed_prompts.industry_context,
+                    job_function_context: response.confirmed_prompts.job_function_context,
+                    location_context: response.confirmed_prompts.location_context
                   }
                 };
               });
@@ -279,150 +287,119 @@ export const useDashboardData = () => {
       const allCitations = responses.flatMap(r => parseCitations(r.citations)).filter(c => c.url);
       const urls = allCitations.map(c => c.url);
       
-      if (urls.length === 0) {
+      // Remove duplicates
+      const uniqueUrls = [...new Set(urls)];
+      
+      console.log('[Relevance Debug] fetchRecencyData: Starting with', uniqueUrls.length, 'unique URLs from', urls.length, 'total URLs in', responses.length, 'responses');
+      console.log('[Relevance Debug] Sample URLs from citations:', uniqueUrls.slice(0, 5));
+      
+      if (uniqueUrls.length === 0) {
+        console.log('[Relevance Debug] fetchRecencyData: No URLs found in citations');
         setRecencyData([]);
         return;
       }
       
-      // Limit URLs to process initially to prevent long blocking (process first 100)
-      // Remaining URLs can be processed in background if needed
-      const maxUrlsToProcess = 100;
-      const urlsToProcess = urls.slice(0, maxUrlsToProcess);
-      
-      // Process URLs in smaller batches to avoid URI length limits
-      const batchSize = 50; // Increased from 25 to 50 for better performance
-      const allMatches: any[] = [];
-      let batchProcessingFailed = false;
-      
-      // Process URLs in batches
-      for (let i = 0; i < urlsToProcess.length; i += batchSize) {
-        const batch = urlsToProcess.slice(i, i + batchSize);
-        
+      // Use domain-based matching as primary method for better coverage
+      // This matches any URL from the same domain, not requiring exact URL matches
+      // Extract unique domains from ALL URLs (not limited to 100)
+      const domains = [...new Set(uniqueUrls.map(url => {
         try {
-          const { data: batchMatches, error: batchError } = await retrySupabaseQuery(() =>
-            supabase
-              .from('url_recency_cache')
-              .select('url, recency_score')
-              .in('url', batch)
-              .not('recency_score', 'is', null)
-          ) as { data: any[] | null; error: any };
-          
-          if (batchError) {
-            console.error(`Error in batch ${Math.floor(i/batchSize) + 1}:`, batchError);
-            
-            // If this is a URI length error, try even smaller batches
-            if (batchError.message?.includes('uri too long') || 
-                batchError.message?.includes('request entity too large') ||
-                batchError.code === 'ERR_FAILED') {
-              batchProcessingFailed = true;
-              break;
-            }
-            
-            // Continue with next batch for other errors
-            continue;
-          }
-          
-          if (batchMatches && batchMatches.length > 0) {
-            allMatches.push(...batchMatches);
-          }
-          
-          // Small delay between batches to prevent overwhelming the server
-          if (i + batchSize < urlsToProcess.length) {
-            await new Promise(resolve => setTimeout(resolve, 25));
-          }
-          
-        } catch (error) {
-          console.error(`Exception in batch ${Math.floor(i/batchSize) + 1}:`, error);
-          
-          // If this is a URI length error, try individual queries
-          if (error.message?.includes('uri too long') || 
-              error.message?.includes('request entity too large') ||
-              error.code === 'ERR_FAILED') {
-            batchProcessingFailed = true;
-            break;
-          }
-          
-          // Continue with next batch for other errors
-          continue;
-        }
-      }
-      
-      // If batch processing failed due to URI length, try individual URL queries
-      if (batchProcessingFailed) {
-        // Limit individual queries too (first 50 only)
-        const maxIndividualQueries = 50;
-        for (const url of urlsToProcess.slice(0, maxIndividualQueries)) {
-          try {
-            const { data: singleMatch, error: singleError } = await retrySupabaseQuery(() =>
-              supabase
-                .from('url_recency_cache')
-                .select('url, recency_score')
-                .eq('url', url)
-                .not('recency_score', 'is', null)
-                .single()
-            ) as { data: any | null; error: any };
-            
-            if (!singleError && singleMatch) {
-              allMatches.push(singleMatch);
-            }
-            
-            // Small delay between individual queries
-            await new Promise(resolve => setTimeout(resolve, 10));
-            
-          } catch (error) {
-            console.error(`Error querying individual URL ${url}:`, error);
-            continue;
-          }
-        }
-      }
-      
-      if (allMatches.length > 0) {
-        setRecencyData(allMatches);
-        setRecencyDataError(null); // Clear any previous errors
-        return;
-      }
-      
-      // If no exact matches, try domain-based search as fallback
-      // Use the same limited URL set
-      const domains = [...new Set(urlsToProcess.map(url => {
-        try {
-          return new URL(url).hostname;
+          const hostname = new URL(url).hostname;
+          // Normalize domain (remove www. prefix for better matching)
+          return hostname.replace(/^www\./, '').toLowerCase();
         } catch {
           return null;
         }
       }).filter(Boolean))];
       
-      // Process domains in batches too
-      const domainBatchSize = 10;
+      console.log('[Relevance Debug] Extracted', domains.length, 'unique domains from', uniqueUrls.length, 'URLs');
+      console.log('[Relevance Debug] Sample domains:', domains.slice(0, 10));
+      
+      // Use domain-based matching as primary method for better coverage
+      // Process domains in batches
+      const domainBatchSize = 20; // Process 20 domains at a time
       const allDomainMatches: any[] = [];
+      const seenUrls = new Set<string>(); // Track unique URLs to avoid duplicates
       
       for (let i = 0; i < domains.length; i += domainBatchSize) {
         const domainBatch = domains.slice(i, i + domainBatchSize);
         
+        console.log(`[Relevance Debug] Processing domain batch ${Math.floor(i/domainBatchSize) + 1}/${Math.ceil(domains.length/domainBatchSize)}, ${domainBatch.length} domains`);
+        
         try {
+          // Query cache for any URLs from these domains
           const { data: domainMatches, error: domainError } = await retrySupabaseQuery(() =>
             supabase
               .from('url_recency_cache')
               .select('url, recency_score, domain')
               .or(domainBatch.map(domain => `domain.eq.${domain}`).join(','))
               .not('recency_score', 'is', null)
-              .limit(50)
+              .limit(200) // Get up to 200 matches per domain batch
           ) as { data: any[] | null; error: any };
           
           if (domainError) {
-            console.error(`Error in domain batch ${Math.floor(i/domainBatchSize) + 1}:`, domainError);
+            console.error(`[Relevance Debug] Error in domain batch ${Math.floor(i/domainBatchSize) + 1}:`, domainError);
             continue;
           }
           
           if (domainMatches && domainMatches.length > 0) {
-            allDomainMatches.push(...domainMatches);
+            // Filter to only include URLs that match our citation domains (for accuracy)
+            const matchingUrls = domainMatches.filter(match => {
+              // Normalize match domain
+              const matchDomain = (match.domain || new URL(match.url).hostname)
+                .replace(/^www\./, '')
+                .toLowerCase();
+              
+              // Check if this cached URL's domain matches any of our citation domains
+              const matchesCitation = domainBatch.some(citationDomain => 
+                citationDomain === matchDomain
+              );
+              
+              // Also check if we've already seen this URL
+              return matchesCitation && !seenUrls.has(match.url);
+            });
+            
+            matchingUrls.forEach(match => seenUrls.add(match.url));
+            allDomainMatches.push(...matchingUrls);
+            
+            console.log(`[Relevance Debug] Domain batch ${Math.floor(i/domainBatchSize) + 1} found ${matchingUrls.length} relevant matches (${domainMatches.length} total from cache)`);
+          } else {
+            console.log(`[Relevance Debug] Domain batch ${Math.floor(i/domainBatchSize) + 1} found 0 matches`);
+          }
+          
+          // Small delay between batches
+          if (i + domainBatchSize < domains.length) {
+            await new Promise(resolve => setTimeout(resolve, 50));
           }
           
         } catch (error) {
-          console.error(`Exception in domain batch ${Math.floor(i/domainBatchSize) + 1}:`, error);
+          console.error(`[Relevance Debug] Exception in domain batch ${Math.floor(i/domainBatchSize) + 1}:`, error);
           continue;
         }
       }
+      
+      console.log('[Relevance Debug] fetchRecencyData: Domain-based search found', allDomainMatches.length, 'total matches');
+      if (allDomainMatches.length > 0) {
+        console.log('[Relevance Debug] Sample domain matches:', allDomainMatches.slice(0, 5).map(m => ({
+          url: m.url?.substring(0, 60),
+          domain: m.domain,
+          score: m.recency_score
+        })));
+        console.log('[Relevance Debug] Score distribution:', {
+          '0-20': allDomainMatches.filter(m => m.recency_score >= 0 && m.recency_score < 20).length,
+          '20-40': allDomainMatches.filter(m => m.recency_score >= 20 && m.recency_score < 40).length,
+          '40-60': allDomainMatches.filter(m => m.recency_score >= 40 && m.recency_score < 60).length,
+          '60-80': allDomainMatches.filter(m => m.recency_score >= 60 && m.recency_score < 80).length,
+          '80-100': allDomainMatches.filter(m => m.recency_score >= 80 && m.recency_score <= 100).length,
+        });
+      }
+      
+      // Cache the results
+      const responseIdsHash = responses.map(r => r.id).sort().join(',');
+      recencyDataCacheRef.current = {
+        responseIdsHash,
+        data: allDomainMatches
+      };
       
       setRecencyData(allDomainMatches);
       setRecencyDataError(null); // Clear any previous errors
@@ -911,6 +888,8 @@ export const useDashboardData = () => {
       
       // Clear search results cache when switching companies
       searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
+      // Clear recency data cache when switching companies
+      recencyDataCacheRef.current = null;
     }
   }, [currentCompany?.id, responses.length, searchResults.length]);
 
@@ -939,12 +918,33 @@ export const useDashboardData = () => {
     }
   }, [isSwitchingCompany, responses.length, searchResults.length]);
 
-  // Fetch recency data when responses change
+  // Fetch recency data when responses change (with caching to avoid unnecessary refetches)
   useEffect(() => {
-    if (responses.length > 0) {
-      fetchRecencyData();
+    if (responses.length === 0) {
+      setRecencyData([]);
+      recencyDataCacheRef.current = null;
+      previousResponseIdsRef.current = '';
+      return;
     }
-  }, [responses.length]); // Only depend on responses length, not the function
+    
+    // Create a hash of response IDs to detect if responses actually changed
+    const responseIdsHash = responses.map(r => r.id).sort().join(',');
+    
+    // Only fetch if responses actually changed (not just on every render)
+    if (previousResponseIdsRef.current !== responseIdsHash) {
+      previousResponseIdsRef.current = responseIdsHash;
+      
+      // Only fetch if we don't have cached data or if cache is stale
+      if (!recencyDataCacheRef.current || recencyDataCacheRef.current.responseIdsHash !== responseIdsHash) {
+        fetchRecencyData();
+      } else {
+        // Use cached data
+        console.log('[Relevance Debug] Using cached recency data, skipping fetch');
+        setRecencyData(recencyDataCacheRef.current.data);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [responses.length]); // Only depend on length - hash comparison happens inside
 
   // Fetch AI themes when responses change
   useEffect(() => {
@@ -1371,28 +1371,48 @@ export const useDashboardData = () => {
     const validRecencyScores = recencyData.filter(item => 
       item.recency_score !== null && item.recency_score !== undefined
     );
+    
+    // Debug logging for relevance score calculation
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[Relevance Debug]', {
+        totalRecencyData: recencyData.length,
+        validScores: validRecencyScores.length,
+        invalidScores: recencyData.length - validRecencyScores.length,
+        sampleScores: validRecencyScores.slice(0, 5).map(item => ({
+          url: item.url?.substring(0, 50),
+          score: item.recency_score
+        })),
+        allScores: validRecencyScores.map(item => item.recency_score)
+      });
+    }
+    
     const averageRelevance = validRecencyScores.length > 0 
       ? validRecencyScores.reduce((sum, item) => sum + item.recency_score, 0) / validRecencyScores.length 
       : 0;
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[Relevance Debug] Average relevance calculated:', averageRelevance);
+    }
 
     // Calculate overall perception score
     const calculatePerceptionScore = () => {
       if (responses.length === 0) return { score: 0, label: 'No Data' };
 
-      // Convert sentiment ratio (0-1) to 0-100 scale
-      const normalizedSentiment = Math.max(0, Math.min(100, averageSentiment * 100));
+      // Convert sentiment ratio (0-1) to 0-100 scale and round
+      const roundedSentiment = Math.round(Math.max(0, Math.min(100, averageSentiment * 100)));
       
-      // Visibility is already 0-100 scale
-      const visibilityScore = averageVisibility;
+      // Visibility is already 0-100 scale, round it
+      const roundedVisibility = Math.round(averageVisibility);
       
-      // Relevance is already 0-100 scale
-      const relevanceScore = averageRelevance;
+      // Relevance is already 0-100 scale, round it
+      const roundedRelevance = Math.round(averageRelevance);
 
       // Weighted formula: 50% sentiment + 30% visibility + 20% relevance (excluding competitive)
+      // Use rounded values so EPS matches what's shown in breakdown
       const perceptionScore = Math.round(
-        (normalizedSentiment * 0.5) + 
-        (visibilityScore * 0.3) + 
-        (relevanceScore * 0.2)
+        (roundedSentiment * 0.5) + 
+        (roundedVisibility * 0.3) + 
+        (roundedRelevance * 0.2)
       );
 
       // Determine label based on score
@@ -1407,7 +1427,7 @@ export const useDashboardData = () => {
 
     const { score: perceptionScore, label: perceptionLabel } = calculatePerceptionScore();
 
-    return {
+    const metricsResult = {
       averageSentiment,
       sentimentLabel,
       sentimentTrendComparison,
@@ -1424,6 +1444,17 @@ export const useDashboardData = () => {
       perceptionScore,
       perceptionLabel
     };
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[Relevance Debug] Metrics object being returned:', {
+        averageRelevance: metricsResult.averageRelevance,
+        roundedRelevance: Math.round(metricsResult.averageRelevance),
+        recencyDataLength: recencyData.length,
+        validScoresCount: validRecencyScores.length
+      });
+    }
+    
+    return metricsResult;
   }, [responses, promptsData, recencyData, aiThemes, calculateAIBasedSentiment]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {

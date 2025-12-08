@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSubscription } from "@/hooks/useSubscription";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
+import { usePersistedState } from "@/hooks/usePersistedState";
 
 interface ResponsesTabProps {
   responses: any[];
@@ -19,9 +20,10 @@ interface ResponsesTabProps {
 export const ResponsesTab = ({ responses, companyName = 'your company' }: ResponsesTabProps) => {
   const { isPro } = useSubscription();
   const [expandedRows, setExpandedRows] = useState<{ [key: string]: boolean }>({});
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [selectedResponse, setSelectedResponse] = useState<any | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  // Filter and modal states - persisted
+  const [categoryFilter, setCategoryFilter] = usePersistedState<string>('responsesTab.categoryFilter', 'all');
+  const [selectedResponse, setSelectedResponse] = usePersistedState<any | null>('responsesTab.selectedResponse', null);
+  const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('responsesTab.isModalOpen', false);
   const isMobile = useIsMobile();
 
   // Dynamically get available categories from responses
@@ -77,7 +79,8 @@ export const ResponsesTab = ({ responses, companyName = 'your company' }: Respon
 
   const handleCloseModal = () => {
     setIsModalOpen(false);
-    setSelectedResponse(null);
+    // Don't clear selectedResponse immediately - let it persist
+    // It will be cleared when a new response is selected
   };
 
   return (
@@ -362,7 +365,7 @@ export const ResponsesTab = ({ responses, companyName = 'your company' }: Respon
         </div>
       )}
 
-      {selectedResponse && (
+      {selectedResponse && isModalOpen && (
         <ResponseDetailsModal
           isOpen={isModalOpen}
           onClose={handleCloseModal}

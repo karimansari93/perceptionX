@@ -12,3 +12,4 @@ COMMENT ON COLUMN confirmed_prompts.location_context IS 'Optional location conte
 
 
 
+

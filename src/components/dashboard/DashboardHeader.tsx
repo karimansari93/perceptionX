@@ -1,6 +1,6 @@
 import React from "react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { ChevronRight, Wrench } from "lucide-react";
+import { ChevronRight, Wrench, RefreshCw, AlertTriangle } from "lucide-react";
 import { LastUpdated } from "./LastUpdated";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -108,8 +108,31 @@ export const DashboardHeader = React.memo(({
         </div>
       </div>
       {isRefreshing && refreshProgress && (
-        <div className="px-4 sm:px-8 py-2 text-sm text-blue-700 bg-blue-50 border-t border-blue-100">
-          Collecting responses: {refreshProgress.completed}/{refreshProgress.total} operations…
+        <div className="px-4 sm:px-8 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border-t border-blue-200/50">
+          <div className="flex items-center gap-3">
+            <div className="flex-shrink-0">
+              <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-gray-900">
+                  We're collecting data about {companyName}
+                </span>
+                {refreshProgress.total > 0 && (
+                  <>
+                    <span className="text-sm text-gray-600">
+                      • {Math.round(((refreshProgress.total - (refreshProgress.completed || 0)) / refreshProgress.total) * 100)}% remaining
+                    </span>
+                    {refreshProgress.completed > 0 && refreshProgress.total > refreshProgress.completed && (
+                      <span className="text-xs text-gray-500">
+                        (est. {Math.ceil(((refreshProgress.total - (refreshProgress.completed || 0)) * 2.5) / 60)} min)
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </header>

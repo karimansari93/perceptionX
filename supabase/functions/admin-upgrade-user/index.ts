@@ -1,16 +1,11 @@
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { generateTalentXPrompts } from "../../../src/config/talentXAttributes.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
-
-interface TalentXPromptTemplate {
-  attributeId: string;
-  promptType: 'sentiment' | 'competitive' | 'visibility';  // Standard types
-  promptText: string;
-}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -72,7 +67,22 @@ serve(async (req) => {
 
     console.log('Onboarding data found:', onboardingData);
 
-    // 3. Check if user already has TalentX prompts and clean them up if they exist
+    // 3. Get user's default company for company-specific prompts
+    const { data: companyMember, error: companyError } = await supabase
+      .from('company_members')
+      .select('company_id')
+      .eq('user_id', userId)
+      .eq('is_default', true)
+      .limit(1)
+      .maybeSingle();
+
+    if (companyError) {
+      console.warn('Could not fetch default company, prompts will be auto-linked:', companyError);
+    }
+
+    const companyId = companyMember?.company_id || null;
+
+    // 4. Check if user already has TalentX prompts and clean them up if they exist
     const { data: existingPrompts, error: checkError } = await supabase
       .from('confirmed_prompts')
       .select('id')
@@ -101,24 +111,55 @@ serve(async (req) => {
       console.log('Successfully deleted existing TalentX prompts');
     }
 
-    // 4. Generate TalentX Pro prompts
+    // 5. Generate all TalentX Pro prompts (48 total: 30 Employee Experience + 18 Candidate Experience)
     const companyName = onboardingData.company_name || 'Your Company';
     const industry = onboardingData.industry || 'Technology';
     
-    const prompts = generatePromptTemplates(companyName, industry);
+    // Use generateTalentXPrompts to get all 48 prompts with proper attribute mapping
+    const generatedPrompts = generateTalentXPrompts(companyName, industry);
+    
+    // Map prompts to the correct database structure with prompt_category and prompt_theme
+    const candidateThemeOverrides: Record<string, string> = {
+      'candidate-communication': 'Candidate Communication',
+      'interview-experience': 'Interview Experience',
+      'application-process': 'Application Process',
+      'onboarding-experience': 'Onboarding Experience',
+      'candidate-feedback': 'Candidate Feedback',
+      'overall-candidate-experience': 'Overall Candidate Experience',
+    };
+
+    const promptsToInsert = generatedPrompts.map(template => {
+      const attribute = template.attribute;
+      const isCandidateExperience = attribute?.category === 'Candidate Experience';
+
+      const theme = attribute
+        ? isCandidateExperience
+          ? candidateThemeOverrides[template.attributeId] || attribute.name || 'Candidate Experience'
+          : attribute.category || attribute.name || 'Employee Experience'
+        : 'General';
+
+      const promptCategory: 'Employee Experience' | 'Candidate Experience' | 'General' =
+        isCandidateExperience ? 'Candidate Experience' : 'Employee Experience';
+
+      return {
+        user_id: userId,
+        onboarding_id: onboardingData.id,
+        company_id: companyId, // Set company_id for company-specific prompts
+        prompt_text: template.prompt,
+        prompt_type: template.type as 'sentiment' | 'competitive' | 'visibility',
+        prompt_category: promptCategory,
+        prompt_theme: theme,
+        talentx_attribute_id: template.attributeId,
+        industry_context: industry,
+        is_pro_prompt: true,
+        is_active: true
+      };
+    });
     
     // Insert prompts with service role key (bypasses RLS)
     const { data, error: insertError } = await supabase
       .from('confirmed_prompts')
-      .insert(prompts.map(prompt => ({
-        user_id: userId,
-        onboarding_id: onboardingData.id,
-        prompt_text: prompt.promptText,
-        prompt_type: prompt.promptType,  // Use standard types: 'sentiment', 'competitive', 'visibility'
-        prompt_category: prompt.attributeId,
-        is_pro_prompt: true,  // This marks it as a TalentX prompt
-        is_active: true
-      })))
+      .insert(promptsToInsert)
       .select();
 
     if (insertError) {
@@ -126,12 +167,12 @@ serve(async (req) => {
       throw insertError;
     }
 
-    console.log(`Successfully generated ${prompts.length} TalentX Pro prompts for user ${userId}`);
+    console.log(`Successfully generated ${promptsToInsert.length} TalentX Pro prompts for user ${userId} (including ${generatedPrompts.filter(p => p.attribute?.category === 'Candidate Experience').length} Candidate Experience prompts)`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: `User upgraded to Pro and ${prompts.length} TalentX prompts generated` 
+        message: `User upgraded to Pro and ${promptsToInsert.length} TalentX prompts generated (including Candidate Experience prompts)` 
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
@@ -149,181 +190,3 @@ serve(async (req) => {
   }
 });
 
-/**
- * Generate prompt templates for all 30 TalentX prompts
- */
-function generatePromptTemplates(companyName: string, industry: string): TalentXPromptTemplate[] {
-  const templates: TalentXPromptTemplate[] = [
-    // Mission & Purpose
-    {
-      attributeId: 'mission-purpose',
-      promptType: 'sentiment',
-      promptText: `How well does ${companyName} communicate its mission and purpose to employees, and how does this resonate with their personal values?`
-    },
-    {
-      attributeId: 'mission-purpose',
-      promptType: 'competitive',
-      promptText: `How do ${companyName}'s mission and purpose compare to other companies in ${industry}?`
-    },
-    {
-      attributeId: 'mission-purpose',
-      promptType: 'visibility',
-      promptText: `What companies in ${industry} are known for having a strong, purpose-driven employer brand?`
-    },
-
-    // Rewards & Recognition
-    {
-      attributeId: 'rewards-recognition',
-      promptType: 'sentiment',
-      promptText: `How satisfied are employees at ${companyName} with the rewards and recognition programs, and what specific aspects drive positive or negative sentiment?`
-    },
-    {
-      attributeId: 'rewards-recognition',
-      promptType: 'competitive',
-      promptText: `How do rewards and recognition programs at ${companyName} compare to other companies in ${industry}?`
-    },
-    {
-      attributeId: 'rewards-recognition',
-      promptType: 'visibility',
-      promptText: `What companies in ${industry} are known for having exceptional rewards and recognition for employees?`
-    },
-
-    // Company Culture
-    {
-      attributeId: 'company-culture',
-      promptType: 'sentiment',
-      promptText: `How do employees at ${companyName} describe the actual company culture versus the promoted culture?`
-    },
-    {
-      attributeId: 'company-culture',
-      promptType: 'competitive',
-      promptText: `How does ${companyName}'s company culture compare to other companies in ${industry}?`
-    },
-    {
-      attributeId: 'company-culture',
-      promptType: 'visibility',
-      promptText: `What companies in ${industry} are known for outstanding workplace culture?`
-    },
-
-    // Social Impact
-    {
-      attributeId: 'social-impact',
-      promptType: 'sentiment',
-      promptText: `How do employees at ${companyName} perceive the company's commitment to social impact and community responsibility?`
-    },
-    {
-      attributeId: 'social-impact',
-      promptType: 'competitive',
-      promptText: `How does ${companyName}'s social impact compare to other companies in ${industry}?`
-    },
-    {
-      attributeId: 'social-impact',
-      promptType: 'visibility',
-      promptText: `What companies in ${industry} are recognized for meaningful social impact and community engagement?`
-    },
-
-    // Inclusion
-    {
-      attributeId: 'inclusion',
-      promptType: 'sentiment',
-      promptText: `How do employees from diverse backgrounds at ${companyName} rate the inclusivity of the workplace culture and practices?`
-    },
-    {
-      attributeId: 'inclusion',
-      promptType: 'competitive',
-      promptText: `How do ${companyName}'s inclusion and diversity efforts compare to other companies in ${industry}?`
-    },
-    {
-      attributeId: 'inclusion',
-      promptType: 'visibility',
-      promptText: `What companies in ${industry} are most recognized for diversity, equity, and inclusion?`
-    },
-
-    // Innovation
-    {
-      attributeId: 'innovation',
-      promptType: 'sentiment',
-      promptText: `How do employees at ${companyName} perceive the company's commitment to innovation and opportunities for creative work?`
-    },
-    {
-      attributeId: 'innovation',
-      promptType: 'competitive',
-      promptText: `How does ${companyName}'s innovation culture compare to other companies in ${industry}?`
-    },
-    {
-      attributeId: 'innovation',
-      promptType: 'visibility',
-      promptText: `What companies in ${industry} are known for fostering innovation and creative thinking?`
-    },
-
-    // Wellbeing & Balance
-    {
-      attributeId: 'wellbeing-balance',
-      promptType: 'sentiment',
-      promptText: `How do employees at ${companyName} rate work-life balance and the overall wellbeing support provided by the company?`
-    },
-    {
-      attributeId: 'wellbeing-balance',
-      promptType: 'competitive',
-      promptText: `How do ${companyName}'s wellbeing and work-life balance offerings compare to other companies in ${industry}?`
-    },
-    {
-      attributeId: 'wellbeing-balance',
-      promptType: 'visibility',
-      promptText: `What companies in ${industry} are recognized for exceptional employee wellbeing and work-life balance?`
-    },
-
-    // Leadership
-    {
-      attributeId: 'leadership',
-      promptType: 'sentiment',
-      promptText: `How do employees at ${companyName} rate the quality and effectiveness of leadership within the organization?`
-    },
-    {
-      attributeId: 'leadership',
-      promptType: 'competitive',
-      promptText: `How does ${companyName}'s leadership quality compare to other companies in ${industry}?`
-    },
-    {
-      attributeId: 'leadership',
-      promptType: 'visibility',
-      promptText: `What companies in ${industry} are respected for outstanding leadership and management?`
-    },
-
-    // Security & Perks
-    {
-      attributeId: 'security-perks',
-      promptType: 'sentiment',
-      promptText: `How do employees at ${companyName} perceive job security, benefits, and additional perks provided by the company?`
-    },
-    {
-      attributeId: 'security-perks',
-      promptType: 'competitive',
-      promptText: `How do ${companyName}'s security, benefits, and perks compare to other companies in ${industry}?`
-    },
-    {
-      attributeId: 'security-perks',
-      promptType: 'visibility',
-      promptText: `What companies in ${industry} are known for providing comprehensive benefits and job security?`
-    },
-
-    // Career Opportunities
-    {
-      attributeId: 'career-opportunities',
-      promptType: 'sentiment',
-      promptText: `How do employees at ${companyName} rate career development opportunities and long-term growth potential?`
-    },
-    {
-      attributeId: 'career-opportunities',
-      promptType: 'competitive',
-      promptText: `How do career progression opportunities at ${companyName} compare to other companies in ${industry}?`
-    },
-    {
-      attributeId: 'career-opportunities',
-      promptType: 'visibility',
-      promptText: `What companies in ${industry} are most recognized for exceptional career development and progression opportunities?`
-    }
-  ];
-
-  return templates;
-}

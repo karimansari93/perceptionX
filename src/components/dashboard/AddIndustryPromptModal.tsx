@@ -380,8 +380,31 @@ export const AddIndustryPromptModal = ({
           )}
 
           {isRefreshing && refreshProgress && (
-            <div className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
-              Collecting responses: {refreshProgress.completed}/{refreshProgress.total} operations…
+            <div className="rounded-md bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-3 border border-blue-200/50">
+              <div className="flex items-center gap-3">
+                <div className="flex-shrink-0">
+                  <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium text-gray-900">
+                      We're collecting data about {companyName}
+                    </span>
+                    {refreshProgress.total > 0 && (
+                      <>
+                        <span className="text-sm text-gray-600">
+                          • {Math.round(((refreshProgress.total - refreshProgress.completed) / refreshProgress.total) * 100)}% remaining
+                        </span>
+                        {refreshProgress.completed > 0 && refreshProgress.total > refreshProgress.completed && (
+                          <span className="text-xs text-gray-500">
+                            (est. {Math.ceil(((refreshProgress.total - refreshProgress.completed) * 2.5) / 60)} min)
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

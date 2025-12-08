@@ -4,13 +4,14 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ResponseItem } from "./ResponseItem";
 import { CitationCount } from "@/types/dashboard";
-import { ExternalLink, Check, X } from "lucide-react";
+import { ExternalLink, Check, X, Download } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS } from "@/utils/sourceConfig";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { extractSourceUrl, extractDomain } from "@/utils/citationUtils";
 // Removed chart imports since we're rendering custom bars like SourcesTab
 
 interface SourceDetailsModalProps {
@@ -21,9 +22,10 @@ interface SourceDetailsModalProps {
   companyName?: string;
   searchResults?: any[];
   companyId?: string;
+  selectedThemeFilter?: string;
 }
 
-export const SourceDetailsModal = ({ isOpen, onClose, source, responses, companyName, searchResults = [], companyId }: SourceDetailsModalProps) => {
+export const SourceDetailsModal = ({ isOpen, onClose, source, responses, companyName, searchResults = [], companyId, selectedThemeFilter = 'all' }: SourceDetailsModalProps) => {
   const [uniqueCitations, setUniqueCitations] = useState<any[]>([]);
   const [loadingUrls, setLoadingUrls] = useState(false);
   const [editingMediaType, setEditingMediaType] = useState(false);
@@ -98,37 +100,48 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
       
       const citationsMap = new Map<string, any>();
       
-      // First, add search results from the passed searchResults prop
-      searchResults.forEach(result => {
-        // Normalize domain comparison - remove www prefix for comparison
-        const normalizedResultDomain = result.domain?.replace(/^www\./, '').toLowerCase();
-        const normalizedTargetDomain = domain.replace(/^www\./, '').toLowerCase();
-        
-        if (normalizedResultDomain === normalizedTargetDomain && result.link && result.title) {
-          const citation = {
-            url: result.link,
-            title: result.title,
-            snippet: result.snippet || '',
-            domain: result.domain,
-            source: result.domain,
-            mediaType: result.media_type || 'organic',
-            searchResult: true // Flag to identify search results
-          };
+      // Only add search results if no theme filter is active (search results don't have theme data)
+      if (selectedThemeFilter === 'all') {
+        // First, add search results from the passed searchResults prop
+        searchResults.forEach(result => {
+          // Normalize domain comparison - remove www prefix for comparison
+          const normalizedResultDomain = result.domain?.replace(/^www\./, '').toLowerCase();
+          const normalizedTargetDomain = domain.replace(/^www\./, '').toLowerCase();
           
-          // Use URL as key to avoid duplicates
-          citationsMap.set(result.link, citation);
-        }
-      });
+          if (normalizedResultDomain === normalizedTargetDomain && result.link && result.title) {
+            const citation = {
+              url: result.link,
+              title: result.title,
+              snippet: result.snippet || '',
+              domain: result.domain,
+              source: result.domain,
+              mediaType: result.media_type || 'organic',
+              searchResult: true // Flag to identify search results
+            };
+            
+            // Use URL as key to avoid duplicates
+            citationsMap.set(result.link, citation);
+          }
+        });
+      }
       
       // Query all prompt_responses to find citations for this domain
-      const { data: promptData, error: promptError } = await supabase
+      // Filter by theme if a theme filter is selected
+      let query = supabase
         .from('prompt_responses')
         .select(`
           citations,
-          confirmed_prompts!inner(company_id)
+          confirmed_prompts!inner(company_id, prompt_theme)
         `)
         .eq('confirmed_prompts.company_id', companyId)
         .not('citations', 'is', null);
+      
+      // Apply theme filter if selected
+      if (selectedThemeFilter !== 'all') {
+        query = query.eq('confirmed_prompts.prompt_theme', selectedThemeFilter);
+      }
+      
+      const { data: promptData, error: promptError } = await query;
 
       if (promptError) {
         console.error('Error fetching prompt citations:', promptError);
@@ -161,7 +174,8 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
             if (citation.domain) {
               // Perplexity format
               citationDomain = citation.domain;
-              citationUrl = citation.url;
+              // Extract actual source URL if it's a Google Translate URL
+              citationUrl = citation.url ? extractSourceUrl(citation.url) : '';
             } else if (citation.source) {
               // Google AI Overviews format
               const source = citation.source.toLowerCase().trim();
@@ -224,16 +238,13 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
                 citationDomain = `${cleanSourceName}.com`;
               }
               
-              citationUrl = citation.url;
+              // Extract actual source URL if it's a Google Translate URL
+              citationUrl = citation.url ? extractSourceUrl(citation.url) : '';
             } else if (citation.url) {
+              // Extract actual source URL if it's a Google Translate URL
+              citationUrl = extractSourceUrl(citation.url);
               // Extract domain from URL if no domain/source field
-              try {
-                const urlObj = new URL(citation.url);
-                citationDomain = urlObj.hostname.replace(/^www\./, '');
-                citationUrl = citation.url;
-              } catch {
-                // Skip invalid URLs
-              }
+              citationDomain = extractDomain(citationUrl);
             }
             
             // Check if this citation matches our target domain
@@ -271,31 +282,34 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
       }
 
       // Use searchResults prop instead of querying database
-      // Filter search results by domain
-      const normalizedTargetDomain = domain.replace(/^www\./, '').toLowerCase();
-      const searchData = (searchResults || []).filter(result => {
-        const normalizedResultDomain = result.domain?.replace(/^www\./, '').toLowerCase();
-        return normalizedResultDomain === normalizedTargetDomain;
-      });
+      // Only process search results if no theme filter is active (search results don't have theme data)
+      if (selectedThemeFilter === 'all') {
+        // Filter search results by domain
+        const normalizedTargetDomain = domain.replace(/^www\./, '').toLowerCase();
+        const searchData = (searchResults || []).filter(result => {
+          const normalizedResultDomain = result.domain?.replace(/^www\./, '').toLowerCase();
+          return normalizedResultDomain === normalizedTargetDomain;
+        });
 
-      // Process search results for this domain
-      searchData.forEach(result => {
-        if (result.link && result.title) {
-          // Create a citation object that matches the expected format
-          const citation = {
-            url: result.link,
-            title: result.title,
-            snippet: result.snippet || '',
-            domain: result.domain,
-            source: result.domain,
-            mediaType: result.media_type || 'organic',
-            searchResult: true // Flag to identify search results
-          };
-          
-          // Use URL as key to avoid duplicates
-          citationsMap.set(result.link, citation);
-        }
-      });
+        // Process search results for this domain
+        searchData.forEach(result => {
+          if (result.link && result.title) {
+            // Create a citation object that matches the expected format
+            const citation = {
+              url: result.link,
+              title: result.title,
+              snippet: result.snippet || '',
+              domain: result.domain,
+              source: result.domain,
+              mediaType: result.media_type || 'organic',
+              searchResult: true // Flag to identify search results
+            };
+            
+            // Use URL as key to avoid duplicates
+            citationsMap.set(result.link, citation);
+          }
+        });
+      }
 
       // Group citations by title first, then by URL
       const titleGroups = new Map<string, any[]>();
@@ -324,12 +338,15 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
           let mentionCount = 1; // Start with 1 for the current citation
           
           // Count additional mentions from all sources
-          // Check search results
-          searchResults.forEach(result => {
-            if (result.link === citation.url && result.mentionCount) {
-              mentionCount += result.mentionCount - 1; // Subtract 1 since we already counted it
-            }
-          });
+          // Only count search results if no theme filter is active
+          if (selectedThemeFilter === 'all') {
+            // Check search results
+            searchResults.forEach(result => {
+              if (result.link === citation.url && result.mentionCount) {
+                mentionCount += result.mentionCount - 1; // Subtract 1 since we already counted it
+              }
+            });
+          }
           
           // Count mentions from prompt responses
           promptData?.forEach(response => {
@@ -363,12 +380,20 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
             }
           });
           
-          // Count mentions from search results in database
-          searchData.forEach(result => {
-            if (result.link === citation.url) {
-              mentionCount += 1;
-            }
-          });
+          // Count mentions from search results in database (only if no theme filter)
+          if (selectedThemeFilter === 'all') {
+            const normalizedTargetDomain = domain.replace(/^www\./, '').toLowerCase();
+            const searchData = (searchResults || []).filter(result => {
+              const normalizedResultDomain = result.domain?.replace(/^www\./, '').toLowerCase();
+              return normalizedResultDomain === normalizedTargetDomain;
+            });
+            
+            searchData.forEach(result => {
+              if (result.link === citation.url) {
+                mentionCount += 1;
+              }
+            });
+          }
           
           totalMentionCount += mentionCount;
         });
@@ -397,16 +422,67 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
     }
   };
 
-  // Fetch citations when modal opens
+  // Fetch citations when modal opens or theme filter changes
   useEffect(() => {
     if (isOpen && source?.domain) {
       fetchAllUrlsForDomain(source.domain).then(setUniqueCitations);
     }
-  }, [isOpen, source?.domain]);
+  }, [isOpen, source?.domain, selectedThemeFilter]);
 
   // Get media type for this source using response data
   const mediaType = getEffectiveMediaType();
   const mediaTypeInfo = getMediaTypeInfo(mediaType);
+
+  // CSV download function
+  const handleDownloadCSV = () => {
+    if (uniqueCitations.length === 0) return;
+
+    // CSV header
+    const headers = ['Title', 'URL', 'All URLs', 'Mention Count', 'URL Count', 'Snippet'];
+    
+    // Convert citations to CSV rows
+    const rows = uniqueCitations.map(citation => {
+      const title = citation.title || 'Untitled';
+      const primaryUrl = citation.url || '';
+      const allUrls = citation.urls && citation.urls.length > 0 
+        ? citation.urls.join('; ') 
+        : primaryUrl;
+      const mentionCount = citation.mentionCount || 1;
+      const urlCount = citation.urlCount || 1;
+      const snippet = (citation.snippet || '').replace(/"/g, '""'); // Escape quotes for CSV
+      
+      // Escape fields that might contain commas or quotes
+      const escapeCSV = (field: string) => {
+        if (field.includes(',') || field.includes('"') || field.includes('\n')) {
+          return `"${field.replace(/"/g, '""')}"`;
+        }
+        return field;
+      };
+      
+      return [
+        escapeCSV(title),
+        escapeCSV(primaryUrl),
+        escapeCSV(allUrls),
+        mentionCount.toString(),
+        urlCount.toString(),
+        escapeCSV(snippet)
+      ].join(',');
+    });
+    
+    // Combine headers and rows
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cited-sources-${source.domain.replace(/[^a-z0-9]/gi, '-')}-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -507,7 +583,20 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
             {/* Cited Sources Card */}
             <Card>
               <CardHeader>
-                <CardTitle>Cited Sources</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Cited Sources</CardTitle>
+                  {uniqueCitations.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleDownloadCSV}
+                      className="flex items-center gap-2"
+                    >
+                      <Download className="w-4 h-4" />
+                      Download CSV
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 {loadingUrls ? (

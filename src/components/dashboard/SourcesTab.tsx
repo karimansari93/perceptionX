@@ -12,6 +12,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useSubscription } from "@/hooks/useSubscription";
+import { usePersistedState } from "@/hooks/usePersistedState";
+import { extractSourceUrl, extractDomain, enhanceCitations } from "@/utils/citationUtils";
 
 interface TimeBasedData {
   name: string;
@@ -50,108 +52,6 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     return searchResults.filter(result => result.company_id === currentCompanyId);
   }, [searchResults, currentCompanyId]);
   
-  // Helper to extract domain from citation (handles different citation formats)
-  const extractDomainFromCitation = (citation: any): string | null => {
-    // If citation has domain field, use it (Perplexity format)
-    if (citation.domain) {
-      return citation.domain;
-    }
-    
-    // Handle Google AI Overviews format - source field contains domain name
-    if (citation.source) {
-      const source = citation.source.toLowerCase().trim();
-      
-      // Map common source names to domains
-      const sourceToDomainMap: Record<string, string> = {
-        'blind': 'www.teamblind.com',
-        'teamblind': 'www.teamblind.com',
-        'indeed': 'www.indeed.com',
-        'glassdoor': 'www.glassdoor.com',
-        'linkedin': 'www.linkedin.com',
-        'youtube': 'www.youtube.com',
-        'great place to work': 'www.greatplacetowork.com',
-        'greatplacetowork': 'www.greatplacetowork.com',
-        'comparably': 'www.comparably.com',
-        'ambitionbox': 'www.ambitionbox.com',
-        'repvue': 'www.repvue.com',
-        'built in': 'builtin.com',
-        'builtin': 'builtin.com',
-        'g2': 'www.g2.com',
-        'inhersight': 'www.inhersight.com',
-        'business because': 'www.businessbecause.com',
-        'businessbecause': 'www.businessbecause.com',
-        'ziprecruiter': 'www.ziprecruiter.com',
-        'snowflake careers': 'careers.snowflake.com',
-        'careers.snowflake.com': 'careers.snowflake.com',
-        'reddit': 'www.reddit.com',
-        'quora': 'www.quora.com',
-        'microsoft': 'www.microsoft.com',
-        'databricks': 'www.databricks.com',
-        'cloudera': 'www.cloudera.com',
-        'snowflake': 'www.snowflake.com',
-        'forbes': 'www.forbes.com',
-        'business insider': 'www.businessinsider.com',
-        'medium': 'medium.com',
-        'management consulted': 'managementconsulted.com'
-      };
-      
-      // Check if source maps to a known domain
-      if (sourceToDomainMap[source]) {
-        return sourceToDomainMap[source];
-      }
-      
-      // If source already looks like a domain (contains a dot), use it
-      if (source.includes('.')) {
-        return source;
-      }
-    }
-    
-    // Otherwise, try to extract from URL
-    if (citation.url) {
-      try {
-        const url = new URL(citation.url);
-        return url.hostname;
-      } catch {
-        // If URL parsing fails, try regex extraction
-        const match = citation.url.match(/^https?:\/\/([^\/]+)/);
-        return match ? match[1] : null;
-      }
-    }
-    
-    return null;
-  };
-
-  // Calculate citation counts directly from prompt_responses for AI responses
-  const aiResponseCitations = useMemo(() => {
-    const citationCounts: Record<string, number> = {};
-    
-    filteredResponses.forEach(response => {
-      try {
-        const citations = typeof response.citations === 'string' 
-          ? JSON.parse(response.citations) 
-          : response.citations;
-        
-        if (Array.isArray(citations)) {
-          citations.forEach((citation: any) => {
-            const domain = extractDomainFromCitation(citation);
-            if (domain) {
-              const normalizedDomain = normalizeDomain(domain);
-              if (normalizedDomain) {
-                citationCounts[normalizedDomain] = (citationCounts[normalizedDomain] || 0) + 1;
-              }
-            }
-          });
-        }
-      } catch {
-        // Ignore parsing errors
-      }
-    });
-    
-    return Object.entries(citationCounts)
-      .map(([domain, count]) => ({ domain, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [filteredResponses]);
-
   // Calculate citation counts from search results
   const searchResultCitations = useMemo(() => {
     const citationCounts: Record<string, number> = {};
@@ -169,6 +69,103 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       .map(([domain, count]) => ({ domain, count }))
       .sort((a, b) => b.count - a.count);
   }, [filteredSearchResults]);
+  
+  // Modal states - persisted
+  const [selectedSource, setSelectedSource] = usePersistedState<CitationCount | null>('sourcesTab.selectedSource', null);
+  const [isSourceModalOpen, setIsSourceModalOpen] = usePersistedState<boolean>('sourcesTab.isSourceModalOpen', false);
+  const [showAllSources] = useState(true);
+  // Filter states - persisted
+  const [selectedMediaTypeFilter, setSelectedMediaTypeFilter] = usePersistedState<string | null>('sourcesTab.selectedMediaTypeFilter', null);
+  const [selectedSourceTypeFilter, setSelectedSourceTypeFilter] = usePersistedState<'all' | 'ai-responses' | 'search-results'>('sourcesTab.selectedSourceTypeFilter', 'all');
+  const [selectedCompanyMentionedFilter, setSelectedCompanyMentionedFilter] = usePersistedState<'all' | 'mentioned' | 'not-mentioned'>('sourcesTab.selectedCompanyMentionedFilter', 'all');
+  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('sourcesTab.selectedJobFunctionFilter', 'all');
+  const [selectedThemeFilter, setSelectedThemeFilter] = usePersistedState<string>('sourcesTab.selectedThemeFilter', 'all');
+  
+  // Media type editing state
+  const [editingMediaType, setEditingMediaType] = useState<string | null>(null);
+  const [customMediaTypes, setCustomMediaTypes] = useState<Record<string, string>>({});
+
+  // Get all available themes/attributes from responses
+  const availableThemes = useMemo(() => {
+    const themes = new Set<string>();
+    filteredResponses.forEach(r => {
+      const theme = r.confirmed_prompts?.prompt_theme;
+      if (theme && theme.trim()) {
+        themes.add(theme);
+      }
+    });
+    
+    // Sort themes alphabetically, but put "General" first if it exists
+    const sortedThemes = Array.from(themes).sort((a, b) => {
+      if (a === 'General') return -1;
+      if (b === 'General') return 1;
+      return a.localeCompare(b);
+    });
+    
+    return sortedThemes;
+  }, [filteredResponses]);
+
+  // Helper to get filtered responses based on all filters (job function, theme)
+  const getFilteredResponsesByAllFilters = useMemo(() => {
+    let filtered = filteredResponses;
+    
+    // Filter by job function
+    if (selectedJobFunctionFilter !== 'all') {
+      filtered = filtered.filter(response => {
+        const jobFunctionContext = response.confirmed_prompts?.job_function_context?.trim();
+        return jobFunctionContext === selectedJobFunctionFilter;
+      });
+    }
+    
+    // Filter by theme/attribute
+    if (selectedThemeFilter !== 'all') {
+      filtered = filtered.filter(response => {
+        const theme = response.confirmed_prompts?.prompt_theme;
+        return theme === selectedThemeFilter;
+      });
+    }
+    
+    return filtered;
+  }, [filteredResponses, selectedJobFunctionFilter, selectedThemeFilter]);
+
+  // Helper to get filtered responses based on job function filter (kept for backward compatibility)
+  const getFilteredResponsesByJobFunction = useMemo(() => {
+    return getFilteredResponsesByAllFilters;
+  }, [getFilteredResponsesByAllFilters]);
+
+  // Calculate citation counts directly from prompt_responses for AI responses
+  // Use enhanceCitations to match the same logic as topCitations calculation
+  const aiResponseCitations = useMemo(() => {
+    const citationCounts: Record<string, number> = {};
+    
+    getFilteredResponsesByJobFunction.forEach(response => {
+      try {
+        const citations = typeof response.citations === 'string' 
+          ? JSON.parse(response.citations) 
+          : response.citations;
+        
+        if (Array.isArray(citations)) {
+          // Use enhanceCitations to properly extract domains (same as topCitations)
+          const enhancedCitations = enhanceCitations(citations);
+          enhancedCitations.forEach((enhancedCitation) => {
+            // Only count website citations (same as topCitations logic)
+            if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
+              const normalizedDomain = normalizeDomain(enhancedCitation.domain);
+              if (normalizedDomain) {
+                citationCounts[normalizedDomain] = (citationCounts[normalizedDomain] || 0) + 1;
+              }
+            }
+          });
+        }
+      } catch {
+        // Ignore parsing errors
+      }
+    });
+    
+    return Object.entries(citationCounts)
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [getFilteredResponsesByJobFunction]);
 
   // Combine both sources for "all" view
   const allSourcesCitations = useMemo(() => {
@@ -188,18 +185,6 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       .map(([domain, count]) => ({ domain, count }))
       .sort((a, b) => b.count - a.count);
   }, [aiResponseCitations, searchResultCitations]);
-  
-  const [selectedSource, setSelectedSource] = useState<CitationCount | null>(null);
-  const [isSourceModalOpen, setIsSourceModalOpen] = useState(false);
-  const [showAllSources] = useState(true);
-  const [selectedMediaTypeFilter, setSelectedMediaTypeFilter] = useState<string | null>(null);
-  const [selectedSourceTypeFilter, setSelectedSourceTypeFilter] = useState<'all' | 'ai-responses' | 'search-results'>('all');
-  const [selectedCompanyMentionedFilter, setSelectedCompanyMentionedFilter] = useState<'all' | 'mentioned' | 'not-mentioned'>('all');
-  
-  // Media type editing state
-  const [editingMediaType, setEditingMediaType] = useState<string | null>(null);
-  const [customMediaTypes, setCustomMediaTypes] = useState<Record<string, string>>({});
-
 
   const handleSourceClick = (citation: CitationCount) => {
     setSelectedSource(citation);
@@ -249,6 +234,14 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     }
   };
 
+  const handleJobFunctionFilterChange = (value: string) => {
+    setSelectedJobFunctionFilter(value);
+  };
+
+  const handleThemeFilterChange = (value: string) => {
+    setSelectedThemeFilter(value);
+  };
+
   // Media type editing functions
   const handleMediaTypeEdit = (domain: string) => {
     setEditingMediaType(domain);
@@ -289,10 +282,16 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
         const citations = typeof response.citations === 'string' 
           ? JSON.parse(response.citations) 
           : response.citations;
-        return Array.isArray(citations) && citations.some((c: any) => {
-          const citationDomain = extractDomainFromCitation(c);
-          return citationDomain && normalizeDomain(citationDomain) === normalizedDomain;
-        });
+        if (Array.isArray(citations)) {
+          // Use enhanceCitations to properly extract domains
+          const enhancedCitations = enhanceCitations(citations);
+          return enhancedCitations.some((enhancedCitation) => {
+            return enhancedCitation.type === 'website' && 
+                   enhancedCitation.domain && 
+                   normalizeDomain(enhancedCitation.domain) === normalizedDomain;
+          });
+        }
+        return false;
       } catch {
         return false;
       }
@@ -312,18 +311,63 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     return hasMentions;
   };
 
-  const getResponsesForSource = (domain: string) => {
-    // Get responses that cite this domain (normalized)
+  // Helper function to get unique job function contexts from responses
+  const getUniqueJobFunctions = useMemo(() => {
+    const jobFunctions = new Set<string>();
+    filteredResponses.forEach(response => {
+      const jobFunctionContext = response.confirmed_prompts?.job_function_context?.trim();
+      if (jobFunctionContext) {
+        jobFunctions.add(jobFunctionContext);
+      }
+    });
+    return Array.from(jobFunctions).sort();
+  }, [filteredResponses]);
+
+  // Helper function to check if a source comes from a specific job function context
+  const isSourceFromJobFunction = (domain: string, jobFunction: string) => {
     const normalizedDomain = normalizeDomain(domain);
-    const citationResponses = filteredResponses.filter(response => {
+    return filteredResponses.some(response => {
+      const jobFunctionContext = response.confirmed_prompts?.job_function_context?.trim();
+      if (jobFunctionContext !== jobFunction) return false;
+      
       try {
         const citations = typeof response.citations === 'string' 
           ? JSON.parse(response.citations) 
           : response.citations;
-        return Array.isArray(citations) && citations.some((c: any) => {
-          const citationDomain = extractDomainFromCitation(c);
-          return citationDomain && normalizeDomain(citationDomain) === normalizedDomain;
-        });
+        if (Array.isArray(citations)) {
+          // Use enhanceCitations to properly extract domains
+          const enhancedCitations = enhanceCitations(citations);
+          return enhancedCitations.some((enhancedCitation) => {
+            return enhancedCitation.type === 'website' && 
+                   enhancedCitation.domain && 
+                   normalizeDomain(enhancedCitation.domain) === normalizedDomain;
+          });
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    });
+  };
+
+  const getResponsesForSource = (domain: string) => {
+    // Get responses that cite this domain (normalized)
+    const normalizedDomain = normalizeDomain(domain);
+    const citationResponses = getFilteredResponsesByJobFunction.filter(response => {
+      try {
+        const citations = typeof response.citations === 'string' 
+          ? JSON.parse(response.citations) 
+          : response.citations;
+        if (Array.isArray(citations)) {
+          // Use enhanceCitations to properly extract domains
+          const enhancedCitations = enhanceCitations(citations);
+          return enhancedCitations.some((enhancedCitation) => {
+            return enhancedCitation.type === 'website' && 
+                   enhancedCitation.domain && 
+                   normalizeDomain(enhancedCitation.domain) === normalizedDomain;
+          });
+        }
+        return false;
       } catch {
         return false;
       }
@@ -344,10 +388,12 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
 
   // Helper to group responses by time period
   const groupResponsesByTimePeriod = useMemo(() => {
-    if (filteredResponses.length === 0) return { current: [], previous: [] };
+    // Use filtered responses that respect all filters (category, theme, job function)
+    const responsesToUse = getFilteredResponsesByAllFilters;
+    if (responsesToUse.length === 0) return { current: [], previous: [] };
 
     // Sort responses by tested_at descending
-    const sortedResponses = [...filteredResponses].sort((a, b) => 
+    const sortedResponses = [...responsesToUse].sort((a, b) => 
       new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime()
     );
 
@@ -371,7 +417,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     }
 
     return { current, previous };
-  }, [filteredResponses]);
+  }, [getFilteredResponsesByAllFilters]);
 
   // Calculate time-based citation data
   const timeBasedCitations = useMemo(() => {
@@ -391,10 +437,12 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     const currentCitations: Record<string, number> = {};
     current.forEach(response => {
       const citations = parseCitations(response.citations);
-      citations.forEach((citation: any) => {
-        const domain = extractDomainFromCitation(citation);
-        if (domain) {
-          const normalizedDomain = normalizeDomain(domain);
+      // Use enhanceCitations to properly extract domains (same as topCitations)
+      const enhancedCitations = enhanceCitations(citations);
+      enhancedCitations.forEach((enhancedCitation) => {
+        // Only count website citations (same as topCitations logic)
+        if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
+          const normalizedDomain = normalizeDomain(enhancedCitation.domain);
           if (normalizedDomain) {
             currentCitations[normalizedDomain] = (currentCitations[normalizedDomain] || 0) + 1;
           }
@@ -409,10 +457,12 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
 
     previous.forEach(response => {
       const citations = parseCitations(response.citations);
-      citations.forEach((citation: any) => {
-        const domain = extractDomainFromCitation(citation);
-        if (domain) {
-          const normalizedDomain = normalizeDomain(domain);
+      // Use enhanceCitations to properly extract domains (same as topCitations)
+      const enhancedCitations = enhanceCitations(citations);
+      enhancedCitations.forEach((enhancedCitation) => {
+        // Only count website citations (same as topCitations logic)
+        if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
+          const normalizedDomain = normalizeDomain(enhancedCitation.domain);
           if (normalizedDomain) {
             previousCitations[normalizedDomain] = (previousCitations[normalizedDomain] || 0) + 1;
           }
@@ -463,7 +513,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       const filteredCounts: Record<string, number> = {};
       
       // Recalculate counts from responses based on company_mentioned filter
-      filteredResponses.forEach(response => {
+      getFilteredResponsesByJobFunction.forEach(response => {
         // Check if this response matches the company_mentioned filter
         const matchesFilter = selectedCompanyMentionedFilter === 'mentioned' 
           ? response.company_mentioned === true 
@@ -477,10 +527,12 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
             : response.citations;
           
           if (Array.isArray(citations)) {
-            citations.forEach((citation: any) => {
-              const domain = extractDomainFromCitation(citation);
-              if (domain) {
-                const normalizedDomain = normalizeDomain(domain);
+            // Use enhanceCitations to properly extract domains (same as topCitations)
+            const enhancedCitations = enhanceCitations(citations);
+            enhancedCitations.forEach((enhancedCitation) => {
+              // Only count website citations (same as topCitations logic)
+              if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
+                const normalizedDomain = normalizeDomain(enhancedCitation.domain);
                 if (normalizedDomain) {
                   filteredCounts[normalizedDomain] = (filteredCounts[normalizedDomain] || 0) + 1;
                 }
@@ -514,10 +566,18 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
         .sort((a, b) => b.count - a.count);
     } else {
       // No company mentioned filter, use the standard citation sources
+      // When theme filter is active, exclude search results from "all" view
+      // since they don't have theme information
+      const hasThemeFilter = selectedThemeFilter !== 'all';
+      
       if (selectedSourceTypeFilter === 'ai-responses') {
         sourceCitations = aiResponseCitations;
       } else if (selectedSourceTypeFilter === 'search-results') {
         sourceCitations = searchResultCitations;
+      } else if (hasThemeFilter) {
+        // When filtering by theme, only show AI response citations
+        // (search results don't have theme data)
+        sourceCitations = aiResponseCitations;
       } else {
         sourceCitations = allSourcesCitations;
       }
@@ -528,7 +588,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       count: citation.count,
       change: 0 // Will be updated after timeBasedCitations is calculated
     }));
-  }, [aiResponseCitations, searchResultCitations, allSourcesCitations, selectedSourceTypeFilter, selectedCompanyMentionedFilter, filteredResponses, filteredSearchResults]);
+  }, [aiResponseCitations, searchResultCitations, allSourcesCitations, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedThemeFilter, getFilteredResponsesByJobFunction, filteredSearchResults]);
 
   // Calculate source counts by data type
   const sourceCountsByType = useMemo(() => {
@@ -541,10 +601,12 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
           ? JSON.parse(response.citations) 
           : response.citations;
         if (Array.isArray(citations)) {
-          citations.forEach((citation: any) => {
-            const domain = extractDomainFromCitation(citation);
-            if (domain) {
-              const normalizedDomain = normalizeDomain(domain);
+          // Use enhanceCitations to properly extract domains (same as topCitations)
+          const enhancedCitations = enhanceCitations(citations);
+          enhancedCitations.forEach((enhancedCitation) => {
+            // Only count website citations (same as topCitations logic)
+            if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
+              const normalizedDomain = normalizeDomain(enhancedCitation.domain);
               if (normalizedDomain) {
                 if (!counts[normalizedDomain]) {
                   counts[normalizedDomain] = { ai: 0, search: 0, total: 0 };
@@ -599,7 +661,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       const recalculatedCounts: Record<string, number> = {};
       const filteredSourceDomains = new Set(sources.map(s => normalizeDomain(s.name)));
       
-      filteredResponses.forEach(response => {
+      getFilteredResponsesByJobFunction.forEach(response => {
         // Check if this response matches the company_mentioned filter
         const matchesFilter = selectedCompanyMentionedFilter === 'mentioned' 
           ? response.company_mentioned === true 
@@ -613,10 +675,12 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
             : response.citations;
           
           if (Array.isArray(citations)) {
-            citations.forEach((citation: any) => {
-              const domain = extractDomainFromCitation(citation);
-              if (domain) {
-                const normalizedDomain = normalizeDomain(domain);
+            // Use enhanceCitations to properly extract domains (same as topCitations)
+            const enhancedCitations = enhanceCitations(citations);
+            enhancedCitations.forEach((enhancedCitation) => {
+              // Only count website citations (same as topCitations logic)
+              if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
+                const normalizedDomain = normalizeDomain(enhancedCitation.domain);
                 if (normalizedDomain && filteredSourceDomains.has(normalizedDomain)) {
                   recalculatedCounts[normalizedDomain] = (recalculatedCounts[normalizedDomain] || 0) + 1;
                 }
@@ -639,6 +703,13 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       }).filter(source => source.count > 0); // Remove sources with 0 counts
     }
     
+    // Filter by job function - only show sources from the selected job function
+    if (selectedJobFunctionFilter !== 'all') {
+      sources = sources.filter(source => 
+        source.count > 0 && isSourceFromJobFunction(source.name, selectedJobFunctionFilter)
+      );
+    }
+    
     // Filter out any sources with 0 counts (shouldn't happen, but safety check)
     sources = sources.filter(source => source.count > 0);
     
@@ -650,7 +721,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     }
     // Show first 20 sources
     return sources.slice(0, 20);
-  }, [allTimeCitations, showAllSources, selectedMediaTypeFilter, selectedSourceTypeFilter, selectedCompanyMentionedFilter, filteredResponses, companyName, customMediaTypes]);
+  }, [allTimeCitations, showAllSources, selectedMediaTypeFilter, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedJobFunctionFilter, filteredResponses, companyName, customMediaTypes]);
 
   // Merge change data into all-time citations
   const allTimeCitationsWithChanges = useMemo(() => {
@@ -848,10 +919,12 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
           : response.citations;
         
         if (Array.isArray(citations)) {
-          citations.forEach((citation: any) => {
-            const domain = extractDomainFromCitation(citation);
-            if (domain) {
-              const normalizedDomain = normalizeDomain(domain);
+          // Use enhanceCitations to properly extract domains (same as topCitations)
+          const enhancedCitations = enhanceCitations(citations);
+          enhancedCitations.forEach((enhancedCitation) => {
+            // Only count website citations (same as topCitations logic)
+            if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
+              const normalizedDomain = normalizeDomain(enhancedCitation.domain);
               if (normalizedDomain) {
                 if (response.company_mentioned === true) {
                   mentionedDomains.add(normalizedDomain);
@@ -915,7 +988,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       {/* Sticky Header with Filters */}
       {isPro && (
         <div className="hidden sm:block sticky top-0 z-10 bg-white pb-2">
-          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
             {/* Source Type Filter Dropdown */}
             <Select
               value={selectedSourceTypeFilter}
@@ -999,6 +1072,55 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
                 </SelectItem>
               </SelectContent>
             </Select>
+            {/* Job Function Filter Dropdown */}
+            <Select
+              value={selectedJobFunctionFilter}
+              onValueChange={handleJobFunctionFilterChange}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="All Job Functions" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  <div className="flex items-center gap-2">
+                    <span>All Job Functions</span>
+                    <span className="text-xs text-gray-500">({allSourcesCitations.length})</span>
+                  </div>
+                </SelectItem>
+                {getUniqueJobFunctions.map(jobFunction => (
+                  <SelectItem key={jobFunction} value={jobFunction}>
+                    <div className="flex items-center gap-2">
+                      <span>{jobFunction}</span>
+                      <span className="text-xs text-gray-500">({allSourcesCitations.filter(c => isSourceFromJobFunction(c.domain, jobFunction)).length})</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* Theme/Attribute Filter Dropdown */}
+            {availableThemes.length > 0 && (
+              <Select
+                value={selectedThemeFilter}
+                onValueChange={handleThemeFilterChange}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="All Attributes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    <div className="flex items-center gap-2">
+                      <span>All Attributes</span>
+                      <span className="text-xs text-gray-500">({allSourcesCitations.length})</span>
+                    </div>
+                  </SelectItem>
+                  {availableThemes.map(theme => (
+                    <SelectItem key={theme} value={theme}>
+                      {theme}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </div>
       )}
@@ -1045,6 +1167,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
           companyName={companyName}
           searchResults={filteredSearchResults}
           companyId={currentCompanyId}
+          selectedThemeFilter={selectedThemeFilter}
         />
       )}
     </div>

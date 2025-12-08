@@ -92,3 +92,4 @@ ORDER BY uo.created_at DESC;
 -- SELECT fix_duplicate_company('FOUND_COMPANY_ID'::UUID, 'HUNGARY_ONBOARDING_ID'::UUID);
 -- SELECT fix_duplicate_company('FOUND_COMPANY_ID'::UUID, 'SPAIN_ONBOARDING_ID'::UUID);
 
+

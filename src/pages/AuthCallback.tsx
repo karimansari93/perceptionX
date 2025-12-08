@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { logger } from '@/lib/utils';
 
 const AuthCallback = () => {
   const navigate = useNavigate();
@@ -34,7 +35,7 @@ const AuthCallback = () => {
               .limit(1);
 
             if (onboardingError) {
-              console.error('Error checking onboarding status:', onboardingError);
+              logger.error('Error checking onboarding status:', onboardingError);
               // If we can't check, default to dashboard
               setTimeout(() => navigate('/dashboard'), 0);
               return;
@@ -55,7 +56,7 @@ const AuthCallback = () => {
               .limit(1);
 
             if (promptsError) {
-              console.error('Error checking confirmed prompts:', promptsError);
+              logger.error('Error checking confirmed prompts:', promptsError);
               // If we can't check, default to dashboard
               navigate('/dashboard');
               return;
@@ -69,7 +70,7 @@ const AuthCallback = () => {
               navigate('/dashboard');
             }
           } catch (onboardingCheckError) {
-            console.error('Error checking onboarding status:', onboardingCheckError);
+            logger.error('Error checking onboarding status:', onboardingCheckError);
             // If we can't check, default to dashboard
             navigate('/dashboard');
           }
@@ -78,7 +79,7 @@ const AuthCallback = () => {
           navigate('/auth');
         }
       } catch (error: any) {
-        console.error('Auth callback error:', error);
+        logger.error('Auth callback error:', error);
         toast.error(error.message || 'Authentication failed');
         navigate('/auth');
       }

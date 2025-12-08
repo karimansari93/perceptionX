@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { RefreshCw, Save, Calendar, Trash2, Brain } from 'lucide-react';
+import { RefreshCw, Save, Calendar, Trash2, Brain, UserPlus } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 
@@ -46,10 +46,68 @@ export const CompanyEditTab = ({ company, onUpdate, onRefresh, onDelete }: Compa
   } | null>(null);
   const [themesCount, setThemesCount] = useState<number | null>(null);
 
+  // Candidate Experience prompts state
+  const [hasCandidateExperiencePrompts, setHasCandidateExperiencePrompts] = useState<boolean | null>(null);
+  const [isAddingCandidatePrompts, setIsAddingCandidatePrompts] = useState(false);
+  const [checkingCandidatePrompts, setCheckingCandidatePrompts] = useState(true);
+
   useEffect(() => {
     loadIndustries();
     loadThemesCount();
+    checkCandidateExperiencePrompts();
   }, [company.id]);
+
+  const checkCandidateExperiencePrompts = async () => {
+    setCheckingCandidatePrompts(true);
+    try {
+      const { data, error } = await supabase
+        .from('confirmed_prompts')
+        .select('id')
+        .eq('company_id', company.id)
+        .eq('prompt_category', 'Candidate Experience')
+        .eq('is_active', true)
+        .limit(1);
+
+      if (error) {
+        console.error('Error checking candidate experience prompts:', error);
+        setHasCandidateExperiencePrompts(null);
+      } else {
+        setHasCandidateExperiencePrompts((data?.length || 0) > 0);
+      }
+    } catch (error) {
+      console.error('Error checking candidate experience prompts:', error);
+      setHasCandidateExperiencePrompts(null);
+    } finally {
+      setCheckingCandidatePrompts(false);
+    }
+  };
+
+  const handleAddCandidateExperiencePrompts = async () => {
+    setIsAddingCandidatePrompts(true);
+    try {
+      // Call edge function to add candidate experience prompts (bypasses RLS)
+      const { data, error } = await supabase.functions.invoke('admin-add-candidate-prompts', {
+        body: { companyId: company.id }
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Failed to add candidate experience prompts');
+      }
+
+      if (data?.success) {
+        toast.success(data.message || `Successfully added ${data.added || 0} candidate experience prompts`);
+        await checkCandidateExperiencePrompts();
+        onUpdate(); // Refresh the parent component
+      } else {
+        throw new Error(data?.error || 'Unknown error occurred');
+      }
+    } catch (error: any) {
+      console.error('Error adding candidate experience prompts:', error);
+      toast.error(error.message || 'Failed to add candidate experience prompts');
+    } finally {
+      setIsAddingCandidatePrompts(false);
+    }
+  };
 
   const loadThemesCount = async () => {
     try {
@@ -477,6 +535,43 @@ export const CompanyEditTab = ({ company, onUpdate, onRefresh, onDelete }: Compa
             >
               <Brain className={`h-4 w-4 mr-2 ${isAnalyzingThemes ? 'animate-pulse' : ''}`} />
               {isAnalyzingThemes ? 'Analyzing...' : 'AI Themes'}
+            </Button>
+          </div>
+
+          <div className="flex items-start justify-between p-4 bg-silver/30 rounded-lg">
+            <div>
+              <h4 className="font-medium text-nightsky mb-1">Candidate Experience Prompts</h4>
+              <p className="text-sm text-nightsky/60">
+                Add candidate experience prompts for this company (18 prompts: 6 attributes × 3 types)
+              </p>
+              {checkingCandidatePrompts ? (
+                <p className="text-xs text-nightsky/50 mt-2 flex items-center gap-1">
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                  Checking...
+                </p>
+              ) : hasCandidateExperiencePrompts ? (
+                <p className="text-xs text-nightsky/50 mt-2 flex items-center gap-1">
+                  <UserPlus className="h-3 w-3" />
+                  Candidate experience prompts already exist
+                </p>
+              ) : (
+                <p className="text-xs text-nightsky/50 mt-2 flex items-center gap-1">
+                  <UserPlus className="h-3 w-3" />
+                  No candidate experience prompts found
+                </p>
+              )}
+            </div>
+            <Button
+              onClick={handleAddCandidateExperiencePrompts}
+              disabled={isAddingCandidatePrompts || checkingCandidatePrompts || hasCandidateExperiencePrompts === true}
+              className="bg-teal hover:bg-teal/90"
+            >
+              <UserPlus className={`h-4 w-4 mr-2 ${isAddingCandidatePrompts ? 'animate-spin' : ''}`} />
+              {isAddingCandidatePrompts 
+                ? 'Adding...' 
+                : hasCandidateExperiencePrompts 
+                  ? 'Already Added' 
+                  : 'Add Candidate Prompts'}
             </Button>
           </div>
         </CardContent>

@@ -7,6 +7,7 @@ import { getLLMDisplayName } from '@/config/llmLogos';
 import { TALENTX_ATTRIBUTES, getProOnlyAttributes, getFreeAttributes, generateTalentXPrompts } from '@/config/talentXAttributes';
 import { useSubscription } from '@/hooks/useSubscription';
 import { logger, sanitizeInput, safeStorePromptResponse, checkExistingPromptResponse } from '@/lib/utils';
+import { extractSourceUrl, extractDomain } from '@/utils/citationUtils';
 
 interface OnboardingData {
   companyName: string;
@@ -624,16 +625,18 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
         .map((citation: any) => {
           // Normalize citation format
           if (typeof citation === 'string') {
+            const sourceUrl = extractSourceUrl(citation);
             return {
-              url: citation,
-              domain: citation.replace(/^https?:\/\/(www\.)?/, '').split('/')[0],
-              title: `Source from ${citation.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}`
+              url: sourceUrl,
+              domain: extractDomain(sourceUrl),
+              title: `Source from ${extractDomain(sourceUrl)}`
             };
           } else if (citation && typeof citation === 'object') {
+            const sourceUrl = citation.url ? extractSourceUrl(citation.url) : '';
             return {
-              url: citation.url,
-              domain: citation.domain || citation.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0],
-              title: citation.title || `Source from ${citation.domain || citation.url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}`,
+              url: sourceUrl,
+              domain: citation.domain || (sourceUrl ? extractDomain(sourceUrl) : ''),
+              title: citation.title || `Source from ${citation.domain || (sourceUrl ? extractDomain(sourceUrl) : 'unknown')}`,
               sourceType: citation.sourceType || 'unknown'
             };
           }

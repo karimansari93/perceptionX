@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Send, Bot, User, Loader2 } from 'lucide-react';
+import { logger } from '@/lib/utils';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -82,7 +83,7 @@ export const DataChatTab = () => {
 
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error: any) {
-      console.error('Error sending message:', error);
+      logger.error('Error sending message:', error);
       toast.error(error.message || 'Failed to get response');
       
       const errorMessage: Message = {

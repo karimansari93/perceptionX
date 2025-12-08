@@ -4,6 +4,7 @@ import { OrganizationManagementTab } from '@/components/admin/OrganizationManage
 import { UsersTab } from '@/components/admin/UsersTab';
 import { CompanyManagementTab } from '@/components/admin/CompanyManagementTab';
 import { DataChatTab } from '@/components/admin/DataChatTab';
+import { VisibilityRankingsTab } from '@/components/admin/VisibilityRankingsTab';
 
 export default function Admin() {
   const [activeTab, setActiveTab] = useState<string>('organizations');
@@ -22,6 +23,8 @@ export default function Admin() {
         return <CompanyManagementTab />;
       case 'data-chat':
         return <DataChatTab />;
+      case 'visibility-rankings':
+        return <VisibilityRankingsTab />;
       default:
         return <OrganizationManagementTab />;
     }

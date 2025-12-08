@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +58,8 @@ export const ResponseDetailsModal = ({
   const [isNonEnglish, setIsNonEnglish] = useState(false);
   const isMobile = useIsMobile();
   const { user } = useAuth();
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const fetchingPromptRef = useRef<string | null>(null);
 
   // Find the matching PromptData for this promptText
   const promptData = promptsData.find ? promptsData.find(p => p.prompt === promptText) : undefined;
@@ -115,15 +117,41 @@ export const ResponseDetailsModal = ({
 
   // Fetch summary from OpenAI API when modal opens or responses change
   useEffect(() => {
-    if (!isOpen || responses.length === 0) return;
+    if (!isOpen || responses.length === 0) {
+      // Cancel any in-flight requests when modal closes
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      fetchingPromptRef.current = null;
+      setSummary("");
+      setLoadingSummary(false);
+      return;
+    }
 
     // Check cache first
     if (summaryCache[promptText]) {
       setSummary(summaryCache[promptText]);
       setLoadingSummary(false);
       setSummaryError(null);
+      fetchingPromptRef.current = null;
       return;
     }
+
+    // Prevent multiple simultaneous requests for the same prompt
+    if (fetchingPromptRef.current === promptText) {
+      return;
+    }
+
+    // Cancel any previous in-flight request for a different prompt
+    if (abortControllerRef.current && fetchingPromptRef.current !== promptText) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new abort controller for this request
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    fetchingPromptRef.current = promptText;
 
     setLoadingSummary(true);
     setSummaryError(null);
@@ -142,36 +170,99 @@ export const ResponseDetailsModal = ({
     
     // Get the current session
     const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setSummaryError("Authentication required");
-        setLoadingSummary(false);
-        return;
-      }
+      // Capture promptText at the start to have a stable reference
+      const currentPromptText = promptText;
+      
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          setSummaryError("Authentication required");
+          setLoadingSummary(false);
+          if (fetchingPromptRef.current === currentPromptText) {
+            fetchingPromptRef.current = null;
+            abortControllerRef.current = null;
+          }
+          return;
+        }
 
-      fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-openai", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({ prompt })
-      })
-        .then(res => res.json())
-        .then(data => {
+        const response = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-openai", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({ prompt }),
+          signal: abortController.signal
+        });
+
+        // Check if request was aborted
+        if (abortController.signal.aborted) {
+          if (fetchingPromptRef.current === currentPromptText) {
+            setLoadingSummary(false);
+          }
+          return;
+        }
+
+        const data = await response.json();
+        
+        // Check again if request was aborted after async operation
+        if (abortController.signal.aborted) {
+          if (fetchingPromptRef.current === currentPromptText) {
+            setLoadingSummary(false);
+          }
+          return;
+        }
+
+        // Only update if this is still the current prompt
+        if (fetchingPromptRef.current === currentPromptText) {
           if (data.response) {
-            setSummary(data.response.trim());
-            setSummaryCache(prev => ({ ...prev, [promptText]: data.response.trim() }));
+            const trimmedResponse = data.response.trim();
+            setSummary(trimmedResponse);
+            setSummaryCache(prev => ({ ...prev, [currentPromptText]: trimmedResponse }));
           } else {
             setSummaryError(data.error || "No summary generated.");
           }
-        })
-        .catch(err => setSummaryError("Failed to fetch summary."))
-        .finally(() => setLoadingSummary(false));
+        }
+      } catch (err: any) {
+        // Don't set error if request was aborted, but still clear loading state
+        if (err.name === 'AbortError') {
+          // Clear loading state if this was our request (even if aborted)
+          if (fetchingPromptRef.current === currentPromptText) {
+            setLoadingSummary(false);
+          }
+          return;
+        }
+        // Only set error if this is still the current prompt
+        if (fetchingPromptRef.current === currentPromptText) {
+          setSummaryError("Failed to fetch summary.");
+        }
+      } finally {
+        // Always clear loading state and refs if this was our request
+        if (fetchingPromptRef.current === currentPromptText) {
+          setLoadingSummary(false);
+          fetchingPromptRef.current = null;
+          if (abortControllerRef.current === abortController) {
+            abortControllerRef.current = null;
+          }
+        }
+      }
     };
 
     getSession();
-  }, [isOpen, promptText, responses, summaryCache]);
+
+    // Cleanup: cancel request only if prompt changes or modal closes
+    return () => {
+      // This cleanup runs when dependencies change or component unmounts
+      // Only cancel if we're still fetching the same prompt (meaning dependencies changed)
+      if (fetchingPromptRef.current === promptText) {
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+        fetchingPromptRef.current = null;
+      }
+    };
+  }, [isOpen, promptText, responses]); // Don't include summaryCache to avoid re-fetch loops
 
   const getSentimentColor = (score: number | null) => {
     if (!score) return "text-gray-500";
@@ -450,15 +541,31 @@ export const ResponseDetailsModal = ({
         </DialogHeader>
         
         {/* Progress Banner */}
-        {isRefreshing && refreshProgress && (
-          <div className="px-6 py-2 text-sm text-blue-700 bg-blue-50 border-b border-blue-100 flex-shrink-0">
-            <div className="flex items-center gap-2">
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              <span>
-                Collecting responses: {refreshProgress.completed}/{refreshProgress.total} operations
-                {refreshProgress.currentModel && ` • ${refreshProgress.currentModel}`}
-                {refreshProgress.currentPrompt && ` • ${refreshProgress.currentPrompt.substring(0, 40)}...`}
-              </span>
+        {isRefreshing && refreshProgress && companyName && (
+          <div className="px-6 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-200/50 flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="flex-shrink-0">
+                <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-gray-900">
+                    We're collecting data about {companyName}
+                  </span>
+                  {refreshProgress.total > 0 && (
+                    <>
+                      <span className="text-sm text-gray-600">
+                        • {Math.round(((refreshProgress.total - refreshProgress.completed) / refreshProgress.total) * 100)}% remaining
+                      </span>
+                      {refreshProgress.completed > 0 && refreshProgress.total > refreshProgress.completed && (
+                        <span className="text-xs text-gray-500">
+                          (est. {Math.ceil(((refreshProgress.total - refreshProgress.completed) * 2.5) / 60)} min)
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}

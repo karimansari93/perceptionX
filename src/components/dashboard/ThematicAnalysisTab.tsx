@@ -2,6 +2,10 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import ReactMarkdown from 'react-markdown';
+import { usePersistedState } from '@/hooks/usePersistedState';
 import { 
   Brain,
   Loader2,
@@ -22,12 +26,17 @@ import {
   ClipboardList,
   MessageCircle,
   UserCheck,
-  Briefcase
+  Briefcase,
+  ArrowLeft
 } from 'lucide-react';
 import { PromptResponse } from '@/types/dashboard';
 import { supabase } from '@/integrations/supabase/client';
 import { TALENTX_ATTRIBUTES } from '@/config/talentXAttributes';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import LLMLogo from '@/components/LLMLogo';
+import { getLLMDisplayName } from '@/config/llmLogos';
+import { extractSourceUrl } from '@/utils/citationUtils';
 
 interface ThematicAnalysisTabProps {
   responses: PromptResponse[];
@@ -77,12 +86,14 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
   const [aiThemes, setAiThemes] = useState<AITheme[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [selectedAttribute, setSelectedAttribute] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [experienceType, setExperienceType] = useState<'employee' | 'candidate'>('employee');
-  const [selectedIndustry, setSelectedIndustry] = useState<string>('all');
-  const [selectedFunction, setSelectedFunction] = useState<string>('all');
-  const [selectedPromptType, setSelectedPromptType] = useState<'all' | 'sentiment' | 'competitive'>('all');
+  // Modal and filter states - persisted
+  const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
+  const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('thematicTab.isModalOpen', false);
+  const [experienceType, setExperienceType] = usePersistedState<'employee' | 'candidate'>('thematicTab.experienceType', 'employee');
+  const [selectedIndustry, setSelectedIndustry] = usePersistedState<string>('thematicTab.selectedIndustry', 'all');
+  const [selectedFunction, setSelectedFunction] = usePersistedState<string>('thematicTab.selectedFunction', 'all');
+  const [selectedPromptType, setSelectedPromptType] = usePersistedState<'all' | 'sentiment' | 'competitive'>('thematicTab.selectedPromptType', 'all');
+  const [themeView, setThemeView] = usePersistedState<'swot' | 'rankings'>('thematicTab.themeView', 'swot');
   const [analysisProgress, setAnalysisProgress] = useState({
     current: 0,
     total: 0,
@@ -90,6 +101,12 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
     isVisible: false
   });
   const [showAllThemeSources, setShowAllThemeSources] = useState<Record<string, boolean>>({});
+  const [selectedTheme, setSelectedTheme] = usePersistedState<AITheme | null>('thematicTab.selectedTheme', null);
+  const [themeSummary, setThemeSummary] = useState<string>("");
+  const [loadingThemeSummary, setLoadingThemeSummary] = useState(false);
+  const [themeSummaryError, setThemeSummaryError] = useState<string | null>(null);
+  const [showAllAttributeSources, setShowAllAttributeSources] = useState(false);
+  const [modalView, setModalView] = usePersistedState<'summary' | 'detail'>('thematicTab.modalView', 'summary');
 
   // Extract unique industries and functions from responses for filter options
   const { industries, functions } = useMemo(() => {
@@ -140,8 +157,9 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
       
       // Then, filter by prompt_category based on experienceType
       if (experienceType === 'employee') {
-        // Employee Experience: only include Employee Experience prompts
-        if (promptCategory !== 'Employee Experience') return false;
+        // Employee Experience: include Employee Experience and General prompts
+        // (General prompts like "How is X as an employer?" are about employee experience)
+        if (promptCategory !== 'Employee Experience' && promptCategory !== 'General') return false;
       } else {
         // Candidate Experience: only include Candidate Experience prompts
         if (promptCategory !== 'Candidate Experience') return false;
@@ -158,11 +176,24 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
   }, [responses, experienceType, selectedIndustry, selectedFunction, selectedPromptType]);
 
   // Fetch AI themes from database
+  // Fetch themes for all relevant responses (sentiment/competitive), then filter by experience type
+  // This ensures we don't miss themes that were already created
   const fetchAIThemes = async () => {
     try {
-      const responseIds = filteredResponses.map(r => r.id);
+      // Get all relevant responses (sentiment/competitive) regardless of category
+      // We'll filter themes by experience type after fetching
+      const allRelevantResponses = responses.filter(response => {
+        const promptType = response.confirmed_prompts?.prompt_type;
+        return promptType === 'sentiment' || 
+               promptType === 'competitive' || 
+               promptType === 'talentx_sentiment' || 
+               promptType === 'talentx_competitive';
+      });
+
+      const responseIds = allRelevantResponses.map(r => r.id);
       if (responseIds.length === 0) return;
 
+      // Fetch themes for all relevant responses
       const { data, error } = await supabase
         .from('ai_themes')
         .select('*')
@@ -170,7 +201,15 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setAiThemes(data || []);
+      
+      // Now filter themes to only include those from responses that match our filters
+      // This ensures themes are only shown for responses that pass all filters
+      const filteredResponseIds = new Set(filteredResponses.map(r => r.id));
+      const filteredThemes = (data || []).filter(theme => 
+        filteredResponseIds.has(theme.response_id)
+      );
+      
+      setAiThemes(filteredThemes);
     } catch (error) {
       console.error('Error fetching AI themes:', error);
     }
@@ -327,7 +366,8 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
               sourceData[citation.domain].count += 1;
               // Store the first URL found for this domain
               if (!sourceData[citation.domain].url && citation.url) {
-                sourceData[citation.domain].url = citation.url;
+                // Extract actual source URL if it's a Google Translate URL
+                sourceData[citation.domain].url = extractSourceUrl(citation.url);
               }
             }
           });
@@ -341,6 +381,42 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
     return Object.entries(sourceData)
       .map(([domain, data]) => ({ domain, count: data.count, url: data.url }))
       .sort((a, b) => b.count - a.count);
+  };
+
+  // Helper to aggregate sources across all instances of themes for an attribute
+  const getAttributeSources = (attributeId: string) => {
+    const sourceData: Record<string, { count: number; url: string | null }> = {};
+    
+    // Get all themes for this attribute
+    const attributeThemes = filteredThemes.filter(theme => theme.talentx_attribute_id === attributeId);
+    
+    // Aggregate sources from all themes
+    attributeThemes.forEach(theme => {
+      const themeSources = getThemeSources(theme);
+      themeSources.forEach(source => {
+        if (!sourceData[source.domain]) {
+          sourceData[source.domain] = { count: 0, url: null };
+        }
+        sourceData[source.domain].count += source.count;
+        // Store the first URL found for this domain
+        if (!sourceData[source.domain].url && source.url) {
+          // Extract actual source URL if it's a Google Translate URL
+          sourceData[source.domain].url = extractSourceUrl(source.url);
+        }
+      });
+    });
+    
+    // Convert to array and sort by count
+    return Object.entries(sourceData)
+      .map(([domain, data]) => ({ domain, count: data.count, url: data.url }))
+      .sort((a, b) => b.count - a.count);
+  };
+
+  // Helper to get all responses mentioning themes for an attribute
+  const getResponsesForAttribute = (attributeId: string) => {
+    const attributeThemes = filteredThemes.filter(theme => theme.talentx_attribute_id === attributeId);
+    const responseIds = new Set(attributeThemes.map(theme => theme.response_id));
+    return responses.filter(response => responseIds.has(response.id));
   };
 
   // Group AI themes by TalentX attribute and sort for bar chart
@@ -450,6 +526,93 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
     });
   }, [themeData, filteredThemes]);
 
+  // Fetch AI summary for attribute when modal opens
+  useEffect(() => {
+    if (!isModalOpen || !selectedAttribute || modalView !== 'summary') return;
+    setThemeSummary("");
+    setThemeSummaryError(null);
+    setLoadingThemeSummary(true);
+    
+    const attributeResponses = getResponsesForAttribute(selectedAttribute);
+    if (attributeResponses.length === 0) {
+      setThemeSummaryError("No responses found for this attribute.");
+      setLoadingThemeSummary(false);
+      return;
+    }
+
+    const attributeData = bubbleChartData.find(d => d.attributeId === selectedAttribute);
+    const attributeName = attributeData?.attributeName || 'this attribute';
+
+    // Build the prompt
+    const prompt = `Analyze ${companyName}'s employer brand perception related to ${attributeName} for talent acquisition.
+
+OUTPUT ONLY THE BULLETS BELOW - NO INTRODUCTION, NO EXPLANATION, JUST THE BULLETS:
+
+• [${companyName}'s ${attributeName} strengths - max 15 words]
+
+• [How talent perceives ${companyName}'s ${attributeName} - max 15 words]
+
+• [Key ${attributeName} reputation factors - max 15 words]
+
+• [Notable ${attributeName} characteristics - max 15 words]
+
+Focus on: themes, sentiment, key insights, and how this attribute impacts employer brand perception.
+
+CRITICAL: 
+- DO NOT include any introductory text like "Here's an analysis..." or similar
+- OUTPUT ONLY THE BULLET POINTS with a blank line between each bullet
+- Each bullet must be under 15 words and fit on one line
+- Start your response directly with the first bullet point
+- Put each bullet on a NEW LINE separated by a blank line
+- Focus ONLY on ${attributeName} for ${companyName}
+
+Responses:\n${attributeResponses.map(r => r.response_text?.slice(0, 1000) || '').join('\n---\n')}`;
+
+    // Get session and call Gemini endpoint
+    const fetchSummary = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          setThemeSummaryError("Authentication required");
+          setLoadingThemeSummary(false);
+          return;
+        }
+        const res = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-gemini", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({ prompt })
+        });
+        const data = await res.json();
+        if (data.response) {
+          // Strip any introductory text before the first bullet point
+          let cleanedResponse = data.response.trim();
+          const firstBulletIndex = cleanedResponse.search(/^[•\-\*]/m);
+          if (firstBulletIndex > 0) {
+            cleanedResponse = cleanedResponse.substring(firstBulletIndex);
+          }
+          
+          // Ensure each bullet is on its own line
+          cleanedResponse = cleanedResponse
+            .replace(/([^\n])\s*([•\-\*])\s+/g, '$1\n\n$2 ')
+            .trim();
+          
+          setThemeSummary(cleanedResponse);
+        } else {
+          setThemeSummaryError(data.error || "No summary generated.");
+        }
+      } catch (err) {
+        setThemeSummaryError("Failed to fetch summary.");
+      } finally {
+        setLoadingThemeSummary(false);
+      }
+    };
+    fetchSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isModalOpen, selectedAttribute, modalView, bubbleChartData, companyName]);
+
   const maxCount = themeData.length > 0 ? Math.max(...themeData.map(t => t.count)) : 1;
 
   if (filteredResponses.length === 0) {
@@ -467,10 +630,23 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
             <div className="mt-4 text-sm text-gray-500">
               <p>This analysis focuses on:</p>
               <ul className="list-disc list-inside mt-2 space-y-1">
-                <li>{experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} sentiment prompts</li>
-                <li>{experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} competitive prompts</li>
-                <li>TalentX {experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} sentiment prompts</li>
-                <li>TalentX {experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} competitive prompts</li>
+                {experienceType === 'employee' ? (
+                  <>
+                    <li>General sentiment prompts (e.g., "How is X as an employer?")</li>
+                    <li>General competitive prompts</li>
+                    <li>Employee Experience sentiment prompts</li>
+                    <li>Employee Experience competitive prompts</li>
+                    <li>TalentX Employee Experience sentiment prompts</li>
+                    <li>TalentX Employee Experience competitive prompts</li>
+                  </>
+                ) : (
+                  <>
+                    <li>Candidate Experience sentiment prompts</li>
+                    <li>Candidate Experience competitive prompts</li>
+                    <li>TalentX Candidate Experience sentiment prompts</li>
+                    <li>TalentX Candidate Experience competitive prompts</li>
+                  </>
+                )}
               </ul>
               <p className="mt-2">Visibility prompts and {experienceType === 'employee' ? 'Candidate Experience' : 'Employee Experience'} prompts are excluded from this analysis.</p>
             </div>
@@ -481,22 +657,42 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
   }
 
   return (
-    <div className="space-y-6">
+    <Tabs value={themeView} onValueChange={(value) => setThemeView(value as 'swot' | 'rankings')} className="w-full space-y-6">
       {/* Main Section Header */}
       <div className="space-y-4">
-        <div className="space-y-2">
-          <h2 className="text-2xl font-bold text-gray-900">Thematic Analysis</h2>
-          <p className="text-gray-600">
-            Analyze themes and sentiment patterns to understand {companyName}'s employer brand perception.
-          </p>
+        <div className="flex items-start justify-between">
+          <div className="space-y-2 flex-1">
+            <h2 className="text-2xl font-bold text-gray-900">Thematic Analysis</h2>
+            <p className="text-gray-600">
+              Analyze themes and sentiment patterns to understand {companyName}'s employer brand perception.
+            </p>
+          </div>
+          
+          {/* SWOT/Rankings Switcher - Top Right */}
+          {filteredThemes.length > 0 && (
+            <TabsList className="grid grid-cols-2 bg-gray-100 w-auto">
+              <TabsTrigger 
+                value="swot"
+                className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+              >
+                SWOT
+              </TabsTrigger>
+              <TabsTrigger 
+                value="rankings"
+                className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
+              >
+                Rankings
+              </TabsTrigger>
+            </TabsList>
+          )}
         </div>
         
-        {/* Filters */}
-        <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {/* Filters - All in one row */}
+        <div className="w-full flex flex-wrap items-center gap-3">
           {/* Experience Type Filter - only show if candidate experience exists */}
           {hasCandidateExperience && (
             <Select value={experienceType} onValueChange={(value) => setExperienceType(value as 'employee' | 'candidate')}>
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-auto min-w-[180px]">
                 <SelectValue placeholder="Employee Experience" />
               </SelectTrigger>
               <SelectContent>
@@ -508,7 +704,7 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
           
           {/* Prompt Type Filter */}
           <Select value={selectedPromptType} onValueChange={(value) => setSelectedPromptType(value as 'all' | 'sentiment' | 'competitive')}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-auto min-w-[160px]">
               <SelectValue placeholder="All Prompt Types" />
             </SelectTrigger>
             <SelectContent>
@@ -521,7 +717,7 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
           {/* Industry Filter */}
           {industries.length > 0 && (
             <Select value={selectedIndustry} onValueChange={setSelectedIndustry}>
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-auto min-w-[150px]">
                 <SelectValue placeholder="All Industries" />
               </SelectTrigger>
               <SelectContent>
@@ -538,7 +734,7 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
           {/* Function Filter */}
           {functions.length > 0 && (
             <Select value={selectedFunction} onValueChange={setSelectedFunction}>
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-auto min-w-[150px]">
                 <SelectValue placeholder="All Functions" />
               </SelectTrigger>
               <SelectContent>
@@ -550,23 +746,6 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                 ))}
               </SelectContent>
             </Select>
-          )}
-          
-          {/* Reset Filters Button */}
-          {(selectedIndustry !== 'all' || selectedFunction !== 'all' || selectedPromptType !== 'all' || (hasCandidateExperience && experienceType !== 'employee')) && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setSelectedIndustry('all');
-                setSelectedFunction('all');
-                setSelectedPromptType('all');
-                setExperienceType('employee');
-              }}
-              className="w-full sm:col-span-2 lg:col-span-1"
-            >
-              Reset Filters
-            </Button>
           )}
         </div>
       </div>
@@ -603,8 +782,9 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
       {/* Charts */}
       {filteredThemes.length > 0 && (
       <>
-        {/* Bubble Chart (Default) */}
-        {chartView === 'bubble' && (
+        {/* SWOT Tab Content */}
+        <TabsContent value="swot" className="mt-4">
+            {/* Bubble Chart (SWOT) */}
             <div className="relative">
               {/* SWOT Chart Container */}
               <div className="h-[calc(100vh-280px)] min-h-96 w-full relative border border-gray-200 rounded-lg bg-gray-50 flex">
@@ -634,7 +814,15 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                     const maxVolume = Math.max(...bubbleChartData.map(d => d.volume));
                     const minVolume = Math.min(...bubbleChartData.map(d => d.volume));
                     
-                    const bubbleSize = Math.max(20, Math.min(50, data.volume * 1.5)); // Bubble size based on volume
+                    // Calculate bubble size relative to filtered data (max volume in current view)
+                    // The largest bubble in the filtered view will always be the biggest
+                    const minBubbleSize = 20;
+                    const maxBubbleSize = 50;
+                    const volumeRange = maxVolume - minVolume || 1; // Avoid division by zero
+                    const relativeSize = maxVolume > 0 
+                      ? minBubbleSize + ((data.volume - minVolume) / volumeRange) * (maxBubbleSize - minBubbleSize)
+                      : minBubbleSize;
+                    const bubbleSize = Math.max(minBubbleSize, Math.min(maxBubbleSize, relativeSize));
                     
                     // FIXED THRESHOLDS for sentiment classification - using actual positive/negative ratios
                     const POSITIVE_SENTIMENT_THRESHOLD = 0.6; // 60%+ positive themes
@@ -818,10 +1006,11 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
               </div>
 
             </div>
-          )}
+          </TabsContent>
 
-          {/* Bar Chart */}
-          {chartView === 'bar' && (
+          {/* Rankings Tab Content */}
+          <TabsContent value="rankings" className="mt-4">
+            {/* Bar Chart (Rankings) */}
             <Card>
               <CardContent>
                 <div className="space-y-4">
@@ -854,10 +1043,6 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                             <span className="text-sm font-medium text-gray-900">
                               {attribute.name}
                             </span>
-                            <div className="text-xs text-gray-500 mt-1">
-                              {attribute.themes.slice(0, 3).join(', ')}
-                              {attribute.themes.length > 3 && ` +${attribute.themes.length - 3} more`}
-                            </div>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-sm text-gray-500">{attribute.count}</span>
@@ -897,7 +1082,7 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                 </div>
               </CardContent>
             </Card>
-          )}
+          </TabsContent>
       </>
       )}
 
@@ -935,11 +1120,34 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
       )}
 
       {/* Attribute Details Modal */}
-      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+      <Dialog open={isModalOpen} onOpenChange={(open) => {
+        setIsModalOpen(open);
+        if (!open) {
+          setModalView('summary');
+          setSelectedTheme(null);
+          setThemeSummary("");
+          setThemeSummaryError(null);
+        }
+      }}>
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              {selectedAttribute && (() => {
+              {modalView === 'detail' && selectedTheme ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setModalView('summary');
+                      setSelectedTheme(null);
+                    }}
+                    className="p-1 h-auto"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </Button>
+                  <span>{selectedTheme.theme_name}</span>
+                </div>
+              ) : selectedAttribute && (() => {
                 const IconComponent = ATTRIBUTE_ICONS[selectedAttribute] || Activity;
                 const attributeData = bubbleChartData.find(d => d.attributeId === selectedAttribute);
                 return (
@@ -952,7 +1160,122 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
             </DialogTitle>
           </DialogHeader>
           
-          {selectedAttribute && (() => {
+          {modalView === 'detail' && selectedTheme ? (
+            // Detail view for a specific theme
+            (() => {
+              const getBadgeColor = (sentiment: string) => {
+                switch (sentiment) {
+                  case 'positive':
+                    return 'bg-green-100 text-green-800';
+                  case 'negative':
+                    return 'bg-red-100 text-red-800';
+                  case 'neutral':
+                    return 'bg-gray-100 text-gray-800';
+                  default:
+                    return 'bg-gray-100 text-gray-800';
+                }
+              };
+
+              const getBorderColor = (sentiment: string) => {
+                switch (sentiment) {
+                  case 'positive':
+                    return 'border-green-500';
+                  case 'negative':
+                    return 'border-red-500';
+                  case 'neutral':
+                    return 'border-gray-500';
+                  default:
+                    return 'border-gray-500';
+                }
+              };
+
+              const themeSources = getThemeSources(selectedTheme);
+              const showAll = showAllThemeSources[selectedTheme.id] || false;
+              const topSources = showAll ? themeSources : themeSources.slice(0, 5);
+              const hasMoreSources = themeSources.length > 5;
+
+              return (
+                <div className="space-y-4">
+                  <Card className={`border-l-4 ${getBorderColor(selectedTheme.sentiment)}`}>
+                    <CardContent className="p-4">
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-start">
+                          <h4 className="font-medium text-gray-900">{selectedTheme.theme_name}</h4>
+                          <span className={`text-xs px-2 py-1 rounded capitalize ${getBadgeColor(selectedTheme.sentiment)}`}>
+                            {selectedTheme.sentiment}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600">{selectedTheme.theme_description}</p>
+                        {selectedTheme.keywords.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {selectedTheme.keywords.map((keyword, idx) => (
+                              <span key={idx} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
+                                {keyword}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {selectedTheme.context_snippets.length > 0 && (
+                          <div className="mt-3">
+                            <h5 className="text-xs font-medium text-gray-700 mb-2">Context Snippets:</h5>
+                            <div className="space-y-1">
+                              {selectedTheme.context_snippets.map((snippet, idx) => (
+                                <div key={idx} className="text-xs text-gray-600 bg-gray-50 p-2 rounded italic">
+                                  "{snippet}"
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Sources section */}
+                        {themeSources.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-2 mt-3">
+                            <span className="text-xs text-gray-500">Sources:</span>
+                            {topSources.map((source, index) => (
+                              <div
+                                key={index}
+                                onClick={() => {
+                                  if (source.url) {
+                                    window.open(source.url, '_blank', 'noopener,noreferrer');
+                                  }
+                                }}
+                                className={`inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200 ${source.url ? 'cursor-pointer' : 'cursor-default'}`}
+                              >
+                                <img
+                                  src={getFavicon(source.domain)}
+                                  alt=""
+                                  className="w-4 h-4 mr-1 rounded"
+                                  style={{ background: '#fff', display: 'block' }}
+                                  onError={e => { e.currentTarget.style.display = 'none'; }}
+                                />
+                                {getSourceDisplayName(source.domain)}
+                                <span className="ml-1 text-gray-500">({source.count})</span>
+                              </div>
+                            ))}
+                            {hasMoreSources && (
+                              <button
+                                onClick={() => setShowAllThemeSources(prev => ({
+                                  ...prev,
+                                  [selectedTheme.id]: !showAll
+                                }))}
+                                className="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded transition-colors font-medium"
+                              >
+                                {showAll
+                                  ? `Show Less` 
+                                  : `+${themeSources.length - 5} more`
+                                }
+                              </button>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              );
+            })()
+          ) : selectedAttribute && (() => {
             // Get all themes for the selected attribute (filtered by experience type)
             const attributeThemes = filteredThemes.filter(theme => theme.talentx_attribute_id === selectedAttribute);
             
@@ -961,10 +1284,133 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
             const negativeThemes = attributeThemes.filter(theme => theme.sentiment === 'negative');
             const neutralThemes = attributeThemes.filter(theme => theme.sentiment === 'neutral');
             
+            // Get unique theme names (grouped by theme_name)
+            const themeMap = new Map<string, AITheme[]>();
+            attributeThemes.forEach(theme => {
+              if (!themeMap.has(theme.theme_name)) {
+                themeMap.set(theme.theme_name, []);
+              }
+              themeMap.get(theme.theme_name)!.push(theme);
+            });
+            const uniqueThemeNames = Array.from(themeMap.entries()).map(([name, themes]) => ({
+              name,
+              themes,
+              count: themes.length,
+              dominantSentiment: themes.reduce((acc, t) => {
+                acc[t.sentiment] = (acc[t.sentiment] || 0) + 1;
+                return acc;
+              }, {} as Record<string, number>)
+            })).sort((a, b) => b.count - a.count);
 
             return (
               <div className="space-y-6">
-                {/* Summary */}
+                {/* MODELS ROW - matching CompetitorsTab style */}
+                {(() => {
+                  const attributeResponses = getResponsesForAttribute(selectedAttribute);
+                  const uniqueLLMs = Array.from(new Set(attributeResponses.map(r => r.ai_model).filter(Boolean)));
+                  
+                  return (
+                    <div className="flex flex-row gap-8 mt-1 mb-1 w-full">
+                      <div className="flex flex-col items-start min-w-[120px]">
+                        <span className="text-xs text-gray-400 font-medium mb-1">Models</span>
+                        <div className="flex flex-row flex-wrap items-center gap-2">
+                          {uniqueLLMs.length === 0 ? (
+                            <span className="text-xs text-gray-400">None</span>
+                          ) : (
+                            uniqueLLMs.map(model => (
+                              <span key={model} className="inline-flex items-center">
+                                <LLMLogo modelName={model} size="sm" className="mr-1" />
+                                <span className="text-xs text-gray-700 mr-2">{getLLMDisplayName(model)}</span>
+                              </span>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Summary Card - matching CompetitorsTab style */}
+                <div className="mb-6">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base font-semibold">Summary</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {loadingThemeSummary ? (
+                        <div className="w-full">
+                          <Skeleton className="h-6 w-3/4 mb-2" />
+                          <Skeleton className="h-6 w-5/6 mb-2" />
+                          <Skeleton className="h-6 w-2/3 mb-2" />
+                          <Skeleton className="h-6 w-1/2 mb-2" />
+                        </div>
+                      ) : themeSummaryError ? (
+                        <div className="text-red-600 text-sm py-2">{themeSummaryError}</div>
+                      ) : themeSummary ? (
+                        <>
+                          <div className="text-gray-800 text-base mb-3">
+                            <ReactMarkdown 
+                              components={{
+                                p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                                ul: ({children}) => <ul className="space-y-1 list-disc list-inside">{children}</ul>,
+                                li: ({children}) => <li className="text-sm leading-tight">{children}</li>
+                              }}
+                            >
+                              {themeSummary}
+                            </ReactMarkdown>
+                          </div>
+                          
+                          {/* Sources section - matching CompetitorsTab style */}
+                          {(() => {
+                            const attributeSources = getAttributeSources(selectedAttribute);
+                            const topSources = showAllAttributeSources ? attributeSources : attributeSources.slice(0, 5);
+                            const hasMoreSources = attributeSources.length > 5;
+                            
+                            return attributeSources.length > 0 ? (
+                              <div className="flex flex-wrap items-center gap-2 mt-2">
+                                <span className="text-xs text-gray-500">Sources:</span>
+                                {topSources.map((source, index) => (
+                                  <div
+                                    key={index}
+                                    onClick={() => {
+                                      if (source.url) {
+                                        window.open(source.url, '_blank', 'noopener,noreferrer');
+                                      }
+                                    }}
+                                    className={`inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200 ${source.url ? 'cursor-pointer' : 'cursor-default'}`}
+                                  >
+                                    <img
+                                      src={getFavicon(source.domain)}
+                                      alt=""
+                                      className="w-4 h-4 mr-1 rounded"
+                                      style={{ background: '#fff', display: 'block' }}
+                                      onError={e => { e.currentTarget.style.display = 'none'; }}
+                                    />
+                                    {getSourceDisplayName(source.domain)}
+                                    <span className="ml-1 text-gray-500">({source.count})</span>
+                                  </div>
+                                ))}
+                                {hasMoreSources && (
+                                  <button
+                                    onClick={() => setShowAllAttributeSources(!showAllAttributeSources)}
+                                    className="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded transition-colors font-medium"
+                                  >
+                                    {showAllAttributeSources 
+                                      ? `Show Less` 
+                                      : `+${attributeSources.length - 5} more`
+                                    }
+                                  </button>
+                                )}
+                              </div>
+                            ) : null;
+                          })()}
+                        </>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Summary Stats */}
                 <div className="grid grid-cols-3 gap-4">
                   <div className="text-center p-3 bg-green-50 rounded-lg">
                     <div className="text-2xl font-bold text-green-600">{positiveThemes.length}</div>
@@ -980,9 +1426,13 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                   </div>
                 </div>
 
-                {/* All Themes */}
+                {/* Key Themes List - Clickable */}
                 <div className="space-y-3">
-                  {attributeThemes.map((theme) => {
+                  <h3 className="text-sm font-semibold text-gray-900">Key Themes</h3>
+                  {uniqueThemeNames.map((themeGroup, index) => {
+                    const dominantSentiment = Object.entries(themeGroup.dominantSentiment)
+                      .sort(([, a], [, b]) => b - a)[0]?.[0] || 'neutral';
+                    
                     const getBadgeColor = (sentiment: string) => {
                       switch (sentiment) {
                         case 'positive':
@@ -1009,87 +1459,44 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
                       }
                     };
 
+                    // Use the first theme as representative for display
+                    const representativeTheme = themeGroup.themes[0];
+
                     return (
-                      <Card key={theme.id} className={`border-l-4 ${getBorderColor(theme.sentiment)}`}>
+                      <Card 
+                        key={index} 
+                        className={`border-l-4 ${getBorderColor(dominantSentiment)} cursor-pointer hover:shadow-md transition-shadow`}
+                        onClick={() => {
+                          setSelectedTheme(representativeTheme);
+                          setModalView('detail');
+                        }}
+                      >
                         <CardContent className="p-4">
-                          <div className="space-y-2">
-                            <div className="flex justify-between items-start">
-                              <h4 className="font-medium text-gray-900">{theme.theme_name}</h4>
-                              <span className={`text-xs px-2 py-1 rounded capitalize ${getBadgeColor(theme.sentiment)}`}>
-                                {theme.sentiment}
-                              </span>
-                            </div>
-                            <p className="text-sm text-gray-600">{theme.theme_description}</p>
-                            {theme.keywords.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {theme.keywords.map((keyword, idx) => (
-                                  <span key={idx} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
-                                    {keyword}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                            {theme.context_snippets.length > 0 && (
-                              <div className="mt-3">
-                                <h5 className="text-xs font-medium text-gray-700 mb-2">Context Snippets:</h5>
-                                <div className="space-y-1">
-                                  {theme.context_snippets.map((snippet, idx) => (
-                                    <div key={idx} className="text-xs text-gray-600 bg-gray-50 p-2 rounded italic">
-                                      "{snippet}"
-                                    </div>
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1">
+                              <h4 className="font-medium text-gray-900 mb-1">{themeGroup.name}</h4>
+                              <p className="text-sm text-gray-600 mb-2">{representativeTheme.theme_description}</p>
+                              {representativeTheme.keywords && representativeTheme.keywords.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mb-2">
+                                  {representativeTheme.keywords.slice(0, 5).map((keyword, idx) => (
+                                    <span key={idx} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
+                                      {keyword}
+                                    </span>
                                   ))}
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* Sources section - matching CompetitorsTab style */}
-                            {(() => {
-                              const themeSources = getThemeSources(theme);
-                              const showAll = showAllThemeSources[theme.id] || false;
-                              const topSources = showAll ? themeSources : themeSources.slice(0, 5);
-                              const hasMoreSources = themeSources.length > 5;
-                              
-                              return themeSources.length > 0 ? (
-                                <div className="flex flex-wrap items-center gap-2 mt-3">
-                                  <span className="text-xs text-gray-500">Sources:</span>
-                                  {topSources.map((source, index) => (
-                                    <div
-                                      key={index}
-                                      onClick={() => {
-                                        if (source.url) {
-                                          window.open(source.url, '_blank', 'noopener,noreferrer');
-                                        }
-                                      }}
-                                      className={`inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200 ${source.url ? 'cursor-pointer' : 'cursor-default'}`}
-                                    >
-                                      <img
-                                        src={getFavicon(source.domain)}
-                                        alt=""
-                                        className="w-4 h-4 mr-1 rounded"
-                                        style={{ background: '#fff', display: 'block' }}
-                                        onError={e => { e.currentTarget.style.display = 'none'; }}
-                                      />
-                                      {getSourceDisplayName(source.domain)}
-                                      <span className="ml-1 text-gray-500">({source.count})</span>
-                                    </div>
-                                  ))}
-                                  {hasMoreSources && (
-                                    <button
-                                      onClick={() => setShowAllThemeSources(prev => ({
-                                        ...prev,
-                                        [theme.id]: !showAll
-                                      }))}
-                                      className="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded transition-colors font-medium"
-                                    >
-                                      {showAll
-                                        ? `Show Less` 
-                                        : `+${themeSources.length - 5} more`
-                                      }
-                                    </button>
+                                  {representativeTheme.keywords.length > 5 && (
+                                    <span className="text-xs text-gray-500">+{representativeTheme.keywords.length - 5} more</span>
                                   )}
                                 </div>
-                              ) : null;
-                            })()}
+                              )}
+                            </div>
+                            <div className="flex flex-col items-end gap-2 ml-4">
+                              <span className={`text-xs px-2 py-1 rounded capitalize ${getBadgeColor(dominantSentiment)}`}>
+                                {dominantSentiment}
+                              </span>
+                              <Badge variant="secondary" className="text-xs">
+                                {themeGroup.count} {themeGroup.count === 1 ? 'instance' : 'instances'}
+                              </Badge>
+                            </div>
                           </div>
                         </CardContent>
                       </Card>
@@ -1107,6 +1514,6 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
           })()}
         </DialogContent>
       </Dialog>
-    </div>
+    </Tabs>
   );
 };
