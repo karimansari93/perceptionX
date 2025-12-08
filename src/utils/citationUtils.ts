@@ -197,27 +197,42 @@ export const enhanceCitations = (citations: any[]): EnhancedCitation[] => {
         // Google AI format: { source: "Glassdoor", url: "..." }
         const sourceName = citation.source.toLowerCase().trim();
         
-        // Try to map source name to canonical domain
-        if (sourceNameToDomain[sourceName]) {
-          domain = sourceNameToDomain[sourceName];
-        } else if (sourceName.includes('.')) {
-          // If source already looks like a domain
-          domain = sourceName;
-        } else {
-          // Try to construct domain from source name
-          // Convert source name to valid domain format by removing spaces and special characters
-          const cleanSourceName = sourceName
-            .replace(/\s+/g, '') // Remove all spaces
-            .replace(/[^a-z0-9-]/g, '') // Remove special characters except hyphens
-            .replace(/-+/g, '-') // Replace multiple hyphens with single
-            .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
-          
-          domain = `${cleanSourceName}.com`;
-        }
-        
         // Extract actual source URL if it's a Google Translate URL
         url = citation.url ? extractSourceUrl(citation.url) : '';
         title = citation.title || '';
+        
+        // If we have a URL, prefer extracting domain from URL (more reliable)
+        if (url) {
+          const extractedDomain = extractDomain(url);
+          if (extractedDomain && extractedDomain !== url) {
+            domain = extractedDomain;
+          }
+        }
+        
+        // Only use source name if we couldn't extract from URL
+        if (!domain) {
+          // Try to map source name to canonical domain
+          if (sourceNameToDomain[sourceName]) {
+            domain = sourceNameToDomain[sourceName];
+          } else if (sourceName.includes('.')) {
+            // If source already looks like a domain
+            domain = sourceName;
+          } else {
+            // Try to construct domain from source name
+            // Convert source name to valid domain format by removing spaces and special characters
+            const cleanSourceName = sourceName
+              .replace(/\s+/g, '') // Remove all spaces
+              .replace(/[^a-z0-9-]/g, '') // Remove special characters except hyphens
+              .replace(/-+/g, '-') // Replace multiple hyphens with single
+              .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+            
+            // Only create domain if we have a valid source name
+            // Don't create ".com" if cleanSourceName is empty
+            if (cleanSourceName && cleanSourceName.length > 0) {
+              domain = `${cleanSourceName}.com`;
+            }
+          }
+        }
       } else if (citation.url) {
         // Extract actual source URL if it's a Google Translate URL
         url = extractSourceUrl(citation.url);

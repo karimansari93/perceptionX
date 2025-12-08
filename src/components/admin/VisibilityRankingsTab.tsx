@@ -180,7 +180,7 @@ export const VisibilityRankingsTab = () => {
 
       // Query prompt_responses with for_index = true for this period
       // Include all models: gpt-5-nano, perplexity, google-ai-overviews
-      // Only filter by for_index = true - this is the indicator for visibility index responses
+      // These are industry-wide responses (company_id = NULL) - explicitly filter to ensure separation
       const { data: responses, error: responsesError } = await supabase
         .from('prompt_responses')
         .select(`
@@ -196,6 +196,7 @@ export const VisibilityRankingsTab = () => {
           )
         `)
         .eq('for_index', true)
+        .is('company_id', null) // Explicitly filter for industry-wide responses only
         .in('confirmed_prompts.prompt_type', ['visibility', 'talentx_visibility'])
         .in('confirmed_prompts.prompt_category', ['Employee Experience', 'Candidate Experience'])
         .in('ai_model', ['gpt-5-nano', 'perplexity', 'google-ai-overviews'])
@@ -990,4 +991,3 @@ export const VisibilityRankingsTab = () => {
     </div>
   );
 };
-

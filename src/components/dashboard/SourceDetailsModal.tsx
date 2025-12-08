@@ -180,66 +180,81 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
               // Google AI Overviews format
               const source = citation.source.toLowerCase().trim();
               
-              // Map common source names to domains
-              const sourceToDomainMap: Record<string, string> = {
-                'blind': 'www.teamblind.com',
-                'teamblind': 'www.teamblind.com',
-                'indeed': 'www.indeed.com',
-                'glassdoor': 'www.glassdoor.com',
-                'linkedin': 'www.linkedin.com',
-                'youtube': 'www.youtube.com',
-                'great place to work': 'www.greatplacetowork.com',
-                'greatplacetowork': 'www.greatplacetowork.com',
-                'comparably': 'www.comparably.com',
-                'ambitionbox': 'www.ambitionbox.com',
-                'repvue': 'www.repvue.com',
-                'built in': 'builtin.com',
-                'builtin': 'builtin.com',
-                'g2': 'www.g2.com',
-                'inhersight': 'www.inhersight.com',
-                'business because': 'www.businessbecause.com',
-                'businessbecause': 'www.businessbecause.com',
-                'ziprecruiter': 'www.ziprecruiter.com',
-                'snowflake careers': 'careers.snowflake.com',
-                'careers.snowflake.com': 'careers.snowflake.com',
-                'reddit': 'www.reddit.com',
-                'quora': 'www.quora.com',
-                'microsoft': 'www.microsoft.com',
-                'databricks': 'www.databricks.com',
-                'cloudera': 'www.cloudera.com',
-                'snowflake': 'www.snowflake.com',
-                'forbes': 'www.forbes.com',
-                'business insider': 'www.businessinsider.com',
-                'medium': 'medium.com',
-                'management consulted': 'managementconsulted.com'
-              };
-              
-              // Check if source maps to a known domain
-              if (sourceToDomainMap[source]) {
-                citationDomain = sourceToDomainMap[source];
-              } else if (source.includes('.')) {
-                // If source already looks like a domain, use it as-is
-                citationDomain = source;
-              } else {
-                // Fallback: try to convert source name to domain
-                let cleanSourceName = source;
-                if (cleanSourceName === 'great place to work') {
-                  cleanSourceName = 'greatplacetowork';
-                } else if (cleanSourceName === 'built in') {
-                  cleanSourceName = 'builtin';
-                } else {
-                  // General case: remove spaces and special characters
-                  cleanSourceName = cleanSourceName
-                    .replace(/\s+/g, '') // Remove all spaces
-                    .replace(/[^a-z0-9-]/g, '') // Remove special characters except hyphens
-                    .replace(/-+/g, '-') // Replace multiple hyphens with single
-                    .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
-                }
-                citationDomain = `${cleanSourceName}.com`;
-              }
-              
               // Extract actual source URL if it's a Google Translate URL
               citationUrl = citation.url ? extractSourceUrl(citation.url) : '';
+              
+              // If we have a URL, prefer extracting domain from URL (more reliable)
+              if (citationUrl) {
+                const extractedDomain = extractDomain(citationUrl);
+                if (extractedDomain && extractedDomain !== citationUrl) {
+                  citationDomain = extractedDomain;
+                }
+              }
+              
+              // Only use source name if we couldn't extract from URL
+              if (!citationDomain) {
+                // Map common source names to domains
+                const sourceToDomainMap: Record<string, string> = {
+                  'blind': 'www.teamblind.com',
+                  'teamblind': 'www.teamblind.com',
+                  'indeed': 'www.indeed.com',
+                  'glassdoor': 'www.glassdoor.com',
+                  'linkedin': 'www.linkedin.com',
+                  'youtube': 'www.youtube.com',
+                  'great place to work': 'www.greatplacetowork.com',
+                  'greatplacetowork': 'www.greatplacetowork.com',
+                  'comparably': 'www.comparably.com',
+                  'ambitionbox': 'www.ambitionbox.com',
+                  'repvue': 'www.repvue.com',
+                  'built in': 'builtin.com',
+                  'builtin': 'builtin.com',
+                  'g2': 'www.g2.com',
+                  'inhersight': 'www.inhersight.com',
+                  'business because': 'www.businessbecause.com',
+                  'businessbecause': 'www.businessbecause.com',
+                  'ziprecruiter': 'www.ziprecruiter.com',
+                  'snowflake careers': 'careers.snowflake.com',
+                  'careers.snowflake.com': 'careers.snowflake.com',
+                  'reddit': 'www.reddit.com',
+                  'quora': 'www.quora.com',
+                  'microsoft': 'www.microsoft.com',
+                  'databricks': 'www.databricks.com',
+                  'cloudera': 'www.cloudera.com',
+                  'snowflake': 'www.snowflake.com',
+                  'forbes': 'www.forbes.com',
+                  'business insider': 'www.businessinsider.com',
+                  'medium': 'medium.com',
+                  'management consulted': 'managementconsulted.com'
+                };
+                
+                // Check if source maps to a known domain
+                if (sourceToDomainMap[source]) {
+                  citationDomain = sourceToDomainMap[source];
+                } else if (source.includes('.')) {
+                  // If source already looks like a domain, use it as-is
+                  citationDomain = source;
+                } else {
+                  // Fallback: try to convert source name to domain
+                  let cleanSourceName = source;
+                  if (cleanSourceName === 'great place to work') {
+                    cleanSourceName = 'greatplacetowork';
+                  } else if (cleanSourceName === 'built in') {
+                    cleanSourceName = 'builtin';
+                  } else {
+                    // General case: remove spaces and special characters
+                    cleanSourceName = cleanSourceName
+                      .replace(/\s+/g, '') // Remove all spaces
+                      .replace(/[^a-z0-9-]/g, '') // Remove special characters except hyphens
+                      .replace(/-+/g, '-') // Replace multiple hyphens with single
+                      .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+                  }
+                  // Only create domain if we have a valid source name
+                  // Don't create ".com" if cleanSourceName is empty
+                  if (cleanSourceName && cleanSourceName.length > 0) {
+                    citationDomain = `${cleanSourceName}.com`;
+                  }
+                }
+              }
             } else if (citation.url) {
               // Extract actual source URL if it's a Google Translate URL
               citationUrl = extractSourceUrl(citation.url);

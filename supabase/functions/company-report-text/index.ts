@@ -266,10 +266,16 @@ function generateGeographicAnalysis(responses: any[]): any {
       } else if (citation && typeof citation === 'object') {
         if (citation.domain) {
           domain = citation.domain;
-        } else if (citation.source) {
-          domain = citation.source.toLowerCase().trim() + '.com';
         } else if (citation.url) {
+          // Prefer extracting domain from URL (more reliable)
           domain = extractDomainFromUrl(citation.url);
+        } else if (citation.source) {
+          // Only use source name if URL is not available
+          const sourceName = citation.source.toLowerCase().trim();
+          // Only create domain if source name is valid (not empty)
+          if (sourceName && sourceName.length > 0) {
+            domain = sourceName + '.com';
+          }
         }
       }
 

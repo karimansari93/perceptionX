@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useSubscription } from '@/hooks/useSubscription';
-import { Building2, Check, ChevronDown, Star, Plus, Lock } from 'lucide-react';
+import { Building2, Check, ChevronDown, Star, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Favicon } from '@/components/ui/favicon';
@@ -252,10 +252,10 @@ export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyMo
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              disabled
-              className="cursor-not-allowed opacity-50"
+              onClick={handleAddNewCompany}
+              className="cursor-pointer text-[#13274F] hover:text-[#0DBCBA] hover:bg-[#13274F]/5"
             >
-              <Lock className="h-4 w-4 mr-2" />
+              <Plus className="h-4 w-4 mr-2" />
               <span className="font-medium">Add New Company</span>
             </DropdownMenuItem>
           </>
