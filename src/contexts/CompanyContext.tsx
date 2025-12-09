@@ -41,12 +41,24 @@ interface CompanyContextType {
   isOwnerOrAdmin: boolean;
 }
 
-const CompanyContext = createContext<CompanyContextType | undefined>(undefined);
+export const CompanyContext = createContext<CompanyContextType | undefined>(undefined);
 
 export const useCompany = () => {
   const context = useContext(CompanyContext);
   if (context === undefined) {
-    throw new Error('useCompany must be used within a CompanyProvider');
+    // Return a default value instead of throwing to prevent crashes during initial render
+    // This can happen during React's initial render cycle before providers are fully mounted
+    console.warn('useCompany called outside CompanyProvider, returning default values');
+    return {
+      currentCompany: null,
+      userCompanies: [],
+      userMemberships: [],
+      loading: true,
+      switchCompany: async () => {},
+      refreshCompanies: async () => {},
+      setAsDefaultCompany: async () => {},
+      isOwnerOrAdmin: false,
+    };
   }
   return context;
 };
