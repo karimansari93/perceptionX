@@ -175,27 +175,42 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const [isNewUser, setIsNewUser] = useState(false);
   const [hasDismissedPromptsModal, setHasDismissedPromptsModal] = useState(false);
 
-  // Track when initial load is complete
+  // Track when initial load is complete - use ref to prevent unnecessary state updates
+  // CRITICAL: Only set hasInitiallyLoaded once per session, never reset it
+  const initialLoadCompletedRef = useRef(hasInitiallyLoaded);
   useEffect(() => {
-    if (!companyLoading && !loading && !isLoading && (currentCompany !== undefined)) {
+    // Update ref from persisted state
+    if (hasInitiallyLoaded) {
+      initialLoadCompletedRef.current = true;
+      return;
+    }
+    
+    // Only mark as loaded once, and don't reset when returning to tab
+    if (!initialLoadCompletedRef.current && !companyLoading && !loading && !isLoading && (currentCompany !== undefined)) {
       // Small delay to ensure everything is settled
       const timer = setTimeout(() => {
-        setHasInitiallyLoaded(true);
+        if (!initialLoadCompletedRef.current) {
+          initialLoadCompletedRef.current = true;
+          setHasInitiallyLoaded(true);
+        }
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [companyLoading, loading, isLoading, currentCompany, setHasInitiallyLoaded]);
+  }, [companyLoading, loading, isLoading, currentCompany, setHasInitiallyLoaded, hasInitiallyLoaded]);
 
   // Show loading screen during initial load
   // Only show loading if we haven't loaded before OR if company is actually loading
+  // CRITICAL: Never show loading when returning to tab - use persisted state and refs
   const isInitialLoading = useMemo(() => {
-    // If we've loaded before, only show loading if company is actively loading
+    // If we've loaded before (persisted state), never show loading again unless explicitly switching companies
     if (hasInitiallyLoaded) {
-      return companyLoading;
+      // Only show loading if company is actively loading AND we don't have a current company yet
+      // This prevents showing loading when returning to tab
+      return companyLoading && currentCompany === null;
     }
     // First time load - show loading while data is being fetched
     return companyLoading || loading || isLoading;
-  }, [companyLoading, loading, isLoading, hasInitiallyLoaded]);
+  }, [companyLoading, loading, isLoading, hasInitiallyLoaded, currentCompany]);
 
   // Check if user is new (less than 24 hours old)
   useEffect(() => {
@@ -231,13 +246,22 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     }
   }, [collectionStatus?.companyId, isCollectingData, currentCompany?.id]);
 
-  // Fetch onboarding data
+  // Fetch onboarding data - only once per user ID, not on every user object reference change
+  const onboardingDataFetchedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const fetchOnboardingData = async () => {
-      if (!user) return;
+      if (!user?.id) return;
+      
+      // Only fetch if we haven't already fetched for this user ID
+      if (onboardingDataFetchedRef.current.has(user.id)) {
+        return;
+      }
 
       try {
-        setIsLoading(true);
+        // Only show loading if we don't have onboarding data yet
+        if (!onboardingData) {
+          setIsLoading(true);
+        }
         const { data, error } = await supabase
           .from('user_onboarding')
           .select('*')
@@ -256,6 +280,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           });
           setOnboardingId(onboarding.id);
         }
+        // Mark this user ID as fetched
+        onboardingDataFetchedRef.current.add(user.id);
       } catch (error) {
         console.error('Error fetching onboarding data:', error);
         setError('Failed to load onboarding data');
@@ -265,7 +291,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     };
 
     fetchOnboardingData();
-  }, [user]);
+  }, [user?.id, onboardingData]); // Only depend on user.id, not the whole user object
 
   // Handle URL changes
   useEffect(() => {

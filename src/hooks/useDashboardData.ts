@@ -44,14 +44,26 @@ export const useDashboardData = () => {
   const previousResponseIdsRef = useRef<string>(''); // Track previous response IDs to detect changes
 
   // Network status monitoring - FIXED
+  // Track if we're coming back online from being offline (vs just tab visibility change)
+  const wasOfflineRef = useRef(!isOnline);
+  
   useEffect(() => {
     const removeListener = networkMonitor.addListener((online) => {
+      const wasOffline = wasOfflineRef.current;
+      wasOfflineRef.current = !online;
+      
       setIsOnline(online);
       if (online) {
         setConnectionError(null);
-        // Only trigger refetch if we have user and company
-        if (user?.id && currentCompany?.id) {
-          setShouldRefetch(true); // Force refetch
+        // Only trigger refetch if:
+        // 1. We have user and company
+        // 2. We were actually offline before (not just tab visibility change)
+        // 3. Tab is currently visible
+        if (user?.id && currentCompany?.id && wasOffline && !document.hidden) {
+          // Only refetch if we don't have data yet or if this is a real network reconnect
+          if (!fetchedCompanyUserKeyRef.current || responses.length === 0) {
+            setShouldRefetch(true); // Force refetch only if needed
+          }
         }
       } else {
         setConnectionError('No internet connection. Please check your network.');
@@ -59,7 +71,7 @@ export const useDashboardData = () => {
     });
 
     return removeListener;
-  }, [user?.id, currentCompany?.id]); // Only IDs
+  }, [user?.id, currentCompany?.id, responses.length]); // Only IDs and responses length
 
   const fetchResponses = useCallback(async () => {
     if (!user || !currentCompany) {
@@ -864,16 +876,19 @@ export const useDashboardData = () => {
   // Add refs to track initial loading state
   const hasInitiallyLoadedRef = useRef(false);
   const currentCompanyIdRef = useRef(currentCompany?.id);
+  // Track if we've fetched for this specific company/user combination
+  const fetchedCompanyUserKeyRef = useRef<string | null>(null);
   const [shouldRefetch, setShouldRefetch] = useState(false);
   const [isSwitchingCompany, setIsSwitchingCompany] = useState(false);
 
   // Update the ref when company changes
   useEffect(() => {
-    if (currentCompany?.id !== currentCompanyIdRef.current) {
+    if (currentCompany?.id !== currentCompanyIdRef.current && currentCompany?.id !== undefined) {
       // Set switching flag to prevent stale data from being used
       setIsSwitchingCompany(true);
       
-      hasInitiallyLoadedRef.current = false;
+      // Only reset hasInitiallyLoadedRef when actually switching companies (not when returning to tab)
+      // The ref will be set to true again in the fetch effect above
       currentCompanyIdRef.current = currentCompany?.id;
       
       // Clear all data immediately when switching companies
@@ -890,26 +905,41 @@ export const useDashboardData = () => {
       searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
       // Clear recency data cache when switching companies
       recencyDataCacheRef.current = null;
+      
+      // Reset the fetched key so new data will be loaded
+      fetchedCompanyUserKeyRef.current = null;
     }
-  }, [currentCompany?.id, responses.length, searchResults.length]);
-
+  }, [currentCompany?.id]); // Remove responses.length and searchResults.length from deps to prevent unnecessary runs
+  
   // Initial data fetch - only run when user or company ID actually changes, or when shouldRefetch is true
+  // CRITICAL: Prevent refetch when returning to tab by tracking what we've already loaded
   useEffect(() => {
-    if (user && currentCompany && (!hasInitiallyLoadedRef.current || shouldRefetch)) {
-      hasInitiallyLoadedRef.current = true;
-      setShouldRefetch(false); // Reset the refetch flag
+    if (user?.id && currentCompany?.id) {
+      const currentKey = `${user.id}-${currentCompany.id}`;
       
-      // Fetch fresh data for the new company
-      fetchResponses();
-      fetchCompanyName();
-      if (isPro) {
-        fetchTalentXProData();
-        fetchSearchResults();
+      // Only fetch if:
+      // 1. This is a new company/user combination, OR
+      // 2. shouldRefetch is explicitly set to true
+      if (fetchedCompanyUserKeyRef.current !== currentKey || shouldRefetch) {
+        fetchedCompanyUserKeyRef.current = currentKey;
+        hasInitiallyLoadedRef.current = true;
+        setShouldRefetch(false); // Reset the refetch flag
+        
+        // Fetch fresh data for the new company
+        fetchResponses();
+        fetchCompanyName();
+        if (isPro) {
+          fetchTalentXProData();
+          fetchSearchResults();
+        }
+        
+        // Don't clear the switching flag here - let it be cleared when data is actually loaded
       }
-      
-      // Don't clear the switching flag here - let it be cleared when data is actually loaded
+    } else {
+      // Reset when user/company becomes null
+      fetchedCompanyUserKeyRef.current = null;
     }
-  }, [user?.id, currentCompany?.id, isPro, shouldRefetch]);
+  }, [user?.id, currentCompany?.id, isPro, shouldRefetch, fetchResponses, fetchCompanyName, fetchTalentXProData, fetchSearchResults]);
 
   // Clear switching flag when data is actually loaded
   useEffect(() => {

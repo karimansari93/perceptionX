@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './AuthContext';
 import { toast } from 'sonner';
@@ -601,16 +601,34 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setUserCompanies([]);
       setUserMemberships([]);
       setLoading(false);
+      // Reset refs so next login triggers a fresh fetch
+      userLoadedRef.current = null;
+      isInitialLoadRef.current = true;
     }
-  }, [user, authLoading]);
+  }, [user?.id, authLoading]); // Only depend on user.id, not entire user object
 
   // Load companies when user changes or auth finishes loading
+  // Use refs to track if we've already loaded for this user to prevent refetches when returning to tab
+  const userLoadedRef = useRef<string | null>(null);
+  const isInitialLoadRef = useRef(true);
+  
   useEffect(() => {
     // Only fetch if auth is fully loaded and user exists
     if (!authLoading) {
-      fetchUserCompanies();
+      const currentUserId = user?.id || null;
+      
+      // Only fetch if:
+      // 1. This is the initial load (isInitialLoadRef.current === true), OR
+      // 2. User ID has actually changed (different user logged in)
+      if (isInitialLoadRef.current || (currentUserId && userLoadedRef.current !== currentUserId)) {
+        isInitialLoadRef.current = false;
+        if (currentUserId) {
+          userLoadedRef.current = currentUserId;
+        }
+        fetchUserCompanies();
+      }
     }
-  }, [fetchUserCompanies, authLoading]);
+  }, [fetchUserCompanies, authLoading, user?.id]); // Only depend on user.id, not entire user object
 
   const switchCompany = useCallback(async (companyId: string) => {
     console.log('🔍 switchCompany called with ID:', companyId);
