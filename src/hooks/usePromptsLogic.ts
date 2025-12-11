@@ -728,7 +728,21 @@ export const formatCountryForPrompt = (countryCode: string): string => {
     'RO': 'Romania',
     'EE': 'Estonia',
     'LV': 'Latvia',
-    'LT': 'Lithuania'
+    'LT': 'Lithuania',
+    'AR': 'Argentina',
+    'CL': 'Chile',
+    'CO': 'Colombia',
+    'PE': 'Peru',
+    'NZ': 'New Zealand',
+    'SG': 'Singapore',
+    'MY': 'Malaysia',
+    'TH': 'Thailand',
+    'ID': 'Indonesia',
+    'VN': 'Vietnam',
+    'SA': 'Saudi Arabia',
+    'ZA': 'South Africa',
+    'TR': 'Turkey',
+    'IL': 'Israel'
   };
   
   const countryName = countryNames[countryCode] || countryCode;

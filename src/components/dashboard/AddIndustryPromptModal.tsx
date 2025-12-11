@@ -20,6 +20,7 @@ interface AddIndustryPromptModalProps {
   onRefreshPrompts: (promptIds: string[], companyName: string) => Promise<void>;
   isRefreshing: boolean;
   refreshProgress: RefreshProgress | null;
+  selectedLocation?: string | null;
 }
 
 type PromptVariant = 'industry' | 'job-function' | 'location';
@@ -72,6 +73,7 @@ export const AddIndustryPromptModal = ({
   onRefreshPrompts,
   isRefreshing,
   refreshProgress,
+  selectedLocation,
 }: AddIndustryPromptModalProps) => {
   const [mode, setMode] = useState<PromptVariant>('industry');
   const [industryInput, setIndustryInput] = useState('');
@@ -186,6 +188,7 @@ export const AddIndustryPromptModal = ({
           type: mode,
           value: trimmedValue,
         },
+        selectedLocation: mode === 'job-function' ? selectedLocation : undefined,
       });
 
       if (result.alreadyExists) {

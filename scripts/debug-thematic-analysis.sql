@@ -122,3 +122,6 @@ LEFT JOIN ai_themes at ON at.response_id = pr.id
 WHERE cp.prompt_type IN ('sentiment', 'competitive', 'talentx_sentiment', 'talentx_competitive')
 GROUP BY c.name, cp.prompt_category
 ORDER BY c.name, cp.prompt_category;
+
+
+

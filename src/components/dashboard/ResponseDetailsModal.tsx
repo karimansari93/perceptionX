@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,8 @@ export const ResponseDetailsModal = ({
   const { user } = useAuth();
   const abortControllerRef = useRef<AbortController | null>(null);
   const fetchingPromptRef = useRef<string | null>(null);
+  const previousResponsesKeyRef = useRef<string>("");
+  const previousPromptTextRef = useRef<string>("");
 
   // Find the matching PromptData for this promptText
   const promptData = promptsData.find ? promptsData.find(p => p.prompt === promptText) : undefined;
@@ -124,18 +126,55 @@ export const ResponseDetailsModal = ({
         abortControllerRef.current = null;
       }
       fetchingPromptRef.current = null;
+      previousResponsesKeyRef.current = "";
+      previousPromptTextRef.current = "";
       setSummary("");
       setLoadingSummary(false);
       return;
     }
 
-    // Check cache first
+    // Reset tracking when prompt text changes (new prompt selected)
+    if (previousPromptTextRef.current !== promptText) {
+      previousPromptTextRef.current = promptText;
+      previousResponsesKeyRef.current = "";
+    }
+
+    // Create a stable key from responses content (calculated inside effect to avoid dependency issues)
+    const responsesContentKey = responses.length === 0 ? "" : responses
+      .map(r => {
+        if (r.id && r.tested_at) {
+          return `${r.id}-${r.tested_at}`;
+        }
+        // Fallback: use first 100 chars of response text as identifier
+        return r.response_text?.slice(0, 100) || 'unknown';
+      })
+      .sort()
+      .join('|');
+    
+    const responsesKey = promptText && responsesContentKey ? `${promptText}::${responsesContentKey}` : "";
+
+    // Check cache first - if we have a cached summary, use it
     if (summaryCache[promptText]) {
       setSummary(summaryCache[promptText]);
       setLoadingSummary(false);
       setSummaryError(null);
       fetchingPromptRef.current = null;
+      // Still update the tracking ref so we don't re-check unnecessarily
+      if (responsesKey !== "") {
+        previousResponsesKeyRef.current = responsesKey;
+      }
       return;
+    }
+
+    // Only proceed if responses actually changed (not just array reference)
+    // Allow fetch if key is empty (initial state) or if key changed
+    if (responsesKey !== "" && previousResponsesKeyRef.current === responsesKey) {
+      return;
+    }
+    
+    // Update the tracking ref
+    if (responsesKey !== "") {
+      previousResponsesKeyRef.current = responsesKey;
     }
 
     // Prevent multiple simultaneous requests for the same prompt
@@ -262,7 +301,7 @@ export const ResponseDetailsModal = ({
         fetchingPromptRef.current = null;
       }
     };
-  }, [isOpen, promptText, responses]); // Don't include summaryCache to avoid re-fetch loops
+  }, [isOpen, promptText, responses, summaryCache]); // Include responses but use content-based key check inside effect
 
   const getSentimentColor = (score: number | null) => {
     if (!score) return "text-gray-500";

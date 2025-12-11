@@ -36,8 +36,8 @@ export default function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-gray-100">
-          <Avatar className="h-6 w-6 border border-gray-300">
+        <Button variant="ghost" className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-gray-100 min-w-0 max-w-full">
+          <Avatar className="h-6 w-6 border border-gray-300 flex-shrink-0">
             <AvatarImage 
               src={userFavicon} 
               alt={`${user.email} domain favicon`}
@@ -50,14 +50,14 @@ export default function UserMenu() {
               {userInitials}
             </AvatarFallback>
           </Avatar>
-          <span className="text-sm text-gray-600 hidden sm:inline">{user.email}</span>
+          <span className="text-sm text-gray-600 hidden sm:inline truncate min-w-0">{user.email}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-56" align="end" forceMount>
         <DropdownMenuLabel className="font-normal">
-          <div className="flex items-center gap-2">
-            <User className="w-4 h-4 text-gray-500" />
-            <span className="text-sm text-gray-600">{user.email}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <User className="w-4 h-4 text-gray-500 flex-shrink-0" />
+            <span className="text-sm text-gray-600 truncate">{user.email}</span>
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />

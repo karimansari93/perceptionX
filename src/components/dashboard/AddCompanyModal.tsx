@@ -11,7 +11,7 @@ import { useCompany } from '@/contexts/CompanyContext';
 import { useSubscription } from '@/hooks/useSubscription';
 import { toast } from 'sonner';
 import { generatePromptsFromData } from '@/hooks/usePromptsLogic';
-import { Star, RefreshCw } from 'lucide-react';
+import { Star, RefreshCw, Lock } from 'lucide-react';
 
 // Custom AI model logo component
 const AIModelLogo = ({ modelName, size = 'lg' }: { modelName: string; size?: 'sm' | 'md' | 'lg' }) => {
@@ -708,11 +708,12 @@ export const AddCompanyModal = ({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="country">
+            <Label htmlFor="country" className="flex items-center gap-2">
               {mode === 'add-location' ? 'Country/Location *' : 'Country'}
+              <Lock className="h-4 w-4 opacity-50" />
             </Label>
-            <Select value={country} onValueChange={setCountry} disabled={isAnalyzing}>
-              <SelectTrigger id="country" className={mode === 'add-location' ? '' : ''}>
+            <Select value={country} onValueChange={setCountry} disabled={true}>
+              <SelectTrigger id="country" className="cursor-not-allowed opacity-50">
                 <SelectValue placeholder="Select a country" />
               </SelectTrigger>
               <SelectContent>

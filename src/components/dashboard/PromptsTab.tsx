@@ -20,6 +20,7 @@ interface PromptsTabProps {
   onRefreshPrompts: (promptIds: string[], companyName: string) => Promise<void>;
   isRefreshing: boolean;
   refreshProgress: RefreshProgress | null;
+  selectedLocation?: string | null;
 }
 
 export const PromptsTab = ({
@@ -30,6 +31,7 @@ export const PromptsTab = ({
   onRefreshPrompts,
   isRefreshing,
   refreshProgress,
+  selectedLocation,
 }: PromptsTabProps) => {
   // Modal states - persisted
   const [selectedPrompt, setSelectedPrompt] = usePersistedState<string | null>('promptsTab.selectedPrompt', null);
@@ -131,6 +133,7 @@ export const PromptsTab = ({
           onRefreshPrompts={onRefreshPrompts}
           isRefreshing={isRefreshing}
           refreshProgress={refreshProgress}
+          selectedLocation={selectedLocation}
         />
       )}
     </>

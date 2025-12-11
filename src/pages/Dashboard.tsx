@@ -484,6 +484,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             }}
             isRefreshing={isRefreshing}
             refreshProgress={refreshProgress}
+            selectedLocation={selectedLocation}
           />
         );
       case "responses":

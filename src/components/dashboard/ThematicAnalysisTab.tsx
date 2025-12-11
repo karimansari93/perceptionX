@@ -615,47 +615,6 @@ Responses:\n${attributeResponses.map(r => r.response_text?.slice(0, 1000) || '')
 
   const maxCount = themeData.length > 0 ? Math.max(...themeData.map(t => t.count)) : 1;
 
-  if (filteredResponses.length === 0) {
-    return (
-      <Card>
-        <CardContent className="p-6">
-          <div className="text-center">
-            <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              No {experienceType === 'employee' ? 'Employee' : 'Candidate'} Experience Data
-            </h3>
-            <p className="text-gray-600">
-              You need responses from {experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} sentiment or competitive prompts to run thematic analysis.
-            </p>
-            <div className="mt-4 text-sm text-gray-500">
-              <p>This analysis focuses on:</p>
-              <ul className="list-disc list-inside mt-2 space-y-1">
-                {experienceType === 'employee' ? (
-                  <>
-                    <li>General sentiment prompts (e.g., "How is X as an employer?")</li>
-                    <li>General competitive prompts</li>
-                    <li>Employee Experience sentiment prompts</li>
-                    <li>Employee Experience competitive prompts</li>
-                    <li>TalentX Employee Experience sentiment prompts</li>
-                    <li>TalentX Employee Experience competitive prompts</li>
-                  </>
-                ) : (
-                  <>
-                    <li>Candidate Experience sentiment prompts</li>
-                    <li>Candidate Experience competitive prompts</li>
-                    <li>TalentX Candidate Experience sentiment prompts</li>
-                    <li>TalentX Candidate Experience competitive prompts</li>
-                  </>
-                )}
-              </ul>
-              <p className="mt-2">Visibility prompts and {experienceType === 'employee' ? 'Candidate Experience' : 'Employee Experience'} prompts are excluded from this analysis.</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
     <Tabs value={themeView} onValueChange={(value) => setThemeView(value as 'swot' | 'rankings')} className="w-full space-y-6">
       {/* Main Section Header */}
@@ -687,7 +646,7 @@ Responses:\n${attributeResponses.map(r => r.response_text?.slice(0, 1000) || '')
           )}
         </div>
         
-        {/* Filters - All in one row */}
+        {/* Filters - All in one row - Always visible */}
         <div className="w-full flex flex-wrap items-center gap-3">
           {/* Experience Type Filter - only show if candidate experience exists */}
           {hasCandidateExperience && (
@@ -749,6 +708,46 @@ Responses:\n${attributeResponses.map(r => r.response_text?.slice(0, 1000) || '')
           )}
         </div>
       </div>
+
+      {/* No Data Message - Show when filteredResponses is empty, but keep filters visible */}
+      {filteredResponses.length === 0 && (
+        <Card>
+          <CardContent className="p-6">
+            <div className="text-center">
+              <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                No {experienceType === 'employee' ? 'Employee' : 'Candidate'} Experience Data
+              </h3>
+              <p className="text-gray-600">
+                You need responses from {experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} sentiment or competitive prompts to run thematic analysis.
+              </p>
+              <div className="mt-4 text-sm text-gray-500">
+                <p>This analysis focuses on:</p>
+                <ul className="list-disc list-inside mt-2 space-y-1">
+                  {experienceType === 'employee' ? (
+                    <>
+                      <li>General sentiment prompts (e.g., "How is X as an employer?")</li>
+                      <li>General competitive prompts</li>
+                      <li>Employee Experience sentiment prompts</li>
+                      <li>Employee Experience competitive prompts</li>
+                      <li>TalentX Employee Experience sentiment prompts</li>
+                      <li>TalentX Employee Experience competitive prompts</li>
+                    </>
+                  ) : (
+                    <>
+                      <li>Candidate Experience sentiment prompts</li>
+                      <li>Candidate Experience competitive prompts</li>
+                      <li>TalentX Candidate Experience sentiment prompts</li>
+                      <li>TalentX Candidate Experience competitive prompts</li>
+                    </>
+                  )}
+                </ul>
+                <p className="mt-2">Visibility prompts and {experienceType === 'employee' ? 'Candidate Experience' : 'Employee Experience'} prompts are excluded from this analysis.</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Error Display */}
       {analysisError && (

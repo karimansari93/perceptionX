@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 
-import { generatePromptsFromData } from '@/hooks/usePromptsLogic';
+import { generatePromptsFromData, formatCountryForPrompt } from '@/hooks/usePromptsLogic';
 
 type PromptVariant = 'industry' | 'job-function' | 'location';
 
@@ -13,6 +13,7 @@ interface AddCustomPromptParams {
     type: PromptVariant;
     value: string;
   };
+  selectedLocation?: string | null;
 }
 
 interface AddCustomPromptResult {
@@ -28,6 +29,7 @@ export const addCustomPrompts = async ({
   userId,
   isProUser,
   variant,
+  selectedLocation,
 }: AddCustomPromptParams): Promise<AddCustomPromptResult> => {
   const normalizedValue = normalizeInput(variant.value);
 
@@ -117,34 +119,78 @@ export const addCustomPrompts = async ({
     }
   }
 
-  const { data: existingPrompts, error: existingError } = await supabase
-    .from('confirmed_prompts')
-    .select('prompt_text')
-    .eq('company_id', companyId);
-
-  if (existingError) {
-    throw existingError;
+  // For job function prompts, use selectedLocation if provided, otherwise fall back to onboarding country
+  let countryForPrompts: string | undefined;
+  let locationForPrompts: string | undefined;
+  
+  if (variant.type === 'location') {
+    // Location variant uses customLocation, no country
+    countryForPrompts = undefined;
+    locationForPrompts = customLocationForPrompts;
+  } else if (variant.type === 'job-function' && selectedLocation && selectedLocation !== 'GLOBAL') {
+    // For job function prompts with a selected location, format it and use as location context
+    locationForPrompts = formatCountryForPrompt(selectedLocation);
+    countryForPrompts = undefined; // Don't use country when we have a specific location
+  } else {
+    // Default: use onboarding country
+    countryForPrompts = onboardingRecord?.country || undefined;
+    locationForPrompts = customLocationForPrompts;
   }
 
-  const existingPromptTexts = new Set(
-    (existingPrompts || []).map(prompt => prompt.prompt_text)
-  );
-
-  const generatedPrompts = generatePromptsFromData(
+  let generatedPrompts = generatePromptsFromData(
     {
       companyName,
       industry: industryForPrompts,
-      country:
-        variant.type === 'location' ? undefined : onboardingRecord?.country || undefined,
+      country: countryForPrompts,
       jobFunction: jobFunctionForPrompts,
-      customLocation: customLocationForPrompts,
+      customLocation: locationForPrompts,
     },
     isProUser
   );
 
-  const promptsToInsert = generatedPrompts
-    .filter(prompt => !existingPromptTexts.has(prompt.text))
-    .map(prompt => {
+  // Translate prompts if a location filter is selected for job function prompts
+  // Only translate when adding job function prompts with a selected location filter
+  const countryCodeForTranslation = 
+    (variant.type === 'job-function' && selectedLocation && selectedLocation !== 'GLOBAL') 
+      ? selectedLocation 
+      : undefined;
+
+  if (countryCodeForTranslation) {
+    // Check if country uses English (no translation needed)
+    const englishSpeakingCountries = ['US', 'GB', 'CA', 'AU', 'NZ', 'IE', 'ZA', 'IN', 'SG', 'MY', 'PH', 'HK', 'AE', 'SA'];
+    const needsTranslation = !englishSpeakingCountries.includes(countryCodeForTranslation);
+    
+    if (needsTranslation) {
+      try {
+        console.log(`🌍 Translating ${generatedPrompts.length} prompts for country: ${countryCodeForTranslation}`);
+        const promptTexts = generatedPrompts.map(p => p.text);
+        
+        const { data: translationData, error: translationError } = await supabase.functions.invoke('translate-prompts', {
+          body: {
+            prompts: promptTexts,
+            countryCode: countryCodeForTranslation
+          }
+        });
+
+        if (!translationError && translationData?.translatedPrompts) {
+          // Map translated prompts back to the original prompt structure
+          generatedPrompts = generatedPrompts.map((prompt, index) => ({
+            ...prompt,
+            text: translationData.translatedPrompts[index] || prompt.text
+          }));
+          console.log(`✅ Translated prompts to ${translationData.targetLanguage}`);
+        } else {
+          console.warn('⚠️ Translation failed, using original prompts:', translationError);
+        }
+      } catch (translationException) {
+        console.warn('⚠️ Translation exception, using original prompts:', translationException);
+      }
+    } else {
+      console.log(`✅ Country ${countryCodeForTranslation} uses English, skipping translation`);
+    }
+  }
+
+  const promptsToInsert = generatedPrompts.map(prompt => {
       let talentxAttributeId: string | null = null;
 
       if (prompt.id.startsWith('talentx-')) {
@@ -152,6 +198,13 @@ export const addCustomPrompts = async ({
         parts.pop();
         talentxAttributeId = parts.join('-');
       }
+
+      // Ensure we use the correct values - prioritize what's on the prompt object,
+      // but fall back to our calculated values if needed
+      // Use nullish coalescing (??) instead of || to properly handle empty strings
+      const finalJobFunctionContext = prompt.jobFunctionContext ?? jobFunctionForPrompts ?? null;
+      const finalLocationContext = prompt.locationContext ?? locationForPrompts ?? null;
+      const finalIndustryContext = prompt.industryContext ?? industryForPrompts;
 
       return {
         onboarding_id: onboardingId,
@@ -162,9 +215,9 @@ export const addCustomPrompts = async ({
         prompt_category: prompt.promptCategory,
         prompt_theme: prompt.promptTheme,
         prompt_type: prompt.type,
-        industry_context: prompt.industryContext || industryForPrompts,
-        job_function_context: prompt.jobFunctionContext || jobFunctionForPrompts || null,
-        location_context: prompt.locationContext || customLocationForPrompts || null,
+        industry_context: finalIndustryContext,
+        job_function_context: finalJobFunctionContext,
+        location_context: finalLocationContext,
         is_active: true,
         talentx_attribute_id: talentxAttributeId,
       };
@@ -177,12 +230,15 @@ export const addCustomPrompts = async ({
     };
   }
 
+  // Just insert - no duplicate checking, users have full control
   const { data: insertedPrompts, error: insertError } = await supabase
     .from('confirmed_prompts')
     .insert(promptsToInsert)
     .select('id');
 
   if (insertError) {
+    // If it's a duplicate error, some prompts might have been inserted before
+    // Just throw the error and let the UI handle it
     throw insertError;
   }
 
