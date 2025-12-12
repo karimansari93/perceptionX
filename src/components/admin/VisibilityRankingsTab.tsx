@@ -101,21 +101,24 @@ export const VisibilityRankingsTab = () => {
 
   const loadIndustries = async () => {
     try {
+      // Only show industries that have visibility prompts (industry-wide)
       const { data, error } = await supabase
-        .from('companies')
-        .select('industry')
-        .not('industry', 'is', null);
+        .from('confirmed_prompts')
+        .select('industry_context')
+        .eq('prompt_type', 'visibility')
+        .is('company_id', null)
+        .not('industry_context', 'is', null);
 
       if (error) throw error;
 
       // Use case-insensitive deduplication and sort
       const industriesMap = new Map<string, string>();
       (data || []).forEach(c => {
-        if (c.industry) {
-          const lower = c.industry.toLowerCase();
+        if (c.industry_context) {
+          const lower = c.industry_context.toLowerCase();
           // Keep the first occurrence (preserves original casing)
           if (!industriesMap.has(lower)) {
-            industriesMap.set(lower, c.industry);
+            industriesMap.set(lower, c.industry_context);
           }
         }
       });
@@ -502,6 +505,85 @@ export const VisibilityRankingsTab = () => {
     }
   };
 
+  // Collect remaining responses (batch) to avoid timeouts
+  const collectRemainingResponses = async () => {
+    if (!selectedIndustry) {
+      toast.error('Please select an industry');
+      return;
+    }
+
+    setCollecting(true);
+
+    try {
+      // Initialize progress
+      setCollectionProgress({
+        companiesProcessed: 0,
+        promptsCreated: 0,
+        responsesCollected: 0,
+        totalCompanies: 0
+      });
+
+      // Start collection process for remaining prompts (default: prompts 7-16)
+      const batchOffset = 6; // skip first 6 already collected
+      const batchSize = 10;  // collect remaining 10
+
+      console.log('Invoking collect-industry-visibility for remaining prompts with batchOffset/batchSize:', { batchOffset, batchSize });
+      const { data, error } = await supabase.functions.invoke('collect-industry-visibility', {
+        body: { 
+          industry: selectedIndustry, 
+          country: selectedCountry,
+          batchOffset,
+          batchSize,
+          skipResponses: false
+        }
+      });
+
+      console.log('Edge function response (remaining prompts):', { data, error });
+
+      if (error) {
+        throw new Error(error.message || 'Failed to invoke collection function for remaining prompts');
+      }
+
+      if (!data) {
+        throw new Error('No response data from collection function');
+      }
+
+      if ((data as any).success === false) {
+        const errorMessage = (data as any).error || (data as any).message || 'Failed to collect remaining visibility responses';
+        throw new Error(errorMessage);
+      }
+
+      if ((data as any).success === true) {
+        const results = (data as any).results || {};
+
+        setCollectionProgress({
+          companiesProcessed: results.companiesProcessed || 0,
+          promptsCreated: results.promptsCreated || 0,
+          responsesCollected: results.responsesCollected || 0,
+          totalCompanies
+        });
+
+        toast.success((data as any).message || 'Remaining visibility responses collected');
+
+        setTimeout(async () => {
+          setCollecting(false);
+          const currentMonth = new Date();
+          const currentPeriod = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`;
+          setSelectedPeriod(currentPeriod);
+          await refreshRankings();
+          setTimeout(() => setCollectionProgress(null), 2000);
+        }, 1500);
+      } else {
+        throw new Error((data as any).error || 'Failed to collect remaining responses');
+      }
+    } catch (err: any) {
+      console.error('Error collecting remaining visibility responses:', err);
+      toast.error(err.message || 'Failed to collect remaining visibility responses');
+      setCollecting(false);
+      setTimeout(() => setCollectionProgress(null), 2000);
+    }
+  };
+
   // Rankings are now calculated on the frontend, so this just reloads the data
   const refreshRankings = async () => {
     if (!selectedPeriod) {
@@ -767,7 +849,7 @@ export const VisibilityRankingsTab = () => {
               </Select>
             </div>
           </div>
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-3">
             <Button
               onClick={collectVisibilityResponses}
               disabled={collecting || !selectedIndustry}
@@ -782,6 +864,25 @@ export const VisibilityRankingsTab = () => {
                 <>
                   <Play className="h-4 w-4 mr-2" />
                   Collect Responses
+                </>
+              )}
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={collectRemainingResponses}
+              disabled={collecting || !selectedIndustry}
+              className="border-teal text-teal hover:bg-teal/10"
+            >
+              {collecting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Collecting...
+                </>
+              ) : (
+                <>
+                  <Play className="h-4 w-4 mr-2" />
+                  Collect Remaining
                 </>
               )}
             </Button>

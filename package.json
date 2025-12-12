@@ -18,6 +18,7 @@
   "dependencies": {
     "@calcom/embed-react": "^1.5.3",
     "@hookform/resolvers": "^3.9.0",
+    "@hotjar/browser": "^1.0.9",
     "@mendable/firecrawl-js": "^4.3.0",
     "@radix-ui/react-accordion": "^1.2.0",
     "@radix-ui/react-alert-dialog": "^1.1.1",

@@ -10,3 +10,4 @@ DROP INDEX IF EXISTS idx_unique_talentx_prompt_per_onboarding;
 -- Add comment explaining the change
 COMMENT ON TABLE confirmed_prompts IS 'Prompts table - no unique constraints, users have full control over prompt creation';
 
+
