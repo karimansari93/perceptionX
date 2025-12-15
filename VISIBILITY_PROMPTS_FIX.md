@@ -76,3 +76,4 @@ After the fix:
 - `scripts/debug-visibility-prompts-count.sql` - Diagnostic script (new)
 - `VISIBILITY_PROMPTS_REVIEW.md` - Original prompt documentation
 
+

@@ -383,3 +383,4 @@ WHERE prompt_type = 'visibility'
 GROUP BY prompt_category
 ORDER BY prompt_category;
 
+

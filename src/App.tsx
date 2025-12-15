@@ -25,6 +25,8 @@ import AdminRoute from "./components/AdminRoute";
 import GoogleOneTapCallback from "@/components/GoogleOneTapCallback";
 import { logger } from "@/lib/utils";
 import { AlertTriangle, RefreshCw, Home } from "lucide-react";
+import { useEffect } from "react";
+import Hotjar from "@hotjar/browser";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -115,6 +117,25 @@ const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; resetError
   );
 };
 
+// Hotjar Initialization Component - Only load in production
+const HotjarInitializer = () => {
+  useEffect(() => {
+    // Only initialize Hotjar in production environments
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      const siteId = 6599957;
+      const hotjarVersion = 6;
+      
+      try {
+        Hotjar.init(siteId, hotjarVersion);
+      } catch (error) {
+        logger.error('Failed to initialize Hotjar:', error);
+      }
+    }
+  }, []);
+  
+  return null;
+};
+
 // Page Tracking Component
 const PageTracker = () => {
   usePageTracking();
@@ -133,6 +154,7 @@ const App = () => (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <BrowserRouter>
+          <HotjarInitializer />
           <PageTracker />
           <AuthProvider>
             <CompanyProvider>
