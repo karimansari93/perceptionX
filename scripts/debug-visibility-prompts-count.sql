@@ -99,3 +99,4 @@ SELECT 'Candidate Experience', 'Onboarding Experience', EXISTS(SELECT 1 FROM con
 UNION ALL
 SELECT 'Candidate Experience', 'Overall Candidate Experience', EXISTS(SELECT 1 FROM confirmed_prompts WHERE prompt_type = 'visibility' AND industry_context = 'Aerospace' AND prompt_category = 'Candidate Experience' AND prompt_theme = 'Overall Candidate Experience' AND company_id IS NULL AND location_context IS NULL)
 ORDER BY category, expected_theme;
+

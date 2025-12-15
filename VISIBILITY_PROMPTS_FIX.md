@@ -75,3 +75,4 @@ After the fix:
 - `supabase/functions/collect-industry-visibility/index.ts` - Main function (fixed)
 - `scripts/debug-visibility-prompts-count.sql` - Diagnostic script (new)
 - `VISIBILITY_PROMPTS_REVIEW.md` - Original prompt documentation
+

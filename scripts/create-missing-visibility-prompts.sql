@@ -382,3 +382,4 @@ WHERE prompt_type = 'visibility'
   AND location_context IS NULL
 GROUP BY prompt_category
 ORDER BY prompt_category;
+
