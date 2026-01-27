@@ -718,7 +718,7 @@ serve(async (req) => {
             .from("prompt_responses")
             .select("id, ai_model, tested_at")
             .eq("confirmed_prompt_id", promptId)
-            .eq("ai_model", "gpt-4o-mini")
+            .eq("ai_model", "gpt-5.2-chat-latest")
             .maybeSingle();
 
         const {
@@ -744,7 +744,7 @@ serve(async (req) => {
         // Collect responses for each model that doesn't exist yet
         const modelsToCollect = [
           {
-            name: "gpt-4o-mini",
+            name: "gpt-5.2-chat-latest",
             exists: !!existingResponseGPT,
             type: "openai",
           },
@@ -777,27 +777,37 @@ serve(async (req) => {
                     "Content-Type": "application/json",
                   },
                   body: JSON.stringify({
-                    model: "gpt-4o-mini",
+                    model: model.name,
                     messages: [
                       {
                         role: "user",
                         content: promptData.text,
                       },
                     ],
-                    max_tokens: 1000,
-                    temperature: 0.7,
+                    // max_tokens: 1000, // Not supported by gpt-5.2-chat-latest (o1/o3 style models)
+                    max_completion_tokens: 1000,
+                    // temperature: 0.7 // Not supported by some newer reasoning models, safer to omit if using reasoning models or set to 1
                   }),
                 },
               );
 
-              const openaiData = await openaiResponse.json();
-
               if (!openaiResponse.ok) {
-                throw new Error(
-                  `${model.name} API error: ${openaiData.error?.message || "Unknown error"}`,
+                const errorText = await openaiResponse.text();
+                console.error(
+                  `[OpenAI] API Error (${openaiResponse.status}):`,
+                  errorText,
                 );
+                try {
+                  const errorJson = JSON.parse(errorText);
+                  throw new Error(
+                    `${model.name} API error: ${errorJson.error?.message || "Unknown error"}`,
+                  );
+                } catch (e) {
+                  throw new Error(`${model.name} API error: ${errorText}`);
+                }
               }
 
+              const openaiData = await openaiResponse.json();
               responseText = openaiData.choices?.[0]?.message?.content || "";
             } else if (model.type === "perplexity") {
               // Perplexity edge function

@@ -62,40 +62,6 @@ type QueueItem = {
   error?: string;
 };
 
-// Common countries for visibility rankings
-const countries = [
-  { code: "US", name: "United States" },
-  { code: "GB", name: "United Kingdom" },
-  { code: "CA", name: "Canada" },
-  { code: "AU", name: "Australia" },
-  { code: "DE", name: "Germany" },
-  { code: "FR", name: "France" },
-  { code: "IT", name: "Italy" },
-  { code: "ES", name: "Spain" },
-  { code: "NL", name: "Netherlands" },
-  { code: "SE", name: "Sweden" },
-  { code: "NO", name: "Norway" },
-  { code: "DK", name: "Denmark" },
-  { code: "FI", name: "Finland" },
-  { code: "CH", name: "Switzerland" },
-  { code: "AT", name: "Austria" },
-  { code: "BE", name: "Belgium" },
-  { code: "IE", name: "Ireland" },
-  { code: "NZ", name: "New Zealand" },
-  { code: "SG", name: "Singapore" },
-  { code: "JP", name: "Japan" },
-  { code: "KR", name: "South Korea" },
-  { code: "CN", name: "China" },
-  { code: "IN", name: "India" },
-  { code: "BR", name: "Brazil" },
-  { code: "MX", name: "Mexico" },
-  { code: "AR", name: "Argentina" },
-  { code: "ZA", name: "South Africa" },
-  { code: "AE", name: "United Arab Emirates" },
-  { code: "SA", name: "Saudi Arabia" },
-  { code: "GLOBAL", name: "Global (All Countries)" },
-];
-
 export const VisibilityRankingsTab = () => {
   // Selection State
   const [selectedIndustry, setSelectedIndustry] = useState<string>("");
@@ -119,6 +85,9 @@ export const VisibilityRankingsTab = () => {
   const [showAddIndustryDialog, setShowAddIndustryDialog] = useState(false);
   const [newIndustryName, setNewIndustryName] = useState("");
   const [addingIndustry, setAddingIndustry] = useState(false);
+  const [showAddCountryDialog, setShowAddCountryDialog] = useState(false);
+  const [newCountryName, setNewCountryName] = useState("");
+  const [addingCountry, setAddingCountry] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [processing, setProcessing] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -127,6 +96,40 @@ export const VisibilityRankingsTab = () => {
   // Recent Results State
   const [recentResults, setRecentResults] = useState<any[]>([]);
   const [loadingResults, setLoadingResults] = useState(false);
+
+  // Common countries for visibility rankings
+  const [availableCountries, setAvailableCountries] = useState([
+    { code: "US", name: "United States" },
+    { code: "GB", name: "United Kingdom" },
+    { code: "CA", name: "Canada" },
+    { code: "AU", name: "Australia" },
+    { code: "DE", name: "Germany" },
+    { code: "FR", name: "France" },
+    { code: "IT", name: "Italy" },
+    { code: "ES", name: "Spain" },
+    { code: "NL", name: "Netherlands" },
+    { code: "SE", name: "Sweden" },
+    { code: "NO", name: "Norway" },
+    { code: "DK", name: "Denmark" },
+    { code: "FI", name: "Finland" },
+    { code: "CH", name: "Switzerland" },
+    { code: "AT", name: "Austria" },
+    { code: "BE", name: "Belgium" },
+    { code: "IE", name: "Ireland" },
+    { code: "NZ", name: "New Zealand" },
+    { code: "SG", name: "Singapore" },
+    { code: "JP", name: "Japan" },
+    { code: "KR", name: "South Korea" },
+    { code: "CN", name: "China" },
+    { code: "IN", name: "India" },
+    { code: "BR", name: "Brazil" },
+    { code: "MX", name: "Mexico" },
+    { code: "AR", name: "Argentina" },
+    { code: "ZA", name: "South Africa" },
+    { code: "AE", name: "United Arab Emirates" },
+    { code: "SA", name: "Saudi Arabia" },
+    { code: "GLOBAL", name: "Global (All Countries)" },
+  ]);
 
   const testSchedule = async () => {
     setTestingSchedule(true);
@@ -364,6 +367,7 @@ export const VisibilityRankingsTab = () => {
 
   const loadRecentResults = async () => {
     setLoadingResults(true);
+
     try {
       // Fetch latest prompt responses joined with prompt details
       const { data, error } = await supabase
@@ -436,6 +440,64 @@ export const VisibilityRankingsTab = () => {
     }
   };
 
+  const handleAddCountry = async () => {
+    if (!newCountryName.trim()) {
+      toast.error("Please enter a country name");
+      return;
+    }
+
+    const trimmedName = newCountryName.trim();
+
+    // Check if country already exists (check name or code)
+    if (
+      availableCountries.some(
+        (c) =>
+          c.name.toLowerCase() === trimmedName.toLowerCase() ||
+          c.code.toLowerCase() === trimmedName.toLowerCase(),
+      )
+    ) {
+      toast.error("This country already exists");
+      setNewCountryName("");
+      setShowAddCountryDialog(false);
+
+      // Try to select existing
+      const existing = availableCountries.find(
+        (c) =>
+          c.name.toLowerCase() === trimmedName.toLowerCase() ||
+          c.code.toLowerCase() === trimmedName.toLowerCase(),
+      );
+
+      if (existing) setSelectedCountry(existing.code);
+      return;
+    }
+
+    setAddingCountry(true);
+
+    try {
+      // Add to available countries list
+      // For custom countries, we use the name as the code
+      const newCountry = { code: trimmedName, name: trimmedName };
+      const updatedCountries = [...availableCountries, newCountry].sort(
+        (a, b) => a.name.localeCompare(b.name),
+      );
+      setAvailableCountries(updatedCountries);
+
+      // Select the new country
+      setSelectedCountry(newCountry.code);
+
+      // Close dialog and reset input
+      setShowAddCountryDialog(false);
+      setNewCountryName("");
+
+      toast.success(`Country "${trimmedName}" added successfully`);
+    } catch (error) {
+      console.error("Error adding country:", error);
+      toast.error("Failed to add country");
+    } finally {
+      setAddingCountry(false);
+    }
+  };
+
   const addTargetIndustry = () => {
     if (selectedIndustry && !targetIndustries.includes(selectedIndustry))
       setTargetIndustries([...targetIndustries, selectedIndustry]);
@@ -447,7 +509,9 @@ export const VisibilityRankingsTab = () => {
   const addTargetCountry = () => {
     if (selectedCountry && !targetCountries.includes(selectedCountry)) {
       // Find the full name for the selected country code
-      const countryObj = countries.find((c) => c.code === selectedCountry);
+      const countryObj = availableCountries.find(
+        (c) => c.code === selectedCountry,
+      );
       // Store Full Name (e.g., "United Kingdom") instead of Code (e.g., "GB")
       // If not found (shouldn't happen), fall back to code
       const valueToStore = countryObj ? countryObj.name : selectedCountry;
@@ -477,8 +541,7 @@ export const VisibilityRankingsTab = () => {
             q.country === country &&
             q.status !== "failed",
         );
-
-        if (!exists)
+        if (!exists) {
           newQueueItems.push({
             id: crypto.randomUUID(),
             industry,
@@ -486,6 +549,7 @@ export const VisibilityRankingsTab = () => {
             status: "pending",
             progress: 0,
           });
+        }
       });
     });
 
@@ -515,7 +579,6 @@ export const VisibilityRankingsTab = () => {
     if (processing) return;
 
     const pendingItems = queue.filter((i) => i.status === "pending");
-
     if (pendingItems.length === 0) {
       toast.info("No pending items in queue");
       return;
@@ -537,12 +600,14 @@ export const VisibilityRankingsTab = () => {
           q.id === item.id ? { ...q, status: "processing", progress: 0 } : q,
         ),
       );
+
       // item.country is now likely the Full Name (e.g. United Kingdom)
       // But we need to try and find the Code if possible, or just send Name if that's what we have.
       // The backend expects 'country' param to be Code ideally, or Name.
       // Let's try to map back to code if it matches a name in our list.
       const countryCode =
-        countries.find((c) => c.name === item.country)?.code || item.country;
+        availableCountries.find((c) => c.name === item.country)?.code ||
+        item.country;
       const countryName = item.country; // Since we store full names now
 
       addLog(`Processing: ${item.industry} (${countryName})`);
@@ -707,6 +772,64 @@ export const VisibilityRankingsTab = () => {
                   </>
                 ) : (
                   "Add Industry"
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Country Dialog */}
+      <Dialog
+        open={showAddCountryDialog}
+        onOpenChange={setShowAddCountryDialog}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add New Country</DialogTitle>
+            <DialogDescription>
+              Add a new country to the list. This will be available for
+              selection immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="newCountry">Country Name</Label>
+              <Input
+                id="newCountry"
+                value={newCountryName}
+                onChange={(e) => setNewCountryName(e.target.value)}
+                placeholder="e.g., Portugal, Vietnam, Poland"
+                className="mt-1"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAddCountry();
+                }}
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowAddCountryDialog(false);
+                  setNewCountryName("");
+                }}
+                disabled={addingCountry}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleAddCountry}
+                disabled={addingCountry || !newCountryName.trim()}
+                className="bg-teal hover:bg-teal/90"
+              >
+                {addingCountry ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Adding...
+                  </>
+                ) : (
+                  "Add Country"
                 )}
               </Button>
             </div>
@@ -948,13 +1071,21 @@ export const VisibilityRankingsTab = () => {
                       <SelectValue placeholder="Select country" />
                     </SelectTrigger>
                     <SelectContent>
-                      {countries.map((country) => (
+                      {availableCountries.map((country) => (
                         <SelectItem key={country.code} value={country.code}>
                           {country.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowAddCountryDialog(true)}
+                    title="Add new country"
+                    className="shrink-0"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
                   <Button
                     onClick={addTargetCountry}
                     disabled={!selectedCountry}
@@ -1142,8 +1273,9 @@ export const VisibilityRankingsTab = () => {
                           variant="outline"
                           className="text-xs font-normal"
                         >
-                          {countries.find((c) => c.code === item.country)
-                            ?.name || item.country}
+                          {availableCountries.find(
+                            (c) => c.code === item.country,
+                          )?.name || item.country}
                         </Badge>
                       </div>
 
