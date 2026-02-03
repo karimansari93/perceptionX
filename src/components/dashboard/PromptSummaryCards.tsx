@@ -22,9 +22,10 @@ function getUniqueLLMsForType(responses: PromptResponse[], type: string) {
 
 export const PromptSummaryCards = ({ promptsData, responses }: PromptSummaryCardsProps) => {
   const isMobile = useIsMobile();
-  const sentimentPrompts = promptsData.filter(p => p.type === 'sentiment' || p.type === 'talentx_sentiment');
-  const visibilityPrompts = promptsData.filter(p => p.type === 'visibility' || p.type === 'talentx_visibility');
+  const experiencePrompts = promptsData.filter(p => p.type === 'experience' || p.type === 'talentx_experience');
+  const discoveryPrompts = promptsData.filter(p => p.type === 'discovery' || p.type === 'talentx_discovery');
   const competitivePrompts = promptsData.filter(p => p.type === 'competitive' || p.type === 'talentx_competitive');
+  const informationalPrompts = promptsData.filter(p => p.type === 'informational' || p.type === 'talentx_informational');
 
   // Hide all cards on mobile
   if (isMobile) {
@@ -32,27 +33,27 @@ export const PromptSummaryCards = ({ promptsData, responses }: PromptSummaryCard
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-3">
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium text-[#13274F]">Sentiment Prompts</CardTitle>
-          <Badge className="bg-blue-100 text-blue-800">Sentiment</Badge>
+          <CardTitle className="text-sm font-medium text-[#13274F]">Experience Prompts</CardTitle>
+          <Badge className="bg-blue-100 text-blue-800">Experience</Badge>
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{sentimentPrompts.length}</div>
+          <div className="text-2xl font-bold">{experiencePrompts.length}</div>
           <p className="text-xs text-muted-foreground">
-            Company-specific perception tracking
+            What it&apos;s like to work there
           </p>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium text-[#13274F]">Visibility Prompts</CardTitle>
-          <Badge className="bg-green-100 text-green-800">Visibility</Badge>
+          <CardTitle className="text-sm font-medium text-[#13274F]">Discovery Prompts</CardTitle>
+          <Badge className="bg-green-100 text-green-800">Discovery</Badge>
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{visibilityPrompts.length}</div>
+          <div className="text-2xl font-bold">{discoveryPrompts.length}</div>
           <p className="text-xs text-muted-foreground">
             Industry-wide mention tracking
           </p>
@@ -68,6 +69,19 @@ export const PromptSummaryCards = ({ promptsData, responses }: PromptSummaryCard
           <div className="text-2xl font-bold">{competitivePrompts.length}</div>
           <p className="text-xs text-muted-foreground">
             Direct competitor comparisons
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium text-[#13274F]">Informational Prompts</CardTitle>
+          <Badge className="bg-amber-100 text-amber-800">Informational</Badge>
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">{informationalPrompts.length}</div>
+          <p className="text-xs text-muted-foreground">
+            Job and offer details
           </p>
         </CardContent>
       </Card>

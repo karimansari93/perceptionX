@@ -44,7 +44,7 @@ export const CompanyRecencyTestTab = ({ companyId, companyName }: CompanyRecency
           )
         `)
         .eq('company_id', companyId)
-        .in('prompt_type', ['sentiment', 'competitive', 'visibility'])
+        .in('prompt_type', ['experience', 'competitive', 'discovery', 'informational', 'talentx_experience', 'talentx_competitive', 'talentx_discovery', 'talentx_informational'])
         .not('prompt_responses.citations', 'is', null);
 
       if (responsesError) throw responsesError;
@@ -62,9 +62,9 @@ export const CompanyRecencyTestTab = ({ companyId, companyName }: CompanyRecency
             if (pr.citations) {
               const citations = Array.isArray(pr.citations) ? pr.citations : JSON.parse(pr.citations);
               citations.forEach((citation: any) => {
-                const sourceType = ['sentiment', 'employer'].includes(response.prompt_type) ? 'sentiment' : 
-                                  ['competitive', 'comparison'].includes(response.prompt_type) ? 'competitive' :
-                                  ['visibility', 'discovery'].includes(response.prompt_type) ? 'visibility' : 'competitive';
+                const sourceType = ['experience', 'talentx_experience', 'informational', 'talentx_informational'].includes(response.prompt_type) ? 'sentiment' :
+                                  ['competitive', 'talentx_competitive'].includes(response.prompt_type) ? 'competitive' :
+                                  ['discovery', 'talentx_discovery'].includes(response.prompt_type) ? 'visibility' : 'competitive';
                 allCitations.push({
                   ...citation,
                   sourceType: sourceType,

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { CitationCount } from "@/types/dashboard";
 import { FileText, TrendingUp, TrendingDown, Check, X } from 'lucide-react';
@@ -80,10 +80,27 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
   const [selectedCompanyMentionedFilter, setSelectedCompanyMentionedFilter] = usePersistedState<'all' | 'mentioned' | 'not-mentioned'>('sourcesTab.selectedCompanyMentionedFilter', 'all');
   const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('sourcesTab.selectedJobFunctionFilter', 'all');
   const [selectedThemeFilter, setSelectedThemeFilter] = usePersistedState<string>('sourcesTab.selectedThemeFilter', 'all');
+  const [selectedPromptTypeFilter, setSelectedPromptTypeFilter] = usePersistedState<string>('sourcesTab.selectedPromptTypeFilter', 'all');
   
   // Media type editing state
   const [editingMediaType, setEditingMediaType] = useState<string | null>(null);
   const [customMediaTypes, setCustomMediaTypes] = useState<Record<string, string>>({});
+
+  // Get all available prompt types from responses
+  const availablePromptTypes = useMemo(() => {
+    const promptTypes = new Set<string>();
+    filteredResponses.forEach(r => {
+      const promptType = r.confirmed_prompts?.prompt_type;
+      if (promptType) {
+        // Normalize to base types (remove talentx_ prefix)
+        const baseType = promptType.replace('talentx_', '');
+        if (['experience', 'competitive', 'discovery', 'informational'].includes(baseType)) {
+          promptTypes.add(baseType);
+        }
+      }
+    });
+    return Array.from(promptTypes).sort();
+  }, [filteredResponses]);
 
   // Get all available themes/attributes from responses
   const availableThemes = useMemo(() => {
@@ -105,9 +122,27 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     return sortedThemes;
   }, [filteredResponses]);
 
-  // Helper to get filtered responses based on all filters (job function, theme)
+  // Helper to get filtered responses based on all filters (job function, theme, prompt_type)
   const getFilteredResponsesByAllFilters = useMemo(() => {
     let filtered = filteredResponses;
+    
+    // Filter by prompt_type
+    if (selectedPromptTypeFilter !== 'all') {
+      filtered = filtered.filter(response => {
+        const promptType = response.confirmed_prompts?.prompt_type;
+        // Handle both regular and talentx_ variants
+        if (selectedPromptTypeFilter === 'experience') {
+          return promptType === 'experience' || promptType === 'talentx_experience';
+        } else if (selectedPromptTypeFilter === 'competitive') {
+          return promptType === 'competitive' || promptType === 'talentx_competitive';
+        } else if (selectedPromptTypeFilter === 'discovery') {
+          return promptType === 'discovery' || promptType === 'talentx_discovery';
+        } else if (selectedPromptTypeFilter === 'informational') {
+          return promptType === 'informational' || promptType === 'talentx_informational';
+        }
+        return false;
+      });
+    }
     
     // Filter by job function
     if (selectedJobFunctionFilter !== 'all') {
@@ -126,7 +161,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     }
     
     return filtered;
-  }, [filteredResponses, selectedJobFunctionFilter, selectedThemeFilter]);
+  }, [filteredResponses, selectedPromptTypeFilter, selectedJobFunctionFilter, selectedThemeFilter]);
 
   // Helper to get filtered responses based on job function filter (kept for backward compatibility)
   const getFilteredResponsesByJobFunction = useMemo(() => {
@@ -186,6 +221,14 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       .sort((a, b) => b.count - a.count);
   }, [aiResponseCitations, searchResultCitations]);
 
+  // Clear persisted "unknown" source so we never open the modal with unknown (domains are now derived from URLs)
+  useEffect(() => {
+    if (selectedSource?.name && normalizeDomain(selectedSource.name) === 'unknown') {
+      setSelectedSource(null);
+      setIsSourceModalOpen(false);
+    }
+  }, [selectedSource?.name]);
+
   const handleSourceClick = (citation: CitationCount) => {
     setSelectedSource(citation);
     setIsSourceModalOpen(true);
@@ -240,6 +283,10 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
 
   const handleThemeFilterChange = (value: string) => {
     setSelectedThemeFilter(value);
+  };
+
+  const handlePromptTypeFilterChange = (value: string) => {
+    setSelectedPromptTypeFilter(value);
   };
 
   // Media type editing functions
@@ -643,7 +690,10 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
   // Get sources to display based on showAllSources state, media type filter, and company mentioned filter
   // When filters are applied, we need to recalculate counts to ensure percentages are correct
   const displayedSources = useMemo(() => {
-    let sources = allTimeCitations;
+    // Never show "unknown" as a source (e.g. ChatGPT citations without domain are now derived from URL)
+    let sources = allTimeCitations.filter(
+      citation => citation.name && normalizeDomain(citation.name) !== 'unknown'
+    );
     
     // Apply media type filter if selected
     if (selectedMediaTypeFilter) {
@@ -988,7 +1038,7 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
       {/* Sticky Header with Filters */}
       {isPro && (
         <div className="hidden sm:block sticky top-0 z-10 bg-white pb-2">
-          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
             {/* Source Type Filter Dropdown */}
             <Select
               value={selectedSourceTypeFilter}
@@ -1116,6 +1166,31 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
                   {availableThemes.map(theme => (
                     <SelectItem key={theme} value={theme}>
                       {theme}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {/* Prompt Type Filter Dropdown */}
+            {availablePromptTypes.length > 0 && (
+              <Select
+                value={selectedPromptTypeFilter}
+                onValueChange={handlePromptTypeFilterChange}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="All Prompt Types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    <div className="flex items-center gap-2">
+                      <span>All Prompt Types</span>
+                    </div>
+                  </SelectItem>
+                  {availablePromptTypes.map(promptType => (
+                    <SelectItem key={promptType} value={promptType}>
+                      <div className="flex items-center gap-2">
+                        <span className="capitalize">{promptType}</span>
+                      </div>
                     </SelectItem>
                   ))}
                 </SelectContent>

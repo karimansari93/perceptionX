@@ -1,7 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from "../_shared/cors.ts"
 import { getLanguageName } from "../_shared/translate-prompts.ts"
+
+/** Max prompts per OpenAI batch to stay under token limits and timeouts */
+const BATCH_SIZE = 25
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -11,7 +13,7 @@ serve(async (req) => {
   try {
     const requestBody = await req.json()
     const { prompts, countryCode } = requestBody
-    
+
     if (!prompts || !Array.isArray(prompts)) {
       return new Response(
         JSON.stringify({ error: 'Prompts array is required' }),
@@ -28,7 +30,7 @@ serve(async (req) => {
     }
 
     const targetLanguage = getLanguageName(countryCode)
-    
+
     // If target language is English, return as-is
     if (targetLanguage === 'English') {
       return new Response(
@@ -38,7 +40,7 @@ serve(async (req) => {
     }
 
     const openaiApiKey = Deno.env.get('OPENAI_API_KEY')
-    
+
     if (!openaiApiKey) {
       console.warn('⚠️ OpenAI API key not configured, returning original prompts')
       return new Response(
@@ -47,86 +49,88 @@ serve(async (req) => {
       )
     }
 
-    console.log(`🌍 Translating ${prompts.length} prompts to ${targetLanguage} (country: ${countryCode})`)
+    console.log(`🌍 Translating ${prompts.length} prompts to ${targetLanguage} (country: ${countryCode}) [batch mode]`)
 
-    // Translate all prompts
+    // Translate in batches via a single API call per batch (avoids 504 timeout)
     const translatedPrompts: string[] = []
-    
-    for (const prompt of prompts) {
+
+    for (let i = 0; i < prompts.length; i += BATCH_SIZE) {
+      const batch = prompts.slice(i, i + BATCH_SIZE)
+      const batchIndex = batch.map((p: string, j: number) => `${j + 1}. ${p}`).join('\n')
+
+      const systemPrompt = `You are a translator. Translate each numbered item to ${targetLanguage}. Preserve meaning, tone, and structure. Keep company names, industry names, and proper nouns unchanged. Reply ONLY with a valid JSON object: {"translations": ["item1 translation", "item2 translation", ...]} with exactly ${batch.length} strings in the same order. No other text.`
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openaiApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `Translate these ${batch.length} items:\n${batchIndex}` },
+          ],
+          max_tokens: 4096,
+          temperature: 0.3,
+          response_format: { type: 'json_object' },
+        }),
+      })
+
+      if (!response.ok) {
+        const errText = await response.text()
+        console.warn(`⚠️ Batch translation failed: ${response.status} - ${errText}`)
+        batch.forEach((p: string) => translatedPrompts.push(p))
+        continue
+      }
+
+      const data = await response.json()
+      const raw = data.choices?.[0]?.message?.content?.trim()
+
+      if (!raw) {
+        batch.forEach((p: string) => translatedPrompts.push(p))
+        continue
+      }
+
       try {
-        const translationPrompt = `Translate the following question/prompt to ${targetLanguage}. 
-Preserve the meaning, tone, and structure. Keep company names, industry names, and proper nouns unchanged.
-Only translate the question structure and common words.
-
-Original prompt: "${prompt}"
-
-Translated prompt:`;
-
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${openaiApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini', // Using mini for cost efficiency
-            messages: [
-              {
-                role: 'user',
-                content: translationPrompt
-              }
-            ],
-            temperature: 0.3,
-            max_tokens: 200
-          })
-        });
-
-        if (!response.ok) {
-          console.warn(`⚠️ Translation failed for prompt: ${prompt.substring(0, 50)}...`);
-          translatedPrompts.push(prompt); // Use original on error
-          continue;
-        }
-
-        const data = await response.json();
-        const translated = data.choices[0]?.message?.content?.trim();
-
-        if (translated && translated.length > 0) {
-          // Clean up any quotes that might wrap the translation
-          const cleaned = translated.replace(/^["']|["']$/g, '').trim();
-          translatedPrompts.push(cleaned);
-          console.log(`✅ Translated: "${prompt.substring(0, 50)}..." → "${cleaned.substring(0, 50)}..."`)
+        const parsed = JSON.parse(raw) as { translations?: string[] }
+        const list = parsed?.translations
+        if (Array.isArray(list) && list.length >= batch.length) {
+          for (let k = 0; k < batch.length; k++) {
+            const t = list[k]
+            const cleaned = (typeof t === 'string' ? t : String(t)).replace(/^["']|["']$/g, '').trim()
+            translatedPrompts.push(cleaned || batch[k])
+          }
         } else {
-          translatedPrompts.push(prompt); // Use original if translation failed
+          batch.forEach((p: string) => translatedPrompts.push(p))
         }
-
-        // Small delay to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 200))
-      } catch (error) {
-        console.warn(`⚠️ Translation error for prompt: ${error.message}`);
-        translatedPrompts.push(prompt); // Use original on error
+      } catch (parseErr) {
+        console.warn('⚠️ Batch JSON parse failed:', parseErr)
+        batch.forEach((p: string) => translatedPrompts.push(p))
       }
     }
 
     console.log(`✅ Translated ${translatedPrompts.length} prompts to ${targetLanguage}`)
 
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         translatedPrompts,
         targetLanguage,
-        countryCode
+        countryCode,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error) {
     console.error('❌ Error in translate-prompts function:', error)
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         error: error.message || 'Internal server error',
-        translatedPrompts: [] 
+        translatedPrompts: [],
       }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     )
   }

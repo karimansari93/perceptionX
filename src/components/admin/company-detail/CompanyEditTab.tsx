@@ -250,14 +250,14 @@ export const CompanyEditTab = ({ company, onUpdate, onRefresh, onDelete }: Compa
           )
         `)
         .eq('confirmed_prompts.company_id', company.id)
-        .in('confirmed_prompts.prompt_type', ['sentiment', 'competitive', 'talentx_sentiment', 'talentx_competitive']);
+        .in('confirmed_prompts.prompt_type', ['experience', 'competitive', 'talentx_experience', 'talentx_competitive']);
 
       if (responsesError) {
         throw responsesError;
       }
 
       if (!responses || responses.length === 0) {
-        toast.error('No sentiment/competitive responses found for this company');
+        toast.error('No experience/competitive responses found for this company');
         setIsAnalyzingThemes(false);
         setThemesProgress(null);
         return;
@@ -517,7 +517,7 @@ export const CompanyEditTab = ({ company, onUpdate, onRefresh, onDelete }: Compa
             <div>
               <h4 className="font-medium text-nightsky mb-1">AI Themes Analysis</h4>
               <p className="text-sm text-nightsky/60">
-                Analyze sentiment and competitive responses to extract thematic insights
+                Analyze experience and competitive responses to extract thematic insights
               </p>
               {themesCount !== null && (
                 <p className="text-xs text-nightsky/50 mt-2 flex items-center gap-1">
@@ -735,7 +735,7 @@ export const CompanyEditTab = ({ company, onUpdate, onRefresh, onDelete }: Compa
               </div>
               
               <div className="text-xs text-gray-500">
-                Analyzing sentiment and competitive responses for thematic insights...
+                Analyzing experience and competitive responses for thematic insights...
               </div>
             </div>
           )}

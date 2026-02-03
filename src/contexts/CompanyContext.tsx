@@ -119,18 +119,30 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (allCompanies && allCompanies.length > 0) {
           const companyIds = allCompanies.map(c => c.id);
           
-          // Fetch industries for all companies
+          // Fetch industries and countries in parallel for better performance
           let industriesMap = new Map<string, Set<string>>();
+          let countriesMap = new Map<string, string | null>();
+          
           if (companyIds.length > 0) {
-            const { data: industriesData, error: industriesError } = await supabase
-              .from('company_industries')
-              .select('company_id, industry')
-              .in('company_id', companyIds);
+            // Parallelize both requests to cut load time in half
+            const [industriesResult, countriesResult] = await Promise.all([
+              supabase
+                .from('company_industries')
+                .select('company_id, industry')
+                .in('company_id', companyIds),
+              supabase
+                .from('user_onboarding')
+                .select('company_id, country')
+                .in('company_id', companyIds)
+                .not('company_id', 'is', null)
+                .order('created_at', { ascending: false })
+            ]);
 
-            if (industriesError) {
-              console.error('🔍 Error fetching company industries for admin:', industriesError);
-            } else if (industriesData) {
-              industriesMap = industriesData.reduce((map, row) => {
+            // Process industries data
+            if (industriesResult.error) {
+              console.error('🔍 Error fetching company industries for admin:', industriesResult.error);
+            } else if (industriesResult.data) {
+              industriesMap = industriesResult.data.reduce((map, row) => {
                 if (!map.has(row.company_id)) {
                   map.set(row.company_id, new Set<string>());
                 }
@@ -138,24 +150,12 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 return map;
               }, new Map<string, Set<string>>());
             }
-          }
 
-          // Fetch countries for all companies
-          // Note: For admin, we don't filter by user_id since admins should see all companies
-          // But we still need to be careful about the query structure
-          let countriesMap = new Map<string, string | null>();
-          if (companyIds.length > 0) {
-            const { data: countriesData, error: countriesError } = await supabase
-              .from('user_onboarding')
-              .select('company_id, country')
-              .in('company_id', companyIds)
-              .not('company_id', 'is', null)
-              .order('created_at', { ascending: false });
-
-            if (countriesError) {
-              console.error('🔍 Error fetching company countries for admin:', countriesError);
-            } else if (countriesData) {
-              countriesMap = countriesData.reduce((map, row) => {
+            // Process countries data
+            if (countriesResult.error) {
+              console.error('🔍 Error fetching company countries for admin:', countriesResult.error);
+            } else if (countriesResult.data) {
+              countriesMap = countriesResult.data.reduce((map, row) => {
                 if (row.company_id && !map.has(row.company_id)) {
                   map.set(row.company_id, row.country || null);
                 }
@@ -736,40 +736,43 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 .select('id, name, industry, company_size, competitors, settings, created_at, updated_at, created_by')
                 .in('id', companyIds);
 
-              // Fetch countries for these companies
-              // CRITICAL: Filter by user_id to ensure we only get countries for this user's companies
+              // Fetch countries and company_members in one batch (avoid N+1 queries)
               let countriesMap = new Map<string, string | null>();
-              if (companyIds.length > 0) {
-                const { data: countriesData } = await supabase
-                  .from('user_onboarding')
-                  .select('company_id, country')
-                  .eq('user_id', user.id) // CRITICAL: Filter by user_id to prevent seeing other users' data
-                  .in('company_id', companyIds)
-                  .not('company_id', 'is', null)
-                  .order('created_at', { ascending: false });
+              const membersMap = new Map<string, boolean>();
 
-                if (countriesData) {
-                  countriesMap = countriesData.reduce((map, row) => {
-                    if (row.company_id && !map.has(row.company_id)) {
-                      map.set(row.company_id, row.country || null);
+              if (companyIds.length > 0) {
+                const [countriesResult, membersResult] = await Promise.all([
+                  supabase
+                    .from('user_onboarding')
+                    .select('company_id, country')
+                    .eq('user_id', user.id)
+                    .in('company_id', companyIds)
+                    .not('company_id', 'is', null)
+                    .order('created_at', { ascending: false }),
+                  supabase
+                    .from('company_members')
+                    .select('company_id, is_default')
+                    .eq('user_id', user.id)
+                    .in('company_id', companyIds)
+                ]);
+
+                if (countriesResult.data) {
+                  countriesResult.data.forEach(row => {
+                    if (row.company_id && !countriesMap.has(row.company_id)) {
+                      countriesMap.set(row.company_id, row.country || null);
                     }
-                    return map;
-                  }, new Map<string, string | null>());
+                  });
+                }
+                if (membersResult.data) {
+                  membersResult.data.forEach(row => {
+                    membersMap.set(row.company_id, row.is_default || false);
+                  });
                 }
               }
 
               for (const companyData of companiesData || []) {
                 if (companyData) {
-                  // Fetch the actual is_default from company_members table
-                  // Use maybeSingle() instead of single() to handle cases where no row exists
-                  const { data: companyMember } = await supabase
-                    .from('company_members')
-                    .select('is_default')
-                    .eq('user_id', user.id)
-                    .eq('company_id', companyData.id)
-                    .maybeSingle();
-
-                  const isDefault = companyMember?.is_default || false;
+                  const isDefault = membersMap.get(companyData.id) || false;
                   const country = countriesMap.get(companyData.id) || null;
 
                   companies.push({

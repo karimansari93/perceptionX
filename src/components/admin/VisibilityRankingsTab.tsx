@@ -335,11 +335,11 @@ export const VisibilityRankingsTab = () => {
 
   const loadIndustries = async () => {
     try {
-      // Only show industries that have visibility prompts (industry-wide)
+      // Only show industries that have discovery prompts (industry-wide)
       const { data, error } = await supabase
         .from("confirmed_prompts")
         .select("industry_context")
-        .eq("prompt_type", "visibility")
+        .eq("prompt_type", "discovery")
         .is("company_id", null)
         .not("industry_context", "is", null);
 
@@ -387,7 +387,7 @@ export const VisibilityRankingsTab = () => {
           )
         `,
         )
-        .eq("confirmed_prompts.prompt_type", "visibility")
+        .eq("confirmed_prompts.prompt_type", "discovery")
         .order("created_at", { ascending: false })
         .limit(10);
 

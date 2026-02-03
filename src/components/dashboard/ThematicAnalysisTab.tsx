@@ -92,7 +92,7 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
   const [experienceType, setExperienceType] = usePersistedState<'employee' | 'candidate'>('thematicTab.experienceType', 'employee');
   const [selectedIndustry, setSelectedIndustry] = usePersistedState<string>('thematicTab.selectedIndustry', 'all');
   const [selectedFunction, setSelectedFunction] = usePersistedState<string>('thematicTab.selectedFunction', 'all');
-  const [selectedPromptType, setSelectedPromptType] = usePersistedState<'all' | 'sentiment' | 'competitive'>('thematicTab.selectedPromptType', 'all');
+  const [selectedPromptType, setSelectedPromptType] = usePersistedState<'all' | 'experience' | 'competitive'>('thematicTab.selectedPromptType', 'all');
   const [themeView, setThemeView] = usePersistedState<'swot' | 'rankings'>('thematicTab.themeView', 'swot');
   const [analysisProgress, setAnalysisProgress] = useState({
     current: 0,
@@ -127,7 +127,7 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
     };
   }, [responses]);
 
-  // Filter responses to only include sentiment and competitive prompts (excluding visibility)
+  // Filter responses to only include experience and competitive prompts (excluding discovery)
   // Also filter by prompt_category based on experienceType, industry, function, and prompt type
   const filteredResponses = useMemo(() => {
     return responses.filter(response => {
@@ -136,19 +136,19 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
       const industry = response.confirmed_prompts?.industry_context;
       const jobFunction = response.confirmed_prompts?.job_function_context;
       
-      // First, filter by prompt type (sentiment/competitive only, exclude visibility)
-      const isValidType = promptType === 'sentiment' || 
-                          promptType === 'competitive' || 
-                          promptType === 'talentx_sentiment' || 
+      // First, filter by prompt type (experience/competitive only, exclude discovery)
+      const isValidType = promptType === 'experience' ||
+                          promptType === 'competitive' ||
+                          promptType === 'talentx_experience' ||
                           promptType === 'talentx_competitive';
       
       if (!isValidType) return false;
       
-      // Filter by selected prompt type (sentiment/competitive)
+      // Filter by selected prompt type (experience/competitive)
       if (selectedPromptType !== 'all') {
-        if (selectedPromptType === 'sentiment') {
-          // Only include sentiment prompts (both regular and talentx)
-          if (promptType !== 'sentiment' && promptType !== 'talentx_sentiment') return false;
+        if (selectedPromptType === 'experience') {
+          // Only include experience prompts (both regular and talentx)
+          if (promptType !== 'experience' && promptType !== 'talentx_experience') return false;
         } else if (selectedPromptType === 'competitive') {
           // Only include competitive prompts (both regular and talentx)
           if (promptType !== 'competitive' && promptType !== 'talentx_competitive') return false;
@@ -176,17 +176,17 @@ export const ThematicAnalysisTab = ({ responses, companyName, chartView, setChar
   }, [responses, experienceType, selectedIndustry, selectedFunction, selectedPromptType]);
 
   // Fetch AI themes from database
-  // Fetch themes for all relevant responses (sentiment/competitive), then filter by experience type
+  // Fetch themes for all relevant responses (experience/competitive), then filter by experience type
   // This ensures we don't miss themes that were already created
   const fetchAIThemes = async () => {
     try {
-      // Get all relevant responses (sentiment/competitive) regardless of category
+      // Get all relevant responses (experience/competitive) regardless of category
       // We'll filter themes by experience type after fetching
       const allRelevantResponses = responses.filter(response => {
         const promptType = response.confirmed_prompts?.prompt_type;
-        return promptType === 'sentiment' || 
-               promptType === 'competitive' || 
-               promptType === 'talentx_sentiment' || 
+        return promptType === 'experience' ||
+               promptType === 'competitive' ||
+               promptType === 'talentx_experience' ||
                promptType === 'talentx_competitive';
       });
 
@@ -662,13 +662,13 @@ Responses:\n${attributeResponses.map(r => r.response_text?.slice(0, 1000) || '')
           )}
           
           {/* Prompt Type Filter */}
-          <Select value={selectedPromptType} onValueChange={(value) => setSelectedPromptType(value as 'all' | 'sentiment' | 'competitive')}>
+          <Select value={selectedPromptType} onValueChange={(value) => setSelectedPromptType(value as 'all' | 'experience' | 'competitive')}>
             <SelectTrigger className="w-auto min-w-[160px]">
               <SelectValue placeholder="All Prompt Types" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Prompt Types</SelectItem>
-              <SelectItem value="sentiment">Employer (Sentiment)</SelectItem>
+              <SelectItem value="experience">Employer (Experience)</SelectItem>
               <SelectItem value="competitive">Competitive</SelectItem>
             </SelectContent>
           </Select>
@@ -719,30 +719,30 @@ Responses:\n${attributeResponses.map(r => r.response_text?.slice(0, 1000) || '')
                 No {experienceType === 'employee' ? 'Employee' : 'Candidate'} Experience Data
               </h3>
               <p className="text-gray-600">
-                You need responses from {experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} sentiment or competitive prompts to run thematic analysis.
+                You need responses from {experienceType === 'employee' ? 'Employee Experience' : 'Candidate Experience'} experience or competitive prompts to run thematic analysis.
               </p>
               <div className="mt-4 text-sm text-gray-500">
                 <p>This analysis focuses on:</p>
                 <ul className="list-disc list-inside mt-2 space-y-1">
                   {experienceType === 'employee' ? (
                     <>
-                      <li>General sentiment prompts (e.g., "How is X as an employer?")</li>
+                      <li>General experience prompts (e.g., "How is X as an employer?")</li>
                       <li>General competitive prompts</li>
-                      <li>Employee Experience sentiment prompts</li>
+                      <li>Employee Experience experience prompts</li>
                       <li>Employee Experience competitive prompts</li>
-                      <li>TalentX Employee Experience sentiment prompts</li>
+                      <li>TalentX Employee Experience experience prompts</li>
                       <li>TalentX Employee Experience competitive prompts</li>
                     </>
                   ) : (
                     <>
-                      <li>Candidate Experience sentiment prompts</li>
+                      <li>Candidate Experience experience prompts</li>
                       <li>Candidate Experience competitive prompts</li>
-                      <li>TalentX Candidate Experience sentiment prompts</li>
+                      <li>TalentX Candidate Experience experience prompts</li>
                       <li>TalentX Candidate Experience competitive prompts</li>
                     </>
                   )}
                 </ul>
-                <p className="mt-2">Visibility prompts and {experienceType === 'employee' ? 'Candidate Experience' : 'Employee Experience'} prompts are excluded from this analysis.</p>
+                <p className="mt-2">Discovery prompts and {experienceType === 'employee' ? 'Candidate Experience' : 'Employee Experience'} prompts are excluded from this analysis.</p>
               </div>
             </div>
           </CardContent>

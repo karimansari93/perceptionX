@@ -27,15 +27,15 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'user',
             content: prompt
           }
         ],
-        max_tokens: 800,
-        temperature: 0.2
+        max_completion_tokens: 1500 // GPT-5.2 uses tokens for reasoning + content
+        // Note: GPT-5.2 doesn't support custom temperature, uses default (1)
       }),
     });
 

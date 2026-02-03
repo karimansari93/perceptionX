@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useCompany } from '@/contexts/CompanyContext';
 import { getCountryFlag } from '@/utils/countryFlags';
-import { Globe, ChevronDown, Check, Plus, Lock } from 'lucide-react';
+import { Globe, ChevronDown, Check, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // Country code to display name mapping (from AddCompanyModal)
@@ -247,10 +247,13 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
           <>
             {availableLocations.length > 0 && <DropdownMenuSeparator />}
             <DropdownMenuItem
-              disabled
-              className="cursor-not-allowed opacity-50 font-medium"
+              onClick={() => {
+                onAddLocation();
+                setIsOpen(false);
+              }}
+              className="cursor-pointer font-medium"
             >
-              <Lock className="h-4 w-4 mr-2" />
+              <Plus className="h-4 w-4 mr-2" />
               <span>Add Location</span>
             </DropdownMenuItem>
           </>

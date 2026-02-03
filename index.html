@@ -7,7 +7,7 @@
     <title>PerceptionX - Shape what AI says about your employer brand</title>
     
     <!-- Security Headers -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.gpteng.co https://client.crisp.chat https://www.google.com https://www.gstatic.com https://www.googletagmanager.com https://static.hotjar.com https://script.hotjar.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://client.crisp.chat; font-src 'self' https://fonts.gstatic.com https://client.crisp.chat; img-src 'self' data: https:; connect-src 'self' https://ofyjvfmcgtntwamkubui.supabase.co wss://ofyjvfmcgtntwamkubui.supabase.co https://api.stripe.com https://client.crisp.chat wss://client.relay.crisp.chat https://www.google-analytics.com https://*.hotjar.com https://*.hotjar.io wss://*.hotjar.com wss://*.hotjar.io; frame-src 'self' https://js.stripe.com; object-src 'none'; base-uri 'self'; form-action 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.gpteng.co https://client.crisp.chat https://www.google.com https://www.gstatic.com https://www.googletagmanager.com https://static.hotjar.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://client.crisp.chat; font-src 'self' https://fonts.gstatic.com https://client.crisp.chat; img-src 'self' data: https:; connect-src 'self' https://ofyjvfmcgtntwamkubui.supabase.co wss://ofyjvfmcgtntwamkubui.supabase.co https://client.crisp.chat wss://client.relay.crisp.chat https://www.google-analytics.com https://*.hotjar.com https://*.hotjar.io; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta http-equiv="X-XSS-Protection" content="1; mode=block">
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
@@ -65,6 +65,21 @@
         page_location: window.location.href,
         page_path: window.location.pathname,
       });
+    </script>
+
+    <!-- Hotjar Tracking Code for App - Only load in production -->
+    <script type="text/javascript">
+      // Only load Hotjar in production environments
+      if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+        (function(h,o,t,j,a,r){
+          h.hj=h.hj||function(){(h.hj.q=h.hj.q||[]).push(arguments)};
+          h._hjSettings={hjid:6599957,hjsv:6};
+          a=o.getElementsByTagName('head')[0];
+          r=o.createElement('script');r.async=1;
+          r.src=t+h._hjSettings.hjid+j+h._hjSettings.hjsv;
+          a.appendChild(r);
+        })(window,document,'https://static.hotjar.com/c/hotjar-','.js?sv=');
+      }
     </script>
 
     <!-- Structured Data -->

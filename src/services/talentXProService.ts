@@ -6,7 +6,7 @@ export interface TalentXProPrompt {
   companyName: string;
   industry: string;
   attributeId: string;
-  promptType: 'sentiment' | 'competitive' | 'visibility';
+  promptType: 'informational' | 'experience' | 'competitive' | 'discovery' | 'talentx_informational' | 'talentx_experience' | 'talentx_competitive' | 'talentx_discovery';
   promptText: string;
   isGenerated: boolean;
   createdAt: string;
@@ -16,7 +16,7 @@ export interface TalentXProPrompt {
 export interface TalentXProAnalysis {
   attributeId: string;
   attributeName: string;
-  promptType: 'sentiment' | 'competitive' | 'visibility';
+  promptType: 'informational' | 'experience' | 'competitive' | 'discovery' | 'talentx_informational' | 'talentx_experience' | 'talentx_competitive' | 'talentx_discovery';
   perceptionScore: number;
   relevanceScore: number;
   sentimentScore: number;
@@ -72,7 +72,7 @@ export class TalentXProService {
           companyName: companyName,
           industry: industry,
           attributeId: prompt.prompt_category?.replace('TalentX: ', '') || 'unknown',
-          promptType: prompt.prompt_type as 'sentiment' | 'competitive' | 'visibility',
+          promptType: prompt.prompt_type as 'talentx_informational' | 'talentx_experience' | 'talentx_competitive' | 'talentx_discovery',
           promptText: prompt.prompt_text,
           isGenerated: true,
           createdAt: prompt.created_at,
@@ -101,7 +101,7 @@ export class TalentXProService {
           user_id: userId,
           onboarding_id: onboardingData.id, // Required field
           prompt_text: prompt.promptText,
-          prompt_type: prompt.promptType, // Use standard types: 'sentiment', 'competitive', 'visibility'
+          prompt_type: prompt.promptType.startsWith('talentx_') ? prompt.promptType : `talentx_${prompt.promptType}`,
           prompt_category: `TalentX: ${prompt.attributeId}`,
           is_active: true
         })))
@@ -118,7 +118,7 @@ export class TalentXProService {
         companyName: companyName,
         industry: industry,
         attributeId: prompt.prompt_category?.replace('TalentX: ', '') || 'unknown',
-        promptType: prompt.prompt_type as 'sentiment' | 'competitive' | 'visibility',
+        promptType: prompt.prompt_type as 'talentx_informational' | 'talentx_experience' | 'talentx_competitive' | 'talentx_discovery',
         promptText: prompt.prompt_text,
         isGenerated: true, // Always true since they're in confirmed_prompts
         createdAt: prompt.created_at,
@@ -135,14 +135,14 @@ export class TalentXProService {
    */
   private static generatePromptTemplates(companyName: string, industry: string): Array<{
     attributeId: string;
-    promptType: 'sentiment' | 'competitive' | 'visibility';
+    promptType: 'informational' | 'experience' | 'competitive' | 'discovery' | 'talentx_informational' | 'talentx_experience' | 'talentx_competitive' | 'talentx_discovery';
     promptText: string;
   }> {
     const templates = [
       // Mission & Purpose
       {
         attributeId: 'mission-purpose',
-        promptType: 'sentiment' as const,
+        promptType: 'experience' as const,
         promptText: `How well does ${companyName} communicate its mission and purpose to employees, and how does this resonate with their personal values?`
       },
       {
@@ -152,14 +152,14 @@ export class TalentXProService {
       },
       {
         attributeId: 'mission-purpose',
-        promptType: 'visibility' as const,
+        promptType: 'discovery' as const,
         promptText: `What companies in ${industry} are known for having a strong, purpose-driven employer brand?`
       },
 
       // Rewards & Recognition
       {
         attributeId: 'rewards-recognition',
-        promptType: 'sentiment' as const,
+        promptType: 'experience' as const,
         promptText: `How satisfied are employees at ${companyName} with the rewards and recognition programs, and what specific aspects drive positive or negative sentiment?`
       },
       {
@@ -169,14 +169,14 @@ export class TalentXProService {
       },
       {
         attributeId: 'rewards-recognition',
-        promptType: 'visibility' as const,
+        promptType: 'discovery' as const,
         promptText: `What companies in ${industry} are known for having exceptional rewards and recognition for employees?`
       },
 
       // Company Culture
       {
         attributeId: 'company-culture',
-        promptType: 'sentiment' as const,
+        promptType: 'experience' as const,
         promptText: `How do employees at ${companyName} describe the actual company culture versus the promoted culture?`
       },
       {
@@ -186,14 +186,14 @@ export class TalentXProService {
       },
       {
         attributeId: 'company-culture',
-        promptType: 'visibility' as const,
+        promptType: 'discovery' as const,
         promptText: `What companies in ${industry} are known for outstanding workplace culture?`
       },
 
       // Social Impact
       {
         attributeId: 'social-impact',
-        promptType: 'sentiment' as const,
+        promptType: 'experience' as const,
         promptText: `How do employees at ${companyName} perceive the company's commitment to social impact and community responsibility?`
       },
       {
@@ -203,14 +203,14 @@ export class TalentXProService {
       },
       {
         attributeId: 'social-impact',
-        promptType: 'visibility' as const,
+        promptType: 'discovery' as const,
         promptText: `What companies in ${industry} are recognized for meaningful social impact and community engagement?`
       },
 
       // Inclusion
       {
         attributeId: 'inclusion',
-        promptType: 'sentiment' as const,
+        promptType: 'experience' as const,
         promptText: `How do employees from diverse backgrounds at ${companyName} rate the inclusivity of the workplace culture and practices?`
       },
       {
@@ -220,14 +220,14 @@ export class TalentXProService {
       },
       {
         attributeId: 'inclusion',
-        promptType: 'visibility' as const,
+        promptType: 'discovery' as const,
         promptText: `What companies in ${industry} are most recognized for diversity, equity, and inclusion?`
       },
 
       // Innovation
       {
         attributeId: 'innovation',
-        promptType: 'sentiment' as const,
+        promptType: 'experience' as const,
         promptText: `How do employees at ${companyName} perceive the company's commitment to innovation and opportunities for creative work?`
       },
       {
@@ -237,14 +237,14 @@ export class TalentXProService {
       },
       {
         attributeId: 'innovation',
-        promptType: 'visibility' as const,
+        promptType: 'discovery' as const,
         promptText: `What companies in ${industry} are known for fostering innovation and creative thinking?`
       },
 
       // Wellbeing & Balance
       {
         attributeId: 'wellbeing-balance',
-        promptType: 'sentiment' as const,
+        promptType: 'experience' as const,
         promptText: `How do employees at ${companyName} rate work-life balance and the overall wellbeing support provided by the company?`
       },
       {
@@ -254,14 +254,14 @@ export class TalentXProService {
       },
       {
         attributeId: 'wellbeing-balance',
-        promptType: 'visibility' as const,
+        promptType: 'discovery' as const,
         promptText: `What companies in ${industry} are recognized for exceptional employee wellbeing and work-life balance?`
       },
 
       // Leadership
       {
         attributeId: 'leadership',
-        promptType: 'sentiment' as const,
+        promptType: 'experience' as const,
         promptText: `How do employees at ${companyName} rate the quality and effectiveness of leadership within the organization?`
       },
       {
@@ -271,14 +271,14 @@ export class TalentXProService {
       },
       {
         attributeId: 'leadership',
-        promptType: 'visibility' as const,
+        promptType: 'discovery' as const,
         promptText: `What companies in ${industry} are respected for outstanding leadership and management?`
       },
 
       // Security & Perks
       {
         attributeId: 'security-perks',
-        promptType: 'sentiment' as const,
+        promptType: 'experience' as const,
         promptText: `How do employees at ${companyName} perceive job security, benefits, and additional perks provided by the company?`
       },
       {
@@ -288,14 +288,14 @@ export class TalentXProService {
       },
       {
         attributeId: 'security-perks',
-        promptType: 'visibility' as const,
+        promptType: 'discovery' as const,
         promptText: `What companies in ${industry} are known for providing comprehensive benefits and job security?`
       },
 
       // Career Opportunities
       {
         attributeId: 'career-opportunities',
-        promptType: 'sentiment' as const,
+        promptType: 'experience' as const,
         promptText: `How do employees at ${companyName} rate career development opportunities and long-term growth potential?`
       },
       {
@@ -305,7 +305,7 @@ export class TalentXProService {
       },
       {
         attributeId: 'career-opportunities',
-        promptType: 'visibility' as const,
+        promptType: 'discovery' as const,
         promptText: `What companies in ${industry} are most recognized for exceptional career development and progression opportunities?`
       }
     ];
@@ -348,7 +348,7 @@ export class TalentXProService {
         companyName: 'Generated', // Not stored in confirmed_prompts
         industry: 'Generated', // Not stored in confirmed_prompts
         attributeId: prompt.prompt_category?.replace('TalentX: ', '') || 'unknown',
-        promptType: prompt.prompt_type as 'sentiment' | 'competitive' | 'visibility',
+        promptType: prompt.prompt_type as 'talentx_informational' | 'talentx_experience' | 'talentx_competitive' | 'talentx_discovery',
         promptText: prompt.prompt_text,
         isGenerated: true, // Always true since they're in confirmed_prompts
         createdAt: prompt.created_at,
@@ -383,7 +383,8 @@ export class TalentXProService {
             prompt_type,
             prompt_text,
             prompt_category,
-            company_id
+            company_id,
+            talentx_attribute_id
           )
         `)
         .eq('confirmed_prompts.user_id', userId)
@@ -425,8 +426,8 @@ export class TalentXProService {
 
       talentXResponses.forEach(response => {
         const promptType = response.confirmed_prompts.prompt_type;
-        const attributeId = response.confirmed_prompts.prompt_category?.replace('TalentX: ', '') || 
-                           promptType.replace('talentx_', '').split('_')[1] || 'unknown';
+        const attributeId = response.confirmed_prompts.talentx_attribute_id ||
+                           response.confirmed_prompts.prompt_category?.replace('TalentX: ', '') || 'unknown';
         
         if (!aggregated[attributeId]) {
           aggregated[attributeId] = {
@@ -463,14 +464,21 @@ export class TalentXProService {
         
         // Add to appropriate type array
         switch (analysisData.prompt_type) {
-          case 'sentiment':
+          case 'experience':
+          case 'talentx_experience':
             group.sentimentAnalyses.push(analysisData);
             break;
           case 'competitive':
+          case 'talentx_competitive':
             group.competitiveAnalyses.push(analysisData);
             break;
-          case 'visibility':
+          case 'discovery':
+          case 'talentx_discovery':
             group.visibilityAnalyses.push(analysisData);
+            break;
+          case 'informational':
+          case 'talentx_informational':
+            group.sentimentAnalyses.push(analysisData);
             break;
         }
 

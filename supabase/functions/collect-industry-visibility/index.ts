@@ -1,6 +1,56 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { SOURCES_SECTION_REGEX } from "../_shared/citation-extraction.ts";
+
+// Extract citations from OpenAI response (all app languages)
+function extractCitationsFromResponse(text: string): any[] {
+  const citations: any[] = [];
+  const seenUrls = new Set<string>();
+  const urlPattern = /https?:\/\/([^\s\)]+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = urlPattern.exec(text)) !== null) {
+    const url = match[0].replace(/[.,;:!?]+$/, "");
+    if (!seenUrls.has(url)) {
+      try {
+        const domain = new URL(url).hostname.replace("www.", "");
+        citations.push({ url, domain, title: `Source from ${domain}` });
+        seenUrls.add(url);
+      } catch (_e) {}
+    }
+  }
+  const citationPattern = /\[(\d+)\][\s]*([^\[]*?)(?:https?:\/\/[^\s\)]+)?/g;
+  while ((match = citationPattern.exec(text)) !== null) {
+    const num = match[1];
+    const context = match[2]?.trim();
+    const nearbyText = text.substring(Math.max(0, match.index - 50), match.index + 200);
+    const urlMatch = nearbyText.match(/https?:\/\/([^\s\)]+)/);
+    const citationKey = `citation-${num}`;
+    if (!seenUrls.has(citationKey)) {
+      citations.push({
+        domain: context || "unknown",
+        title: `Citation [${num}]${context ? `: ${context}` : ""}`,
+        url: urlMatch ? urlMatch[0] : undefined,
+      });
+      seenUrls.add(citationKey);
+    }
+  }
+  const sourcesMatch = text.match(SOURCES_SECTION_REGEX);
+  if (sourcesMatch) {
+    const sourcesText = sourcesMatch[1];
+    const sourceUrls = sourcesText.match(/https?:\/\/([^\s\n\)]+)/g) || [];
+    sourceUrls.forEach((url: string) => {
+      if (!seenUrls.has(url)) {
+        try {
+          const domain = new URL(url).hostname.replace("www.", "");
+          citations.push({ url, domain, title: `Source from ${domain}` });
+          seenUrls.add(url);
+        } catch (_e) {}
+      }
+    });
+  }
+  return citations;
+}
 
 // Visibility prompt templates for Employee Experience and Candidate Experience
 const VISIBILITY_PROMPTS = {
@@ -503,7 +553,7 @@ serve(async (req) => {
               company_id: null,
               onboarding_id: null,
               prompt_text: promptData.text,
-              prompt_type: "visibility",
+              prompt_type: "discovery",
               prompt_category: promptData.category,
               prompt_theme: promptData.theme,
               industry_context: industry,
@@ -527,7 +577,7 @@ serve(async (req) => {
                 .from("confirmed_prompts")
                 .select("id")
                 .is("company_id", null)
-                .eq("prompt_type", "visibility")
+                .eq("prompt_type", "discovery")
                 .eq("prompt_category", promptData.category)
                 .eq("prompt_theme", promptData.theme)
                 .eq("industry_context", industry);
@@ -809,6 +859,7 @@ serve(async (req) => {
 
               const openaiData = await openaiResponse.json();
               responseText = openaiData.choices?.[0]?.message?.content || "";
+              citations = extractCitationsFromResponse(responseText);
             } else if (model.type === "perplexity") {
               // Perplexity edge function
               const perplexityResponse = await fetch(
@@ -876,11 +927,13 @@ serve(async (req) => {
                   ai_model: model.name,
                   response_text: responseText,
                   citations:
-                    model.type === "perplexity"
+                    model.type === "openai"
                       ? citations
-                      : model.type === "google"
+                      : model.type === "perplexity"
                         ? citations
-                        : [],
+                        : model.type === "google"
+                          ? citations
+                          : [],
                   company_id: null, // Industry-wide response
                   company_mentioned: false,
                   detected_competitors: "",

@@ -62,7 +62,18 @@ export const LastUpdated = ({ onRefresh, lastUpdated }: LastUpdatedProps) => {
           <span className="hidden sm:inline">Last collected: {formattedTime}</span>
           <span className="sm:hidden">{formattedTime}</span>
         </div>
-        
+        {canRefreshData && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleUpdate}
+            disabled={isUpdating}
+            className="h-8 px-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+            title="Refresh data"
+          >
+            <RefreshCw className={`w-4 h-4 ${isUpdating ? 'animate-spin' : ''}`} />
+          </Button>
+        )}
         {!isPro && (
           <Badge 
             variant="secondary" 

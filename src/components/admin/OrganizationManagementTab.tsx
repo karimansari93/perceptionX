@@ -10,7 +10,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar } from 'lucide-react';
+import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database } from 'lucide-react';
+import { OrganizationDataDetail } from './OrganizationDataDetail';
 
 interface Organization {
   id: string;
@@ -39,6 +40,7 @@ export const OrganizationManagementTab = () => {
   const [filteredOrganizations, setFilteredOrganizations] = useState<Organization[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
+  const [selectedOrgForData, setSelectedOrgForData] = useState<Organization | null>(null);
   const [orgMembers, setOrgMembers] = useState<OrganizationMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -235,160 +237,153 @@ export const OrganizationManagementTab = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-48">
         <div className="text-center">
-          <RefreshCw className="h-12 w-12 animate-spin text-pink mx-auto mb-4" />
-          <p className="text-nightsky/60">Loading organizations...</p>
+          <RefreshCw className="h-8 w-8 animate-spin text-slate-400 mx-auto mb-3" />
+          <p className="text-sm text-slate-500">Loading organizations...</p>
         </div>
       </div>
     );
   }
 
+  if (selectedOrgForData) {
+    return (
+      <OrganizationDataDetail
+        org={{
+          id: selectedOrgForData.id,
+          name: selectedOrgForData.name,
+          description: selectedOrgForData.description ?? undefined,
+        }}
+        onBack={() => setSelectedOrgForData(null)}
+      />
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      {/* Header - compact */}
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-headline font-bold text-nightsky">Organizations</h1>
-          <p className="text-nightsky/60 mt-2">Manage your organizations and their members</p>
+          <h1 className="text-xl font-headline font-semibold text-slate-800">Organizations</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Manage your organizations and their members</p>
         </div>
-        <div className="flex gap-3">
-          <Button onClick={loadData} variant="outline" className="border-silver">
-            <RefreshCw className="h-4 w-4 mr-2" />
+        <div className="flex gap-2">
+          <Button onClick={loadData} variant="outline" size="sm" className="border-slate-200 text-slate-600">
+            <RefreshCw className="h-4 w-4 mr-1.5" />
             Refresh
           </Button>
-          <Button onClick={() => setShowCreateOrgModal(true)} className="bg-pink hover:bg-pink/90">
-            <Plus className="h-4 w-4 mr-2" />
+          <Button onClick={() => setShowCreateOrgModal(true)} size="sm" className="bg-pink hover:bg-pink/90 text-white">
+            <Plus className="h-4 w-4 mr-1.5" />
             Create Organization
           </Button>
         </div>
       </div>
 
-      {/* Search */}
-      <Card className="border-none shadow-md">
-        <CardContent className="pt-6">
-          <div className="space-y-2">
-            <Label className="text-nightsky">Search Organizations</Label>
+      {/* Search - compact */}
+      <Card className="border border-slate-200 shadow-sm bg-white">
+        <CardContent className="py-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium text-slate-600">Search Organizations</Label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-nightsky/40" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <Input
                 placeholder="Search by name or description..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="border-silver pl-10"
+                className="border-slate-200 h-9 pl-9 text-sm"
               />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Organizations Table */}
-      <Card className="border-none shadow-md">
-        <CardHeader>
-          <CardTitle className="text-nightsky">
+      {/* Organizations Table - focus on data */}
+      <Card className="border border-slate-200 shadow-sm bg-white">
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm font-medium text-slate-700">
             {filteredOrganizations.length} {filteredOrganizations.length === 1 ? 'Organization' : 'Organizations'}
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-0">
           {filteredOrganizations.length === 0 ? (
-            <div className="text-center py-12">
-              <Briefcase className="h-16 w-16 text-silver mx-auto mb-4" />
-              <p className="text-lg font-medium text-nightsky mb-2">No organizations found</p>
-              <p className="text-sm text-nightsky/60 mb-4">
-                {searchQuery 
-                  ? 'Try adjusting your search'
-                  : 'Create your first organization to get started'
-                }
+            <div className="text-center py-10">
+              <Briefcase className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-sm font-medium text-slate-700 mb-1">No organizations found</p>
+              <p className="text-xs text-slate-500 mb-3">
+                {searchQuery ? 'Try adjusting your search' : 'Create your first organization to get started'}
               </p>
               {!searchQuery && (
-                <Button onClick={() => setShowCreateOrgModal(true)} className="bg-pink hover:bg-pink/90">
-                  <Plus className="h-4 w-4 mr-2" />
+                <Button onClick={() => setShowCreateOrgModal(true)} size="sm" className="bg-pink hover:bg-pink/90 text-white">
+                  <Plus className="h-4 w-4 mr-1.5" />
                   Create Organization
                 </Button>
               )}
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Organization Name</TableHead>
-                  <TableHead>Organization ID</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Members</TableHead>
-                  <TableHead>Companies</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredOrganizations.map(org => (
-                  <TableRow key={org.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Briefcase className="h-4 w-4 text-nightsky/60" />
-                        <span className="font-medium text-nightsky">{org.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-sm text-nightsky/60 font-mono">{org.id}</span>
-                    </TableCell>
-                    <TableCell>
-                      {org.description ? (
-                        <span className="text-sm text-nightsky/70">{org.description}</span>
-                      ) : (
-                        <span className="text-sm text-nightsky/40 italic">No description</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Users className="h-4 w-4 text-teal" />
-                        <Badge variant="outline" className="border-teal/30 text-teal bg-teal/5">
+            <div className="rounded-md border border-slate-200 overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-200 hover:bg-transparent bg-slate-50/80">
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Organization Name</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Organization ID</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Description</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Members</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Companies</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Created</TableHead>
+                    <TableHead className="h-9 px-3 text-right text-xs font-medium text-slate-600">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredOrganizations.map(org => (
+                    <TableRow key={org.id} className="border-slate-200">
+                      <TableCell className="py-2 px-3 text-sm">
+                        <div className="flex items-center gap-2">
+                          <Briefcase className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />
+                          <span className="font-medium text-slate-800">{org.name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-xs font-mono text-slate-500">{org.id}</TableCell>
+                      <TableCell className="py-2 px-3 text-sm text-slate-600 max-w-[200px] truncate">
+                        {org.description || '—'}
+                      </TableCell>
+                      <TableCell className="py-2 px-3">
+                        <Badge variant="outline" className="border-slate-200 text-slate-600 bg-slate-50 text-xs font-normal">
                           {org.member_count || 0}
                         </Badge>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Building2 className="h-4 w-4 text-nightsky/60" />
-                        <Badge variant="outline" className="border-nightsky/30 text-nightsky bg-nightsky/5">
+                      </TableCell>
+                      <TableCell className="py-2 px-3">
+                        <Badge variant="outline" className="border-slate-200 text-slate-600 bg-slate-50 text-xs font-normal">
                           {org.company_count || 0}
                         </Badge>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-nightsky/60 text-sm">
-                        <Calendar className="h-4 w-4" />
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-xs text-slate-500">
                         {new Date(org.created_at).toLocaleDateString()}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-2 justify-end">
-                        <Button
-                          onClick={() => handleViewMembers(org)}
-                          size="sm"
-                          variant="outline"
-                          className="border-silver"
-                        >
-                          <Eye className="h-4 w-4 mr-2" />
-                          View Members
-                        </Button>
-                        <Button
-                          onClick={() => {
-                            setSelectedOrg(org);
-                            setShowAddUserModal(true);
-                          }}
-                          size="sm"
-                          className="bg-teal hover:bg-teal/90"
-                        >
-                          <UserPlus className="h-4 w-4 mr-2" />
-                          Add User
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-right">
+                        <div className="flex gap-1.5 justify-end flex-wrap">
+                          <Button onClick={() => setSelectedOrgForData(org)} size="sm" className="bg-pink hover:bg-pink/90 text-white h-7 text-xs">
+                            <Database className="h-3.5 w-3.5 mr-1" />
+                            Manage data
+                          </Button>
+                          <Button onClick={() => handleViewMembers(org)} size="sm" variant="outline" className="border-slate-200 text-slate-600 h-7 text-xs">
+                            <Eye className="h-3.5 w-3.5 mr-1" />
+                            View Members
+                          </Button>
+                          <Button
+                            onClick={() => { setSelectedOrg(org); setShowAddUserModal(true); }}
+                            size="sm"
+                            className="bg-teal hover:bg-teal/90 text-white h-7 text-xs"
+                          >
+                            <UserPlus className="h-3.5 w-3.5 mr-1" />
+                            Add User
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

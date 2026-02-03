@@ -22,7 +22,7 @@ interface GeneratedPrompt {
   id: string;
   text: string;
   category: string;
-  type: 'sentiment' | 'visibility' | 'competitive' | 'talentx';
+  type: 'informational' | 'experience' | 'competitive' | 'discovery' | 'talentx';
   industryContext?: string;
   jobFunctionContext?: string;
   locationContext?: string;
@@ -428,6 +428,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
   let generatedPrompts = generatePromptsFromData(onboardingData, isProUser);
   
   // Translate prompts if country is not GLOBAL and language is not English
+  // CRITICAL: Translation is REQUIRED for non-English countries - cannot proceed without it
   if (onboardingData.country && onboardingData.country !== 'GLOBAL') {
     // Check if country uses English (no translation needed)
     const englishSpeakingCountries = ['US', 'GB', 'CA', 'AU', 'NZ', 'IE', 'ZA', 'IN', 'SG', 'MY', 'PH', 'HK', 'AE', 'SA'];
@@ -437,26 +438,48 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
       try {
         console.log(`🌍 Translating ${generatedPrompts.length} prompts for country: ${onboardingData.country}`);
         const promptTexts = generatedPrompts.map(p => p.text);
-        
-        const { data: translationData, error: translationError } = await supabase.functions.invoke('translate-prompts', {
-          body: {
-            prompts: promptTexts,
-            countryCode: onboardingData.country
-          }
-        });
 
-        if (!translationError && translationData?.translatedPrompts) {
-          // Map translated prompts back to the original prompt structure
-          generatedPrompts = generatedPrompts.map((prompt, index) => ({
-            ...prompt,
-            text: translationData.translatedPrompts[index] || prompt.text
-          }));
-          console.log(`✅ Translated prompts to ${translationData.targetLanguage}`);
-        } else {
-          console.warn('⚠️ Translation failed, using original prompts:', translationError);
+        const invokeTranslate = () =>
+          supabase.functions.invoke('translate-prompts', {
+            body: { prompts: promptTexts, countryCode: onboardingData.country },
+          });
+        let { data: translationData, error: translationError } = await invokeTranslate();
+        if (translationError && (translationError.message?.includes('504') || translationError.message?.includes('timeout'))) {
+          console.warn('🔄 Translation timed out, retrying once...');
+          await new Promise((r) => setTimeout(r, 2000));
+          const retry = await invokeTranslate();
+          translationData = retry.data;
+          translationError = retry.error;
         }
-      } catch (translationException) {
-        console.warn('⚠️ Translation exception, using original prompts:', translationException);
+
+        if (!translationError && translationData?.translatedPrompts && translationData.translatedPrompts.length > 0) {
+          // Verify all prompts were translated
+          const allTranslated = translationData.translatedPrompts.every((translated: string, index: number) => 
+            translated && translated.trim().length > 0 && translated !== promptTexts[index]
+          );
+          
+          if (allTranslated) {
+            // Map translated prompts back to the original prompt structure
+            generatedPrompts = generatedPrompts.map((prompt, index) => ({
+              ...prompt,
+              text: translationData.translatedPrompts[index] || prompt.text
+            }));
+            console.log(`✅ Translated prompts to ${translationData.targetLanguage || 'target language'}`);
+          } else {
+            // Translation incomplete - fail the process
+            const targetLanguage = translationData?.targetLanguage || 'the local language';
+            throw new Error(`Translation incomplete for ${onboardingData.country}. All prompts must be translated to ${targetLanguage}.`);
+          }
+        } else {
+          // Translation failed - fail the process
+          const errorMessage = translationError?.message || 'Unknown error';
+          throw new Error(`Failed to translate prompts for ${onboardingData.country}. Translation service error: ${errorMessage}`);
+        }
+      } catch (translationException: any) {
+        // Translation is REQUIRED - cannot proceed without it
+        const errorMsg = translationException?.message || translationException?.toString() || 'Translation service unavailable';
+        console.error(`❌ Translation failed for ${onboardingData.country}:`, errorMsg);
+        throw new Error(`Cannot proceed: Translation to ${onboardingData.country}'s language is required but failed. ${errorMsg}`);
       }
     } else {
       console.log(`✅ Country ${onboardingData.country} uses English, skipping translation`);
@@ -470,7 +493,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
     if (prompt.id.startsWith('talentx-')) {
       // Remove 'talentx-' prefix and get the attributeId (everything before the last '-')
       const parts = prompt.id.replace('talentx-', '').split('-');
-      // Remove the last part (which is the type: sentiment/competitive/visibility)
+      // Remove the last part (which is the type: informational/experience/competitive/discovery)
       parts.pop();
       talentxAttributeId = parts.join('-');
     }
@@ -481,7 +504,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
       prompt_text: prompt.text,
       prompt_category: prompt.promptCategory,
       prompt_theme: prompt.promptTheme,
-      prompt_type: prompt.type,
+      prompt_type: talentxAttributeId ? `talentx_${prompt.type}` : prompt.type,
       talentx_attribute_id: talentxAttributeId,
       industry_context: prompt.industryContext || onboardingData.industry,
       job_function_context: prompt.jobFunctionContext || null,
@@ -500,103 +523,65 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
     throw insertError;
   }
 
-  // Define which models to test based on subscription status
-  const modelsToTest = [
-    { name: 'openai', displayName: 'ChatGPT', functionName: 'test-prompt-openai' },
-    { name: 'perplexity', displayName: 'Perplexity', functionName: 'test-prompt-perplexity' },
-    { name: 'google-ai-overviews', displayName: 'Google AI', functionName: 'test-prompt-google-ai-overviews' },
-    { name: 'bing-copilot', displayName: 'Bing Copilot', functionName: 'test-prompt-bing-copilot' }
-  ];
-
-  // Calculate total operations for progress tracking
-  const totalOperations = (confirmedPrompts?.length || 0) * modelsToTest.length;
-  setProgress({ completed: 0, total: totalOperations });
-
-  let completedOperations = 0;
-
-  // Define testWithModel inside this function to avoid scope issues
-  const testWithModel = async (confirmedPrompt: any, functionName: string, modelName: string) => {
-    try {
-      const { data: responseData, error: functionError } = await supabase.functions
-        .invoke(functionName, {
-          body: { prompt: confirmedPrompt.prompt_text }
-        });
-
-      if (functionError) {
-        console.error(`${functionName} edge function error:`, functionError);
-      } else if (responseData?.response) {
-        // Handle citations from Perplexity, Google AI Overviews, and Bing Copilot responses
-        const perplexityCitations = functionName === 'test-prompt-perplexity' ? responseData.citations : null;
-        const googleAICitations = functionName === 'test-prompt-google-ai-overviews' ? responseData.citations : null;
-        const bingCopilotCitations = functionName === 'test-prompt-bing-copilot' ? responseData.citations : null;
-        
-        // Analyze sentiment and extract citations with enhanced visibility support
-        const { data: sentimentData, error: sentimentError } = await supabase.functions
-          .invoke('analyze-response', {
-            body: { 
-              response: responseData.response,
-              companyName: onboardingRecord?.company_name || onboardingData.companyName,
-              promptType: confirmedPrompt.prompt_type,
-              perplexityCitations: perplexityCitations,
-              citations: googleAICitations, // Pass Google AI citations
-              confirmed_prompt_id: confirmedPrompt.id,
-              ai_model: modelName,
-              company_id: confirmedPrompt.company_id
-            }
-          });
-
-        if (sentimentError) {
-          throw new Error(`Sentiment analysis error: ${sentimentError.message}`);
-        }
-
-        // Combine Perplexity citations with analyzed citations
-        let finalCitations = sentimentData?.citations || [];
-        if (perplexityCitations && perplexityCitations.length > 0) {
-          finalCitations = [...perplexityCitations, ...finalCitations];
-        }
-        // Also add Google AI citations if present
-        if (googleAICitations && googleAICitations.length > 0) {
-          finalCitations = [...googleAICitations, ...finalCitations];
-        }
-
-        // Store the response with enhanced analysis using safeStorePromptResponse
-        // SKIP recency extraction during onboarding loop (will batch at end)
-        const { success, error: storeError } = await safeStorePromptResponse(supabase, {
-          confirmed_prompt_id: confirmedPrompt.id,
-          ai_model: modelName,
-          response_text: responseData.response,
-          // Sentiment analysis now handled by AI themes
-          // No need to store basic sentiment_score
-          // Sentiment analysis now handled by AI themes
-          // No need to store basic sentiment_score
-          citations: finalCitations,
-          company_mentioned: sentimentData?.company_mentioned || false,
-          mention_ranking: sentimentData?.mention_ranking || null,
-          detected_competitors: sentimentData?.detected_competitors || '',
-        }, true); // ✅ Skip recency extraction during loop
-
-        if (!success) {
-          console.error(`Error storing ${modelName} response:`, storeError);
-        }
-      }
-    } catch (error) {
-      console.error(`Error testing with ${modelName}:`, error);
-    }
-  };
-
-  // Test each prompt with allowed models based on subscription
-  for (const confirmedPrompt of confirmedPrompts || []) {
-    for (const model of modelsToTest) {
-      setProgress({ 
-        currentModel: model.displayName,
-        currentPrompt: confirmedPrompt.prompt_text,
-        completed: completedOperations,
-        total: totalOperations
-      });
-      await testWithModel(confirmedPrompt, model.functionName, model.name);
-      completedOperations++;
+  // Get company_id from prompts (should be set by trigger)
+  let companyId = confirmedPrompts?.[0]?.company_id;
+  
+  if (!companyId) {
+    console.warn('No company_id found in prompts, attempting to fetch from user...');
+    // Fallback: try to get company from user's companies
+    const { data: companyData } = await supabase
+      .from('companies')
+      .select('id')
+      .eq('created_by', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (companyData?.id) {
+      companyId = companyData.id;
+      console.log('Using fetched company_id:', companyId);
+    } else {
+      throw new Error('Could not determine company_id for batch collection');
     }
   }
+  
+  // Use batch collection function
+  const promptIds = confirmedPrompts?.map(p => p.id) || [];
+  const modelNames = ['openai', 'perplexity', 'google-ai-overviews'];
+  
+  setProgress({ 
+    currentModel: 'Batch Processing',
+    currentPrompt: `Processing ${promptIds.length} prompts...`,
+    completed: 0,
+    total: promptIds.length * modelNames.length
+  });
+
+  const { data: batchData, error: batchError } = await supabase.functions.invoke('collect-company-responses', {
+    body: {
+      companyId,
+      promptIds,
+      models: modelNames,
+      batchSize: 5,
+      skipExisting: true
+    }
+  });
+
+  if (batchError) {
+    throw new Error(`Batch collection failed: ${batchError.message}`);
+  }
+
+  if (!batchData?.success) {
+    throw new Error(batchData?.error || 'Batch collection failed');
+  }
+
+  setProgress({ 
+    currentModel: 'Complete',
+    currentPrompt: 'All prompts processed',
+    completed: batchData.summary?.totalOperations || 0,
+    total: batchData.summary?.totalOperations || 0
+  });
+
+  console.log('Batch collection completed:', batchData.summary);
 
   // ✅ BATCHED RECENCY EXTRACTION - After all responses are stored
   console.log('🎯 All responses stored, now extracting recency scores in one batch...');
@@ -751,7 +736,7 @@ export const formatCountryForPrompt = (countryCode: string): string => {
   return needsThe ? `the ${countryName}` : countryName;
 };
 
-const appendPromptContext = (text: string, jobFunction?: string, location?: string, promptType?: 'sentiment' | 'visibility' | 'competitive' | 'talentx') => {
+const appendPromptContext = (text: string, jobFunction?: string, location?: string, promptType?: 'informational' | 'experience' | 'competitive' | 'discovery' | 'talentx') => {
   const trimmedText = text.trim();
   const lowerText = trimmedText.toLowerCase();
   
@@ -796,9 +781,9 @@ const appendPromptContext = (text: string, jobFunction?: string, location?: stri
     return result;
   }
   
-  // Special handling for visibility prompts with job functions
-  if (promptType === 'visibility' && jobFunction) {
-    // Remove industry context from visibility prompts when job function is present
+  // Special handling for discovery prompts with job functions
+  if (promptType === 'discovery' && jobFunction) {
+    // Remove industry context from discovery prompts when job function is present
     // Pattern: "What companies in {industry} are known for X?" -> "What companies are known for X for {jobFunction}?"
     // Pattern: "What companies in the {industry} industry are known for X?" -> "What companies are known for X for {jobFunction}?"
     
@@ -848,7 +833,7 @@ const appendPromptContext = (text: string, jobFunction?: string, location?: stri
     return result.trim();
   }
   
-  // Default behavior for non-competitive/visibility prompts or prompts without job functions
+  // Default behavior for non-competitive/discovery prompts or prompts without job functions
   const contextParts: string[] = [];
 
   if (jobFunction) {
@@ -896,10 +881,10 @@ export const generatePromptsFromData = (onboardingData: OnboardingData, isProUse
 
   const basePrompts: GeneratedPrompt[] = [
     {
-      id: 'sentiment-1',
+      id: 'experience-1',
       text: `How is ${companyName} as an employer?`,
       category: 'General',
-      type: 'sentiment' as const,
+      type: 'experience' as const,
       industryContext: industry,
       jobFunctionContext: jobFunction,
       locationContext: locationContextValue,
@@ -907,10 +892,10 @@ export const generatePromptsFromData = (onboardingData: OnboardingData, isProUse
       promptTheme: 'General'
     },
     {
-      id: 'visibility-1',
+      id: 'discovery-1',
       text: `What is the best company to work for in the ${industry} industry?`,
       category: 'General',
-      type: 'visibility' as const,
+      type: 'discovery' as const,
       industryContext: industry,
       jobFunctionContext: jobFunction,
       locationContext: locationContextValue,
@@ -927,6 +912,17 @@ export const generatePromptsFromData = (onboardingData: OnboardingData, isProUse
       locationContext: locationContextValue,
       promptCategory: 'General' as const,
       promptTheme: 'General'
+    },
+    {
+      id: 'informational-1',
+      text: `What are the job and employment details at ${companyName}?`,
+      category: 'General',
+      type: 'informational' as const,
+      industryContext: industry,
+      jobFunctionContext: jobFunction,
+      locationContext: locationContextValue,
+      promptCategory: 'General' as const,
+      promptTheme: 'General'
     }
   ].map(prompt => ({
     ...prompt,
@@ -937,7 +933,7 @@ export const generatePromptsFromData = (onboardingData: OnboardingData, isProUse
   if (isProUser) {
     const talentXPrompts: GeneratedPrompt[] = [];
     
-    // Use the TALENTX_PROMPT_TEMPLATES system to generate all 30 prompts (3 per attribute)
+    // Use the TALENTX_PROMPT_TEMPLATES system to generate all 64 prompts (4 per attribute)
     const templates = generateTalentXPrompts(companyName, industry);
     templates.forEach(template => {
       const attribute = template.attribute;
@@ -965,14 +961,14 @@ export const generatePromptsFromData = (onboardingData: OnboardingData, isProUse
         template.prompt,
         jobFunction,
         locationForBasePrompts, // Use locationForBasePrompts which includes formatted country
-        template.type as 'sentiment' | 'competitive' | 'visibility'
+        template.type as 'informational' | 'experience' | 'competitive' | 'discovery'
       );
 
       talentXPrompts.push({
         id: `talentx-${template.attributeId}-${template.type}`,
         text: textWithContext,
         category: theme,
-        type: template.type as 'sentiment' | 'competitive' | 'visibility',
+        type: template.type as 'informational' | 'experience' | 'competitive' | 'discovery',
         industryContext: industry,
         jobFunctionContext: jobFunction,
         locationContext: locationContextValue,

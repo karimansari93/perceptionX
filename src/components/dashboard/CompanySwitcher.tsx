@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Favicon } from '@/components/ui/favicon';
 import { getCountryFlag } from '@/utils/countryFlags';
+import { DASHBOARD_ADD_LOCKED } from '@/config/featureFlags';
 
 interface CompanySwitcherProps {
   className?: string;
@@ -52,21 +53,19 @@ export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyMo
   };
 
   const handleAddNewCompany = () => {
-    const companyLimit = isPro ? 10 : 3;
-    const hasReachedLimit = userCompanies.length >= companyLimit;
-    
-    if (hasReachedLimit) {
-      if (isPro) {
-        toast.error('You\'ve reached the 10-company limit. Contact support for higher limits.');
-      } else {
-        toast.error('You\'ve reached the 3-company limit. Upgrade to Pro for up to 10 companies.');
-        setShowUpgradeModal?.(true);
-      }
+    if (DASHBOARD_ADD_LOCKED) {
+      toast.error('Adding companies is temporarily unavailable.');
       setIsOpen(false);
-      return; // Don't open the modal
+      return;
     }
-    
-    // Only open if under limit
+    // Pro users have no limit; free users are limited to 3 companies
+    if (!isPro && userCompanies.length >= 3) {
+      toast.error('You\'ve reached the 3-company limit. Upgrade to Pro for unlimited companies.');
+      setShowUpgradeModal?.(true);
+      setIsOpen(false);
+      return;
+    }
+
     setIsOpen(false);
     setShowAddCompanyModal?.(true);
   };
@@ -252,10 +251,19 @@ export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyMo
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              disabled
-              className="cursor-not-allowed opacity-50 font-medium"
+              disabled={!isPro || DASHBOARD_ADD_LOCKED}
+              onClick={isPro && !DASHBOARD_ADD_LOCKED ? handleAddNewCompany : undefined}
+              className={cn(
+                "font-medium",
+                (isPro && !DASHBOARD_ADD_LOCKED) ? "cursor-pointer" : "cursor-not-allowed opacity-50"
+              )}
+              title={DASHBOARD_ADD_LOCKED ? "Temporarily unavailable" : undefined}
             >
-              <Lock className="h-4 w-4 mr-2" />
+              {DASHBOARD_ADD_LOCKED || !isPro ? (
+                <Lock className="h-4 w-4 mr-2" />
+              ) : (
+                <Building2 className="h-4 w-4 mr-2" />
+              )}
               <span>Add New Company</span>
             </DropdownMenuItem>
           </>

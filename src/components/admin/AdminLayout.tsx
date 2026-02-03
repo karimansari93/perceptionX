@@ -6,7 +6,6 @@ import {
   Users, 
   Briefcase, 
   LogOut,
-  MessageSquare,
   Trophy
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -27,83 +26,49 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
   };
 
   const navItems = [
-    {
-      id: 'organizations',
-      label: 'Organizations',
-      icon: Briefcase,
-      description: 'Manage organizations'
-    },
-    {
-      id: 'users',
-      label: 'Users',
-      icon: Users,
-      description: 'Manage users & access'
-    },
-    {
-      id: 'companies',
-      label: 'Companies',
-      icon: Building2,
-      description: 'Manage company data'
-    },
-    {
-      id: 'visibility-rankings',
-      label: 'Visibility Rankings',
-      icon: Trophy,
-      description: 'Calculate & view rankings'
-    },
-    {
-      id: 'data-chat',
-      label: 'Data Chat',
-      icon: MessageSquare,
-      description: 'Ask questions about your data'
-    }
+    { id: 'organizations', label: 'Organizations', icon: Briefcase },
+    { id: 'users', label: 'Users', icon: Users },
+    { id: 'companies', label: 'Companies', icon: Building2 },
+    { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy }
   ];
 
   return (
-    <div className="flex h-screen bg-silver">
-      {/* Sidebar */}
-      <aside className="w-72 bg-nightsky text-white flex flex-col">
+    <div className="flex h-screen bg-slate-50">
+      {/* Sidebar - light, minimal */}
+      <aside className="w-56 flex-shrink-0 border-r border-slate-200 bg-white flex flex-col">
         {/* Logo/Header */}
-        <div className="p-6 border-b border-dusk">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-pink rounded-lg flex items-center justify-center">
-              <span className="text-xl font-bold">pX</span>
+        <div className="p-4 border-b border-slate-200">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center">
+              <span className="text-sm font-semibold text-slate-600">pX</span>
             </div>
             <div>
-              <h1 className="text-lg font-headline font-semibold">PerceptionX</h1>
-              <p className="text-xs text-silver/70">Admin Panel</p>
+              <h1 className="text-sm font-headline font-semibold text-slate-800">PerceptionX</h1>
+              <p className="text-xs text-slate-500">Admin</p>
             </div>
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 overflow-y-auto py-4 px-3">
-          <div className="space-y-1">
+        <nav className="flex-1 overflow-y-auto py-3 px-2">
+          <div className="space-y-0.5">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
-              
               return (
                 <button
                   key={item.id}
                   onClick={() => onTabChange(item.id)}
                   className={`
-                    w-full flex items-start gap-3 px-3 py-2.5 rounded-lg transition-all
-                    ${isActive 
-                      ? 'bg-pink text-white shadow-lg' 
-                      : 'text-silver/80 hover:bg-dusk hover:text-white'
+                    w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-left transition-colors
+                    ${isActive
+                      ? 'bg-slate-100 text-slate-900'
+                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'
                     }
                   `}
                 >
-                  <Icon className={`h-5 w-5 mt-0.5 flex-shrink-0 ${isActive ? 'text-white' : 'text-teal'}`} />
-                  <div className="text-left flex-1">
-                    <div className={`text-sm font-medium ${isActive ? 'text-white' : ''}`}>
-                      {item.label}
-                    </div>
-                    <div className={`text-xs ${isActive ? 'text-white/80' : 'text-silver/50'}`}>
-                      {item.description}
-                    </div>
-                  </div>
+                  <Icon className={`h-4 w-4 flex-shrink-0 ${isActive ? 'text-slate-700' : 'text-slate-500'}`} />
+                  <span className="text-sm font-medium truncate">{item.label}</span>
                 </button>
               );
             })}
@@ -111,11 +76,12 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
         </nav>
 
         {/* Sign Out */}
-        <div className="p-4 border-t border-dusk">
+        <div className="p-3 border-t border-slate-200">
           <Button
             onClick={handleSignOut}
             variant="outline"
-            className="w-full bg-transparent border-silver/20 text-silver hover:bg-dusk hover:text-white"
+            size="sm"
+            className="w-full border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-800"
           >
             <LogOut className="h-4 w-4 mr-2" />
             Sign Out
@@ -123,9 +89,9 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="p-8">
+      {/* Main Content - more room for data */}
+      <main className="flex-1 overflow-y-auto min-w-0">
+        <div className="p-5">
           {children}
         </div>
       </main>

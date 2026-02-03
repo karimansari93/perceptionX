@@ -146,7 +146,7 @@ serve(async (req) => {
         onboarding_id: onboardingData.id,
         company_id: companyId, // Set company_id for company-specific prompts
         prompt_text: template.prompt,
-        prompt_type: template.type as 'sentiment' | 'competitive' | 'visibility',
+        prompt_type: `talentx_${template.type}` as 'talentx_informational' | 'talentx_experience' | 'talentx_competitive' | 'talentx_discovery',
         prompt_category: promptCategory,
         prompt_theme: theme,
         talentx_attribute_id: template.attributeId,

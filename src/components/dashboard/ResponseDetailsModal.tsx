@@ -404,7 +404,7 @@ export const ResponseDetailsModal = ({
 
   // Extract company name from prompt text if not provided
   const extractedCompanyName = companyName || (() => {
-    // Try to extract company name from visibility prompts like "which companies in X industry mention Y?"
+    // Try to extract company name from discovery prompts like "which companies in X industry mention Y?"
     const mentionPattern = /mention\s+([A-Z][a-zA-Z\s&]+?)(?:\s+in|,|\?|$)/i;
     const match = promptText.match(mentionPattern);
     if (match && match[1]) {

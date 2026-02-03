@@ -174,12 +174,12 @@ export const useSubscription = () => {
     if (isPro) {
       return {
         prompts: -1, // unlimited
-        companies: 10,
+        companies: -1, // unlimited
         teamMembers: 5,
         projects: 10,
         features: [
           'Full company insights',
-          '10 companies at once',
+          'Unlimited companies',
           'Monthly data updates',
           'Company reports & analytics',
           'All AI models',

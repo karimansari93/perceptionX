@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { CheckCircle, Loader2, Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { retrySupabaseFunction } from "@/utils/supabaseRetry";
 import LLMLogo from "@/components/LLMLogo";
 import { checkExistingPromptResponse, logger } from "@/lib/utils";
 import { useDashboardData } from "@/hooks/useDashboardData";
@@ -20,7 +21,6 @@ const llmModels = [
   { name: "ChatGPT", model: "openai" },
   { name: "Perplexity", model: "perplexity" },
   { name: "Google AI", model: "google-ai-overviews" },
-  { name: "Bing Copilot", model: "bing-copilot" },
   { name: "Search Insights", model: "search-insights" }
 ];
 
@@ -190,7 +190,7 @@ const OnboardingLoading = () => {
           // Generate country context for prompts
           const countryContext = getCountryContext(finalCountry);
           
-          // First, generate and insert prompts
+          // First, generate and insert prompts (4 types: Experience, Discovery, Competitive, Informational)
           const promptsToInsert = [
             {
               onboarding_id: onboardingId,
@@ -198,7 +198,7 @@ const OnboardingLoading = () => {
               prompt_text: `How is ${companyName} as an employer${countryContext}?`,
               prompt_category: 'General',
               prompt_theme: 'General',
-              prompt_type: 'sentiment',
+              prompt_type: 'experience',
               industry_context: industry,
               is_active: true
             },
@@ -208,7 +208,7 @@ const OnboardingLoading = () => {
               prompt_text: `What is the best company to work for in the ${industry} industry${countryContext}?`,
               prompt_category: 'General',
               prompt_theme: 'General',
-              prompt_type: 'visibility',
+              prompt_type: 'discovery',
               industry_context: industry,
               is_active: true
             },
@@ -219,6 +219,16 @@ const OnboardingLoading = () => {
               prompt_category: 'General',
               prompt_theme: 'General',
               prompt_type: 'competitive',
+              industry_context: industry,
+              is_active: true
+            },
+            {
+              onboarding_id: onboardingId,
+              user_id: (await supabase.auth.getUser()).data.user?.id,
+              prompt_text: `What are the job and employment details at ${companyName}${countryContext}?`,
+              prompt_category: 'General',
+              prompt_theme: 'General',
+              prompt_type: 'informational',
               industry_context: industry,
               is_active: true
             }
@@ -269,123 +279,69 @@ const OnboardingLoading = () => {
           promptResponsesTableExists = false;
         }
 
-        // Function to run AI prompts
+        // Function to run AI prompts using batch collection
         const runAIPrompts = async () => {
-          for (const confirmedPrompt of confirmedPrompts) {
-            for (const model of modelsToTest) {
-              try {
-                // Only check for existing responses if the table exists
-                if (promptResponsesTableExists) {
-                  // Check if response already exists for this prompt and model
-                  const { data: existingResponse, error: responseCheckError } = await supabase
-                    .from('prompt_responses')
-                    .select('id')
-                    .eq('confirmed_prompt_id', confirmedPrompt.id)
-                    .eq('ai_model', model.name)
-                    .limit(1);
+          // Safety check: Don't proceed if company_id is still null
+          if (!companyId) {
+            console.error('❌ Cannot run batch collection: company_id is null');
+            logger.error('Skipping batch collection: company_id is null');
+            return;
+          }
 
-                  if (responseCheckError) {
-                    console.error(`Error checking existing response for ${model.name}:`, responseCheckError);
-                    // If it's a table not found error or other database error, continue with processing
-                    if (responseCheckError.code === '42P01' || responseCheckError.code === '406' || responseCheckError.code === 'PGRST116') {
-                      console.log(`Database error for ${model.name} (table may not exist yet), continuing with processing...`);
-                    } else {
-                      console.log(`Unknown error for ${model.name}, continuing with processing...`);
-                    }
-                    // Continue with processing regardless of the error
-                  }
+          const promptIds = confirmedPrompts.map(p => p.id);
+          const modelNames = modelsToTest.map(m => m.name);
 
-                  // Skip if response already exists
-                  if (existingResponse && existingResponse.length > 0) {
-                    console.log(`Response for ${model.name} already exists, skipping...`);
-                    completedOperations++;
-                    setProgress(prev => ({ ...prev, completed: completedOperations }));
-                    continue;
-                  }
-                }
+          setProgress(prev => ({
+            ...prev,
+            currentModel: 'Batch Processing',
+            currentPrompt: `Processing ${promptIds.length} prompts with ${modelNames.length} models...`
+          }));
 
-                setProgress(prev => ({
-                  ...prev,
-                  currentModel: model.displayName,
-                  currentPrompt: confirmedPrompt.prompt_text
-                }));
+          try {
+            // Call batch collection function (with retry for fetch/CORS/network errors)
+            const batchBody = {
+              companyId,
+              promptIds,
+              models: modelNames,
+              batchSize: 5,
+              skipExisting: promptResponsesTableExists,
+            };
+            const { data: batchData, error: batchError } = await retrySupabaseFunction('collect-company-responses', batchBody, {
+              maxRetries: 2,
+              initialDelay: 2000,
+            });
 
-                // Call the LLM edge function
-                const { data: responseData, error: functionError } = await supabase.functions
-                  .invoke(model.functionName, {
-                    body: { prompt: confirmedPrompt.prompt_text }
-                  });
-
-                if (functionError) {
-                  console.error(`${model.functionName} error:`, functionError);
-                  // Continue with next model instead of failing completely
-                  continue;
-                }
-
-                if (responseData && responseData.response) {
-                  // Check if response already exists for this prompt and model
-                  const responseExists = await checkExistingPromptResponse(
-                    supabase,
-                    confirmedPrompt.id,
-                    model.name
-                  );
-
-                  if (responseExists) {
-                    continue;
-                  }
-
-                  // Process the response through analyze-response
-                  const perplexityCitations = model.functionName === 'test-prompt-perplexity' ? responseData.citations : null;
-                  const googleAICitations = model.name === 'google-ai-overviews' ? responseData.citations : null;
-                  
-                  try {
-                    console.log('🔍 Calling analyze-response with:', {
-                      companyName,
-                      company_id: companyId,
-                      confirmed_prompt_id: confirmedPrompt.id,
-                      ai_model: model.name
-                    });
-                    
-                    // Safety check: Don't proceed if company_id is still null
-                    if (!companyId) {
-                      console.error('❌ Skipping analyze-response: company_id is null');
-                      logger.error(`Skipping analysis for ${model.name}: company_id is null`);
-                      continue; // Skip this response
-                    }
-                    
-                    const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-response', {
-                      body: {
-                        response: responseData.response,
-                        companyName: companyName,
-                        promptType: confirmedPrompt.prompt_type,
-                        perplexityCitations: perplexityCitations,
-                        citations: googleAICitations,
-                        confirmed_prompt_id: confirmedPrompt.id,
-                        ai_model: model.name,
-                        company_id: companyId
-                      }
-                    });
-
-                    if (analysisError) {
-                      logger.error(`Analysis error for ${model.name}:`, analysisError);
-                    }
-                  } catch (analysisError) {
-                    logger.error(`Analysis exception for ${model.name}:`, analysisError);
-                  }
-                }
-
-                completedOperations++;
-                setProgress(prev => ({ ...prev, completed: completedOperations }));
-
-                // Small delay to show progress
-                await new Promise(resolve => setTimeout(resolve, 1000));
-
-              } catch (modelError) {
-                logger.error(`Error with ${model.name}:`, modelError);
-                // Continue with next model
-                continue;
-              }
+            if (batchError) {
+              const isFetchError =
+                batchError?.name === 'FunctionsFetchError' ||
+                (batchError?.message && String(batchError.message).toLowerCase().includes('failed to send a request'));
+              const msg = isFetchError
+                ? 'Could not reach the server. Check your connection or redeploy the Edge Function (see docs/debug/DEBUG_CORS_EDGE_FUNCTIONS.md).'
+                : `Batch collection failed: ${batchError.message}`;
+              throw new Error(msg);
             }
+
+            if (!batchData?.success) {
+              throw new Error(batchData?.error || 'Batch collection failed');
+            }
+
+            // Update progress
+            completedOperations = batchData.summary?.totalOperations || completedOperations;
+            setProgress(prev => ({
+              ...prev,
+              currentModel: 'Complete',
+              currentPrompt: 'All prompts processed',
+              completed: completedOperations
+            }));
+
+            console.log('✅ Batch collection completed:', batchData.summary);
+            
+            if (batchData.results?.errors?.length > 0) {
+              console.warn('Some errors occurred during batch collection:', batchData.results.errors);
+            }
+          } catch (batchError: any) {
+            logger.error('Batch collection error:', batchError);
+            throw batchError;
           }
         };
 

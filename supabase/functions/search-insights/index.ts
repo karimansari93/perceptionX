@@ -364,19 +364,19 @@ interface SearchResult {
 }
 
 serve(async (req) => {
-  // Handle OPTIONS preflight requests
+  // Handle OPTIONS preflight first (required for browser CORS from localhost)
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { 
+    return new Response('ok', {
+      status: 200,
       headers: {
         ...corsHeaders,
         'Access-Control-Max-Age': '86400',
-      }
-    })
+      },
+    });
   }
 
-  // Wrap everything in a try-catch to ensure CORS headers are always returned
   try {
-    // Parse request body with error handling
+    // Parse request body and run handler (inner try/catch ensures CORS on all responses)
     let requestBody: any
     try {
       requestBody = await req.json()
@@ -1334,4 +1334,4 @@ serve(async (req) => {
       )
     }
   }
-})
+});

@@ -1,3 +1,20 @@
+// Get Supabase URL from environment variable or use fallback
+const getSupabaseUrl = () => {
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  if (url) {
+    return url.replace('https://', '');
+  }
+  return 'ofyjvfmcgtntwamkubui.supabase.co'; // Fallback for development
+};
+
+const getSupabaseWssUrl = () => {
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  if (url) {
+    return url.replace('https://', 'wss://');
+  }
+  return 'wss://ofyjvfmcgtntwamkubui.supabase.co'; // Fallback for development
+};
+
 // Security configuration for the application
 export const securityConfig = {
   // Rate limiting settings
@@ -16,61 +33,62 @@ export const securityConfig = {
   },
   
   // Content Security Policy settings
-  csp: {
-    defaultSrc: ["'self'"],
-    scriptSrc: [
-      "'self'",
-      "'unsafe-inline'",
-      "'unsafe-eval'",
-      "https://cdn.gpteng.co",
-      "https://client.crisp.chat",
-      "https://www.google.com",
-      "https://www.gstatic.com"
-    ],
-    styleSrc: [
-      "'self'",
-      "'unsafe-inline'",
-      "https://fonts.googleapis.com",
-      "https://client.crisp.chat"
-    ],
-    fontSrc: [
-      "'self'",
-      "https://fonts.gstatic.com",
-      "https://client.crisp.chat"
-    ],
-    imgSrc: [
-      "'self'",
-      "data:",
-      "https:"
-    ],
-    connectSrc: [
-      "'self'",
-      "https://ofyjvfmcgtntwamkubui.supabase.co",
-      "wss://ofyjvfmcgtntwamkubui.supabase.co",
-      "https://api.stripe.com",
-      "https://client.crisp.chat",
-      "wss://client.relay.crisp.chat"
-    ],
-    frameSrc: [
-      "'self'",
-      "https://js.stripe.com"
-    ],
-    objectSrc: ["'none'"],
-    baseUri: ["'self'"],
-    formAction: ["'self'"]
+  get csp() {
+    return {
+      defaultSrc: ["'self'"],
+      scriptSrc: [
+        "'self'",
+        "'unsafe-inline'",
+        "'unsafe-eval'",
+        "https://cdn.gpteng.co",
+        "https://client.crisp.chat",
+        "https://www.google.com",
+        "https://www.gstatic.com"
+      ],
+      styleSrc: [
+        "'self'",
+        "'unsafe-inline'",
+        "https://fonts.googleapis.com",
+        "https://client.crisp.chat"
+      ],
+      fontSrc: [
+        "'self'",
+        "https://fonts.gstatic.com",
+        "https://client.crisp.chat"
+      ],
+      imgSrc: [
+        "'self'",
+        "data:",
+        "https:"
+      ],
+      connectSrc: [
+        "'self'",
+        `https://${getSupabaseUrl()}`,
+        getSupabaseWssUrl(),
+        "https://client.crisp.chat",
+        "wss://client.relay.crisp.chat"
+      ],
+      frameSrc: [
+        "'self'"
+      ],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"]
+    };
   },
   
   // Allowed domains for external resources
-  allowedDomains: [
-    'ofyjvfmcgtntwamkubui.supabase.co',
-    'api.stripe.com',
-    'client.crisp.chat',
-    'fonts.googleapis.com',
-    'fonts.gstatic.com',
-    'cdn.gpteng.co',
-    'www.google.com',
-    'www.gstatic.com'
-  ],
+  get allowedDomains() {
+    return [
+      getSupabaseUrl(),
+      'client.crisp.chat',
+      'fonts.googleapis.com',
+      'fonts.gstatic.com',
+      'cdn.gpteng.co',
+      'www.google.com',
+      'www.gstatic.com'
+    ];
+  },
   
   // Sensitive data patterns to avoid logging
   sensitivePatterns: [

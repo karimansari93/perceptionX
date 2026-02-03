@@ -3,19 +3,14 @@ import { SidebarProvider, SidebarInset, SidebarTrigger, useSidebar } from "@/com
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { OverviewTab } from "@/components/dashboard/OverviewTab";
-import { PromptsTab } from "@/components/dashboard/PromptsTab";
-import { ResponsesTab } from "@/components/dashboard/ResponsesTab";
-import { SourcesTab } from "@/components/dashboard/SourcesTab";
-import { CompetitorsTab } from "@/components/dashboard/CompetitorsTab";
-import { AnswerGapsTab } from "@/components/dashboard/AnswerGapsTab";
-import { SearchTab } from "@/components/dashboard/SearchTab";
-import { ThematicAnalysisTab } from "@/components/dashboard/ThematicAnalysisTab";
+// Lazy load heavy components (especially those with recharts) to reduce initial bundle size
+import { lazy, Suspense } from "react";
 import { ReportGenerator } from "@/components/dashboard/ReportGenerator";
 import { AppSidebar } from "@/components/AppSidebar";
 import { UpgradeModal } from "@/components/upgrade/UpgradeModal";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { DASHBOARD_ADD_LOCKED } from "@/config/featureFlags";
 import { useCompany } from "@/contexts/CompanyContext";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertTriangle, ChevronRight, LayoutDashboard, Lock, Globe, Users, TrendingUp, BarChart3, Activity, RefreshCw } from "lucide-react";
@@ -28,6 +23,15 @@ import {
   AnswerGapsSkeleton, 
   ReportsSkeleton 
 } from "@/components/dashboard/SectionSkeletons";
+
+const OverviewTab = lazy(() => import("@/components/dashboard/OverviewTab").then(module => ({ default: module.OverviewTab })));
+const PromptsTab = lazy(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
+const ResponsesTab = lazy(() => import("@/components/dashboard/ResponsesTab").then(module => ({ default: module.ResponsesTab })));
+const SourcesTab = lazy(() => import("@/components/dashboard/SourcesTab").then(module => ({ default: module.SourcesTab })));
+const CompetitorsTab = lazy(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
+const AnswerGapsTab = lazy(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
+const SearchTab = lazy(() => import("@/components/dashboard/SearchTab").then(module => ({ default: module.SearchTab })));
+const ThematicAnalysisTab = lazy(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
 import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
 import LLMLogo from "@/components/LLMLogo";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -149,7 +153,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     recencyDataError,
     recencyData,
     recencyDataLoading,
-    aiThemesLoading
+    aiThemesLoading,
+    metricsCalculating
   } = useDashboardData();
   const { isPro } = useSubscription();
 
@@ -453,75 +458,97 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     switch (activeSection) {
       case "overview":
         return (
-          <OverviewTab 
-            responses={responses}
-            metrics={metrics}
-            topCitations={topCitations}
-            topCompetitors={topCompetitors}
-            competitorLoading={competitorLoading}
-            companyName={companyName}
-            llmMentionRankings={llmMentionRankings}
-            talentXProData={talentXProData}
-            isPro={isPro}
-            searchResults={searchResults}
-            aiThemes={aiThemes}
-            recencyData={recencyData}
-            recencyDataLoading={recencyDataLoading}
-            aiThemesLoading={aiThemesLoading}
-          />
+          <Suspense fallback={<OverviewSkeleton />}>
+            <OverviewTab 
+              responses={responses}
+              metrics={metrics}
+              topCitations={topCitations}
+              topCompetitors={topCompetitors}
+              competitorLoading={competitorLoading}
+              companyName={companyName}
+              llmMentionRankings={llmMentionRankings}
+              talentXProData={talentXProData}
+              isPro={isPro}
+              searchResults={searchResults}
+              aiThemes={aiThemes}
+              recencyData={recencyData}
+              recencyDataLoading={recencyDataLoading}
+              aiThemesLoading={aiThemesLoading}
+              metricsCalculating={metricsCalculating}
+            />
+          </Suspense>
         );
       case "prompts":
         return (
-          <PromptsTab
-            promptsData={promptsData}
-            responses={responses}
-            companyName={companyName}
-            onRefresh={refreshData}
-            onRefreshPrompts={async (ids, name) => {
-              const targetName = name || companyName || currentCompany?.name;
-              if (!targetName || ids.length === 0) return;
-              await refreshAllPrompts(targetName, { promptIds: ids });
-            }}
-            isRefreshing={isRefreshing}
-            refreshProgress={refreshProgress}
-            selectedLocation={selectedLocation}
-          />
+          <Suspense fallback={<PromptsSkeleton />}>
+            <PromptsTab
+              promptsData={promptsData}
+              responses={responses}
+              companyName={companyName}
+              onRefresh={refreshData}
+              onRefreshPrompts={async (ids, name) => {
+                const targetName = name || companyName || currentCompany?.name;
+                if (!targetName || ids.length === 0) return;
+                await refreshAllPrompts(targetName, { promptIds: ids });
+              }}
+              isRefreshing={isRefreshing}
+              refreshProgress={refreshProgress}
+              selectedLocation={selectedLocation}
+            />
+          </Suspense>
         );
       case "responses":
-        return <ResponsesTab responses={responses} parseCitations={parseCitations} companyName={companyName} />;
+        return (
+          <Suspense fallback={<ResponsesSkeleton />}>
+            <ResponsesTab responses={responses} parseCitations={parseCitations} companyName={companyName} />
+          </Suspense>
+        );
       case "search":
         return (
-          <SearchTab 
-            companyName={companyName}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            searchResults={searchResults}
-            searchTermsData={searchTermsData}
-          />
+          <Suspense fallback={<div className="flex items-center justify-center h-64"><LoadingSpinner /></div>}>
+            <SearchTab 
+              companyName={companyName}
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              searchResults={searchResults}
+              searchTermsData={searchTermsData}
+            />
+          </Suspense>
         );
       case "sources":
-        return <SourcesTab key={companyName} topCitations={topCitations} responses={responses} parseCitations={parseCitations} companyName={companyName} searchResults={searchResults} currentCompanyId={currentCompany?.id} />;
-      case "competitors":
-        const competitorsContent = (
-          <CompetitorsTab 
-            topCompetitors={topCompetitors}
-            responses={responses}
-            companyName={companyName}
-            searchResults={searchResults.filter(r => r.company_id === currentCompany?.id)}
-          />
+        return (
+          <Suspense fallback={<div className="flex items-center justify-center h-64"><LoadingSpinner /></div>}>
+            <SourcesTab key={companyName} topCitations={topCitations} responses={responses} parseCitations={parseCitations} companyName={companyName} searchResults={searchResults} currentCompanyId={currentCompany?.id} />
+          </Suspense>
         );
-        return competitorsContent;
+      case "competitors":
+        return (
+          <Suspense fallback={<div className="flex items-center justify-center h-64"><LoadingSpinner /></div>}>
+            <CompetitorsTab 
+              topCompetitors={topCompetitors}
+              responses={responses}
+              companyName={companyName}
+              searchResults={searchResults.filter(r => r.company_id === currentCompany?.id)}
+            />
+          </Suspense>
+        );
       case "thematic":
         return (
-          <ThematicAnalysisTab 
-            responses={responses}
-            companyName={companyName}
-            chartView={chartView}
-            setChartView={setChartView}
-          />
+          <Suspense fallback={<div className="flex items-center justify-center h-64"><LoadingSpinner /></div>}>
+            <ThematicAnalysisTab 
+              responses={responses}
+              companyName={companyName}
+              chartView={chartView}
+              setChartView={setChartView}
+            />
+          </Suspense>
         );
       case "answer-gaps":
-        return <AnswerGapsTab />;
+        return (
+          <Suspense fallback={<AnswerGapsSkeleton />}>
+            <AnswerGapsTab />
+          </Suspense>
+        );
       case "reports":
         const reportsContent = (
           <ReportGenerator
@@ -615,7 +642,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           refreshProgress={isCollectingData ? collectionProgress : refreshProgress}
           selectedLocation={selectedLocation}
           onLocationChange={setSelectedLocation}
-          onAddLocation={() => setShowAddLocationModal(true)}
+          onAddLocation={DASHBOARD_ADD_LOCKED ? undefined : () => setShowAddLocationModal(true)}
         />
         <div className="flex-1 overflow-auto">
           {isLoading ? (

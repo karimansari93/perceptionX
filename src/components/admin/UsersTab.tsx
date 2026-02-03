@@ -124,230 +124,209 @@ export const UsersTab = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-48">
         <div className="text-center">
-          <RefreshCw className="h-12 w-12 animate-spin text-pink mx-auto mb-4" />
-          <p className="text-nightsky/60">Loading users...</p>
+          <RefreshCw className="h-8 w-8 animate-spin text-slate-400 mx-auto mb-3" />
+          <p className="text-sm text-slate-500">Loading users...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      {/* Header - compact */}
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-headline font-bold text-nightsky">Users</h1>
-          <p className="text-nightsky/60 mt-2">Manage user accounts and permissions</p>
+          <h1 className="text-xl font-headline font-semibold text-slate-800">Users</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Manage user accounts and permissions</p>
         </div>
-        <Button onClick={loadUsers} variant="outline" className="border-silver">
-          <RefreshCw className="h-4 w-4 mr-2" />
+        <Button onClick={loadUsers} variant="outline" size="sm" className="border-slate-200 text-slate-600">
+          <RefreshCw className="h-4 w-4 mr-1.5" />
           Refresh
         </Button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <Card className="border-none shadow-md">
-          <CardContent className="pt-6">
+      {/* Stats - neutral */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <Card className="border border-slate-200 shadow-sm bg-white">
+          <CardContent className="py-4">
             <div className="flex items-center gap-3">
-              <div className="bg-teal/10 p-3 rounded-lg">
-                <Users className="h-6 w-6 text-teal" />
+              <div className="p-2 rounded-md bg-slate-100 text-slate-500">
+                <Users className="h-5 w-5" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-nightsky">{users.length}</p>
-                <p className="text-sm text-nightsky/60">Total Users</p>
+                <p className="text-xl font-semibold text-slate-800">{users.length}</p>
+                <p className="text-xs text-slate-500">Total Users</p>
               </div>
             </div>
           </CardContent>
         </Card>
-
-        <Card className="border-none shadow-md">
-          <CardContent className="pt-6">
+        <Card className="border border-slate-200 shadow-sm bg-white">
+          <CardContent className="py-4">
             <div className="flex items-center gap-3">
-              <div className="bg-pink/10 p-3 rounded-lg">
-                <Crown className="h-6 w-6 text-pink" />
+              <div className="p-2 rounded-md bg-slate-100 text-slate-500">
+                <Crown className="h-5 w-5" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-nightsky">
+                <p className="text-xl font-semibold text-slate-800">
                   {users.filter(u => u.subscription_type === 'pro').length}
                 </p>
-                <p className="text-sm text-nightsky/60">Pro Users</p>
+                <p className="text-xs text-slate-500">Pro Users</p>
               </div>
             </div>
           </CardContent>
         </Card>
-
-        <Card className="border-none shadow-md">
-          <CardContent className="pt-6">
+        <Card className="border border-slate-200 shadow-sm bg-white">
+          <CardContent className="py-4">
             <div className="flex items-center gap-3">
-              <div className="bg-pink/10 p-3 rounded-lg">
-                <Briefcase className="h-6 w-6 text-pink" />
+              <div className="p-2 rounded-md bg-slate-100 text-slate-500">
+                <Briefcase className="h-5 w-5" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-nightsky">
+                <p className="text-xl font-semibold text-slate-800">
                   {users.filter(u => u.organizations.length > 0).length}
                 </p>
-                <p className="text-sm text-nightsky/60">Users in Organizations</p>
+                <p className="text-xs text-slate-500">In Organizations</p>
               </div>
             </div>
           </CardContent>
         </Card>
-
-        <Card className="border-none shadow-md">
-          <CardContent className="pt-6">
+        <Card className="border border-slate-200 shadow-sm bg-white">
+          <CardContent className="py-4">
             <div className="flex items-center gap-3">
-              <div className="bg-nightsky/10 p-3 rounded-lg">
-                <Users className="h-6 w-6 text-nightsky" />
+              <div className="p-2 rounded-md bg-slate-100 text-slate-500">
+                <Users className="h-5 w-5" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-nightsky">
+                <p className="text-xl font-semibold text-slate-800">
                   {users.filter(u => u.organizations.length === 0).length}
                 </p>
-                <p className="text-sm text-nightsky/60">Unassigned Users</p>
+                <p className="text-xs text-slate-500">Unassigned</p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Search */}
-      <Card className="border-none shadow-md">
-        <CardContent className="pt-6">
-          <div className="space-y-2">
-            <Label className="text-nightsky">Search Users</Label>
+      {/* Search - compact */}
+      <Card className="border border-slate-200 shadow-sm bg-white">
+        <CardContent className="py-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium text-slate-600">Search Users</Label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-nightsky/40" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <Input
                 placeholder="Search by email or organization..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="border-silver pl-10"
+                className="border-slate-200 h-9 pl-9 text-sm"
               />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Users Table */}
-      <Card className="border-none shadow-md">
-        <CardHeader>
-          <CardTitle className="text-nightsky">
+      {/* Users Table - focus on data */}
+      <Card className="border border-slate-200 shadow-sm bg-white">
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm font-medium text-slate-700">
             {filteredUsers.length} {filteredUsers.length === 1 ? 'User' : 'Users'}
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-0">
           {filteredUsers.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="h-16 w-16 text-silver mx-auto mb-4" />
-              <p className="text-lg font-medium text-nightsky mb-2">No users found</p>
-              <p className="text-sm text-nightsky/60">
+            <div className="text-center py-10">
+              <Users className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-sm font-medium text-slate-700 mb-1">No users found</p>
+              <p className="text-xs text-slate-500">
                 {searchQuery ? 'Try adjusting your search' : 'No users in the system yet'}
               </p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Subscription</TableHead>
-                  <TableHead>Organizations</TableHead>
-                  <TableHead>Joined</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredUsers.map(user => {
-                  const isPro = user.subscription_type === 'pro';
-                  const isUpgrading = upgradingUserId === user.id;
-                  
-                  return (
-                    <TableRow key={user.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Mail className="h-4 w-4 text-nightsky/60" />
-                          <span className="font-medium text-nightsky">{user.email}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge 
-                          variant={isPro ? 'default' : 'outline'}
-                          className={isPro 
-                            ? 'bg-pink text-white border-pink' 
-                            : 'border-silver text-nightsky/70'
-                          }
-                        >
-                          {isPro ? (
-                            <>
-                              <Crown className="h-3 w-3 mr-1" />
-                              Pro
-                            </>
-                          ) : (
-                            'Free'
-                          )}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {user.organizations.length === 0 ? (
-                          <Badge variant="outline" className="border-red-300 text-red-600 bg-red-50">
-                            No organization
-                          </Badge>
-                        ) : (
-                          <div className="flex flex-wrap gap-2">
-                            {user.organizations.map(org => (
-                              <div key={org.id} className="flex items-center gap-1">
-                                <Badge 
-                                  variant="outline" 
-                                  className="border-teal/30 text-teal bg-teal/5"
-                                >
-                                  <Briefcase className="h-3 w-3 mr-1" />
-                                  {org.name}
-                                </Badge>
-                                <Badge 
-                                  variant="secondary" 
-                                  className="text-xs bg-nightsky/10 text-nightsky"
-                                >
-                                  {org.role}
-                                </Badge>
-                              </div>
-                            ))}
+            <div className="rounded-md border border-slate-200 overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-200 hover:bg-transparent bg-slate-50/80">
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Email</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Subscription</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Organizations</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Joined</TableHead>
+                    <TableHead className="h-9 px-3 text-right text-xs font-medium text-slate-600">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredUsers.map(user => {
+                    const isPro = user.subscription_type === 'pro';
+                    const isUpgrading = upgradingUserId === user.id;
+                    return (
+                      <TableRow key={user.id} className="border-slate-200">
+                        <TableCell className="py-2 px-3 text-sm">
+                          <div className="flex items-center gap-2">
+                            <Mail className="h-3.5 w-3.5 text-slate-400" />
+                            <span className="font-medium text-slate-800">{user.email}</span>
                           </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2 text-nightsky/60 text-sm">
-                          <Calendar className="h-4 w-4" />
-                          {new Date(user.created_at).toLocaleDateString()}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {!isPro && (
-                          <Button
-                            onClick={() => handleUpgradeToPro(user.id)}
-                            disabled={isUpgrading}
-                            size="sm"
-                            className="bg-pink hover:bg-pink/90"
+                        </TableCell>
+                        <TableCell className="py-2 px-3">
+                          <Badge
+                            variant={isPro ? 'default' : 'outline'}
+                            className={isPro
+                              ? 'bg-pink text-white border-pink text-xs font-normal'
+                              : 'border-slate-200 text-slate-600 bg-slate-50 text-xs font-normal'
+                            }
                           >
-                            {isUpgrading ? (
-                              <>
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                Upgrading...
-                              </>
-                            ) : (
-                              <>
-                                <Crown className="h-4 w-4 mr-2" />
-                                Upgrade to Pro
-                              </>
-                            )}
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                            {isPro ? <><Crown className="h-3 w-3 mr-1" />Pro</> : 'Free'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="py-2 px-3">
+                          {user.organizations.length === 0 ? (
+                            <Badge variant="outline" className="border-slate-200 text-slate-500 bg-slate-50 text-xs font-normal">
+                              No organization
+                            </Badge>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {user.organizations.map(org => (
+                                <div key={org.id} className="flex items-center gap-1">
+                                  <Badge variant="outline" className="border-slate-200 text-slate-600 bg-slate-50 text-xs font-normal">
+                                    <Briefcase className="h-3 w-3 mr-1" />
+                                    {org.name}
+                                  </Badge>
+                                  <Badge variant="secondary" className="text-xs bg-slate-100 text-slate-600 font-normal">
+                                    {org.role}
+                                  </Badge>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="py-2 px-3 text-xs text-slate-500">
+                          <div className="flex items-center gap-1.5">
+                            <Calendar className="h-3.5 w-3.5" />
+                            {new Date(user.created_at).toLocaleDateString()}
+                          </div>
+                        </TableCell>
+                        <TableCell className="py-2 px-3 text-right">
+                          {!isPro && (
+                            <Button
+                              onClick={() => handleUpgradeToPro(user.id)}
+                              disabled={isUpgrading}
+                              size="sm"
+                              className="bg-pink hover:bg-pink/90 text-white h-7 text-xs"
+                            >
+                              {isUpgrading ? (
+                                <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Upgrading...</>
+                              ) : (
+                                <><Crown className="h-3.5 w-3.5 mr-1.5" />Upgrade to Pro</>
+                              )}
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

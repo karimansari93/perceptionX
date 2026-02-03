@@ -155,6 +155,8 @@ export const addCustomPrompts = async ({
       ? selectedLocation 
       : undefined;
 
+  // Translate prompts if country is not GLOBAL and language is not English
+  // CRITICAL: Translation is REQUIRED for non-English countries - cannot proceed without it
   if (countryCodeForTranslation) {
     // Check if country uses English (no translation needed)
     const englishSpeakingCountries = ['US', 'GB', 'CA', 'AU', 'NZ', 'IE', 'ZA', 'IN', 'SG', 'MY', 'PH', 'HK', 'AE', 'SA'];
@@ -164,26 +166,48 @@ export const addCustomPrompts = async ({
       try {
         console.log(`🌍 Translating ${generatedPrompts.length} prompts for country: ${countryCodeForTranslation}`);
         const promptTexts = generatedPrompts.map(p => p.text);
-        
-        const { data: translationData, error: translationError } = await supabase.functions.invoke('translate-prompts', {
-          body: {
-            prompts: promptTexts,
-            countryCode: countryCodeForTranslation
-          }
-        });
 
-        if (!translationError && translationData?.translatedPrompts) {
-          // Map translated prompts back to the original prompt structure
-          generatedPrompts = generatedPrompts.map((prompt, index) => ({
-            ...prompt,
-            text: translationData.translatedPrompts[index] || prompt.text
-          }));
-          console.log(`✅ Translated prompts to ${translationData.targetLanguage}`);
-        } else {
-          console.warn('⚠️ Translation failed, using original prompts:', translationError);
+        const invokeTranslate = () =>
+          supabase.functions.invoke('translate-prompts', {
+            body: { prompts: promptTexts, countryCode: countryCodeForTranslation },
+          });
+        let { data: translationData, error: translationError } = await invokeTranslate();
+        if (translationError && (translationError.message?.includes('504') || translationError.message?.includes('timeout'))) {
+          console.warn('🔄 Translation timed out, retrying once...');
+          await new Promise((r) => setTimeout(r, 2000));
+          const retry = await invokeTranslate();
+          translationData = retry.data;
+          translationError = retry.error;
         }
-      } catch (translationException) {
-        console.warn('⚠️ Translation exception, using original prompts:', translationException);
+
+        if (!translationError && translationData?.translatedPrompts && translationData.translatedPrompts.length > 0) {
+          // Verify all prompts were translated
+          const allTranslated = translationData.translatedPrompts.every((translated: string, index: number) => 
+            translated && translated.trim().length > 0 && translated !== promptTexts[index]
+          );
+          
+          if (allTranslated) {
+            // Map translated prompts back to the original prompt structure
+            generatedPrompts = generatedPrompts.map((prompt, index) => ({
+              ...prompt,
+              text: translationData.translatedPrompts[index] || prompt.text
+            }));
+            console.log(`✅ Translated prompts to ${translationData.targetLanguage || 'target language'}`);
+          } else {
+            // Translation incomplete - fail the process
+            const targetLanguage = translationData?.targetLanguage || 'the local language';
+            throw new Error(`Translation incomplete for ${countryCodeForTranslation}. All prompts must be translated to ${targetLanguage}.`);
+          }
+        } else {
+          // Translation failed - fail the process
+          const errorMessage = translationError?.message || 'Unknown error';
+          throw new Error(`Failed to translate prompts for ${countryCodeForTranslation}. Translation service error: ${errorMessage}`);
+        }
+      } catch (translationException: any) {
+        // Translation is REQUIRED - cannot proceed without it
+        const errorMsg = translationException?.message || translationException?.toString() || 'Translation service unavailable';
+        console.error(`❌ Translation failed for ${countryCodeForTranslation}:`, errorMsg);
+        throw new Error(`Cannot proceed: Translation to ${countryCodeForTranslation}'s language is required but failed. ${errorMsg}`);
       }
     } else {
       console.log(`✅ Country ${countryCodeForTranslation} uses English, skipping translation`);

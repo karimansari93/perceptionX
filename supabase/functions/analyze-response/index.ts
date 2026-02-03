@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { SOURCES_SECTION_REGEX } from "../_shared/citation-extraction.ts";
 
 // TalentX Analysis Service removed - focusing on ai-themes only
 
@@ -40,7 +41,7 @@ serve(async (req) => {
     
     // Handle citations from different LLMs
     let llmCitations = perplexityCitations || [];
-    if ((ai_model === 'google-ai-overviews' || ai_model === 'bing-copilot') && body.citations) {
+    if ((ai_model === 'google-ai-overviews' || ai_model === 'bing-copilot' || ai_model === 'openai') && body.citations) {
       llmCitations = body.citations;
     }
 
@@ -80,12 +81,46 @@ serve(async (req) => {
 
     const result = await analyzeResponse(response, companyName, promptType);
 
+    // For OpenAI, if no citations provided in request, use extracted citations from text
+    // Otherwise prefer provided citations (from collect-industry-visibility)
+    let finalCitations = llmCitations;
+    if (ai_model === 'openai' && (!llmCitations || llmCitations.length === 0)) {
+      finalCitations = result.citations;
+      console.log(`No citations provided for OpenAI, extracted ${finalCitations.length} from response text`);
+    } else if (llmCitations && llmCitations.length > 0) {
+      finalCitations = llmCitations;
+      console.log(`Using provided citations: ${finalCitations.length} citations`);
+    } else {
+      finalCitations = result.citations;
+      console.log(`Using extracted citations: ${finalCitations.length} citations`);
+    }
+
+    // Only persist citations with a valid url so DB and MVs (citation_url, recency) stay consistent
+    const citationsForDb = (Array.isArray(finalCitations) ? finalCitations : [])
+      .filter((c: Citation) => c && typeof c.url === 'string' && c.url.trim().length > 0)
+      .map((c: Citation) => {
+        const url = c.url!.trim();
+        let domain = c.domain;
+        if (!domain) {
+          try {
+            domain = new URL(url).hostname.replace('www.', '');
+          } catch {
+            domain = url;
+          }
+        }
+        return {
+          url,
+          domain,
+          title: c.title ?? `Source from ${domain}`,
+        };
+      });
+
     // Prepare data for insert
     const insertData: any = {
       confirmed_prompt_id,
       ai_model,
       response_text: response,
-      citations: llmCitations,
+      citations: citationsForDb,
       company_mentioned: result.company_mentioned,
       detected_competitors: result.detected_competitors,
       company_id: company_id
@@ -459,65 +494,76 @@ function extractSourceUrl(url: string): string {
   }
 }
 
-function extractCitationsFromText(text: string): Citation[] {
+// Enhanced citation extraction (same as test-prompt-openai) for better OpenAI citation detection
+function extractCitationsFromTextEnhanced(text: string): Citation[] {
   const citations: Citation[] = [];
+  const seenUrls = new Set<string>();
   
-  // Look for URLs in the text
-  const urlPattern = /https?:\/\/([^\s]+)/g;
+  // Extract URLs (most reliable)
+  const urlPattern = /https?:\/\/([^\s\)]+)/g;
   let match;
-  
   while ((match = urlPattern.exec(text)) !== null) {
-    const originalUrl = match[0];
+    const originalUrl = match[0].replace(/[.,;:!?]+$/, ''); // Remove trailing punctuation
     // Extract actual source URL if it's a Google Translate URL
     const url = extractSourceUrl(originalUrl);
-    const domain = new URL(url).hostname.replace('www.', '');
-    
-    citations.push({
-      domain: domain,
-      url: url,
-      title: `Source from ${domain}`
-    });
-  }
-  
-  // Look for Perplexity citation patterns like [1], [2], [3], etc.
-  const perplexityCitationPattern = /\[(\d+)\]/g;
-  const localPerplexityCitations = new Set<number>();
-  
-  while ((match = perplexityCitationPattern.exec(text)) !== null) {
-    const citationNumber = parseInt(match[1]);
-    localPerplexityCitations.add(citationNumber);
-  }
-  
-  // Add Perplexity citations
-  localPerplexityCitations.forEach(citationNumber => {
-    citations.push({
-      domain: 'perplexity.ai',
-      title: `Perplexity Citation [${citationNumber}]`,
-      url: undefined
-    });
-  });
-  
-  // Look for common citation patterns like "According to [Company]" or "as reported by [Company]"
-  const citationPatterns = [
-    /(?:according to|as reported by|as stated by|per|via)\s+([A-Z][a-zA-Z\s&]+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Company|Technologies|Systems|Solutions|Software|Group|International|Global))/gi,
-    /(?:source|reference|cited from)\s*:\s*([A-Z][a-zA-Z\s&]+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Company|Technologies|Systems|Solutions|Software|Group|International|Global))/gi
-  ];
-  
-  citationPatterns.forEach(pattern => {
-    let citationMatch;
-    while ((citationMatch = pattern.exec(text)) !== null) {
-      const companyName = citationMatch[1].trim();
-      if (companyName.length > 3) { // Filter out very short matches
+    if (!seenUrls.has(url)) {
+      try {
+        const domain = new URL(url).hostname.replace('www.', '');
         citations.push({
-          domain: companyName.toLowerCase().replace(/\s+/g, ''),
-          title: `Cited from ${companyName}`,
-          url: undefined
+          url,
+          domain,
+          title: `Source from ${domain}`
         });
+        seenUrls.add(url);
+      } catch (e) {
+        // Invalid URL, skip
       }
     }
-  });
+  }
+  
+  // Extract numbered citations [1], [2] with potential URLs nearby
+  const citationPattern = /\[(\d+)\][\s]*([^\[]*?)(?:https?:\/\/[^\s\)]+)?/g;
+  while ((match = citationPattern.exec(text)) !== null) {
+    const num = match[1];
+    const context = match[2]?.trim();
+    // Try to find URL in nearby text (200 chars after citation)
+    const nearbyText = text.substring(Math.max(0, match.index - 50), match.index + 200);
+    const urlMatch = nearbyText.match(/https?:\/\/([^\s\)]+)/);
+    const citationKey = `citation-${num}`;
+    if (!seenUrls.has(citationKey)) {
+      const url = urlMatch ? extractSourceUrl(urlMatch[0]) : undefined;
+      citations.push({
+        domain: context || 'unknown',
+        title: `Citation [${num}]${context ? `: ${context}` : ''}`,
+        url: url
+      });
+      seenUrls.add(citationKey);
+    }
+  }
+  
+  // Extract "Sources" section (all app languages: Fontes, Fuentes, Quellen, 出典, etc.)
+  const sourcesMatch = text.match(SOURCES_SECTION_REGEX);
+  if (sourcesMatch) {
+    const sourcesText = sourcesMatch[1];
+    const sourceUrls = sourcesText.match(/https?:\/\/([^\s\n\)]+)/g) || [];
+    sourceUrls.forEach(originalUrl => {
+      const url = extractSourceUrl(originalUrl);
+      if (!seenUrls.has(url)) {
+        try {
+          const domain = new URL(url).hostname.replace('www.', '');
+          citations.push({ url, domain, title: `Source from ${domain}` });
+          seenUrls.add(url);
+        } catch (e) {}
+      }
+    });
+  }
   
   return citations;
+}
+
+function extractCitationsFromText(text: string): Citation[] {
+  // Use enhanced extraction for better results
+  return extractCitationsFromTextEnhanced(text);
 }
 
 // Sentiment analysis is now handled by AI themes - no need for basic keyword analysis

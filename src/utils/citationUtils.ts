@@ -111,6 +111,13 @@ export const getCompetitorFavicon = (competitorName: string): string => {
   return getFavicon(domain);
 };
 
+// Treat domain as missing when it's empty or the literal "unknown" (e.g. from ChatGPT citations)
+const isDomainMissing = (domain: string): boolean => {
+  if (!domain || typeof domain !== 'string') return true;
+  const d = domain.trim().toLowerCase();
+  return d === '' || d === 'unknown';
+};
+
 // Helper to normalize domain names for consistent comparison
 const normalizeDomain = (domain: string): string => {
   if (!domain) return '';
@@ -170,97 +177,115 @@ const sourceNameToDomain: Record<string, string> = {
   'built in': 'builtin.com'
 };
 
+/** Build one EnhancedCitation for a given domain/url/title and shared citation fields. */
+const buildEnhancedCitation = (
+  domain: string,
+  url: string,
+  title: string,
+  citation: any
+): EnhancedCitation | null => {
+  if (isDomainMissing(domain)) {
+    // Derive domain from URL when missing or "unknown" (e.g. ChatGPT citations)
+    if (url) {
+      domain = extractDomain(url);
+    }
+  }
+  if (!domain || isDomainMissing(domain)) return null;
+
+  const normalizedDomain = normalizeDomain(domain);
+  const sourceConfig = EMPLOYMENT_SOURCES[normalizedDomain];
+  const type: 'website' | 'inferred' = url ? 'website' : 'inferred';
+
+  return {
+    domain: normalizedDomain,
+    title: title || sourceConfig?.displayName,
+    url,
+    type,
+    sourceType: sourceConfig?.type,
+    confidence: sourceConfig?.confidence || 'low',
+    categories: sourceConfig?.categories,
+    displayName: sourceConfig?.displayName,
+    favicon: getFavicon(normalizedDomain)
+  };
+};
+
 export const enhanceCitations = (citations: any[]): EnhancedCitation[] => {
   if (!Array.isArray(citations)) return [];
-  
-  return citations.map(citation => {
+
+  const out: EnhancedCitation[] = [];
+
+  for (const citation of citations) {
     let domain = '';
     let url = '';
     let title = '';
-    
-    // Handle different citation formats from different LLMs
+
     if (typeof citation === 'string') {
-      // String citation (URL)
-      // Extract actual source URL if it's a Google Translate URL
       url = extractSourceUrl(citation);
       domain = extractDomain(url);
       url = url.startsWith('http') ? url : '';
-    } else if (citation && typeof citation === 'object') {
-      // Object citation
-      if (citation.domain) {
-        // Perplexity format: { domain: "glassdoor.com", url: "..." }
-        domain = citation.domain;
-        // Extract actual source URL if it's a Google Translate URL
-        url = citation.url ? extractSourceUrl(citation.url) : '';
-        title = citation.title || '';
-      } else if (citation.source) {
-        // Google AI format: { source: "Glassdoor", url: "..." }
-        const sourceName = citation.source.toLowerCase().trim();
-        
-        // Extract actual source URL if it's a Google Translate URL
-        url = citation.url ? extractSourceUrl(citation.url) : '';
-        title = citation.title || '';
-        
-        // If we have a URL, prefer extracting domain from URL (more reliable)
-        if (url) {
-          const extractedDomain = extractDomain(url);
-          if (extractedDomain && extractedDomain !== url) {
-            domain = extractedDomain;
-          }
-        }
-        
-        // Only use source name if we couldn't extract from URL
-        if (!domain) {
-          // Try to map source name to canonical domain
-          if (sourceNameToDomain[sourceName]) {
-            domain = sourceNameToDomain[sourceName];
-          } else if (sourceName.includes('.')) {
-            // If source already looks like a domain
-            domain = sourceName;
-          } else {
-            // Try to construct domain from source name
-            // Convert source name to valid domain format by removing spaces and special characters
-            const cleanSourceName = sourceName
-              .replace(/\s+/g, '') // Remove all spaces
-              .replace(/[^a-z0-9-]/g, '') // Remove special characters except hyphens
-              .replace(/-+/g, '-') // Replace multiple hyphens with single
-              .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
-            
-            // Only create domain if we have a valid source name
-            // Don't create ".com" if cleanSourceName is empty
-            if (cleanSourceName && cleanSourceName.length > 0) {
-              domain = `${cleanSourceName}.com`;
-            }
-          }
-        }
-      } else if (citation.url) {
-        // Extract actual source URL if it's a Google Translate URL
-        url = extractSourceUrl(citation.url);
-        // Extract domain from URL if no domain/source field
-        domain = extractDomain(url);
-        title = citation.title || '';
-      }
+      const built = buildEnhancedCitation(domain, url, title, citation);
+      if (built) out.push(built);
+      continue;
     }
-    
-    // Normalize the domain to prevent duplicates
-    const normalizedDomain = normalizeDomain(domain);
-    
-    // Check if it's a known employment source
-    const sourceConfig = EMPLOYMENT_SOURCES[normalizedDomain];
-    const type: 'website' | 'inferred' = url ? 'website' : 'inferred';
-    
-    return {
-      domain: normalizedDomain,
-      title: title || sourceConfig?.displayName,
-      url,
-      type,
-      sourceType: sourceConfig?.type,
-      confidence: sourceConfig?.confidence || 'low',
-      categories: sourceConfig?.categories,
-      displayName: sourceConfig?.displayName,
-      favicon: getFavicon(normalizedDomain)
-    };
-  }).filter(citation => citation.domain); // Remove empty domains
+
+    if (!citation || typeof citation !== 'object') continue;
+
+    // ChatGPT-style: multiple URLs in one citation (no or "unknown" domain)
+    const urlsArray = citation.urls && Array.isArray(citation.urls) ? citation.urls : null;
+    if (urlsArray && urlsArray.length > 0) {
+      const sharedTitle = citation.title || '';
+      for (const rawUrl of urlsArray) {
+        const u = typeof rawUrl === 'string' ? extractSourceUrl(rawUrl) : '';
+        if (!u || !u.startsWith('http')) continue;
+        const d = extractDomain(u);
+        if (!d) continue;
+        const built = buildEnhancedCitation(d, u, sharedTitle, citation);
+        if (built) out.push(built);
+      }
+      continue;
+    }
+
+    // Single-URL object citation
+    if (citation.domain && !isDomainMissing(citation.domain)) {
+      domain = citation.domain;
+      url = citation.url ? extractSourceUrl(citation.url) : '';
+      title = citation.title || '';
+    } else if (citation.source) {
+      const sourceName = citation.source.toLowerCase().trim();
+      url = citation.url ? extractSourceUrl(citation.url) : '';
+      title = citation.title || '';
+      if (url) {
+        const extractedDomain = extractDomain(url);
+        if (extractedDomain && extractedDomain !== url) domain = extractedDomain;
+      }
+      if (!domain) {
+        if (sourceNameToDomain[sourceName]) domain = sourceNameToDomain[sourceName];
+        else if (sourceName.includes('.')) domain = sourceName;
+        else {
+          const cleanSourceName = sourceName
+            .replace(/\s+/g, '')
+            .replace(/[^a-z0-9-]/g, '')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/, '');
+          if (cleanSourceName) domain = `${cleanSourceName}.com`;
+        }
+      }
+    } else if (citation.url) {
+      url = extractSourceUrl(citation.url);
+      domain = extractDomain(url);
+      title = citation.title || '';
+    } else {
+      continue;
+    }
+
+    // If domain is still "unknown" or empty but we have a URL, derive from URL
+    if (isDomainMissing(domain) && url) domain = extractDomain(url);
+
+    const built = buildEnhancedCitation(domain, url, title, citation);
+    if (built) out.push(built);
+  }
+
+  return out.filter(c => c.domain && !isDomainMissing(c.domain));
 };
 
 export const groupCitationsByDomain = (citations: EnhancedCitation[]): Map<string, EnhancedCitation[]> => {
@@ -300,16 +325,14 @@ export function getMostMentionedPages(rawCitations: any[], max?: number) {
   // Map of pageKey => array of {title, url, domain, snippet, mentionCount}
   const pageMap = new Map<string, {titles: {[t:string]:number}, urls: string[], domain?: string, snippets: {[s:string]:number}, mentionCount: number}>();
 
-  for (const citation of rawCitations) {
-    let url = citation?.url || citation?.link;
-    if (!url) continue;
-    // Extract actual source URL if it's a Google Translate URL
+  const processOneUrl = (url: string, title: string, snippet: string, domainFromCitation: string | undefined) => {
     url = extractSourceUrl(url);
+    if (!url || !url.startsWith('http')) return;
     const pageKey = normalizePageKey(url);
-    const title = citation.title || '';
-    const domain = citation.domain || (citation.source && typeof citation.source === 'string' ? citation.source : undefined);
-    const snippet = citation.snippet || '';
-
+    let domain = domainFromCitation;
+    if (!domain || (typeof domain === 'string' && domain.trim().toLowerCase() === 'unknown')) {
+      domain = extractDomain(url);
+    }
     if (!pageMap.has(pageKey)) {
       pageMap.set(pageKey, {titles: {}, urls: [url], domain, snippets: {}, mentionCount: 1});
       if (title) pageMap.get(pageKey)!.titles[title] = 1;
@@ -320,6 +343,24 @@ export function getMostMentionedPages(rawCitations: any[], max?: number) {
       p.mentionCount++;
       if (title) p.titles[title] = (p.titles[title] || 0) + 1;
       if (snippet) p.snippets[snippet] = (p.snippets[snippet] || 0) + 1;
+    }
+  };
+
+  for (const citation of rawCitations) {
+    const title = citation.title || '';
+    const snippet = citation.snippet || '';
+    const domainFromCitation = citation.domain || (citation.source && typeof citation.source === 'string' ? citation.source : undefined);
+
+    const singleUrl = citation?.url || citation?.link;
+    if (singleUrl) {
+      processOneUrl(singleUrl, title, snippet, domainFromCitation);
+    }
+    // ChatGPT-style: multiple URLs in one citation
+    if (citation.urls && Array.isArray(citation.urls)) {
+      for (const rawUrl of citation.urls) {
+        const u = typeof rawUrl === 'string' ? rawUrl : '';
+        if (u) processOneUrl(u, title, snippet, domainFromCitation);
+      }
     }
   }
 

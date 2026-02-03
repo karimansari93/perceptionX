@@ -1,9 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Check, Loader2 } from "lucide-react";
-import { useState } from "react";
-import { StripeService } from "@/services/stripe";
+import { Check } from "lucide-react";
 
 interface UpgradeModalProps {
   open: boolean;
@@ -24,34 +22,6 @@ interface PricingTier {
 }
 
 export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Server holds Stripe Price ID; client does not need it
-  const PRO_PRICE_ID = undefined as unknown as string | undefined;
-
-  const handleUpgrade = async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      await StripeService.redirectToCheckout(
-        PRO_PRICE_ID,
-        `${window.location.origin}/dashboard?upgrade=success`,
-        `${window.location.origin}/dashboard?upgrade=cancelled`
-      );
-    } catch (err) {
-      console.error('Upgrade error:', err);
-      setError('Failed to start checkout. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleBookDemo = () => {
-    window.open('https://meetings-eu1.hubspot.com/karim-al-ansari', '_blank');
-  };
-
   const handleContactSales = () => {
     window.open('https://meetings-eu1.hubspot.com/karim-al-ansari', '_blank');
   };
@@ -76,21 +46,21 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
     },
     {
       name: "Pro",
-      price: "$199",
-      priceUnit: "/month",
+      price: "Custom",
+      priceUnit: "",
       description: "More companies, more insights, more results",
       features: [
         "Full company insights",
-        "10 companies at once",
+        "Unlimited companies",
         "Monthly data updates",
         "Company reports & analytics",
         "All AI models",
         "Priority support"
       ],
-      buttonText: "Upgrade Now",
+      buttonText: "Contact Sales",
       buttonVariant: "default",
       popular: true,
-      action: handleUpgrade
+      action: handleContactSales
     },
     {
       name: "Enterprise",
@@ -127,13 +97,6 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
         </DialogHeader>
 
         <div className="py-4 sm:py-6 px-4 sm:px-6">
-          {/* Error Message */}
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 sm:mb-6">
-              <p className="text-sm text-red-700">{error}</p>
-            </div>
-          )}
-
           {/* Pricing Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {pricingTiers.map((tier, index) => (
@@ -175,7 +138,7 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
 
                 <Button
                   onClick={tier.action}
-                  disabled={tier.disabled || loading}
+                  disabled={tier.disabled}
                   variant={tier.buttonVariant}
                   className={`w-full font-semibold h-10 sm:h-12 mt-auto text-sm sm:text-base ${
                     tier.popular
@@ -185,15 +148,7 @@ export const UpgradeModal = ({ open, onOpenChange }: UpgradeModalProps) => {
                       : ''
                   }`}
                 >
-                  {loading && tier.name === "Pro" ? (
-                    <>
-                      <Loader2 className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2 animate-spin" />
-                      <span className="hidden sm:inline">Processing...</span>
-                      <span className="sm:hidden">Processing</span>
-                    </>
-                  ) : (
-                    <span className="truncate">{tier.buttonText}</span>
-                  )}
+                  <span className="truncate">{tier.buttonText}</span>
                 </Button>
               </div>
             ))}

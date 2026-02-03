@@ -3,7 +3,6 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { OrganizationManagementTab } from '@/components/admin/OrganizationManagementTab';
 import { UsersTab } from '@/components/admin/UsersTab';
 import { CompanyManagementTab } from '@/components/admin/CompanyManagementTab';
-import { DataChatTab } from '@/components/admin/DataChatTab';
 import { VisibilityRankingsTab } from '@/components/admin/VisibilityRankingsTab';
 
 export default function Admin() {
@@ -21,8 +20,6 @@ export default function Admin() {
         return <UsersTab />;
       case 'companies':
         return <CompanyManagementTab />;
-      case 'data-chat':
-        return <DataChatTab />;
       case 'visibility-rankings':
         return <VisibilityRankingsTab />;
       default:

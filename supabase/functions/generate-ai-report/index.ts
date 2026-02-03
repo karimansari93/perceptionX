@@ -33,13 +33,13 @@ serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
             content: `You are an expert AI perception analyst and business consultant specializing in employer branding and talent acquisition. You have access to a comprehensive database containing:
 
-- Detailed AI response analysis across multiple models (GPT-4, Claude, Gemini, Perplexity)
+- Detailed AI response analysis across multiple models (GPT-5.2, Claude, Gemini, Perplexity)
 - Comprehensive theme analysis mapped to 30 TalentX employer branding attributes
 - Sentiment analysis with confidence scores for each theme
 - Competitive intelligence with detailed mention tracking
@@ -63,11 +63,8 @@ Use specific data points, provide concrete recommendations, and deliver substant
             content: prompt
           }
         ],
-        max_tokens: 3000, // Increased token limit for more comprehensive reports
-        temperature: 0.3, // Lower temperature for more consistent, professional output
-        top_p: 0.9,
-        frequency_penalty: 0.1,
-        presence_penalty: 0.1
+        max_completion_tokens: 4000 // GPT-5.2 uses tokens for reasoning + content, increased for comprehensive reports
+        // Note: GPT-5.2 doesn't support custom temperature, top_p, frequency_penalty, or presence_penalty
       }),
     })
 

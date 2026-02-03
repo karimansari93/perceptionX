@@ -99,15 +99,15 @@ Translated prompt:`;
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini', // Using mini for cost efficiency
+        model: 'gpt-4o-mini', // Cheapest model - translation doesn't need GPT-5.2
         messages: [
           {
             role: 'user',
             content: translationPrompt
           }
         ],
-        temperature: 0.3,
-        max_tokens: 200
+        max_completion_tokens: 2000 // GPT-5.2 uses tokens for reasoning + content
+        // Note: GPT-5.2 doesn't support custom temperature, uses default (1)
       })
     });
 

@@ -367,8 +367,8 @@ Return ONLY the raw JSON array starting with [ and ending with ].`;
             content: prompt
           }
         ],
-        temperature: 0.3,
-        max_tokens: 2000
+        max_completion_tokens: 3000 // GPT-5.2 uses tokens for reasoning + content
+        // Note: GPT-5.2 doesn't support custom temperature, uses default (1)
       })
     });
 

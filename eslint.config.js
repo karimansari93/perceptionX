@@ -25,7 +25,7 @@ export default tseslint.config(
       ],
       "@typescript-eslint/no-unused-vars": "off",
       "@typescript-eslint/no-explicit-any": "warn", // Changed from "off" to "warn" for production
-      "no-console": import.meta.env.PROD ? "warn" : "off",
+      "no-console": "warn", // Warn about console.log in production builds (Vite will strip them)
       "prefer-const": "error",
       "no-case-declarations": "error",
       "no-useless-escape": "error",

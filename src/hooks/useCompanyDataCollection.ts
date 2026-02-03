@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { retrySupabaseFunction } from '@/utils/supabaseRetry';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCompany } from '@/contexts/CompanyContext';
 import { toast } from 'sonner';
-import { generatePromptsFromData } from '@/hooks/usePromptsLogic';
-import { useSubscription } from '@/hooks/useSubscription';
 
 export interface CollectionProgress {
   currentPrompt: string;
@@ -24,7 +23,6 @@ interface CollectionStatus {
 export const useCompanyDataCollection = () => {
   const { user } = useAuth();
   const { currentCompany } = useCompany();
-  const { isPro } = useSubscription();
   const [isCollecting, setIsCollecting] = useState(false);
   const [collectionStatus, setCollectionStatus] = useState<CollectionStatus | null>(null);
   const [progress, setProgress] = useState<CollectionProgress | null>(null);
@@ -191,9 +189,11 @@ export const useCompanyDataCollection = () => {
         }
       }
 
-      // Calculate total operations
-      const totalOperations = confirmedPrompts.length * models.length;
-      
+      // Calculate total operations and prompt IDs
+      const modelNames = models.map((m) => m.name);
+      const totalOperations = confirmedPrompts.length * modelNames.length;
+      const promptIds = confirmedPrompts.map((p) => p.id);
+
       // Move to LLM data collection
       await supabase
         .from('companies')
@@ -208,107 +208,69 @@ export const useCompanyDataCollection = () => {
         })
         .eq('id', collectionStatus.companyId);
       
-      // Initialize progress state
       setProgress({
-        currentPrompt: 'Starting AI analysis...',
+        currentPrompt: 'Collecting AI responses...',
         currentModel: '',
         completed: 0,
         total: totalOperations
       });
-      let completedOperations = 0;
 
-      // Check which prompts/models have already been completed
-      const { data: existingResponses } = await supabase
-        .from('prompt_responses')
-        .select('confirmed_prompt_id, ai_model')
-        .in('confirmed_prompt_id', confirmedPrompts.map(p => p.id));
-
-      const completedSet = new Set(
-        (existingResponses || []).map(r => `${r.confirmed_prompt_id}-${r.ai_model}`)
-      );
-
-      // Run AI prompts
-      for (const prompt of confirmedPrompts) {
-        for (const model of models) {
-          const key = `${prompt.id}-${model.name}`;
-          
-          // Skip if already completed
-          if (completedSet.has(key)) {
-            completedOperations++;
-            setProgress({
-              currentPrompt: prompt.prompt_text.substring(0, 100) + '...',
-              currentModel: model.displayName,
-              completed: completedOperations,
-              total: totalOperations,
-            });
-            continue;
+      // Poll progress while the batch runs (same pattern as Add Company modal)
+      let pollIntervalId: ReturnType<typeof setInterval> | null = null;
+      const startPolling = () => {
+        pollIntervalId = setInterval(async () => {
+          const { data } = await supabase
+            .from('companies')
+            .select('data_collection_status, data_collection_progress')
+            .eq('id', collectionStatus.companyId)
+            .single();
+          if (data?.data_collection_progress && typeof data.data_collection_progress === 'object') {
+            const p = data.data_collection_progress as { completed?: number; total?: number; currentPrompt?: string; currentModel?: string };
+            setProgress((prev) => ({
+              ...prev,
+              completed: p.completed ?? prev?.completed ?? 0,
+              total: p.total ?? prev?.total ?? totalOperations,
+              currentPrompt: p.currentPrompt ?? prev?.currentPrompt ?? '',
+              currentModel: p.currentModel ?? prev?.currentModel ?? '',
+            }));
           }
+        }, 2000);
+      };
+      startPolling();
 
-          try {
-            setProgress({
-              currentPrompt: prompt.prompt_text.substring(0, 100) + '...',
-              currentModel: model.displayName,
-              completed: completedOperations,
-              total: totalOperations,
-            });
+      try {
+        // Use batch edge function (same as Add Company / Visibility Rankings) – one server run, skip already-done
+        const batchBody = {
+          companyId: collectionStatus.companyId,
+          promptIds,
+          models: modelNames,
+          batchSize: 3,
+          skipExisting: true,
+        };
+        const { data: batchData, error: batchError } = await retrySupabaseFunction('collect-company-responses', batchBody, {
+          maxRetries: 2,
+          initialDelay: 2000,
+        });
 
-            await supabase
-              .from('companies')
-              .update({ 
-                data_collection_progress: {
-                  currentPrompt: prompt.prompt_text.substring(0, 100) + '...',
-                  currentModel: model.displayName,
-                  completed: completedOperations,
-                  total: totalOperations
-                }
-              })
-              .eq('id', collectionStatus.companyId);
-
-            const { data: responseData, error: functionError } = await supabase.functions.invoke(model.functionName, {
-              body: { prompt: prompt.prompt_text }
-            });
-
-            if (functionError) {
-              console.error(`${model.functionName} error:`, functionError);
-              completedOperations++;
-              continue;
-            }
-
-            if (responseData?.response) {
-              const perplexityCitations = model.name === 'perplexity' ? responseData.citations : null;
-              const googleAICitations = model.name === 'google-ai-overviews' ? responseData.citations : null;
-
-              const { error: analyzeError } = await supabase.functions.invoke('analyze-response', {
-                body: {
-                  response: responseData.response,
-                  companyName: collectionStatus.companyName,
-                  promptType: prompt.prompt_type,
-                  perplexityCitations: perplexityCitations,
-                  citations: googleAICitations,
-                  confirmed_prompt_id: prompt.id,
-                  ai_model: model.name,
-                  company_id: collectionStatus.companyId,
-                }
-              });
-
-              if (analyzeError) {
-                console.error('Analyze error:', analyzeError);
-              }
-            }
-
-            completedOperations++;
-            setProgress({
-              currentPrompt: prompt.prompt_text.substring(0, 100) + '...',
-              currentModel: model.displayName,
-              completed: completedOperations,
-              total: totalOperations,
-            });
-
-          } catch (error) {
-            console.error(`Error testing ${model.name}:`, error);
-            completedOperations++;
-          }
+        if (batchError) {
+          console.error('Batch collection error:', batchError);
+          const isFetchError =
+            batchError?.name === 'FunctionsFetchError' ||
+            (batchError?.message && String(batchError.message).toLowerCase().includes('failed to send a request'));
+          const msg = isFetchError
+            ? 'Could not reach the server. Check your connection or redeploy the Edge Function (see docs/debug/DEBUG_CORS_EDGE_FUNCTIONS.md). You can try "Continue collection" again.'
+            : `${batchError.message}. You can try "Continue collection" again.`;
+          toast.error(msg);
+          setIsCollecting(false);
+          return;
         }
+        if (!batchData?.success) {
+          toast.error(batchData?.error || 'Collection failed. You can try "Continue collection" again.');
+          setIsCollecting(false);
+          return;
+        }
+      } finally {
+        if (pollIntervalId) clearInterval(pollIntervalId);
       }
 
       // Mark as completed

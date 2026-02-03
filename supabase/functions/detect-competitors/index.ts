@@ -103,7 +103,7 @@ Example invalid responses:
 "Some competitors are IBM, Salesforce"`;
 
     const userPrompt = isIndustryWide
-      ? `In the following text, identify ALL company names that are mentioned. Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`
+      ? `In the following text, identify EVERY company name that is mentioned. You must list ALL companies mentioned, not just a few. Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`
       : `In the following text, identify all company names that are mentioned as competitors or alternatives to "${companyName}". Return ONLY a comma-separated list of company names with proper capitalization, nothing else:\n\n${response}`;
 
     const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -125,7 +125,7 @@ Example invalid responses:
           }
         ],
         temperature: 0.2,
-        max_tokens: 200 // Increased for industry-wide (more companies)
+        max_tokens: isIndustryWide ? 500 : 200
       })
     });
 

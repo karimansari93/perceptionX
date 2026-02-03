@@ -57,6 +57,7 @@ interface OverviewTabProps {
   recencyData?: any[]; // Add recency data for relevance calculation
   recencyDataLoading?: boolean; // Loading state for recency data
   aiThemesLoading?: boolean; // Loading state for AI themes
+  metricsCalculating?: boolean; // Whether metrics are still being calculated (for UX - show all together)
 }
 
 interface TimeBasedData {
@@ -96,7 +97,8 @@ export const OverviewTab = ({
   aiThemes = [],
   recencyData = [],
   recencyDataLoading = false,
-  aiThemesLoading = false
+  aiThemesLoading = false,
+  metricsCalculating = false
 }: OverviewTabProps) => {
   // Modal states - persisted
   const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('overviewTab.selectedCompetitor', null);
@@ -947,12 +949,12 @@ export const OverviewTab = ({
       
       const periodResponses = Array.from(promptModelMap.values());
       
-      // Filter for sentiment and competitive responses only for score calculation
+      // Filter for experience and competitive responses only for score calculation
       const relevantResponses = periodResponses.filter(r => {
         const promptType = r.confirmed_prompts?.prompt_type;
-        return promptType === 'sentiment' || 
-               promptType === 'competitive' || 
-               promptType === 'talentx_sentiment' || 
+        return promptType === 'experience' ||
+               promptType === 'competitive' ||
+               promptType === 'talentx_experience' ||
                promptType === 'talentx_competitive';
       });
       
@@ -1171,7 +1173,23 @@ export const OverviewTab = ({
             </div>
           </CardHeader>
           <CardContent className="px-4 sm:px-8 pb-4 flex-1 flex flex-col justify-center">
-            {(() => {
+            {metricsCalculating ? (
+              // Show loading skeletons while metrics are calculating
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="text-center">
+                  <Skeleton className="h-8 w-16 mx-auto mb-2" />
+                  <Skeleton className="h-4 w-20 mx-auto" />
+                </div>
+                <div className="text-center">
+                  <Skeleton className="h-8 w-16 mx-auto mb-2" />
+                  <Skeleton className="h-4 w-20 mx-auto" />
+                </div>
+                <div className="text-center">
+                  <Skeleton className="h-8 w-16 mx-auto mb-2" />
+                  <Skeleton className="h-4 w-20 mx-auto" />
+                </div>
+              </div>
+            ) : (() => {
               // Get latest and previous period data
               const latestPeriod = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1] : null;
               const previousPeriod = perceptionScoreTrend.length > 1 ? perceptionScoreTrend[perceptionScoreTrend.length - 2] : null;
@@ -1188,17 +1206,6 @@ export const OverviewTab = ({
               // For relevance, always use the overall average from metrics since it's calculated from all recency data
               // The period-specific relevance may only include a subset of citations, so the overall average is more accurate
               const currentRelevance = Math.round(metrics.averageRelevance);
-              
-              // Debug logging
-              if (process.env.NODE_ENV === 'development') {
-                console.log('[Relevance Debug] OverviewTab - Relevance calculation:', {
-                  latestPeriodRelevance: latestPeriod?.relevance,
-                  metricsAverageRelevance: metrics.averageRelevance,
-                  currentRelevance,
-                  hasLatestPeriod: !!latestPeriod,
-                  note: 'Using overall average relevance for consistency'
-                });
-              }
               
               return (
                 <>
@@ -1467,7 +1474,23 @@ export const OverviewTab = ({
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {(() => {
+                  {metricsCalculating ? (
+                    // Show loading skeletons while metrics are calculating
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div className="text-center">
+                        <Skeleton className="h-8 w-16 mx-auto mb-2" />
+                        <Skeleton className="h-4 w-20 mx-auto" />
+                      </div>
+                      <div className="text-center">
+                        <Skeleton className="h-8 w-16 mx-auto mb-2" />
+                        <Skeleton className="h-4 w-20 mx-auto" />
+                      </div>
+                      <div className="text-center">
+                        <Skeleton className="h-8 w-16 mx-auto mb-2" />
+                        <Skeleton className="h-4 w-20 mx-auto" />
+                      </div>
+                    </div>
+                  ) : (() => {
                     // Get latest period data (same logic as Breakdown Card)
                     const latestPeriod = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1] : null;
                     const currentSentiment = latestPeriod ? latestPeriod.sentiment : Math.round(metrics.averageSentiment * 100);

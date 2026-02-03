@@ -38,10 +38,37 @@ export const useDashboardData = () => {
   const [isOnline, setIsOnline] = useState(networkMonitor.online);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [recencyDataError, setRecencyDataError] = useState<string | null>(null);
+  // Backend-calculated metrics from materialized views
+  const [companySentimentMetrics, setCompanySentimentMetrics] = useState<any | null>(null);
+  const [companyRelevanceMetrics, setCompanyRelevanceMetrics] = useState<any | null>(null);
+  const [companyMetricsLoading, setCompanyMetricsLoading] = useState(false);
+  // Track if metrics are still being calculated (for UX - show all metrics together)
+  // Start as true, will be set to false when all metrics are ready
+  const [metricsCalculating, setMetricsCalculating] = useState(true);
+  
+  // Reset metricsCalculating when company changes or when starting to load
+  useEffect(() => {
+    if (currentCompany?.id) {
+      setMetricsCalculating(true);
+    }
+  }, [currentCompany?.id]);
+  
+  // Also reset when loading starts
+  useEffect(() => {
+    if (loading) {
+      setMetricsCalculating(true);
+    }
+  }, [loading]);
+  // Pagination state for responses
+  const [loadAllResponses, setLoadAllResponses] = useState(false); // Flag to load all historical data
+  const [hasMoreResponses, setHasMoreResponses] = useState(false);
   const subscriptionRef = useRef<any>(null); // Track subscription instance
   const pollingRef = useRef<NodeJS.Timeout | null>(null);   // Track polling interval
   const recencyDataCacheRef = useRef<{ responseIdsHash: string; data: any[] } | null>(null); // Cache recency data
   const previousResponseIdsRef = useRef<string>(''); // Track previous response IDs to detect changes
+  // Cache company dashboard data for instant restore when switching back (stale-while-revalidate)
+  const COMPANY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  const companyDataCacheRef = useRef<Record<string, { responses: PromptResponse[]; lastUpdated?: Date; timestamp: number }>>({});
 
   // Network status monitoring - FIXED
   // Track if we're coming back online from being offline (vs just tab visibility change)
@@ -90,25 +117,66 @@ export const useDashboardData = () => {
       setCompetitorLoading(true);
       setConnectionError(null);
       
-      const { data: userPrompts, error: promptsError } = await retrySupabaseQuery(() =>
+      // Fetch prompts first
+      const promptsResult = await retrySupabaseQuery(() =>
         supabase
           .from('confirmed_prompts')
           .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, is_pro_prompt, talentx_attribute_id')
           .eq('company_id', currentCompany.id)
-      ) as { data: any[] | null; error: any };
+      ) as Promise<{ data: any[] | null; error: any }>;
+
+      const { data: userPrompts, error: promptsError } = promptsResult;
+
+      // Fetch ALL prompt_responses for the company (paginate to bypass Supabase 1000-row default cap)
+      const PAGE_SIZE = 1000;
+      let data: any[] = [];
+      let page = 0;
+      let chunk: any[] | null;
+      do {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        const result = await retrySupabaseQuery(() =>
+          supabase
+            .from('prompt_responses')
+            .select(`
+              *,
+              confirmed_prompts (
+                prompt_text,
+                prompt_category,
+                prompt_theme,
+                prompt_type,
+                industry_context,
+                job_function_context,
+                location_context,
+                talentx_attribute_id
+              )
+            `)
+            .eq('company_id', currentCompany.id)
+            .order('tested_at', { ascending: false })
+            .range(from, to)
+        ) as Promise<{ data: any[] | null; error: any }>;
+        if (result.error) throw result.error;
+        chunk = result.data ?? [];
+        data = data.concat(chunk);
+        page += 1;
+      } while (chunk.length === PAGE_SIZE);
+
+      const responsesError = null;
 
       if (promptsError) {
         console.error('🔍 Error fetching prompts:', promptsError);
-        // Provide more user-friendly error message
         if (promptsError.message?.includes('permission') || promptsError.message?.includes('policy')) {
           throw new Error('You don\'t have permission to view prompts for this company. Please contact support if you believe this is an error.');
         }
         throw new Error('Unable to load prompts. Please refresh the page or try again later.');
       }
 
+      if (responsesError) {
+        throw responsesError;
+      }
+
       if (!userPrompts || userPrompts.length === 0) {
         setActivePrompts([]);
-        // No prompts found for this company - this is expected for new companies
         setResponses([]);
         setLoading(false);
         setCompetitorLoading(false);
@@ -116,46 +184,24 @@ export const useDashboardData = () => {
       }
 
       setActivePrompts(userPrompts);
-
-
-      // Clear data issues flag if we found prompts
       setHasDataIssues(false);
+      setHasMoreResponses(false);
 
-      const promptIds = userPrompts.map(p => p.id);
-
-      // Fetch all responses for this company
-      // With historical tracking enabled, we get ALL responses (multiple per prompt+model)
-      const { data, error } = await retrySupabaseQuery(() =>
-        supabase
-          .from('prompt_responses')
-          .select(`
-            *,
-            confirmed_prompts (
-              prompt_text,
-              prompt_category,
-              prompt_theme,
-              prompt_type,
-              industry_context,
-              job_function_context,
-              location_context,
-              talentx_attribute_id
-            )
-          `)
-          .eq('company_id', currentCompany.id)
-          .order('tested_at', { ascending: false })
-      ) as { data: any[] | null; error: any };
-
-      if (error) throw error;
-      
-      // For trend analysis, we need ALL responses, not just the latest
-      // This preserves historical data for score trend calculations
       let allResponses = data || [];
       
-      // If user is Pro, fetch TalentX perception scores and convert them to PromptResponse format
+      // If user is Pro, fetch TalentX responses in parallel with regular responses
+      // (We already fetched regular responses above, so fetch TalentX now)
       if (isPro) {
         try {
-            // Fetch TalentX responses from prompt_responses table joined with confirmed_prompts
-            const { data: talentXResponsesRaw, error: talentXError } = await supabase
+          // Paginate TalentX responses to bypass 1000-row cap
+          const talentXPageSize = 1000;
+          let talentXRaw: any[] = [];
+          let talentXPage = 0;
+          let talentXChunk: any[];
+          do {
+            const from = talentXPage * talentXPageSize;
+            const to = from + talentXPageSize - 1;
+            const talentXResult = await supabase
               .from('prompt_responses')
               .select(`
                 *,
@@ -172,11 +218,17 @@ export const useDashboardData = () => {
               `)
               .eq('confirmed_prompts.company_id', currentCompany.id)
               .like('confirmed_prompts.prompt_type', 'talentx_%')
-              .order('tested_at', { ascending: false });
-            
+              .order('tested_at', { ascending: false })
+              .range(from, to);
+            if (talentXResult.error) throw talentXResult.error;
+            talentXChunk = talentXResult.data ?? [];
+            talentXRaw = talentXRaw.concat(talentXChunk);
+            talentXPage += 1;
+          } while (talentXChunk.length === talentXPageSize);
+
             // Filter to get only latest TalentX responses per prompt+model
             const talentXLatestMap = new Map<string, any>();
-            (talentXResponsesRaw || []).forEach(response => {
+            talentXRaw.forEach(response => {
               const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
               if (!talentXLatestMap.has(key)) {
                 talentXLatestMap.set(key, response);
@@ -184,9 +236,7 @@ export const useDashboardData = () => {
             });
             const talentXResponses = Array.from(talentXLatestMap.values());
 
-            if (talentXError) {
-              console.error('Error fetching TalentX responses:', talentXError);
-            } else if (talentXResponses && talentXResponses.length > 0) {
+            if (talentXResponses && talentXResponses.length > 0) {
               // Convert TalentX responses to PromptResponse format
               const talentXResponsesFormatted: PromptResponse[] = talentXResponses.map(response => {
                 const promptType = response.confirmed_prompts.prompt_type;
@@ -231,16 +281,26 @@ export const useDashboardData = () => {
       }
       
       setResponses(allResponses);
-      
+
       // Set lastUpdated to the most recent response collection time
+      let lastUpdatedDate: Date | undefined;
       if (allResponses.length > 0) {
         const mostRecentResponse = allResponses[0]; // Already sorted by updated_at desc
-        const lastUpdatedDate = new Date(mostRecentResponse.tested_at || mostRecentResponse.updated_at || mostRecentResponse.created_at);
+        lastUpdatedDate = new Date(mostRecentResponse.tested_at || mostRecentResponse.updated_at || mostRecentResponse.created_at);
         setLastUpdated(lastUpdatedDate);
       } else {
         setLastUpdated(undefined);
       }
-      
+
+      // Update company cache for instant restore when switching back
+      if (currentCompany?.id && allResponses.length > 0) {
+        companyDataCacheRef.current[currentCompany.id] = {
+          responses: allResponses,
+          lastUpdated: lastUpdatedDate,
+          timestamp: Date.now()
+        };
+      }
+
       setLoading(false);
       setCompetitorLoading(false);
     } catch (error) {
@@ -287,6 +347,128 @@ export const useDashboardData = () => {
     }
   }, [user, currentCompany, isOnline]);
 
+  // Fetch company metrics from materialized views (backend-calculated)
+  const fetchCompanyMetrics = useCallback(async () => {
+    if (!user || !currentCompany?.id) return;
+    
+    try {
+      setCompanyMetricsLoading(true);
+      
+      // Fetch sentiment and relevance metrics from materialized views
+      // Get the most recent month with data (not just current month)
+      // This handles cases where data is from previous months
+      const [sentimentResult, relevanceResult] = await Promise.all([
+        supabase
+          .from('company_sentiment_scores')
+          .select('*')
+          .eq('company_id', currentCompany.id)
+          .order('response_month', { ascending: false })
+          .limit(100), // Get all months, limit to prevent huge queries
+        supabase
+          .from('company_relevance_scores')
+          .select('*')
+          .eq('company_id', currentCompany.id)
+          .order('response_month', { ascending: false })
+          .limit(100) // Get all months, limit to prevent huge queries
+      ]);
+
+      if (sentimentResult.error && sentimentResult.error.code !== 'PGRST116') {
+        console.warn('Error fetching sentiment metrics from materialized view:', sentimentResult.error);
+        // Don't throw - fallback to frontend calculation
+      } else if (sentimentResult.data && sentimentResult.data.length > 0) {
+        // Aggregate sentiment metrics across all prompt types/themes and months
+        // Use the most recent month's data primarily, but aggregate all available months
+        const aggregated = sentimentResult.data.reduce((acc, row) => {
+          acc.totalThemes += row.total_themes || 0;
+          acc.positiveThemes += row.positive_themes || 0;
+          acc.negativeThemes += row.negative_themes || 0;
+          acc.neutralThemes += row.neutral_themes || 0;
+          acc.totalSentimentScore += (row.avg_sentiment_score || 0) * (row.total_themes || 0);
+          acc.totalWeight += row.total_themes || 0;
+          return acc;
+        }, { 
+          totalThemes: 0, 
+          positiveThemes: 0, 
+          negativeThemes: 0, 
+          neutralThemes: 0,
+          totalSentimentScore: 0,
+          totalWeight: 0
+        });
+
+        const sentimentRatio = (aggregated.positiveThemes + aggregated.negativeThemes) > 0
+          ? aggregated.positiveThemes / (aggregated.positiveThemes + aggregated.negativeThemes)
+          : 0;
+        
+        const avgSentimentScore = aggregated.totalWeight > 0
+          ? aggregated.totalSentimentScore / aggregated.totalWeight
+          : 0;
+
+        if (aggregated.totalThemes > 0) {
+          setCompanySentimentMetrics({
+            sentiment_ratio: sentimentRatio,
+            avg_sentiment_score: avgSentimentScore,
+            total_themes: aggregated.totalThemes,
+            positive_themes: aggregated.positiveThemes,
+            negative_themes: aggregated.negativeThemes,
+            neutral_themes: aggregated.neutralThemes
+          });
+        } else {
+          // Data exists but has no themes - fallback to frontend
+          setCompanySentimentMetrics(null);
+        }
+      } else {
+        // No data in materialized view - will use frontend calculation
+        setCompanySentimentMetrics(null);
+      }
+
+      if (relevanceResult.error && relevanceResult.error.code !== 'PGRST116') {
+        console.warn('Error fetching relevance metrics from materialized view:', relevanceResult.error);
+        // Don't throw - fallback to frontend calculation
+      } else if (relevanceResult.data && relevanceResult.data.length > 0) {
+        // Aggregate relevance metrics across all prompt types/themes and months
+        // Use the most recent month's data primarily, but aggregate all available months
+        const aggregated = relevanceResult.data.reduce((acc, row) => {
+          acc.totalCitations += row.total_citations || 0;
+          acc.validCitations += row.valid_citations || 0;
+          acc.totalRelevanceScore += (row.relevance_score || 0) * (row.valid_citations || 0);
+          acc.totalWeight += row.valid_citations || 0;
+          return acc;
+        }, { 
+          totalCitations: 0, 
+          validCitations: 0, 
+          totalRelevanceScore: 0, 
+          totalWeight: 0
+        });
+
+        const avgRelevanceScore = aggregated.totalWeight > 0
+          ? aggregated.totalRelevanceScore / aggregated.totalWeight
+          : 0;
+
+        if (aggregated.validCitations > 0) {
+          setCompanyRelevanceMetrics({
+            relevance_score: avgRelevanceScore,
+            total_citations: aggregated.totalCitations,
+            valid_citations: aggregated.validCitations
+          });
+        } else {
+          // Data exists but has no valid citations - fallback to frontend
+          setCompanyRelevanceMetrics(null);
+        }
+      } else {
+        // No data in materialized view - will use frontend calculation
+        setCompanyRelevanceMetrics(null);
+      }
+      
+    } catch (error: any) {
+      console.warn('Error fetching company metrics from materialized views:', error);
+      // Don't set error state - fallback to frontend calculation
+      setCompanySentimentMetrics(null);
+      setCompanyRelevanceMetrics(null);
+    } finally {
+      setCompanyMetricsLoading(false);
+    }
+  }, [user, currentCompany?.id]);
+
   const fetchRecencyData = useCallback(async () => {
     if (!user) return;
     
@@ -302,11 +484,7 @@ export const useDashboardData = () => {
       // Remove duplicates
       const uniqueUrls = [...new Set(urls)];
       
-      console.log('[Relevance Debug] fetchRecencyData: Starting with', uniqueUrls.length, 'unique URLs from', urls.length, 'total URLs in', responses.length, 'responses');
-      console.log('[Relevance Debug] Sample URLs from citations:', uniqueUrls.slice(0, 5));
-      
       if (uniqueUrls.length === 0) {
-        console.log('[Relevance Debug] fetchRecencyData: No URLs found in citations');
         setRecencyData([]);
         return;
       }
@@ -324,87 +502,61 @@ export const useDashboardData = () => {
         }
       }).filter(Boolean))];
       
-      console.log('[Relevance Debug] Extracted', domains.length, 'unique domains from', uniqueUrls.length, 'URLs');
-      console.log('[Relevance Debug] Sample domains:', domains.slice(0, 10));
-      
       // Use domain-based matching as primary method for better coverage
-      // Process domains in batches
-      const domainBatchSize = 20; // Process 20 domains at a time
-      const allDomainMatches: any[] = [];
-      const seenUrls = new Set<string>(); // Track unique URLs to avoid duplicates
-      
+      // Process domains in parallel batches for faster fetching
+      const domainBatchSize = 50; // Increased batch size for fewer requests
+      const domainBatches: string[][] = [];
       for (let i = 0; i < domains.length; i += domainBatchSize) {
-        const domainBatch = domains.slice(i, i + domainBatchSize);
-        
-        console.log(`[Relevance Debug] Processing domain batch ${Math.floor(i/domainBatchSize) + 1}/${Math.ceil(domains.length/domainBatchSize)}, ${domainBatch.length} domains`);
-        
+        domainBatches.push(domains.slice(i, i + domainBatchSize));
+      }
+      
+      // Process all batches in parallel for much faster fetching
+      const batchPromises = domainBatches.map(async (domainBatch, batchIndex) => {
         try {
-          // Query cache for any URLs from these domains
           const { data: domainMatches, error: domainError } = await retrySupabaseQuery(() =>
             supabase
               .from('url_recency_cache')
               .select('url, recency_score, domain')
               .or(domainBatch.map(domain => `domain.eq.${domain}`).join(','))
               .not('recency_score', 'is', null)
-              .limit(200) // Get up to 200 matches per domain batch
+              .limit(500) // Increased limit per batch
           ) as { data: any[] | null; error: any };
           
           if (domainError) {
-            console.error(`[Relevance Debug] Error in domain batch ${Math.floor(i/domainBatchSize) + 1}:`, domainError);
-            continue;
+            return [];
           }
           
-          if (domainMatches && domainMatches.length > 0) {
-            // Filter to only include URLs that match our citation domains (for accuracy)
-            const matchingUrls = domainMatches.filter(match => {
-              // Normalize match domain
-              const matchDomain = (match.domain || new URL(match.url).hostname)
-                .replace(/^www\./, '')
-                .toLowerCase();
-              
-              // Check if this cached URL's domain matches any of our citation domains
-              const matchesCitation = domainBatch.some(citationDomain => 
-                citationDomain === matchDomain
-              );
-              
-              // Also check if we've already seen this URL
-              return matchesCitation && !seenUrls.has(match.url);
-            });
-            
-            matchingUrls.forEach(match => seenUrls.add(match.url));
-            allDomainMatches.push(...matchingUrls);
-            
-            console.log(`[Relevance Debug] Domain batch ${Math.floor(i/domainBatchSize) + 1} found ${matchingUrls.length} relevant matches (${domainMatches.length} total from cache)`);
-          } else {
-            console.log(`[Relevance Debug] Domain batch ${Math.floor(i/domainBatchSize) + 1} found 0 matches`);
+          if (!domainMatches || domainMatches.length === 0) {
+            return [];
           }
           
-          // Small delay between batches
-          if (i + domainBatchSize < domains.length) {
-            await new Promise(resolve => setTimeout(resolve, 50));
-          }
-          
+          // Filter to only include URLs that match our citation domains
+          const domainSet = new Set(domainBatch);
+          return domainMatches.filter(match => {
+            const matchDomain = (match.domain || new URL(match.url).hostname)
+              .replace(/^www\./, '')
+              .toLowerCase();
+            return domainSet.has(matchDomain);
+          });
         } catch (error) {
-          console.error(`[Relevance Debug] Exception in domain batch ${Math.floor(i/domainBatchSize) + 1}:`, error);
-          continue;
+          return [];
         }
-      }
+      });
       
-      console.log('[Relevance Debug] fetchRecencyData: Domain-based search found', allDomainMatches.length, 'total matches');
-      if (allDomainMatches.length > 0) {
-        console.log('[Relevance Debug] Sample domain matches:', allDomainMatches.slice(0, 5).map(m => ({
-          url: m.url?.substring(0, 60),
-          domain: m.domain,
-          score: m.recency_score
-        })));
-        console.log('[Relevance Debug] Score distribution:', {
-          '0-20': allDomainMatches.filter(m => m.recency_score >= 0 && m.recency_score < 20).length,
-          '20-40': allDomainMatches.filter(m => m.recency_score >= 20 && m.recency_score < 40).length,
-          '40-60': allDomainMatches.filter(m => m.recency_score >= 40 && m.recency_score < 60).length,
-          '60-80': allDomainMatches.filter(m => m.recency_score >= 60 && m.recency_score < 80).length,
-          '80-100': allDomainMatches.filter(m => m.recency_score >= 80 && m.recency_score <= 100).length,
+      // Wait for all batches to complete in parallel
+      const batchResults = await Promise.all(batchPromises);
+      
+      // Combine results and deduplicate by URL
+      const seenUrls = new Set<string>();
+      const allDomainMatches: any[] = [];
+      batchResults.forEach(batchResult => {
+        batchResult.forEach(match => {
+          if (!seenUrls.has(match.url)) {
+            seenUrls.add(match.url);
+            allDomainMatches.push(match);
+          }
         });
-      }
+      });
       
       // Cache the results
       const responseIdsHash = responses.map(r => r.id).sort().join(',');
@@ -435,7 +587,7 @@ export const useDashboardData = () => {
   }, [user, responses]);
 
   const fetchAIThemes = useCallback(async () => {
-    if (!user || responses.length === 0) {
+    if (!user || !currentCompany?.id) {
       setAiThemes([]);
       setAiThemesLoading(false);
       return;
@@ -443,114 +595,47 @@ export const useDashboardData = () => {
 
     try {
       setAiThemesLoading(true);
-      // Get response IDs for sentiment and competitive prompts (excluding visibility)
-      const relevantResponses = responses.filter(response => {
-        const promptType = response.confirmed_prompts?.prompt_type;
-        return promptType === 'sentiment' || 
-               promptType === 'competitive' || 
-               promptType === 'talentx_sentiment' || 
-               promptType === 'talentx_competitive';
-      });
-
-      const responseIds = relevantResponses.map(r => r.id);
       
-      if (responseIds.length === 0) {
-        setAiThemes([]);
-        return;
-      }
+      // OPTIMIZED: Single query using company_id (no batching, no waiting for responses)
+      // This eliminates waterfall and batch processing overhead
+      // company_id column exists on ai_themes table (from migration 20250201000000)
+      const { data: themes, error: themesError } = await retrySupabaseQuery(() =>
+        supabase
+          .from('ai_themes')
+          .select('*')
+          .eq('company_id', currentCompany.id)
+          .order('created_at', { ascending: false })
+      ) as { data: any[] | null; error: any };
 
-      // Process response IDs in batches to avoid URI length limits
-      // Supabase .in() queries can fail if the array is too large
-      const batchSize = 100; // Process 100 response IDs at a time
-      const allThemes: any[] = [];
-      let batchProcessingFailed = false;
-
-      // Process response IDs in batches
-      for (let i = 0; i < responseIds.length; i += batchSize) {
-        const batch = responseIds.slice(i, i + batchSize);
-        
-        try {
-          const { data: batchThemes, error: batchError } = await retrySupabaseQuery(() =>
-            supabase
-              .from('ai_themes')
-              .select('*')
-              .in('response_id', batch)
-              .order('created_at', { ascending: false })
-          ) as { data: any[] | null; error: any };
-
-          if (batchError) {
-            console.error(`Error fetching AI themes batch ${Math.floor(i/batchSize) + 1}:`, batchError);
-            
-            // If this is a URI length error, try even smaller batches
-            if (batchError.message?.includes('uri too long') || 
-                batchError.message?.includes('request entity too large') ||
-                batchError.code === 'ERR_FAILED') {
-              batchProcessingFailed = true;
-              break;
-            }
-            
-            // Continue with next batch for other errors
-            continue;
-          }
-
-          if (batchThemes && batchThemes.length > 0) {
-            allThemes.push(...batchThemes);
-          }
-
-          // Small delay between batches to avoid rate limiting
-          if (i + batchSize < responseIds.length) {
-            await new Promise(resolve => setTimeout(resolve, 50));
-          }
-
-        } catch (error) {
-          console.error(`Error in AI themes batch ${Math.floor(i/batchSize) + 1}:`, error);
-          continue;
-        }
-      }
-
-      // If batching failed, try individual queries as fallback
-      if (batchProcessingFailed && allThemes.length === 0) {
-        console.warn('Batch processing failed, trying individual queries for AI themes...');
-        for (const responseId of responseIds.slice(0, 50)) { // Limit to first 50 to avoid too many requests
-          try {
-            const { data: singleTheme, error: singleError } = await retrySupabaseQuery(() =>
-              supabase
-                .from('ai_themes')
-                .select('*')
-                .eq('response_id', responseId)
-            ) as { data: any[] | null; error: any };
-
-            if (!singleError && singleTheme) {
-              allThemes.push(...singleTheme);
-            }
-
-            await new Promise(resolve => setTimeout(resolve, 25));
-          } catch (error) {
-            console.error(`Error fetching themes for response ${responseId}:`, error);
-          }
-        }
-      }
-
-      // Check if we got any themes
-      if (batchProcessingFailed && allThemes.length === 0) {
-        console.error('❌ Failed to fetch AI themes after batching. Response IDs count:', responseIds.length);
+      if (themesError) {
+        console.error('Error fetching AI themes:', themesError);
         setAiThemes([]);
         return;
       }
       
-      setAiThemes(allThemes);
+      // Store all themes - filtering by prompt_type happens in sentiment calculation
+      // when responses are available
+      setAiThemes(themes || []);
     } catch (error) {
       console.error('Error in fetchAIThemes:', error);
       setAiThemes([]);
     } finally {
       setAiThemesLoading(false);
     }
-  }, [user, responses]);
+  }, [user, currentCompany?.id]);
 
   // Memoized cache of sentiment calculations per response ID
-  // This prevents recalculating sentiment for the same response multiple times
-  // Only counts themes from responses that belong to the current company
-  const sentimentCache = useMemo(() => {
+  // OPTIMIZED: Only recalculates when themes change, not on every render
+  // This prevents expensive calculations on every render
+  const [sentimentCacheState, setSentimentCacheState] = useState<Map<string, { sentiment_score: number; sentiment_label: string }>>(new Map());
+  
+  // Calculate sentiment cache only when themes change (debounced)
+  useEffect(() => {
+    if (aiThemes.length === 0 && responses.length === 0) {
+      setSentimentCacheState(new Map());
+      return;
+    }
+    
     const cache = new Map<string, { sentiment_score: number; sentiment_label: string }>();
     
     // Create a Set of response IDs from the current company's responses
@@ -591,14 +676,17 @@ export const useDashboardData = () => {
       });
     });
     
-    return cache;
+    setSentimentCacheState(cache);
   }, [aiThemes, responses]);
+  
+  // Use state-based cache instead of useMemo (prevents recalculation on every render)
+  const sentimentCache = sentimentCacheState;
 
   // Helper function to calculate AI-based sentiment for a response
-  // Now uses the memoized cache for O(1) lookup instead of recalculating
+  // Uses the state-based cache for O(1) lookup (calculated only when themes change)
   const calculateAIBasedSentiment = useCallback((responseId: string) => {
     // Check cache first
-    const cached = sentimentCache.get(responseId);
+    const cached = sentimentCacheState.get(responseId);
     if (cached) {
       return cached;
     }
@@ -608,7 +696,7 @@ export const useDashboardData = () => {
       sentiment_score: 0,
       sentiment_label: 'neutral'
     };
-  }, [sentimentCache]);
+  }, [sentimentCacheState]);
 
   const fetchCompanyName = useCallback(async () => {
     if (!currentCompany) {
@@ -884,13 +972,19 @@ export const useDashboardData = () => {
   // Update the ref when company changes
   useEffect(() => {
     if (currentCompany?.id !== currentCompanyIdRef.current && currentCompany?.id !== undefined) {
+      const previousCompanyId = currentCompanyIdRef.current;
+      // Save current company's data to cache before clearing (for instant restore when switching back)
+      if (previousCompanyId && responses.length > 0) {
+        companyDataCacheRef.current[previousCompanyId] = {
+          responses,
+          lastUpdated: lastUpdated,
+          timestamp: Date.now()
+        };
+      }
       // Set switching flag to prevent stale data from being used
       setIsSwitchingCompany(true);
-      
-      // Only reset hasInitiallyLoadedRef when actually switching companies (not when returning to tab)
-      // The ref will be set to true again in the fetch effect above
       currentCompanyIdRef.current = currentCompany?.id;
-      
+
       // Clear all data immediately when switching companies
       setResponses([]);
       setAiThemes([]);
@@ -900,46 +994,71 @@ export const useDashboardData = () => {
       setTalentXProPrompts([]);
       setRecencyData([]);
       setLastUpdated(undefined);
-      
+
       // Clear search results cache when switching companies
       searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
       // Clear recency data cache when switching companies
       recencyDataCacheRef.current = null;
-      
+
       // Reset the fetched key so new data will be loaded
       fetchedCompanyUserKeyRef.current = null;
     }
-  }, [currentCompany?.id]); // Remove responses.length and searchResults.length from deps to prevent unnecessary runs
+  }, [currentCompany?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally omit responses/lastUpdated to avoid saving on every response change
   
   // Initial data fetch - only run when user or company ID actually changes, or when shouldRefetch is true
   // CRITICAL: Prevent refetch when returning to tab by tracking what we've already loaded
   useEffect(() => {
     if (user?.id && currentCompany?.id) {
       const currentKey = `${user.id}-${currentCompany.id}`;
-      
+      const companyId = currentCompany.id;
+
       // Only fetch if:
       // 1. This is a new company/user combination, OR
-      // 2. shouldRefetch is explicitly set to true
-      if (fetchedCompanyUserKeyRef.current !== currentKey || shouldRefetch) {
+      // 2. shouldRefetch is explicitly set to true (user clicked Refresh)
+      const isExplicitRefresh = shouldRefetch;
+      if (fetchedCompanyUserKeyRef.current !== currentKey || isExplicitRefresh) {
         fetchedCompanyUserKeyRef.current = currentKey;
         hasInitiallyLoadedRef.current = true;
         setShouldRefetch(false); // Reset the refetch flag
-        
-        // Fetch fresh data for the new company
-        fetchResponses();
-        fetchCompanyName();
+
+        // On explicit refresh: skip cache and clear caches so we get fresh data
+        if (isExplicitRefresh) {
+          delete companyDataCacheRef.current[companyId];
+          recencyDataCacheRef.current = null;
+          previousResponseIdsRef.current = '';
+        } else {
+          // Restore from cache if available (instant UI when switching back to recently viewed company)
+          const cached = companyDataCacheRef.current[companyId];
+          if (cached && (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL && cached.responses.length > 0) {
+            setResponses(cached.responses);
+            setLastUpdated(cached.lastUpdated);
+            setLoading(false);
+            setCompetitorLoading(false);
+            setIsSwitchingCompany(false);
+          }
+        }
+
+        // Always fetch fresh data (in background if cache was used)
+        setCompanyName(currentCompany.name || '');
+        Promise.all([
+          fetchResponses(),
+          fetchCompanyMetrics(),
+          // On explicit refresh, also refetch AI themes and clear search cache
+          ...(isExplicitRefresh ? [fetchAIThemes()] : []),
+        ]);
         if (isPro) {
           fetchTalentXProData();
+          if (isExplicitRefresh) {
+            searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
+          }
           fetchSearchResults();
         }
-        
-        // Don't clear the switching flag here - let it be cleared when data is actually loaded
       }
     } else {
       // Reset when user/company becomes null
       fetchedCompanyUserKeyRef.current = null;
     }
-  }, [user?.id, currentCompany?.id, isPro, shouldRefetch, fetchResponses, fetchCompanyName, fetchTalentXProData, fetchSearchResults]);
+  }, [user?.id, currentCompany?.id, isPro, shouldRefetch, fetchResponses, fetchCompanyName, fetchTalentXProData, fetchSearchResults, fetchCompanyMetrics, fetchAIThemes]);
 
   // Clear switching flag when data is actually loaded
   useEffect(() => {
@@ -947,6 +1066,20 @@ export const useDashboardData = () => {
       setIsSwitchingCompany(false);
     }
   }, [isSwitchingCompany, responses.length, searchResults.length]);
+
+  // Reset pagination when company changes
+  useEffect(() => {
+    setLoadAllResponses(false);
+    setHasMoreResponses(false);
+  }, [currentCompany?.id]);
+
+  // Clear company metrics when company becomes null
+  useEffect(() => {
+    if (!currentCompany?.id || !user?.id) {
+      setCompanySentimentMetrics(null);
+      setCompanyRelevanceMetrics(null);
+    }
+  }, [currentCompany?.id, user?.id]);
 
   // Fetch recency data when responses change (with caching to avoid unnecessary refetches)
   useEffect(() => {
@@ -965,50 +1098,58 @@ export const useDashboardData = () => {
       previousResponseIdsRef.current = responseIdsHash;
       
       // Only fetch if we don't have cached data or if cache is stale
+      // Fetch immediately - don't wait for backend metrics
+      // This ensures recency is loading while backend metrics query runs, so relevance appears faster
       if (!recencyDataCacheRef.current || recencyDataCacheRef.current.responseIdsHash !== responseIdsHash) {
+        // Always fetch immediately - don't wait for backend metrics
+        // If backend metrics exist, we'll use them. If not, recency is already loading.
         fetchRecencyData();
       } else {
         // Use cached data
-        console.log('[Relevance Debug] Using cached recency data, skipping fetch');
         setRecencyData(recencyDataCacheRef.current.data);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [responses.length]); // Only depend on length - hash comparison happens inside
+  }, [responses.length]); // Only depend on responses length - fetch immediately
 
-  // Fetch AI themes when responses change
+  // Fetch AI themes immediately when company changes (PARALLEL with responses)
+  // Don't wait for responses to load - fetch directly from database using company_id
+  // This eliminates waterfall and makes themes load in parallel with responses
   useEffect(() => {
-    if (responses.length > 0) {
+    if (user && currentCompany?.id) {
+      // Fetch themes immediately in parallel with responses
+      // No need to wait for responses state - fetch directly from DB
       fetchAIThemes();
+    } else {
+      setAiThemes([]);
+      setAiThemesLoading(false);
     }
-  }, [responses.length]); // Only depend on responses length, not the function
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, currentCompany?.id]); // Fetch when company changes, not when responses load
 
-  // Track when metrics are ready (depends on responses and AI themes)
-  // Recency data is non-blocking - dashboard can show without it
+  // Track when metrics are ready
+  // Backend metrics (from materialized views) are available immediately
+  // Frontend metrics calculation can happen in background - don't block UI
   useEffect(() => {
     if (loading) {
       setMetricsLoading(true);
-    } else if (responses.length > 0) {
-      // Don't wait for recency data - it can load in the background
-      // Only wait for responses and AI themes (which should be fast)
-      // If AI themes haven't loaded yet but we have responses, still show dashboard
-      // The metrics will update when AI themes arrive
-      setMetricsLoading(false);
     } else {
+      // Metrics are ready as soon as responses load
+      // Backend metrics are already available from materialized views
+      // Frontend calculation (themes/recency) can update in background
       setMetricsLoading(false);
     }
-  }, [loading, responses.length]);
+  }, [loading]);
 
   // Comprehensive loading state that includes all critical data
-  // Wait for recency data if we have responses (since it affects relevance scores)
+  // Don't wait for recency/themes - backend metrics are available immediately
+  // Let recency/themes load in background and update when ready
   const isFullyLoaded = useMemo(() => {
-    const baseLoaded = !loading && !metricsLoading && !competitorLoading;
-    // If we have responses, also wait for recency data to prevent score changes
-    if (responses.length > 0) {
-      return baseLoaded && !recencyDataLoading;
-    }
-    return baseLoaded;
-  }, [loading, metricsLoading, competitorLoading, recencyDataLoading, responses.length]);
+    // Dashboard is ready as soon as responses load
+    // Backend metrics (from materialized views) are available immediately
+    // Recency/themes can load in background without blocking UI
+    return !loading && !metricsLoading && !competitorLoading;
+  }, [loading, metricsLoading, competitorLoading]);
 
   // Fetch search results when company is available
   useEffect(() => {
@@ -1019,6 +1160,13 @@ export const useDashboardData = () => {
 
   const refreshData = useCallback(async () => {
     // Force refetch by setting the state
+    setShouldRefetch(true);
+  }, []);
+
+  // Function to load all historical responses (for complete trend analysis)
+  const loadAllHistoricalResponses = useCallback(async () => {
+    setLoadAllResponses(true);
+    // Trigger refetch - fetchResponses will check loadAllResponses flag
     setShouldRefetch(true);
   }, []);
 
@@ -1168,7 +1316,7 @@ export const useDashboardData = () => {
           existing.visibilityScores.push(visibilityScore);
         }
         // Update visibility metrics
-        if (response.confirmed_prompts?.prompt_type === 'visibility' || response.confirmed_prompts?.prompt_type === 'talentx_visibility') {
+        if (response.confirmed_prompts?.prompt_type === 'discovery' || response.confirmed_prompts?.prompt_type === 'talentx_discovery') {
           if (typeof existing.averageVisibility === 'number') {
             existing.averageVisibility = (existing.averageVisibility * (existing.responses - 1) + (response.company_mentioned ? 100 : 0)) / existing.responses;
           } else {
@@ -1195,7 +1343,7 @@ export const useDashboardData = () => {
         acc.push({
           prompt: promptKey || '',
           category: promptThemeValue,
-          type: response.confirmed_prompts?.prompt_type || 'sentiment',
+          type: response.confirmed_prompts?.prompt_type || 'experience',
           industryContext: response.confirmed_prompts?.industry_context || undefined,
           jobFunctionContext: response.confirmed_prompts?.job_function_context || undefined,
           locationContext: response.confirmed_prompts?.location_context || undefined,
@@ -1207,7 +1355,7 @@ export const useDashboardData = () => {
           mentionRanking: response.mention_ranking || undefined,
           competitivePosition: response.mention_ranking || undefined,
           detectedCompetitors: response.detected_competitors || undefined,
-          averageVisibility: (response.confirmed_prompts?.prompt_type === 'visibility' || response.confirmed_prompts?.prompt_type === 'talentx_visibility') ? (response.company_mentioned ? 100 : 0) : undefined,
+          averageVisibility: (response.confirmed_prompts?.prompt_type === 'discovery' || response.confirmed_prompts?.prompt_type === 'talentx_discovery') ? (response.company_mentioned ? 100 : 0) : undefined,
           visibilityScores: visibilityScore !== undefined ? [visibilityScore] : [],
           // Add TalentX-specific fields if it's a TalentX response
           isTalentXPrompt: isTalentXResponse,
@@ -1248,7 +1396,7 @@ export const useDashboardData = () => {
         promptsWithActive.push({
           prompt: prompt.prompt_text,
           category: prompt.prompt_theme || 'General',
-          type: prompt.prompt_type || 'sentiment',
+          type: prompt.prompt_type || 'experience',
           industryContext: prompt.industry_context || undefined,
           jobFunctionContext: prompt.job_function_context || undefined,
           locationContext: prompt.location_context || undefined,
@@ -1260,7 +1408,7 @@ export const useDashboardData = () => {
           mentionRanking: undefined,
           competitivePosition: undefined,
           detectedCompetitors: undefined,
-          averageVisibility: (prompt.prompt_type === 'visibility') ? 0 : undefined,
+          averageVisibility: (prompt.prompt_type === 'discovery') ? 0 : undefined,
           totalWords: undefined,
           firstMentionPosition: undefined,
           visibilityScores: [],
@@ -1271,49 +1419,176 @@ export const useDashboardData = () => {
     return promptsWithActive;
   }, [responses, talentXProPrompts, calculateAIBasedSentiment, activePrompts]);
 
-  const metrics: DashboardMetrics = useMemo(() => {
-    // Calculate AI-based sentiment averages
-    const relevantResponses = responses.filter(response => {
-      const promptType = response.confirmed_prompts?.prompt_type;
-      return promptType === 'sentiment' || 
-             promptType === 'competitive' || 
-             promptType === 'talentx_sentiment' || 
-             promptType === 'talentx_competitive';
-    });
+  // Track when metrics calculation is complete (all data loaded)
+  // Don't show anything until sentiment loads - this ensures all metrics appear together
+  // CRITICAL: Only show metrics when data is ACTUALLY ready and calculated
+  useEffect(() => {
+    // Metrics are ready when:
+    // 1. Responses are loaded (needed for visibility calculation)
+    // 2. Backend metrics query is complete
+    // 3. SENTIMENT is ready (backend metrics exist OR themes fetch completed AND themes are set)
+    // 4. Relevance is ready (backend metrics exist OR recency fetch completed AND recency is set)
+    const responsesReady = !loading && responses.length > 0;
+    const backendMetricsReady = !companyMetricsLoading;
+    
+    // Check what we have for each metric
+    const hasBackendSentiment = companySentimentMetrics !== null;
+    const hasBackendRelevance = companyRelevanceMetrics !== null;
+    
+    // Sentiment is ready if:
+    // - Backend metrics exist (has data), OR
+    // - Frontend fallback: themes fetch completed (not loading) AND themes have been set (even if empty array)
+    //   We check aiThemes.length !== undefined to ensure setAiThemes() was called
+    const themesFetchCompleted = !aiThemesLoading && (aiThemes.length >= 0 || hasBackendSentiment);
+    const sentimentReady = hasBackendSentiment || themesFetchCompleted;
+    
+    // Relevance is ready if:
+    // - Backend metrics exist (has data), OR
+    // - Frontend fallback: recency fetch completed (not loading) AND recency has been set (even if empty array)
+    const recencyFetchCompleted = !recencyDataLoading && (recencyData.length >= 0 || hasBackendRelevance);
+    const relevanceReady = hasBackendRelevance || recencyFetchCompleted;
+    
+    // CRITICAL: Don't show anything until sentiment is ready
+    // All metrics ready when responses are loaded, backend query complete, AND sentiment/relevance are ready
+    const allReady = responsesReady && backendMetricsReady && sentimentReady && relevanceReady;
+    setMetricsCalculating(!allReady);
+    
+  }, [loading, responses.length, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, aiThemesLoading, recencyDataLoading, aiThemes.length, recencyData.length]);
 
+  const metrics: DashboardMetrics = useMemo(() => {
+    // PREFER backend-calculated metrics from materialized views if available
+    // Fallback to frontend calculation if backend data is not available
+    
+    // Don't calculate if still loading AND we don't have backend metrics
+    // If backend metrics exist, we can use them even if responses aren't fully loaded yet
+    if ((loading || responses.length === 0) && !companySentimentMetrics && !companyRelevanceMetrics) {
+      return {
+        averageSentiment: 0,
+        sentimentLabel: 'Neutral',
+        sentimentTrendComparison: { value: 0, direction: 'neutral' as const },
+        visibilityTrendComparison: { value: 0, direction: 'neutral' as const },
+        citationsTrendComparison: { value: 0, direction: 'neutral' as const },
+        totalCitations: 0,
+        uniqueDomains: 0,
+        totalResponses: 0,
+        averageVisibility: 0,
+        averageRelevance: 0,
+        positiveCount: 0,
+        neutralCount: 0,
+        negativeCount: 0,
+        perceptionScore: 0,
+        perceptionLabel: 'No Data'
+      };
+    }
+    
     let averageSentiment = 0;
     let positiveCount = 0;
     let neutralCount = 0;
     let negativeCount = 0;
 
-    if (aiThemes.length > 0 && relevantResponses.length > 0) {
-      // Use AI themes for sentiment calculation
-      // Calculate overall positive ratio directly from all themes (not averaged across responses)
-      const companyResponseIds = new Set(relevantResponses.map(r => r.id));
-      const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
+    // Use backend-calculated sentiment if available
+    if (companySentimentMetrics) {
+      averageSentiment = companySentimentMetrics.sentiment_ratio || 0;
       
-      const positiveThemes = companyThemes.filter(theme => theme.sentiment_score > 0.1).length;
-      const negativeThemes = companyThemes.filter(theme => theme.sentiment_score < -0.1).length;
-      const totalNonNeutralThemes = positiveThemes + negativeThemes;
+      // Ensure averageSentiment is set correctly (defensive check)
+      if (averageSentiment === 0 && companySentimentMetrics.sentiment_ratio > 0) {
+        averageSentiment = companySentimentMetrics.sentiment_ratio;
+      }
       
-      // Calculate overall positive ratio (0-1 scale)
-      averageSentiment = totalNonNeutralThemes > 0 
-        ? positiveThemes / totalNonNeutralThemes 
-        : 0;
-
-      // Calculate sentiment counts based on AI themes (ratio-based)
-      const responseSentiments = relevantResponses.map(response => {
-        return calculateAIBasedSentiment(response.id);
-      });
-      positiveCount = responseSentiments.filter(s => s.sentiment_score > 0.6).length;
-      neutralCount = responseSentiments.filter(s => s.sentiment_score >= 0.4 && s.sentiment_score <= 0.6).length;
-      negativeCount = responseSentiments.filter(s => s.sentiment_score < 0.4).length;
+      // If backend returns 0 but we have themes, check if frontend calculation gives different result
+      // This handles cases where materialized view is stale or calculation differs
+      if (averageSentiment === 0 && aiThemes.length > 0 && responses.length > 0) {
+        const relevantResponses = responses.filter(response => {
+          const promptType = response.confirmed_prompts?.prompt_type;
+          return promptType === 'experience' ||
+                 promptType === 'competitive' ||
+                 promptType === 'talentx_experience' ||
+                 promptType === 'talentx_competitive';
+        });
+        
+        if (relevantResponses.length > 0) {
+          const companyResponseIds = new Set(relevantResponses.map(r => r.id));
+          const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
+          const positiveThemes = companyThemes.filter(theme => theme.sentiment_score > 0.1).length;
+          const negativeThemes = companyThemes.filter(theme => theme.sentiment_score < -0.1).length;
+          const totalNonNeutralThemes = positiveThemes + negativeThemes;
+          
+          if (totalNonNeutralThemes > 0) {
+            // Use frontend calculation if backend returned 0 but themes exist
+            // This handles cases where materialized view is stale
+            averageSentiment = positiveThemes / totalNonNeutralThemes;
+          }
+        }
+      }
+      // Estimate counts based on ratios (for display purposes)
+      const totalResponses = responses.length;
+      if (companySentimentMetrics.total_themes > 0) {
+        const positiveRatio = companySentimentMetrics.positive_themes / companySentimentMetrics.total_themes;
+        const negativeRatio = companySentimentMetrics.negative_themes / companySentimentMetrics.total_themes;
+        const neutralRatio = companySentimentMetrics.neutral_themes / companySentimentMetrics.total_themes;
+        
+        positiveCount = Math.round(totalResponses * positiveRatio);
+        negativeCount = Math.round(totalResponses * negativeRatio);
+        neutralCount = totalResponses - positiveCount - negativeCount;
+      } else {
+        neutralCount = totalResponses;
+      }
     } else {
-      // No AI themes available - use neutral sentiment as fallback
-      averageSentiment = 0; // Neutral sentiment when no AI themes available
-      positiveCount = 0;
-      neutralCount = responses.length;
-      negativeCount = 0;
+      // Fallback to frontend calculation
+      const relevantResponses = responses.filter(response => {
+        const promptType = response.confirmed_prompts?.prompt_type;
+        return promptType === 'experience' ||
+               promptType === 'competitive' ||
+               promptType === 'talentx_experience' ||
+               promptType === 'talentx_competitive';
+      });
+
+      // Only calculate if we have both themes AND responses loaded
+      // This prevents calculation when themes load before responses (parallel fetching)
+      if (aiThemes.length > 0 && relevantResponses.length > 0 && !loading) {
+        // Use AI themes for sentiment calculation
+        // Calculate overall positive ratio directly from all themes (not averaged across responses)
+        const companyResponseIds = new Set(relevantResponses.map(r => r.id));
+        const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
+        
+        const positiveThemes = companyThemes.filter(theme => theme.sentiment_score > 0.1).length;
+        const negativeThemes = companyThemes.filter(theme => theme.sentiment_score < -0.1).length;
+        const totalNonNeutralThemes = positiveThemes + negativeThemes;
+        
+        // Calculate overall positive ratio (0-1 scale)
+        averageSentiment = totalNonNeutralThemes > 0 
+          ? positiveThemes / totalNonNeutralThemes 
+          : 0;
+
+        // Calculate sentiment counts based on AI themes (ratio-based)
+        const responseSentiments = relevantResponses.map(response => {
+          return calculateAIBasedSentiment(response.id);
+        });
+        positiveCount = responseSentiments.filter(s => s.sentiment_score > 0.6).length;
+        neutralCount = responseSentiments.filter(s => s.sentiment_score >= 0.4 && s.sentiment_score <= 0.6).length;
+        negativeCount = responseSentiments.filter(s => s.sentiment_score < 0.4).length;
+      } else {
+        // No AI themes available - check if still loading or truly empty
+        if (aiThemesLoading) {
+          // Still loading - return 0 temporarily, will update when themes load
+          averageSentiment = 0;
+          positiveCount = 0;
+          neutralCount = 0;
+          negativeCount = 0;
+        } else if (relevantResponses.length === 0) {
+          // No relevant responses (only discovery prompts) - neutral sentiment
+          averageSentiment = 0;
+          positiveCount = 0;
+          neutralCount = responses.length;
+          negativeCount = 0;
+        } else {
+          // Has relevant responses but no themes - neutral sentiment
+          averageSentiment = 0;
+          positiveCount = 0;
+          neutralCount = responses.length;
+          negativeCount = 0;
+        }
+      }
     }
 
     const sentimentLabel = averageSentiment > 0.6 ? 'Positive' : averageSentiment < 0.4 ? 'Negative' : 'Neutral';
@@ -1397,31 +1672,27 @@ export const useDashboardData = () => {
       ? (mentionedCount / responses.length) * 100
       : 0;
 
-    // Calculate average relevance score (ignoring null scores)
+    // PREFER backend-calculated relevance if available, fallback to frontend calculation
+    let averageRelevance = 0;
+    
+    // Calculate validRecencyScores for debugging purposes (always available)
     const validRecencyScores = recencyData.filter(item => 
       item.recency_score !== null && item.recency_score !== undefined
     );
     
-    // Debug logging for relevance score calculation
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[Relevance Debug]', {
-        totalRecencyData: recencyData.length,
-        validScores: validRecencyScores.length,
-        invalidScores: recencyData.length - validRecencyScores.length,
-        sampleScores: validRecencyScores.slice(0, 5).map(item => ({
-          url: item.url?.substring(0, 50),
-          score: item.recency_score
-        })),
-        allScores: validRecencyScores.map(item => item.recency_score)
-      });
-    }
-    
-    const averageRelevance = validRecencyScores.length > 0 
-      ? validRecencyScores.reduce((sum, item) => sum + item.recency_score, 0) / validRecencyScores.length 
-      : 0;
-    
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[Relevance Debug] Average relevance calculated:', averageRelevance);
+      if (companyRelevanceMetrics && companyRelevanceMetrics.relevance_score !== null) {
+        // Use backend-calculated relevance score
+        averageRelevance = companyRelevanceMetrics.relevance_score;
+      } else {
+      // Fallback to frontend calculation
+      if (recencyDataLoading) {
+        // Still loading - return 0 temporarily, will update when recency data loads
+        averageRelevance = 0;
+      } else if (validRecencyScores.length > 0) {
+        averageRelevance = validRecencyScores.reduce((sum, item) => sum + item.recency_score, 0) / validRecencyScores.length;
+      } else {
+        averageRelevance = 0;
+      }
     }
 
     // Calculate overall perception score
@@ -1475,17 +1746,8 @@ export const useDashboardData = () => {
       perceptionLabel
     };
     
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[Relevance Debug] Metrics object being returned:', {
-        averageRelevance: metricsResult.averageRelevance,
-        roundedRelevance: Math.round(metricsResult.averageRelevance),
-        recencyDataLength: recencyData.length,
-        validScoresCount: validRecencyScores.length
-      });
-    }
-    
     return metricsResult;
-  }, [responses, promptsData, recencyData, aiThemes, calculateAIBasedSentiment]);
+  }, [responses, promptsData, recencyData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companyRelevanceMetrics]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
     const trend = responses.reduce((acc: SentimentTrendData[], response) => {
@@ -1863,6 +2125,12 @@ export const useDashboardData = () => {
     recencyDataError, // Recency data specific error message
     recencyData, // Export recency data for components
     recencyDataLoading, // Loading state for recency data
-    aiThemesLoading // Loading state for AI themes
+    companySentimentMetrics, // Backend-calculated sentiment metrics from materialized view
+    companyRelevanceMetrics, // Backend-calculated relevance metrics from materialized view
+    companyMetricsLoading, // Loading state for company metrics
+    aiThemesLoading, // Loading state for AI themes
+    hasMoreResponses, // Whether there are more responses to load
+    loadAllHistoricalResponses, // Function to load all historical responses
+    metricsCalculating // Whether metrics are still being calculated (for UX - show all together)
   };
 };

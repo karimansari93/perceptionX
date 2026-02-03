@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Download Lucide Icons as PNG</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .icon-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .icon-item {
+            border: 1px solid #ddd;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            background: white;
+        }
+        .icon-container {
+            width: 128px;
+            height: 128px;
+            margin: 0 auto 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+        .icon-name {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .category {
+            margin-top: 40px;
+            margin-bottom: 20px;
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Lucide Icons - Employee & Candidate Experience Themes</h1>
+    
+    <div class="controls">
+        <button onclick="downloadAllIcons()">Download All Icons as PNG</button>
+        <button onclick="downloadEmployeeIcons()">Download Employee Experience Icons</button>
+        <button onclick="downloadCandidateIcons()">Download Candidate Experience Icons</button>
+    </div>
+
+    <div id="icons-container">
+        <div class="category">Employee Experience Icons</div>
+        <div class="icon-grid" id="employee-icons">
+            <!-- Icons will be inserted here -->
+        </div>
+
+        <div class="category">Candidate Experience Icons</div>
+        <div class="icon-grid" id="candidate-icons">
+            <!-- Icons will be inserted here -->
+        </div>
+    </div>
+
+    <script>
+        // Employee Experience icons
+        const employeeIcons = [
+            { name: 'target', label: 'Mission & Purpose', id: 'mission-purpose' },
+            { name: 'award', label: 'Rewards & Recognition', id: 'rewards-recognition' },
+            { name: 'users', label: 'Company Culture', id: 'company-culture' },
+            { name: 'heart', label: 'Social Impact', id: 'social-impact' },
+            { name: 'shield', label: 'Inclusion', id: 'inclusion' },
+            { name: 'lightbulb', label: 'Innovation', id: 'innovation' },
+            { name: 'coffee', label: 'Wellbeing & Balance', id: 'wellbeing-balance' },
+            { name: 'crown', label: 'Leadership', id: 'leadership' },
+            { name: 'lock', label: 'Security & Perks', id: 'security-perks' },
+            { name: 'trending-up', label: 'Career Opportunities', id: 'career-opportunities' }
+        ];
+
+        // Candidate Experience icons
+        const candidateIcons = [
+            { name: 'file-text', label: 'Application Process', id: 'application-process' },
+            { name: 'message-square', label: 'Candidate Communication', id: 'candidate-communication' },
+            { name: 'clipboard-list', label: 'Interview Experience', id: 'interview-experience' },
+            { name: 'message-circle', label: 'Candidate Feedback', id: 'candidate-feedback' },
+            { name: 'user-check', label: 'Onboarding Experience', id: 'onboarding-experience' },
+            { name: 'briefcase', label: 'Overall Candidate Experience', id: 'overall-candidate-experience' }
+        ];
+
+        // Render icons
+        function renderIcons() {
+            const employeeContainer = document.getElementById('employee-icons');
+            const candidateContainer = document.getElementById('candidate-icons');
+
+            employeeIcons.forEach(icon => {
+                const iconItem = createIconItem(icon);
+                employeeContainer.appendChild(iconItem);
+            });
+
+            candidateIcons.forEach(icon => {
+                const iconItem = createIconItem(icon);
+                candidateContainer.appendChild(iconItem);
+            });
+
+            // Initialize Lucide icons
+            lucide.createIcons();
+        }
+
+        function createIconItem(icon) {
+            const div = document.createElement('div');
+            div.className = 'icon-item';
+            div.setAttribute('data-icon-id', icon.id);
+            div.innerHTML = `
+                <div class="icon-container" data-icon-name="${icon.name}">
+                    <i data-lucide="${icon.name}" style="width: 64px; height: 64px; stroke-width: 2;"></i>
+                </div>
+                <div class="icon-name">${icon.label}</div>
+            `;
+            return div;
+        }
+
+        async function downloadIcon(iconItem, iconName, label) {
+            const iconContainer = iconItem.querySelector('.icon-container');
+            
+            return new Promise((resolve) => {
+                html2canvas(iconContainer, {
+                    backgroundColor: null,
+                    scale: 2,
+                    width: 128,
+                    height: 128
+                }).then(canvas => {
+                    canvas.toBlob((blob) => {
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${iconName}-${label.replace(/\s+/g, '-').toLowerCase()}.png`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        resolve();
+                    });
+                });
+            });
+        }
+
+        async function downloadAllIcons() {
+            const allIcons = [...employeeIcons, ...candidateIcons];
+            const iconItems = document.querySelectorAll('.icon-item');
+            
+            for (let i = 0; i < iconItems.length; i++) {
+                const iconItem = iconItems[i];
+                const iconId = iconItem.getAttribute('data-icon-id');
+                const icon = allIcons.find(ic => ic.id === iconId);
+                
+                if (icon) {
+                    await downloadIcon(iconItem, icon.name, icon.label);
+                    // Small delay to prevent browser blocking
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+            }
+            
+            alert('All icons downloaded!');
+        }
+
+        async function downloadEmployeeIcons() {
+            const employeeItems = document.querySelectorAll('#employee-icons .icon-item');
+            
+            for (let i = 0; i < employeeItems.length; i++) {
+                const iconItem = employeeItems[i];
+                const iconId = iconItem.getAttribute('data-icon-id');
+                const icon = employeeIcons.find(ic => ic.id === iconId);
+                
+                if (icon) {
+                    await downloadIcon(iconItem, icon.name, icon.label);
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+            }
+            
+            alert('Employee Experience icons downloaded!');
+        }
+
+        async function downloadCandidateIcons() {
+            const candidateItems = document.querySelectorAll('#candidate-icons .icon-item');
+            
+            for (let i = 0; i < candidateItems.length; i++) {
+                const iconItem = candidateItems[i];
+                const iconId = iconItem.getAttribute('data-icon-id');
+                const icon = candidateIcons.find(ic => ic.id === iconId);
+                
+                if (icon) {
+                    await downloadIcon(iconItem, icon.name, icon.label);
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+            }
+            
+            alert('Candidate Experience icons downloaded!');
+        }
+
+        // Initialize when page loads
+        window.addEventListener('DOMContentLoaded', () => {
+            renderIcons();
+        });
+    </script>
+</body>
+</html>

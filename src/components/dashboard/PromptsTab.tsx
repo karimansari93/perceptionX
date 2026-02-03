@@ -8,6 +8,7 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { useCompany } from "@/contexts/CompanyContext";
+import { DASHBOARD_ADD_LOCKED } from "@/config/featureFlags";
 import { AddIndustryPromptModal } from "./AddIndustryPromptModal";
 import type { RefreshProgress } from "@/hooks/useRefreshPrompts";
 import { usePersistedState } from "@/hooks/usePersistedState";
@@ -57,7 +58,7 @@ export const PromptsTab = ({
 
   // Calculate current vs total prompts
   const currentPrompts = promptsData.length;
-  const totalPrompts = 33; // 33 total prompts available (3 base + 30 Employee/Candidate Experience prompts)
+  const totalPrompts = 68; // 68 total prompts available (4 base + 64 Employee/Candidate Experience prompts, 4 types per attribute)
 
   const existingIndustries = (currentCompany?.industries && currentCompany.industries.length > 0)
     ? currentCompany.industries
@@ -80,8 +81,9 @@ export const PromptsTab = ({
           </div>
           <Button
             variant="outline"
-            onClick={() => setIsAddPromptModalOpen(true)}
-            disabled={!currentCompany}
+            onClick={() => !DASHBOARD_ADD_LOCKED && setIsAddPromptModalOpen(true)}
+            disabled={!currentCompany || DASHBOARD_ADD_LOCKED}
+            title={DASHBOARD_ADD_LOCKED ? "Temporarily unavailable" : undefined}
           >
             <Plus className="mr-2 h-4 w-4" />
             Add new prompt

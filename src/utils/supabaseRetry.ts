@@ -23,10 +23,13 @@ const DEFAULT_RETRY_OPTIONS: Required<RetryOptions> = {
                           errorMessage.includes('connection') ||
                           errorMessage.includes('timeout') ||
                           errorMessage.includes('fetch') ||
+                          errorMessage.includes('failed to send a request') ||
+                          errorMessage.includes('edge function') ||
                           errorMessage.includes('load') ||
                           errorMessage.includes('err_failed') ||
                           errorMessage.includes('failed to fetch') ||
                           error?.name === 'NetworkError' ||
+                          error?.name === 'FunctionsFetchError' ||
                           error?.name === 'TypeError' ||
                           error?.code === 'ERR_FAILED';
     

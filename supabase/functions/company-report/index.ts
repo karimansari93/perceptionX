@@ -729,8 +729,8 @@ Return your response as JSON with this exact structure:
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 1000
+        max_completion_tokens: 2000 // GPT-5.2 uses tokens for reasoning + content
+        // Note: GPT-5.2 doesn't support custom temperature, uses default (1)
       })
     });
 
@@ -804,8 +804,8 @@ Return your response as JSON with this exact structure:
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 800
+        max_completion_tokens: 2000 // GPT-5.2 uses tokens for reasoning + content
+        // Note: GPT-5.2 doesn't support custom temperature, uses default (1)
       })
     });
 

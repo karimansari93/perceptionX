@@ -130,6 +130,7 @@ export type Database = {
           settings: Json | null
           created_at: string
           updated_at: string
+          last_updated: string | null
           created_by: string | null
           website: string | null
         }
@@ -142,6 +143,7 @@ export type Database = {
           settings?: Json | null
           created_at?: string
           updated_at?: string
+          last_updated?: string | null
           created_by?: string | null
           website?: string | null
         }
@@ -154,6 +156,7 @@ export type Database = {
           settings?: Json | null
           created_at?: string
           updated_at?: string
+          last_updated?: string | null
           created_by?: string | null
           website?: string | null
         }
@@ -398,7 +401,7 @@ export type Database = {
       }
     }
     Enums: {
-      prompt_type: "sentiment" | "visibility" | "competitive"
+      prompt_type: "informational" | "experience" | "competitive" | "discovery" | "talentx_informational" | "talentx_experience" | "talentx_competitive" | "talentx_discovery"
       subscription_type: "free" | "pro"
     }
     CompositeTypes: {
@@ -515,7 +518,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      prompt_type: ["sentiment", "visibility", "competitive", "talentx_sentiment", "talentx_competitive", "talentx_visibility"],
+      prompt_type: ["informational", "experience", "competitive", "discovery", "talentx_informational", "talentx_experience", "talentx_competitive", "talentx_discovery"],
     },
   },
 } as const

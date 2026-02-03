@@ -6,12 +6,62 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
 import { supabase } from '@/integrations/supabase/client';
+import { retrySupabaseFunction } from '@/utils/supabaseRetry';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useSubscription } from '@/hooks/useSubscription';
 import { toast } from 'sonner';
 import { generatePromptsFromData } from '@/hooks/usePromptsLogic';
-import { Star, RefreshCw, Lock } from 'lucide-react';
+import { Star, RefreshCw } from 'lucide-react';
+
+// Helper function to get country name from code
+const getCountryName = (code: string): string => {
+  const countryNames: Record<string, string> = {
+    'GLOBAL': 'Global',
+    'PL': 'Poland',
+    'DE': 'Germany',
+    'FR': 'France',
+    'IT': 'Italy',
+    'ES': 'Spain',
+    'PT': 'Portugal',
+    'NL': 'Netherlands',
+    'CZ': 'Czech Republic',
+    'HU': 'Hungary',
+    'RO': 'Romania',
+    'BG': 'Bulgaria',
+    'HR': 'Croatia',
+    'SK': 'Slovakia',
+    'SI': 'Slovenia',
+    'LT': 'Lithuania',
+    'LV': 'Latvia',
+    'EE': 'Estonia',
+    'FI': 'Finland',
+    'SE': 'Sweden',
+    'NO': 'Norway',
+    'DK': 'Denmark',
+    'GR': 'Greece',
+    'JP': 'Japan',
+    'KR': 'South Korea',
+    'TH': 'Thailand',
+    'ID': 'Indonesia',
+    'VN': 'Vietnam',
+    'TR': 'Turkey',
+    'RU': 'Russia',
+    'CN': 'China',
+    'MX': 'Mexico',
+    'AR': 'Argentina',
+    'CL': 'Chile',
+    'CO': 'Colombia',
+    'PE': 'Peru',
+    'BR': 'Brazil',
+    'AE': 'United Arab Emirates',
+    'SA': 'Saudi Arabia',
+    'AT': 'Austria',
+    'CH': 'Switzerland',
+    'BE': 'Belgium',
+  };
+  return countryNames[code] || code;
+};
 
 // Custom AI model logo component
 const AIModelLogo = ({ modelName, size = 'lg' }: { modelName: string; size?: 'sm' | 'md' | 'lg' }) => {
@@ -129,18 +179,46 @@ export const AddCompanyModal = ({
   }, [open, mode, existingCompanyName, existingIndustry]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isCollectingSearchInsights, setIsCollectingSearchInsights] = useState(false);
+  const [collectingCompanyId, setCollectingCompanyId] = useState<string | null>(null);
+  /** When set, Step 2 stays visible with this error message and user can close (avoids Step 2 disappearing on timeout/error). */
+  const [step2Error, setStep2Error] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProgressInfo>({
     currentPrompt: '',
     currentModel: '',
     completed: 0,
     total: 0,
   });
-  
+
+  // Poll company progress during LLM phase so the progress bar updates in real time
+  useEffect(() => {
+    if (!isAnalyzing || !collectingCompanyId || isCollectingSearchInsights) return;
+    const poll = async () => {
+      const { data } = await supabase
+        .from('companies')
+        .select('data_collection_status, data_collection_progress')
+        .eq('id', collectingCompanyId)
+        .single();
+      if (data?.data_collection_progress && typeof data.data_collection_progress === 'object') {
+        const p = data.data_collection_progress as { completed?: number; total?: number; currentPrompt?: string; currentModel?: string };
+        setProgress(prev => ({
+          ...prev,
+          completed: p.completed ?? prev.completed,
+          total: p.total ?? prev.total,
+          currentPrompt: p.currentPrompt ?? prev.currentPrompt,
+          currentModel: p.currentModel ?? prev.currentModel,
+        }));
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 2000);
+    return () => clearInterval(interval);
+  }, [isAnalyzing, collectingCompanyId, isCollectingSearchInsights]);
+
   // No need for company limit checks here - the modal should only be opened when user is allowed to add a company
 
   const handleClose = () => {
-    // Prevent closing during analysis or search insights collection
-    if (isAnalyzing || isCollectingSearchInsights) {
+    // Prevent closing during analysis or search insights collection (allow close if step2Error so user can dismiss after error)
+    if (!step2Error && (isAnalyzing || isCollectingSearchInsights)) {
       toast.error('Please wait for the process to complete before closing.');
       return;
     }
@@ -150,6 +228,8 @@ export const AddCompanyModal = ({
     setCountry('GLOBAL');
     setIsAnalyzing(false);
     setIsCollectingSearchInsights(false);
+    setCollectingCompanyId(null);
+    setStep2Error(null);
     setProgress({
       currentPrompt: '',
       currentModel: '',
@@ -160,8 +240,8 @@ export const AddCompanyModal = ({
   };
 
   const handleOpenChange = (newOpen: boolean) => {
-    // Prevent closing during analysis or search insights collection
-    if (!newOpen && (isAnalyzing || isCollectingSearchInsights)) {
+    // Prevent closing during analysis or search insights collection (allow close if step2Error)
+    if (!newOpen && !step2Error && (isAnalyzing || isCollectingSearchInsights)) {
       toast.error('Please wait for the process to complete before closing.');
       return;
     }
@@ -187,6 +267,7 @@ export const AddCompanyModal = ({
 
     // Company limit check is handled before opening the modal
 
+    setStep2Error(null);
     setIsAnalyzing(true);
     let onboardingData: any = null;
     let companyId: string | null = null;
@@ -210,6 +291,7 @@ export const AddCompanyModal = ({
 
       // 2. Wait for company creation
       companyId = await waitForCompany(onboardingData.id);
+      setCollectingCompanyId(companyId);
       const newCompany = { id: companyId };
 
       // 2.5. Initialize collection status in database
@@ -230,6 +312,7 @@ export const AddCompanyModal = ({
       }, isPro);
 
       // 3.5. Translate prompts if country is not GLOBAL and language is not English
+      // CRITICAL: Translation is REQUIRED for non-English countries - cannot proceed without it
       let finalPrompts = generatedPrompts;
       if (country && country !== 'GLOBAL') {
         // Check if country uses English (no translation needed)
@@ -240,26 +323,54 @@ export const AddCompanyModal = ({
           try {
             console.log(`🌍 Translating ${generatedPrompts.length} prompts for country: ${country}`);
             const promptTexts = generatedPrompts.map(p => p.text);
-            
-            const { data: translationData, error: translationError } = await supabase.functions.invoke('translate-prompts', {
-              body: {
-                prompts: promptTexts,
-                countryCode: country
-              }
-            });
 
-            if (!translationError && translationData?.translatedPrompts) {
-              // Map translated prompts back to the original prompt structure
-              finalPrompts = generatedPrompts.map((prompt, index) => ({
-                ...prompt,
-                text: translationData.translatedPrompts[index] || prompt.text
-              }));
-              console.log(`✅ Translated prompts to ${translationData.targetLanguage}`);
-            } else {
-              console.warn('⚠️ Translation failed, using original prompts:', translationError);
+            const invokeTranslate = () =>
+              supabase.functions.invoke('translate-prompts', {
+                body: { prompts: promptTexts, countryCode: country },
+              });
+            let { data: translationData, error: translationError } = await invokeTranslate();
+            if (translationError && (translationError.message?.includes('504') || translationError.message?.includes('timeout'))) {
+              console.warn('🔄 Translation timed out, retrying once...');
+              await new Promise((r) => setTimeout(r, 2000));
+              const retry = await invokeTranslate();
+              translationData = retry.data;
+              translationError = retry.error;
             }
-          } catch (translationException) {
-            console.warn('⚠️ Translation exception, using original prompts:', translationException);
+
+            if (!translationError && translationData?.translatedPrompts && translationData.translatedPrompts.length > 0) {
+              // Verify all prompts were translated
+              const allTranslated = translationData.translatedPrompts.every((translated: string, index: number) => 
+                translated && translated.trim().length > 0 && translated !== promptTexts[index]
+              );
+              
+              if (allTranslated) {
+                // Map translated prompts back to the original prompt structure
+                finalPrompts = generatedPrompts.map((prompt, index) => ({
+                  ...prompt,
+                  text: translationData.translatedPrompts[index] || prompt.text
+                }));
+                console.log(`✅ Translated prompts to ${translationData.targetLanguage || 'target language'}`);
+              } else {
+                // Translation incomplete - fail the process
+                const countryName = getCountryName(country);
+                const targetLanguage = translationData?.targetLanguage || 'the local language';
+                throw new Error(`Translation incomplete for ${countryName}. All prompts must be translated to ${targetLanguage}.`);
+              }
+            } else {
+              // Translation failed - fail the process
+              const countryName = getCountryName(country);
+              const errorMessage = translationError?.message || 'Unknown error';
+              throw new Error(`Failed to translate prompts for ${countryName}. Translation service error: ${errorMessage}`);
+            }
+          } catch (translationException: any) {
+            // Translation is REQUIRED - cannot proceed without it
+            const countryName = getCountryName(country);
+            const errorMsg = translationException?.message || translationException?.toString() || 'Translation service unavailable';
+            console.error(`❌ Translation failed for ${countryName}:`, errorMsg);
+            toast.error(`Cannot proceed: Translation to ${countryName}'s language is required but failed. Please try again or contact support.`);
+            setIsAnalyzing(false);
+            setIsCollectingSearchInsights(false);
+            return; // Stop the process - don't create company with English prompts
           }
         } else {
           console.log(`✅ Country ${country} uses English, skipping translation`);
@@ -274,7 +385,7 @@ export const AddCompanyModal = ({
         if (prompt.id.startsWith('talentx-')) {
           // Remove 'talentx-' prefix and get the attributeId (everything before the last '-')
           const parts = prompt.id.replace('talentx-', '').split('-');
-          // Remove the last part (which is the type: sentiment/competitive/visibility)
+          // Remove the last part (which is the type: experience/competitive/discovery/informational)
           parts.pop();
           talentxAttributeId = parts.join('-');
         }
@@ -375,92 +486,79 @@ export const AddCompanyModal = ({
         })
         .eq('id', companyId);
 
-      // 9. Run AI analysis
-      let completedOperations = 0;
-
+      // 9. Run AI analysis via batch collect-company-responses (parallel models per prompt, stays under 60s)
       setProgress({
-        currentPrompt: 'Starting AI analysis...',
-        currentModel: '',
+        currentPrompt: 'Collecting AI responses...',
+        currentModel: 'Batch',
         completed: 0,
         total: totalOperations,
       });
 
-      const runAIPrompts = async () => {
-        for (const prompt of confirmedPrompts) {
-          for (const model of models) {
-            try {
-              const currentProgress = {
-                currentPrompt: prompt.prompt_text.substring(0, 100) + '...',
-                currentModel: model.displayName,
-                completed: completedOperations,
-                total: totalOperations,
-              };
+      await supabase
+        .from('companies')
+        .update({
+          data_collection_progress: {
+            currentPrompt: 'Collecting AI responses...',
+            currentModel: 'Batch',
+            completed: 0,
+            total: totalOperations,
+          },
+        })
+        .eq('id', companyId);
 
-              setProgress(currentProgress);
+      const promptIds = confirmedPrompts.map((p) => p.id);
+      const modelNames = models.map((m) => m.name);
 
-              // Update progress in database
-              await supabase
-                .from('companies')
-                .update({ data_collection_progress: currentProgress })
-                .eq('id', companyId);
-
-              const { data: responseData, error: functionError } = await supabase.functions.invoke(model.functionName, {
-                body: { prompt: prompt.prompt_text }
-              });
-
-              if (functionError) {
-                console.error(`${model.functionName} error:`, functionError);
-                completedOperations++;
-                continue;
-              }
-
-              if (responseData?.response) {
-                const perplexityCitations = model.name === 'perplexity' ? responseData.citations : null;
-                const googleAICitations = model.name === 'google-ai-overviews' ? responseData.citations : null;
-
-                const { error: analyzeError } = await supabase.functions.invoke('analyze-response', {
-                  body: {
-                    response: responseData.response,
-                    companyName: companyName,
-                    promptType: prompt.prompt_type,
-                    perplexityCitations: perplexityCitations,
-                    citations: googleAICitations,
-                    confirmed_prompt_id: prompt.id,
-                    ai_model: model.name,
-                    company_id: newCompany.id,
-                  }
-                });
-
-                if (analyzeError) {
-                  console.error('Analyze error:', analyzeError);
-                }
-              }
-
-              completedOperations++;
-              const updatedProgress = {
-                currentPrompt: prompt.prompt_text.substring(0, 100) + '...',
-                currentModel: model.displayName,
-                completed: completedOperations,
-                total: totalOperations,
-              };
-              setProgress(updatedProgress);
-
-              // Update progress in database
-              await supabase
-                .from('companies')
-                .update({ data_collection_progress: updatedProgress })
-                .eq('id', companyId);
-
-            } catch (error) {
-              console.error(`Error testing ${model.name}:`, error);
-              completedOperations++;
-            }
-          }
-        }
+      const batchBody = {
+        companyId: newCompany.id,
+        promptIds,
+        models: modelNames,
+        batchSize: 3,
+        skipExisting: true,
       };
+      const { data: batchData, error: batchError } = await retrySupabaseFunction('collect-company-responses', batchBody, {
+        maxRetries: 2,
+        initialDelay: 2000,
+      });
 
-      // Run AI prompts
-      await runAIPrompts();
+      if (batchError) {
+        console.error('Batch collection error:', batchError);
+        const isFetchError =
+          batchError?.name === 'FunctionsFetchError' ||
+          (batchError?.message && String(batchError.message).toLowerCase().includes('failed to send a request'));
+        const msg = isFetchError
+          ? 'Could not reach the server. Check your connection and try again, or the Edge Function may need to be redeployed (see docs/debug/DEBUG_CORS_EDGE_FUNCTIONS.md).'
+          : batchError.message || 'Connection or timeout error. Collection may still be running.';
+        setStep2Error(msg);
+        toast.error(isFetchError ? 'Server unreachable — check connection or redeploy Edge Function' : `Collection failed: ${batchError.message}`);
+        return; // Keep Step 2 visible with error; do not close or run success path
+      }
+      if (!batchData?.success) {
+        console.error('Batch collection failed:', batchData?.error);
+        const msg = batchData?.error || 'Collection failed';
+        setStep2Error(msg);
+        toast.error(msg);
+        return; // Keep Step 2 visible with error
+      }
+
+      setProgress({
+        currentPrompt: 'Complete',
+        currentModel: '',
+        completed: totalOperations,
+        total: totalOperations,
+      });
+
+      await supabase
+        .from('companies')
+        .update({
+          data_collection_progress: {
+            currentPrompt: 'Complete',
+            currentModel: '',
+            completed: totalOperations,
+            total: totalOperations,
+          },
+        })
+        .eq('id', companyId);
 
       // Mark collection as completed
       await supabase
@@ -513,14 +611,22 @@ export const AddCompanyModal = ({
       // Small delay to ensure the switch completes
       await new Promise(resolve => setTimeout(resolve, 500));
 
+      setCollectingCompanyId(null);
       // Now close the modal
       handleClose();
 
     } catch (error) {
       console.error('Error analyzing company:', error);
-      toast.error('Failed to analyze company');
-      setIsAnalyzing(false);
+      const errMsg = error instanceof Error ? error.message : 'Failed to analyze company';
+      toast.error(errMsg);
+      // Keep Step 2 visible with error instead of reverting to form (only set step2Error if we're in Step 2)
+      if (progress.total > 0) {
+        setStep2Error(errMsg);
+      } else {
+        setIsAnalyzing(false);
+      }
       setIsCollectingSearchInsights(false);
+      setCollectingCompanyId(null);
       
       // Mark collection as failed if we have a companyId
       if (companyId) {
@@ -562,10 +668,14 @@ export const AddCompanyModal = ({
           <DialogHeader>
             <DialogTitle>Collecting Data for {companyName}</DialogTitle>
             <DialogDescription>
-              We're collecting traditional search results first
+              Step 1 of 2 — We're collecting traditional search results first
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
+            <div className="flex justify-between items-center text-sm text-muted-foreground">
+              <span>Step 1 of 2</span>
+              <span>Search insights</span>
+            </div>
             <div className="flex justify-center">
               <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
                 <svg className="w-6 h-6 text-blue-600 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -586,18 +696,18 @@ export const AddCompanyModal = ({
     );
   }
 
-  // Loading state - LLM analysis phase
-  if (isAnalyzing && progress.total > 0) {
-    const progressPercent = (progress.completed / progress.total) * 100;
+  // Loading state - LLM analysis phase (also show when step2Error so Step 2 doesn't "close" before user can read error)
+  const showingStep2 = (isAnalyzing || step2Error) && progress.total > 0;
+  if (showingStep2) {
+    const progressPercent = progress.total > 0 ? (progress.completed / progress.total) * 100 : 0;
+    const allowClose = !!step2Error;
     
     return (
       <Dialog 
         open={open} 
         onOpenChange={(newOpen) => {
-          // Completely block any close attempts during analysis
-          if (!newOpen && isAnalyzing) {
-            return;
-          }
+          if (!newOpen && !allowClose) return;
+          if (!newOpen) handleClose();
         }}
         modal={true}
         {...(alwaysMounted && { forceMount: true })}
@@ -605,39 +715,57 @@ export const AddCompanyModal = ({
         <DialogContent 
           className="max-w-md" 
           onInteractOutside={(e) => {
-            e.preventDefault();
+            if (!allowClose) e.preventDefault();
           }}
           onEscapeKeyDown={(e) => {
-            e.preventDefault();
+            if (!allowClose) e.preventDefault();
           }}
         >
           <DialogHeader>
             <DialogTitle>Analyzing {companyName}</DialogTitle>
             <DialogDescription>
-              Please wait while we analyze {companyName} across multiple AI platforms
+              Step 2 of 2 — {step2Error ? 'Something went wrong' : `Please wait while we analyze ${companyName} across multiple AI platforms`}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4">
-            <div className="flex justify-center">
-              <AIModelLogo modelName={progress.currentModel} size="lg" />
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">{progress.currentModel}</span>
-                <span className="text-gray-600">{progress.completed} / {progress.total}</span>
+            {step2Error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                <p className="font-medium">Collection failed or timed out</p>
+                <p className="mt-1 text-red-700">{step2Error}</p>
+                <p className="mt-2 text-red-600">You can close and retry, or check this company later — collection may have continued in the background.</p>
+                <Button variant="outline" size="sm" className="mt-3 border-red-300 text-red-700 hover:bg-red-100" onClick={handleClose}>
+                  Close
+                </Button>
               </div>
-              <Progress value={progressPercent} className="h-2" />
-              <p className="text-xs text-gray-500 text-center">
-                {progress.currentPrompt || 'Analyzing responses...'}
-              </p>
-            </div>
+            )}
+            {!step2Error && (
+              <>
+                <div className="flex justify-between items-center text-sm text-muted-foreground">
+                  <span>Step 2 of 2</span>
+                  <span>{progress.completed} / {progress.total} responses</span>
+                </div>
+                <div className="flex justify-center">
+                  <AIModelLogo modelName={progress.currentModel} size="lg" />
+                </div>
 
-            <div className="bg-blue-50 p-3 rounded-lg">
-              <p className="text-sm text-blue-700 text-center">
-                This may take 2-3 minutes. We're gathering insights from multiple AI sources.
-              </p>
-            </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">{progress.currentModel}</span>
+                    <span className="text-gray-600">{progress.completed} / {progress.total}</span>
+                  </div>
+                  <Progress value={progressPercent} className="h-2" />
+                  <p className="text-xs text-gray-500 text-center truncate max-w-full" title={progress.currentPrompt || undefined}>
+                    {progress.currentPrompt || 'Analyzing responses...'}
+                  </p>
+                </div>
+
+                <div className="bg-blue-50 p-3 rounded-lg">
+                  <p className="text-sm text-blue-700 text-center">
+                    This may take 2-3 minutes. We're gathering insights from multiple AI sources.
+                  </p>
+                </div>
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -710,10 +838,9 @@ export const AddCompanyModal = ({
           <div className="space-y-2">
             <Label htmlFor="country" className="flex items-center gap-2">
               {mode === 'add-location' ? 'Country/Location *' : 'Country'}
-              <Lock className="h-4 w-4 opacity-50" />
             </Label>
-            <Select value={country} onValueChange={setCountry} disabled={true}>
-              <SelectTrigger id="country" className="cursor-not-allowed opacity-50">
+            <Select value={country} onValueChange={setCountry} disabled={isAnalyzing || (mode !== 'add-location')}>
+              <SelectTrigger id="country" className={mode !== 'add-location' ? 'cursor-not-allowed opacity-50' : ''}>
                 <SelectValue placeholder="Select a country" />
               </SelectTrigger>
               <SelectContent>
@@ -837,7 +964,7 @@ export const AddCompanyModal = ({
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={isAnalyzing || isCollectingSearchInsights || !companyName.trim() || !industry.trim()}
+              disabled={isAnalyzing || isCollectingSearchInsights || !companyName.trim() || !industry.trim() || (mode === 'add-location' && !country)}
               className="bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600"
             >
               {(isAnalyzing || isCollectingSearchInsights) ? (

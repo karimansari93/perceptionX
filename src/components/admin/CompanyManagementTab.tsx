@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -9,8 +10,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Building2, Plus, RefreshCw, Pencil, Briefcase, Calendar, ArrowRight } from 'lucide-react';
+import { Building2, Plus, RefreshCw, Pencil, Briefcase, Calendar, ArrowRight, Play, Loader2, XCircle } from 'lucide-react';
 import { CompanyDetailView } from './CompanyDetailView';
+import { CompanyGroupDetailView } from './CompanyGroupDetailView';
+import { useAdminCompanyCollection } from '@/hooks/useAdminCompanyCollection';
+import { coverageLabel } from '@/utils/collectionCoverage';
 
 interface Organization {
   id: string;
@@ -21,23 +25,46 @@ interface Company {
   id: string;
   name: string;
   industry: string;
+  industries: string[];
   created_at: string;
   organization_id: string;
   organization_name: string;
   last_updated: string | null;
   country: string | null;
+  /** All countries from user_onboarding for this company */
+  countries: string[];
+  data_collection_status?: string | null;
+  prompt_count: number;
+  response_count: number;
+  /** Number of active prompts that have 5 model responses each (used for accurate Completed badge) */
+  prompts_with_full_coverage: number;
+}
+
+/** Group of companies with same name in same org - one row in the list */
+interface CompanyGroup {
+  name: string;
+  organization_id: string;
+  organization_name: string;
+  industries: string[];
+  companies: Company[];
+  /** Unique countries across all companies in group */
+  countries: string[];
+  /** Summary: e.g. "2/3 Completed" when 2 of 3 locations are complete */
+  statusSummary: { completed: number; total: number; inProgress: number; pending: number };
 }
 
 export const CompanyManagementTab = () => {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [filteredCompanies, setFilteredCompanies] = useState<Company[]>([]);
+  const [filteredGroups, setFilteredGroups] = useState<CompanyGroup[]>([]);
   const [industries, setIndustries] = useState<string[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   
-  // Company detail view
+  // Company detail view - group view shows countries; single company for drill-down
+  const [selectedGroup, setSelectedGroup] = useState<CompanyGroup | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
   
   // Modals
@@ -56,13 +83,77 @@ export const CompanyManagementTab = () => {
   const [confirmationData, setConfirmationData] = useState<any>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  const { runContinueCollection, isRunning: isCollectionRunning } = useAdminCompanyCollection();
+  const [continueCollectionCompanyId, setContinueCollectionCompanyId] = useState<string | null>(null);
+
   useEffect(() => {
     loadData();
   }, []);
 
+  // Server-side search with debouncing
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
-    filterCompanies();
-  }, [companies, selectedOrg, searchQuery]);
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    // If search query exists and is long enough, use server-side search
+    if (searchQuery && searchQuery.trim().length >= 2) {
+      setSearchLoading(true);
+      
+      // Debounce search by 300ms
+      searchTimeoutRef.current = setTimeout(async () => {
+        try {
+          const { data: userData } = await supabase.auth.getUser();
+          const { data, error } = await supabase.functions.invoke('search-companies', {
+            body: {
+              searchTerm: searchQuery.trim(),
+              limit: 100,
+              offset: 0,
+              userId: userData.user?.id
+            }
+          });
+
+          if (error) throw error;
+
+          if (data?.companies) {
+            // Apply organization filter client-side (since search doesn't support it yet)
+            let filtered = data.companies;
+            if (selectedOrg && selectedOrg !== 'all') {
+              filtered = filtered.filter((c: any) => c.organization_id === selectedOrg);
+            }
+            // Enrich with countries array (search returns single country; use as countries for grouping).
+            // Use last_updated when present, else updated_at so "Last Updated" column shows a date instead of "Never".
+            const enriched = filtered.map((c: any) => ({
+              ...c,
+              countries: c.country ? [c.country] : [],
+              last_updated: c.last_updated ?? c.updated_at ?? null,
+            }));
+            setFilteredCompanies(enriched);
+            setFilteredGroups(buildCompanyGroups(enriched));
+          }
+        } catch (error) {
+          console.error('Error searching companies:', error);
+          // Fallback to client-side filtering
+          filterCompanies();
+        } finally {
+          setSearchLoading(false);
+        }
+      }, 300);
+    } else {
+      // No search query or too short - use client-side filtering on all companies
+      filterCompanies();
+    }
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [searchQuery, selectedOrg, companies]);
 
   const loadData = async () => {
     setLoading(true);
@@ -108,34 +199,93 @@ export const CompanyManagementTab = () => {
         ...company,
         organization_id: company.organization_companies[0]?.organization_id,
         organization_name: company.organization_companies[0]?.organizations?.name || 'Unknown',
-        last_updated: company.last_updated || null,
-        country: null as string | null // Will be populated below
+        last_updated: company.last_updated ?? (company as { updated_at?: string }).updated_at ?? null,
+        country: null as string | null,
+        countries: [] as string[],
+        industries: [] as string[],
+        data_collection_status: (company as { data_collection_status?: string | null }).data_collection_status ?? undefined,
+        prompt_count: 0,
+        response_count: 0,
+        prompts_with_full_coverage: 0,
       }));
 
-      // Fetch countries for companies from user_onboarding
       const companyIds = companiesWithOrg.map(c => c.id);
       if (companyIds.length > 0) {
-        const { data: countriesData, error: countriesError } = await supabase
-          .from('user_onboarding')
-          .select('company_id, country')
-          .in('company_id', companyIds)
-          .not('company_id', 'is', null)
-          .order('created_at', { ascending: false });
+        const [countriesRes, industriesRes, promptsRes, responsesRes] = await Promise.all([
+          supabase
+            .from('user_onboarding')
+            .select('company_id, country')
+            .in('company_id', companyIds)
+            .not('company_id', 'is', null)
+            .order('created_at', { ascending: false }),
+          supabase.from('company_industries').select('company_id, industry').in('company_id', companyIds),
+          supabase
+            .from('confirmed_prompts')
+            .select('company_id, id')
+            .eq('is_active', true)
+            .in('company_id', companyIds),
+          supabase.from('prompt_responses').select('company_id, confirmed_prompt_id').in('company_id', companyIds),
+        ]);
 
-        if (!countriesError && countriesData) {
-          // Create a map of company_id to country (using most recent record for each company)
-          const countriesMap = new Map<string, string | null>();
-          countriesData.forEach(row => {
-            if (row.company_id && !countriesMap.has(row.company_id)) {
-              countriesMap.set(row.company_id, row.country || null);
+        const countriesMap = new Map<string, string[]>();
+        (countriesRes.data || []).forEach(row => {
+          if (row.company_id) {
+            const arr = countriesMap.get(row.company_id) || [];
+            const c = row.country || null;
+            if (c && !arr.includes(c)) arr.push(c);
+            countriesMap.set(row.company_id, arr);
+          }
+        });
+
+        const industriesMap = new Map<string, Set<string>>();
+        (industriesRes.data || []).forEach(row => {
+          if (!industriesMap.has(row.company_id)) industriesMap.set(row.company_id, new Set());
+          industriesMap.get(row.company_id)!.add(row.industry);
+        });
+
+        const promptCountByCompany = new Map<string, number>();
+        const promptIdsByCompany = new Map<string, Set<string>>();
+        (promptsRes.data || []).forEach(row => {
+          if (row.company_id) {
+            promptCountByCompany.set(row.company_id, (promptCountByCompany.get(row.company_id) ?? 0) + 1);
+            if (row.id) {
+              if (!promptIdsByCompany.has(row.company_id)) promptIdsByCompany.set(row.company_id, new Set());
+              promptIdsByCompany.get(row.company_id)!.add(row.id);
             }
-          });
+          }
+        });
+        const responseCountByCompany = new Map<string, number>();
+        const responseCountByPrompt = new Map<string, number>();
+        (responsesRes.data || []).forEach(row => {
+          if (row.company_id) {
+            responseCountByCompany.set(row.company_id, (responseCountByCompany.get(row.company_id) ?? 0) + 1);
+            if (row.confirmed_prompt_id) {
+              const key = `${row.company_id}:${row.confirmed_prompt_id}`;
+              responseCountByPrompt.set(key, (responseCountByPrompt.get(key) ?? 0) + 1);
+            }
+          }
+        });
 
-          // Add country to each company
-          companiesWithOrg.forEach(company => {
-            company.country = countriesMap.get(company.id) || null;
+        const EXPECTED_MODELS = 5;
+        const promptsWithFullCoverageByCompany = new Map<string, number>();
+        promptIdsByCompany.forEach((promptIds, companyId) => {
+          let full = 0;
+          promptIds.forEach(pid => {
+            if ((responseCountByPrompt.get(`${companyId}:${pid}`) ?? 0) >= EXPECTED_MODELS) full++;
           });
-        }
+          promptsWithFullCoverageByCompany.set(companyId, full);
+        });
+
+        companiesWithOrg.forEach(company => {
+          const countriesList = countriesMap.get(company.id) || [];
+          company.countries = countriesList;
+          company.country = countriesList[0] || null;
+          const indSet = industriesMap.get(company.id);
+          company.industries = indSet ? Array.from(indSet) : (company.industry ? [company.industry] : []);
+          company.prompt_count = promptCountByCompany.get(company.id) ?? 0;
+          company.response_count = responseCountByCompany.get(company.id) ?? 0;
+          company.prompts_with_full_coverage = promptsWithFullCoverageByCompany.get(company.id) ?? 0;
+        });
       }
 
       setCompanies(companiesWithOrg);
@@ -145,6 +295,38 @@ export const CompanyManagementTab = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  /** Build company groups: same name + same org = one group */
+  const buildCompanyGroups = (list: Company[]): CompanyGroup[] => {
+    const byKey = new Map<string, Company[]>();
+    for (const c of list) {
+      const key = `${c.name.toLowerCase().trim()}::${c.organization_id}`;
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key)!.push(c);
+    }
+    return Array.from(byKey.entries()).map(([, companies]) => {
+      const allCountries = [...new Set(companies.flatMap(c => c.countries || (c.country ? [c.country] : [])))];
+      const industries = [...new Set(companies.flatMap(c => c.industries?.length ? c.industries : (c.industry ? [c.industry] : [])))];
+      let completed = 0, inProgress = 0, pending = 0;
+      companies.forEach(c => {
+        const status = c.data_collection_status ?? null;
+        const promptCount = c.prompt_count ?? 0;
+        const fullCoverage = c.prompts_with_full_coverage ?? 0;
+        if (status === 'collecting_search_insights' || status === 'collecting_llm_data') inProgress++;
+        else if (promptCount > 0 && fullCoverage === promptCount) completed++;
+        else pending++;
+      });
+      return {
+        name: companies[0].name,
+        organization_id: companies[0].organization_id,
+        organization_name: companies[0].organization_name,
+        industries,
+        companies: companies.sort((a, b) => (a.country || 'zzz').localeCompare(b.country || 'zzz')),
+        countries: allCountries.sort(),
+        statusSummary: { completed, total: companies.length, inProgress, pending },
+      };
+    });
   };
 
   const filterCompanies = () => {
@@ -161,12 +343,15 @@ export const CompanyManagementTab = () => {
       filtered = filtered.filter(c =>
         c.name.toLowerCase().includes(query) ||
         c.industry.toLowerCase().includes(query) ||
+        (c.industries && c.industries.some(ind => ind.toLowerCase().includes(query))) ||
         c.organization_name.toLowerCase().includes(query) ||
-        (c.country && c.country.toLowerCase().includes(query))
+        (c.country && c.country.toLowerCase().includes(query)) ||
+        (c.countries && c.countries.some(ct => ct.toLowerCase().includes(query)))
       );
     }
 
     setFilteredCompanies(filtered);
+    setFilteredGroups(buildCompanyGroups(filtered));
   };
 
   const handleCreateCompany = async () => {
@@ -325,7 +510,6 @@ export const CompanyManagementTab = () => {
         { name: 'openai', fn: 'test-prompt-openai' },
         { name: 'perplexity', fn: 'test-prompt-perplexity' },
         { name: 'google-ai-overviews', fn: 'test-prompt-google-ai-overviews' },
-        { name: 'bing-copilot', fn: 'test-prompt-bing-copilot' },
       ];
 
       const proModels = [
@@ -334,7 +518,6 @@ export const CompanyManagementTab = () => {
         { name: 'gemini', fn: 'test-prompt-gemini' },
         { name: 'deepseek', fn: 'test-prompt-deepseek' },
         { name: 'google-ai-overviews', fn: 'test-prompt-google-ai-overviews' },
-        { name: 'bing-copilot', fn: 'test-prompt-bing-copilot' },
       ];
 
       const models = isProUser ? proModels : freeModels;
@@ -347,12 +530,25 @@ export const CompanyManagementTab = () => {
       ])).sort();
       console.log('All prompt types:', allPromptTypes);
 
-      // Get all unique prompt categories (default to 'General' if null/undefined)
-      const allPromptCategories = Array.from(new Set([
-        ...regularPrompts.map(p => p.prompt_category || 'General'),
-        ...talentXPrompts.map(p => p.prompt_category || 'General')
-      ])).sort();
-      console.log('All prompt categories:', allPromptCategories);
+      // Get all unique prompt category/theme pairs (prompt_theme defaults to 'General' if null)
+      const categoryThemePairs = [
+        ...regularPrompts.map((p: any) => ({
+          category: p.prompt_category || 'General',
+          theme: p.prompt_theme || 'General'
+        })),
+        ...talentXPrompts.map((p: any) => ({
+          category: p.prompt_category || 'General',
+          theme: p.prompt_theme || 'General'
+        }))
+      ];
+      const uniquePairs = Array.from(
+        new Map(categoryThemePairs.map(p => [`${p.category}|${p.theme}`, p])).values()
+      ).sort((a, b) => {
+        const catCmp = a.category.localeCompare(b.category);
+        return catCmp !== 0 ? catCmp : a.theme.localeCompare(b.theme);
+      });
+      const allPromptCategoryThemes = uniquePairs;
+      console.log('All prompt category/themes:', allPromptCategoryThemes);
 
       const totalOperations = totalPrompts * models.length;
       console.log('Total operations:', totalOperations);
@@ -370,8 +566,8 @@ export const CompanyManagementTab = () => {
         selectedModels: models,
         allPromptTypes,
         selectedPromptTypes: allPromptTypes,
-        allPromptCategories,
-        selectedPromptCategories: allPromptCategories,
+        allPromptCategoryThemes,
+        selectedPromptCategoryThemes: allPromptCategoryThemes,
         totalOperations
       };
       console.log('Confirmation data:', confirmData);
@@ -407,25 +603,32 @@ export const CompanyManagementTab = () => {
     updateTotalOperations({ ...confirmationData, selectedPromptTypes: newSelectedTypes });
   };
 
-  const togglePromptCategorySelection = (promptCategory: string) => {
+  const getCategoryThemeKey = (category: string, theme: string) => `${category}|${theme}`;
+
+  const togglePromptCategoryThemeSelection = (category: string, theme: string) => {
     if (!confirmationData) return;
-    
-    const isSelected = confirmationData.selectedPromptCategories.includes(promptCategory);
-    const newSelectedCategories = isSelected
-      ? confirmationData.selectedPromptCategories.filter((c: string) => c !== promptCategory)
-      : [...confirmationData.selectedPromptCategories, promptCategory];
-    
-    updateTotalOperations({ ...confirmationData, selectedPromptCategories: newSelectedCategories });
+    const key = getCategoryThemeKey(category, theme);
+    const current = confirmationData.selectedPromptCategoryThemes as { category: string; theme: string }[];
+    const isSelected = current.some((p: { category: string; theme: string }) => getCategoryThemeKey(p.category, p.theme) === key);
+    const newSelected = isSelected
+      ? current.filter((p: { category: string; theme: string }) => getCategoryThemeKey(p.category, p.theme) !== key)
+      : [...current, { category, theme }];
+    updateTotalOperations({ ...confirmationData, selectedPromptCategoryThemes: newSelected });
   };
 
   const updateTotalOperations = (newData: any) => {
-    const filteredRegularPrompts = newData.regularPrompts.filter((p: any) => 
-      newData.selectedPromptTypes.includes(p.prompt_type) &&
-      newData.selectedPromptCategories.includes(p.prompt_category || 'General')
+    const selectedSet = new Set(
+      (newData.selectedPromptCategoryThemes || []).map((p: { category: string; theme: string }) =>
+        getCategoryThemeKey(p.category, p.theme)
+      )
     );
-    const filteredTalentXPrompts = newData.talentXPrompts.filter((p: any) => 
-      newData.selectedPromptTypes.includes(p.prompt_type) &&
-      newData.selectedPromptCategories.includes(p.prompt_category || 'General')
+    const matchesPrompt = (p: any) =>
+      selectedSet.has(getCategoryThemeKey(p.prompt_category || 'General', p.prompt_theme || 'General'));
+    const filteredRegularPrompts = newData.regularPrompts.filter((p: any) =>
+      newData.selectedPromptTypes.includes(p.prompt_type) && matchesPrompt(p)
+    );
+    const filteredTalentXPrompts = newData.talentXPrompts.filter((p: any) =>
+      newData.selectedPromptTypes.includes(p.prompt_type) && matchesPrompt(p)
     );
     
     const totalFilteredPrompts = filteredRegularPrompts.length + filteredTalentXPrompts.length;
@@ -459,132 +662,96 @@ export const CompanyManagementTab = () => {
 
   const selectAllPromptCategories = () => {
     if (!confirmationData) return;
-    updateTotalOperations({ ...confirmationData, selectedPromptCategories: [...confirmationData.allPromptCategories] });
+    updateTotalOperations({ ...confirmationData, selectedPromptCategoryThemes: [...confirmationData.allPromptCategoryThemes] });
   };
 
   const deselectAllPromptCategories = () => {
     if (!confirmationData) return;
-    updateTotalOperations({ ...confirmationData, selectedPromptCategories: [] });
+    updateTotalOperations({ ...confirmationData, selectedPromptCategoryThemes: [] });
   };
 
   const executeRefresh = async () => {
     if (!confirmationData || isRefreshing) return;
 
-    if (confirmationData.selectedModels.length === 0 || confirmationData.selectedPromptTypes.length === 0 || confirmationData.selectedPromptCategories.length === 0) {
-      toast.error('Please select at least one model, one prompt type, and one prompt category');
+    if (confirmationData.selectedModels.length === 0 || confirmationData.selectedPromptTypes.length === 0 || (confirmationData.selectedPromptCategoryThemes?.length ?? 0) === 0) {
+      toast.error('Please select at least one model, one prompt type, and one prompt category/theme');
       return;
     }
 
     setIsRefreshing(true);
     
     try {
-      const { regularPrompts, talentXPrompts, selectedModels, selectedPromptTypes, selectedPromptCategories, companyId, companyName } = confirmationData;
-      
-      // Filter prompts by selected types and categories
-      const filteredRegularPrompts = regularPrompts.filter((p: any) => 
-        selectedPromptTypes.includes(p.prompt_type) &&
-        selectedPromptCategories.includes(p.prompt_category || 'General')
+      const { regularPrompts, talentXPrompts, selectedModels, selectedPromptTypes, selectedPromptCategoryThemes, companyId, companyName } = confirmationData;
+      const selectedSet = new Set(
+        (selectedPromptCategoryThemes || []).map((p: { category: string; theme: string }) => `${p.category}|${p.theme}`)
       );
-      const filteredTalentXPrompts = talentXPrompts.filter((p: any) => 
-        selectedPromptTypes.includes(p.prompt_type) &&
-        selectedPromptCategories.includes(p.prompt_category || 'General')
+      const matchesPrompt = (p: any) =>
+        selectedSet.has(`${p.prompt_category || 'General'}|${p.prompt_theme || 'General'}`);
+      
+      // Filter prompts by selected types and category/themes
+      const filteredRegularPrompts = regularPrompts.filter((p: any) =>
+        selectedPromptTypes.includes(p.prompt_type) && matchesPrompt(p)
+      );
+      const filteredTalentXPrompts = talentXPrompts.filter((p: any) =>
+        selectedPromptTypes.includes(p.prompt_type) && matchesPrompt(p)
       );
       
-      const totalOperations = (filteredRegularPrompts.length + filteredTalentXPrompts.length) * selectedModels.length;
-      let completedOperations = 0;
+      // Combine all filtered prompts
+      const allFilteredPrompts = [...filteredRegularPrompts, ...filteredTalentXPrompts];
+      const promptIds = allFilteredPrompts.map((p: any) => p.id);
+      const modelNames = selectedModels.map((m: any) => m.name);
 
-      toast.info(`Starting refresh: ${totalOperations} operations for ${companyName}`);
+      const totalOperations = allFilteredPrompts.length * selectedModels.length;
 
-      // Process regular prompts
-      for (const prompt of filteredRegularPrompts) {
-        for (const model of selectedModels) {
-          try {
-            // Get response from model
-            const { data: resp, error } = await supabase.functions.invoke(model.fn, {
-              body: { prompt: prompt.prompt_text }
-            });
+      toast.info(`Starting batch refresh: ${totalOperations} operations for ${companyName}`);
 
-            if (error || !(resp as any)?.response) {
-              console.error(`${model.name} error:`, error);
-              continue;
-            }
+      // Derive unique categories for backend (promptIds are the source of truth for filtering)
+      const promptCategories = [...new Set((selectedPromptCategoryThemes || []).map((p: { category: string }) => p.category))];
 
-            // Analyze and store response
-            const analyzeResult = await supabase.functions.invoke('analyze-response', {
-              body: {
-                response: (resp as any).response,
-                companyName: companyName,
-                promptType: prompt.prompt_type,
-                perplexityCitations: model.name === 'perplexity' ? (resp as any).citations : null,
-                citations: model.name === 'google-ai-overviews' || model.name === 'bing-copilot' ? (resp as any).citations : null,
-                confirmed_prompt_id: prompt.id,
-                ai_model: model.name,
-                company_id: companyId,
-                isTalentXPrompt: false
-              }
-            });
-
-            if (analyzeResult.error) {
-              console.error(`Analyze error:`, analyzeResult.error);
-            }
-          } catch (e) {
-            console.error(`Unexpected error:`, e);
-          }
-
-          completedOperations++;
+      // Call batch collection function
+      const { data, error } = await supabase.functions.invoke('collect-company-responses', {
+        body: {
+          companyId,
+          promptIds,
+          models: modelNames,
+          promptTypes: selectedPromptTypes,
+          promptCategories,
+          batchSize: 5,
+          skipExisting: false
         }
+      });
+
+      if (error) {
+        let message = error.message || 'Failed to refresh company data';
+        if (error instanceof FunctionsHttpError && error.context) {
+          try {
+            const body = await (error.context as Response).json();
+            if (body?.error) message = body.error;
+          } catch {
+            // ignore parse errors
+          }
+        }
+        throw new Error(message);
       }
 
-      // Process TalentX prompts
-      for (const prompt of filteredTalentXPrompts) {
-        for (const model of selectedModels) {
-          try {
-            const { data: resp, error } = await supabase.functions.invoke(model.fn, {
-              body: { prompt: prompt.prompt_text }
-            });
-
-            if (error || !(resp as any)?.response) {
-              console.error(`${model.name} error:`, error);
-              continue;
-            }
-
-            const analyzeResult = await supabase.functions.invoke('analyze-response', {
-              body: {
-                response: (resp as any).response,
-                companyName: companyName,
-                promptType: prompt.prompt_type,
-                perplexityCitations: model.name === 'perplexity' ? (resp as any).citations : null,
-                citations: model.name === 'google-ai-overviews' || model.name === 'bing-copilot' ? (resp as any).citations : null,
-                confirmed_prompt_id: prompt.id,
-                ai_model: model.name,
-                company_id: companyId,
-                isTalentXPrompt: true
-              }
-            });
-
-            if (analyzeResult.error) {
-              console.error(`Analyze error:`, analyzeResult.error);
-            }
-          } catch (e) {
-            console.error(`Unexpected error:`, e);
-          }
-
-          completedOperations++;
-        }
+      if (!data?.success) {
+        throw new Error(data?.error || 'Batch refresh failed');
       }
 
-      // Update last_updated timestamp
-      await supabase
-        .from('companies')
-        .update({ last_updated: new Date().toISOString() })
-        .eq('id', companyId);
+      const { results, summary } = data;
+      
+      if (results.errors.length > 0) {
+        console.warn('Some errors occurred during refresh:', results.errors);
+        toast.warning(`Refresh completed with ${results.errors.length} errors. ${results.responsesCollected} responses collected.`);
+      } else {
+        toast.success(`Refresh complete! Processed ${results.promptsProcessed} prompts and collected ${results.responsesCollected} responses.`);
+      }
 
-      toast.success(`Refresh complete! Processed ${completedOperations} operations.`);
       setConfirmationData(null);
       loadData();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error during refresh:', error);
-      toast.error('Failed to complete refresh');
+      toast.error(`Failed to complete refresh: ${error.message || 'Unknown error'}`);
     } finally {
       setIsRefreshing(false);
     }
@@ -602,73 +769,97 @@ export const CompanyManagementTab = () => {
   
   if (loading) {
     content = (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-48">
         <div className="text-center">
-          <RefreshCw className="h-12 w-12 animate-spin text-pink mx-auto mb-4" />
-          <p className="text-nightsky/60">Loading companies...</p>
+          <RefreshCw className="h-8 w-8 animate-spin text-slate-400 mx-auto mb-3" />
+          <p className="text-sm text-slate-500">Loading companies...</p>
         </div>
       </div>
     );
   } else if (selectedCompany) {
-    // Show company detail view if a company is selected
+    // Drill-down: full company detail for a specific location
     content = (
       <CompanyDetailView 
         company={selectedCompany}
         onBack={() => setSelectedCompany(null)}
         onUpdate={() => {
           loadData();
-          // Update the selected company data
           const updatedCompany = companies.find(c => c.id === selectedCompany.id);
-          if (updatedCompany) {
-            setSelectedCompany(updatedCompany);
-          }
+          if (updatedCompany) setSelectedCompany(updatedCompany);
         }}
         onRefresh={prepareRefreshForCompany}
         onDelete={() => {
-          // Reload data and navigate back to list
           loadData();
           setSelectedCompany(null);
+          setSelectedGroup(null);
         }}
+      />
+    );
+  } else if (selectedGroup) {
+    // Group view: countries with collection status
+    content = (
+      <CompanyGroupDetailView
+        group={selectedGroup}
+        onBack={() => setSelectedGroup(null)}
+        onSelectCompany={(c) => setSelectedCompany(c)}
+        onUpdate={loadData}
+        onContinueCollection={async (company) => {
+          setContinueCollectionCompanyId(company.id);
+          try {
+            const ok = await runContinueCollection(company.id, company.organization_id, company.name);
+            if (ok) loadData();
+          } finally {
+            setContinueCollectionCompanyId(null);
+          }
+        }}
+        continueCollectionCompanyId={continueCollectionCompanyId}
+        isCollectionRunning={isCollectionRunning}
       />
     );
   } else {
     content = (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      {/* Header - compact */}
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-headline font-bold text-nightsky">Companies</h1>
-          <p className="text-nightsky/60 mt-2">Manage companies and their data</p>
+          <h1 className="text-xl font-headline font-semibold text-slate-800">Companies</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Manage companies and their data</p>
         </div>
-        <div className="flex gap-3">
-          <Button onClick={loadData} variant="outline" className="border-silver">
-            <RefreshCw className="h-4 w-4 mr-2" />
+        <div className="flex gap-2">
+          <Button onClick={loadData} variant="outline" size="sm" className="border-slate-200 text-slate-600">
+            <RefreshCw className="h-4 w-4 mr-1.5" />
             Refresh
           </Button>
-          <Button onClick={() => setShowCreateModal(true)} className="bg-pink hover:bg-pink/90">
-            <Plus className="h-4 w-4 mr-2" />
+          <Button onClick={() => setShowCreateModal(true)} size="sm" className="bg-pink hover:bg-pink/90 text-white">
+            <Plus className="h-4 w-4 mr-1.5" />
             Add Company
           </Button>
         </div>
       </div>
 
-      {/* Filters */}
-      <Card className="border-none shadow-md">
-        <CardContent className="pt-6">
+      {/* Filters - compact */}
+      <Card className="border border-slate-200 shadow-sm bg-white">
+        <CardContent className="py-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label className="text-nightsky">Search</Label>
-              <Input
-                placeholder="Search by name, industry, or organization..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="border-silver"
-              />
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-600">Search</Label>
+              <div className="relative">
+                <Input
+                  placeholder="Search by name, industry, or organization..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="border-slate-200 h-9 text-sm"
+                  disabled={searchLoading}
+                />
+                {searchLoading && (
+                  <RefreshCw className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-slate-400" />
+                )}
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label className="text-nightsky">Filter by Organization</Label>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-600">Organization</Label>
               <Select value={selectedOrg} onValueChange={setSelectedOrg}>
-                <SelectTrigger className="border-silver">
+                <SelectTrigger className="border-slate-200 h-9">
                   <SelectValue placeholder="All organizations" />
                 </SelectTrigger>
                 <SelectContent>
@@ -683,97 +874,121 @@ export const CompanyManagementTab = () => {
         </CardContent>
       </Card>
 
-      {/* Companies Table */}
-      <Card className="border-none shadow-md">
-        <CardHeader>
-          <CardTitle className="text-nightsky">
-            {filteredCompanies.length} {filteredCompanies.length === 1 ? 'Company' : 'Companies'}
+      {/* Companies Table - grouped by name+org */}
+      <Card className="border border-slate-200 shadow-sm bg-white">
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm font-medium text-slate-700">
+            {filteredGroups.length} {filteredGroups.length === 1 ? 'Company' : 'Companies'}
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          {filteredCompanies.length === 0 ? (
-            <div className="text-center py-12">
-              <Building2 className="h-16 w-16 text-silver mx-auto mb-4" />
-              <p className="text-lg font-medium text-nightsky mb-2">No companies found</p>
-              <p className="text-sm text-nightsky/60 mb-4">
-                {searchQuery || selectedOrg !== 'all' 
+        <CardContent className="pt-0">
+          {filteredGroups.length === 0 ? (
+            <div className="text-center py-10">
+              <Building2 className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-sm font-medium text-slate-700 mb-1">No companies found</p>
+              <p className="text-xs text-slate-500 mb-3">
+                {searchQuery || selectedOrg !== 'all'
                   ? 'Try adjusting your filters'
                   : 'Create your first company to get started'
                 }
               </p>
               {!searchQuery && selectedOrg === 'all' && (
-                <Button onClick={() => setShowCreateModal(true)} className="bg-pink hover:bg-pink/90">
-                  <Plus className="h-4 w-4 mr-2" />
+                <Button onClick={() => setShowCreateModal(true)} size="sm" className="bg-pink hover:bg-pink/90 text-white">
+                  <Plus className="h-4 w-4 mr-1.5" />
                   Add Company
                 </Button>
               )}
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Company Name</TableHead>
-                  <TableHead>Company ID</TableHead>
-                  <TableHead>Industry</TableHead>
-                  <TableHead>Country</TableHead>
-                  <TableHead>Organization</TableHead>
-                  <TableHead>Last Updated</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredCompanies.map(company => (
-                  <TableRow key={company.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Building2 className="h-4 w-4 text-nightsky/60" />
-                        <span className="font-medium text-nightsky">{company.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-sm text-nightsky/60 font-mono">{company.id}</span>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="border-teal/30 text-teal bg-teal/5">
-                        {company.industry}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-sm text-nightsky/70">
-                        {company.country || '—'}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-nightsky/70">
-                        <Briefcase className="h-4 w-4" />
-                        {company.organization_name}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 text-nightsky/60 text-sm">
-                        <Calendar className="h-4 w-4" />
-                        {company.last_updated 
-                          ? new Date(company.last_updated).toLocaleDateString()
-                          : 'Never'
-                        }
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-2 justify-end">
+            <div className="rounded-md border border-slate-200 overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-200 hover:bg-transparent bg-slate-50/80">
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Company Name</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Industries</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Countries</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Organization</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Collection status</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Last Updated</TableHead>
+                    <TableHead className="h-9 px-3 text-right text-xs font-medium text-slate-600">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                {filteredGroups.map(group => {
+                  const latestUpdated = group.companies
+                    .map(c => c.last_updated)
+                    .filter(Boolean)
+                    .sort()
+                    .pop() as string | undefined;
+                  const hasInProgress = group.statusSummary.inProgress > 0;
+                  const allCompleted = group.statusSummary.completed === group.statusSummary.total;
+                  const statusLabel = hasInProgress
+                    ? `${group.statusSummary.inProgress} collecting`
+                    : allCompleted
+                      ? `${group.statusSummary.completed}/${group.statusSummary.total} Completed`
+                      : `${group.statusSummary.completed}/${group.statusSummary.total} done`;
+                  return (
+                    <TableRow key={`${group.name}-${group.organization_id}`} className="border-slate-200">
+                      <TableCell className="py-2 px-3 text-sm">
+                        <div className="flex items-center gap-2">
+                          <Building2 className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />
+                          <span className="font-medium text-slate-800">{group.name}</span>
+                          {group.companies.length > 1 && (
+                            <Badge variant="outline" className="text-xs font-normal border-slate-200">
+                              {group.companies.length} locations
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-2 px-3">
+                        <div className="flex flex-wrap gap-1">
+                          {group.industries.map(ind => (
+                            <Badge key={ind} variant="outline" className="border-slate-200 text-slate-600 bg-slate-50 text-xs font-normal">
+                              {ind}
+                            </Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-sm text-slate-600">
+                        {group.countries.length > 0 ? group.countries.join(', ') : '—'}
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-sm text-slate-600">
+                        <div className="flex items-center gap-1.5">
+                          <Briefcase className="h-3.5 w-3.5 text-slate-400" />
+                          {group.organization_name}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-2 px-3">
+                        <Badge
+                          variant={
+                            hasInProgress ? 'secondary' :
+                            allCompleted ? 'default' : 'outline'
+                          }
+                          className="text-xs font-normal"
+                          title={`${group.statusSummary.completed} completed, ${group.statusSummary.inProgress} in progress, ${group.statusSummary.pending} pending`}
+                        >
+                          {statusLabel}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-xs text-slate-500">
+                        {latestUpdated ? new Date(latestUpdated).toLocaleDateString() : 'Never'}
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-right">
                         <Button
-                          onClick={() => setSelectedCompany(company)}
+                          onClick={() => setSelectedGroup(group)}
                           size="sm"
-                          className="bg-pink hover:bg-pink/90"
+                          className="bg-pink hover:bg-pink/90 text-white h-7 text-xs"
                         >
                           View Details
-                          <ArrowRight className="h-4 w-4 ml-2" />
+                          <ArrowRight className="h-3.5 w-3.5 ml-1" />
                         </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -1033,7 +1248,9 @@ export const CompanyManagementTab = () => {
 
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <h4 className="font-medium">Prompt Categories ({confirmationData.selectedPromptCategories.length}/{confirmationData.allPromptCategories.length})</h4>
+                      <h4 className="font-medium">
+                        Prompt Categories / Themes ({confirmationData.selectedPromptCategoryThemes?.length ?? 0}/{confirmationData.allPromptCategoryThemes?.length ?? 0})
+                      </h4>
                       <div className="flex space-x-2">
                         <button
                           type="button"
@@ -1052,31 +1269,48 @@ export const CompanyManagementTab = () => {
                         </button>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      {confirmationData.allPromptCategories.map((promptCategory: string) => {
-                        const isSelected = confirmationData.selectedPromptCategories.includes(promptCategory);
-                        return (
-                          <div key={promptCategory} className="flex items-center space-x-2">
-                            <input
-                              type="checkbox"
-                              id={`category-${promptCategory}`}
-                              checked={isSelected}
-                              onChange={() => togglePromptCategorySelection(promptCategory)}
-                              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                            />
-                            <label 
-                              htmlFor={`category-${promptCategory}`}
-                              className={`text-sm cursor-pointer ${isSelected ? 'font-medium' : 'text-gray-600'}`}
-                            >
-                              {promptCategory}
-                            </label>
+                    <div className="space-y-3 max-h-48 overflow-y-auto">
+                      {(() => {
+                        const items = confirmationData.allPromptCategoryThemes || [];
+                        const selected = confirmationData.selectedPromptCategoryThemes || [];
+                        const byCategory = items.reduce((acc: Record<string, { category: string; theme: string }[]>, p: { category: string; theme: string }) => {
+                          if (!acc[p.category]) acc[p.category] = [];
+                          acc[p.category].push(p);
+                          return acc;
+                        }, {});
+                        return Object.entries(byCategory).map(([category, themes]) => (
+                          <div key={category} className="space-y-1">
+                            <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">{category}</div>
+                            {themes.map(({ theme }) => {
+                              const isSelected = selected.some(
+                                (s: { category: string; theme: string }) => s.category === category && s.theme === theme
+                              );
+                              const id = `category-${category}-${theme}`;
+                              return (
+                                <div key={id} className="flex items-center space-x-2 pl-2">
+                                  <input
+                                    type="checkbox"
+                                    id={id}
+                                    checked={isSelected}
+                                    onChange={() => togglePromptCategoryThemeSelection(category, theme)}
+                                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                  />
+                                  <label
+                                    htmlFor={id}
+                                    className={`text-sm cursor-pointer ${isSelected ? 'font-medium' : 'text-gray-600'}`}
+                                  >
+                                    {theme}
+                                  </label>
+                                </div>
+                              );
+                            })}
                           </div>
-                        );
-                      })}
+                        ));
+                      })()}
                     </div>
-                    {confirmationData.selectedPromptCategories.length === 0 && (
+                    {(confirmationData.selectedPromptCategoryThemes?.length ?? 0) === 0 && (
                       <div className="text-xs text-red-600 bg-red-50 p-2 rounded">
-                        ⚠️ Please select at least one prompt category
+                        ⚠️ Please select at least one prompt category/theme
                       </div>
                     )}
                   </div>
@@ -1117,7 +1351,7 @@ export const CompanyManagementTab = () => {
                 </Button>
                 <Button
                   onClick={executeRefresh}
-                  disabled={isRefreshing || confirmationData.selectedModels.length === 0 || confirmationData.selectedPromptTypes.length === 0 || confirmationData.selectedPromptCategories.length === 0}
+                  disabled={isRefreshing || confirmationData.selectedModels.length === 0 || confirmationData.selectedPromptTypes.length === 0 || (confirmationData.selectedPromptCategoryThemes?.length ?? 0) === 0}
                   className="bg-pink hover:bg-pink/90"
                 >
                   {isRefreshing ? (

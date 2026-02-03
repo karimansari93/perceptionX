@@ -86,85 +86,48 @@ export const OverviewTab = () => {
   };
 
   const statCards = [
-    {
-      title: 'Organizations',
-      value: stats.totalOrganizations,
-      icon: Briefcase,
-      color: 'text-pink',
-      bgColor: 'bg-pink/10'
-    },
-    {
-      title: 'Users',
-      value: stats.totalUsers,
-      icon: Users,
-      color: 'text-teal',
-      bgColor: 'bg-teal/10'
-    },
-    {
-      title: 'Companies',
-      value: stats.totalCompanies,
-      icon: Building2,
-      color: 'text-nightsky',
-      bgColor: 'bg-nightsky/10'
-    },
-    {
-      title: 'Total Prompts',
-      value: stats.totalPrompts,
-      icon: Database,
-      color: 'text-pink',
-      bgColor: 'bg-pink/10'
-    },
-    {
-      title: 'Total Responses',
-      value: stats.totalResponses,
-      icon: TrendingUp,
-      color: 'text-teal',
-      bgColor: 'bg-teal/10'
-    },
-    {
-      title: 'Recent Activity',
-      value: stats.recentActivity,
-      icon: Activity,
-      color: 'text-nightsky',
-      bgColor: 'bg-nightsky/10',
-      subtitle: 'Last 7 days'
-    }
+    { title: 'Organizations', value: stats.totalOrganizations, icon: Briefcase, subtitle: null },
+    { title: 'Users', value: stats.totalUsers, icon: Users, subtitle: null },
+    { title: 'Companies', value: stats.totalCompanies, icon: Building2, subtitle: null },
+    { title: 'Total Prompts', value: stats.totalPrompts, icon: Database, subtitle: null },
+    { title: 'Total Responses', value: stats.totalResponses, icon: TrendingUp, subtitle: null },
+    { title: 'Recent Activity', value: stats.recentActivity, icon: Activity, subtitle: 'Last 7 days' }
   ];
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-48">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-pink mx-auto mb-4"></div>
-          <p className="text-nightsky/60">Loading statistics...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-2 border-slate-300 border-t-slate-600 mx-auto mb-3"></div>
+          <p className="text-sm text-slate-500">Loading statistics...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
-        <h1 className="text-3xl font-headline font-bold text-nightsky">System Overview</h1>
-        <p className="text-nightsky/60 mt-2">Monitor your PerceptionX system at a glance</p>
+        <h1 className="text-xl font-headline font-semibold text-slate-800">System Overview</h1>
+        <p className="text-sm text-slate-500 mt-0.5">Monitor your PerceptionX system at a glance</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {statCards.map((stat) => {
           const Icon = stat.icon;
           return (
-            <Card key={stat.title} className="border-none shadow-md hover:shadow-lg transition-shadow">
-              <CardContent className="pt-6">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-sm text-nightsky/60 font-medium mb-1">{stat.title}</p>
-                    <p className="text-3xl font-bold text-nightsky">{stat.value.toLocaleString()}</p>
+            <Card key={stat.title} className="border border-slate-200 shadow-sm bg-white">
+              <CardContent className="pt-4 pb-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{stat.title}</p>
+                    <p className="text-2xl font-semibold text-slate-800 mt-0.5">{stat.value.toLocaleString()}</p>
                     {stat.subtitle && (
-                      <p className="text-xs text-nightsky/40 mt-1">{stat.subtitle}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{stat.subtitle}</p>
                     )}
                   </div>
-                  <div className={`${stat.bgColor} ${stat.color} p-3 rounded-lg`}>
-                    <Icon className="h-6 w-6" />
+                  <div className="p-2 rounded-md bg-slate-100 text-slate-500 flex-shrink-0">
+                    <Icon className="h-5 w-5" />
                   </div>
                 </div>
               </CardContent>
@@ -173,35 +136,35 @@ export const OverviewTab = () => {
         })}
       </div>
 
-      <Card className="border-none shadow-md">
-        <CardHeader>
-          <CardTitle className="text-nightsky">Quick Actions</CardTitle>
+      <Card className="border border-slate-200 shadow-sm bg-white">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-medium text-slate-800">Quick Actions</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <button
               onClick={() => window.location.reload()}
-              className="p-4 border border-silver rounded-lg hover:bg-silver/50 transition-colors text-left"
+              className="p-3 border border-slate-200 rounded-md hover:bg-slate-50 transition-colors text-left"
             >
-              <Briefcase className="h-5 w-5 text-pink mb-2" />
-              <p className="font-medium text-nightsky">Manage Organizations</p>
-              <p className="text-sm text-nightsky/60 mt-1">Add and configure organizations</p>
+              <Briefcase className="h-4 w-4 text-slate-500 mb-1.5" />
+              <p className="text-sm font-medium text-slate-800">Manage Organizations</p>
+              <p className="text-xs text-slate-500 mt-0.5">Add and configure organizations</p>
             </button>
             <button
               onClick={() => window.location.reload()}
-              className="p-4 border border-silver rounded-lg hover:bg-silver/50 transition-colors text-left"
+              className="p-3 border border-slate-200 rounded-md hover:bg-slate-50 transition-colors text-left"
             >
-              <Building2 className="h-5 w-5 text-teal mb-2" />
-              <p className="font-medium text-nightsky">Company Management</p>
-              <p className="text-sm text-nightsky/60 mt-1">Update company data and settings</p>
+              <Building2 className="h-4 w-4 text-slate-500 mb-1.5" />
+              <p className="text-sm font-medium text-slate-800">Company Management</p>
+              <p className="text-xs text-slate-500 mt-0.5">Update company data and settings</p>
             </button>
             <button
               onClick={() => window.location.reload()}
-              className="p-4 border border-silver rounded-lg hover:bg-silver/50 transition-colors text-left"
+              className="p-3 border border-slate-200 rounded-md hover:bg-slate-50 transition-colors text-left"
             >
-              <Users className="h-5 w-5 text-nightsky mb-2" />
-              <p className="font-medium text-nightsky">User Management</p>
-              <p className="text-sm text-nightsky/60 mt-1">Manage user access and permissions</p>
+              <Users className="h-4 w-4 text-slate-500 mb-1.5" />
+              <p className="text-sm font-medium text-slate-800">User Management</p>
+              <p className="text-xs text-slate-500 mt-0.5">Manage user access and permissions</p>
             </button>
           </div>
         </CardContent>
