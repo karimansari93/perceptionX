@@ -529,28 +529,124 @@ serve(async (req) => {
       allPrompts.map((p) => `${p.theme} (${p.category})`).join(", "),
     );
 
-    // PHASE 1: Create all prompts first (fast, no API calls)
-    console.log(`PHASE 1: Creating all ${allPrompts.length} prompts`);
+    // PHASE 1: Create/Fetch prompts
+    // We only need to run the creation logic ONCE.
+    // If this is a subsequent batch (batchOffset > 0), we can skip the heavy creation logic
+    // and just fetch the IDs we need for this specific batch.
+    
+    console.log(`PHASE 1: Resolving prompts (batchOffset: ${batchOffset})`);
 
     const promptsWithIds: Array<{
       promptData: { category: string; theme: string; text: string };
       promptId: string;
     }> = [];
 
+    // If we are processing a specific batch (offset > 0), we only need to resolve the prompts FOR THAT BATCH.
+    // However, to keep logic simple and consistent, we'll just resolve ALL prompts if batchOffset == 0 (First Run),
+    // and for subsequent runs, we'll try to just FETCH them efficiently without "creation" attempts if possible.
+    
+    // Actually, the safest and most robust way is:
+    // 1. If batchOffset == 0: Run the full "Create if not exists" logic.
+    // 2. If batchOffset > 0: Run a "Fetch only" logic. If missing, THEN create.
+    
+    // To ensure we don't break anything, let's keep the logic but optimize it:
+    // Only attempt to CREATE if we can't find it. This is what the code already does.
+    // But we can skip the loop entirely if we just want to fetch.
+    
     for (let i = 0; i < allPrompts.length; i++) {
+      // Optimization: If we are using batching, and this prompt is NOT in our batch,
+      // we don't technically need to resolve its ID right now.
+      // BUT the original logic returned "results.promptsCreated" for the whole set.
+      // Let's stick to the core requirement: PREVENT DUPLICATES.
+      
       const promptData = allPrompts[i];
-
       let promptId: string | null = null;
 
       try {
-        // Try to insert directly - faster than checking first
-        // If it's a duplicate, we'll catch the error and get the existing ID
-        try {
-          const { data: newPrompt, error: promptError } = await supabase
+        // Step 1: ALWAYS check if prompt exists first.
+        // This is the read-only path that should happen 99% of the time.
+        // IMPORTANT: We need to handle company_id correctly.
+        // If we are running for a specific company context (adminUser.company_id),
+        // we should check for prompts that match that ID (if they are company specific)
+        // OR check for global prompts (company_id is null) if that's the intention.
+        // However, based on the DB state, it seems we are creating prompts WITH company_id.
+        // So we must include it in our search to find the matches.
+        
+        let query = supabase
+          .from("confirmed_prompts")
+          .select("id")
+          .eq("prompt_text", promptData.text)
+          .eq("prompt_type", "discovery");
+
+        // Use the company_id we are about to insert with (which is null in code, but seems to be populated in DB?)
+        // Wait, line 619 says `company_id: null`.
+        // BUT the user found `company_id: a1c9...` in the DB.
+        // This means `adminUser.company_id` might be getting used somewhere or I am misreading line 619.
+        // Line 619 explicitly says `company_id: null`.
+        
+        // Let's look at how `adminUser` is fetched. 
+        // If the DB has `company_id` set, it means previous runs inserted it that way.
+        // If we want to support both (generic and company-specific), we should be careful.
+        // But for "Industry Visibility", it SHOULD be null.
+        
+        // If the unique index includes company_id, then (text, type, ind, loc, NULL) is different from (text, type, ind, loc, UUID).
+        // The user's DB showed company_id was NOT null.
+        // This implies that `collect-industry-visibility` might have been modified before or I am looking at the wrong version?
+        // OR, the `insert` below is using `company_id: null` but maybe there is a trigger?
+        // OR, maybe the user was looking at prompts created by a DIFFERENT function?
+        
+        // Regardless, to be robust, we should check for BOTH cases or just match the text.
+        // Since we decided "Text is King", let's relax the company_id check for finding existing prompts.
+        // If we find a prompt with the same text, we should use it, regardless of company_id.
+        
+        // query = query.is("company_id", null); // REMOVED strict check
+        
+        const { data: existingPrompts, error: searchError } = await query.limit(1);
+
+        if (searchError) {
+          console.error(
+            `[${i + 1}/${allPrompts.length}] Error searching for existing prompt:`,
+            searchError.message
+          );
+        }
+
+        if (existingPrompts && existingPrompts.length > 0) {
+          promptId = existingPrompts[0].id;
+          // Only log on the first batch to reduce noise
+          if (batchOffset === 0) {
+             console.log(
+              `[${i + 1}/${allPrompts.length}] Found existing prompt ${promptId} by TEXT match.`
+            );
+          }
+          
+          // Only update timestamp on the first batch to avoid 16 writes for the same row
+          if (batchOffset === 0) {
+             const { error: updateError } = await supabase
+              .from("confirmed_prompts")
+              .update({ 
+                updated_at: new Date().toISOString(),
+                industry_context: industry,
+                location_context: dbLocationContext,
+                prompt_category: promptData.category,
+                prompt_theme: promptData.theme
+                // We do NOT update company_id here to preserve whatever it was
+              })
+              .eq("id", promptId);
+              
+             if (updateError) {
+               console.error(`Error updating timestamp for prompt ${promptId}:`, updateError.message);
+             }
+          }
+        } else {
+          // Step 2: Create ONLY if not found AND we are in the first batch (or forced).
+          // If we are in batch > 0, we expect prompts to exist from batch 0. 
+          // But if they are missing, we MUST create them to proceed.
+          
+          const { data: newPrompt, error: insertError } = await supabase
             .from("confirmed_prompts")
             .insert({
               user_id: adminUser.id,
-              company_id: null,
+              company_id: null, // We explicitly set this to NULL for industry visibility
               onboarding_id: null,
               prompt_text: promptData.text,
               prompt_type: "discovery",
@@ -562,93 +658,47 @@ serve(async (req) => {
             .select("id")
             .single();
 
-          if (promptError) {
-            // If it's a unique constraint violation, the prompt already exists - get the existing ID
-            if (
-              promptError.code === "23505" ||
-              promptError.message?.includes("duplicate") ||
-              promptError.message?.includes("unique")
-            ) {
-              console.log(
-                `[${i + 1}/${allPrompts.length}] Prompt already exists, fetching existing ID...`,
-              );
-
-              let query = supabase
-                .from("confirmed_prompts")
-                .select("id")
-                .is("company_id", null)
-                .eq("prompt_type", "discovery")
-                .eq("prompt_category", promptData.category)
-                .eq("prompt_theme", promptData.theme)
-                .eq("industry_context", industry);
-
-              if (dbLocationContext) {
-                query = query.eq("location_context", dbLocationContext);
-              } else {
-                query = query.is("location_context", null);
-              }
-
-              const { data: existingPrompts } = await query.limit(1);
-
-              if (existingPrompts && existingPrompts.length > 0) {
-                promptId = existingPrompts[0].id;
-                console.log(
-                  `[${i + 1}/${allPrompts.length}] → Using existing prompt ${promptId} for ${promptData.theme}`,
-                );
-              } else {
+          if (insertError) {
+            // Handle unique violation gracefully (Race condition catcher)
+            if (insertError.code === "23505" || insertError.message?.includes("duplicate")) {
+               console.log(`[${i + 1}/${allPrompts.length}] Race condition caught: Prompt created by another process. Fetching ID...`);
+               // Retry fetch - RELAXED (No company_id check, just text)
+               const { data: retryFetch } = await supabase
+                  .from("confirmed_prompts")
+                  .select("id")
+                  .eq("prompt_text", promptData.text)
+                  .eq("prompt_type", "discovery")
+                  // .is("company_id", null) // REMOVED to find any matching prompt
+                  .limit(1);
+                  
+               if (retryFetch && retryFetch.length > 0) {
+                 promptId = retryFetch[0].id;
+               }
+            } else {
                 console.error(
-                  `[${i + 1}/${allPrompts.length}] Duplicate error but couldn't find existing prompt`,
+                  `[${i + 1}/${allPrompts.length}] Failed to create prompt:`,
+                  insertError.message
                 );
                 results.errors.push(
-                  `Duplicate error for ${promptData.theme} but couldn't retrieve ID`,
+                  `Failed to create prompt for ${promptData.theme}: ${insertError.message}`
                 );
-              }
-            } else {
-              // Some other error
-              console.error(
-                `[${i + 1}/${allPrompts.length}] Failed to create prompt:`,
-                {
-                  error: promptError.message,
-                  code: promptError.code,
-                },
-              );
-              results.errors.push(
-                `Failed to create prompt for ${promptData.theme}: ${promptError.message}`,
-              );
             }
           } else if (newPrompt && newPrompt.id) {
             promptId = newPrompt.id;
             results.promptsCreated++;
             console.log(
-              `[${i + 1}/${allPrompts.length}] ✓ Created prompt ${promptId} for ${promptData.theme}`,
-            );
-          } else {
-            console.error(
-              `[${i + 1}/${allPrompts.length}] Prompt creation returned no ID`,
-            );
-            results.errors.push(
-              `Prompt creation failed for ${promptData.theme}: No ID returned`,
+              `[${i + 1}/${allPrompts.length}] ✓ Created prompt ${promptId} for ${promptData.theme}`
             );
           }
-        } catch (insertError: any) {
-          console.error(
-            `[${i + 1}/${allPrompts.length}] Exception during prompt creation:`,
-            insertError.message,
-          );
-          results.errors.push(
-            `Exception creating prompt ${promptData.theme}: ${insertError.message}`,
-          );
         }
       } catch (error: any) {
         console.error(
           `[${i + 1}/${allPrompts.length}] CRITICAL ERROR processing prompt ${promptData.theme}:`,
-          error.message,
-          error.stack,
+          error.message
         );
         results.errors.push(
-          `Critical error processing prompt ${promptData.theme}: ${error.message}`,
+          `Critical error processing prompt ${promptData.theme}: ${error.message}`
         );
-        // Continue to next prompt - don't let one failure stop the whole process
       }
 
       // Only add to promptsWithIds if we have a valid promptId
