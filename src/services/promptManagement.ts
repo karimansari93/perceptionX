@@ -119,18 +119,23 @@ export const addCustomPrompts = async ({
     }
   }
 
-  // For job function prompts, use selectedLocation if provided, otherwise fall back to onboarding country
+  // For job function and industry, use selectedLocation if provided so prompt text and translation match the dashboard selection.
+  // Otherwise fall back to onboarding country.
   let countryForPrompts: string | undefined;
   let locationForPrompts: string | undefined;
-  
+
   if (variant.type === 'location') {
     // Location variant uses customLocation, no country
     countryForPrompts = undefined;
     locationForPrompts = customLocationForPrompts;
-  } else if (variant.type === 'job-function' && selectedLocation && selectedLocation !== 'GLOBAL') {
-    // For job function prompts with a selected location, format it and use as location context
+  } else if (
+    (variant.type === 'job-function' || variant.type === 'industry') &&
+    selectedLocation &&
+    selectedLocation !== 'GLOBAL'
+  ) {
+    // Use dashboard-selected location so generated prompt text says e.g. "in Poland", then we translate to Polish
     locationForPrompts = formatCountryForPrompt(selectedLocation);
-    countryForPrompts = undefined; // Don't use country when we have a specific location
+    countryForPrompts = undefined;
   } else {
     // Default: use onboarding country
     countryForPrompts = onboardingRecord?.country || undefined;
@@ -148,12 +153,27 @@ export const addCustomPrompts = async ({
     isProUser
   );
 
-  // Translate prompts if a location filter is selected for job function prompts
-  // Only translate when adding job function prompts with a selected location filter
-  const countryCodeForTranslation = 
-    (variant.type === 'job-function' && selectedLocation && selectedLocation !== 'GLOBAL') 
-      ? selectedLocation 
-      : undefined;
+  // When adding an industry, only create discovery prompts (industry is only used in discovery)
+  if (variant.type === 'industry') {
+    generatedPrompts = generatedPrompts.filter(p => p.type === 'discovery');
+  }
+
+  // Translate prompts for non-English countries:
+  // - Job function: when a location filter is selected (e.g. Poland → Polish).
+  // - Industry: when a location filter is selected, or when onboarding country is non-GLOBAL (e.g. Netflix Poland → Polish).
+  let countryCodeForTranslation: string | undefined;
+  if (variant.type === 'job-function' && selectedLocation && selectedLocation !== 'GLOBAL') {
+    countryCodeForTranslation = selectedLocation;
+  } else if (variant.type === 'industry') {
+    countryCodeForTranslation =
+      selectedLocation && selectedLocation !== 'GLOBAL'
+        ? selectedLocation
+        : onboardingRecord?.country && onboardingRecord.country !== 'GLOBAL'
+          ? onboardingRecord.country
+          : undefined;
+  } else {
+    countryCodeForTranslation = undefined;
+  }
 
   // Translate prompts if country is not GLOBAL and language is not English
   // CRITICAL: Translation is REQUIRED for non-English countries - cannot proceed without it

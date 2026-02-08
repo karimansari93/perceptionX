@@ -2,9 +2,7 @@ import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { getLLMDisplayName } from '@/config/llmLogos';
 import { useSubscription } from '@/hooks/useSubscription';
-import { safeStorePromptResponse, checkExistingPromptResponse } from '@/lib/utils';
 
 export interface RefreshProgress {
   currentPrompt: string;
@@ -16,7 +14,11 @@ export interface RefreshProgress {
 interface RefreshOptions {
   modelType?: string;
   promptIds?: string[];
+  companyId?: string;
 }
+
+const FREE_MODELS = ['openai', 'perplexity', 'google-ai-overviews'];
+const PRO_MODELS = ['openai', 'perplexity', 'google-ai-overviews', 'gemini', 'deepseek'];
 
 export const useRefreshPrompts = () => {
   const { user } = useAuth();
@@ -25,7 +27,7 @@ export const useRefreshPrompts = () => {
   const [progress, setProgress] = useState<RefreshProgress | null>(null);
 
   const refreshAllPrompts = async (companyName: string, options: RefreshOptions = {}) => {
-    const { modelType, promptIds } = options;
+    const { modelType, promptIds, companyId: optionsCompanyId } = options;
     if (!user) {
       toast.error('You must be logged in to refresh prompts');
       return;
@@ -35,23 +37,27 @@ export const useRefreshPrompts = () => {
     setProgress({ currentPrompt: '', currentModel: '', completed: 0, total: 0 });
 
     try {
-      // Get user's onboarding data for competitor analysis
-      const { data: onboardingData, error: onboardingError } = await supabase
-        .from('user_onboarding')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+      // Restrict free users to allowed models
+      if (!isPro && modelType && !FREE_MODELS.includes(modelType)) {
+        toast.error('This AI model is only available for Pro users. Upgrade to Pro to access all AI models.');
+        return;
+      }
 
-      if (onboardingError) {
-        console.error('Failed to fetch onboarding data:', onboardingError);
+      const modelNames = modelType
+        ? [modelType]
+        : isPro
+          ? PRO_MODELS
+          : FREE_MODELS;
+
+      if (modelNames.length === 0) {
+        toast.error('No AI models available for testing. Please try again.');
+        return;
       }
 
       // Get active confirmed prompts to refresh
       let promptQuery = supabase
         .from('confirmed_prompts')
-        .select('*')
+        .select('id, company_id')
         .eq('is_active', true)
         .eq('user_id', user.id);
 
@@ -71,280 +77,89 @@ export const useRefreshPrompts = () => {
         return;
       }
 
-      // Show warning for free users if they're trying to refresh with restricted models
-      if (!isPro && modelType && !['openai', 'perplexity', 'google-ai-overviews'].includes(modelType)) {
-        toast.error('This AI model is only available for Pro users. Upgrade to Pro to access all AI models.');
+      // Group prompts by company_id so we can call collect-company-responses once per company
+      const byCompany = new Map<string, string[]>();
+      for (const p of confirmedPrompts) {
+        const cid = p.company_id ?? '';
+        if (!byCompany.has(cid)) byCompany.set(cid, []);
+        byCompany.get(cid)!.push(p.id);
+      }
+
+      // When promptIds were provided (e.g. after add industry), process all companies that own those prompts (usually one).
+      // When doing full refresh (no promptIds), scope to companyId if provided so we only refresh current company.
+      let companiesToProcess: [string, string[]][];
+      if (promptIds && promptIds.length > 0) {
+        companiesToProcess = Array.from(byCompany.entries());
+      } else if (optionsCompanyId != null && byCompany.has(optionsCompanyId)) {
+        companiesToProcess = [[optionsCompanyId, byCompany.get(optionsCompanyId)!]];
+      } else if (optionsCompanyId != null) {
+        companiesToProcess = [];
+      } else {
+        companiesToProcess = Array.from(byCompany.entries());
+      }
+
+      if (companiesToProcess.length === 0) {
+        toast.error('No prompts found for this company to refresh');
         return;
       }
 
-      // Define which models to test based on subscription status and modelType parameter
-      const modelsToTest = [];
-      
-      // Free users can only test with OpenAI, Perplexity, and Google AI
-      const allowedModelsForFree = ['openai', 'perplexity', 'google-ai-overviews'];
-      
-      if (!modelType || modelType === 'openai') {
-        if (isPro || allowedModelsForFree.includes('openai')) {
-          modelsToTest.push({ name: 'OpenAI', function: 'test-prompt-openai', model: 'openai' });
-        }
-      }
-      if (!modelType || modelType === 'perplexity') {
-        if (isPro || allowedModelsForFree.includes('perplexity')) {
-          modelsToTest.push({ name: 'Perplexity', function: 'test-prompt-perplexity', model: 'perplexity' });
-        }
-      }
-      if (!modelType || modelType === 'gemini') {
-        if (isPro) { // Only Pro users can test with Gemini
-          modelsToTest.push({ name: 'Gemini', function: 'test-prompt-gemini', model: 'gemini' });
-        }
-      }
-      if (!modelType || modelType === 'deepseek') {
-        if (isPro) { // Only Pro users can test with DeepSeek
-          modelsToTest.push({ name: 'DeepSeek', function: 'test-prompt-deepseek', model: 'deepseek' });
-        }
-      }
-      if (!modelType || modelType === 'google-ai-overviews') {
-        if (isPro) { // Only Pro users can test with Google AI Overviews
-          modelsToTest.push({ name: 'Google AI Overviews', function: 'test-prompt-google-ai-overviews', model: 'google-ai-overviews' });
-        }
-      }
-      // Bing Copilot temporarily disabled - not working
-      // if (!modelType || modelType === 'bing-copilot') {
-      //   if (isPro || allowedModelsForFree.includes('bing-copilot')) {
-      //     modelsToTest.push({ name: 'Bing Copilot', function: 'test-prompt-bing-copilot', model: 'bing-copilot' });
-      //   }
-      // }
-
-      // Check if any models are available for testing
-      if (modelsToTest.length === 0) {
-        if (!isPro && modelType && !['openai', 'perplexity', 'google-ai-overviews'].includes(modelType)) {
-          toast.error('This AI model is only available for Pro users. Upgrade to Pro to access all AI models.');
-        } else {
-          toast.error('No AI models available for testing. Please try again.');
-        }
-        return;
+      let totalOperations = 0;
+      for (const [, ids] of companiesToProcess) {
+        totalOperations += ids.length * modelNames.length;
       }
 
-      // Calculate total operations
-      // When promptIds are provided (targeted refresh), only count those specific prompts
-      // When promptIds is empty (full refresh), count all prompts + TalentX prompts for Pro users
-      let totalOperations = confirmedPrompts.length * modelsToTest.length;
-      
-      console.log(`[Refresh] Prompt count: ${confirmedPrompts.length}, Models: ${modelsToTest.length}, Targeted: ${promptIds ? promptIds.length : 'all'}`);
-      
-      // Only include TalentX Pro prompts in full refresh mode (when no specific promptIds are given)
-      if (isPro && (!promptIds || promptIds.length === 0)) {
-        const { data: talentXPrompts, error: talentXError } = await supabase
-          .from('confirmed_prompts')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('is_pro_prompt', true)
-          .eq('is_active', true);
+      setProgress(prev =>
+        prev ? { ...prev, total: totalOperations, currentPrompt: 'Starting batch collection…' } : null
+      );
 
-        if (talentXError) {
-          console.error('Error fetching TalentX Pro prompts:', talentXError);
-        } else if (talentXPrompts) {
-          totalOperations += talentXPrompts.length * modelsToTest.length;
-          console.log(`[Refresh] Added ${talentXPrompts.length} TalentX prompts for full refresh`);
+      let totalCompleted = 0;
+      const allErrors: string[] = [];
+      let totalPromptsProcessed = 0;
+      let totalResponsesCollected = 0;
+
+      for (const [companyId, idsForCompany] of companiesToProcess) {
+        const { data, error } = await supabase.functions.invoke('collect-company-responses', {
+          body: {
+            companyId,
+            promptIds: idsForCompany,
+            models: modelNames,
+            batchSize: 5,
+            skipExisting: true,
+          },
+        });
+
+        if (error) {
+          console.error('Batch collection error:', error);
+          throw new Error(error.message || 'Collection failed');
         }
-      }
-      
-      console.log(`[Refresh] Total operations: ${totalOperations} (${confirmedPrompts.length} prompts × ${modelsToTest.length} models)`);
 
-      let completed = 0;
-      setProgress(prev => prev ? { ...prev, total: totalOperations } : null);
-
-      // Test each prompt with selected models
-      for (const confirmedPrompt of confirmedPrompts) {
-        setProgress(prev => prev ? { 
-          ...prev, 
-          currentPrompt: confirmedPrompt.prompt_text.substring(0, 50) + '...' 
-        } : null);
-
-        for (const model of modelsToTest) {
-          try {
-            setProgress(prev => prev ? { ...prev, currentModel: getLLMDisplayName(model.model) } : null);
-            
-            const { data: responseData, error: responseError } = await supabase.functions
-              .invoke(model.function, {
-                body: { prompt: confirmedPrompt.prompt_text }
-              });
-
-            if (responseError) {
-              console.error(`${model.name} error:`, responseError);
-              toast.error(`${model.name} test failed: ${responseError.message}`);
-            } else if (responseData?.response) {
-              // Check if response already exists for this prompt and model
-              const responseExists = await checkExistingPromptResponse(
-                supabase,
-                confirmedPrompt.id,
-                model.model
-              );
-
-              if (responseExists) {
-                // Skip analysis for existing response
-                continue;
-              }
-
-              // Process response through analyze-response function to get proper analysis
-              try {
-                const { data: analysisData, error: analysisError } = await supabase.functions
-                  .invoke('analyze-response', {
-                    body: {
-                      response: responseData.response,
-                      companyName: companyName,
-                      promptType: confirmedPrompt.prompt_type,
-                      perplexityCitations: model.model === 'perplexity' ? responseData.citations : null,
-                      citations: model.model === 'google-ai-overviews' ? responseData.citations : null,
-                      confirmed_prompt_id: confirmedPrompt.id,
-                      ai_model: model.model,
-                      company_id: confirmedPrompt.company_id,
-                      isTalentXPrompt: false
-                    }
-                  });
-
-                if (analysisError) {
-                  console.error('Error analyzing response:', analysisError);
-                  // Fallback to storing with placeholder values using safe storage
-                  const fallbackData = {
-                    confirmed_prompt_id: confirmedPrompt.id,
-                    ai_model: model.model,
-                    response_text: responseData.response,
-                    // Sentiment analysis now handled by AI themes
-                    // No need to store basic sentiment_score
-                    sentiment_label: 'neutral',
-                    citations: responseData.citations || [],
-                    company_mentioned: false,
-                    mention_ranking: null,
-                    detected_competitors: '',
-                    first_mention_position: null,
-                    total_words: responseData.response.split(' ').length,
-                    // Visibility now calculated from company_mentioned boolean
-                    // No need to store visibility_score
-                    competitive_score: 0,
-                  };
-
-                  const { success, error: storeError } = await safeStorePromptResponse(supabase, fallbackData);
-                  if (!success) {
-                    console.error('Error storing fallback response:', storeError);
-                  }
-                }
-              } catch (error) {
-                console.error('Error processing response analysis:', error);
-                // Fallback to storing with placeholder values using safe storage
-                const fallbackData = {
-                  confirmed_prompt_id: confirmedPrompt.id,
-                  ai_model: model.model,
-                  response_text: responseData.response,
-                  sentiment_score: 0,
-                  sentiment_label: 'neutral',
-                  citations: responseData.citations || [],
-                  company_mentioned: false,
-                  mention_ranking: null,
-                  detected_competitors: '',
-                };
-
-                const { success, error: storeError } = await safeStorePromptResponse(supabase, fallbackData);
-                if (!success) {
-                  console.error('Error storing fallback response:', storeError);
-                }
-              }
-            }
-          } catch (error) {
-            console.error(`Error testing with ${model.name}:`, error);
-            toast.error(`${model.name} test failed`);
-          }
-
-          completed++;
-          setProgress(prev => prev ? { ...prev, completed } : null);
+        if (!data?.success) {
+          throw new Error(data?.error || 'Collection failed');
         }
+
+        const summary = data.summary ?? {};
+        const results = data.results ?? {};
+        totalPromptsProcessed += summary.totalPrompts ?? results.promptsProcessed ?? 0;
+        totalResponsesCollected += results.responsesCollected ?? 0;
+        if (Array.isArray(results.errors)) {
+          allErrors.push(...results.errors);
+        }
+        totalCompleted += (summary.totalPrompts ?? idsForCompany.length) * modelNames.length;
+        setProgress(prev =>
+          prev ? { ...prev, completed: totalCompleted, currentPrompt: 'Collecting AI responses…' } : null
+        );
       }
 
-      // If user is Pro, also refresh TalentX Pro prompts (only in full refresh mode)
-      if (isPro && (!promptIds || promptIds.length === 0)) {
-        const { data: talentXPrompts, error: talentXError } = await supabase
-          .from('confirmed_prompts')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('is_pro_prompt', true)
-          .eq('is_active', true);
+      setProgress(prev => (prev ? { ...prev, completed: prev.total, currentPrompt: 'Complete' } : null));
 
-        if (talentXError) {
-          console.error('Failed to fetch TalentX Pro prompts:', talentXError);
-        } else if (talentXPrompts && talentXPrompts.length > 0) {
-          for (const talentXPrompt of talentXPrompts) {
-            setProgress(prev => prev ? { 
-              ...prev, 
-              currentPrompt: talentXPrompt.prompt_text.substring(0, 50) + '...',
-              currentModel: 'TalentX Analysis'
-            } : null);
-
-            try {
-              // Test the TalentX prompt with multiple models (like regular prompts)
-              for (const model of modelsToTest) {
-                setProgress(prev => prev ? { 
-                  ...prev, 
-                  currentModel: model.name,
-                  currentPrompt: talentXPrompt.prompt_text.substring(0, 50) + '...'
-                } : null);
-
-                try {
-                  const { data: responseData, error: responseError } = await supabase.functions
-                    .invoke(model.function, {
-                      body: { prompt: talentXPrompt.prompt_text }
-                    });
-
-                  if (responseError) {
-                    console.error(`TalentX prompt test error with ${model.name}:`, responseError);
-                  } else if (responseData?.response) {
-                    // Process TalentX response through the same analyze-response function
-                    // to get proper citations and competitor detection
-                    try {
-                      const { data: analysisData, error: analysisError } = await supabase.functions
-                        .invoke('analyze-response', {
-                          body: {
-                            response: responseData.response,
-                            companyName: companyName,
-                            promptType: talentXPrompt.prompt_type,
-                            perplexityCitations: model.model === 'perplexity' ? responseData.citations : null,
-                            citations: model.model === 'google-ai-overviews' ? responseData.citations : null,
-                            confirmed_prompt_id: talentXPrompt.id,
-                            ai_model: model.model,
-                            company_id: talentXPrompt.company_id,
-                            isTalentXPrompt: true,
-                            talentXAttributeId: talentXPrompt.talentx_attribute_id
-                          }
-                        });
-
-                      if (analysisError) {
-                        console.error(`Error analyzing TalentX response with ${model.name}:`, analysisError);
-                      }
-                    } catch (error) {
-                      console.error(`Error processing TalentX response analysis with ${model.name}:`, error);
-                    }
-                  }
-                } catch (error) {
-                  console.error(`Error testing TalentX prompt with ${model.name}:`, error);
-                }
-
-                completed++;
-                setProgress(prev => prev ? { ...prev, completed } : null);
-              }
-
-              // TalentX prompts in confirmed_prompts don't need is_generated flag
-            } catch (error) {
-              console.error('Error processing TalentX prompt:', error);
-            }
-          }
-        }
+      if (allErrors.length > 0) {
+        toast.warning(
+          `Refresh completed with ${allErrors.length} error(s). ${totalResponsesCollected} responses collected.`
+        );
       }
-
-      const finalText = isPro ? 'all prompts and experience prompts' : 'all prompts';
-              // Refreshed successfully - no toast needed
-
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error refreshing prompts:', error);
-      toast.error('Failed to refresh prompts. Please try again.');
+      toast.error(error?.message ?? 'Failed to refresh prompts. Please try again.');
     } finally {
       setIsRefreshing(false);
       setProgress(null);
@@ -354,6 +169,6 @@ export const useRefreshPrompts = () => {
   return {
     isRefreshing,
     progress,
-    refreshAllPrompts
+    refreshAllPrompts,
   };
 };

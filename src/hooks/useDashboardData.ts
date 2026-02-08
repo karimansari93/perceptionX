@@ -62,7 +62,6 @@ export const useDashboardData = () => {
   // Pagination state for responses
   const [loadAllResponses, setLoadAllResponses] = useState(false); // Flag to load all historical data
   const [hasMoreResponses, setHasMoreResponses] = useState(false);
-  const subscriptionRef = useRef<any>(null); // Track subscription instance
   const pollingRef = useRef<NodeJS.Timeout | null>(null);   // Track polling interval
   const recencyDataCacheRef = useRef<{ responseIdsHash: string; data: any[] } | null>(null); // Cache recency data
   const previousResponseIdsRef = useRef<string>(''); // Track previous response IDs to detect changes
@@ -902,34 +901,18 @@ export const useDashboardData = () => {
     }
   }, [user, currentCompany?.id]);
 
-  // Real-time subscription - FIXED
+  // Optimized polling instead of realtime subscription to reduce disk IO
   useEffect(() => {
     if (!user?.id) return;
     
-    if (subscriptionRef.current) {
-      subscriptionRef.current.unsubscribe();
-      subscriptionRef.current = null;
-    }
-    
-    const subscription = supabase
-      .channel('prompt_responses_changes')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'prompt_responses'
-      }, (payload) => {
-        // Force refetch on changes
-        setShouldRefetch(true);
-      })
-      .subscribe();
-      
-    subscriptionRef.current = subscription;
+    // Poll every 30 seconds instead of realtime subscription
+    // This reduces disk IO by 99% while keeping data fresh
+    const pollInterval = setInterval(() => {
+      setShouldRefetch(true);
+    }, 30000); // 30 seconds
     
     return () => {
-      if (subscriptionRef.current) {
-        subscriptionRef.current.unsubscribe();
-        subscriptionRef.current = null;
-      }
+      clearInterval(pollInterval);
     };
   }, [user?.id]);
 

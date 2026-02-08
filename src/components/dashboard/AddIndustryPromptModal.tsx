@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -9,6 +19,20 @@ import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { useSubscription } from '@/hooks/useSubscription';
 import type { RefreshProgress } from '@/hooks/useRefreshPrompts';
+
+function getCountryDisplayName(code: string | null | undefined): string {
+  if (!code || code === 'GLOBAL') return 'Global';
+  const names: Record<string, string> = {
+    US: 'United States', GB: 'United Kingdom', CA: 'Canada', AU: 'Australia',
+    DE: 'Germany', FR: 'France', IT: 'Italy', ES: 'Spain', NL: 'Netherlands',
+    PL: 'Poland', BE: 'Belgium', CH: 'Switzerland', AT: 'Austria', SE: 'Sweden',
+    NO: 'Norway', DK: 'Denmark', FI: 'Finland', IE: 'Ireland', PT: 'Portugal',
+    GR: 'Greece', CZ: 'Czech Republic', HU: 'Hungary', RO: 'Romania', JP: 'Japan',
+    CN: 'China', KR: 'South Korea', IN: 'India', SG: 'Singapore', MX: 'Mexico',
+    BR: 'Brazil', AE: 'United Arab Emirates', SA: 'Saudi Arabia', TR: 'Turkey',
+  };
+  return names[code] ?? code;
+}
 
 interface AddIndustryPromptModalProps {
   isOpen: boolean;
@@ -83,6 +107,8 @@ export const AddIndustryPromptModal = ({
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
   const [suggestedIndustries, setSuggestedIndustries] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [pendingSubmit, setPendingSubmit] = useState<{ value: string; mode: PromptVariant } | null>(null);
   const { isPro } = useSubscription();
 
   const normalizedExistingIndustries = useMemo(
@@ -139,7 +165,7 @@ export const AddIndustryPromptModal = ({
     setError(null);
   };
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
 
@@ -170,6 +196,14 @@ export const AddIndustryPromptModal = ({
       return;
     }
 
+    setPendingSubmit({ value: trimmedValue, mode });
+    setIsConfirmOpen(true);
+  };
+
+  const doActualSubmit = async () => {
+    if (!pendingSubmit) return;
+
+    const { value: trimmedValue, mode: submitMode } = pendingSubmit;
     setIsSubmitting(true);
 
     try {
@@ -185,10 +219,10 @@ export const AddIndustryPromptModal = ({
         userId,
         isProUser: isPro,
         variant: {
-          type: mode,
+          type: submitMode,
           value: trimmedValue,
         },
-        selectedLocation: mode === 'job-function' ? selectedLocation : undefined,
+        selectedLocation: submitMode === 'job-function' || submitMode === 'industry' ? selectedLocation : undefined,
       });
 
       if (result.alreadyExists) {
@@ -206,6 +240,8 @@ export const AddIndustryPromptModal = ({
         }
       }
 
+      setIsConfirmOpen(false);
+      setPendingSubmit(null);
       onPromptsAdded();
       onClose();
     } catch (submitError: any) {
@@ -217,6 +253,7 @@ export const AddIndustryPromptModal = ({
   };
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={open => !open && onClose()}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
@@ -429,6 +466,62 @@ export const AddIndustryPromptModal = ({
         </form>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog
+      open={isConfirmOpen}
+      onOpenChange={open => {
+        setIsConfirmOpen(open);
+        if (!open) setPendingSubmit(null);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Confirm collection</AlertDialogTitle>
+          <AlertDialogDescription>
+            {pendingSubmit && (() => {
+              const { value, mode } = pendingSubmit;
+              const countryLabel =
+                (mode === 'industry' || mode === 'job-function') &&
+                selectedLocation &&
+                selectedLocation !== 'GLOBAL'
+                  ? getCountryDisplayName(selectedLocation)
+                  : null;
+              if (mode === 'industry') {
+                return countryLabel
+                  ? `Are you sure you want to collect discovery prompts for ${value} in ${countryLabel}?`
+                  : `Are you sure you want to collect discovery prompts for ${value}?`;
+              }
+              if (mode === 'job-function') {
+                return countryLabel
+                  ? `Are you sure you want to collect prompts for ${value} in ${countryLabel}?`
+                  : `Are you sure you want to collect prompts for ${value}?`;
+              }
+              return `Are you sure you want to collect prompts for ${value}?`;
+            })()}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isSubmitting}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={e => {
+              e.preventDefault();
+              doActualSubmit();
+            }}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Adding…
+              </>
+            ) : (
+              'Yes, collect prompts'
+            )}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </>
   );
 };
 

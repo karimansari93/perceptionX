@@ -489,7 +489,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
               onRefreshPrompts={async (ids, name) => {
                 const targetName = name || companyName || currentCompany?.name;
                 if (!targetName || ids.length === 0) return;
-                await refreshAllPrompts(targetName, { promptIds: ids });
+                await refreshAllPrompts(targetName, {
+                  promptIds: ids,
+                  companyId: currentCompany?.id,
+                });
               }}
               isRefreshing={isRefreshing}
               refreshProgress={refreshProgress}
