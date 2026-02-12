@@ -641,8 +641,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           showUpgradeModal={showUpgradeModal}
           setShowUpgradeModal={setShowUpgradeModal}
           alwaysMounted={true}
-          isRefreshing={isRefreshing || isCollectingData}
-          refreshProgress={isCollectingData ? collectionProgress : refreshProgress}
           selectedLocation={selectedLocation}
           onLocationChange={setSelectedLocation}
           onAddLocation={DASHBOARD_ADD_LOCKED ? undefined : () => setShowAddLocationModal(true)}

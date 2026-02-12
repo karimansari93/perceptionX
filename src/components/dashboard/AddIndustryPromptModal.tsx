@@ -227,8 +227,17 @@ export const AddIndustryPromptModal = ({
 
       if (result.alreadyExists) {
         toast.info('Prompts with this context already exist. Try refreshing to see the latest responses.');
+        setIsConfirmOpen(false);
+        setPendingSubmit(null);
+        onPromptsAdded();
+        onClose();
       } else {
         toast.success(`Added ${result.insertedPromptIds.length} new prompt${result.insertedPromptIds.length === 1 ? '' : 's'}. Collecting responses now...`);
+
+        // Close the confirmation dialog so the main modal's progress bar is visible
+        setIsConfirmOpen(false);
+        setPendingSubmit(null);
+        setIsSubmitting(false);
 
         if (result.insertedPromptIds.length > 0) {
           try {
@@ -238,12 +247,10 @@ export const AddIndustryPromptModal = ({
             toast.error('Prompts were created, but automatic data collection failed. Please use "Refresh Prompts" manually.');
           }
         }
-      }
 
-      setIsConfirmOpen(false);
-      setPendingSubmit(null);
-      onPromptsAdded();
-      onClose();
+        onPromptsAdded();
+        onClose();
+      }
     } catch (submitError: any) {
       console.error('Failed to add prompts:', submitError);
       setError(submitError.message || 'Failed to add prompts. Please try again.');

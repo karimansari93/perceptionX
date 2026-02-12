@@ -901,20 +901,8 @@ export const useDashboardData = () => {
     }
   }, [user, currentCompany?.id]);
 
-  // Optimized polling instead of realtime subscription to reduce disk IO
-  useEffect(() => {
-    if (!user?.id) return;
-    
-    // Poll every 30 seconds instead of realtime subscription
-    // This reduces disk IO by 99% while keeping data fresh
-    const pollInterval = setInterval(() => {
-      setShouldRefetch(true);
-    }, 30000); // 30 seconds
-    
-    return () => {
-      clearInterval(pollInterval);
-    };
-  }, [user?.id]);
+  // Data freshness is handled on the backend (materialized views / cron jobs).
+  // No automatic frontend polling — users can manually refresh via the UI button.
 
   // Polling effect: only set up polling when loading is true and only one interval at a time
   useEffect(() => {

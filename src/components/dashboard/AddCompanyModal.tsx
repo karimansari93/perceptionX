@@ -794,7 +794,7 @@ export const AddCompanyModal = ({
           </DialogTitle>
           <DialogDescription>
             {mode === 'add-location' 
-              ? 'Add a new location for this company. We\'ll scan AI to uncover what people really think about working there in this location.'
+              ? 'Add a new location for this company. You can also adjust the industry if needed. We\'ll scan AI to uncover what people really think about working there in this location.'
               : 'We\'ll scan AI to uncover what people really think about working there.'}
           </DialogDescription>
         </DialogHeader>
@@ -831,9 +831,13 @@ export const AddCompanyModal = ({
               placeholder="e.g., Software"
               value={industry}
               onChange={(e) => setIndustry(e.target.value)}
-              disabled={isAnalyzing || mode === 'add-location'}
-              className={mode === 'add-location' ? 'bg-gray-100 cursor-not-allowed' : ''}
+              disabled={isAnalyzing}
             />
+            {mode === 'add-location' && (
+              <p className="text-xs text-muted-foreground">
+                You can change the industry for this location if needed.
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="country" className="flex items-center gap-2">

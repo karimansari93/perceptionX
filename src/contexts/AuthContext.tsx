@@ -33,7 +33,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(session?.user ?? null);
         setLoading(false);
         
-        // Handle auth errors
+        // Handle password recovery: flag it so no page can redirect to dashboard
+        if (event === 'PASSWORD_RECOVERY') {
+          sessionStorage.setItem('passwordRecovery', 'true');
+          if (!window.location.pathname.includes('/reset-password')) {
+            window.location.href = '/reset-password';
+          }
+        }
+        
         if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
           console.log('Auth event:', event);
         }

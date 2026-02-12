@@ -89,6 +89,12 @@ const Auth = () => {
       !authLoading &&
       (user.email_confirmed_at || user.confirmed_at)
     ) {
+      // If the user arrived via a password reset link, send them to reset page
+      if (sessionStorage.getItem('passwordRecovery') === 'true') {
+        navigate('/reset-password');
+        return;
+      }
+
       // If admin, go straight to admin panel
       const adminEmails = ['karim@perceptionx.ai'];
       if (adminEmails.includes(user.email?.toLowerCase() || '')) {
