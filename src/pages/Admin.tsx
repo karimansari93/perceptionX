@@ -4,6 +4,7 @@ import { OrganizationManagementTab } from '@/components/admin/OrganizationManage
 import { UsersTab } from '@/components/admin/UsersTab';
 import { CompanyManagementTab } from '@/components/admin/CompanyManagementTab';
 import { VisibilityRankingsTab } from '@/components/admin/VisibilityRankingsTab';
+import { BatchCompanyCollectionTab } from '@/components/admin/BatchCompanyCollectionTab';
 
 export default function Admin() {
   const [activeTab, setActiveTab] = useState<string>('organizations');
@@ -22,6 +23,8 @@ export default function Admin() {
         return <CompanyManagementTab />;
       case 'visibility-rankings':
         return <VisibilityRankingsTab />;
+      case 'batch-company-collection':
+        return <BatchCompanyCollectionTab />;
       default:
         return <OrganizationManagementTab />;
     }
