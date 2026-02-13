@@ -1,12 +1,13 @@
 import { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { 
-  Building2, 
-  Users, 
-  Briefcase, 
+import {
+  Building2,
+  Users,
+  Briefcase,
   LogOut,
-  Trophy
+  Trophy,
+  Layers
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -29,7 +30,8 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
     { id: 'organizations', label: 'Organizations', icon: Briefcase },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'companies', label: 'Companies', icon: Building2 },
-    { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy }
+    { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy },
+    { id: 'batch-company-collection', label: 'Batch Companies', icon: Layers }
   ];
 
   return (
