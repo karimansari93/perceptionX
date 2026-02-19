@@ -136,7 +136,6 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
     
     // Check if prompts are already completed to prevent duplicate processing
     if (onboardingRecord.prompts_completed) {
-      console.log('Prompts already completed, navigating to dashboard');
       navigate('/dashboard', { 
         state: { 
           shouldRefresh: true,
@@ -436,7 +435,6 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
     
     if (needsTranslation) {
       try {
-        console.log(`🌍 Translating ${generatedPrompts.length} prompts for country: ${onboardingData.country}`);
         const promptTexts = generatedPrompts.map(p => p.text);
 
         const invokeTranslate = () =>
@@ -464,7 +462,6 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
               ...prompt,
               text: translationData.translatedPrompts[index] || prompt.text
             }));
-            console.log(`✅ Translated prompts to ${translationData.targetLanguage || 'target language'}`);
           } else {
             // Translation incomplete - fail the process
             const targetLanguage = translationData?.targetLanguage || 'the local language';
@@ -481,8 +478,6 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
         console.error(`❌ Translation failed for ${onboardingData.country}:`, errorMsg);
         throw new Error(`Cannot proceed: Translation to ${onboardingData.country}'s language is required but failed. ${errorMsg}`);
       }
-    } else {
-      console.log(`✅ Country ${onboardingData.country} uses English, skipping translation`);
     }
   }
   
@@ -539,7 +534,6 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
     
     if (companyData?.id) {
       companyId = companyData.id;
-      console.log('Using fetched company_id:', companyId);
     } else {
       throw new Error('Could not determine company_id for batch collection');
     }
@@ -581,11 +575,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
     total: batchData.summary?.totalOperations || 0
   });
 
-  console.log('Batch collection completed:', batchData.summary);
-
   // ✅ BATCHED RECENCY EXTRACTION - After all responses are stored
-  console.log('🎯 All responses stored, now extracting recency scores in one batch...');
-  
   try {
     // Fetch all citations from all responses for this onboarding
     const { data: allResponses } = await supabase
@@ -630,19 +620,13 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
         .filter(Boolean);
     }) || [];
 
-    console.log(`📊 Batched extraction: Found ${allCitations.length} total citations from all responses`);
-
     if (allCitations.length > 0) {
       // Trigger recency extraction ONCE for all citations (async, non-blocking)
       supabase.functions.invoke('extract-recency-scores', {
         body: { citations: allCitations }
-      }).then(response => {
-        console.log('✅ Batched recency extraction completed:', response.data?.summary);
       }).catch(error => {
         console.warn('❌ Batched recency extraction failed:', error);
       });
-    } else {
-      console.log('⚠️ No citations with URLs found in onboarding responses');
     }
   } catch (batchError) {
     console.warn('Error in batched recency extraction:', batchError);

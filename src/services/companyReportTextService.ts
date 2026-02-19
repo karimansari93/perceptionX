@@ -14,8 +14,6 @@ export class CompanyReportTextService {
         }
       });
 
-      console.log('📡 Edge function response:', { data, error });
-
       if (error) {
         console.error('Error generating company report:', error);
         return {
@@ -37,8 +35,6 @@ export class CompanyReportTextService {
           };
         }
       }
-
-      console.log('📄 Parsed report data:', reportData);
 
       return {
         success: true,
@@ -112,8 +108,6 @@ export class CompanyReportTextService {
    */
   static async getAvailableCompanies(): Promise<{ id: string; name: string; industry: string; email: string }[]> {
     try {
-      console.log('🔍 Fetching companies...');
-      
       // 1) Get completed onboarding records (latest per user) - same as admin panel
       const { data: allOnboardings, error: onboardingError } = await supabase
         .from('user_onboarding')
@@ -122,15 +116,12 @@ export class CompanyReportTextService {
         .not('industry', 'is', null)
         .order('created_at', { ascending: false });
 
-      console.log('📊 Onboarding data:', { allOnboardings, onboardingError });
-
       if (onboardingError) {
         console.error('Error fetching onboarding data:', onboardingError);
         return [];
       }
 
       if (!allOnboardings || allOnboardings.length === 0) {
-        console.log('⚠️ No onboarding data found');
         return [];
       }
 
@@ -179,7 +170,6 @@ export class CompanyReportTextService {
         };
       });
 
-      console.log('✅ Final companies result:', result);
       return result;
     } catch (error) {
       console.error('Error fetching companies:', error);

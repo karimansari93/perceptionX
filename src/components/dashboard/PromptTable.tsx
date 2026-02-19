@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PromptData } from "@/types/dashboard";
 import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter, HelpCircle } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useTransition, useDeferredValue, memo } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSubscription } from "@/hooks/useSubscription";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
@@ -15,10 +15,13 @@ interface PromptTableProps {
   onPromptClick: (promptText: string) => void;
 }
 
-export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
+export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) => {
   const { isPro } = useSubscription();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [, startTransition] = useTransition();
+  const deferredTypeFilter = useDeferredValue(typeFilter);
+  const deferredCategoryFilter = useDeferredValue(categoryFilter);
   const isMobile = useIsMobile();
 
   // Helper function to format kebab-case attribute IDs to Title Case
@@ -87,23 +90,20 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
         displayType = 'Comparison';
       }
       
-      if (typeFilter !== "all" && displayType !== typeFilter) {
+      if (deferredTypeFilter !== "all" && displayType !== deferredTypeFilter) {
         return false;
       }
 
-      // Theme filter - ONLY use promptTheme from confirmed_prompts
-      // If blank, it = General
       const categoryLabel = prompt.promptTheme || 'General';
-      // Format attribute names (kebab-case to Title Case) for comparison
       const formattedLabel = formatAttributeName(categoryLabel);
       
-      if (categoryFilter !== "all" && formattedLabel !== categoryFilter) {
+      if (deferredCategoryFilter !== "all" && formattedLabel !== deferredCategoryFilter) {
         return false;
       }
 
       return true;
     });
-  }, [prompts, typeFilter, categoryFilter]);
+  }, [prompts, deferredTypeFilter, deferredCategoryFilter]);
   const getSentimentIcon = (sentiment: number) => {
     if (sentiment > 0.1) return <TrendingUp className="w-4 h-4 text-green-600" />;
     if (sentiment < -0.1) return <TrendingDown className="w-4 h-4 text-red-600" />;
@@ -295,7 +295,7 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
       {/* Filters above the card - Only show for Pro users */}
       {isPro && (
         <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 mb-4">
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
+          <Select value={typeFilter} onValueChange={(v) => startTransition(() => setTypeFilter(v))}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="All Types" />
             </SelectTrigger>
@@ -307,7 +307,7 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
             </SelectContent>
           </Select>
           
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+          <Select value={categoryFilter} onValueChange={(v) => startTransition(() => setCategoryFilter(v))}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="All Themes" />
             </SelectTrigger>
@@ -342,6 +342,11 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                   <div className="flex items-center gap-2 mb-3">
                     {getTypeBadge(prompt)}
                     {isPro && getCategoryBadge(prompt)}
+                    {prompt.jobFunctionContext && (
+                      <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                        {prompt.jobFunctionContext}
+                      </Badge>
+                    )}
                   </div>
                    
                    {/* Responses row */}
@@ -427,6 +432,19 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center justify-center gap-1 cursor-help">
+                          <span>Function</span>
+                          <HelpCircle className="w-3 h-3 text-gray-400" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Job function this prompt relates to</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TableHead>
+                  <TableHead className="text-center">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center justify-center gap-1 cursor-help">
                           <span>Responses</span>
                           <HelpCircle className="w-3 h-3 text-gray-400" />
                         </div>
@@ -485,6 +503,15 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
                       </TableCell>
                     )}
                     <TableCell className="text-center">
+                      {prompt.jobFunctionContext ? (
+                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                          {prompt.jobFunctionContext}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="bg-gray-50 text-gray-500 border-gray-200">General</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">
                       <Badge variant="secondary" className="bg-gray-100 text-gray-700">{prompt.responses}</Badge>
                     </TableCell>
                     <TableCell className="text-center">
@@ -524,4 +551,5 @@ export const PromptTable = ({ prompts, onPromptClick }: PromptTableProps) => {
         )}
     </>
   );
-};
+});
+PromptTable.displayName = 'PromptTable';

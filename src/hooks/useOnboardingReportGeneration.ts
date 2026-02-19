@@ -191,18 +191,17 @@ export const useOnboardingReportGeneration = () => {
               try {
                 pdf.addImage(img, 'PNG', x, y, size, size);
               } catch (error) {
-                console.log('Error adding favicon:', error);
+                // Error adding favicon - continue without it
               }
               resolve(true);
             };
             img.onerror = () => {
-              console.log('Favicon not available for:', domain);
               resolve(true);
             };
             img.src = faviconUrl;
           });
         } catch (error) {
-          console.log('Error loading favicon for:', domain);
+          // Error loading favicon - continue without it
         }
       };
 
@@ -228,18 +227,17 @@ export const useOnboardingReportGeneration = () => {
               // Reset opacity
               pdf.setGState(pdf.GState({opacity: 1}));
             } catch (error) {
-              console.log('Error adding background logo:', error);
+              // Error adding background logo - continue without it
             }
             resolve(true);
           };
           img.onerror = () => {
-            console.log('Background logo not available, continuing without it');
             resolve(true);
           };
           img.src = logoPath;
         });
       } catch (error) {
-        console.log('Background logo not available, continuing without it');
+        // Background logo not available - continue without it
       }
 
       // Title
@@ -398,7 +396,7 @@ export const useOnboardingReportGeneration = () => {
           // Reset opacity
           pdf.setGState(pdf.GState({opacity: 1}));
         } catch (error) {
-          console.log('Background logo not available for page', i);
+          // Background logo not available - continue without it
         }
         
         // Add footer

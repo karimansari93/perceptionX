@@ -271,11 +271,9 @@ const OnboardingLoading = () => {
             .limit(1);
           
           if (tableCheckError && (tableCheckError.code === '42P01' || tableCheckError.code === '406')) {
-            console.log('prompt_responses table does not exist yet, skipping duplicate checks');
             promptResponsesTableExists = false;
           }
         } catch (tableError) {
-          console.log('Error checking prompt_responses table, assuming it does not exist:', tableError);
           promptResponsesTableExists = false;
         }
 
@@ -333,8 +331,6 @@ const OnboardingLoading = () => {
               currentPrompt: 'All prompts processed',
               completed: completedOperations
             }));
-
-            console.log('✅ Batch collection completed:', batchData.summary);
             
             if (batchData.results?.errors?.length > 0) {
               console.warn('Some errors occurred during batch collection:', batchData.results.errors);
@@ -369,7 +365,6 @@ const OnboardingLoading = () => {
               console.error('❌ Search insights error:', searchError);
               logger.log('Search insights failed, but continuing with onboarding');
             } else {
-              console.log('✅ Search insights completed successfully');
               logger.log('Search insights data:', searchData);
             }
             
@@ -388,8 +383,6 @@ const OnboardingLoading = () => {
         };
 
         // Run both operations in parallel
-        console.log('🚀 Starting parallel AI prompts and search insights...');
-        
         // Start search insights immediately
         const searchPromise = runSearchInsights();
         

@@ -39,8 +39,6 @@ export const useSubscription = () => {
       if (error) {
         // If profile doesn't exist, create one with default values
         if (error.code === 'PGRST116') { // No rows returned
-          console.log('Profile not found, creating new profile for user:', user.id);
-          
           // Use upsert to prevent duplicates
           const { data: newProfile, error: createError } = await supabase
             .from('profiles')

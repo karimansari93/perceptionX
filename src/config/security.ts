@@ -41,20 +41,17 @@ export const securityConfig = {
         "'unsafe-inline'",
         "'unsafe-eval'",
         "https://cdn.gpteng.co",
-        "https://client.crisp.chat",
         "https://www.google.com",
         "https://www.gstatic.com"
       ],
       styleSrc: [
         "'self'",
         "'unsafe-inline'",
-        "https://fonts.googleapis.com",
-        "https://client.crisp.chat"
+        "https://fonts.googleapis.com"
       ],
       fontSrc: [
         "'self'",
-        "https://fonts.gstatic.com",
-        "https://client.crisp.chat"
+        "https://fonts.gstatic.com"
       ],
       imgSrc: [
         "'self'",
@@ -64,9 +61,7 @@ export const securityConfig = {
       connectSrc: [
         "'self'",
         `https://${getSupabaseUrl()}`,
-        getSupabaseWssUrl(),
-        "https://client.crisp.chat",
-        "wss://client.relay.crisp.chat"
+        getSupabaseWssUrl()
       ],
       frameSrc: [
         "'self'"
@@ -81,7 +76,6 @@ export const securityConfig = {
   get allowedDomains() {
     return [
       getSupabaseUrl(),
-      'client.crisp.chat',
       'fonts.googleapis.com',
       'fonts.gstatic.com',
       'cdn.gpteng.co',

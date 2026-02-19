@@ -184,7 +184,6 @@ export const addCustomPrompts = async ({
     
     if (needsTranslation) {
       try {
-        console.log(`🌍 Translating ${generatedPrompts.length} prompts for country: ${countryCodeForTranslation}`);
         const promptTexts = generatedPrompts.map(p => p.text);
 
         const invokeTranslate = () =>
@@ -212,7 +211,6 @@ export const addCustomPrompts = async ({
               ...prompt,
               text: translationData.translatedPrompts[index] || prompt.text
             }));
-            console.log(`✅ Translated prompts to ${translationData.targetLanguage || 'target language'}`);
           } else {
             // Translation incomplete - fail the process
             const targetLanguage = translationData?.targetLanguage || 'the local language';
@@ -229,8 +227,6 @@ export const addCustomPrompts = async ({
         console.error(`❌ Translation failed for ${countryCodeForTranslation}:`, errorMsg);
         throw new Error(`Cannot proceed: Translation to ${countryCodeForTranslation}'s language is required but failed. ${errorMsg}`);
       }
-    } else {
-      console.log(`✅ Country ${countryCodeForTranslation} uses English, skipping translation`);
     }
   }
 
@@ -274,20 +270,66 @@ export const addCustomPrompts = async ({
     };
   }
 
-  // Just insert - no duplicate checking, users have full control
+  // Try batch insert first (fast path)
   const { data: insertedPrompts, error: insertError } = await supabase
     .from('confirmed_prompts')
     .insert(promptsToInsert)
     .select('id');
 
-  if (insertError) {
-    // If it's a duplicate error, some prompts might have been inserted before
-    // Just throw the error and let the UI handle it
+  if (!insertError) {
+    return {
+      insertedPromptIds: insertedPrompts?.map(prompt => prompt.id) || [],
+      alreadyExists: false,
+    };
+  }
+
+  // If not a duplicate error, throw immediately
+  const isDuplicateError =
+    insertError.code === '23505' ||
+    insertError.message?.includes('duplicate') ||
+    insertError.message?.includes('unique');
+
+  if (!isDuplicateError) {
     throw insertError;
   }
 
+  // Batch insert failed due to duplicates — fall back to inserting one at a time,
+  // skipping any prompts that already exist.
+  const insertedIds: string[] = [];
+  let skippedCount = 0;
+
+  for (const prompt of promptsToInsert) {
+    const { data: singleInsert, error: singleError } = await supabase
+      .from('confirmed_prompts')
+      .insert(prompt)
+      .select('id')
+      .single();
+
+    if (!singleError && singleInsert) {
+      insertedIds.push(singleInsert.id);
+    } else if (
+      singleError?.code === '23505' ||
+      singleError?.message?.includes('duplicate') ||
+      singleError?.message?.includes('unique')
+    ) {
+      // This specific prompt already exists — skip it
+      skippedCount++;
+    } else if (singleError) {
+      // Non-duplicate error on an individual prompt — throw
+      throw singleError;
+    }
+  }
+
+  if (insertedIds.length === 0 && skippedCount > 0) {
+    // Every prompt was a duplicate
+    return {
+      insertedPromptIds: [],
+      alreadyExists: true,
+    };
+  }
+
   return {
-    insertedPromptIds: insertedPrompts?.map(prompt => prompt.id) || [],
+    insertedPromptIds: insertedIds,
     alreadyExists: false,
   };
 };

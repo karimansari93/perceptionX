@@ -16,53 +16,63 @@ serve(async (req) => {
       );
     }
 
-    // Build the LLM prompt
-    const prompt = `For the following text, extract all companies mentioned. For each company, list the themes or aspects discussed in relation to that company, and classify each theme as positive, negative, or neutral. Output as a JSON array with this structure: [{\"company\": \"...\", \"themes\": [{\"theme\": \"...\", \"sentiment\": \"positive|negative|neutral\"}]}]. Only include companies that are actually mentioned in the text.\n\nText:\n${text}`;
+    const claudeApiKey = Deno.env.get('CLAUDE_API_KEY');
+    if (!claudeApiKey) {
+      throw new Error('Claude API key not configured');
+    }
 
-    // Call OpenAI API
-    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    const prompt = `For the following text, extract all companies mentioned. For each company, list the themes or aspects discussed in relation to that company, and classify each theme as positive, negative, or neutral. Output as a JSON array with this structure: [{"company": "...", "themes": [{"theme": "...", "sentiment": "positive|negative|neutral"}]}]. Only include companies that are actually mentioned in the text. Return ONLY the JSON array, no other text.\n\nText:\n${text}`;
+
+    const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`,
         'Content-Type': 'application/json',
+        'x-api-key': claudeApiKey,
+        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1500,
+        temperature: 0.3,
         messages: [
           {
             role: 'user',
-            content: prompt
-          }
+            content: prompt,
+          },
         ],
-        max_completion_tokens: 1500 // GPT-5.2 uses tokens for reasoning + content
-        // Note: GPT-5.2 doesn't support custom temperature, uses default (1)
       }),
     });
 
-    const data = await openaiResponse.json();
-    if (!openaiResponse.ok) {
-      throw new Error(data.error?.message || 'OpenAI API error');
+    const data = await claudeResponse.json();
+    if (!claudeResponse.ok) {
+      if (data.error?.type === 'rate_limit_error') {
+        return new Response(
+          JSON.stringify({ error: 'Rate limit exceeded. Please wait and try again.', retryAfter: 60000 }),
+          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': '60' } }
+        );
+      }
+      throw new Error(data.error?.message || `Claude API error: ${claudeResponse.status}`);
     }
 
-    // Try to parse the JSON from the LLM response
+    const rawContent = data.content?.[0]?.text || '[]';
+
     let companies: any[] = [];
     try {
-      companies = JSON.parse(data.choices?.[0]?.message?.content || '[]');
+      const jsonMatch = rawContent.match(/\[[\s\S]*\]/);
+      companies = JSON.parse(jsonMatch ? jsonMatch[0] : rawContent);
     } catch (e) {
       return new Response(
-        JSON.stringify({ error: "Failed to parse LLM output as JSON.", raw: data.choices?.[0]?.message?.content }),
+        JSON.stringify({ error: "Failed to parse LLM output as JSON.", raw: rawContent }),
         { status: 500, headers: corsHeaders }
       );
     }
 
-    // Optionally, calculate sentiment score per company
     companies = companies.map((c: any) => {
       const pos = c.themes.filter((t: any) => t.sentiment === 'positive').length;
-      const neg = c.themes.filter((t: any) => t.sentiment === 'negative').length;
-      const total = pos + neg;
+      const total = c.themes.length;
       return {
         ...c,
-        sentiment_score: total > 0 ? Math.round((pos / total) * 1000) / 10 : null // e.g. 66.7
+        sentiment_score: total > 0 ? Math.round((pos / total) * 1000) / 10 : null,
       };
     });
 

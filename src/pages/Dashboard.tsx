@@ -1,9 +1,8 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { SidebarProvider, SidebarInset, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-// Lazy load heavy components (especially those with recharts) to reduce initial bundle size
 import { lazy, Suspense } from "react";
 import { ReportGenerator } from "@/components/dashboard/ReportGenerator";
 import { AppSidebar } from "@/components/AppSidebar";
@@ -24,14 +23,17 @@ import {
   ReportsSkeleton 
 } from "@/components/dashboard/SectionSkeletons";
 
-const OverviewTab = lazy(() => import("@/components/dashboard/OverviewTab").then(module => ({ default: module.OverviewTab })));
-const PromptsTab = lazy(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
-const ResponsesTab = lazy(() => import("@/components/dashboard/ResponsesTab").then(module => ({ default: module.ResponsesTab })));
+// OverviewTab is eagerly imported — it's the default landing tab
+import { OverviewTab } from "@/components/dashboard/OverviewTab";
+
+// All other tabs are lazy-loaded — mounted on first visit, then kept alive
 const SourcesTab = lazy(() => import("@/components/dashboard/SourcesTab").then(module => ({ default: module.SourcesTab })));
 const CompetitorsTab = lazy(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
-const AnswerGapsTab = lazy(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
-const SearchTab = lazy(() => import("@/components/dashboard/SearchTab").then(module => ({ default: module.SearchTab })));
 const ThematicAnalysisTab = lazy(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
+const PromptsTab = lazy(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
+const ResponsesTab = lazy(() => import("@/components/dashboard/ResponsesTab").then(module => ({ default: module.ResponsesTab })));
+const AnswerGapsTab = lazy(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
+// const SearchTab = lazy(() => import("@/components/dashboard/SearchTab").then(module => ({ default: module.SearchTab })));
 import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
 import LLMLogo from "@/components/LLMLogo";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -78,6 +80,24 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
   const [showAddLocationModal, setShowAddLocationModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  // Track which lazy tabs have been visited so they stay mounted after first visit
+  const [hasVisited, setHasVisited] = useState({
+    sources: false,
+    competitors: false,
+    thematic: false,
+    prompts: false,
+    responses: false,
+    search: false,
+    answerGaps: false,
+  });
+  // Reset lazy tabs on company switch so they unmount stale data and re-initialize
+  const prevCompanyIdRef = useRef(currentCompany?.id);
+  useEffect(() => {
+    if (currentCompany?.id && currentCompany.id !== prevCompanyIdRef.current) {
+      prevCompanyIdRef.current = currentCompany.id;
+      setHasVisited({ sources: false, competitors: false, thematic: false, prompts: false, responses: false, search: false, answerGaps: false });
+    }
+  }, [currentCompany?.id]);
   const { isRefreshing, progress: refreshProgress, refreshAllPrompts } = useRefreshPrompts();
   const { 
     isCollecting: isCollectingData, 
@@ -154,9 +174,26 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     recencyData,
     recencyDataLoading,
     aiThemesLoading,
-    metricsCalculating
+    metricsCalculating,
+    responseTexts,
+    responseTextsLoading,
+    fetchResponseTexts,
   } = useDashboardData();
   const { isPro } = useSubscription();
+
+  const currentCompanySearchResults = useMemo(() =>
+    searchResults.filter(r => r.company_id === currentCompany?.id),
+    [searchResults, currentCompany?.id]
+  );
+
+  const handleRefreshPrompts = useCallback(async (ids: string[], name?: string) => {
+    const targetName = name || companyName || currentCompany?.name;
+    if (!targetName || ids.length === 0) return;
+    await refreshAllPrompts(targetName, {
+      promptIds: ids,
+      companyId: currentCompany?.id,
+    });
+  }, [companyName, currentCompany?.name, currentCompany?.id, refreshAllPrompts]);
 
   // Load search results once when component mounts and company name is available
   useEffect(() => {
@@ -235,19 +272,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
 
   useEffect(() => {
     if (collectionStatus && !isCollectingData && currentCompany?.id === collectionStatus.companyId) {
-      console.log('[Dashboard] Auto-resuming collection for company:', collectionStatus.companyId);
       // Small delay to ensure page is fully loaded
       const timer = setTimeout(() => {
-        console.log('[Dashboard] Calling resumeCollection');
         resumeCollectionRef.current();
       }, 2000);
       return () => clearTimeout(timer);
-    } else {
-      console.log('[Dashboard] Not auto-resuming:', {
-        hasStatus: !!collectionStatus,
-        isCollecting: isCollectingData,
-        companyMatch: currentCompany?.id === collectionStatus?.companyId
-      });
     }
   }, [collectionStatus?.companyId, isCollectingData, currentCompany?.id]);
 
@@ -319,8 +348,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         setActiveSection('prompts');
       } else if (path === '/monitor/responses') {
         setActiveSection('responses');
-      } else if (path === '/monitor/search') {
-        setActiveSection('search');
       }
     } else if (path.startsWith('/analyze')) {
       setActiveGroup('analyze');
@@ -335,6 +362,24 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       }
     }
   }, [location.pathname]);
+
+  // Track lazy tab visits so they stay mounted after first visit
+  useEffect(() => {
+    setHasVisited(prev => {
+      const key = activeSection === 'answer-gaps' ? 'answerGaps' : activeSection;
+      if (key in prev && !prev[key as keyof typeof prev]) {
+        return { ...prev, [key]: true };
+      }
+      return prev;
+    });
+  }, [activeSection]);
+
+  // Lazy-load response texts when the responses tab becomes visible
+  useEffect(() => {
+    if (activeSection === 'responses' && responses.length > 0) {
+      fetchResponseTexts(responses.map(r => r.id));
+    }
+  }, [activeSection, responses.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSectionChange = (section: string) => {
     setActiveSection(section);
@@ -355,8 +400,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         navigate('/monitor');
       } else if (section === 'responses') {
         navigate('/monitor/responses');
-      } else if (section === 'search') {
-        navigate('/monitor/search');
       }
     } else if (activeGroup === 'analyze') {
       if (section === 'thematic') {
@@ -410,192 +453,56 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     );
   };
 
-  const renderActiveSection = () => {
+  const renderDashboardContent = () => {
     if (!isFullyLoaded) {
       switch (activeSection) {
-        case "overview":
-          return <OverviewSkeleton />;
-        case "prompts":
-          return <PromptsSkeleton />;
-        case "responses":
-          return <ResponsesSkeleton />;
-        case "answer-gaps":
-          return <AnswerGapsSkeleton />;
-        case "reports":
-          return <ReportsSkeleton />;
-        default:
-          return <OverviewSkeleton />;
+        case "overview": return <OverviewSkeleton />;
+        case "prompts": return <PromptsSkeleton />;
+        case "responses": return <ResponsesSkeleton />;
+        case "answer-gaps": return <AnswerGapsSkeleton />;
+        case "reports": return <ReportsSkeleton />;
+        case "sources":
+        case "competitors":
+        case "thematic":
+        case "search":
+          return <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>;
+        default: return <OverviewSkeleton />;
       }
     }
 
-    // Only show welcome screen if we have NO company at all
     if (!isFullyLoaded && !companyName) {
       return renderSetupBlurredOverview();
     }
 
-    // If we have a company but no responses yet, show analyzing state
     if (!isFullyLoaded && responses.length === 0 && promptsData && promptsData.length > 0) {
       return (
         <div className="min-h-[600px] flex items-center justify-center">
           <div className="text-center p-8 max-w-lg mx-auto">
-            <img
-              alt="Perception Logo"
-              className="object-contain h-16 w-16 mx-auto mb-4 animate-pulse"
-              src="/logos/PinkBadge.png"
-            />
+            <img alt="Perception Logo" className="object-contain h-16 w-16 mx-auto mb-4 animate-pulse" src="/logos/PinkBadge.png" />
             <h2 className="text-2xl font-bold mb-4 text-gray-800">Analysis in Progress</h2>
-            <p className="text-gray-600 mb-2 leading-relaxed">
-              We're currently analyzing {companyName} across multiple AI platforms.
-            </p>
-            <p className="text-sm text-gray-500">
-              This process takes 2-3 minutes. You can check back shortly or refresh the page.
-            </p>
+            <p className="text-gray-600 mb-2 leading-relaxed">We're currently analyzing {companyName} across multiple AI platforms.</p>
+            <p className="text-sm text-gray-500">This process takes 2-3 minutes. You can check back shortly or refresh the page.</p>
           </div>
         </div>
       );
     }
 
-    switch (activeSection) {
-      case "overview":
-        return (
-          <Suspense fallback={<OverviewSkeleton />}>
-            <OverviewTab 
-              responses={responses}
-              metrics={metrics}
-              topCitations={topCitations}
-              topCompetitors={topCompetitors}
-              competitorLoading={competitorLoading}
-              companyName={companyName}
-              llmMentionRankings={llmMentionRankings}
-              talentXProData={talentXProData}
-              isPro={isPro}
-              searchResults={searchResults}
-              aiThemes={aiThemes}
-              recencyData={recencyData}
-              recencyDataLoading={recencyDataLoading}
-              aiThemesLoading={aiThemesLoading}
-              metricsCalculating={metricsCalculating}
-            />
-          </Suspense>
-        );
-      case "prompts":
-        return (
-          <Suspense fallback={<PromptsSkeleton />}>
-            <PromptsTab
-              promptsData={promptsData}
-              responses={responses}
-              companyName={companyName}
-              onRefresh={refreshData}
-              onRefreshPrompts={async (ids, name) => {
-                const targetName = name || companyName || currentCompany?.name;
-                if (!targetName || ids.length === 0) return;
-                await refreshAllPrompts(targetName, {
-                  promptIds: ids,
-                  companyId: currentCompany?.id,
-                });
-              }}
-              isRefreshing={isRefreshing}
-              refreshProgress={refreshProgress}
-              selectedLocation={selectedLocation}
-            />
-          </Suspense>
-        );
-      case "responses":
-        return (
-          <Suspense fallback={<ResponsesSkeleton />}>
-            <ResponsesTab responses={responses} parseCitations={parseCitations} companyName={companyName} />
-          </Suspense>
-        );
-      case "search":
-        return (
-          <Suspense fallback={<div className="flex items-center justify-center h-64"><LoadingSpinner /></div>}>
-            <SearchTab 
-              companyName={companyName}
-              activeTab={activeTab}
-              setActiveTab={setActiveTab}
-              searchResults={searchResults}
-              searchTermsData={searchTermsData}
-            />
-          </Suspense>
-        );
-      case "sources":
-        return (
-          <Suspense fallback={<div className="flex items-center justify-center h-64"><LoadingSpinner /></div>}>
-            <SourcesTab key={companyName} topCitations={topCitations} responses={responses} parseCitations={parseCitations} companyName={companyName} searchResults={searchResults} currentCompanyId={currentCompany?.id} />
-          </Suspense>
-        );
-      case "competitors":
-        return (
-          <Suspense fallback={<div className="flex items-center justify-center h-64"><LoadingSpinner /></div>}>
-            <CompetitorsTab 
-              topCompetitors={topCompetitors}
-              responses={responses}
-              companyName={companyName}
-              searchResults={searchResults.filter(r => r.company_id === currentCompany?.id)}
-            />
-          </Suspense>
-        );
-      case "thematic":
-        return (
-          <Suspense fallback={<div className="flex items-center justify-center h-64"><LoadingSpinner /></div>}>
-            <ThematicAnalysisTab 
-              responses={responses}
-              companyName={companyName}
-              chartView={chartView}
-              setChartView={setChartView}
-            />
-          </Suspense>
-        );
-      case "answer-gaps":
-        return (
-          <Suspense fallback={<AnswerGapsSkeleton />}>
-            <AnswerGapsTab />
-          </Suspense>
-        );
-      case "reports":
-        const reportsContent = (
-          <ReportGenerator
-            companyName={companyName}
-            responses={responses}
-            metrics={metrics}
-            sentimentTrend={sentimentTrend}
-            topCitations={topCitations}
-            promptsData={promptsData}
-          />
-        );
-        
-        // Show reports content for Pro users, or upgrade prompt for free users
-        if (isPro) {
-          return reportsContent;
-        } else {
-          return (
-            <div className="relative min-h-[600px]">
-              {/* Overlay for Free Users */}
-              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm" style={{ pointerEvents: 'all' }}>
-                <div className="text-center p-8 max-w-lg mx-auto">
-                  <h2 className="text-2xl font-bold mb-4 text-gray-800">Reports - Pro Feature</h2>
-                  <p className="text-gray-600 mb-6 leading-relaxed">
-                    Generate comprehensive reports about your AI perception and performance. 
-                    Get detailed insights, competitor analysis, and actionable recommendations.
-                  </p>
-                  <Button 
-                    onClick={() => setShowUpgradeModal(true)}
-                    className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
-                  >
-                    Upgrade to Pro
-                  </Button>
-                </div>
-              </div>
-              {/* Blurred/disabled content underneath */}
-              <div className="blur-sm pointer-events-none select-none opacity-60">
-                {reportsContent}
-              </div>
-            </div>
-          );
-        }
-      default:
-        return (
-          <OverviewTab 
+    const reportsContent = activeSection === 'reports' ? (
+      <ReportGenerator
+        companyName={companyName}
+        responses={responses}
+        metrics={metrics}
+        sentimentTrend={sentimentTrend}
+        topCitations={topCitations}
+        promptsData={promptsData}
+      />
+    ) : null;
+
+    return (
+      <div className="w-full">
+        {/* OverviewTab — always mounted (default landing tab) */}
+        <div style={{ display: activeSection === 'overview' ? 'block' : 'none' }}>
+          <OverviewTab
             responses={responses}
             metrics={metrics}
             topCitations={topCitations}
@@ -610,9 +517,137 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
+            metricsCalculating={metricsCalculating}
+            responseTexts={responseTexts}
+            fetchResponseTexts={fetchResponseTexts}
           />
-        );
-    }
+        </div>
+
+        {/* Lazy tabs — mount on first visit, then stay alive */}
+        {(activeSection === 'sources' || hasVisited.sources) && (
+          <div style={{ display: activeSection === 'sources' ? 'block' : 'none' }}>
+            <Suspense fallback={<OverviewSkeleton />}>
+              <SourcesTab
+                topCitations={topCitations}
+                responses={responses}
+                parseCitations={parseCitations}
+                companyName={companyName}
+                searchResults={searchResults}
+                currentCompanyId={currentCompany?.id}
+                responseTexts={responseTexts}
+                fetchResponseTexts={fetchResponseTexts}
+              />
+            </Suspense>
+          </div>
+        )}
+
+        {(activeSection === 'competitors' || hasVisited.competitors) && (
+          <div style={{ display: activeSection === 'competitors' ? 'block' : 'none' }}>
+            <Suspense fallback={<OverviewSkeleton />}>
+              <CompetitorsTab
+                topCompetitors={topCompetitors}
+                responses={responses}
+                companyName={companyName}
+                searchResults={currentCompanySearchResults}
+                responseTexts={responseTexts}
+                fetchResponseTexts={fetchResponseTexts}
+              />
+            </Suspense>
+          </div>
+        )}
+
+        {(activeSection === 'thematic' || hasVisited.thematic) && (
+          <div style={{ display: activeSection === 'thematic' ? 'block' : 'none' }}>
+            <Suspense fallback={<OverviewSkeleton />}>
+              <ThematicAnalysisTab
+                responses={responses}
+                companyName={companyName}
+                aiThemes={aiThemes}
+                aiThemesLoading={aiThemesLoading}
+                onRefreshThemes={refreshData}
+                responseTexts={responseTexts}
+                fetchResponseTexts={fetchResponseTexts}
+              />
+            </Suspense>
+          </div>
+        )}
+        {(activeSection === 'prompts' || hasVisited.prompts) && (
+          <div style={{ display: activeSection === 'prompts' ? 'block' : 'none' }}>
+            <Suspense fallback={<PromptsSkeleton />}>
+              <PromptsTab
+                promptsData={promptsData}
+                responses={responses}
+                companyName={companyName}
+                onRefresh={refreshData}
+                onRefreshPrompts={handleRefreshPrompts}
+                isRefreshing={isRefreshing}
+                refreshProgress={refreshProgress}
+                selectedLocation={selectedLocation}
+              />
+            </Suspense>
+          </div>
+        )}
+
+        {(activeSection === 'responses' || hasVisited.responses) && (
+          <div style={{ display: activeSection === 'responses' ? 'block' : 'none' }}>
+            <Suspense fallback={<ResponsesSkeleton />}>
+              <ResponsesTab responses={responses} parseCitations={parseCitations} companyName={companyName} responseTexts={responseTexts} responseTextsLoading={responseTextsLoading} fetchResponseTexts={fetchResponseTexts} />
+            </Suspense>
+          </div>
+        )}
+
+        {/* Search tab temporarily hidden
+        {(activeSection === 'search' || hasVisited.search) && (
+          <div style={{ display: activeSection === 'search' ? 'block' : 'none' }}>
+            <Suspense fallback={<div className="flex items-center justify-center h-64"><LoadingSpinner /></div>}>
+              <SearchTab
+                companyName={companyName}
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                searchResults={searchResults}
+                searchTermsData={searchTermsData}
+              />
+            </Suspense>
+          </div>
+        )}
+        */}
+
+        {(activeSection === 'answer-gaps' || hasVisited.answerGaps) && (
+          <div style={{ display: activeSection === 'answer-gaps' ? 'block' : 'none' }}>
+            <Suspense fallback={<AnswerGapsSkeleton />}>
+              <AnswerGapsTab />
+            </Suspense>
+          </div>
+        )}
+
+        {activeSection === 'reports' && reportsContent && (
+          <div>
+            {isPro ? reportsContent : (
+              <div className="relative min-h-[600px]">
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm" style={{ pointerEvents: 'all' }}>
+                  <div className="text-center p-8 max-w-lg mx-auto">
+                    <h2 className="text-2xl font-bold mb-4 text-gray-800">Reports - Pro Feature</h2>
+                    <p className="text-gray-600 mb-6 leading-relaxed">
+                      Generate comprehensive reports about your AI perception and performance.
+                      Get detailed insights, competitor analysis, and actionable recommendations.
+                    </p>
+                    <Button
+                      onClick={() => setShowUpgradeModal(true)}
+                      className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
+                    >
+                      Upgrade to Pro
+                    </Button>
+                  </div>
+                </div>
+                <div className="blur-sm pointer-events-none select-none opacity-60">
+                  {reportsContent}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Show full loading screen during initial load
@@ -686,7 +721,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             </div>
           ) : (
             <div className="p-6">
-              {renderActiveSection()}
+              {renderDashboardContent()}
             </div>
           )}
         </div>
@@ -714,6 +749,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         open={showWelcomeProModal}
         onOpenChange={setShowWelcomeProModal}
       />
+
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import { BarChart3, FileText, MessageSquare, Search, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lock, Lightbulb } from "lucide-react";
+import { BarChart3, FileText, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lock, Lightbulb } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -47,7 +47,6 @@ const navigationGroups: NavigationGroup[] = [
     items: [
       { title: "Prompts", icon: MessageSquare, section: "prompts", group: "monitor", route: "/monitor" },
       { title: "Responses", icon: FileText, section: "responses", group: "monitor", route: "/monitor/responses" },
-      { title: "Search", icon: Search, section: "search", group: "monitor", route: "/monitor/search" },
     ]
   },
   // Temporarily hidden - Analyze section

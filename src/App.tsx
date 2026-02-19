@@ -244,6 +244,7 @@ const App = () => (
                   </OnboardingGuard>
                 </ProtectedRoute>
               } />
+              {/* Search tab temporarily hidden
               <Route path="/monitor/search" element={
                 <ProtectedRoute>
                   <OnboardingGuard requireOnboarding={true}>
@@ -253,6 +254,7 @@ const App = () => (
                   </OnboardingGuard>
                 </ProtectedRoute>
               } />
+              */}
               <Route path="/analyze" element={
                 <ProtectedRoute>
                   <OnboardingGuard requireOnboarding={true}>

@@ -1,11 +1,12 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { MetricCard } from "./MetricCard";
 import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dashboard";
-import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown } from 'lucide-react';
+import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown, Sparkles, Loader2, CheckCircle2 } from 'lucide-react';
 import { usePersistedState } from "@/hooks/usePersistedState";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import ReactMarkdown from 'react-markdown';
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
@@ -16,6 +17,7 @@ import { SourcesSummaryCard } from "./SourcesSummaryCard";
 import { CompetitorsSummaryCard } from "./CompetitorsSummaryCard";
 import { AttributesSummaryCard } from "./AttributesSummaryCard";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { Favicon } from "@/components/ui/favicon";
 import { extractSourceUrl } from "@/utils/citationUtils";
@@ -58,6 +60,8 @@ interface OverviewTabProps {
   recencyDataLoading?: boolean; // Loading state for recency data
   aiThemesLoading?: boolean; // Loading state for AI themes
   metricsCalculating?: boolean; // Whether metrics are still being calculated (for UX - show all together)
+  responseTexts?: Record<string, string>;
+  fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
 }
 
 interface TimeBasedData {
@@ -83,13 +87,13 @@ const normalizeCompetitorName = (name: string): string => {
   return name.trim().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 };
 
-export const OverviewTab = ({ 
+export const OverviewTab = memo(({ 
   metrics, 
   topCitations, 
   topCompetitors,
   responses,
   competitorLoading = false,
-  companyName, // <-- Add this
+  companyName,
   llmMentionRankings,
   talentXProData = [],
   isPro = false,
@@ -98,7 +102,9 @@ export const OverviewTab = ({
   recencyData = [],
   recencyDataLoading = false,
   aiThemesLoading = false,
-  metricsCalculating = false
+  metricsCalculating = false,
+  responseTexts = {},
+  fetchResponseTexts
 }: OverviewTabProps) => {
   // Modal states - persisted
   const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('overviewTab.selectedCompetitor', null);
@@ -108,6 +114,10 @@ export const OverviewTab = ({
   const [competitorSummary, setCompetitorSummary] = useState<string>("");
   const [loadingCompetitorSummary, setLoadingCompetitorSummary] = useState(false);
   const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
+  const [competitorThinkingStep, setCompetitorThinkingStep] = useState<number>(-1);
+  const [competitorThinkingSteps, setCompetitorThinkingSteps] = useState<string[]>([]);
+  const [competitorSummarySources, setCompetitorSummarySources] = useState<{ domain: string; url: string | null; displayName: string }[]>([]);
+  const [hoveredCompetitorCitation, setHoveredCompetitorCitation] = useState<number | null>(null);
   const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = usePersistedState<boolean>('overviewTab.isMentionsDrawerOpen', false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
   const [isScoreBreakdownModalOpen, setIsScoreBreakdownModalOpen] = usePersistedState<boolean>('overviewTab.isScoreBreakdownModalOpen', false);
@@ -152,17 +162,16 @@ export const OverviewTab = ({
     
     // Calculate sentiment for each response ID once
     themesByResponseId.forEach((responseThemes, responseId) => {
-      const positiveThemes = responseThemes.filter(theme => theme.sentiment_score > 0.1).length;
-      const negativeThemes = responseThemes.filter(theme => theme.sentiment_score < -0.1).length;
-      const totalThemes = positiveThemes + negativeThemes;
+      const totalThemes = responseThemes.length;
       
       if (totalThemes === 0) {
-        // All themes are neutral
         cache.set(responseId, { sentiment_score: 0, sentiment_label: 'neutral' });
         return;
       }
       
-      // Sentiment score is the ratio of positive themes (0-1 scale)
+      const positiveThemes = responseThemes.filter(theme => theme.sentiment === 'positive').length;
+      
+      // Sentiment score: positive themes / total themes (0-1 scale)
       const sentimentRatio = positiveThemes / totalThemes;
       const sentimentLabel = sentimentRatio > 0.6 ? 'positive' : sentimentRatio < 0.4 ? 'negative' : 'neutral';
       
@@ -186,18 +195,18 @@ export const OverviewTab = ({
 
 
 
-  // Helper for mini-cards
+  // Helper for mini-cards — use the same rounded values that feed the EPS formula
   const breakdowns = [
     {
       title: 'Sentiment',
-      value: Math.round(metrics.averageSentiment * 100), // Convert ratio (0-1) to percentage (0-100)
+      value: metrics.sentimentScore,
       trend: metrics.sentimentTrendComparison,
       color: 'green',
       description: 'How positively your brand is perceived based on AI thematic analysis.'
     },
     {
       title: 'Visibility',
-      value: Math.round(metrics.averageVisibility),
+      value: metrics.visibilityScore,
       trend: metrics.visibilityTrendComparison,
       color: 'blue',
       description: 'How prominently your brand is mentioned.'
@@ -550,6 +559,12 @@ export const OverviewTab = ({
     setIsCompetitorModalOpen(false);
     setSelectedCompetitor(null);
     setCompetitorSnippets([]);
+    setCompetitorSummary("");
+    setCompetitorSummaryError(null);
+    setCompetitorThinkingStep(-1);
+    setCompetitorThinkingSteps([]);
+    setCompetitorSummarySources([]);
+    setHoveredCompetitorCitation(null);
   };
 
   const handleLLMClick = (llm: LLMMentionRanking) => {
@@ -587,52 +602,120 @@ export const OverviewTab = ({
     return responses.filter(r => r.response_text && regex.test(r.response_text));
   };
 
-  // Fetch AI summary for competitor when modal opens
-  useEffect(() => {
-    if (!isCompetitorModalOpen || !selectedCompetitor) return;
+  const fetchCompetitorSummary = async () => {
+    if (!selectedCompetitor) return;
     setCompetitorSummary("");
     setCompetitorSummaryError(null);
     setLoadingCompetitorSummary(true);
+    setCompetitorThinkingStep(0);
+    setCompetitorThinkingSteps([]);
+
     const relevantResponses = getFullResponsesForCompetitor(selectedCompetitor);
     if (relevantResponses.length === 0) {
       setCompetitorSummaryError("No responses found for this competitor.");
       setLoadingCompetitorSummary(false);
+      setCompetitorThinkingStep(-1);
       return;
     }
-    // Build the prompt
-    const prompt = `Summarize the following AI responses about \"${selectedCompetitor}\" in one concise paragraph. Highlight what is said about ${selectedCompetitor}, and how this is different from ${companyName}. Focus on key themes, sentiment, and notable comparisons.\n\nResponses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\n---\n')}`;
-    // Get session and call Gemini endpoint
-    const fetchSummary = async () => {
+
+    let texts = responseTexts;
+    const missingTextIds = relevantResponses.filter(r => !r.response_text && !texts[r.id]).map(r => r.id);
+    if (missingTextIds.length > 0 && fetchResponseTexts) {
+      texts = await fetchResponseTexts(missingTextIds) || texts;
+    }
+
+    // Build numbered source list
+    const sourceMap: { domain: string; url: string | null; displayName: string }[] = [];
+    const seenDomains = new Set<string>();
+    relevantResponses.forEach(r => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          setCompetitorSummaryError("Authentication required");
-          setLoadingCompetitorSummary(false);
-          return;
+        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
+        if (Array.isArray(citations)) {
+          citations.forEach((c: any) => {
+            if (c.domain && !seenDomains.has(c.domain)) {
+              seenDomains.add(c.domain);
+              sourceMap.push({
+                domain: c.domain,
+                url: c.url ? extractSourceUrl(c.url) : null,
+                displayName: getSourceDisplayName(c.domain),
+              });
+            }
+          });
         }
-        const res = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-gemini", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${session.access_token}`
-          },
-          body: JSON.stringify({ prompt })
-        });
-        const data = await res.json();
-        if (data.response) {
-          setCompetitorSummary(data.response.trim());
-        } else {
-          setCompetitorSummaryError(data.error || "No summary generated.");
+      } catch { /* skip */ }
+    });
+    setCompetitorSummarySources(sourceMap);
+
+    const steps = [
+      `Reading ${relevantResponses.length} responses mentioning ${selectedCompetitor}...`,
+      `Identifying key themes and comparisons...`,
+      `Evaluating sentiment across mentions...`,
+      `Writing competitive analysis...`,
+    ];
+    setCompetitorThinkingSteps(steps);
+
+    const stepTimers: ReturnType<typeof setTimeout>[] = [];
+    for (let i = 1; i < steps.length; i++) {
+      stepTimers.push(setTimeout(() => setCompetitorThinkingStep(i), i * 1800));
+    }
+
+    const sourcesList = sourceMap.map((s, i) => `[${i + 1}] ${s.displayName} (${s.domain})`).join('\n');
+
+    const prompt = `You are an employer brand analyst. Write a concise, insightful summary comparing how ${selectedCompetitor} is positioned relative to ${companyName} in the talent market.
+
+Available sources:
+${sourcesList || 'No sources available'}
+
+Source responses:
+${relevantResponses.map((r, i) => {
+      let responseSources = '';
+      try {
+        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
+        if (Array.isArray(citations)) {
+          const domains = [...new Set(citations.map((c: any) => c.domain).filter(Boolean))];
+          const indices = domains.map((d: string) => sourceMap.findIndex(s => s.domain === d) + 1).filter((n: number) => n > 0);
+          if (indices.length > 0) responseSources = ` [Sources: ${indices.join(', ')}]`;
         }
-      } catch (err) {
-        setCompetitorSummaryError("Failed to fetch summary.");
-      } finally {
+      } catch { /* skip */ }
+      return `${(texts[r.id] || r.response_text || '').slice(0, 800)}${responseSources}`;
+    }).join('\n---\n')}
+
+Write 2-3 short paragraphs (no bullet points, no headings). Cover: (1) what stands out about ${selectedCompetitor} and how they differ from ${companyName}, (2) areas where ${selectedCompetitor} is stronger or weaker, (3) what this means for ${companyName}'s talent strategy. Be direct and specific. Do not start with "${selectedCompetitor} is..."
+
+CRITICAL: When you reference information from a source, add an inline citation like [1], [2], etc. matching the source numbers above. Place citations naturally at the end of the relevant sentence or claim. Use citations frequently — every key claim should have one. Only cite sources from the numbered list above.`;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setCompetitorSummaryError("Authentication required");
         setLoadingCompetitorSummary(false);
+        setCompetitorThinkingStep(-1);
+        stepTimers.forEach(clearTimeout);
+        return;
       }
-    };
-    fetchSummary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCompetitorModalOpen, selectedCompetitor]);
+      const res = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-claude", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ prompt, enableWebSearch: false })
+      });
+      const data = await res.json();
+      stepTimers.forEach(clearTimeout);
+      if (data.response) {
+        setCompetitorSummary(data.response.trim());
+      } else {
+        setCompetitorSummaryError(data.error || "No summary generated.");
+      }
+    } catch (err) {
+      stepTimers.forEach(clearTimeout);
+      setCompetitorSummaryError("Failed to generate summary.");
+    } finally {
+      setLoadingCompetitorSummary(false);
+      setCompetitorThinkingStep(-1);
+    }
+  };
 
   // Filtered mentions for drawer
   const filteredMentions = competitorSnippets;
@@ -840,23 +923,33 @@ export const OverviewTab = ({
     const dataByDate: Record<string, { totalScore: number; count: number }> = {};
     
     responses.forEach(response => {
-      if (typeof response.visibility_score === 'number') {
+      if (typeof response.company_mentioned === 'boolean') {
         const date = new Date(response.tested_at).toISOString().split('T')[0];
         if (!dataByDate[date]) {
           dataByDate[date] = { totalScore: 0, count: 0 };
         }
-        dataByDate[date].totalScore += response.visibility_score;
+        dataByDate[date].totalScore += response.company_mentioned ? 1 : 0;
         dataByDate[date].count += 1;
       }
     });
 
     const trendData = Object.entries(dataByDate).map(([date, { totalScore, count }]) => ({
       date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      "Visibility": Math.round(totalScore / count),
+      "Visibility": Math.round((totalScore / count) * 100),
     }));
 
     return trendData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [responses]);
+
+  const aiThemeLookup = useMemo(() => {
+    const map = new Map<string, any>();
+    (aiThemes || []).forEach(theme => {
+      if (!map.has(theme.response_id)) {
+        map.set(theme.response_id, theme);
+      }
+    });
+    return map;
+  }, [aiThemes]);
 
   const sentimentTrendData = useMemo(() => {
     if (!responses || responses.length === 0) {
@@ -866,12 +959,14 @@ export const OverviewTab = ({
     const dataByDate: Record<string, { totalScore: number; count: number }> = {};
     
     responses.forEach(response => {
-      if (typeof response.sentiment_score === 'number') {
+      const theme = aiThemeLookup.get(response.id);
+      const sentimentScore = theme?.avg_sentiment_score;
+      if (typeof sentimentScore === 'number') {
         const date = new Date(response.tested_at).toISOString().split('T')[0];
         if (!dataByDate[date]) {
           dataByDate[date] = { totalScore: 0, count: 0 };
         }
-        dataByDate[date].totalScore += response.sentiment_score;
+        dataByDate[date].totalScore += sentimentScore;
         dataByDate[date].count += 1;
       }
     });
@@ -882,7 +977,7 @@ export const OverviewTab = ({
     }));
   
     return trendData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [responses]);
+  }, [responses, aiThemeLookup]);
 
   const chartConfig = {
     Visibility: {
@@ -958,25 +1053,15 @@ export const OverviewTab = ({
                promptType === 'talentx_competitive';
       });
       
-      // Calculate AI-based sentiment for this period
-      // Use overall positive ratio directly from themes (not averaged across responses)
+      // Sentiment: positive themes / total themes from ai_themes for this period
       let avgSentiment = 0;
-      if (relevantResponses.length > 0 && aiThemes.length > 0) {
-        // Get themes for this period's responses
+      if (aiThemes.length > 0) {
         const periodResponseIds = new Set(periodResponses.map(r => r.id));
         const periodThemes = aiThemes.filter(theme => periodResponseIds.has(theme.response_id));
+        const totalThemes = periodThemes.length;
+        const positiveThemes = periodThemes.filter(theme => theme.sentiment === 'positive').length;
         
-        const positiveThemes = periodThemes.filter(theme => theme.sentiment_score > 0.1).length;
-        const negativeThemes = periodThemes.filter(theme => theme.sentiment_score < -0.1).length;
-        const totalNonNeutralThemes = positiveThemes + negativeThemes;
-        
-        // Calculate overall positive ratio (0-1 scale)
-        avgSentiment = totalNonNeutralThemes > 0 
-          ? positiveThemes / totalNonNeutralThemes 
-          : 0;
-      } else if (relevantResponses.length > 0) {
-        // Fallback to direct sentiment_score if no AI themes
-        avgSentiment = relevantResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / relevantResponses.length;
+        avgSentiment = totalThemes > 0 ? positiveThemes / totalThemes : 0;
       }
       // Convert ratio (0-1) to percentage (0-100)
       const normalizedSentiment = Math.max(0, Math.min(100, avgSentiment * 100));
@@ -1087,7 +1172,7 @@ export const OverviewTab = ({
               </div>
               <div className="flex items-end gap-3 mb-1 mt-2">
                 <span className="text-6xl font-extrabold text-gray-900 drop-shadow-sm leading-none">
-                  {perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1].score : metrics.perceptionScore}
+                  {metrics.perceptionScore}
                 </span>
                 {perceptionScoreTrend.length > 1 && (() => {
                   const latestScore = perceptionScoreTrend[perceptionScoreTrend.length - 1].score;
@@ -1108,10 +1193,9 @@ export const OverviewTab = ({
             </div>
             {/* Badge in top right */}
             <div className="flex items-start">
-              <span className={`px-3 py-1 rounded-full text-base font-semibold mt-1 ${(() => {
-                const currentScore = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1].score : metrics.perceptionScore;
-                return currentScore >= 80 ? 'bg-green-100 text-green-800' : currentScore >= 65 ? 'bg-blue-100 text-blue-800' : currentScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800';
-              })()}`}>{metrics.perceptionLabel}</span>
+              <span className={`px-3 py-1 rounded-full text-base font-semibold mt-1 ${
+                metrics.perceptionScore >= 80 ? 'bg-green-100 text-green-800' : metrics.perceptionScore >= 65 ? 'bg-blue-100 text-blue-800' : metrics.perceptionScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+              }`}>{metrics.perceptionLabel}</span>
             </div>
           </div>
           {/* Bottom: Chart, visually anchored */}
@@ -1190,22 +1274,15 @@ export const OverviewTab = ({
                 </div>
               </div>
             ) : (() => {
-              // Get latest and previous period data
-              const latestPeriod = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1] : null;
               const previousPeriod = perceptionScoreTrend.length > 1 ? perceptionScoreTrend[perceptionScoreTrend.length - 2] : null;
               
-              // Calculate changes
-              const sentimentChange = latestPeriod && previousPeriod ? latestPeriod.sentiment - previousPeriod.sentiment : 0;
-              const visibilityChange = latestPeriod && previousPeriod ? latestPeriod.visibility - previousPeriod.visibility : 0;
-              const relevanceChange = latestPeriod && previousPeriod ? latestPeriod.relevance - previousPeriod.relevance : 0;
+              const sentimentChange = previousPeriod ? metrics.sentimentScore - previousPeriod.sentiment : 0;
+              const visibilityChange = previousPeriod ? metrics.visibilityScore - previousPeriod.visibility : 0;
+              const relevanceChange = previousPeriod ? metrics.relevanceScore - previousPeriod.relevance : 0;
               
-              // Use latest period data if available, otherwise fall back to metrics
-              const currentSentiment = latestPeriod ? latestPeriod.sentiment : Math.round(metrics.averageSentiment * 100);
-              const currentVisibility = latestPeriod ? latestPeriod.visibility : Math.round(metrics.averageVisibility);
-              
-              // For relevance, always use the overall average from metrics since it's calculated from all recency data
-              // The period-specific relevance may only include a subset of citations, so the overall average is more accurate
-              const currentRelevance = Math.round(metrics.averageRelevance);
+              const currentSentiment = metrics.sentimentScore;
+              const currentVisibility = metrics.visibilityScore;
+              const currentRelevance = metrics.relevanceScore;
               
               return (
                 <>
@@ -1325,40 +1402,135 @@ export const OverviewTab = ({
 
 
 
-      {/* Competitor Snippet Modal (Summary Only) */}
-      <Dialog open={isCompetitorModalOpen} onOpenChange={handleCloseCompetitorModal}>
-        <DialogContent className="max-w-xl w-full sm:max-w-2xl sm:w-[90vw] p-2 sm:p-6">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+      {/* Competitor Panel (slide from right) */}
+      <Sheet open={isCompetitorModalOpen} onOpenChange={(open) => { if (!open) handleCloseCompetitorModal(); }}>
+        <SheetContent side="right" className="w-full sm:max-w-2xl p-0 flex flex-col gap-0 [&>button]:hidden">
+          <div className="flex items-center justify-between px-6 py-4 border-b bg-white">
+            <SheetTitle className="flex items-center gap-2 text-base font-semibold">
               <span>Mentions of {selectedCompetitor}</span>
               <Badge variant="secondary">{competitorSnippets.length} mentions</Badge>
-            </DialogTitle>
-          </DialogHeader>
-          {/* AI-generated summary */}
+            </SheetTitle>
+          </div>
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+          {/* AI Summary — on demand */}
           <div className="mb-4">
-            <Card className="bg-gray-50 border border-gray-200">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base font-semibold flex items-center gap-2">
-                  <LLMLogo modelName="gemini" size="sm" className="mr-1" />
-                  AI Summary
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {loadingCompetitorSummary ? (
-                  <div className="w-full">
-                    <Skeleton className="h-6 w-3/4 mb-2" />
-                    <Skeleton className="h-6 w-5/6 mb-2" />
-                    <Skeleton className="h-6 w-2/3 mb-2" />
+            {competitorSummary ? (
+              <Card className="border-blue-100 bg-blue-50/30">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base font-semibold flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-blue-500" />
+                      AI Summary
+                    </CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={fetchCompetitorSummary}
+                      disabled={loadingCompetitorSummary}
+                      className="text-xs text-gray-400 hover:text-gray-600 h-auto py-1"
+                    >
+                      {loadingCompetitorSummary ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                      Regenerate
+                    </Button>
                   </div>
-                ) : competitorSummaryError ? (
-                  <div className="text-red-600 text-sm py-2">{competitorSummaryError}</div>
-                ) : competitorSummary ? (
-                  <div className="text-gray-800 text-base mb-3 whitespace-pre-line">
-                    <ReactMarkdown>{competitorSummary}</ReactMarkdown>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-gray-800 text-sm leading-relaxed">
+                    {competitorSummary.split('\n\n').filter(Boolean).map((paragraph, pIdx) => {
+                      const parts = paragraph.split(/(\[\d+\])/g);
+                      return (
+                        <p key={pIdx} className="mb-3 last:mb-0">
+                          {parts.map((part, partIdx) => {
+                            const citationMatch = part.match(/^\[(\d+)\]$/);
+                            if (citationMatch) {
+                              const num = parseInt(citationMatch[1], 10);
+                              const source = competitorSummarySources[num - 1];
+                              if (!source) return <span key={partIdx}>{part}</span>;
+                              return (
+                                <span key={partIdx} className="relative inline-block">
+                                  <button
+                                    className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-blue-600 bg-blue-100 hover:bg-blue-200 rounded-full cursor-pointer align-super transition-colors ml-0.5"
+                                    onMouseEnter={() => setHoveredCompetitorCitation(num)}
+                                    onMouseLeave={() => setHoveredCompetitorCitation(null)}
+                                    onClick={() => { if (source.url) window.open(source.url, '_blank', 'noopener,noreferrer'); }}
+                                  >
+                                    {num}
+                                  </button>
+                                  {hoveredCompetitorCitation === num && (
+                                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 whitespace-nowrap bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg flex items-center gap-2 pointer-events-none">
+                                      <img src={getFavicon(source.domain)} alt="" className="w-4 h-4 rounded" style={{ background: '#fff' }} />
+                                      <span>{source.displayName}</span>
+                                      <span className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900" />
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            }
+                            return <span key={partIdx}>{part}</span>;
+                          })}
+                        </p>
+                      );
+                    })}
                   </div>
-                ) : null}
-              </CardContent>
-            </Card>
+                  {competitorSummarySources.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-blue-100">
+                      {competitorSummarySources.map((source, index) => (
+                        <button
+                          key={index}
+                          onClick={() => { if (source.url) window.open(source.url, '_blank', 'noopener,noreferrer'); }}
+                          className={`inline-flex items-center gap-1.5 bg-white hover:bg-gray-50 pl-1 pr-2 py-1 rounded-full text-xs text-gray-600 transition-colors border border-gray-200 ${source.url ? 'cursor-pointer' : 'cursor-default'}`}
+                        >
+                          <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-blue-600 bg-blue-100 rounded-full flex-shrink-0">{index + 1}</span>
+                          <img src={getFavicon(source.domain)} alt="" className="w-3.5 h-3.5 rounded" style={{ background: '#fff', display: 'block' }} onError={e => { e.currentTarget.style.display = 'none'; }} />
+                          <span>{source.displayName}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : loadingCompetitorSummary ? (
+              <Card className="border-blue-100 bg-gradient-to-br from-blue-50/40 to-indigo-50/30 overflow-hidden">
+                <CardContent className="py-5 px-5">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="relative">
+                      <Sparkles className="w-4 h-4 text-blue-500" />
+                      <div className="absolute inset-0 animate-ping"><Sparkles className="w-4 h-4 text-blue-400 opacity-30" /></div>
+                    </div>
+                    <span className="text-sm font-medium text-blue-700">Analyzing...</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    {competitorThinkingSteps.map((step, i) => {
+                      const isActive = i === competitorThinkingStep;
+                      const isComplete = i < competitorThinkingStep;
+                      const isPending = i > competitorThinkingStep;
+                      return (
+                        <div key={i} className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${isActive ? 'bg-blue-100/60' : ''}`}
+                          style={{ opacity: isPending ? 0.3 : 1, transform: isPending ? 'translateX(4px)' : 'translateX(0)', transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }}>
+                          <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                            {isComplete ? <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" /> : isActive ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
+                          </div>
+                          <span className={`text-xs transition-colors duration-300 ${isActive ? 'text-blue-700 font-medium' : isComplete ? 'text-blue-500' : 'text-gray-400'}`}>{step}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-4 h-1 bg-blue-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-blue-400 to-indigo-500 rounded-full transition-all duration-700 ease-out"
+                      style={{ width: `${competitorThinkingSteps.length > 0 ? ((competitorThinkingStep + 1) / competitorThinkingSteps.length) * 100 : 0}%` }} />
+                  </div>
+                </CardContent>
+              </Card>
+            ) : competitorSummaryError ? (
+              <Card className="border-red-100 bg-red-50/30">
+                <CardContent className="py-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-red-600 text-sm">{competitorSummaryError}</span>
+                    <Button variant="ghost" size="sm" onClick={fetchCompetitorSummary} className="text-xs">Retry</Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
           </div>
           {/* View All Mentions Button */}
           <button
@@ -1368,8 +1540,24 @@ export const OverviewTab = ({
           >
             View All Mentions
           </button>
-        </DialogContent>
-      </Dialog>
+
+          </div>
+
+          {/* Floating Ask AI button — bottom right of panel */}
+          {!competitorSummary && !loadingCompetitorSummary && !competitorSummaryError && (
+            <div className="absolute bottom-6 right-6 z-10 animate-slideUpGlow rounded-full">
+              <button
+                onClick={fetchCompetitorSummary}
+                className="h-12 rounded-full bg-[#13274F] text-white shadow-lg hover:bg-[#1a3468] transition-all hover:scale-105 flex items-center justify-center gap-2 px-5"
+              >
+                <img alt="PerceptionX" className="h-5 w-5 object-contain shrink-0 brightness-0 invert" src="/logos/perceptionx-small.png" />
+                <span className="text-sm font-medium whitespace-nowrap">Ask AI</span>
+                <span className="text-[10px] font-semibold bg-[#DB5E89] text-white px-1.5 py-0.5 rounded-full leading-none">BETA</span>
+              </button>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
 
       {/* Mentions Drawer Modal */}
       <Dialog open={isMentionsDrawerOpen} onOpenChange={setIsMentionsDrawerOpen}>
@@ -1491,13 +1679,10 @@ export const OverviewTab = ({
                       </div>
                     </div>
                   ) : (() => {
-                    // Get latest period data (same logic as Breakdown Card)
-                    const latestPeriod = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1] : null;
-                    const currentSentiment = latestPeriod ? latestPeriod.sentiment : Math.round(metrics.averageSentiment * 100);
-                    const currentVisibility = latestPeriod ? latestPeriod.visibility : Math.round(metrics.averageVisibility);
-                    // For relevance, always use the overall average from metrics for consistency
-                    const currentRelevance = Math.round(metrics.averageRelevance);
-                    const currentPerceptionScore = latestPeriod ? latestPeriod.score : metrics.perceptionScore;
+                    const currentSentiment = metrics.sentimentScore;
+                    const currentVisibility = metrics.visibilityScore;
+                    const currentRelevance = metrics.relevanceScore;
+                    const currentPerceptionScore = metrics.perceptionScore;
                     
                     return (
                       <>
@@ -1539,9 +1724,7 @@ export const OverviewTab = ({
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {(() => {
-                    // Use the same logic as Breakdown Card for consistency
-                    const latestPeriod = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1] : null;
-                    const currentSentiment = latestPeriod ? latestPeriod.sentiment : Math.round(metrics.averageSentiment * 100);
+                    const currentSentiment = metrics.sentimentScore;
                     
                     return (
                       <>
@@ -1581,9 +1764,7 @@ export const OverviewTab = ({
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {(() => {
-                    // Use the same logic as Breakdown Card for consistency
-                    const latestPeriod = perceptionScoreTrend.length > 0 ? perceptionScoreTrend[perceptionScoreTrend.length - 1] : null;
-                    const currentVisibility = latestPeriod ? latestPeriod.visibility : Math.round(metrics.averageVisibility);
+                    const currentVisibility = metrics.visibilityScore;
                     
                     return (
                       <>
@@ -1623,10 +1804,7 @@ export const OverviewTab = ({
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {(() => {
-                    // Use the same logic as Breakdown Card for consistency
-                    // For relevance, always use the overall average from metrics since it's calculated from all recency data
-                    // The period-specific relevance may only include a subset of citations, so the overall average is more accurate
-                    const currentRelevance = Math.round(metrics.averageRelevance);
+                    const currentRelevance = metrics.relevanceScore;
                     
                     return (
                       <>
@@ -1660,4 +1838,5 @@ export const OverviewTab = ({
       </Dialog>
     </div>
   );
-};
+});
+OverviewTab.displayName = 'OverviewTab';

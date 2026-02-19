@@ -125,7 +125,7 @@ export const AnswerGapsTab = () => {
             promptType: prompt?.prompt_type || 'general',
             promptCategory: prompt?.prompt_category || 'general',
             aiModel: response.ai_model,
-            responseText: response.response_text,
+            responseText: response.response_text || '',
             sources,
             suggestion,
             gapType: 'not_mentioned'
@@ -140,7 +140,7 @@ export const AnswerGapsTab = () => {
             promptType: prompt?.prompt_type || 'general',
             promptCategory: prompt?.prompt_category || 'general',
             aiModel: response.ai_model,
-            responseText: response.response_text,
+            responseText: response.response_text || '',
             sources,
             suggestion,
             gapType: 'no_owned_sources'

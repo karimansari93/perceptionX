@@ -321,7 +321,6 @@ export const AddCompanyModal = ({
         
         if (needsTranslation) {
           try {
-            console.log(`🌍 Translating ${generatedPrompts.length} prompts for country: ${country}`);
             const promptTexts = generatedPrompts.map(p => p.text);
 
             const invokeTranslate = () =>
@@ -349,7 +348,6 @@ export const AddCompanyModal = ({
                   ...prompt,
                   text: translationData.translatedPrompts[index] || prompt.text
                 }));
-                console.log(`✅ Translated prompts to ${translationData.targetLanguage || 'target language'}`);
               } else {
                 // Translation incomplete - fail the process
                 const countryName = getCountryName(country);
@@ -372,8 +370,6 @@ export const AddCompanyModal = ({
             setIsCollectingSearchInsights(false);
             return; // Stop the process - don't create company with English prompts
           }
-        } else {
-          console.log(`✅ Country ${country} uses English, skipping translation`);
         }
       }
 
@@ -443,7 +439,6 @@ export const AddCompanyModal = ({
 
       const runSearchInsights = async () => {
         try {
-          console.log(`🌍 Running search insights for company with country: ${country || 'GLOBAL'}`);
           const { error: searchError } = await supabase.functions.invoke('search-insights', {
             body: {
               companyName: companyName,
@@ -454,8 +449,6 @@ export const AddCompanyModal = ({
 
           if (searchError) {
             console.error('❌ Search insights error:', searchError);
-          } else {
-            console.log(`✅ Search insights completed for ${companyName} (country: ${country || 'GLOBAL'})`);
           }
           
         } catch (searchException) {

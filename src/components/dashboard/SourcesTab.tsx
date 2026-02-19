@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { CitationCount } from "@/types/dashboard";
 import { FileText, TrendingUp, TrendingDown, Check, X } from 'lucide-react';
@@ -7,11 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Favicon } from "@/components/ui/favicon";
 import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS } from "@/utils/sourceConfig";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useSubscription } from "@/hooks/useSubscription";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { extractSourceUrl, extractDomain, enhanceCitations } from "@/utils/citationUtils";
 
@@ -30,6 +27,8 @@ interface SourcesTabProps {
   companyName?: string;
   searchResults?: any[];
   currentCompanyId?: string;
+  responseTexts?: Record<string, string>;
+  fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
 }
 
 // Helper function to normalize domains for consistent counting
@@ -38,8 +37,7 @@ const normalizeDomain = (domain: string): string => {
   return domain.trim().toLowerCase().replace(/^www\./, '');
 };
 
-export const SourcesTab = ({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId }: SourcesTabProps) => {
-  const { isPro } = useSubscription();
+export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts }: SourcesTabProps) => {
   
   // Filter responses and searchResults by currentCompanyId to ensure we only show sources for the current company
   const filteredResponses = useMemo(() => {
@@ -74,13 +72,14 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
   const [selectedSource, setSelectedSource] = usePersistedState<CitationCount | null>('sourcesTab.selectedSource', null);
   const [isSourceModalOpen, setIsSourceModalOpen] = usePersistedState<boolean>('sourcesTab.isSourceModalOpen', false);
   const [showAllSources] = useState(true);
-  // Filter states - persisted
-  const [selectedMediaTypeFilter, setSelectedMediaTypeFilter] = usePersistedState<string | null>('sourcesTab.selectedMediaTypeFilter', null);
-  const [selectedSourceTypeFilter, setSelectedSourceTypeFilter] = usePersistedState<'all' | 'ai-responses' | 'search-results'>('sourcesTab.selectedSourceTypeFilter', 'all');
-  const [selectedCompanyMentionedFilter, setSelectedCompanyMentionedFilter] = usePersistedState<'all' | 'mentioned' | 'not-mentioned'>('sourcesTab.selectedCompanyMentionedFilter', 'all');
-  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('sourcesTab.selectedJobFunctionFilter', 'all');
-  const [selectedThemeFilter, setSelectedThemeFilter] = usePersistedState<string>('sourcesTab.selectedThemeFilter', 'all');
-  const [selectedPromptTypeFilter, setSelectedPromptTypeFilter] = usePersistedState<string>('sourcesTab.selectedPromptTypeFilter', 'all');
+  // Mentioned/Not Mentioned toggle - persisted
+  const [selectedCompanyMentionedFilter, setSelectedCompanyMentionedFilter] = usePersistedState<'mentioned' | 'not-mentioned'>('sourcesTab.selectedCompanyMentionedFilter', 'mentioned');
+  // Other filters hardcoded to defaults (dropdowns removed)
+  const selectedMediaTypeFilter: string | null = null;
+  const selectedSourceTypeFilter: 'all' | 'ai-responses' | 'search-results' = 'all';
+  const selectedJobFunctionFilter = 'all';
+  const selectedThemeFilter = 'all';
+  const selectedPromptTypeFilter = 'all';
   
   // Media type editing state
   const [editingMediaType, setEditingMediaType] = useState<string | null>(null);
@@ -249,45 +248,6 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
     }
   };
 
-  const handleSourceTypeClick = (sourceType: 'all' | 'ai-responses' | 'search-results') => {
-    setSelectedSourceTypeFilter(sourceType);
-  };
-
-  const handleMediaTypeDropdownChange = (value: string) => {
-    if (value === 'all') {
-      setSelectedMediaTypeFilter(null);
-    } else {
-      setSelectedMediaTypeFilter(value);
-    }
-  };
-
-  const handleSourceTypeDropdownChange = (value: string) => {
-    if (value === 'all') {
-      setSelectedSourceTypeFilter('all');
-    } else {
-      setSelectedSourceTypeFilter(value as 'ai-responses' | 'search-results');
-    }
-  };
-
-  const handleCompanyMentionedDropdownChange = (value: string) => {
-    if (value === 'all') {
-      setSelectedCompanyMentionedFilter('all');
-    } else {
-      setSelectedCompanyMentionedFilter(value as 'mentioned' | 'not-mentioned');
-    }
-  };
-
-  const handleJobFunctionFilterChange = (value: string) => {
-    setSelectedJobFunctionFilter(value);
-  };
-
-  const handleThemeFilterChange = (value: string) => {
-    setSelectedThemeFilter(value);
-  };
-
-  const handlePromptTypeFilterChange = (value: string) => {
-    setSelectedPromptTypeFilter(value);
-  };
 
   // Media type editing functions
   const handleMediaTypeEdit = (domain: string) => {
@@ -889,18 +849,11 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
           />
         </div>
         
-        {/* Count and percentage */}
-        <div className="flex items-center gap-2 sm:gap-4">
-          <div className="flex items-center min-w-[35px] sm:min-w-[60px] justify-end">
-            <span className="text-sm font-semibold text-gray-900">
-              {data.count}
-            </span>
-          </div>
-          <div className="flex items-center min-w-[45px] sm:min-w-[60px] justify-end">
-            <span className="text-xs text-gray-500">
-              {totalPercentage.toFixed(1)}%
-            </span>
-          </div>
+        {/* Percentage */}
+        <div className="flex items-center min-w-[50px] sm:min-w-[60px] justify-end">
+          <span className="text-sm font-semibold text-gray-900">
+            {totalPercentage.toFixed(1)}%
+          </span>
         </div>
       </div>
     );
@@ -1035,170 +988,31 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
         </p>
       </div>
 
-      {/* Sticky Header with Filters */}
-      {isPro && (
-        <div className="hidden sm:block sticky top-0 z-10 bg-white pb-2">
-          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-            {/* Source Type Filter Dropdown */}
-            <Select
-              value={selectedSourceTypeFilter}
-              onValueChange={handleSourceTypeDropdownChange}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="All Sources" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">
-                  <div className="flex items-center gap-2">
-                    <span>All Sources</span>
-                    <span className="text-xs text-gray-500">({sourceTypeSummary.ai.count + sourceTypeSummary.search.count + sourceTypeSummary.both.count})</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="ai-responses">
-                  <div className="flex items-center gap-2">
-                    <span>AI Responses</span>
-                    <span className="text-xs text-gray-500">({sourceTypeSummary.ai.count + sourceTypeSummary.both.count})</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="search-results">
-                  <div className="flex items-center gap-2">
-                    <span>Search Results</span>
-                    <span className="text-xs text-gray-500">({sourceTypeSummary.search.count + sourceTypeSummary.both.count})</span>
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            {/* Media Type Filter Dropdown */}
-            <Select
-              value={selectedMediaTypeFilter || 'all'}
-              onValueChange={handleMediaTypeDropdownChange}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="All Media Types" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Media Types</SelectItem>
-                {Object.entries(mediaTypeSummary).map(([mediaType, data]) => {
-                  const mediaTypeInfo = getMediaTypeInfo(mediaType);
-                  return (
-                    <SelectItem key={mediaType} value={mediaType}>
-                      <div className="flex items-center gap-2">
-                        <Badge className={`text-xs ${mediaTypeInfo.colors} pointer-events-none`}>
-                          {mediaTypeInfo.label}
-                        </Badge>
-                        <span className="text-xs text-gray-500">({data.count})</span>
-                      </div>
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
-            {/* Company Mentioned Filter Dropdown */}
-            <Select
-              value={selectedCompanyMentionedFilter}
-              onValueChange={handleCompanyMentionedDropdownChange}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Company Mentioned" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">
-                  <div className="flex items-center gap-2">
-                    <span>All Mentions</span>
-                    <span className="text-xs text-gray-500">({companyMentionedSummary.total})</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="mentioned">
-                  <div className="flex items-center gap-2">
-                    <span>Company Mentioned</span>
-                    <span className="text-xs text-gray-500">({companyMentionedSummary.mentioned})</span>
-                  </div>
-                </SelectItem>
-                <SelectItem value="not-mentioned">
-                  <div className="flex items-center gap-2">
-                    <span>Not Mentioned</span>
-                    <span className="text-xs text-gray-500">({companyMentionedSummary.notMentioned})</span>
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            {/* Job Function Filter Dropdown */}
-            <Select
-              value={selectedJobFunctionFilter}
-              onValueChange={handleJobFunctionFilterChange}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="All Job Functions" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">
-                  <div className="flex items-center gap-2">
-                    <span>All Job Functions</span>
-                    <span className="text-xs text-gray-500">({allSourcesCitations.length})</span>
-                  </div>
-                </SelectItem>
-                {getUniqueJobFunctions.map(jobFunction => (
-                  <SelectItem key={jobFunction} value={jobFunction}>
-                    <div className="flex items-center gap-2">
-                      <span>{jobFunction}</span>
-                      <span className="text-xs text-gray-500">({allSourcesCitations.filter(c => isSourceFromJobFunction(c.domain, jobFunction)).length})</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {/* Theme/Attribute Filter Dropdown */}
-            {availableThemes.length > 0 && (
-              <Select
-                value={selectedThemeFilter}
-                onValueChange={handleThemeFilterChange}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="All Attributes" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">
-                    <div className="flex items-center gap-2">
-                      <span>All Attributes</span>
-                      <span className="text-xs text-gray-500">({allSourcesCitations.length})</span>
-                    </div>
-                  </SelectItem>
-                  {availableThemes.map(theme => (
-                    <SelectItem key={theme} value={theme}>
-                      {theme}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {/* Prompt Type Filter Dropdown */}
-            {availablePromptTypes.length > 0 && (
-              <Select
-                value={selectedPromptTypeFilter}
-                onValueChange={handlePromptTypeFilterChange}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="All Prompt Types" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">
-                    <div className="flex items-center gap-2">
-                      <span>All Prompt Types</span>
-                    </div>
-                  </SelectItem>
-                  {availablePromptTypes.map(promptType => (
-                    <SelectItem key={promptType} value={promptType}>
-                      <div className="flex items-center gap-2">
-                        <span className="capitalize">{promptType}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
+      {/* Toggle: Mentioned / Not Mentioned */}
+      <div className="sticky top-0 z-10 bg-white pb-2">
+        <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100">
+          <button
+            onClick={() => setSelectedCompanyMentionedFilter('mentioned')}
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+              selectedCompanyMentionedFilter === 'mentioned'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Mentioned
+          </button>
+          <button
+            onClick={() => setSelectedCompanyMentionedFilter('not-mentioned')}
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+              selectedCompanyMentionedFilter === 'not-mentioned'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Not Mentioned
+          </button>
         </div>
-      )}
+      </div>
 
       {/* Main Content with Tabs */}
       <div className="flex-1 min-h-0">
@@ -1243,8 +1057,11 @@ export const SourcesTab = ({ topCitations, responses, parseCitations, companyNam
           searchResults={filteredSearchResults}
           companyId={currentCompanyId}
           selectedThemeFilter={selectedThemeFilter}
+          responseTexts={responseTexts}
+          fetchResponseTexts={fetchResponseTexts}
         />
       )}
     </div>
   );
-}; 
+});
+SourcesTab.displayName = 'SourcesTab';

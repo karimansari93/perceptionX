@@ -55,7 +55,6 @@ export class TalentXProService {
       }
 
       if (existingPrompts && existingPrompts.length > 0) {
-        console.log('User already has TalentX prompts, skipping generation');
         // Return existing prompts instead of creating duplicates
         const { data: existing, error: fetchError } = await supabase
           .from('confirmed_prompts')
@@ -321,7 +320,6 @@ export class TalentXProService {
     onboardingId: string
   ): Promise<void> {
     // No longer needed - prompts are created directly in confirmed_prompts
-    console.log('convertToConfirmedPrompts is deprecated - prompts are now created directly in confirmed_prompts');
   }
 
   /**
@@ -445,10 +443,9 @@ export class TalentXProService {
 
         const group = aggregated[attributeId];
         
-        // Extract scores from talentx_analysis or talentx_scores
-        const talentXData = response.talentx_analysis || response.talentx_scores || {};
+        const talentXData = response.talentx_scores || {};
         const perceptionScore = talentXData.perception_score || talentXData.score || 0;
-        const sentimentScore = talentXData.sentiment_score || response.sentiment_score || 0;
+        const sentimentScore = talentXData.sentiment_score || 0;
         
         const analysisData = {
           id: response.id,
@@ -558,7 +555,6 @@ export class TalentXProService {
   static async resetProPrompts(userId: string): Promise<void> {
     // No-op: TalentX prompts in confirmed_prompts don't have is_generated flag
     // They are always considered "generated" since they're active prompts
-    console.log('Reset not needed for TalentX prompts in confirmed_prompts');
   }
 
   /**

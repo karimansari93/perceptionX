@@ -30,6 +30,8 @@ interface ResponseDetailsModalProps {
   onRefreshPrompt?: (promptIds: string[], companyName: string) => Promise<void>;
   isRefreshing?: boolean;
   refreshProgress?: RefreshProgress | null;
+  responseTexts?: Record<string, string>;
+  fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
 }
 
 export const ResponseDetailsModal = ({ 
@@ -42,7 +44,9 @@ export const ResponseDetailsModal = ({
   companyName,
   onRefreshPrompt,
   isRefreshing = false,
-  refreshProgress = null
+  refreshProgress = null,
+  responseTexts = {},
+  fetchResponseTexts,
 }: ResponseDetailsModalProps) => {
   const [selectedResponse, setSelectedResponse] = useState<PromptResponse | null>(
     responses.length > 0 ? responses[0] : null
@@ -62,6 +66,18 @@ export const ResponseDetailsModal = ({
   const fetchingPromptRef = useRef<string | null>(null);
   const previousResponsesKeyRef = useRef<string>("");
   const previousPromptTextRef = useRef<string>("");
+
+  const getResponseText = (r: PromptResponse) => responseTexts[r.id] || r.response_text || '';
+
+  // Lazy-load response texts when modal opens
+  useEffect(() => {
+    if (isOpen && responses.length > 0 && fetchResponseTexts) {
+      const ids = responses.map(r => r.id).filter(id => !responseTexts[id]);
+      if (ids.length > 0) {
+        fetchResponseTexts(ids);
+      }
+    }
+  }, [isOpen, responses]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Find the matching PromptData for this promptText
   const promptData = promptsData.find ? promptsData.find(p => p.prompt === promptText) : undefined;
@@ -145,8 +161,7 @@ export const ResponseDetailsModal = ({
         if (r.id && r.tested_at) {
           return `${r.id}-${r.tested_at}`;
         }
-        // Fallback: use first 100 chars of response text as identifier
-        return r.response_text?.slice(0, 100) || 'unknown';
+        return getResponseText(r).slice(0, 100) || 'unknown';
       })
       .sort()
       .join('|');
@@ -205,7 +220,7 @@ export const ResponseDetailsModal = ({
       }, {} as Record<string, typeof responses[0]>)
     );
     // Build the prompt with only the latest response per model
-    const prompt = `Summarize the following AI model responses to the question: "${promptText}" in one concise paragraph, highlighting key themes, sentiment, and any notable mentions.\n\nResponses:\n${latestByModel.map(r => r.response_text.slice(0, 1000)).join('\n---\n')}`;
+    const prompt = `Summarize the following AI model responses to the question: "${promptText}" in one concise paragraph, highlighting key themes, sentiment, and any notable mentions.\n\nResponses:\n${latestByModel.map(r => getResponseText(r).slice(0, 1000)).join('\n---\n')}`;
     
     // Get the current session
     const getSession = async () => {
@@ -376,7 +391,7 @@ export const ResponseDetailsModal = ({
     }
 
     // Analyze response consistency
-    const responseLengths = responses.map(r => r.response_text.length);
+    const responseLengths = responses.map(r => getResponseText(r).length);
     const avgLength = responseLengths.reduce((a, b) => a + b, 0) / responseLengths.length;
     const lengthVariation = Math.max(...responseLengths) - Math.min(...responseLengths);
     
@@ -432,9 +447,9 @@ export const ResponseDetailsModal = ({
     const mentionedResponses = responses.filter(r => r.company_mentioned === true);
     
     mentionedResponses.forEach(response => {
-      if (!response.response_text) return;
+      const text = getResponseText(response);
+      if (!text) return;
       
-      const text = response.response_text;
       const textLower = text.toLowerCase();
       
       // Find all occurrences of company name (case-insensitive)
@@ -466,7 +481,7 @@ export const ResponseDetailsModal = ({
         snippets.push({
           snippet: snippet.trim(),
           model: response.ai_model || 'Unknown',
-          full: response.response_text
+          full: text
         });
         
         // Only get first mention per response to avoid duplicates

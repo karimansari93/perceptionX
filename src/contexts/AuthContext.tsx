@@ -40,10 +40,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             window.location.href = '/reset-password';
           }
         }
-        
-        if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
-          console.log('Auth event:', event);
-        }
       }
     );
 

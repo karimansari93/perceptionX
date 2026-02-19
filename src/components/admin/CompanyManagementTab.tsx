@@ -435,7 +435,6 @@ export const CompanyManagementTab = () => {
 
   const prepareRefreshForCompany = async (companyId: string) => {
     try {
-      console.log('Preparing refresh for company:', companyId);
       
       // Get company and organization details
       const company = companies.find(c => c.id === companyId);
@@ -444,11 +443,9 @@ export const CompanyManagementTab = () => {
         toast.error('Company not found');
         return;
       }
-      console.log('Company found:', company.name, 'Org ID:', company.organization_id);
 
       // Get organization owner to determine subscription type
       // Fetch organization_members first
-      console.log('Fetching organization members...');
       const { data: orgMember, error: orgMemberError } = await supabase
         .from('organization_members')
         .select('user_id, role')
@@ -461,10 +458,8 @@ export const CompanyManagementTab = () => {
         console.error('Organization member error:', orgMemberError);
         throw orgMemberError;
       }
-      console.log('Org member found:', orgMember);
 
       // Then fetch profile data separately to avoid RLS issues
-      console.log('Fetching profile data...');
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('email, subscription_type')
@@ -475,13 +470,11 @@ export const CompanyManagementTab = () => {
         console.error('Profile error:', profileError);
         throw profileError;
       }
-      console.log('Profile data:', profileData);
 
       const isProUser = profileData?.subscription_type === 'pro';
       const userEmail = profileData?.email || 'admin@perceptionx.ai';
 
       // Fetch prompts for this specific company
-      console.log('Fetching prompts for company...');
       const { data: allPrompts, error: promptsError } = await supabase
         .from('confirmed_prompts')
         .select('*')
@@ -492,12 +485,10 @@ export const CompanyManagementTab = () => {
         console.error('Prompts error:', promptsError);
         throw promptsError;
       }
-      console.log('Prompts fetched:', allPrompts?.length);
 
       // Separate regular and TalentX prompts
       const regularPrompts = allPrompts?.filter(p => !p.is_pro_prompt) || [];
       const talentXPrompts = allPrompts?.filter(p => p.is_pro_prompt) || [];
-      console.log('Regular prompts:', regularPrompts.length, 'TalentX prompts:', talentXPrompts.length);
 
       const totalPrompts = (allPrompts?.length || 0);
       if (totalPrompts === 0) {
@@ -521,14 +512,12 @@ export const CompanyManagementTab = () => {
       ];
 
       const models = isProUser ? proModels : freeModels;
-      console.log('Models available:', models.length, 'Is Pro:', isProUser);
 
       // Get all unique prompt types
       const allPromptTypes = Array.from(new Set([
         ...regularPrompts.map(p => p.prompt_type),
         ...talentXPrompts.map(p => p.prompt_type)
       ])).sort();
-      console.log('All prompt types:', allPromptTypes);
 
       // Get all unique prompt category/theme pairs (prompt_theme defaults to 'General' if null)
       const categoryThemePairs = [
@@ -548,13 +537,10 @@ export const CompanyManagementTab = () => {
         return catCmp !== 0 ? catCmp : a.theme.localeCompare(b.theme);
       });
       const allPromptCategoryThemes = uniquePairs;
-      console.log('All prompt category/themes:', allPromptCategoryThemes);
 
       const totalOperations = totalPrompts * models.length;
-      console.log('Total operations:', totalOperations);
 
       // Show confirmation modal
-      console.log('Setting confirmation data...');
       const confirmData = {
         companyId,
         companyName: company.name,
@@ -570,9 +556,7 @@ export const CompanyManagementTab = () => {
         selectedPromptCategoryThemes: allPromptCategoryThemes,
         totalOperations
       };
-      console.log('Confirmation data:', confirmData);
       setConfirmationData(confirmData);
-      console.log('Confirmation data set! Modal should appear.');
 
     } catch (e: any) {
       console.error('Error preparing company refresh:', e);

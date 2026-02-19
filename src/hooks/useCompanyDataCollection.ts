@@ -31,11 +31,8 @@ export const useCompanyDataCollection = () => {
   useEffect(() => {
     const checkIncompleteCollection = async () => {
       if (!user?.id || !currentCompany?.id) {
-        console.log('[Collection] Skipping check - missing user or company', { userId: user?.id, companyId: currentCompany?.id });
         return;
       }
-
-      console.log('[Collection] Checking for incomplete collection for company:', currentCompany.id);
 
       try {
         const { data: company, error } = await supabase
@@ -54,13 +51,6 @@ export const useCompanyDataCollection = () => {
           return;
         }
 
-        console.log('[Collection] Company data:', {
-          id: company?.id,
-          name: company?.name,
-          status: company?.data_collection_status,
-          progress: company?.data_collection_progress
-        });
-
         // Check if status exists and is incomplete (null means completed for old companies)
         if (company && 
             company.data_collection_status && 
@@ -68,7 +58,6 @@ export const useCompanyDataCollection = () => {
             company.data_collection_status !== 'failed' &&
             company.data_collection_status !== null) {
           
-          console.log('[Collection] Found incomplete collection! Status:', company.data_collection_status);
           const progressData = company.data_collection_progress as any;
           
           // Ensure progress has valid values
@@ -90,8 +79,6 @@ export const useCompanyDataCollection = () => {
           });
           setProgress(validProgress);
           setIsCollecting(true);
-        } else {
-          console.log('[Collection] No incomplete collection found. Status:', company?.data_collection_status);
         }
       } catch (error) {
         console.error('[Collection] Error in checkIncompleteCollection:', error);
@@ -104,15 +91,9 @@ export const useCompanyDataCollection = () => {
   // Resume collection process
   const resumeCollection = useCallback(async () => {
     if (!collectionStatus || !user || isCollecting) {
-      console.log('[Collection] Skipping resume - conditions not met', {
-        hasStatus: !!collectionStatus,
-        hasUser: !!user,
-        isCollecting
-      });
       return;
     }
 
-    console.log('[Collection] Resuming collection for company:', collectionStatus.companyId);
     setIsCollecting(true);
 
     try {

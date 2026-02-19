@@ -100,7 +100,6 @@ export const CompanySearchTermsTab = () => {
       return;
     }
 
-    console.log('Adding search term:', { company_id: selectedCompany.id, search_term: newSearchTerm.trim() });
     setAdding(true);
     try {
       const result = await CompanySearchTermsService.addSearchTerm({
@@ -108,7 +107,6 @@ export const CompanySearchTermsTab = () => {
         search_term: newSearchTerm.trim()
       });
 
-      console.log('Add search term result:', result);
       toast.success('Search term added successfully');
       setShowAddModal(false);
       setNewSearchTerm('');

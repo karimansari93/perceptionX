@@ -18,6 +18,8 @@ export const useDashboardData = () => {
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
   const [responses, setResponses] = useState<PromptResponse[]>([]);
+  const [responseTexts, setResponseTexts] = useState<Record<string, string>>({});
+  const [responseTextsLoading, setResponseTextsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [competitorLoading, setCompetitorLoading] = useState(false);
   const [metricsLoading, setMetricsLoading] = useState(false);
@@ -38,6 +40,10 @@ export const useDashboardData = () => {
   const [isOnline, setIsOnline] = useState(networkMonitor.online);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [recencyDataError, setRecencyDataError] = useState<string | null>(null);
+  // Pre-aggregated data from materialized views (Phase 1 MV migration)
+  const [mvTopCitations, setMvTopCitations] = useState<CitationCount[]>([]);
+  const [mvTopCompetitors, setMvTopCompetitors] = useState<{company: string; count: number}[]>([]);
+  const [mvLlmRankings, setMvLlmRankings] = useState<LLMMentionRanking[]>([]);
   // Backend-calculated metrics from materialized views
   const [companySentimentMetrics, setCompanySentimentMetrics] = useState<any | null>(null);
   const [companyRelevanceMetrics, setCompanyRelevanceMetrics] = useState<any | null>(null);
@@ -138,15 +144,27 @@ export const useDashboardData = () => {
           supabase
             .from('prompt_responses')
             .select(`
-              *,
-              confirmed_prompts (
+              id,
+              confirmed_prompt_id,
+              company_id,
+              ai_model,
+              tested_at,
+              created_at,
+              updated_at,
+              company_mentioned,
+              detected_competitors,
+              citations,
+              for_index,
+              index_period,
+              confirmed_prompts!inner(
+                id,
                 prompt_text,
                 prompt_category,
-                prompt_theme,
                 prompt_type,
-                industry_context,
+                prompt_theme,
                 job_function_context,
                 location_context,
+                industry_context,
                 talentx_attribute_id
               )
             `)
@@ -158,6 +176,9 @@ export const useDashboardData = () => {
         chunk = result.data ?? [];
         data = data.concat(chunk);
         page += 1;
+        if (chunk.length === PAGE_SIZE) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
       } while (chunk.length === PAGE_SIZE);
 
       const responsesError = null;
@@ -203,8 +224,20 @@ export const useDashboardData = () => {
             const talentXResult = await supabase
               .from('prompt_responses')
               .select(`
-                *,
+                id,
+                confirmed_prompt_id,
+                company_id,
+                ai_model,
+                tested_at,
+                created_at,
+                updated_at,
+                company_mentioned,
+                detected_competitors,
+                citations,
+                for_index,
+                index_period,
                 confirmed_prompts!inner(
+                  id,
                   user_id,
                   prompt_type,
                   prompt_text,
@@ -251,12 +284,9 @@ export const useDashboardData = () => {
                   company_id: response.confirmed_prompts.company_id,
                   ai_model: response.ai_model,
                   response_text: response.response_text,
-                  sentiment_score: response.sentiment_score,
-                  sentiment_label: response.sentiment_score > 0.1 ? 'positive' : response.sentiment_score < -0.1 ? 'negative' : 'neutral',
                   citations: response.citations,
                   tested_at: response.tested_at || response.updated_at || response.created_at,
-                  company_mentioned: true, // TalentX responses are always about the company
-                  mention_ranking: 1, // Default to 1 since it's about the company
+                  company_mentioned: true,
                   detected_competitors: response.detected_competitors,
 
                   confirmed_prompts: {
@@ -279,6 +309,10 @@ export const useDashboardData = () => {
         }
       }
       
+      // Yield to the browser before the big state set so pending interactions
+      // (clicks, scrolls) can be processed before the useMemo cascade fires.
+      await new Promise(resolve => setTimeout(resolve, 0));
+
       setResponses(allResponses);
 
       // Set lastUpdated to the most recent response collection time
@@ -346,6 +380,42 @@ export const useDashboardData = () => {
     }
   }, [user, currentCompany, isOnline]);
 
+  const fetchResponseTexts = useCallback(async (ids: string[]) => {
+    if (!ids.length) return {};
+
+    const missing = ids.filter(id => !responseTexts[id]);
+    if (!missing.length) return responseTexts;
+
+    setResponseTextsLoading(true);
+    try {
+      const chunks: string[][] = [];
+      for (let i = 0; i < missing.length; i += 100) {
+        chunks.push(missing.slice(i, i + 100));
+      }
+
+      const results = await Promise.all(
+        chunks.map(chunk =>
+          supabase
+            .from('prompt_responses')
+            .select('id, response_text')
+            .in('id', chunk)
+        )
+      );
+
+      const newTexts: Record<string, string> = {};
+      results.forEach(({ data }) => {
+        data?.forEach(row => {
+          newTexts[row.id] = row.response_text;
+        });
+      });
+
+      setResponseTexts(prev => ({ ...prev, ...newTexts }));
+      return { ...responseTexts, ...newTexts };
+    } finally {
+      setResponseTextsLoading(false);
+    }
+  }, [responseTexts]);
+
   // Fetch company metrics from materialized views (backend-calculated)
   const fetchCompanyMetrics = useCallback(async () => {
     if (!user || !currentCompany?.id) return;
@@ -358,13 +428,13 @@ export const useDashboardData = () => {
       // This handles cases where data is from previous months
       const [sentimentResult, relevanceResult] = await Promise.all([
         supabase
-          .from('company_sentiment_scores')
+          .from('company_sentiment_scores_mv')
           .select('*')
           .eq('company_id', currentCompany.id)
           .order('response_month', { ascending: false })
           .limit(100), // Get all months, limit to prevent huge queries
         supabase
-          .from('company_relevance_scores')
+          .from('company_relevance_scores_mv')
           .select('*')
           .eq('company_id', currentCompany.id)
           .order('response_month', { ascending: false })
@@ -394,8 +464,8 @@ export const useDashboardData = () => {
           totalWeight: 0
         });
 
-        const sentimentRatio = (aggregated.positiveThemes + aggregated.negativeThemes) > 0
-          ? aggregated.positiveThemes / (aggregated.positiveThemes + aggregated.negativeThemes)
+        const sentimentRatio = aggregated.totalThemes > 0
+          ? aggregated.positiveThemes / aggregated.totalThemes
           : 0;
         
         const avgSentimentScore = aggregated.totalWeight > 0
@@ -465,6 +535,57 @@ export const useDashboardData = () => {
       setCompanyRelevanceMetrics(null);
     } finally {
       setCompanyMetricsLoading(false);
+    }
+  }, [user, currentCompany?.id]);
+
+  const fetchMVData = useCallback(async () => {
+    if (!user || !currentCompany?.id) return;
+
+    try {
+      const [sourcesResult, competitorsResult, llmResult] = await Promise.all([
+        supabase
+          .from('company_top_sources')
+          .select('domain, citation_count')
+          .eq('company_id', currentCompany.id)
+          .order('citation_count', { ascending: false })
+          .limit(30),
+        supabase
+          .from('company_competitors')
+          .select('competitor_name, mention_count')
+          .eq('company_id', currentCompany.id)
+          .order('mention_count', { ascending: false })
+          .limit(30),
+        supabase
+          .from('company_llm_rankings')
+          .select('ai_model, mentions')
+          .eq('company_id', currentCompany.id)
+          .order('mentions', { ascending: false }),
+      ]);
+
+      if (sourcesResult.data) {
+        setMvTopCitations(
+          sourcesResult.data.map(row => ({ domain: row.domain, count: row.citation_count }))
+        );
+      }
+
+      if (competitorsResult.data) {
+        setMvTopCompetitors(
+          competitorsResult.data.map(row => ({ company: row.competitor_name, count: row.mention_count }))
+        );
+      }
+
+      if (llmResult.data) {
+        setMvLlmRankings(
+          llmResult.data.map(row => ({
+            model: row.ai_model,
+            displayName: getLLMDisplayName(row.ai_model),
+            mentions: row.mentions,
+            logoUrl: getLLMLogo(row.ai_model),
+          }))
+        );
+      }
+    } catch (err) {
+      console.warn('[fetchMVData] error — will fall back to frontend calculation:', err);
     }
   }, [user, currentCompany?.id]);
 
@@ -583,7 +704,7 @@ export const useDashboardData = () => {
     } finally {
       setRecencyDataLoading(false);
     }
-  }, [user, responses]);
+  }, [user, responses]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchAIThemes = useCallback(async () => {
     if (!user || !currentCompany?.id) {
@@ -655,17 +776,16 @@ export const useDashboardData = () => {
     
     // Calculate sentiment for each response ID once
     themesByResponseId.forEach((responseThemes, responseId) => {
-      const positiveThemes = responseThemes.filter(theme => theme.sentiment_score > 0.1).length;
-      const negativeThemes = responseThemes.filter(theme => theme.sentiment_score < -0.1).length;
-      const totalThemes = positiveThemes + negativeThemes;
+      const totalThemes = responseThemes.length;
       
       if (totalThemes === 0) {
-        // All themes are neutral
         cache.set(responseId, { sentiment_score: 0, sentiment_label: 'neutral' });
         return;
       }
       
-      // Sentiment score is the ratio of positive themes (0-1 scale)
+      const positiveThemes = responseThemes.filter(theme => theme.sentiment === 'positive').length;
+      
+      // Sentiment score: positive themes / total themes (0-1 scale)
       const sentimentRatio = positiveThemes / totalThemes;
       const sentimentLabel = sentimentRatio > 0.6 ? 'positive' : sentimentRatio < 0.4 ? 'negative' : 'neutral';
       
@@ -696,6 +816,16 @@ export const useDashboardData = () => {
       sentiment_label: 'neutral'
     };
   }, [sentimentCacheState]);
+
+  const aiThemeByResponseId = useMemo(() => {
+    const map = new Map<string, any>();
+    aiThemes.forEach(theme => {
+      if (!map.has(theme.response_id)) {
+        map.set(theme.response_id, theme);
+      }
+    });
+    return map;
+  }, [aiThemes]);
 
   const fetchCompanyName = useCallback(async () => {
     if (!currentCompany) {
@@ -904,33 +1034,10 @@ export const useDashboardData = () => {
   // Data freshness is handled on the backend (materialized views / cron jobs).
   // No automatic frontend polling — users can manually refresh via the UI button.
 
-  // Polling effect: only set up polling when loading is true and only one interval at a time
-  useEffect(() => {
-    if (!user?.id || !loading || !isOnline) {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-      return;
-    }
-    if (pollingRef.current) return; // Already polling
-    
-    // Use debounced polling to prevent overwhelming the server
-    pollingRef.current = setInterval(() => {
-      // Only poll if tab is still visible
-      if (!document.hidden) {
-        // Force refetch instead of calling function directly
-        setShouldRefetch(true);
-      }
-    }, 3000); // Increased interval from 2s to 3s
-    
-    return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-    };
-  }, [user?.id, loading, isOnline]); // Only depend on IDs and primitive values, not the function
+  // Data freshness is managed by backend materialized views and cron jobs.
+  // Users can trigger manual refresh via the UI button (setShouldRefetch).
+  // The previous 3-second polling loop was re-triggering full data fetches during
+  // initial load, causing cascading state updates and 15+ redundant network requests.
 
   // Add refs to track initial loading state
   const hasInitiallyLoadedRef = useRef(false);
@@ -958,6 +1065,7 @@ export const useDashboardData = () => {
 
       // Clear all data immediately when switching companies
       setResponses([]);
+      setResponseTexts({});
       setAiThemes([]);
       setSearchResults([]);
       setSearchTermsData([]);
@@ -965,6 +1073,9 @@ export const useDashboardData = () => {
       setTalentXProPrompts([]);
       setRecencyData([]);
       setLastUpdated(undefined);
+      setMvTopCitations([]);
+      setMvTopCompetitors([]);
+      setMvLlmRankings([]);
 
       // Clear search results cache when switching companies
       searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
@@ -1012,8 +1123,9 @@ export const useDashboardData = () => {
         // Always fetch fresh data (in background if cache was used)
         setCompanyName(currentCompany.name || '');
         Promise.all([
-          fetchResponses(),
+          fetchMVData(),
           fetchCompanyMetrics(),
+          fetchResponses(),
           // On explicit refresh, also refetch AI themes and clear search cache
           ...(isExplicitRefresh ? [fetchAIThemes()] : []),
         ]);
@@ -1022,14 +1134,14 @@ export const useDashboardData = () => {
           if (isExplicitRefresh) {
             searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
           }
-          fetchSearchResults();
         }
       }
     } else {
       // Reset when user/company becomes null
       fetchedCompanyUserKeyRef.current = null;
     }
-  }, [user?.id, currentCompany?.id, isPro, shouldRefetch, fetchResponses, fetchCompanyName, fetchTalentXProData, fetchSearchResults, fetchCompanyMetrics, fetchAIThemes]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, currentCompany?.id, isPro, shouldRefetch]);
 
   // Clear switching flag when data is actually loaded
   useEffect(() => {
@@ -1068,15 +1180,11 @@ export const useDashboardData = () => {
     if (previousResponseIdsRef.current !== responseIdsHash) {
       previousResponseIdsRef.current = responseIdsHash;
       
-      // Only fetch if we don't have cached data or if cache is stale
-      // Fetch immediately - don't wait for backend metrics
-      // This ensures recency is loading while backend metrics query runs, so relevance appears faster
-      if (!recencyDataCacheRef.current || recencyDataCacheRef.current.responseIdsHash !== responseIdsHash) {
-        // Always fetch immediately - don't wait for backend metrics
-        // If backend metrics exist, we'll use them. If not, recency is already loading.
-        fetchRecencyData();
-      } else {
-        // Use cached data
+      // Recency data is now provided by the company_relevance_scores materialized view
+      // (fetched via fetchCompanyMetrics). The old fetchRecencyData fired 15+ parallel
+      // requests to url_recency_cache on every load — disabled to eliminate main-thread
+      // contention and reduce INP.
+      if (recencyDataCacheRef.current && recencyDataCacheRef.current.responseIdsHash === responseIdsHash) {
         setRecencyData(recencyDataCacheRef.current.data);
       }
     }
@@ -1130,7 +1238,7 @@ export const useDashboardData = () => {
   }, [user?.id, isPro, currentCompany?.id]); // Only depend on IDs, not the function
 
   const refreshData = useCallback(async () => {
-    // Force refetch by setting the state
+    searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
     setShouldRefetch(true);
   }, []);
 
@@ -1154,6 +1262,18 @@ export const useDashboardData = () => {
     }
     return [];
   }, []);
+
+  const parsedCitationsMap = useMemo(() => {
+    const map = new Map<string, Citation[]>();
+    responses.forEach(r => {
+      map.set(r.id, parseCitations(r.citations));
+    });
+    return map;
+  }, [responses, parseCitations]);
+
+  const getCitations = useCallback((responseId: string): Citation[] => {
+    return parsedCitationsMap.get(responseId) || [];
+  }, [parsedCitationsMap]);
 
   // Fetch TalentX Pro prompts if user is Pro
   useEffect(() => {
@@ -1181,7 +1301,7 @@ export const useDashboardData = () => {
             // Find matching TalentX responses to get visibility scores
             const matchingResponses = responses.filter(r => 
               r.confirmed_prompts?.prompt_type === prompt.prompt_type &&
-              r.talentx_analysis?.some((analysis: any) => analysis.attributeId === prompt.talentx_attribute_id)
+              (r.confirmed_prompts as any)?.talentx_attribute_id === prompt.talentx_attribute_id
             );
             
             // Calculate visibility from company_mentioned boolean
@@ -1300,15 +1420,8 @@ export const useDashboardData = () => {
             const mentions = response.detected_competitors.split(',').map(m => m.trim()).filter(m => m.length > 0);
             existing.detectedCompetitors = mentions.join(',');
           }
-          // Calculate competitive position based on mention order
-          if (response.mention_ranking) {
-            existing.competitivePosition = existing.competitivePosition 
-              ? (existing.competitivePosition + response.mention_ranking) / 2 
-              : response.mention_ranking;
-          }
         }
       } else {
-        const talentXAnalysis = response.talentx_analysis?.[0];
         const promptCategoryValue = response.confirmed_prompts?.prompt_category || 'General';
         const promptThemeValue = response.confirmed_prompts?.prompt_theme || 'General';
         acc.push({
@@ -1321,16 +1434,15 @@ export const useDashboardData = () => {
           promptCategory: promptCategoryValue,
           promptTheme: promptThemeValue,
           responses: 1,
-          avgSentiment: aiSentiment.sentiment_score, // Use AI-based sentiment
-          sentimentLabel: aiSentiment.sentiment_label, // Use AI-based sentiment label
-          mentionRanking: response.mention_ranking || undefined,
-          competitivePosition: response.mention_ranking || undefined,
+          avgSentiment: aiSentiment.sentiment_score,
+          sentimentLabel: aiSentiment.sentiment_label,
+          mentionRanking: undefined,
+          competitivePosition: undefined,
           detectedCompetitors: response.detected_competitors || undefined,
           averageVisibility: (response.confirmed_prompts?.prompt_type === 'discovery' || response.confirmed_prompts?.prompt_type === 'talentx_discovery') ? (response.company_mentioned ? 100 : 0) : undefined,
           visibilityScores: visibilityScore !== undefined ? [visibilityScore] : [],
-          // Add TalentX-specific fields if it's a TalentX response
           isTalentXPrompt: isTalentXResponse,
-          talentXAttributeId: talentXAnalysis?.attributeId,
+          talentXAttributeId: (response.confirmed_prompts as any)?.talentx_attribute_id,
           talentXPromptType: response.confirmed_prompts?.prompt_type?.replace('talentx_', '')
         });
       }
@@ -1480,14 +1592,13 @@ export const useDashboardData = () => {
         if (relevantResponses.length > 0) {
           const companyResponseIds = new Set(relevantResponses.map(r => r.id));
           const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
-          const positiveThemes = companyThemes.filter(theme => theme.sentiment_score > 0.1).length;
-          const negativeThemes = companyThemes.filter(theme => theme.sentiment_score < -0.1).length;
-          const totalNonNeutralThemes = positiveThemes + negativeThemes;
+          const positiveThemes = companyThemes.filter(theme => theme.sentiment === 'positive').length;
+          const totalThemes = companyThemes.length;
           
-          if (totalNonNeutralThemes > 0) {
+          if (totalThemes > 0) {
             // Use frontend calculation if backend returned 0 but themes exist
             // This handles cases where materialized view is stale
-            averageSentiment = positiveThemes / totalNonNeutralThemes;
+            averageSentiment = positiveThemes / totalThemes;
           }
         }
       }
@@ -1522,13 +1633,12 @@ export const useDashboardData = () => {
         const companyResponseIds = new Set(relevantResponses.map(r => r.id));
         const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
         
-        const positiveThemes = companyThemes.filter(theme => theme.sentiment_score > 0.1).length;
-        const negativeThemes = companyThemes.filter(theme => theme.sentiment_score < -0.1).length;
-        const totalNonNeutralThemes = positiveThemes + negativeThemes;
+        const positiveThemes = companyThemes.filter(theme => theme.sentiment === 'positive').length;
+        const totalThemes = companyThemes.length;
         
-        // Calculate overall positive ratio (0-1 scale)
-        averageSentiment = totalNonNeutralThemes > 0 
-          ? positiveThemes / totalNonNeutralThemes 
+        // Calculate overall positive ratio (0-1 scale): positive themes / total themes
+        averageSentiment = totalThemes > 0 
+          ? positiveThemes / totalThemes 
           : 0;
 
         // Calculate sentiment counts based on AI themes (ratio-based)
@@ -1621,8 +1731,8 @@ export const useDashboardData = () => {
         };
 
         // Calculate citations trend
-        const currentCitationsTotal = currentResponses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
-        const previousCitationsTotal = previousResponses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
+        const currentCitationsTotal = currentResponses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
+        const previousCitationsTotal = previousResponses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
         const previousCitationsAvg = previousCitationsTotal / numPreviousDays;
         const citationsChange = currentCitationsTotal - previousCitationsAvg;
         citationsTrendComparison = {
@@ -1632,9 +1742,9 @@ export const useDashboardData = () => {
       }
     }
 
-    const totalCitations = responses.reduce((sum, r) => sum + parseCitations(r.citations).length, 0);
+    const totalCitations = responses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
     const uniqueDomains = new Set(
-      responses.flatMap(r => parseCitations(r.citations).map((c: Citation) => c.domain).filter(Boolean))
+      responses.flatMap(r => getCitations(r.id).map((c: Citation) => c.domain).filter(Boolean))
     ).size;
 
     // Calculate average visibility as the percentage of responses where company_mentioned is TRUE
@@ -1643,61 +1753,33 @@ export const useDashboardData = () => {
       ? (mentionedCount / responses.length) * 100
       : 0;
 
-    // PREFER backend-calculated relevance if available, fallback to frontend calculation
-    let averageRelevance = 0;
-    
-    // Calculate validRecencyScores for debugging purposes (always available)
-    const validRecencyScores = recencyData.filter(item => 
-      item.recency_score !== null && item.recency_score !== undefined
-    );
-    
-      if (companyRelevanceMetrics && companyRelevanceMetrics.relevance_score !== null) {
-        // Use backend-calculated relevance score
-        averageRelevance = companyRelevanceMetrics.relevance_score;
-      } else {
-      // Fallback to frontend calculation
-      if (recencyDataLoading) {
-        // Still loading - return 0 temporarily, will update when recency data loads
-        averageRelevance = 0;
-      } else if (validRecencyScores.length > 0) {
-        averageRelevance = validRecencyScores.reduce((sum, item) => sum + item.recency_score, 0) / validRecencyScores.length;
-      } else {
-        averageRelevance = 0;
-      }
-    }
+    const averageRelevance = companyRelevanceMetrics?.relevance_score ?? 0;
 
     // Calculate overall perception score
     const calculatePerceptionScore = () => {
-      if (responses.length === 0) return { score: 0, label: 'No Data' };
+      if (responses.length === 0) return { score: 0, label: 'No Data', sentimentScore: 0, visibilityScore: 0, relevanceScore: 0 };
 
-      // Convert sentiment ratio (0-1) to 0-100 scale and round
-      const roundedSentiment = Math.round(Math.max(0, Math.min(100, averageSentiment * 100)));
-      
-      // Visibility is already 0-100 scale, round it
-      const roundedVisibility = Math.round(averageVisibility);
-      
-      // Relevance is already 0-100 scale, round it
-      const roundedRelevance = Math.round(averageRelevance);
+      const sentimentScore = Math.round(Math.max(0, Math.min(100, averageSentiment * 100)));
+      const visibilityScore = Math.round(averageVisibility);
+      const relevanceScore = Math.round(averageRelevance);
 
-      // Weighted formula: 50% sentiment + 30% visibility + 20% relevance (excluding competitive)
-      // Use rounded values so EPS matches what's shown in breakdown
+      // Weighted formula: 50% sentiment + 30% visibility + 20% relevance
       const perceptionScore = Math.round(
-        (roundedSentiment * 0.5) + 
-        (roundedVisibility * 0.3) + 
-        (roundedRelevance * 0.2)
+        (sentimentScore * 0.5) + 
+        (visibilityScore * 0.3) + 
+        (relevanceScore * 0.2)
       );
 
-      // Determine label based on score
       let perceptionLabel = 'Poor';
       if (perceptionScore >= 80) perceptionLabel = 'Excellent';
       else if (perceptionScore >= 65) perceptionLabel = 'Good';
       else if (perceptionScore >= 50) perceptionLabel = 'Fair';
       else if (perceptionScore >= 30) perceptionLabel = 'Poor';
 
-      return { score: perceptionScore, label: perceptionLabel };
+      return { score: perceptionScore, label: perceptionLabel, sentimentScore, visibilityScore, relevanceScore };
     };
 
-    const { score: perceptionScore, label: perceptionLabel } = calculatePerceptionScore();
+    const { score: perceptionScore, label: perceptionLabel, sentimentScore, visibilityScore, relevanceScore } = calculatePerceptionScore();
 
     const metricsResult = {
       averageSentiment,
@@ -1714,11 +1796,14 @@ export const useDashboardData = () => {
       neutralCount,
       negativeCount,
       perceptionScore,
-      perceptionLabel
+      perceptionLabel,
+      sentimentScore,
+      visibilityScore,
+      relevanceScore
     };
     
     return metricsResult;
-  }, [responses, promptsData, recencyData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companyRelevanceMetrics]);
+  }, [responses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companyRelevanceMetrics, getCitations]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
     const trend = responses.reduce((acc: SentimentTrendData[], response) => {
@@ -1747,78 +1832,53 @@ export const useDashboardData = () => {
   }, [responses, calculateAIBasedSentiment]);
 
   const topCitations: CitationCount[] = useMemo(() => {
-    // If no current company, return empty array
-    if (!currentCompany?.id) {
-      return [];
-    }
+    if (!currentCompany?.id || isSwitchingCompany) return [];
 
-    // If we're switching companies, return empty array to prevent stale data
-    if (isSwitchingCompany) {
-      return [];
-    }
+    // Start with MV data (AI citations, pre-aggregated on the backend)
+    const combined: Record<string, number> = {};
+    mvTopCitations.forEach(c => {
+      combined[c.domain] = (combined[c.domain] || 0) + c.count;
+    });
 
-    // CRITICAL: Filter responses and search results by current company ID
-    // This ensures we only count citations from the currently selected company
-    const currentCompanyResponses = responses.filter(r => r.company_id === currentCompany.id);
+    // Merge in search result citations (already cached, lightweight)
     const currentCompanySearchResults = searchResults.filter(r => r.company_id === currentCompany.id);
-
-
-    // Use enhanceCitations to get EnhancedCitation objects from filtered responses
-    const allCitations = currentCompanyResponses.flatMap(r => enhanceCitations(parseCitations(r.citations)));
-    // Only keep citations that are real websites
-    const websiteCitations = allCitations.filter(citation => citation.type === 'website' && citation.url);
-
-    const citationCounts = websiteCitations.reduce((acc: any, citation: EnhancedCitation) => {
-      const domain = citation.domain;
-      if (domain) {
-        acc[domain] = (acc[domain] || 0) + 1;
-      }
-      return acc;
-    }, {});
-
-    // Add search result domains to citation counts (from filtered search results)
     currentCompanySearchResults.forEach(result => {
       const domain = result.domain;
       if (domain) {
-        // Count each search result as a citation (mentionCount represents how many search terms found this domain)
-        const searchCount = result.mentionCount || 1;
-        citationCounts[domain] = (citationCounts[domain] || 0) + searchCount;
+        combined[domain] = (combined[domain] || 0) + (result.mentionCount || 1);
       }
     });
 
-    const finalCitations = Object.entries(citationCounts)
-      .map(([domain, count]) => ({ domain, count: count as number }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 20);
-    
-    return finalCitations;
-  }, [responses, searchResults, currentCompany?.name, currentCompany?.id, isSwitchingCompany]);
+    // Fallback: if MV hasn't populated yet, compute from responses (same logic as before)
+    if (mvTopCitations.length === 0 && responses.length > 0) {
+      const currentCompanyResponses = responses.filter(r => r.company_id === currentCompany.id);
+      const allCitations = currentCompanyResponses.flatMap(r => enhanceCitations(getCitations(r.id)));
+      const websiteCitations = allCitations.filter(citation => citation.type === 'website' && citation.url);
+      websiteCitations.forEach((citation: EnhancedCitation) => {
+        const domain = citation.domain;
+        if (domain) {
+          combined[domain] = (combined[domain] || 0) + 1;
+        }
+      });
+    }
 
-  const getMostCommonValue = (arr: string[]): string | null => {
-    if (!arr.length) return null;
-    const counts: Record<string, number> = arr.reduce((acc, val) => {
-      acc[val] = (acc[val] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
-  };
+    return Object.entries(combined)
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 30);
+  }, [mvTopCitations, searchResults, responses, currentCompany?.id, isSwitchingCompany, getCitations]);
 
   const preparePromptData = (prompts: any[], responses: any[]): PromptData[] => {
     return prompts.map(prompt => {
       const promptResponses = responses.filter(r => r.confirmed_prompt_id === prompt.id);
       const totalResponses = promptResponses.length;
 
-      // Calculate average sentiment
-      const totalSentiment = promptResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0);
-      const avgSentiment = totalResponses > 0 ? totalSentiment / totalResponses : 0;
-      
-      // Get the most common sentiment label
-      const sentimentLabels = promptResponses
-        .map(r => r.sentiment_label)
-        .filter(Boolean);
-      const sentimentLabel = getMostCommonValue(sentimentLabels) || 'neutral';
-      
-      // Calculate average visibility as the percentage of responses where company_mentioned is TRUE
+      const sentiments = promptResponses.map(r => calculateAIBasedSentiment(r.id));
+      const avgSentiment = totalResponses > 0
+        ? sentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / totalResponses
+        : 0;
+      const sentimentLabel = avgSentiment > 0.1 ? 'positive' : avgSentiment < -0.1 ? 'negative' : 'neutral';
+
       const mentionedCount = promptResponses.filter(r => r.company_mentioned === true).length;
       let averageVisibility: number | undefined = undefined;
       if (promptResponses.length > 0) {
@@ -1832,8 +1892,8 @@ export const useDashboardData = () => {
         responses: totalResponses,
         avgSentiment,
         sentimentLabel,
-        mentionRanking: promptResponses[0]?.mention_ranking,
-        competitivePosition: promptResponses[0]?.competitive_position,
+        mentionRanking: undefined,
+        competitivePosition: undefined,
         detectedCompetitors: promptResponses[0]?.detected_competitors,
         averageVisibility
       };
@@ -1841,7 +1901,6 @@ export const useDashboardData = () => {
   };
 
   const prepareTalentXPromptData = (responses: any[]): PromptData[] => {
-    // Group TalentX responses by attribute and prompt type
     const talentXGroups: Record<string, any[]> = {};
     
     responses.forEach(response => {
@@ -1856,20 +1915,16 @@ export const useDashboardData = () => {
 
     return Object.entries(talentXGroups).map(([promptText, promptResponses]) => {
       const totalResponses = promptResponses.length;
-      
-      // Calculate average sentiment
-      const totalSentiment = promptResponses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0);
-      const avgSentiment = totalResponses > 0 ? totalSentiment / totalResponses : 0;
-      
-      // Get the most common sentiment label
-      const sentimentLabels = promptResponses
-        .map(r => r.sentiment_label)
-        .filter(Boolean);
-      const sentimentLabel = getMostCommonValue(sentimentLabels) || 'neutral';
-      
-      // Get TalentX-specific data
+
+      const sentiments = promptResponses.map(r => calculateAIBasedSentiment(r.id));
+      const avgSentiment = totalResponses > 0
+        ? sentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / totalResponses
+        : 0;
+      const sentimentLabel = avgSentiment > 0.1 ? 'positive' : avgSentiment < -0.1 ? 'negative' : 'neutral';
+
       const firstResponse = promptResponses[0];
-      const talentXAnalysis = firstResponse.talentx_analysis?.[0];
+      const mentionedCount = promptResponses.filter(r => r.company_mentioned === true).length;
+      const averageVisibility = totalResponses > 0 ? (mentionedCount / totalResponses) * 100 : undefined;
       
       return {
         prompt: promptText,
@@ -1878,79 +1933,75 @@ export const useDashboardData = () => {
         responses: totalResponses,
         avgSentiment,
         sentimentLabel,
-        mentionRanking: firstResponse.mention_ranking,
-        competitivePosition: firstResponse.competitive_position,
+        mentionRanking: undefined,
+        competitivePosition: undefined,
         detectedCompetitors: firstResponse.detected_competitors,
-        averageVisibility: firstResponse.visibility_score,
+        averageVisibility,
         isTalentXPrompt: true,
-        talentXAttributeId: talentXAnalysis?.attributeId,
+        talentXAttributeId: firstResponse.confirmed_prompts?.talentx_attribute_id,
         talentXPromptType: firstResponse.confirmed_prompts.prompt_type.replace('talentx_', '')
       };
     });
   };
 
   const topCompetitors = useMemo(() => {
-    if (!companyName || (!responses.length && !searchResults.length) || loading) {
-      return [];
-    }
-    
-    const competitorCounts: Record<string, number> = {};
-    
-    // Process competitors from AI responses
-    responses.forEach(response => {
-      if (response.detected_competitors) {
-        const validCompetitors = parseCompetitors(response.detected_competitors, companyName);
-        validCompetitors.forEach(competitor => {
-          competitorCounts[competitor] = (competitorCounts[competitor] || 0) + 1;
-        });
-      }
+    if (!companyName || isSwitchingCompany) return [];
+
+    // Start with MV data (AI responses, pre-aggregated on the backend)
+    const combined: Record<string, number> = {};
+    mvTopCompetitors.forEach(c => {
+      combined[c.company] = (combined[c.company] || 0) + c.count;
     });
 
-    // Process competitors from search results
+    // Merge in search result competitors (already cached, lightweight)
     searchResults.forEach(result => {
       if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
         const validCompetitors = parseCompetitors(result.detectedCompetitors, companyName);
         validCompetitors.forEach(competitor => {
-          // Weight search result competitors by mention count (how many search terms found this domain)
           const weight = result.mentionCount || 1;
-          competitorCounts[competitor] = (competitorCounts[competitor] || 0) + weight;
+          combined[competitor] = (combined[competitor] || 0) + weight;
         });
       }
     });
 
-    const result = Object.entries(competitorCounts)
+    // Fallback: if MV hasn't populated yet, compute from responses
+    if (mvTopCompetitors.length === 0 && responses.length > 0 && !loading) {
+      responses.forEach(response => {
+        if (response.detected_competitors) {
+          const validCompetitors = parseCompetitors(response.detected_competitors, companyName);
+          validCompetitors.forEach(competitor => {
+            combined[competitor] = (combined[competitor] || 0) + 1;
+          });
+        }
+      });
+    }
+
+    return Object.entries(combined)
       .map(([company, count]) => ({ company, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 20);
-
-    return result;
-  }, [responses, searchResults, companyName, loading]);
+  }, [mvTopCompetitors, searchResults, responses, companyName, loading, isSwitchingCompany]);
 
   const llmMentionRankings = useMemo(() => {
-    if (!responses.length) return [];
+    // Use MV data if available; fall back to responses when MV hasn't refreshed yet
+    if (mvLlmRankings.length > 0) return mvLlmRankings;
 
-    // Group responses by AI model and count mentions
+    if (!responses.length) return [];
     const modelMentions: Record<string, number> = {};
-    
     responses.forEach(response => {
-      const model = response.ai_model;
       if (response.company_mentioned) {
-        modelMentions[model] = (modelMentions[model] || 0) + 1;
+        modelMentions[response.ai_model] = (modelMentions[response.ai_model] || 0) + 1;
       }
     });
-
-    // Convert to array and sort by mentions descending
-    const rankings: LLMMentionRanking[] = Object.entries(modelMentions)
+    return Object.entries(modelMentions)
       .map(([model, mentions]) => ({
         model,
         displayName: getLLMDisplayName(model),
         mentions,
-        logoUrl: getLLMLogo(model)
+        logoUrl: getLLMLogo(model),
       }))
       .sort((a, b) => b.mentions - a.mentions);
-
-    return rankings;
-  }, [responses]);
+  }, [mvLlmRankings, responses]);
 
   const fixExistingPrompts = useCallback(async () => {
     if (!user) return;
@@ -2002,8 +2053,19 @@ export const useDashboardData = () => {
       const { data, error } = await supabase
         .from('prompt_responses')
         .select(`
-          *,
-          confirmed_prompts (
+          id,
+          confirmed_prompt_id,
+          company_id,
+          ai_model,
+          tested_at,
+          created_at,
+          updated_at,
+          company_mentioned,
+          detected_competitors,
+          citations,
+          for_index,
+          index_period,
+          confirmed_prompts(
             prompt_text,
             prompt_category,
             prompt_type
@@ -2075,6 +2137,7 @@ export const useDashboardData = () => {
     promptsData,
     refreshData,
     parseCitations,
+    getCitations,
     topCompetitors,
     lastUpdated,
     llmMentionRankings,
@@ -2102,6 +2165,10 @@ export const useDashboardData = () => {
     aiThemesLoading, // Loading state for AI themes
     hasMoreResponses, // Whether there are more responses to load
     loadAllHistoricalResponses, // Function to load all historical responses
-    metricsCalculating // Whether metrics are still being calculated (for UX - show all together)
+    metricsCalculating, // Whether metrics are still being calculated (for UX - show all together)
+    fetchMVData, // Refresh materialized-view-backed data (sources, competitors, LLM rankings)
+    responseTexts,
+    responseTextsLoading,
+    fetchResponseTexts,
   };
 };

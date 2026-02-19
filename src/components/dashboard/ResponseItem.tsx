@@ -12,16 +12,12 @@ interface ResponseItemProps {
   response: PromptResponse;
   parseAndEnhanceCitations: (citations: any) => EnhancedCitation[];
   truncateText: (text: string, maxLength?: number) => string;
-  getSentimentColor: (sentimentScore: number | null) => string;
-  getSentimentBgColor: (sentimentScore: number | null) => string;
 }
 
 export const ResponseItem = ({ 
   response, 
   parseAndEnhanceCitations, 
   truncateText, 
-  getSentimentColor, 
-  getSentimentBgColor 
 }: ResponseItemProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -43,14 +39,6 @@ export const ResponseItem = ({
           <Badge variant="outline">
             {response.confirmed_prompts?.prompt_category}
           </Badge>
-          <div className={`px-2 py-1 rounded-full text-xs font-medium ${getSentimentBgColor(response.sentiment_score)}`}>
-            <span className={getSentimentColor(response.sentiment_score)}>
-              {response.sentiment_score ? 
-                `${Math.round(response.sentiment_score * 100)}% ${response.sentiment_label}` :
-                'No sentiment'
-              }
-            </span>
-          </div>
         </div>
         <span className="text-sm text-gray-500">
           {new Date(response.tested_at).toLocaleString()}
@@ -68,12 +56,12 @@ export const ResponseItem = ({
           <div className="flex-1">
             <p className="text-sm text-gray-800 leading-relaxed">
               {isExpanded 
-                ? response.response_text 
-                : truncateText(response.response_text, 200)
+                ? (response.response_text || '') 
+                : truncateText(response.response_text || '', 200)
               }
             </p>
           </div>
-          {response.response_text.length > 200 && (
+          {(response.response_text || '').length > 200 && (
             <Button
               variant="ghost"
               size="sm"

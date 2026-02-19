@@ -55,8 +55,8 @@ SELECT
   negative_themes,
   neutral_themes,
   CASE 
-    WHEN (positive_themes + negative_themes) > 0 
-    THEN positive_themes::NUMERIC / (positive_themes + negative_themes)
+    WHEN total_themes > 0 
+    THEN positive_themes::NUMERIC / total_themes
     ELSE 0 
   END as sentiment_ratio,
   COALESCE(avg_sentiment_score, 0) as avg_sentiment_score,

@@ -166,10 +166,14 @@ export const CompetitorsSummaryCard = ({
       }));
   }, [topCompetitors, companyName, competitorTrends]);
 
+  const totalCompetitorMentions = useMemo(() => {
+    return topCompetitorsFiltered.reduce((sum, c) => sum + c.count, 0);
+  }, [topCompetitorsFiltered]);
+
   const renderCompetitorItem = (competitor: any) => {
-    // Get favicon URL for competitor
     const faviconUrl = getCompetitorFavicon(competitor.displayName);
     const initials = competitor.displayName.charAt(0).toUpperCase();
+    const mentionPercent = totalCompetitorMentions > 0 ? (competitor.count / totalCompetitorMentions) * 100 : 0;
     
     return (
       <div className="flex items-center justify-between py-2 hover:bg-gray-50/50 transition-colors rounded-lg px-2">
@@ -182,7 +186,6 @@ export const CompetitorsSummaryCard = ({
                 alt={`${competitor.displayName} favicon`}
                 className="w-full h-full rounded object-contain"
                 onError={(e) => {
-                  // Fallback to initials if favicon fails to load
                   e.currentTarget.style.display = 'none';
                   const fallback = e.currentTarget.nextElementSibling as HTMLElement;
                   if (fallback) fallback.style.display = 'flex';
@@ -202,10 +205,10 @@ export const CompetitorsSummaryCard = ({
           </span>
         </div>
         
-        {/* Count and trend */}
-        <div className="flex items-center gap-1 min-w-[30px] justify-end">
+        {/* Percentage and trend */}
+        <div className="flex items-center gap-1 min-w-[40px] justify-end">
           <span className="text-xs font-semibold text-gray-900">
-            {competitor.count}
+            {mentionPercent.toFixed(1)}%
           </span>
           {competitor.trendChange !== 0 && (
             <span className={`text-xs font-semibold flex items-center gap-0.5 ${

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { PromptData } from "@/types/dashboard";
 import { ResponseDetailsModal } from "./ResponseDetailsModal";
 import { PromptResponse } from "@/types/dashboard";
@@ -63,6 +63,22 @@ export const PromptsTab = ({
   const existingIndustries = (currentCompany?.industries && currentCompany.industries.length > 0)
     ? currentCompany.industries
     : (currentCompany?.industry ? [currentCompany.industry] : []);
+
+  const existingJobFunctions = useMemo(() => {
+    const functions = new Set<string>();
+    promptsData.forEach(p => {
+      if (p.jobFunctionContext) functions.add(p.jobFunctionContext);
+    });
+    return Array.from(functions).sort((a, b) => a.localeCompare(b));
+  }, [promptsData]);
+
+  const existingLocations = useMemo(() => {
+    const locations = new Set<string>();
+    promptsData.forEach(p => {
+      if (p.locationContext) locations.add(p.locationContext);
+    });
+    return Array.from(locations).sort((a, b) => a.localeCompare(b));
+  }, [promptsData]);
 
   const handlePromptsAdded = () => {
     onRefresh?.();
@@ -131,6 +147,8 @@ export const PromptsTab = ({
           companyId={currentCompany.id}
           companyName={companyName}
           existingIndustries={existingIndustries}
+          existingJobFunctions={existingJobFunctions}
+          existingLocations={existingLocations}
           onPromptsAdded={handlePromptsAdded}
           onRefreshPrompts={onRefreshPrompts}
           isRefreshing={isRefreshing}

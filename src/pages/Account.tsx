@@ -111,14 +111,6 @@ export default function Account() {
 
   // Function to update prompt texts when company or industry changes
   const updatePromptTexts = async (oldCompany: string, newCompany: string, oldIndustry: string, newIndustry: string) => {
-    console.log('Starting prompt text updates...', {
-      oldCompany,
-      newCompany,
-      oldIndustry,
-      newIndustry,
-      userId: user?.id
-    });
-
     try {
       // Get all confirmed prompts for this user
       const { data: prompts, error: promptsError } = await supabase
@@ -132,13 +124,10 @@ export default function Account() {
       }
 
       if (!prompts || prompts.length === 0) {
-        console.log('No confirmed prompts found for this user');
         return;
       }
 
       // Update each prompt text using the utility function
-      console.log(`Found ${prompts.length} confirmed prompts to update`);
-      
       const updatePromises = prompts.map(async (prompt) => {
         const newPromptText = updatePromptText(
           prompt.prompt_text,
@@ -150,15 +139,6 @@ export default function Account() {
 
         // Only update if the text actually changed
         if (isValidPromptUpdate(prompt.prompt_text, newPromptText)) {
-          console.log(`Updating confirmed prompt ${prompt.id}:`, {
-            oldText: prompt.prompt_text.substring(0, 50) + '...',
-            newText: newPromptText.substring(0, 50) + '...',
-            oldCompany,
-            newCompany,
-            oldIndustry,
-            newIndustry
-          });
-
           const { error: updateError } = await supabase
             .from('confirmed_prompts')
             .update({ prompt_text: newPromptText })
@@ -166,11 +146,7 @@ export default function Account() {
 
           if (updateError) {
             console.error(`Error updating confirmed prompt ${prompt.id}:`, updateError);
-          } else {
-            console.log(`Successfully updated confirmed prompt ${prompt.id}`);
           }
-        } else {
-          console.log(`Confirmed prompt ${prompt.id}: No changes needed`);
         }
       });
 
@@ -178,7 +154,6 @@ export default function Account() {
 
       // Also update TalentX Pro prompts if user is Pro
       if (isPro) {
-        console.log('Updating TalentX Pro prompts for Pro user...');
         const { data: talentxPrompts, error: talentxError } = await supabase
           .from('confirmed_prompts')
           .select('id, prompt_text, prompt_category')
@@ -188,8 +163,6 @@ export default function Account() {
         if (talentxError) {
           console.error('Error fetching TalentX prompts:', talentxError);
         } else if (talentxPrompts && talentxPrompts.length > 0) {
-          console.log(`Found ${talentxPrompts.length} TalentX prompts to update`);
-          
           const talentxUpdatePromises = talentxPrompts.map(async (prompt) => {
             const newPromptText = updatePromptText(
               prompt.prompt_text,
@@ -205,14 +178,6 @@ export default function Account() {
             // Only update prompt_text if it actually changed
             if (isValidPromptUpdate(prompt.prompt_text, newPromptText)) {
               updateData.prompt_text = newPromptText;
-              console.log(`Updating TalentX prompt ${prompt.id}:`, {
-                oldText: prompt.prompt_text.substring(0, 50) + '...',
-                newText: newPromptText.substring(0, 50) + '...',
-                oldCompany,
-                newCompany,
-                oldIndustry,
-                newIndustry
-              });
 
               const { error: updateError } = await supabase
                 .from('confirmed_prompts')
@@ -221,17 +186,11 @@ export default function Account() {
 
               if (updateError) {
                 console.error(`Error updating TalentX prompt ${prompt.id}:`, updateError);
-              } else {
-                console.log(`Successfully updated TalentX prompt ${prompt.id}`);
               }
-            } else {
-              console.log(`TalentX prompt ${prompt.id}: No changes needed for prompt text`);
             }
           });
 
           await Promise.all(talentxUpdatePromises);
-        } else {
-          console.log('No TalentX prompts found for this user');
         }
       }
     } catch (error) {

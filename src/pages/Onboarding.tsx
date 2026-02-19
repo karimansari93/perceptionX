@@ -419,14 +419,6 @@ export const Onboarding = () => {
   return (
     <TooltipProvider>
       <div className="min-h-screen bg-[#fbeef3] flex items-center justify-center p-4 relative" onKeyPress={handleKeyPress}>
-        {/* Hide Crisp button on mobile */}
-        <style>{`
-          @media (max-width: 768px) {
-            #crisp-chatbox {
-              display: none !important;
-            }
-          }
-        `}</style>
         {/* Top left logo */}
         <div className="absolute top-6 left-6 z-10">
           <a href="https://perceptionx.ai" target="_blank" rel="noopener noreferrer">

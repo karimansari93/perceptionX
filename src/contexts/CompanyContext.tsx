@@ -83,7 +83,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     // CRITICAL: Wait for auth to be fully loaded before fetching companies
     // This prevents race conditions where user data is fetched before auth context is ready
     if (authLoading) {
-      console.log('🔍 Auth still loading, waiting...');
       return;
     }
 
@@ -103,8 +102,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const isAdmin = isAdminUser(user.email);
       
       if (isAdmin) {
-        console.log('🔍 Admin user detected - fetching all companies');
-        
         // Fetch ALL companies for admin
         const { data: allCompanies, error: allCompaniesError } = await supabase
           .from('companies')
@@ -226,7 +223,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             });
           }
 
-          console.log('🔍 All companies loaded for admin:', companies.length);
           setUserCompanies(companies);
           setUserMemberships(memberships);
 
@@ -235,7 +231,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (!prevCurrent) {
               const defaultCompany = companies.find(c => c.is_default) || companies[0];
               if (defaultCompany) {
-                console.log('🔍 Setting initial current company for admin:', defaultCompany.name);
                 return defaultCompany;
               }
               return null;
@@ -278,8 +273,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         console.error('🔍 Error fetching organization memberships:', orgError);
         throw orgError;
       }
-
-      console.log('🔍 Organization memberships found:', orgMemberships?.length || 0);
 
       if (orgMemberships && orgMemberships.length > 0) {
         // New organization-based approach - fetch companies separately
@@ -413,7 +406,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         }
 
-        console.log('🔍 Companies found through organizations:', companies.length);
         setUserCompanies(companies);
         setUserMemberships(memberships);
 
@@ -423,26 +415,21 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             // No current company, set to default or first
             const defaultCompany = companies.find(c => c.is_default) || companies[0];
             if (defaultCompany) {
-              console.log('🔍 Setting initial current company:', defaultCompany.name);
               return defaultCompany;
             } else {
-              console.log('🔍 No companies found');
               return null;
             }
           } else {
             // Check if current company is still valid
             const stillValid = companies.find(c => c.id === prevCurrent.id);
             if (stillValid) {
-              console.log('🔍 Current company still valid, keeping:', prevCurrent.name);
               return prevCurrent;
             } else {
               // Current company no longer valid, set to default or first
               const defaultCompany = companies.find(c => c.is_default) || companies[0];
               if (defaultCompany) {
-                console.log('🔍 Current company no longer valid, switching to:', defaultCompany.name);
                 return defaultCompany;
               } else {
-                console.log('🔍 No companies found');
                 return null;
               }
             }
@@ -548,7 +535,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
               // No current company, set to default or first
               const defaultCompany = companies.find(c => c.is_default) || companies[0];
               if (defaultCompany) {
-                console.log('🔍 Setting initial current company (fallback):', defaultCompany.name);
                 return defaultCompany;
               }
               return null;
@@ -556,13 +542,11 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
               // Check if current company is still valid
               const stillValid = companies.find(c => c.id === prevCurrent.id);
               if (stillValid) {
-                console.log('🔍 Current company still valid (fallback), keeping:', prevCurrent.name);
                 return prevCurrent;
               } else {
                 // Current company no longer valid, set to default or first
                 const defaultCompany = companies.find(c => c.is_default) || companies[0];
                 if (defaultCompany) {
-                  console.log('🔍 Current company no longer valid (fallback), switching to:', defaultCompany.name);
                   return defaultCompany;
                 }
                 return null;
@@ -571,8 +555,6 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           });
         } else {
           // No companies found - check if user needs to complete onboarding
-          console.log('🔍 No companies found, checking onboarding data...');
-          
           const { data: onboardingData } = await supabase
             .from('user_onboarding')
             .select('organization_name, company_name, industry, company_size, competitors')
@@ -643,14 +625,10 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [fetchUserCompanies, authLoading, user?.id]); // Only depend on user.id, not entire user object
 
   const switchCompany = useCallback(async (companyId: string) => {
-    console.log('🔍 switchCompany called with ID:', companyId);
-    console.log('🔍 Current userCompanies:', userCompanies.map(c => ({ id: c.id, name: c.name })));
-    
     let company = userCompanies.find(c => c.id === companyId);
     
     // If company not found in current list, refresh companies first
     if (!company) {
-      console.log('🔍 Company not found in current list, refreshing companies...');
       await fetchUserCompanies();
       
       // For admins, fetch all companies directly
@@ -787,13 +765,11 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
           
           company = companies.find(c => c.id === companyId);
-          console.log('🔍 After refresh, company found:', !!company);
         }
       }
     }
     
     if (company) {
-      console.log('🔍 Switching to company:', company.id, company.name);
       setCurrentCompany(company);
     } else {
       console.error('🔍 Company not found after refresh:', companyId);

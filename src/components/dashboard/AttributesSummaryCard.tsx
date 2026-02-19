@@ -150,48 +150,51 @@ export const AttributesSummaryCard = ({
       .slice(0, 5); // Top 5 most mentioned
   }, [aiThemes, themeTrends]);
 
+  const volumeThresholds = useMemo(() => {
+    if (mostMentionedThemes.length === 0) return { p20: 0, p40: 0, p60: 0, p80: 0 };
+    const sorted = [...mostMentionedThemes.map(t => t.count)].sort((a, b) => a - b);
+    const percentile = (p: number) => {
+      const idx = Math.max(0, Math.ceil((p / 100) * sorted.length) - 1);
+      return sorted[idx];
+    };
+    return { p20: percentile(20), p40: percentile(40), p60: percentile(60), p80: percentile(80) };
+  }, [mostMentionedThemes]);
+
+  const getVolumeLabel = (count: number) => {
+    if (count > volumeThresholds.p80) return { text: 'Very High', style: 'bg-blue-100 text-blue-700' };
+    if (count > volumeThresholds.p60) return { text: 'High', style: 'bg-sky-50 text-sky-700' };
+    if (count > volumeThresholds.p40) return { text: 'Medium', style: 'bg-amber-50 text-amber-700' };
+    if (count > volumeThresholds.p20) return { text: 'Low', style: 'bg-orange-50 text-orange-700' };
+    return { text: 'Very Low', style: 'bg-red-50 text-red-600' };
+  };
+
   const renderAttributeItem = (attribute: any) => {
     const IconComponent = ATTRIBUTE_ICONS[attribute.id] || Target;
-    
-    // Determine color and variant based on SWOT category
-    const getSWOTStyling = (swotCategory: string) => {
-      switch (swotCategory) {
-        case 'Strength':
-          return { colors: 'text-green-700 bg-green-50 border-green-200' };
-        case 'Weakness':
-          return { colors: 'text-red-700 bg-red-50 border-red-200' };
-        case 'Opportunity':
-          return { colors: 'text-blue-700 bg-blue-50 border-blue-200' };
-        case 'Threat':
-          return { colors: 'text-orange-700 bg-orange-50 border-orange-200' };
-        default:
-          return { colors: 'text-gray-700 bg-gray-50 border-gray-200' };
-      }
-    };
-    
-    const styling = getSWOTStyling(attribute.swotCategory);
-    
+    const total = attribute.positiveCount + attribute.negativeCount + attribute.neutralCount;
+    const sentimentScore = total > 0 ? Math.round((attribute.positiveCount / total) * 100) : 0;
+    const scoreColor = sentimentScore >= 70 ? 'text-green-600' : sentimentScore >= 50 ? 'text-yellow-600' : sentimentScore >= 30 ? 'text-orange-600' : 'text-red-600';
+
+    const volumeLabel = getVolumeLabel(attribute.count);
+
     return (
       <div className="flex items-center justify-between py-2 hover:bg-gray-50/50 transition-colors rounded-lg px-2">
-        {/* Attribute icon and name */}
         <div className="flex items-center space-x-2 min-w-0 flex-1">
           <div className="w-4 h-4 flex-shrink-0 flex items-center justify-center">
-            <IconComponent className={`w-4 h-4 ${styling.colors.split(' ')[0]}`} />
+            <IconComponent className={`w-4 h-4 ${scoreColor}`} />
           </div>
-          <div className="min-w-0 flex items-center space-x-1">
+          <div className="min-w-0 flex items-center space-x-1.5">
             <span className="text-xs font-medium text-gray-900 truncate" title={attribute.name}>
               {attribute.name}
             </span>
-            <Badge className={`text-xs px-1 py-0 h-4 ${styling.colors}`}>
-              {attribute.swotCategory}
-            </Badge>
+            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${volumeLabel.style}`}>
+              {volumeLabel.text}
+            </span>
           </div>
         </div>
         
-        {/* Count and trend */}
-        <div className="flex items-center gap-1 min-w-[30px] justify-end">
-          <span className="text-xs font-semibold text-gray-900">
-            {attribute.count}
+        <div className="flex items-center gap-1.5 min-w-[40px] justify-end">
+          <span className={`text-xs font-semibold ${scoreColor}`}>
+            {sentimentScore}%
           </span>
           {attribute.trendChange !== 0 && (
             <span className={`text-xs font-semibold flex items-center gap-0.5 ${
@@ -199,7 +202,6 @@ export const AttributesSummaryCard = ({
             }`}>
               {attribute.trendChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
               {attribute.trendChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-              <span className="whitespace-nowrap">{Math.abs(attribute.trendChange)}</span>
             </span>
           )}
         </div>

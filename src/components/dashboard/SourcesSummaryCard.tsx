@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CitationCount } from "@/types/dashboard";
 import { FileText, ExternalLink, TrendingUp, TrendingDown } from 'lucide-react';
@@ -7,6 +7,12 @@ import { Favicon } from "@/components/ui/favicon";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { categorizeSourceByMediaType, getMediaTypeInfo } from "@/utils/sourceConfig";
+import { enhanceCitations } from "@/utils/citationUtils";
+
+const normalizeDomain = (domain: string): string => {
+  if (!domain) return '';
+  return domain.trim().toLowerCase().replace(/^www\./, '');
+};
 
 interface SourcesSummaryCardProps {
   topCitations: CitationCount[];
@@ -25,70 +31,86 @@ export const SourcesSummaryCard = ({
 }: SourcesSummaryCardProps) => {
   const navigate = useNavigate();
 
-  // Local parseCitations function
-  const parseCitations = (citations: any): any[] => {
-    if (!citations) return [];
-    if (Array.isArray(citations)) return citations;
-    if (typeof citations === 'string') {
-      try {
-        const parsed = JSON.parse(citations);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  };
-
-  // Helper to format domain to a human-friendly name
   const getSourceDisplayName = (domain: string) => {
-    return domain.replace(/^www\./, ""); // Remove www. if present
+    return domain.replace(/^www\./, "");
   };
 
-  // Helper function to get responses for a source
+  // Compute citations from responses where company was mentioned,
+  // using enhanceCitations + normalizeDomain (consistent with SourcesTab default view)
+  const mentionedCitations = useMemo(() => {
+    const citationCounts: Record<string, number> = {};
+
+    const mentionedResponses = responses.filter(r => r.company_mentioned === true);
+
+    mentionedResponses.forEach(response => {
+      try {
+        const raw = typeof response.citations === 'string'
+          ? JSON.parse(response.citations)
+          : response.citations;
+
+        if (Array.isArray(raw)) {
+          const enhanced = enhanceCitations(raw);
+          enhanced.forEach(citation => {
+            if (citation.type === 'website' && citation.domain) {
+              const normalized = normalizeDomain(citation.domain);
+              if (normalized) {
+                citationCounts[normalized] = (citationCounts[normalized] || 0) + 1;
+              }
+            }
+          });
+        }
+      } catch {
+        // Ignore parsing errors
+      }
+    });
+
+    return Object.entries(citationCounts)
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [responses]);
+
   const getResponsesForSource = (domain: string) => {
+    const normalized = normalizeDomain(domain);
     return responses.filter(response => {
       try {
-        const citations = typeof response.citations === 'string' 
-          ? JSON.parse(response.citations) 
+        const raw = typeof response.citations === 'string'
+          ? JSON.parse(response.citations)
           : response.citations;
-        return Array.isArray(citations) && citations.some((c: any) => c.domain === domain);
+        if (Array.isArray(raw)) {
+          const enhanced = enhanceCitations(raw);
+          return enhanced.some(c =>
+            c.type === 'website' && c.domain && normalizeDomain(c.domain) === normalized
+          );
+        }
+        return false;
       } catch {
         return false;
       }
     });
   };
 
-  // Calculate source trends between latest and previous periods
+  // Calculate source trends between latest and previous periods using normalized domains
   const sourceTrends = useMemo(() => {
     if (perceptionScoreTrend.length < 2) return {};
-    
+
     const latestPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 1];
     const previousPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 2];
-    
-    // Get responses for each period
-    const latestResponses = responses.filter(r => {
-      const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
-      return responseDate === latestPeriod.fullDate;
-    });
-    
-    const previousResponses = responses.filter(r => {
-      const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
-      return responseDate === previousPeriod.fullDate;
-    });
-    
-    // Calculate citation counts for each period
+
     const getCitationCounts = (responseList: any[]) => {
-      const counts: { [key: string]: number } = {};
+      const counts: Record<string, number> = {};
       responseList.forEach(response => {
         try {
-          const citations = typeof response.citations === 'string' 
-            ? JSON.parse(response.citations) 
+          const raw = typeof response.citations === 'string'
+            ? JSON.parse(response.citations)
             : response.citations;
-          if (Array.isArray(citations)) {
-            citations.forEach((c: any) => {
-              if (c.domain) {
-                counts[c.domain] = (counts[c.domain] || 0) + 1;
+          if (Array.isArray(raw)) {
+            const enhanced = enhanceCitations(raw);
+            enhanced.forEach(c => {
+              if (c.type === 'website' && c.domain) {
+                const normalized = normalizeDomain(c.domain);
+                if (normalized) {
+                  counts[normalized] = (counts[normalized] || 0) + 1;
+                }
               }
             });
           }
@@ -98,33 +120,47 @@ export const SourcesSummaryCard = ({
       });
       return counts;
     };
-    
+
+    const mentionedResponses = responses.filter(r => r.company_mentioned === true);
+
+    const latestResponses = mentionedResponses.filter(r => {
+      const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
+      return responseDate === latestPeriod.fullDate;
+    });
+
+    const previousResponses = mentionedResponses.filter(r => {
+      const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
+      return responseDate === previousPeriod.fullDate;
+    });
+
     const latestCounts = getCitationCounts(latestResponses);
     const previousCounts = getCitationCounts(previousResponses);
-    
-    // Calculate changes
-    const trends: { [key: string]: number } = {};
+
+    const trends: Record<string, number> = {};
     Object.keys(latestCounts).forEach(domain => {
-      const latest = latestCounts[domain] || 0;
-      const previous = previousCounts[domain] || 0;
-      trends[domain] = latest - previous;
+      trends[domain] = (latestCounts[domain] || 0) - (previousCounts[domain] || 0);
     });
-    
+
     return trends;
   }, [perceptionScoreTrend, responses]);
 
-  // Get top 5 sources for the summary with trend data
+  // Top 5 sources from mentioned-only citations (consistent with SourcesTab default)
   const topSources = useMemo(() => {
-    return topCitations.slice(0, 5).map(citation => ({
+    return mentionedCitations.slice(0, 5).map(citation => ({
       ...citation,
       displayName: getSourceDisplayName(citation.domain),
       mediaType: categorizeSourceByMediaType(citation.domain, getResponsesForSource(citation.domain), companyName),
       trendChange: sourceTrends[citation.domain] || 0
     }));
-  }, [topCitations, responses, companyName, sourceTrends]);
+  }, [mentionedCitations, responses, companyName, sourceTrends]);
+
+  const totalSourceMentions = useMemo(() => {
+    return topSources.reduce((sum, s) => sum + s.count, 0);
+  }, [topSources]);
 
   const renderSourceItem = (source: any) => {
     const mediaTypeInfo = getMediaTypeInfo(source.mediaType);
+    const mentionPercent = totalSourceMentions > 0 ? (source.count / totalSourceMentions) * 100 : 0;
     
     return (
       <div className="flex items-center justify-between py-2 hover:bg-gray-50/50 transition-colors rounded-lg px-2">
@@ -141,10 +177,10 @@ export const SourcesSummaryCard = ({
           </div>
         </div>
         
-        {/* Count and trend */}
-        <div className="flex items-center gap-1 min-w-[30px] justify-end">
+        {/* Percentage and trend */}
+        <div className="flex items-center gap-1 min-w-[40px] justify-end">
           <span className="text-xs font-semibold text-gray-900">
-            {source.count}
+            {mentionPercent.toFixed(1)}%
           </span>
           {source.trendChange !== 0 && (
             <span className={`text-xs font-semibold flex items-center gap-0.5 ${

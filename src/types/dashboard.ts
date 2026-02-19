@@ -5,11 +5,10 @@ export interface PromptResponse {
   confirmed_prompt_id: string;
   company_id: string;
   ai_model: string;
-  response_text: string;
+  response_text?: string;
   citations: Json | null;
   tested_at: string;
   company_mentioned: boolean | null;
-  mention_ranking: number | null;
   detected_competitors: string | null;
   confirmed_prompts: {
     prompt_text: string;
@@ -23,7 +22,6 @@ export interface PromptResponse {
   first_mention_position?: number;
   total_words?: number;
 
-  talentx_analysis?: any[];
   talentx_scores?: {
     overall_score: number;
     top_attributes: string[];
@@ -105,6 +103,9 @@ export interface DashboardMetrics {
   negativeCount: number;
   perceptionScore: number;
   perceptionLabel: string;
+  sentimentScore: number;
+  visibilityScore: number;
+  relevanceScore: number;
 }
 
 export interface VisibilityMetrics {

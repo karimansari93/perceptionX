@@ -15,9 +15,12 @@ interface ResponsesTabProps {
   responses: any[];
   parseCitations: (citations: any) => any[];
   companyName?: string;
+  responseTexts?: Record<string, string>;
+  responseTextsLoading?: boolean;
+  fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
 }
 
-export const ResponsesTab = ({ responses, companyName = 'your company' }: ResponsesTabProps) => {
+export const ResponsesTab = ({ responses, companyName = 'your company', responseTexts = {}, responseTextsLoading = false, fetchResponseTexts }: ResponsesTabProps) => {
   const { isPro } = useSubscription();
   const [expandedRows, setExpandedRows] = useState<{ [key: string]: boolean }>({});
   // Filter and modal states - persisted
@@ -130,7 +133,7 @@ export const ResponsesTab = ({ responses, companyName = 'your company' }: Respon
                   {/* Response text */}
                   <div className="mb-3">
                     <p className="text-sm text-gray-900 leading-relaxed">
-                      {truncateText(response.response_text, 200)}
+                      {truncateText(responseTexts[response.id] || response.response_text || '', 200)}
                     </p>
                   </div>
                   
@@ -261,7 +264,7 @@ export const ResponsesTab = ({ responses, companyName = 'your company' }: Respon
                       >
                         <TableCell className="max-w-xs">
                           <div className="truncate whitespace-nowrap max-w-[300px] text-[#13274F]">
-                            {response.response_text}
+                            {responseTexts[response.id] || response.response_text || ''}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -372,6 +375,8 @@ export const ResponsesTab = ({ responses, companyName = 'your company' }: Respon
           promptText={selectedResponse.confirmed_prompts?.prompt_text || ''}
           responses={[selectedResponse]}
           companyName={companyName}
+          responseTexts={responseTexts}
+          fetchResponseTexts={fetchResponseTexts}
         />
       )}
     </div>

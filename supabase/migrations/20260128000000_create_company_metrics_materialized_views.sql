@@ -58,10 +58,10 @@ SELECT
   negative_themes,
   neutral_themes,
   CASE 
-    WHEN (positive_themes + negative_themes) > 0 
-    THEN positive_themes::NUMERIC / (positive_themes + negative_themes)
+    WHEN total_themes > 0 
+    THEN positive_themes::NUMERIC / total_themes
     ELSE 0 
-  END as sentiment_ratio, -- 0-1 scale (positive themes / total non-neutral themes)
+  END as sentiment_ratio, -- 0-1 scale (positive themes / total themes)
   COALESCE(avg_sentiment_score, 0) as avg_sentiment_score, -- -1 to 1 scale
   NOW() as calculated_at
 FROM ai_themes_aggregated

@@ -1,16 +1,17 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useTransition, useDeferredValue, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import ReactMarkdown from 'react-markdown';
+import { Sparkles, Loader2, CheckCircle2 } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { extractSourceUrl } from "@/utils/citationUtils";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
 import LLMLogo from "@/components/LLMLogo";
 import { getLLMDisplayName } from "@/config/llmLogos";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useSubscription } from "@/hooks/useSubscription";
 import { usePersistedState } from "@/hooks/usePersistedState";
 
 interface TimeBasedData {
@@ -26,10 +27,11 @@ interface CompetitorsTabProps {
   responses: any[];
   companyName: string;
   searchResults?: any[];
+  responseTexts?: Record<string, string>;
+  fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
 }
 
-export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchResults = [] }: CompetitorsTabProps) => {
-  const { isPro } = useSubscription();
+export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, searchResults = [], responseTexts = {}, fetchResponseTexts }: CompetitorsTabProps) => {
   // Modal states - persisted
   const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('competitorsTab.selectedCompetitor', null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = usePersistedState<boolean>('competitorsTab.isCompetitorModalOpen', false);
@@ -38,280 +40,56 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
   const [competitorSummary, setCompetitorSummary] = useState<string>("");
   const [loadingCompetitorSummary, setLoadingCompetitorSummary] = useState(false);
   const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
+  const [competitorThinkingStep, setCompetitorThinkingStep] = useState<number>(-1);
+  const [competitorThinkingSteps, setCompetitorThinkingSteps] = useState<string[]>([]);
+  const [competitorSummarySources, setCompetitorSummarySources] = useState<{ domain: string; url: string | null; displayName: string }[]>([]);
+
   const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = usePersistedState<boolean>('competitorsTab.isMentionsDrawerOpen', false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
   const [selectedSource, setSelectedSource] = usePersistedState<{ domain: string; count: number } | null>('competitorsTab.selectedSource', null);
   const [isSourceModalOpen, setIsSourceModalOpen] = usePersistedState<boolean>('competitorsTab.isSourceModalOpen', false);
   const [showAllCompetitorSources, setShowAllCompetitorSources] = useState(false);
-  // Filter states - persisted
-  const [selectedSourceTypeFilter, setSelectedSourceTypeFilter] = usePersistedState<'all' | 'ai-responses' | 'search-results'>('competitorsTab.selectedSourceTypeFilter', 'all');
-  const [selectedPromptCategoryFilter, setSelectedPromptCategoryFilter] = usePersistedState<string>('competitorsTab.selectedPromptCategoryFilter', 'all');
-  const [selectedCompetitorTypeFilter, setSelectedCompetitorTypeFilter] = usePersistedState<'all' | 'direct'>('competitorsTab.selectedCompetitorTypeFilter', 'all');
-  const [selectedIndustryFilter, setSelectedIndustryFilter] = usePersistedState<string>('competitorsTab.selectedIndustryFilter', 'all');
-  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('competitorsTab.selectedJobFunctionFilter', 'all');
-  const [selectedLocationFilter, setSelectedLocationFilter] = usePersistedState<string>('competitorsTab.selectedLocationFilter', 'all');
-  const [forceRender, setForceRender] = useState(0);
+  // Filter state - persisted
+  const [selectedCompetitorTypeFilter, setSelectedCompetitorTypeFilter] = usePersistedState<'all' | 'direct'>('competitorsTab.selectedCompetitorTypeFilter', 'direct');
+  const deferredCompetitorTypeFilter = useDeferredValue(selectedCompetitorTypeFilter);
+  const [, startTransition] = useTransition();
 
-  // Helper to check if a response is from a competitive prompt
-  const isCompetitivePrompt = (response: any): boolean => {
-    return response.confirmed_prompts?.prompt_type === 'competitive';
-  };
-
-  // Helper to check if a competitor is a direct competitor (mentioned only in competitive prompts)
-  const isDirectCompetitor = (competitorName: string): boolean => {
-    return responses.some(response => {
-      // Check if response is from competitive prompt (including talentx_competitive)
-      const isCompetitivePrompt = response.confirmed_prompts?.prompt_type === 'competitive' || 
-                                 response.confirmed_prompts?.prompt_type === 'talentx_competitive';
-      
-      if (!isCompetitivePrompt) {
-        return false;
-      }
-
-      // Check if competitor is mentioned in this response
-      if (response.detected_competitors) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
-        return mentions.some((mention: any) => 
-          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
-        );
-      }
-      return false;
+  const directCompetitorNames = useMemo(() => {
+    const names = new Set<string>();
+    responses.forEach(response => {
+      const isComp = response.confirmed_prompts?.prompt_type === 'competitive' || 
+                     response.confirmed_prompts?.prompt_type === 'talentx_competitive';
+      if (!isComp || !response.detected_competitors) return;
+      response.detected_competitors.split(',').forEach((comp: string) => {
+        const name = comp.trim();
+        if (name) names.add(name.toLowerCase());
+      });
     });
-  };
+    return names;
+  }, [responses]);
 
 
-  // Helper function to check if a competitor comes from search results
-  const isCompetitorFromSearchResults = (competitorName: string) => {
-    return searchResults.some(result => {
-      if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
-        const competitors = result.detectedCompetitors
-          .split(',')
-          .map((comp: string) => comp.trim().toLowerCase());
-        return competitors.includes(competitorName.toLowerCase());
-      }
-      return false;
-    });
-  };
 
-  // Helper function to check if a competitor comes from AI responses
-  const isCompetitorFromAIResponses = (competitorName: string) => {
-    return getFilteredResponses.some(response => {
-      if (response.detected_competitors) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
-        return mentions.some((mention: any) => 
-          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
-        );
-      }
-      return false;
-    });
-  };
-
-  // Helper to get filtered responses based on all filters
+  // Helper to get filtered responses based on competitor type toggle
   const getFilteredResponses = useMemo(() => {
     let filtered = responses;
 
-    // Filter by competitor type
-    if (selectedCompetitorTypeFilter === 'direct') {
+    if (deferredCompetitorTypeFilter === 'direct') {
       filtered = filtered.filter(response => {
-        const isCompetitivePrompt = response.confirmed_prompts?.prompt_type === 'competitive';
-        return isCompetitivePrompt;
-      });
-    }
-
-    // Filter by industry context
-    if (selectedIndustryFilter !== 'all') {
-      filtered = filtered.filter(response => {
-        const industryContext = response.confirmed_prompts?.industry_context?.trim();
-        return industryContext === selectedIndustryFilter;
-      });
-    }
-
-    // Filter by job function context
-    if (selectedJobFunctionFilter !== 'all') {
-      filtered = filtered.filter(response => {
-        const jobFunctionContext = response.confirmed_prompts?.job_function_context?.trim();
-        return jobFunctionContext === selectedJobFunctionFilter;
-      });
-    }
-
-    // Filter by location context
-    if (selectedLocationFilter !== 'all') {
-      filtered = filtered.filter(response => {
-        const locationContext = response.confirmed_prompts?.location_context?.trim();
-        return locationContext === selectedLocationFilter;
+        return response.confirmed_prompts?.prompt_type === 'competitive';
       });
     }
 
     return filtered;
-  }, [responses, selectedCompetitorTypeFilter, selectedIndustryFilter, selectedJobFunctionFilter, selectedLocationFilter]);
+  }, [responses, deferredCompetitorTypeFilter]);
 
-  const handleSourceTypeDropdownChange = (value: string) => {
-    if (value === 'all') {
-      setSelectedSourceTypeFilter('all');
-    } else {
-      setSelectedSourceTypeFilter(value as 'ai-responses' | 'search-results');
-    }
-  };
-
-  const handlePromptCategoryDropdownChange = (value: string) => {
-    setSelectedPromptCategoryFilter(value);
-  };
-
-  const handleCompetitorTypeDropdownChange = (value: string) => {
-    if (value === 'all') {
-      setSelectedCompetitorTypeFilter('all');
-    } else {
-      setSelectedCompetitorTypeFilter(value as 'direct');
-    }
-    setForceRender(prev => prev + 1);
-  };
-
-  const handleIndustryFilterChange = (value: string) => {
-    setSelectedIndustryFilter(value);
-    setForceRender(prev => prev + 1);
-  };
-
-  const handleJobFunctionFilterChange = (value: string) => {
-    setSelectedJobFunctionFilter(value);
-    setForceRender(prev => prev + 1);
-  };
-
-  const handleLocationFilterChange = (value: string) => {
-    setSelectedLocationFilter(value);
-    setForceRender(prev => prev + 1);
-  };
-
-  // Helper function to get unique prompt categories from responses
-  const getUniquePromptCategories = useMemo(() => {
-    const categories = new Set<string>();
-    getFilteredResponses.forEach(response => {
-      if (response.confirmed_prompts?.prompt_category) {
-        categories.add(response.confirmed_prompts.prompt_category);
-      }
-    });
-    return Array.from(categories).sort();
-  }, [getFilteredResponses]);
-
-  // Helper function to get unique industry contexts from responses
-  const getUniqueIndustries = useMemo(() => {
-    const industries = new Set<string>();
-    responses.forEach(response => {
-      const industryContext = response.confirmed_prompts?.industry_context?.trim();
-      if (industryContext) {
-        industries.add(industryContext);
-      }
-    });
-    return Array.from(industries).sort();
-  }, [responses]);
-
-  // Helper function to get unique job function contexts from responses
-  const getUniqueJobFunctions = useMemo(() => {
-    const jobFunctions = new Set<string>();
-    responses.forEach(response => {
-      const jobFunctionContext = response.confirmed_prompts?.job_function_context?.trim();
-      if (jobFunctionContext) {
-        jobFunctions.add(jobFunctionContext);
-      }
-    });
-    return Array.from(jobFunctions).sort();
-  }, [responses]);
-
-  // Helper function to get unique location contexts from responses
-  const getUniqueLocations = useMemo(() => {
-    const locations = new Set<string>();
-    responses.forEach(response => {
-      const locationContext = response.confirmed_prompts?.location_context?.trim();
-      if (locationContext) {
-        locations.add(locationContext);
-      }
-    });
-    return Array.from(locations).sort();
-  }, [responses]);
-
-  // Helper function to check if a competitor comes from a specific industry context
-  const isCompetitorFromIndustry = (competitorName: string, industry: string) => {
-    return responses.some(response => {
-      const industryContext = response.confirmed_prompts?.industry_context?.trim();
-      if (industryContext !== industry) return false;
-      
-      if (response.detected_competitors) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
-        return mentions.some((mention: any) => 
-          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
-        );
-      }
-      return false;
+  const handleCompetitorTypeToggle = (value: 'all' | 'direct') => {
+    startTransition(() => {
+      setSelectedCompetitorTypeFilter(value);
     });
   };
 
-  // Helper function to check if a competitor comes from a specific job function context
-  const isCompetitorFromJobFunction = (competitorName: string, jobFunction: string) => {
-    return responses.some(response => {
-      const jobFunctionContext = response.confirmed_prompts?.job_function_context?.trim();
-      if (jobFunctionContext !== jobFunction) return false;
-      
-      if (response.detected_competitors) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
-        return mentions.some((mention: any) => 
-          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
-        );
-      }
-      return false;
-    });
-  };
 
-  // Helper function to check if a competitor comes from a specific location context
-  const isCompetitorFromLocation = (competitorName: string, location: string) => {
-    return responses.some(response => {
-      const locationContext = response.confirmed_prompts?.location_context?.trim();
-      if (locationContext !== location) return false;
-      
-      if (response.detected_competitors) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
-        return mentions.some((mention: any) => 
-          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
-        );
-      }
-      return false;
-    });
-  };
-
-  // Helper function to check if a competitor comes from a specific prompt category
-  const isCompetitorFromPromptCategory = (competitorName: string, category: string) => {
-    return getFilteredResponses.some(response => {
-      if (response.detected_competitors && response.confirmed_prompts?.prompt_category === category) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
-        return mentions.some((mention: any) => 
-          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
-        );
-      }
-      return false;
-    });
-  };
 
   // Helper to normalize competitor names
   const normalizeCompetitorName = (name: string): string => {
@@ -570,112 +348,40 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
     let result = timeBasedData
       .sort((a, b) => b.current - a.current);
 
-    // Apply direct competitors filter if selected
-    if (selectedCompetitorTypeFilter === 'direct') {
+    if (deferredCompetitorTypeFilter === 'direct') {
       result = result.filter(competitor => 
-        isDirectCompetitor(competitor.name)
+        directCompetitorNames.has(competitor.name.toLowerCase())
       );
     }
 
     return result;
-  }, [groupResponsesByTimePeriod, companyName, selectedCompetitorTypeFilter]);
+  }, [groupResponsesByTimePeriod, companyName, deferredCompetitorTypeFilter, directCompetitorNames]);
 
-  // Calculate all-time competitor data (unfiltered for filter counts)
-  const allTimeCompetitorsUnfiltered = useMemo(() => {
-    // Get competitor counts across all time
+
+  // Calculate all-time competitor data based on filtered responses
+  const allTimeCompetitors = useMemo(() => {
     const competitorCounts: Record<string, number> = {};
     
-    // Count from AI responses (always include for unfiltered count)
-    responses.forEach(response => {
+    // Count from filtered AI responses
+    getFilteredResponses.forEach(response => {
       if (response.detected_competitors) {
         const mentions = response.detected_competitors
           .split(',')
           .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
+          .filter((comp: string) => comp.length > 0);
         
-        mentions.forEach((mention: any) => {
-          if (mention.name) {
-            const name = normalizeCompetitorName(mention.name);
-            if (name && 
-                name.toLowerCase() !== companyName.toLowerCase() &&
-                name.length > 1) {
-              competitorCounts[name] = (competitorCounts[name] || 0) + 1;
-            }
+        mentions.forEach((name: string) => {
+          const normalized = normalizeCompetitorName(name);
+          if (normalized && 
+              normalized.toLowerCase() !== companyName.toLowerCase() &&
+              normalized.length > 1) {
+            competitorCounts[normalized] = (competitorCounts[normalized] || 0) + 1;
           }
         });
       }
     });
 
-    // Count from search results (always include for unfiltered count)
-    searchResults.forEach(result => {
-      if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
-        const competitors = result.detectedCompetitors
-          .split(',')
-          .map((comp: string) => comp.trim());
-        
-        competitors.forEach(competitor => {
-          const name = normalizeCompetitorName(competitor);
-          if (name && 
-              name.toLowerCase() !== companyName.toLowerCase() &&
-              name.length > 1) {
-            competitorCounts[name] = (competitorCounts[name] || 0) + 1;
-          }
-        });
-      }
-    });
-
-    // Convert to array and sort by count descending
-    return Object.entries(competitorCounts)
-      .map(([competitor, count]) => ({
-        name: competitor,
-        count: count,
-        change: 0
-      }))
-      .sort((a, b) => b.count - a.count);
-  }, [responses, companyName, searchResults]);
-
-
-  // Calculate all-time competitor data (filtered by source type for counts only)
-  const allTimeCompetitors = useMemo(() => {
-    // Start with all competitors from unfiltered data
-    const allCompetitors = allTimeCompetitorsUnfiltered;
-    
-    // Recalculate counts based on filtered data
-    const competitorCounts: Record<string, number> = {};
-    
-    // Count from AI responses
-    if (selectedSourceTypeFilter === 'all' || selectedSourceTypeFilter === 'ai-responses') {
-      getFilteredResponses.forEach(response => {
-        if (response.detected_competitors) {
-          // Apply prompt category filter
-          if (selectedPromptCategoryFilter !== 'all' && 
-              response.confirmed_prompts?.prompt_category !== selectedPromptCategoryFilter) {
-            return;
-          }
-          
-          const mentions = response.detected_competitors
-            .split(',')
-            .map((comp: string) => comp.trim())
-            .filter((comp: string) => comp.length > 0)
-            .map((comp: string) => ({ name: comp }));
-          
-          mentions.forEach((mention: any) => {
-            if (mention.name) {
-              const name = normalizeCompetitorName(mention.name);
-              if (name && 
-                  name.toLowerCase() !== companyName.toLowerCase() &&
-                  name.length > 1) {
-                competitorCounts[name] = (competitorCounts[name] || 0) + 1;
-              }
-            }
-          });
-        }
-      });
-    }
-
-    // Count from search results
-    if (selectedSourceTypeFilter === 'all' || selectedSourceTypeFilter === 'search-results') {
+    if (deferredCompetitorTypeFilter === 'all') {
       searchResults.forEach(result => {
         if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
           const competitors = result.detectedCompetitors
@@ -694,18 +400,10 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
       });
     }
 
-    // Map all competitors but update their counts based on the filters
-    // Show all competitors, even those with 0 count from the selected filters
-    return allCompetitors.map(competitor => ({
-      ...competitor,
-      count: competitorCounts[competitor.name] || 0
-    })).sort((a, b) => {
-      // Sort by the filtered count, but put competitors with 0 count at the end
-      if (a.count === 0 && b.count > 0) return 1;
-      if (b.count === 0 && a.count > 0) return -1;
-      return b.count - a.count;
-    });
-  }, [allTimeCompetitorsUnfiltered, getFilteredResponses, companyName, selectedSourceTypeFilter, selectedPromptCategoryFilter, searchResults]);
+    return Object.entries(competitorCounts)
+      .map(([name, count]) => ({ name, count, change: 0 }))
+      .sort((a, b) => b.count - a.count);
+  }, [getFilteredResponses, companyName, deferredCompetitorTypeFilter, searchResults]);
 
   // Merge change data into all-time competitors
   const allTimeCompetitorsWithChanges = useMemo(() => {
@@ -731,45 +429,17 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
       'na', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_'
     ]);
 
-    let filteredCompetitors = allTimeCompetitors
+    const filteredCompetitors = allTimeCompetitors
       .filter(competitor => 
         !excludedCompetitors.has(competitor.name.toLowerCase()) &&
         !excludedWords.has(competitor.name.toLowerCase())
       );
 
-    // Apply direct competitors filter if selected
-    if (selectedCompetitorTypeFilter === 'direct') {
-      filteredCompetitors = filteredCompetitors.filter(competitor => 
-        isDirectCompetitor(competitor.name)
-      );
-    }
-
-    // Filter by job function - only show competitors mentioned in the selected job function
-    if (selectedJobFunctionFilter !== 'all') {
-      filteredCompetitors = filteredCompetitors.filter(competitor => 
-        competitor.count > 0 && isCompetitorFromJobFunction(competitor.name, selectedJobFunctionFilter)
-      );
-    }
-
-    // Filter by industry - only show competitors mentioned in the selected industry
-    if (selectedIndustryFilter !== 'all') {
-      filteredCompetitors = filteredCompetitors.filter(competitor => 
-        competitor.count > 0 && isCompetitorFromIndustry(competitor.name, selectedIndustryFilter)
-      );
-    }
-
-    // Filter by location - only show competitors mentioned in the selected location
-    if (selectedLocationFilter !== 'all') {
-      filteredCompetitors = filteredCompetitors.filter(competitor => 
-        competitor.count > 0 && isCompetitorFromLocation(competitor.name, selectedLocationFilter)
-      );
-    }
-
     return filteredCompetitors.map(competitor => ({
       ...competitor,
       change: changeData.get(competitor.name) || 0
     }));
-  }, [allTimeCompetitors, timeBasedCompetitors, selectedCompetitorTypeFilter, selectedJobFunctionFilter, selectedIndustryFilter, selectedLocationFilter]);
+  }, [allTimeCompetitors, timeBasedCompetitors]);
 
   // Helper to extract snippets for a competitor from all responses
   const getSnippetsForCompetitor = (competitor: string) => {
@@ -810,6 +480,11 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
     setSelectedCompetitor(null);
     setCompetitorSnippets([]);
     setShowAllCompetitorSources(false);
+    setCompetitorSummary("");
+    setCompetitorSummaryError(null);
+    setCompetitorThinkingStep(-1);
+    setCompetitorThinkingSteps([]);
+    setCompetitorSummarySources([]);
   };
 
   const handleSourceClick = (source: { domain: string; count: number }) => {
@@ -869,97 +544,127 @@ export const CompetitorsTab = ({ topCompetitors, responses, companyName, searchR
     return clean;
   }
 
-  // Fetch AI summary for competitor when modal opens
-  useEffect(() => {
-    if (!isCompetitorModalOpen || !selectedCompetitor) return;
+  const fetchCompetitorSummary = async () => {
+    if (!selectedCompetitor) return;
     setCompetitorSummary("");
     setCompetitorSummaryError(null);
     setLoadingCompetitorSummary(true);
+    setCompetitorThinkingStep(0);
+    setCompetitorThinkingSteps([]);
+
     const relevantResponses = getFullResponsesForCompetitor(selectedCompetitor);
     if (relevantResponses.length === 0) {
       setCompetitorSummaryError("No responses found for this competitor.");
       setLoadingCompetitorSummary(false);
+      setCompetitorThinkingStep(-1);
       return;
     }
-    // Build the prompt
-    const prompt = `Analyze ${selectedCompetitor}'s employer brand perception for talent acquisition.
 
-OUTPUT ONLY THE BULLETS BELOW - NO INTRODUCTION, NO EXPLANATION, JUST THE BULLETS:
+    let texts = responseTexts;
+    const missingTextIds = relevantResponses.filter(r => !r.response_text && !texts[r.id]).map(r => r.id);
+    if (missingTextIds.length > 0 && fetchResponseTexts) {
+      texts = await fetchResponseTexts(missingTextIds) || texts;
+    }
 
-• [${selectedCompetitor}'s employer brand strengths - max 15 words]
-
-• [How talent perceives ${selectedCompetitor} - max 15 words]
-
-• [Key employer reputation factors - max 15 words]
-
-• [Notable employer brand characteristics - max 15 words]
-
-Focus on: culture, benefits, career growth, work environment, compensation, employee experience, talent attraction, employer reputation.
-
-CRITICAL: 
-- DO NOT include any introductory text like "Here's an analysis..." or similar
-- OUTPUT ONLY THE BULLET POINTS with a blank line between each bullet
-- Each bullet must be under 15 words and fit on one line
-- Start your response directly with the first bullet point
-- Put each bullet on a NEW LINE separated by a blank line
-- Focus ONLY on ${selectedCompetitor}, do not compare to ${companyName}
-
-Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\n---\n')}`;
-    // Get session and call Gemini endpoint
-    const fetchSummary = async () => {
+    const sourceMap: { domain: string; url: string | null; displayName: string }[] = [];
+    const seenDomains = new Set<string>();
+    relevantResponses.forEach(r => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          setCompetitorSummaryError("Authentication required");
-          setLoadingCompetitorSummary(false);
-          return;
+        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
+        if (Array.isArray(citations)) {
+          citations.forEach((c: any) => {
+            if (c.domain && !seenDomains.has(c.domain)) {
+              seenDomains.add(c.domain);
+              sourceMap.push({
+                domain: c.domain,
+                url: c.url ? extractSourceUrl(c.url) : null,
+                displayName: getSourceDisplayName(c.domain),
+              });
+            }
+          });
         }
-        const res = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-gemini", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${session.access_token}`
-          },
-          body: JSON.stringify({ prompt })
-        });
-        const data = await res.json();
-        if (data.response) {
-          // Strip any introductory text before the first bullet point
-          let cleanedResponse = data.response.trim();
-          const firstBulletIndex = cleanedResponse.search(/^[•\-\*]/m);
-          if (firstBulletIndex > 0) {
-            cleanedResponse = cleanedResponse.substring(firstBulletIndex);
-          }
-          
-          // Ensure each bullet is on its own line
-          // Replace instances where bullets run together (• text • text) with proper line breaks
-          cleanedResponse = cleanedResponse
-            .replace(/([^\n])\s*([•\-\*])\s+/g, '$1\n\n$2 ')  // Add double line break before bullets
-            .trim();
-          
-          setCompetitorSummary(cleanedResponse);
-        } else {
-          setCompetitorSummaryError(data.error || "No summary generated.");
-        }
-      } catch (err) {
-        setCompetitorSummaryError("Failed to fetch summary.");
-      } finally {
-        setLoadingCompetitorSummary(false);
-      }
-    };
-    fetchSummary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCompetitorModalOpen, selectedCompetitor]);
+      } catch { /* skip */ }
+    });
+    setCompetitorSummarySources(sourceMap);
 
-  const renderAllTimeBar = (data: { name: string; count: number; change?: number }, maxCount: number) => {
-    // Calculate the actual percentage width
-    const percentage = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
+    const steps = [
+      `Reading ${relevantResponses.length} responses mentioning ${selectedCompetitor}...`,
+      `Identifying key themes and comparisons...`,
+      `Evaluating sentiment across mentions...`,
+      `Writing competitive analysis...`,
+    ];
+    setCompetitorThinkingSteps(steps);
+
+    const stepTimers: ReturnType<typeof setTimeout>[] = [];
+    for (let i = 1; i < steps.length; i++) {
+      stepTimers.push(setTimeout(() => setCompetitorThinkingStep(i), i * 1800));
+    }
+
+    const sourcesList = sourceMap.map((s, i) => `[${i + 1}] ${s.displayName} (${s.domain})`).join('\n');
+
+    const prompt = `You are an employer brand analyst. Write a concise, insightful summary comparing how ${selectedCompetitor} is positioned relative to ${companyName} in the talent market.
+
+Available sources:
+${sourcesList || 'No sources available'}
+
+Source responses:
+${relevantResponses.map((r) => {
+      let responseSources = '';
+      try {
+        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
+        if (Array.isArray(citations)) {
+          const domains = [...new Set(citations.map((c: any) => c.domain).filter(Boolean))];
+          const indices = domains.map((d: string) => sourceMap.findIndex(s => s.domain === d) + 1).filter((n: number) => n > 0);
+          if (indices.length > 0) responseSources = ` [Sources: ${indices.join(', ')}]`;
+        }
+      } catch { /* skip */ }
+      return `${(texts[r.id] || r.response_text || '').slice(0, 800)}${responseSources}`;
+    }).join('\n---\n')}
+
+Write 2-3 short paragraphs (no bullet points, no headings). Cover: (1) what stands out about ${selectedCompetitor} and how they differ from ${companyName}, (2) areas where ${selectedCompetitor} is stronger or weaker, (3) what this means for ${companyName}'s talent strategy. Be direct and specific. Do not start with "${selectedCompetitor} is..."
+
+CRITICAL: When you reference information from a source, add an inline citation like [1], [2], etc. matching the source numbers above. Place citations naturally at the end of the relevant sentence or claim. Use citations frequently. Only cite sources from the numbered list above.`;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setCompetitorSummaryError("Authentication required");
+        setLoadingCompetitorSummary(false);
+        setCompetitorThinkingStep(-1);
+        stepTimers.forEach(clearTimeout);
+        return;
+      }
+      const res = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-claude", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ prompt, enableWebSearch: false })
+      });
+      const data = await res.json();
+      stepTimers.forEach(clearTimeout);
+      if (data.response) {
+        setCompetitorSummary(data.response.trim());
+      } else {
+        setCompetitorSummaryError(data.error || "No summary generated.");
+      }
+    } catch (err) {
+      stepTimers.forEach(clearTimeout);
+      setCompetitorSummaryError("Failed to generate summary.");
+    } finally {
+      setLoadingCompetitorSummary(false);
+      setCompetitorThinkingStep(-1);
+    }
+  };
+
+  const renderAllTimeBar = (data: { name: string; count: number; change?: number }, maxCount: number, totalMentions: number) => {
+    const barWidth = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
+    const mentionPercent = totalMentions > 0 ? (data.count / totalMentions) * 100 : 0;
     
-    // Truncate labels to 15 characters
     const displayName = data.name;
     const truncatedName = displayName.length > 15 ? displayName.substring(0, 15) + '...' : displayName;
     
-    // Get favicon URL for competitor
     const faviconUrl = getCompetitorFavicon(displayName);
     const initials = displayName.charAt(0).toUpperCase();
     
@@ -977,7 +682,6 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
                 alt={`${displayName} favicon`}
                 className="w-full h-full rounded object-contain"
                 onError={(e) => {
-                  // Fallback to initials if favicon fails to load
                   e.currentTarget.style.display = 'none';
                   const fallback = e.currentTarget.nextElementSibling as HTMLElement;
                   if (fallback) fallback.style.display = 'flex';
@@ -997,21 +701,21 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
           </span>
         </div>
         
-        {/* Bar chart - REDUCED WIDTH FOR MOBILE */}
+        {/* Bar chart */}
         <div className="flex-1 mx-2 sm:mx-4 bg-gray-200 rounded-full h-4 relative min-w-0 max-w-[120px] sm:max-w-none">
           <div
             className="h-4 rounded-full absolute left-0 top-0"
             style={{ 
-              width: `${percentage}%`,
+              width: `${barWidth}%`,
               backgroundColor: '#0DBCBA'
             }}
           />
         </div>
         
-        {/* Count only - no change indicators */}
-        <div className="flex items-center min-w-[40px] sm:min-w-[60px] justify-end">
+        {/* Percentage */}
+        <div className="flex items-center min-w-[50px] sm:min-w-[60px] justify-end">
           <span className="text-sm font-semibold text-gray-900">
-            {data.count}
+            {mentionPercent.toFixed(1)}%
           </span>
         </div>
       </div>
@@ -1028,168 +732,31 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
         </p>
       </div>
 
-      {/* Sticky Header with Filters */}
-      {isPro && (
-        <div className="hidden sm:block sticky top-0 z-10 bg-white pb-2">
-          <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-          <Select
-            value={selectedCompetitorTypeFilter}
-            onValueChange={handleCompetitorTypeDropdownChange}
+      {/* Toggle: Direct Competitors / All Competitors */}
+      <div className="sticky top-0 z-10 bg-white pb-2">
+        <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100">
+          <button
+            onClick={() => handleCompetitorTypeToggle('direct')}
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+              selectedCompetitorTypeFilter === 'direct'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
           >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="All Competitors" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">
-                <div className="flex items-center gap-2">
-                  <span>All Competitors</span>
-                  <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.length})</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="direct">
-                <div className="flex items-center gap-2">
-                  <span>Direct Competitors</span>
-                  <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isDirectCompetitor(c.name)).length})</span>
-                </div>
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          
-          <Select
-            value={selectedSourceTypeFilter}
-            onValueChange={handleSourceTypeDropdownChange}
+            Direct Competitors
+          </button>
+          <button
+            onClick={() => handleCompetitorTypeToggle('all')}
+            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+              selectedCompetitorTypeFilter === 'all'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
           >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="All Sources" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">
-                <div className="flex items-center gap-2">
-                  <span>All Sources</span>
-                  <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.length})</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="ai-responses">
-                <div className="flex items-center gap-2">
-                  <span>AI Responses</span>
-                  <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isCompetitorFromAIResponses(c.name)).length})</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="search-results">
-                <div className="flex items-center gap-2">
-                  <span>Search Results</span>
-                  <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isCompetitorFromSearchResults(c.name)).length})</span>
-                </div>
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          {getUniquePromptCategories.length > 0 && (
-            <Select
-              value={selectedPromptCategoryFilter}
-              onValueChange={handlePromptCategoryDropdownChange}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="All Categories" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">
-                  <div className="flex items-center gap-2">
-                    <span>All Categories</span>
-                    <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.length})</span>
-                  </div>
-                </SelectItem>
-                {getUniquePromptCategories.map(category => (
-                  <SelectItem key={category} value={category}>
-                    <div className="flex items-center gap-2">
-                      <span>{category}</span>
-                      <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isCompetitorFromPromptCategory(c.name, category)).length})</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {getUniqueIndustries.length > 1 && (
-            <Select
-              value={selectedIndustryFilter}
-              onValueChange={handleIndustryFilterChange}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="All Industries" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">
-                  <div className="flex items-center gap-2">
-                    <span>All Industries</span>
-                    <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.length})</span>
-                  </div>
-                </SelectItem>
-                {getUniqueIndustries.map(industry => (
-                  <SelectItem key={industry} value={industry}>
-                    <div className="flex items-center gap-2">
-                      <span>{industry}</span>
-                      <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isCompetitorFromIndustry(c.name, industry)).length})</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {getUniqueJobFunctions.length > 0 && (
-            <Select
-              value={selectedJobFunctionFilter}
-              onValueChange={handleJobFunctionFilterChange}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="All Job Functions" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">
-                  <div className="flex items-center gap-2">
-                    <span>All Job Functions</span>
-                    <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.length})</span>
-                  </div>
-                </SelectItem>
-                {getUniqueJobFunctions.map(jobFunction => (
-                  <SelectItem key={jobFunction} value={jobFunction}>
-                    <div className="flex items-center gap-2">
-                      <span>{jobFunction}</span>
-                      <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isCompetitorFromJobFunction(c.name, jobFunction)).length})</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {getUniqueLocations.length > 1 && (
-            <Select
-              value={selectedLocationFilter}
-              onValueChange={handleLocationFilterChange}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="All Locations" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">
-                  <div className="flex items-center gap-2">
-                    <span>All Locations</span>
-                    <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.length})</span>
-                  </div>
-                </SelectItem>
-                {getUniqueLocations.map(location => (
-                  <SelectItem key={location} value={location}>
-                    <div className="flex items-center gap-2">
-                      <span>{location}</span>
-                      <span className="text-xs text-gray-500">({allTimeCompetitorsUnfiltered.filter(c => isCompetitorFromLocation(c.name, location)).length})</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          </div>
+            All Competitors
+          </button>
         </div>
-      )}
+      </div>
 
       {/* Main Content */}
       <div className="flex-1 min-h-0">
@@ -1199,13 +766,14 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
               {allTimeCompetitorsWithChanges.length > 0 ? (
                 (() => {
                   const maxCount = Math.max(...allTimeCompetitorsWithChanges.map(c => c.count), 1);
+                  const totalMentions = allTimeCompetitorsWithChanges.reduce((sum, c) => sum + c.count, 0);
                   
                   return allTimeCompetitorsWithChanges.map((competitor, idx) => (
                     <div 
-                      key={`${competitor.name}-${selectedCompetitorTypeFilter}-${forceRender}-${idx}`} 
+                      key={`${competitor.name}-${deferredCompetitorTypeFilter}-${idx}`} 
                       className="cursor-pointer"
                     >
-                      {renderAllTimeBar(competitor, maxCount)}
+                      {renderAllTimeBar(competitor, maxCount, totalMentions)}
                     </div>
                   ));
                 })()
@@ -1215,29 +783,14 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
                     <span className="text-xl font-bold text-gray-400">🏢</span>
                   </div>
                   <p className="text-sm">
-                    {(() => {
-                      if (selectedCompetitorTypeFilter === 'direct') {
-                        return "No direct competitors found in competitive prompts.";
-                      } else if (selectedSourceTypeFilter === 'ai-responses') {
-                        return "No competitors found in AI responses.";
-                      } else if (selectedSourceTypeFilter === 'search-results') {
-                        return "No competitors found in search results.";
-                      } else if (selectedPromptCategoryFilter !== 'all') {
-                        return `No competitors found in ${selectedPromptCategoryFilter} prompts.`;
-                      } else if (selectedIndustryFilter !== 'all') {
-                        return `No competitors found for ${selectedIndustryFilter} industry.`;
-                      } else if (selectedJobFunctionFilter !== 'all') {
-                        return `No competitors found for ${selectedJobFunctionFilter} job function.`;
-                      } else if (selectedLocationFilter !== 'all') {
-                        return `No competitors found for ${selectedLocationFilter} location.`;
-                      } else {
-                        return "No competitor mentions found yet.";
-                      }
-                    })()}
+                    {selectedCompetitorTypeFilter === 'direct'
+                      ? "No direct competitors found in competitive prompts."
+                      : "No competitor mentions found yet."
+                    }
                   </p>
-                  {(selectedCompetitorTypeFilter !== 'all' || selectedSourceTypeFilter !== 'all' || selectedPromptCategoryFilter !== 'all' || selectedIndustryFilter !== 'all' || selectedJobFunctionFilter !== 'all' || selectedLocationFilter !== 'all') && (
+                  {selectedCompetitorTypeFilter === 'direct' && (
                     <p className="text-xs text-gray-400 mt-1">
-                      Try adjusting the filters to see more competitor mentions.
+                      Try switching to "All Competitors" to see all mentions.
                     </p>
                   )}
                 </div>
@@ -1247,138 +800,178 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
         </Card>
       </div>
 
-      {/* Competitor Snippet Modal (Summary Only) */}
-      <Dialog open={isCompetitorModalOpen} onOpenChange={handleCloseCompetitorModal}>
-        <DialogContent className="max-w-xl w-full sm:max-w-2xl sm:w-[90vw] p-2 sm:p-6">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+      {/* Competitor Panel (slide from right) */}
+      <Sheet open={isCompetitorModalOpen} onOpenChange={(open) => { if (!open) handleCloseCompetitorModal(); }}>
+        <SheetContent 
+          side="right" 
+          className={`p-0 flex flex-col gap-0 [&>button]:hidden transition-all duration-500 ease-in-out ${
+            competitorSummary || loadingCompetitorSummary || competitorSummaryError 
+              ? 'w-full sm:max-w-2xl inset-y-0 h-full rounded-none' 
+              : 'w-full sm:max-w-sm !h-auto !inset-y-auto !bottom-6 !right-4 !rounded-2xl !border !shadow-2xl'
+          }`}
+        >
+          <div className={`flex items-center justify-between px-5 py-4 bg-white ${
+            competitorSummary || loadingCompetitorSummary || competitorSummaryError ? 'border-b' : 'rounded-t-2xl'
+          }`}>
+            <SheetTitle className="flex items-center gap-2 text-base font-semibold">
               <img 
                 src={getCompetitorFavicon(selectedCompetitor || '')} 
                 alt={`${selectedCompetitor} favicon`}
                 className="w-5 h-5 rounded"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                }}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
                 style={{ display: 'block' }}
               />
               <span>{selectedCompetitor}</span>
               {(() => {
                 const sourceInfo = getCompetitorSourceInfo(selectedCompetitor || '');
+                return <Badge variant="secondary">{sourceInfo.totalCount} mentions</Badge>;
+              })()}
+            </SheetTitle>
+          </div>
+          <div className={`overflow-y-auto px-5 py-4 ${
+            competitorSummary || loadingCompetitorSummary || competitorSummaryError ? 'flex-1' : ''
+          }`}>
+            <div className="space-y-4">
+              {/* MODELS ROW */}
+              {selectedCompetitor && (() => {
+                const competitorResponses = getFullResponsesForCompetitor(selectedCompetitor);
+                const uniqueLLMs = Array.from(new Set(competitorResponses.map(r => r.ai_model).filter(Boolean)));
                 return (
-                  <div className="flex gap-2">
-                    <Badge variant="secondary">{sourceInfo.totalCount} mentions</Badge>
+                  <div className="flex flex-row gap-8 mt-1 mb-1 w-full">
+                    <div className="flex flex-col items-start min-w-[120px]">
+                      <span className="text-xs text-gray-400 font-medium mb-1">Models</span>
+                      <div className="flex flex-row flex-wrap items-center gap-2">
+                        {uniqueLLMs.length === 0 ? (
+                          <span className="text-xs text-gray-400">None</span>
+                        ) : (
+                          uniqueLLMs.map(model => (
+                            <span key={model} className="inline-flex items-center">
+                              <LLMLogo modelName={model} size="sm" className="mr-1" />
+                              <span className="text-xs text-gray-700 mr-2">{getLLMDisplayName(model)}</span>
+                            </span>
+                          ))
+                        )}
+                      </div>
+                    </div>
                   </div>
                 );
               })()}
-            </DialogTitle>
-          </DialogHeader>
-          
-          <div className="space-y-4">
-            {/* MODELS ROW - matching PromptsModal style */}
-            {selectedCompetitor && (() => {
-              const competitorResponses = getFullResponsesForCompetitor(selectedCompetitor);
-              const uniqueLLMs = Array.from(new Set(competitorResponses.map(r => r.ai_model).filter(Boolean)));
-              
-              return (
-                <div className="flex flex-row gap-8 mt-1 mb-1 w-full">
-                  {/* Models */}
-                  <div className="flex flex-col items-start min-w-[120px]">
-                    <span className="text-xs text-gray-400 font-medium mb-1">Models</span>
-                    <div className="flex flex-row flex-wrap items-center gap-2">
-                      {uniqueLLMs.length === 0 ? (
-                        <span className="text-xs text-gray-400">None</span>
-                      ) : (
-                        uniqueLLMs.map(model => (
-                          <span key={model} className="inline-flex items-center">
-                            <LLMLogo modelName={model} size="sm" className="mr-1" />
-                            <span className="text-xs text-gray-700 mr-2">{getLLMDisplayName(model)}</span>
-                          </span>
-                        ))
-                      )}
-                    </div>
+
+              {/* Ask AI — inline for compact state */}
+              {!competitorSummary && !loadingCompetitorSummary && !competitorSummaryError && (
+                <div className="flex justify-center pt-2 pb-1">
+                  <div className="animate-slideUpGlow rounded-full">
+                    <button
+                      onClick={fetchCompetitorSummary}
+                      className="h-11 rounded-full bg-[#13274F] text-white shadow-lg hover:bg-[#1a3468] transition-all hover:scale-105 flex items-center justify-center gap-2 px-5"
+                    >
+                      <img alt="PerceptionX" className="h-5 w-5 object-contain shrink-0 brightness-0 invert" src="/logos/perceptionx-small.png" />
+                      <span className="text-sm font-medium whitespace-nowrap">Ask AI</span>
+                      <span className="text-[10px] font-semibold bg-[#DB5E89] text-white px-1.5 py-0.5 rounded-full leading-none">BETA</span>
+                    </button>
                   </div>
                 </div>
-              );
-            })()}
+              )}
 
-            {/* Summary Card - matching PromptsModal style */}
-            <div className="mb-6">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base font-semibold">Summary</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {loadingCompetitorSummary ? (
-                    <div className="w-full">
-                      <Skeleton className="h-6 w-3/4 mb-2" />
-                      <Skeleton className="h-6 w-5/6 mb-2" />
-                      <Skeleton className="h-6 w-2/3 mb-2" />
-                      <Skeleton className="h-6 w-1/2 mb-2" />
+              {/* AI Summary — on demand */}
+              {competitorSummary ? (
+                <Card className="border-blue-100 bg-blue-50/30">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base font-semibold flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-blue-500" />
+                        AI Summary
+                      </CardTitle>
+                      <Button variant="ghost" size="sm" onClick={fetchCompetitorSummary} disabled={loadingCompetitorSummary} className="text-xs text-gray-400 hover:text-gray-600 h-auto py-1">
+                        {loadingCompetitorSummary ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                        Regenerate
+                      </Button>
                     </div>
-                  ) : competitorSummaryError ? (
-                    <div className="text-red-600 text-sm py-2">{competitorSummaryError}</div>
-                  ) : competitorSummary ? (
-                    <>
-                      <div className="text-gray-800 text-base mb-3">
-                        <ReactMarkdown 
-                          components={{
-                            p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                            ul: ({children}) => <ul className="space-y-1 list-disc list-inside">{children}</ul>,
-                            li: ({children}) => <li className="text-sm leading-tight">{children}</li>
-                          }}
-                        >
-                          {competitorSummary}
-                        </ReactMarkdown>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-gray-800 text-sm leading-relaxed">
+                      {competitorSummary.split('\n\n').filter(Boolean).map((paragraph, pIdx) => {
+                        const parts = paragraph.split(/(\[\d+(?:\s*,\s*\d+)*\])/g);
+                        return (
+                          <p key={pIdx} className="mb-3 last:mb-0">
+                            {parts.map((part, partIdx) => {
+                              const citationMatch = part.match(/^\[([\d\s,]+)\]$/);
+                              if (citationMatch) {
+                                const nums = citationMatch[1].split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+                                return (
+                                  <span key={partIdx}>
+                                    {nums.map((num, nIdx) => {
+                                      const source = competitorSummarySources[num - 1];
+                                      if (!source) return null;
+                                      return (
+                                        <button
+                                          key={nIdx}
+                                          onClick={() => { if (source.url) window.open(source.url, '_blank', 'noopener,noreferrer'); }}
+                                          className={`inline-flex items-center gap-1 bg-white hover:bg-gray-50 pl-1 pr-2 py-0.5 rounded-full text-xs text-gray-600 transition-colors border border-gray-200 mx-0.5 align-middle ${source.url ? 'cursor-pointer' : 'cursor-default'}`}
+                                        >
+                                          <img src={getFavicon(source.domain)} alt="" className="w-3.5 h-3.5 rounded flex-shrink-0" style={{ background: '#fff', display: 'block' }} onError={e => { e.currentTarget.style.display = 'none'; }} />
+                                          <span>{source.displayName}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </span>
+                                );
+                              }
+                              return <span key={partIdx}>{part}</span>;
+                            })}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : loadingCompetitorSummary ? (
+                <Card className="border-blue-100 bg-gradient-to-br from-blue-50/40 to-indigo-50/30 overflow-hidden">
+                  <CardContent className="py-5 px-5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="relative">
+                        <Sparkles className="w-4 h-4 text-blue-500" />
+                        <div className="absolute inset-0 animate-ping"><Sparkles className="w-4 h-4 text-blue-400 opacity-30" /></div>
                       </div>
-                      
-                      {/* Sources section - matching PromptsModal style */}
-                      {selectedCompetitor && (() => {
-                        const competitorSources = getCompetitorSources(selectedCompetitor);
-                        const topSources = showAllCompetitorSources ? competitorSources : competitorSources.slice(0, 5);
-                        const hasMoreSources = competitorSources.length > 5;
-                        
-                        return competitorSources.length > 0 ? (
-                          <div className="flex flex-wrap items-center gap-2 mt-2">
-                            <span className="text-xs text-gray-500">Sources:</span>
-                            {topSources.map((source, index) => (
-                              <div
-                                key={index}
-                                onClick={() => handleSourceClick(source)}
-                                className="inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200 cursor-pointer"
-                              >
-                                <img
-                                  src={getFavicon(source.domain)}
-                                  alt=""
-                                  className="w-4 h-4 mr-1 rounded"
-                                  style={{ background: '#fff', display: 'block' }}
-                                  onError={e => { e.currentTarget.style.display = 'none'; }}
-                                />
-                                {getSourceDisplayName(source.domain)}
-                                <span className="ml-1 text-gray-500">({source.count})</span>
-                              </div>
-                            ))}
-                            {hasMoreSources && (
-                              <button
-                                onClick={() => setShowAllCompetitorSources(!showAllCompetitorSources)}
-                                className="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded transition-colors font-medium"
-                              >
-                                {showAllCompetitorSources 
-                                  ? `Show Less` 
-                                  : `+${competitorSources.length - 5} more`
-                                }
-                              </button>
-                            )}
+                      <span className="text-sm font-medium text-blue-700">Analyzing...</span>
+                    </div>
+                    <div className="space-y-0.5">
+                      {competitorThinkingSteps.map((step, i) => {
+                        const isActive = i === competitorThinkingStep;
+                        const isComplete = i < competitorThinkingStep;
+                        const isPending = i > competitorThinkingStep;
+                        return (
+                          <div key={i} className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${isActive ? 'bg-blue-100/60' : ''}`}
+                            style={{ opacity: isPending ? 0.3 : 1, transform: isPending ? 'translateX(4px)' : 'translateX(0)', transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }}>
+                            <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                              {isComplete ? <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" /> : isActive ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
+                            </div>
+                            <span className={`text-xs transition-colors duration-300 ${isActive ? 'text-blue-700 font-medium' : isComplete ? 'text-blue-500' : 'text-gray-400'}`}>{step}</span>
                           </div>
-                        ) : null;
-                      })()}
-                    </>
-                  ) : null}
-                </CardContent>
-              </Card>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-4 h-1 bg-blue-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-blue-400 to-indigo-500 rounded-full transition-all duration-700 ease-out"
+                        style={{ width: `${competitorThinkingSteps.length > 0 ? ((competitorThinkingStep + 1) / competitorThinkingSteps.length) * 100 : 0}%` }} />
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : competitorSummaryError ? (
+                <Card className="border-red-100 bg-red-50/30">
+                  <CardContent className="py-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-red-600 text-sm">{competitorSummaryError}</span>
+                      <Button variant="ghost" size="sm" onClick={fetchCompetitorSummary} className="text-xs">Retry</Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+
+        </SheetContent>
+      </Sheet>
 
       {/* Mentions Drawer Modal */}
       <Dialog open={isMentionsDrawerOpen} onOpenChange={setIsMentionsDrawerOpen}>
@@ -1480,7 +1073,7 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
                         <div
                           className="prose prose-sm max-w-none"
                           dangerouslySetInnerHTML={{
-                            __html: highlightCompetitor(response.response_text?.slice(0, 200) + '...', selectedCompetitor)
+                            __html: highlightCompetitor((response.response_text || '').slice(0, 200) + '...', selectedCompetitor)
                           }}
                         />
                       </div>
@@ -1499,4 +1092,5 @@ Responses:\n${relevantResponses.map(r => r.response_text.slice(0, 1000)).join('\
       </Dialog>
     </div>
   );
-}; 
+});
+CompetitorsTab.displayName = 'CompetitorsTab';

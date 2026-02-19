@@ -62,7 +62,6 @@ export class AdminReportService {
       }
 
       if (!responses || responses.length === 0) {
-        console.log('No responses found for user');
         return null;
       }
 
@@ -268,8 +267,8 @@ export class AdminReportService {
         responses: totalResponses,
         avgSentiment,
         sentimentLabel,
-        mentionRanking: promptResponses[0]?.mention_ranking,
-        competitivePosition: promptResponses[0]?.competitive_position,
+        mentionRanking: undefined,
+        competitivePosition: undefined,
         detectedCompetitors: promptResponses[0]?.detected_competitors,
         averageVisibility
       };
