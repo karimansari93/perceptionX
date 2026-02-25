@@ -1047,61 +1047,44 @@ export const useDashboardData = () => {
   const [shouldRefetch, setShouldRefetch] = useState(false);
   const [isSwitchingCompany, setIsSwitchingCompany] = useState(false);
 
-  // Debounce timer ref for rapid company switching
-  const switchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Update the ref when company changes — debounced to handle rapid switching
+  // Update the ref when company changes
   useEffect(() => {
     if (currentCompany?.id !== currentCompanyIdRef.current && currentCompany?.id !== undefined) {
-      // Clear any pending debounced switch
-      if (switchDebounceRef.current) {
-        clearTimeout(switchDebounceRef.current);
+      const previousCompanyId = currentCompanyIdRef.current;
+      // Save current company's data to cache before clearing (for instant restore when switching back)
+      if (previousCompanyId && responses.length > 0) {
+        companyDataCacheRef.current[previousCompanyId] = {
+          responses,
+          lastUpdated: lastUpdated,
+          timestamp: Date.now()
+        };
       }
-
-      // Set switching flag immediately for UI feedback
+      // Set switching flag to prevent stale data from being used
       setIsSwitchingCompany(true);
+      currentCompanyIdRef.current = currentCompany?.id;
 
-      // Debounce the expensive state clearing + cache operations
-      switchDebounceRef.current = setTimeout(() => {
-        const previousCompanyId = currentCompanyIdRef.current;
-        // Save current company's data to cache before clearing (for instant restore when switching back)
-        if (previousCompanyId && responses.length > 0) {
-          companyDataCacheRef.current[previousCompanyId] = {
-            responses,
-            lastUpdated: lastUpdated,
-            timestamp: Date.now()
-          };
-        }
-        currentCompanyIdRef.current = currentCompany?.id;
+      // Clear all data immediately when switching companies
+      setResponses([]);
+      setResponseTexts({});
+      setAiThemes([]);
+      setSearchResults([]);
+      setSearchTermsData([]);
+      setTalentXProData([]);
+      setTalentXProPrompts([]);
+      setRecencyData([]);
+      setLastUpdated(undefined);
+      setMvTopCitations([]);
+      setMvTopCompetitors([]);
+      setMvLlmRankings([]);
 
-        // Clear all data when switching companies
-        setResponses([]);
-        setResponseTexts({});
-        setAiThemes([]);
-        setSearchResults([]);
-        setSearchTermsData([]);
-        setTalentXProData([]);
-        setTalentXProPrompts([]);
-        setRecencyData([]);
-        setLastUpdated(undefined);
-        setMvTopCitations([]);
-        setMvTopCompetitors([]);
-        setMvLlmRankings([]);
+      // Clear search results cache when switching companies
+      searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
+      // Clear recency data cache when switching companies
+      recencyDataCacheRef.current = null;
 
-        // Clear search results cache when switching companies
-        searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
-        // Clear recency data cache when switching companies
-        recencyDataCacheRef.current = null;
-
-        // Reset the fetched key so new data will be loaded
-        fetchedCompanyUserKeyRef.current = null;
-      }, 150);
+      // Reset the fetched key so new data will be loaded
+      fetchedCompanyUserKeyRef.current = null;
     }
-    return () => {
-      if (switchDebounceRef.current) {
-        clearTimeout(switchDebounceRef.current);
-      }
-    };
   }, [currentCompany?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally omit responses/lastUpdated to avoid saving on every response change
   
   // Initial data fetch - only run when user or company ID actually changes, or when shouldRefetch is true
