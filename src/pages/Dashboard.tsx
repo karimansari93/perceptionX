@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, startTransition } from 'react';
 import { SidebarProvider, SidebarInset, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
@@ -382,8 +382,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   }, [activeSection, responses.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSectionChange = (section: string) => {
-    setActiveSection(section);
-    
+    // Wrap in startTransition so the UI stays responsive during tab switch
+    startTransition(() => {
+      setActiveSection(section);
+    });
+
     // Update URL based on section
     if (activeGroup === 'dashboard') {
       if (section === 'overview') {
