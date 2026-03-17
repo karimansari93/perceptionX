@@ -143,7 +143,8 @@ export const useCompanyDataCollection = () => {
       const models = [
         { name: 'openai', functionName: 'test-prompt-openai', displayName: 'ChatGPT' },
         { name: 'perplexity', functionName: 'test-prompt-perplexity', displayName: 'Perplexity' },
-        { name: 'google-ai-overviews', functionName: 'test-prompt-google-ai-overviews', displayName: 'Google AI' }
+        { name: 'google-ai-overviews', functionName: 'test-prompt-google-ai-overviews', displayName: 'Google AI Overviews' },
+        { name: 'google-ai-mode', functionName: 'test-prompt-google-ai-mode', displayName: 'Google AI Mode' }
       ];
 
       // Resume based on status

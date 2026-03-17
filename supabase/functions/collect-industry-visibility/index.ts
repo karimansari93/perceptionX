@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { SOURCES_SECTION_REGEX } from "../_shared/citation-extraction.ts";
+import { COUNTRY_CODE_TO_NAME } from "../_shared/countries.ts";
 
 // Extract citations from OpenAI response (all app languages)
 function extractCitationsFromResponse(text: string): any[] {
@@ -52,142 +53,6 @@ function extractCitationsFromResponse(text: string): any[] {
   return citations;
 }
 
-// Visibility prompt templates for Employee Experience and Candidate Experience
-const VISIBILITY_PROMPTS = {
-  "Employee Experience": [
-    {
-      theme: "Mission & Purpose",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are known for having a strong, purpose-driven employer brand?`;
-      },
-    },
-    {
-      theme: "Rewards & Recognition",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are known for having exceptional rewards and recognition for employees?`;
-      },
-    },
-    {
-      theme: "Company Culture",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are known for outstanding workplace culture?`;
-      },
-    },
-    {
-      theme: "Social Impact",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are recognized for meaningful social impact and community engagement?`;
-      },
-    },
-    {
-      theme: "Inclusion",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are most recognized for diversity, equity, and inclusion?`;
-      },
-    },
-    {
-      theme: "Innovation",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are known for fostering innovation and creative thinking?`;
-      },
-    },
-    {
-      theme: "Wellbeing & Balance",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are recognized for exceptional employee wellbeing and work-life balance?`;
-      },
-    },
-    {
-      theme: "Leadership",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are respected for outstanding leadership and management?`;
-      },
-    },
-    {
-      theme: "Security & Perks",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are known for providing comprehensive benefits and job security?`;
-      },
-    },
-    {
-      theme: "Career Opportunities",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are most recognized for exceptional career development and progression opportunities?`;
-      },
-    },
-  ],
-  "Candidate Experience": [
-    {
-      theme: "Application Process",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} have the best application process?`;
-      },
-    },
-    {
-      theme: "Candidate Communication",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are recognized for strong candidate communication?`;
-      },
-    },
-    {
-      theme: "Interview Experience",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} have the best interview experience?`;
-      },
-    },
-    {
-      theme: "Candidate Feedback",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} are known for providing valuable candidate feedback?`;
-      },
-    },
-    {
-      theme: "Onboarding Experience",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} have the best onboarding experience?`;
-      },
-    },
-    {
-      theme: "Overall Candidate Experience",
-      text: (industry: string, country?: string) => {
-        const location =
-          country && country !== "GLOBAL" ? ` in ${country}` : "";
-        return `What companies in ${industry}${location} have the best overall candidate reputation?`;
-      },
-    },
-  ],
-};
-
 serve(async (req) => {
   console.log("collect-industry-visibility function called", {
     method: req.method,
@@ -227,42 +92,6 @@ serve(async (req) => {
     // const promptLocation = (country === 'GLOBAL') ? undefined : (countryName || country);
     // Use full country name in prompt text if available, otherwise fall back to code
     // const countryNameForPrompt = countryName || country;
-
-    // Map country codes to their full English names.
-    // This is required because the AI models generate better responses with full country names,
-    // and we want to store readable location contexts in the database.
-    const COUNTRY_CODE_TO_NAME: Record<string, string> = {
-      US: "United States",
-      GB: "United Kingdom",
-      CA: "Canada",
-      AU: "Australia",
-      DE: "Germany",
-      FR: "France",
-      IT: "Italy",
-      ES: "Spain",
-      NL: "Netherlands",
-      SE: "Sweden",
-      NO: "Norway",
-      DK: "Denmark",
-      FI: "Finland",
-      CH: "Switzerland",
-      AT: "Austria",
-      BE: "Belgium",
-      IE: "Ireland",
-      NZ: "New Zealand",
-      SG: "Singapore",
-      JP: "Japan",
-      KR: "South Korea",
-      CN: "China",
-      IN: "India",
-      BR: "Brazil",
-      MX: "Mexico",
-      AR: "Argentina",
-      ZA: "South Africa",
-      AE: "United Arab Emirates",
-      SA: "Saudi Arabia",
-      GLOBAL: "Global (All Countries)",
-    };
 
     // If we have a country name provided, use it. Otherwise, look up the code in our map.
     // Fallback to the code itself if it's not in our list (though it should be).
@@ -792,6 +621,7 @@ serve(async (req) => {
           .maybeSingle();
 
         // Collect responses for each model that doesn't exist yet
+        // TODO [12.6]: Confirm whether gpt-5.2-chat-latest should be updated to a newer model.
         const modelsToCollect = [
           {
             name: "gpt-5.2-chat-latest",

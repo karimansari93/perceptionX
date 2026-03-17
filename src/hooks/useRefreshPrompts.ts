@@ -17,8 +17,8 @@ interface RefreshOptions {
   companyId?: string;
 }
 
-const FREE_MODELS = ['openai', 'perplexity', 'google-ai-overviews'];
-const PRO_MODELS = ['openai', 'perplexity', 'google-ai-overviews', 'gemini', 'deepseek'];
+const FREE_MODELS = ['openai', 'perplexity', 'google-ai-overviews', 'google-ai-mode'];
+const PRO_MODELS = ['openai', 'perplexity', 'google-ai-overviews', 'google-ai-mode', 'gemini', 'deepseek'];
 
 export const useRefreshPrompts = () => {
   const { user } = useAuth();
@@ -117,6 +117,9 @@ export const useRefreshPrompts = () => {
       let totalPromptsProcessed = 0;
       let totalResponsesCollected = 0;
 
+      // TODO [12.9]: An error from one company throws to the top-level catch and stops all
+      // remaining companies. Wrap each company batch call in its own try/catch, accumulate
+      // errors, continue processing, and report partial success at the end.
       for (const [companyId, idsForCompany] of companiesToProcess) {
         const { data, error } = await supabase.functions.invoke('collect-company-responses', {
           body: {

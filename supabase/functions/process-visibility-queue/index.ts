@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { COUNTRY_NAME_TO_CODE } from "../_shared/countries.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -54,39 +55,7 @@ serve(async (req) => {
       configs = data || [];
     }
 
-    // Country mapping helper (Name -> Code)
-    const COUNTRY_MAP: Record<string, string> = {
-      "United States": "US",
-      "United Kingdom": "GB",
-      Canada: "CA",
-      Australia: "AU",
-      Germany: "DE",
-      France: "FR",
-      Italy: "IT",
-      Spain: "ES",
-      Netherlands: "NL",
-      Sweden: "SE",
-      Norway: "NO",
-      Denmark: "DK",
-      Finland: "FI",
-      Switzerland: "CH",
-      Austria: "AT",
-      Belgium: "BE",
-      Ireland: "IE",
-      "New Zealand": "NZ",
-      Singapore: "SG",
-      Japan: "JP",
-      "South Korea": "KR",
-      China: "CN",
-      India: "IN",
-      Brazil: "BR",
-      Mexico: "MX",
-      Argentina: "AR",
-      "South Africa": "ZA",
-      "United Arab Emirates": "AE",
-      "Saudi Arabia": "SA",
-      "Global (All Countries)": "GLOBAL",
-    };
+    // Country mapping imported from _shared/countries.ts (COUNTRY_NAME_TO_CODE)
 
     if (configs && configs.length > 0) {
       console.log(`[Scheduler] Found ${configs.length} configs to trigger.`);
@@ -118,7 +87,7 @@ serve(async (req) => {
           for (const ind of industries) {
             for (const ctry of countries) {
               // Convert Full Name to Code if possible, otherwise keep as is
-              const countryCode = COUNTRY_MAP[ctry] || ctry;
+              const countryCode = COUNTRY_NAME_TO_CODE[ctry] || ctry;
 
               jobs.push({
                 config_id: config.id,
@@ -178,6 +147,7 @@ serve(async (req) => {
       `,
       )
       .in("status", ["pending", "processing"])
+      .or("is_cancelled.is.null,is_cancelled.eq.false")
       .order("updated_at", { ascending: true }) // Oldest first
       .limit(1);
 
@@ -191,6 +161,15 @@ serve(async (req) => {
         `[Processor] Processing Job ${job.id}: ${job.industry}/${job.country} (Batch ${job.batch_index})`,
       );
 
+      // Check if job has been cancelled before processing
+      if (job.is_cancelled) {
+        console.log(`[Processor] Job ${job.id} was cancelled, skipping.`);
+        await supabase
+          .from("visibility_queue")
+          .update({ status: "failed", error_log: "Cancelled by admin", updated_at: now.toISOString() })
+          .eq("id", job.id);
+        result = { processed: 0, message: "Job cancelled" };
+      } else
       // Mark as processing if pending
       if (job.status === "pending") {
         await supabase
