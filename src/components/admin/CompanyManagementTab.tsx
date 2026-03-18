@@ -501,6 +501,7 @@ export const CompanyManagementTab = () => {
         { name: 'openai', fn: 'test-prompt-openai' },
         { name: 'perplexity', fn: 'test-prompt-perplexity' },
         { name: 'google-ai-overviews', fn: 'test-prompt-google-ai-overviews' },
+        { name: 'google-ai-mode', fn: 'test-prompt-google-ai-mode' },
       ];
 
       const proModels = [
@@ -509,6 +510,7 @@ export const CompanyManagementTab = () => {
         { name: 'gemini', fn: 'test-prompt-gemini' },
         { name: 'deepseek', fn: 'test-prompt-deepseek' },
         { name: 'google-ai-overviews', fn: 'test-prompt-google-ai-overviews' },
+        { name: 'google-ai-mode', fn: 'test-prompt-google-ai-mode' },
       ];
 
       const models = isProUser ? proModels : freeModels;

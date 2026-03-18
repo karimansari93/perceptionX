@@ -189,6 +189,9 @@ serve(async (req) => {
     const totalOperations = totalPrompts * models.length;
     let batchesProcessed = 0;
 
+    // TODO [12.8]: Add data_collection_last_heartbeat timestamptz column updated every ~10s
+    // so the UI can detect stale progress (heartbeat older than 60s = likely failed).
+    // Also define a shared TypeScript type for the progress JSON shape.
     const updateProgress = async (
       completed: number,
       currentPrompt: string,
@@ -211,6 +214,9 @@ serve(async (req) => {
     // Write initial progress so the frontend can show 0 / total immediately
     await updateProgress(0, "Starting AI analysis…", "Multiple models");
 
+    // TODO [12.7]: batchSize fires more parallel calls than expected — batchSize N runs
+    // N prompts × M models simultaneously via Promise.all. Consider processing prompts
+    // sequentially within each batch, or keep batchSize at 2 from queue processors.
     for (let batchOffset = 0; batchOffset < totalPrompts; batchOffset += batchSize) {
       const batchEnd = Math.min(batchOffset + batchSize, totalPrompts);
       const batch = allPrompts.slice(batchOffset, batchEnd);
@@ -220,7 +226,7 @@ serve(async (req) => {
       );
 
       // Process all prompts in this batch in PARALLEL (each prompt runs its models in parallel)
-      const promptPromises = batch.map(async (prompt: any) => {
+      const promptPromises = batch.map(async (prompt: any, promptIdx: number) => {
         try {
           // Check existing responses if skipExisting is true
           let modelsToProcess = [...models];
@@ -250,7 +256,13 @@ serve(async (req) => {
               let responseText = "";
               let citations: any[] = [];
 
-              // Call edge function for each model (same pattern: test-prompt-openai, test-prompt-perplexity, test-prompt-google-ai-overviews)
+              // Stagger Claude calls to avoid token rate limit bursts.
+              // Web search is now enabled for citations, so use longer delays.
+              if (modelName === "claude" && promptIdx > 0) {
+                await new Promise(r => setTimeout(r, Math.min(promptIdx, 5) * 4000));
+              }
+
+              // Call edge function for each model
               const functionName = `test-prompt-${modelName}`;
               const modelResponse = await fetch(
                 `${supabaseUrl}/functions/v1/${functionName}`,
@@ -260,7 +272,9 @@ serve(async (req) => {
                     Authorization: `Bearer ${supabaseKey}`,
                     "Content-Type": "application/json",
                   },
-                  body: JSON.stringify({ prompt: prompt.prompt_text }),
+                  body: JSON.stringify({
+                    prompt: prompt.prompt_text,
+                  }),
                 },
               );
 
@@ -297,7 +311,9 @@ serve(async (req) => {
                     citations:
                       modelName === "openai" ||
                       modelName === "google-ai-overviews" ||
-                      modelName === "bing-copilot"
+                      modelName === "google-ai-mode" ||
+                      modelName === "bing-copilot" ||
+                      modelName === "claude"
                         ? citations
                         : null,
                     confirmed_prompt_id: prompt.id,

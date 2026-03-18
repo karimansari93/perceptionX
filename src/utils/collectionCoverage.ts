@@ -1,8 +1,8 @@
 /**
  * Expected number of AI models per prompt (one response from each model).
- * "Completed" = every prompt has 5 responses (openai, perplexity, gemini, deepseek, google-ai-overviews).
+ * "Completed" = every prompt has 6 responses (openai, perplexity, gemini, deepseek, google-ai-overviews, google-ai-mode).
  */
-export const EXPECTED_MODELS_PER_PROMPT = 5;
+export const EXPECTED_MODELS_PER_PROMPT = 6;
 
 export function isCoverageComplete(promptCount: number, responseCount: number): boolean {
   if (promptCount === 0) return true;

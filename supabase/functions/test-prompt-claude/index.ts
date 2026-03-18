@@ -1,24 +1,26 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 
-// Simple rate limiting - track requests per second
+// TODO [12.11]: In-memory rate limiter is non-functional — Deno edge function state is not
+// shared across invocations or instances, so each cold start gets a fresh counter.
+// Remove and rely on Anthropic's API-level rate limiting.
 let requestCount = 0;
 let lastResetTime = Date.now();
 
 function checkRateLimit(): boolean {
   const now = Date.now();
-  
+
   // Reset counter every second
   if (now - lastResetTime >= 1000) {
     requestCount = 0;
     lastResetTime = now;
   }
-  
+
   // Check if we're under the limit (20 per second)
   if (requestCount >= 20) {
     return false; // Rate limit exceeded
   }
-  
+
   requestCount++;
   return true; // OK to proceed
 }
@@ -57,24 +59,29 @@ serve(async (req) => {
     const body = await req.json();
     console.log('Request body:', body);
     
-    const { prompt, enableWebSearch = true } = body;
+    const { prompt, enableWebSearch = true, batch = false } = body;
 
     if (!prompt) {
       throw new Error('Prompt is required');
     }
 
     const claudeApiKey = Deno.env.get('CLAUDE_API_KEY')
-    
+
     if (!claudeApiKey) {
       console.error('CLAUDE_API_KEY not found in environment variables');
       throw new Error('Claude API key not configured')
     }
 
-    console.log('Making request to Claude API with web search...')
+    // In batch mode (or when web search is explicitly disabled), omit tools entirely
+    // to keep responses fast (~5-10s) and within Supabase edge function timeout limits.
+    const useWebSearch = enableWebSearch && !batch;
+    const maxTokens = batch ? 800 : 1500;
 
-    const requestBody = {
+    console.log(`Making request to Claude API (batch=${batch}, webSearch=${useWebSearch}, maxTokens=${maxTokens})...`)
+
+    const requestBody: Record<string, any> = {
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 1500,
+      max_tokens: maxTokens,
       messages: [
         {
           role: 'user',
@@ -82,12 +89,17 @@ serve(async (req) => {
         }
       ],
       temperature: 0.7,
-      tools: enableWebSearch ? [{
+    };
+
+    // Only include tools when web search is enabled — omitting the key entirely
+    // avoids unnecessary overhead vs sending an empty array.
+    if (useWebSearch) {
+      requestBody.tools = [{
         type: "web_search_20250305",
         name: "web_search",
         max_uses: 5
-      }] : []
-    };
+      }];
+    }
 
     console.log('Claude request body:', JSON.stringify(requestBody, null, 2));
 
@@ -138,11 +150,19 @@ serve(async (req) => {
       }
     }
 
-    const response = data.content?.[0]?.text || 'No response generated'
+    // Extract the LAST text block from the response — web search responses have
+    // multiple text blocks: the first is Claude's preamble ("I'll search for..."),
+    // followed by tool_use/web_search_result blocks, then the final answer.
+    // The actual answer is always the last text block in the array.
+    const contentArray = data.content || [];
+    const textBlocks = contentArray.filter((block: any) => block.type === 'text');
+    const response = textBlocks.length > 0
+      ? textBlocks[textBlocks.length - 1].text
+      : 'No response generated';
     console.log('Claude response extracted:', response);
 
-    // Extract Claude's native citations from the response
-    const citations = extractClaudeCitations(data.content?.[0]);
+    // Extract Claude's native citations from the full content array
+    const citations = extractClaudeCitations(contentArray);
     console.log('Extracted Claude citations:', citations);
 
     // Log web search usage if available
@@ -180,25 +200,43 @@ serve(async (req) => {
   }
 })
 
-// Function to extract Claude's native citations
-function extractClaudeCitations(content: any): any[] {
+/**
+ * Extract Claude's native citations from the full data.content array.
+ *
+ * The Anthropic API returns a flat content array where web_search_result_location
+ * blocks are siblings of text blocks at the top level — not nested inside them.
+ * When web search is disabled (batch mode), no citation blocks will be present
+ * and this correctly returns [].
+ *
+ * Output format matches Perplexity's citation structure for consistency with
+ * how collect-company-responses and analyze-response consume citations.
+ */
+function extractClaudeCitations(contentArray: any[]): any[] {
   const citations: any[] = [];
-  
-  if (!content || !content.content) {
+
+  if (!Array.isArray(contentArray)) {
     return citations;
   }
 
-  // Look for web_search_result_location blocks in Claude's response
-  content.content.forEach((block: any) => {
+  for (const block of contentArray) {
     if (block.type === 'web_search_result_location') {
+      let domain = '';
+      try {
+        domain = new URL(block.url).hostname.replace('www.', '');
+      } catch {
+        domain = block.url || '';
+      }
+
       citations.push({
         url: block.url,
+        domain,
         title: block.title,
         cited_text: block.cited_text,
-        encrypted_index: block.encrypted_index
+        type: 'website',
+        confidence: 'high',
       });
     }
-  });
+  }
 
   return citations;
 }

@@ -424,8 +424,8 @@ export const AddCompanyModal = ({
       const models = [
         { name: 'openai', functionName: 'test-prompt-openai', displayName: 'ChatGPT' },
         { name: 'perplexity', functionName: 'test-prompt-perplexity', displayName: 'Perplexity' },
-        { name: 'google-ai-overviews', functionName: 'test-prompt-google-ai-overviews', displayName: 'Google AI' }
-        // Bing Copilot temporarily disabled - not working
+        { name: 'google-ai-overviews', functionName: 'test-prompt-google-ai-overviews', displayName: 'Google AI Overviews' },
+        { name: 'google-ai-mode', functionName: 'test-prompt-google-ai-mode', displayName: 'Google AI Mode' }
       ];
 
       // 7. Run search insights FIRST

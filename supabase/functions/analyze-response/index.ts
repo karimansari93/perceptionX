@@ -5,6 +5,8 @@ import { SOURCES_SECTION_REGEX } from "../_shared/citation-extraction.ts";
 
 // TalentX Analysis Service removed - focusing on ai-themes only
 
+// TODO [12.6]: Move Supabase client creation inside serve() handler to avoid connection pooling
+// issues across cold starts. See collect-company-responses for the correct pattern.
 const supabase = createClient(
   // @ts-ignore: Deno.env.get() is not recognized by TypeScript but is available in Deno runtime
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -41,7 +43,7 @@ serve(async (req) => {
     
     // Handle citations from different LLMs
     let llmCitations = perplexityCitations || [];
-    if ((ai_model === 'google-ai-overviews' || ai_model === 'bing-copilot' || ai_model === 'openai') && body.citations) {
+    if ((ai_model === 'google-ai-overviews' || ai_model === 'google-ai-mode' || ai_model === 'bing-copilot' || ai_model === 'openai') && body.citations) {
       llmCitations = body.citations;
     }
 
@@ -247,7 +249,7 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`
+        'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
       },
       body: JSON.stringify({ response: text, companyName })
     });

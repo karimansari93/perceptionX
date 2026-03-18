@@ -48,9 +48,9 @@ interface LoadingModalProps {
 const llmModels = [
   { name: "OpenAI", model: "openai" },
   { name: "Perplexity", model: "perplexity" },
-  { name: "Google AI", model: "google-ai" },
-  { name: "DeepSeek", model: "deepseek" },
   { name: "Google AI Overviews", model: "google-ai-overviews" },
+  { name: "Google AI Mode", model: "google-ai-mode" },
+  { name: "DeepSeek", model: "deepseek" },
 ];
 
 export const LoadingModal = ({ 
