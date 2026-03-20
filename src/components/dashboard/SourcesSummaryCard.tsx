@@ -20,6 +20,7 @@ interface SourcesSummaryCardProps {
   companyName?: string;
   searchResults?: any[];
   perceptionScoreTrend?: any[];
+  previousPeriodResponses?: any[];
 }
 
 export const SourcesSummaryCard = ({ 
@@ -27,7 +28,8 @@ export const SourcesSummaryCard = ({
   responses, 
   companyName, 
   searchResults = [],
-  perceptionScoreTrend = []
+  perceptionScoreTrend = [],
+  previousPeriodResponses = []
 }: SourcesSummaryCardProps) => {
   const navigate = useNavigate();
 
@@ -89,16 +91,14 @@ export const SourcesSummaryCard = ({
     });
   };
 
-  // Calculate source trends between latest and previous periods using normalized domains
+  // Calculate source trends: compare share % between current and previous periods
   const sourceTrends = useMemo(() => {
-    if (perceptionScoreTrend.length < 2) return {};
-
-    const latestPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 1];
-    const previousPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 2];
+    if (previousPeriodResponses.length === 0) return {};
 
     const getCitationCounts = (responseList: any[]) => {
       const counts: Record<string, number> = {};
-      responseList.forEach(response => {
+      const mentioned = responseList.filter(r => r.company_mentioned === true);
+      mentioned.forEach(response => {
         try {
           const raw = typeof response.citations === 'string'
             ? JSON.parse(response.citations)
@@ -121,28 +121,22 @@ export const SourcesSummaryCard = ({
       return counts;
     };
 
-    const mentionedResponses = responses.filter(r => r.company_mentioned === true);
+    const currentCounts = getCitationCounts(responses);
+    const previousCounts = getCitationCounts(previousPeriodResponses);
 
-    const latestResponses = mentionedResponses.filter(r => {
-      const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
-      return responseDate === latestPeriod.fullDate;
-    });
-
-    const previousResponses = mentionedResponses.filter(r => {
-      const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
-      return responseDate === previousPeriod.fullDate;
-    });
-
-    const latestCounts = getCitationCounts(latestResponses);
-    const previousCounts = getCitationCounts(previousResponses);
+    // Convert counts to percentages of their respective totals
+    const currentTotal = Object.values(currentCounts).reduce((s, c) => s + c, 0);
+    const previousTotal = Object.values(previousCounts).reduce((s, c) => s + c, 0);
 
     const trends: Record<string, number> = {};
-    Object.keys(latestCounts).forEach(domain => {
-      trends[domain] = (latestCounts[domain] || 0) - (previousCounts[domain] || 0);
+    Object.keys(currentCounts).forEach(domain => {
+      const currentPct = currentTotal > 0 ? ((currentCounts[domain] || 0) / currentTotal) * 100 : 0;
+      const previousPct = previousTotal > 0 ? ((previousCounts[domain] || 0) / previousTotal) * 100 : 0;
+      trends[domain] = currentPct - previousPct;
     });
 
     return trends;
-  }, [perceptionScoreTrend, responses]);
+  }, [responses, previousPeriodResponses]);
 
   // Top 5 sources from mentioned-only citations (consistent with SourcesTab default)
   const topSources = useMemo(() => {
@@ -182,15 +176,18 @@ export const SourcesSummaryCard = ({
           <span className="text-xs font-semibold text-gray-900">
             {mentionPercent.toFixed(1)}%
           </span>
-          {source.trendChange !== 0 && (
-            <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-              source.trendChange > 0 ? 'text-green-600' : 'text-red-600'
-            }`}>
-              {source.trendChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
-              {source.trendChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-              <span className="whitespace-nowrap">{Math.abs(source.trendChange)}</span>
-            </span>
-          )}
+          {(() => {
+            const delta = Math.round(source.trendChange);
+            if (delta === 0) return previousPeriodResponses.length > 0 ? <span className="text-xs text-gray-400">-</span> : null;
+            return (
+              <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                delta > 0 ? 'text-green-600' : 'text-red-600'
+              }`}>
+                {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+              </span>
+            );
+          })()}
         </div>
       </div>
     );

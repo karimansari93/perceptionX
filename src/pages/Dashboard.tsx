@@ -178,6 +178,12 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     responseTexts,
     responseTextsLoading,
     fetchResponseTexts,
+    availablePeriods,
+    selectedPeriod,
+    setSelectedPeriod,
+    previousPeriodMetrics,
+    companyRelevanceByMonth,
+    previousPeriodResponses,
   } = useDashboardData();
   const { isPro } = useSubscription();
 
@@ -523,6 +529,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             metricsCalculating={metricsCalculating}
             responseTexts={responseTexts}
             fetchResponseTexts={fetchResponseTexts}
+            previousPeriodMetrics={previousPeriodMetrics}
+            companyRelevanceByMonth={companyRelevanceByMonth}
+            previousPeriodResponses={previousPeriodResponses}
           />
         </div>
 
@@ -539,6 +548,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 currentCompanyId={currentCompany?.id}
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
+                previousPeriodResponses={previousPeriodResponses}
               />
             </Suspense>
           </div>
@@ -554,6 +564,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 searchResults={currentCompanySearchResults}
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
+                previousPeriodResponses={previousPeriodResponses}
               />
             </Suspense>
           </div>
@@ -570,6 +581,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 onRefreshThemes={refreshData}
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
+                previousPeriodResponses={previousPeriodResponses}
               />
             </Suspense>
           </div>
@@ -682,6 +694,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           selectedLocation={selectedLocation}
           onLocationChange={setSelectedLocation}
           onAddLocation={DASHBOARD_ADD_LOCKED ? undefined : () => setShowAddLocationModal(true)}
+          availablePeriods={availablePeriods}
+          selectedPeriod={selectedPeriod}
+          onPeriodChange={setSelectedPeriod}
         />
         <div className="flex-1 overflow-auto">
           {isLoading ? (

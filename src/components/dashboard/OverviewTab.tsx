@@ -62,6 +62,9 @@ interface OverviewTabProps {
   metricsCalculating?: boolean; // Whether metrics are still being calculated (for UX - show all together)
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
+  previousPeriodMetrics?: { sentimentScore: number; visibilityScore: number; relevanceScore: number } | null;
+  companyRelevanceByMonth?: Record<string, number>;
+  previousPeriodResponses?: any[];
 }
 
 interface TimeBasedData {
@@ -104,7 +107,10 @@ export const OverviewTab = memo(({
   aiThemesLoading = false,
   metricsCalculating = false,
   responseTexts = {},
-  fetchResponseTexts
+  fetchResponseTexts,
+  previousPeriodMetrics = null,
+  companyRelevanceByMonth = {},
+  previousPeriodResponses = []
 }: OverviewTabProps) => {
   // Modal states - persisted
   const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('overviewTab.selectedCompetitor', null);
@@ -1072,26 +1078,28 @@ CRITICAL: When you reference information from a source, add an inline citation l
         ? (mentionedCount / periodResponses.length) * 100 
         : 0;
       
-      // Calculate relevance from recency data
-      // Get all citations from responses in this period and match to recency data
-      const periodCitations = periodResponses.flatMap(r => parseCitations(r.citations));
-      const recencyScores: number[] = [];
-      
-      periodCitations.forEach((citation: any) => {
-        const originalUrl = citation.url || citation.link;
-        if (originalUrl) {
-          // Extract actual source URL if it's a Google Translate URL
-          const url = extractSourceUrl(originalUrl);
-          if (recencyMap.has(url)) {
-            const score = recencyMap.get(url)!;
-            recencyScores.push(score);
+      // Calculate relevance: prefer MV per-month data, fall back to recency data
+      const dateMonthKey = `${new Date(date).getFullYear()}-${String(new Date(date).getMonth() + 1).padStart(2, '0')}`;
+      let avgRelevance = 0;
+      if (companyRelevanceByMonth[dateMonthKey] !== undefined) {
+        avgRelevance = companyRelevanceByMonth[dateMonthKey];
+      } else {
+        // Fallback to recency data (may be empty)
+        const periodCitations = periodResponses.flatMap(r => parseCitations(r.citations));
+        const recencyScores: number[] = [];
+        periodCitations.forEach((citation: any) => {
+          const originalUrl = citation.url || citation.link;
+          if (originalUrl) {
+            const url = extractSourceUrl(originalUrl);
+            if (recencyMap.has(url)) {
+              recencyScores.push(recencyMap.get(url)!);
+            }
           }
-        }
-      });
-      
-      const avgRelevance = recencyScores.length > 0
-        ? recencyScores.reduce((sum, score) => sum + score, 0) / recencyScores.length
-        : 0;
+        });
+        avgRelevance = recencyScores.length > 0
+          ? recencyScores.reduce((sum, score) => sum + score, 0) / recencyScores.length
+          : 0;
+      }
       
       // Round values first so they match what's displayed in the breakdown
       const roundedSentiment = Math.round(normalizedSentiment);
@@ -1125,7 +1133,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
     );
     
     return sorted;
-  }, [responses, aiThemes, recencyData, calculateAIBasedSentiment]);
+  }, [responses, aiThemes, recencyData, companyRelevanceByMonth, calculateAIBasedSentiment]);
 
   // Prepare chart data for LLM mentions
   const llmMentionChartData = useMemo(() => {
@@ -1174,17 +1182,23 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 <span className="text-6xl font-extrabold text-gray-900 drop-shadow-sm leading-none">
                   {metrics.perceptionScore}
                 </span>
-                {perceptionScoreTrend.length > 1 && (() => {
-                  const latestScore = perceptionScoreTrend[perceptionScoreTrend.length - 1].score;
-                  const previousScore = perceptionScoreTrend[perceptionScoreTrend.length - 2].score;
-                  const change = latestScore - previousScore;
-                  const direction = change > 0 ? 'up' : change < 0 ? 'down' : 'neutral';
-                  
+                {previousPeriodMetrics && (() => {
+                  const prevEPS = Math.round(
+                    (previousPeriodMetrics.sentimentScore * 0.5) +
+                    (previousPeriodMetrics.visibilityScore * 0.3) +
+                    (previousPeriodMetrics.relevanceScore * 0.2)
+                  );
+                  const change = metrics.perceptionScore - prevEPS;
+                  if (change === 0) return (
+                    <span className="ml-4 text-xl font-semibold text-gray-400" style={{marginBottom: 6}}>-</span>
+                  );
+                  const direction = change > 0 ? 'up' : 'down';
+
                   return (
-                    <span className={`ml-4 flex items-center gap-1 text-xl font-semibold ${direction === 'up' ? 'text-green-600' : direction === 'down' ? 'text-red-600' : 'text-gray-400'}`}
+                    <span className={`ml-4 flex items-center gap-1 text-xl font-semibold ${direction === 'up' ? 'text-green-600' : 'text-red-600'}`}
                   style={{marginBottom: 6}}>
-                      {direction === 'up' && <TrendingUp className="w-5 h-5" />} 
-                      {direction === 'down' && <TrendingDown className="w-5 h-5" />} 
+                      {direction === 'up' && <TrendingUp className="w-5 h-5" />}
+                      {direction === 'down' && <TrendingDown className="w-5 h-5" />}
                       {Math.abs(change)}
                 </span>
                   );
@@ -1202,11 +1216,23 @@ CRITICAL: When you reference information from a source, add an inline citation l
            <div className="w-full flex-1 flex items-end" style={{ minHeight: 0 }}>
              <div className="w-full" style={{ height: '60px' }}>
                <ChartContainer config={{ score: { label: "Score", color: "#0DBCBA" } }} className="w-full h-full">
-                 <AreaChart 
-                   data={perceptionScoreTrend.length > 1 ? perceptionScoreTrend : [
-                     { date: 'Start', score: metrics.perceptionScore, fullDate: new Date().toISOString(), responseCount: responses.length },
-                     { date: 'Today', score: metrics.perceptionScore, fullDate: new Date().toISOString(), responseCount: responses.length }
-                   ]} 
+                 <AreaChart
+                   data={(() => {
+                     // Build chart data: previous period EPS + current period trend points
+                     const points = [...perceptionScoreTrend];
+                     if (previousPeriodMetrics && points.length > 0) {
+                       const prevEPS = Math.round(
+                         (previousPeriodMetrics.sentimentScore * 0.5) +
+                         (previousPeriodMetrics.visibilityScore * 0.3) +
+                         (previousPeriodMetrics.relevanceScore * 0.2)
+                       );
+                       points.unshift({ date: 'Prev', score: prevEPS, fullDate: '', responseCount: 0, promptCount: 0, sentiment: previousPeriodMetrics.sentimentScore, visibility: previousPeriodMetrics.visibilityScore, relevance: previousPeriodMetrics.relevanceScore });
+                     }
+                     return points.length > 1 ? points : [
+                       { date: 'Start', score: metrics.perceptionScore, fullDate: '', responseCount: responses.length },
+                       { date: 'Today', score: metrics.perceptionScore, fullDate: '', responseCount: responses.length }
+                     ];
+                   })()}
                    width={undefined}
                    height={60}
                    margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
@@ -1274,11 +1300,11 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 </div>
               </div>
             ) : (() => {
-              const previousPeriod = perceptionScoreTrend.length > 1 ? perceptionScoreTrend[perceptionScoreTrend.length - 2] : null;
-              
-              const sentimentChange = previousPeriod ? metrics.sentimentScore - previousPeriod.sentiment : 0;
-              const visibilityChange = previousPeriod ? metrics.visibilityScore - previousPeriod.visibility : 0;
-              const relevanceChange = previousPeriod ? metrics.relevanceScore - previousPeriod.relevance : 0;
+              const prevMetrics = previousPeriodMetrics;
+              const sentimentChange = prevMetrics ? metrics.sentimentScore - prevMetrics.sentimentScore : 0;
+              const visibilityChange = prevMetrics ? metrics.visibilityScore - prevMetrics.visibilityScore : 0;
+              const relevanceChange = prevMetrics ? metrics.relevanceScore - prevMetrics.relevanceScore : 0;
+              const hasPrevious = !!prevMetrics;
               
               const currentSentiment = metrics.sentimentScore;
               const currentVisibility = metrics.visibilityScore;
@@ -1293,15 +1319,17 @@ CRITICAL: When you reference information from a source, add an inline citation l
               </div>
                     <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
                       <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentSentiment}%</span>
-                      {previousPeriod && sentimentChange !== 0 && (
-                        <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                          sentimentChange > 0 ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {sentimentChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
-                          {sentimentChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                          <span className="whitespace-nowrap">{Math.abs(sentimentChange)}</span>
-                        </span>
-                      )}
+                      <span className="w-[40px] flex justify-end">
+                        {hasPrevious && (sentimentChange !== 0 ? (
+                          <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                            sentimentChange > 0 ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            {sentimentChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
+                            {sentimentChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                            <span className="whitespace-nowrap">{Math.abs(sentimentChange)}</span>
+                          </span>
+                        ) : <span className="text-xs text-gray-400">-</span>)}
+                      </span>
                     </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 mb-6">
@@ -1311,15 +1339,17 @@ CRITICAL: When you reference information from a source, add an inline citation l
               </div>
                     <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
                       <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentVisibility}%</span>
-                      {previousPeriod && visibilityChange !== 0 && (
-                        <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                          visibilityChange > 0 ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {visibilityChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
-                          {visibilityChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                          <span className="whitespace-nowrap">{Math.abs(visibilityChange)}</span>
-                        </span>
-                      )}
+                      <span className="w-[40px] flex justify-end">
+                        {hasPrevious && (visibilityChange !== 0 ? (
+                          <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                            visibilityChange > 0 ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            {visibilityChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
+                            {visibilityChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                            <span className="whitespace-nowrap">{Math.abs(visibilityChange)}</span>
+                          </span>
+                        ) : <span className="text-xs text-gray-400">-</span>)}
+                      </span>
                     </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3">
@@ -1329,15 +1359,17 @@ CRITICAL: When you reference information from a source, add an inline citation l
               </div>
                     <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
                       <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentRelevance}%</span>
-                      {previousPeriod && relevanceChange !== 0 && (
-                        <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                          relevanceChange > 0 ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {relevanceChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
-                          {relevanceChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                          <span className="whitespace-nowrap">{Math.abs(relevanceChange)}</span>
-                        </span>
-                      )}
+                      <span className="w-[40px] flex justify-end">
+                        {hasPrevious && (relevanceChange !== 0 ? (
+                          <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                            relevanceChange > 0 ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            {relevanceChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
+                            {relevanceChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                            <span className="whitespace-nowrap">{Math.abs(relevanceChange)}</span>
+                          </span>
+                        ) : <span className="text-xs text-gray-400">-</span>)}
+                      </span>
             </div>
                   </div>
                 </>
@@ -1362,39 +1394,44 @@ CRITICAL: When you reference information from a source, add an inline citation l
         />
       </div> */}
 
-      {/* Summary Cards Grid */}
+      {/* Summary Cards Grid - only render when all metrics (including themes) are ready */}
+      {!metricsCalculating && (
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         <div>
-          <SourcesSummaryCard 
+          <SourcesSummaryCard
             topCitations={topCitations}
             responses={responses}
             companyName={companyName}
             searchResults={searchResults}
             perceptionScoreTrend={perceptionScoreTrend}
+            previousPeriodResponses={previousPeriodResponses}
           />
         </div>
 
         <div>
-          <CompetitorsSummaryCard 
+          <CompetitorsSummaryCard
             topCompetitors={normalizedTopCompetitors}
             responses={responses}
             companyName={companyName}
             searchResults={searchResults}
             perceptionScoreTrend={perceptionScoreTrend}
+            previousPeriodResponses={previousPeriodResponses}
           />
         </div>
 
         <div className="lg:col-span-2 xl:col-span-1">
-          <AttributesSummaryCard 
+          <AttributesSummaryCard
             talentXProData={talentXProData}
             aiThemes={aiThemes}
             companyName={companyName}
             perceptionScoreTrend={perceptionScoreTrend}
+            previousPeriodResponses={previousPeriodResponses}
+            responses={responses}
+            aiThemesLoading={aiThemesLoading}
           />
         </div>
       </div>
-
-
+      )}
 
 
 

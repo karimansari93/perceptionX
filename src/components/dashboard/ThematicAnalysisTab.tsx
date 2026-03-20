@@ -21,6 +21,7 @@ import {
   Crown,
   Lock,
   TrendingUp,
+  TrendingDown,
   FileText,
   MessageSquare,
   ClipboardList,
@@ -46,6 +47,7 @@ interface ThematicAnalysisTabProps {
   onRefreshThemes: () => Promise<void>;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
+  previousPeriodResponses?: PromptResponse[];
 }
 
 interface AITheme {
@@ -85,7 +87,7 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
   'overall-candidate-experience': Briefcase
 };
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, onRefreshThemes, responseTexts = {}, fetchResponseTexts }: ThematicAnalysisTabProps) => {
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [] }: ThematicAnalysisTabProps) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   // Modal and filter states - persisted
@@ -216,6 +218,19 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   // Only include themes with a valid known attribute ID
   const validAttributeIds = new Set(TALENTX_ATTRIBUTES.map(a => a.id));
   const filteredThemes = aiThemes.filter(theme => validAttributeIds.has(theme.talentx_attribute_id));
+
+  // Previous period theme counts for delta display
+  const prevThemeCounts = useMemo(() => {
+    if (previousPeriodResponses.length === 0) return null;
+    const prevIds = new Set(previousPeriodResponses.map(r => r.id));
+    const prevThemes = aiThemes.filter(t => validAttributeIds.has(t.talentx_attribute_id) && prevIds.has(t.response_id));
+    return {
+      positive: prevThemes.filter(t => t.sentiment === 'positive').length,
+      negative: prevThemes.filter(t => t.sentiment === 'negative').length,
+      neutral: prevThemes.filter(t => t.sentiment === 'neutral').length,
+      total: prevThemes.length
+    };
+  }, [previousPeriodResponses, aiThemes, validAttributeIds]);
 
   // Helper to get favicon for a domain
   const getFavicon = (domain: string): string => {
@@ -1052,20 +1067,55 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 ) : null}
 
                 {/* Summary Stats */}
+                {(() => {
+                  // Compute per-attribute previous period theme counts
+                  const prevIds = new Set(previousPeriodResponses.map(r => r.id));
+                  const prevAttrThemes = prevIds.size > 0
+                    ? aiThemes.filter(t => validAttributeIds.has(t.talentx_attribute_id) && t.talentx_attribute_id === selectedAttribute && prevIds.has(t.response_id))
+                    : [];
+                  const prevPositive = prevAttrThemes.filter(t => t.sentiment === 'positive').length;
+                  const prevNegative = prevAttrThemes.filter(t => t.sentiment === 'negative').length;
+                  const prevNeutral = prevAttrThemes.filter(t => t.sentiment === 'neutral').length;
+                  const hasPrev = prevIds.size > 0;
+
+                  const renderDelta = (current: number, previous: number) => {
+                    if (!hasPrev || previous === 0) return null;
+                    const pctChange = Math.round(((current - previous) / previous) * 100);
+                    if (pctChange === 0) return null;
+                    return (
+                      <span className={`text-xs font-semibold inline-flex items-center gap-0.5 ${pctChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {pctChange > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                        {Math.abs(pctChange)}%
+                      </span>
+                    );
+                  };
+
+                  return (
                 <div className="grid grid-cols-3 gap-4">
                   <div className="text-center p-3 bg-green-50 rounded-lg">
-                    <div className="text-2xl font-bold text-green-600">{positiveThemes.length}</div>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span className="text-2xl font-bold text-green-600">{positiveThemes.length}</span>
+                      {renderDelta(positiveThemes.length, prevPositive)}
+                    </div>
                     <div className="text-sm text-green-700">Positive Themes</div>
                   </div>
                   <div className="text-center p-3 bg-red-50 rounded-lg">
-                    <div className="text-2xl font-bold text-red-600">{negativeThemes.length}</div>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span className="text-2xl font-bold text-red-600">{negativeThemes.length}</span>
+                      {renderDelta(negativeThemes.length, prevNegative)}
+                    </div>
                     <div className="text-sm text-red-700">Negative Themes</div>
                   </div>
                   <div className="text-center p-3 bg-gray-50 rounded-lg">
-                    <div className="text-2xl font-bold text-gray-600">{neutralThemes.length}</div>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span className="text-2xl font-bold text-gray-600">{neutralThemes.length}</span>
+                      {renderDelta(neutralThemes.length, prevNeutral)}
+                    </div>
                     <div className="text-sm text-gray-700">Neutral Themes</div>
                   </div>
                 </div>
+                  );
+                })()}
 
                 {/* Key Themes List - Clickable */}
                 <div className="space-y-3">

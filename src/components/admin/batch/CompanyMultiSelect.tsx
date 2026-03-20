@@ -13,6 +13,7 @@ export type OrgCompany = {
   promptCount: number;
   createdAt: string | null;
   lastUpdated: string | null;
+  country: string | null;
 };
 
 type Props = {
@@ -70,27 +71,54 @@ export const CompanyMultiSelect = ({ organizationId, selectedIds, onSelectionCha
         return;
       }
 
-      // Step 3: Get prompt counts per company
-      const { data: promptCounts } = await supabase
-        .from("confirmed_prompts")
-        .select("company_id")
-        .eq("is_active", true)
-        .in("company_id", companyIds);
+      // Step 3: Get prompt counts and location per company (paginate to avoid 1000-row limit)
+      const PAGE_SIZE = 1000;
+      let allPromptData: any[] = [];
+      let page = 0;
+      let chunk: any[] | null;
+      do {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        const { data } = await supabase
+          .from("confirmed_prompts")
+          .select("company_id, location_context")
+          .eq("is_active", true)
+          .in("company_id", companyIds)
+          .range(from, to);
+        chunk = data ?? [];
+        allPromptData = allPromptData.concat(chunk);
+        page++;
+      } while (chunk && chunk.length === PAGE_SIZE);
 
       const countMap = new Map<string, number>();
-      (promptCounts || []).forEach((p: any) => {
+      const locationMap = new Map<string, Set<string>>();
+      allPromptData.forEach((p: any) => {
         countMap.set(p.company_id, (countMap.get(p.company_id) || 0) + 1);
+        if (p.location_context) {
+          if (!locationMap.has(p.company_id)) locationMap.set(p.company_id, new Set());
+          locationMap.get(p.company_id)!.add(p.location_context);
+        }
       });
 
       setCompanies(
-        companyData.map((c: any) => ({
-          id: c.id,
-          name: c.name,
-          industry: c.industry,
-          promptCount: countMap.get(c.id) || 0,
-          createdAt: c.created_at,
-          lastUpdated: c.updated_at,
-        }))
+        companyData.map((c: any) => {
+          const locations = locationMap.get(c.id);
+          // Pick the primary location (first non-GLOBAL, or GLOBAL if that's all there is)
+          let country: string | null = null;
+          if (locations && locations.size > 0) {
+            const nonGlobal = [...locations].filter(l => l !== 'GLOBAL');
+            country = nonGlobal.length > 0 ? nonGlobal[0] : 'Global';
+          }
+          return {
+            id: c.id,
+            name: c.name,
+            industry: c.industry,
+            promptCount: countMap.get(c.id) || 0,
+            createdAt: c.created_at,
+            lastUpdated: c.updated_at,
+            country,
+          };
+        })
       );
     } finally {
       setLoading(false);
@@ -144,8 +172,8 @@ export const CompanyMultiSelect = ({ organizationId, selectedIds, onSelectionCha
           Select All ({companies.length} companies)
         </Label>
       </div>
-      <ScrollArea className="max-h-[280px]">
-        <div className="space-y-1">
+      <ScrollArea className="h-[400px]">
+        <div className="space-y-1 pr-3">
           {companies.map((company) => (
             <div
               key={company.id}
@@ -158,6 +186,11 @@ export const CompanyMultiSelect = ({ organizationId, selectedIds, onSelectionCha
               />
               <div className="flex-1 min-w-0">
                 <span className="text-sm font-medium">{company.name}</span>
+                {company.country && (
+                  <Badge variant="secondary" className="text-[10px] ml-2 px-1.5 py-0">
+                    {company.country}
+                  </Badge>
+                )}
                 {company.industry && (
                   <span className="text-xs text-muted-foreground ml-2">
                     {company.industry}

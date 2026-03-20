@@ -12,6 +12,7 @@ interface CompetitorsSummaryCardProps {
   companyName: string;
   searchResults?: any[];
   perceptionScoreTrend?: any[];
+  previousPeriodResponses?: any[];
 }
 
 export const CompetitorsSummaryCard = ({ 
@@ -19,7 +20,8 @@ export const CompetitorsSummaryCard = ({
   responses, 
   companyName, 
   searchResults = [],
-  perceptionScoreTrend = []
+  perceptionScoreTrend = [],
+  previousPeriodResponses = []
 }: CompetitorsSummaryCardProps) => {
   const navigate = useNavigate();
 
@@ -89,85 +91,71 @@ export const CompetitorsSummaryCard = ({
     return trimmedName.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   };
 
-  // Calculate competitor trends between latest and previous periods
-  const competitorTrends = useMemo(() => {
-    if (perceptionScoreTrend.length < 2) return {};
-    
-    const latestPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 1];
-    const previousPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 2];
-    
-    // Get responses for each period
-    const latestResponses = responses.filter(r => {
-      const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
-      return responseDate === latestPeriod.fullDate;
-    });
-    
-    const previousResponses = responses.filter(r => {
-      const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
-      return responseDate === previousPeriod.fullDate;
-    });
-    
-    // Calculate competitor mention counts for each period
-    const getCompetitorCounts = (responseList: any[]) => {
-      const counts: { [key: string]: number } = {};
-      responseList.forEach(response => {
-        try {
-          const competitorMentions = typeof response.detected_competitors === 'string' 
-            ? response.detected_competitors.split(',').map(c => c.trim()).filter(c => c.length > 0)
-            : [];
-          if (Array.isArray(competitorMentions)) {
-            competitorMentions.forEach((c: any) => {
-              if (c.name) {
-                const normalizedName = normalizeCompetitorName(c.name);
-                counts[normalizedName] = (counts[normalizedName] || 0) + 1;
-              }
-            });
-          }
-        } catch {
-          // Ignore invalid competitor mentions
-        }
-      });
-      return counts;
-    };
-    
-    const latestCounts = getCompetitorCounts(latestResponses);
-    const previousCounts = getCompetitorCounts(previousResponses);
-    
-    // Calculate changes
-    const trends: { [key: string]: number } = {};
-    Object.keys(latestCounts).forEach(competitor => {
-      const latest = latestCounts[competitor] || 0;
-      const previous = previousCounts[competitor] || 0;
-      trends[competitor] = latest - previous;
-    });
-    
-    return trends;
-  }, [perceptionScoreTrend, responses]);
+  // Calculate competitor previous counts from competitive prompts only
+  const competitorPreviousCounts = useMemo(() => {
+    if (previousPeriodResponses.length === 0) return {};
 
-  // Get top 5 competitors for the summary with trend data
+    const counts: { [key: string]: number } = {};
+    previousPeriodResponses
+      .filter(r => r.confirmed_prompts?.prompt_type === 'competitive' || r.confirmed_prompts?.prompt_type === 'talentx_competitive')
+      .forEach(response => {
+        if (!response.detected_competitors) return;
+        response.detected_competitors
+          .split(',')
+          .map((c: string) => c.trim())
+          .filter((c: string) => c.length > 0)
+          .forEach((c: string) => {
+            const name = normalizeCompetitorName(c);
+            if (name) {
+              counts[name] = (counts[name] || 0) + 1;
+            }
+          });
+      });
+    return counts;
+  }, [previousPeriodResponses]);
+
+  // Get top 5 direct competitors from competitive prompts only (matching Competitors tab default)
   const topCompetitorsFiltered = useMemo(() => {
-    // Excluded competitors and words
     const excludedCompetitors = new Set([
       'glassdoor', 'indeed', 'ambitionbox', 'workday', 'linkedin', 'monster', 'careerbuilder', 'ziprecruiter',
       'dice', 'angelist', 'wellfound', 'builtin', 'stackoverflow', 'github'
     ]);
-    
-    return topCompetitors
-      .filter(competitor => 
-        !excludedCompetitors.has(competitor.company.toLowerCase()) &&
-        competitor.company.toLowerCase() !== companyName.toLowerCase() &&
-        normalizeCompetitorName(competitor.company)
-      )
+
+    // Count competitors from competitive prompt responses only
+    const counts: Record<string, number> = {};
+    responses
+      .filter(r => r.confirmed_prompts?.prompt_type === 'competitive' || r.confirmed_prompts?.prompt_type === 'talentx_competitive')
+      .forEach(response => {
+        if (!response.detected_competitors) return;
+        response.detected_competitors
+          .split(',')
+          .map((c: string) => c.trim())
+          .filter((c: string) => c.length > 0)
+          .forEach((c: string) => {
+            const name = normalizeCompetitorName(c);
+            if (name && name.toLowerCase() !== companyName.toLowerCase() && !excludedCompetitors.has(name.toLowerCase())) {
+              counts[name] = (counts[name] || 0) + 1;
+            }
+          });
+      });
+
+    return Object.entries(counts)
+      .sort(([, a], [, b]) => b - a)
       .slice(0, 5)
-      .map(competitor => ({
-        ...competitor,
-        displayName: normalizeCompetitorName(competitor.company),
-        trendChange: competitorTrends[normalizeCompetitorName(competitor.company)] || 0
+      .map(([name, count]) => ({
+        company: name,
+        count,
+        displayName: name,
+        previousCount: competitorPreviousCounts[name] || 0
       }));
-  }, [topCompetitors, companyName, competitorTrends]);
+  }, [responses, companyName, competitorPreviousCounts]);
 
   const totalCompetitorMentions = useMemo(() => {
     return topCompetitorsFiltered.reduce((sum, c) => sum + c.count, 0);
+  }, [topCompetitorsFiltered]);
+
+  const totalPreviousMentions = useMemo(() => {
+    return topCompetitorsFiltered.reduce((sum, c) => sum + (c.previousCount || 0), 0);
   }, [topCompetitorsFiltered]);
 
   const renderCompetitorItem = (competitor: any) => {
@@ -210,15 +198,23 @@ export const CompetitorsSummaryCard = ({
           <span className="text-xs font-semibold text-gray-900">
             {mentionPercent.toFixed(1)}%
           </span>
-          {competitor.trendChange !== 0 && (
-            <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-              competitor.trendChange > 0 ? 'text-green-600' : 'text-red-600'
-            }`}>
-              {competitor.trendChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
-              {competitor.trendChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-              <span className="whitespace-nowrap">{Math.abs(competitor.trendChange)}</span>
-            </span>
-          )}
+          <span className="w-[40px] flex justify-end">
+            {(() => {
+              if (!competitor.previousCount || totalPreviousMentions === 0) return null;
+              const prevPct = (competitor.previousCount / totalPreviousMentions) * 100;
+              const delta = Math.round(mentionPercent - prevPct);
+              if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
+
+              return (
+                <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                  delta > 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                  <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+                </span>
+              );
+            })()}
+          </span>
         </div>
       </div>
     );

@@ -11,6 +11,9 @@ interface AttributesSummaryCardProps {
   aiThemes?: any[];
   companyName?: string;
   perceptionScoreTrend?: any[];
+  previousPeriodResponses?: any[];
+  responses?: any[];
+  aiThemesLoading?: boolean;
 }
 
 // Attribute icon mapping (shared with KeyTakeaways)
@@ -31,62 +34,55 @@ export const AttributesSummaryCard = ({
   talentXProData = [], 
   aiThemes = [], 
   companyName,
-  perceptionScoreTrend = []
+  perceptionScoreTrend = [],
+  previousPeriodResponses = [],
+  responses = [],
+  aiThemesLoading = false
 }: AttributesSummaryCardProps) => {
   const navigate = useNavigate();
 
-  // Calculate theme trends between latest and previous periods
+  // Calculate theme trends: share of mentions % (current period) - share of mentions % (previous period)
   const themeTrends = useMemo(() => {
-    if (perceptionScoreTrend.length < 2) return {};
-    
-    const latestPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 1];
-    const previousPeriod = perceptionScoreTrend[perceptionScoreTrend.length - 2];
-    
-    // Get responses for each period
-    const latestResponses = aiThemes.filter(theme => {
-      const responseDate = new Date(theme.created_at).toISOString().split('T')[0];
-      return responseDate === latestPeriod.fullDate;
-    });
-    
-    const previousResponses = aiThemes.filter(theme => {
-      const responseDate = new Date(theme.created_at).toISOString().split('T')[0];
-      return responseDate === previousPeriod.fullDate;
-    });
-    
-    // Calculate theme counts for each period
-    const getThemeCounts = (themeList: any[]) => {
-      const counts: { [key: string]: number } = {};
-      themeList.forEach(theme => {
-        const attributeId = theme.talentx_attribute_id;
-        counts[attributeId] = (counts[attributeId] || 0) + 1;
-      });
-      return counts;
-    };
-    
-    const latestCounts = getThemeCounts(latestResponses);
-    const previousCounts = getThemeCounts(previousResponses);
-    
-    // Calculate changes
-    const trends: { [key: string]: number } = {};
-    Object.keys(latestCounts).forEach(attributeId => {
-      const latest = latestCounts[attributeId] || 0;
-      const previous = previousCounts[attributeId] || 0;
-      trends[attributeId] = latest - previous;
-    });
-    
-    return trends;
-  }, [perceptionScoreTrend, aiThemes]);
+    if (previousPeriodResponses.length === 0 || aiThemesLoading) return {};
 
-  // Calculate most mentioned attributes from AI themes with SWOT categorization
+    const currentResponseIds = new Set(responses.map((r: any) => r.id));
+    const prevResponseIds = new Set(previousPeriodResponses.map((r: any) => r.id));
+
+    const currentThemes = aiThemes.filter(t => currentResponseIds.has(t.response_id));
+    const prevThemes = aiThemes.filter(t => prevResponseIds.has(t.response_id));
+
+    // Count mentions per attribute
+    const countByAttr = (themes: any[]) => {
+      const c: Record<string, number> = {};
+      themes.forEach(t => { c[t.talentx_attribute_id] = (c[t.talentx_attribute_id] || 0) + 1; });
+      return c;
+    };
+
+    const currCounts = countByAttr(currentThemes);
+    const prevCounts = countByAttr(prevThemes);
+    const currTotal = currentThemes.length;
+    const prevTotal = prevThemes.length;
+
+    const trends: { [key: string]: number } = {};
+    Object.keys(currCounts).forEach(id => {
+      const currPct = currTotal > 0 ? (currCounts[id] / currTotal) * 100 : 0;
+      const prevPct = prevTotal > 0 ? ((prevCounts[id] || 0) / prevTotal) * 100 : 0;
+      trends[id] = Math.round(currPct - prevPct);
+    });
+
+    return trends;
+  }, [aiThemes, responses, previousPeriodResponses, aiThemesLoading]);
+
+  // Calculate most mentioned attributes from AI themes
   const mostMentionedThemes = useMemo(() => {
     if (aiThemes.length === 0) return [];
 
     // Group themes by attribute and count mentions
-    const attributeCounts: Record<string, { 
-      count: number; 
-      name: string; 
-      positiveCount: number; 
-      negativeCount: number; 
+    const attributeCounts: Record<string, {
+      count: number;
+      name: string;
+      positiveCount: number;
+      negativeCount: number;
       neutralCount: number;
       avgSentimentScore: number;
     }> = {};
@@ -182,28 +178,34 @@ export const AttributesSummaryCard = ({
           <div className="w-4 h-4 flex-shrink-0 flex items-center justify-center">
             <IconComponent className={`w-4 h-4 ${scoreColor}`} />
           </div>
-          <div className="min-w-0 flex items-center space-x-1.5">
-            <span className="text-xs font-medium text-gray-900 truncate" title={attribute.name}>
+          <div className="min-w-0 flex items-center space-x-1">
+            <span className="text-xs font-medium text-gray-900 truncate max-w-[120px]" title={attribute.name}>
               {attribute.name}
             </span>
-            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${volumeLabel.style}`}>
+            <span className={`text-[9px] font-medium px-1 py-0 rounded whitespace-nowrap ${volumeLabel.style}`}>
               {volumeLabel.text}
             </span>
           </div>
         </div>
         
-        <div className="flex items-center gap-1.5 min-w-[40px] justify-end">
-          <span className={`text-xs font-semibold ${scoreColor}`}>
+        <div className="flex items-center gap-1 min-w-[40px] justify-end">
+          <span className="text-xs font-semibold text-gray-900">
             {sentimentScore}%
           </span>
-          {attribute.trendChange !== 0 && (
-            <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-              attribute.trendChange > 0 ? 'text-green-600' : 'text-red-600'
-            }`}>
-              {attribute.trendChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
-              {attribute.trendChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-            </span>
-          )}
+          <span className="w-[40px] flex justify-end">
+            {(() => {
+              const delta = Math.round(attribute.trendChange);
+              if (delta === 0) return previousPeriodResponses.length > 0 ? <span className="text-xs text-gray-400">-</span> : null;
+              return (
+                <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                  delta > 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                  <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+                </span>
+              );
+            })()}
+          </span>
         </div>
       </div>
     );
@@ -216,12 +218,26 @@ export const AttributesSummaryCard = ({
           <CardTitle className="text-lg font-semibold">Themes</CardTitle>
         </CardHeader>
         <CardContent className="px-4 sm:px-6">
-          <div className="text-center py-8 text-gray-500">
-            <div className="w-8 h-8 mx-auto mb-2 bg-gray-100 rounded-full flex items-center justify-center">
-              <Target className="w-4 h-4 text-gray-400" />
+          {aiThemesLoading ? (
+            <div className="space-y-3 py-2">
+              {[1,2,3,4,5].map(i => (
+                <div key={i} className="flex items-center justify-between py-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-3 w-24 bg-gray-100 rounded animate-pulse" />
+                  </div>
+                  <div className="h-3 w-8 bg-gray-100 rounded animate-pulse" />
+                </div>
+              ))}
             </div>
-            <p className="text-sm">No attribute mentions found yet.</p>
-          </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              <div className="w-8 h-8 mx-auto mb-2 bg-gray-100 rounded-full flex items-center justify-center">
+                <Target className="w-4 h-4 text-gray-400" />
+              </div>
+              <p className="text-sm">No attribute mentions found yet.</p>
+            </div>
+          )}
         </CardContent>
       </Card>
     );

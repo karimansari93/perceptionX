@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { CompanySwitcher } from "./CompanySwitcher";
 import { LocationFilter } from "./LocationFilter";
+import { PeriodSelector } from "./PeriodSelector";
+import { PeriodInfo } from "@/hooks/useDashboardData";
+
 interface DashboardHeaderProps {
   companyName: string;
   responsesCount: number;
@@ -22,6 +25,9 @@ interface DashboardHeaderProps {
   selectedLocation?: string | null;
   onLocationChange?: (location: string | null) => void;
   onAddLocation?: () => void;
+  availablePeriods?: PeriodInfo[];
+  selectedPeriod?: string | null;
+  onPeriodChange?: (period: string | null) => void;
 }
 
 export const DashboardHeader = React.memo(({
@@ -40,6 +46,9 @@ export const DashboardHeader = React.memo(({
   selectedLocation,
   onLocationChange,
   onAddLocation,
+  availablePeriods,
+  selectedPeriod,
+  onPeriodChange,
 }: DashboardHeaderProps) => {
   const isMobile = useIsMobile();
 
@@ -68,8 +77,16 @@ export const DashboardHeader = React.memo(({
         {/* Right side with LocationFilter, CompanySwitcher, LastUpdated component and debug button */}
         <div className="flex-1" />
         <div className="flex items-center gap-2 sm:gap-3">
+          {onPeriodChange && availablePeriods && availablePeriods.length > 1 && (
+            <PeriodSelector
+              availablePeriods={availablePeriods}
+              selectedPeriod={selectedPeriod ?? null}
+              onPeriodChange={onPeriodChange}
+              className={isMobile ? "min-w-[120px]" : ""}
+            />
+          )}
           {onLocationChange && (
-            <LocationFilter 
+            <LocationFilter
               selectedLocation={selectedLocation || null}
               onLocationChange={onLocationChange}
               onAddLocation={onAddLocation}

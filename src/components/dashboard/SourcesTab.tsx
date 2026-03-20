@@ -29,6 +29,7 @@ interface SourcesTabProps {
   currentCompanyId?: string;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
+  previousPeriodResponses?: any[];
 }
 
 // Helper function to normalize domains for consistent counting
@@ -37,7 +38,7 @@ const normalizeDomain = (domain: string): string => {
   return domain.trim().toLowerCase().replace(/^www\./, '');
 };
 
-export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts }: SourcesTabProps) => {
+export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [] }: SourcesTabProps) => {
   
   // Filter responses and searchResults by currentCompanyId to ensure we only show sources for the current company
   const filteredResponses = useMemo(() => {
@@ -393,123 +394,41 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return domain.replace(/^www\./, ""); // Remove www. if present
   };
 
-  // Helper to group responses by time period
-  const groupResponsesByTimePeriod = useMemo(() => {
-    // Use filtered responses that respect all filters (category, theme, job function)
-    const responsesToUse = getFilteredResponsesByAllFilters;
-    if (responsesToUse.length === 0) return { current: [], previous: [] };
-
-    // Sort responses by tested_at descending
-    const sortedResponses = [...responsesToUse].sort((a, b) => 
-      new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime()
-    );
-
-    // Find the most recent date
-    const latestDate = new Date(sortedResponses[0].tested_at);
-    
-    // Group responses into current (latest date) and previous (all other dates)
-    const current = sortedResponses.filter(r => {
-      const responseDate = new Date(r.tested_at);
-      return responseDate.toDateString() === latestDate.toDateString();
-    });
-    
-    const previous = sortedResponses.filter(r => {
-      const responseDate = new Date(r.tested_at);
-      return responseDate.toDateString() !== latestDate.toDateString();
-    });
-
-    // If we only have responses from one date, treat them all as current
-    if (previous.length === 0) {
-      return { current: sortedResponses, previous: [] };
-    }
-
-    return { current, previous };
-  }, [getFilteredResponsesByAllFilters]);
-
-  // Calculate time-based citation data
+  // Cross-period citation counts for delta computation
   const timeBasedCitations = useMemo(() => {
-    const { current, previous } = groupResponsesByTimePeriod;
-    
-    // Helper to parse citations
-    const parseCitations = (citations: any) => {
-      if (!citations) return [];
-      try {
-        return typeof citations === 'string' ? JSON.parse(citations) : citations;
-      } catch {
-        return [];
-      }
+    if (previousPeriodResponses.length === 0) return [];
+
+    const getCitationCounts = (responseList: any[]) => {
+      const counts: Record<string, number> = {};
+      responseList.forEach(response => {
+        try {
+          const raw = typeof response.citations === 'string' ? JSON.parse(response.citations) : response.citations;
+          if (Array.isArray(raw)) {
+            enhanceCitations(raw).forEach(c => {
+              if (c.type === 'website' && c.domain) {
+                const d = normalizeDomain(c.domain);
+                if (d) counts[d] = (counts[d] || 0) + 1;
+              }
+            });
+          }
+        } catch { /* skip */ }
+      });
+      return counts;
     };
 
-    // Get citation counts for current period
-    const currentCitations: Record<string, number> = {};
-    current.forEach(response => {
-      const citations = parseCitations(response.citations);
-      // Use enhanceCitations to properly extract domains (same as topCitations)
-      const enhancedCitations = enhanceCitations(citations);
-      enhancedCitations.forEach((enhancedCitation) => {
-        // Only count website citations (same as topCitations logic)
-        if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
-          const normalizedDomain = normalizeDomain(enhancedCitation.domain);
-          if (normalizedDomain) {
-            currentCitations[normalizedDomain] = (currentCitations[normalizedDomain] || 0) + 1;
-          }
-        }
-      });
-    });
+    const currentCounts = getCitationCounts(getFilteredResponsesByAllFilters);
+    const prevCounts = getCitationCounts(previousPeriodResponses);
 
-    // Get citation counts for previous period and calculate average
-    const previousCitations: Record<string, number> = {};
-    const previousUniqueDays = new Set(previous.map(r => new Date(r.tested_at).toDateString()));
-    const numPreviousDays = Math.max(1, previousUniqueDays.size);
+    const allDomains = new Set([...Object.keys(currentCounts), ...Object.keys(prevCounts)]);
 
-    previous.forEach(response => {
-      const citations = parseCitations(response.citations);
-      // Use enhanceCitations to properly extract domains (same as topCitations)
-      const enhancedCitations = enhanceCitations(citations);
-      enhancedCitations.forEach((enhancedCitation) => {
-        // Only count website citations (same as topCitations logic)
-        if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
-          const normalizedDomain = normalizeDomain(enhancedCitation.domain);
-          if (normalizedDomain) {
-            previousCitations[normalizedDomain] = (previousCitations[normalizedDomain] || 0) + 1;
-          }
-        }
-      });
-    });
-
-    // Combine all unique domains
-    const allDomains = new Set([
-      ...Object.keys(currentCitations),
-      ...Object.keys(previousCitations)
-    ]);
-
-    const timeBasedData: TimeBasedData[] = Array.from(allDomains).map(domain => {
-      const currentCount = currentCitations[domain] || 0;
-      const previousTotalCount = previousCitations[domain] || 0;
-      const previousAverage = Math.round(previousTotalCount / numPreviousDays);
-
-      const change = currentCount - previousAverage;
-      const changePercent = previousAverage > 0 ? (change / previousAverage) * 100 : currentCount > 0 ? 100 : 0;
-
-      return {
-        name: domain,
-        current: currentCount,
-        previous: previousAverage,
-        change,
-        changePercent
-      };
-    });
-
-    // Sort by current count descending, then by change descending
-    const result = timeBasedData
-      .sort((a, b) => {
-        if (b.current !== a.current) return b.current - a.current;
-        return b.change - a.change;
-      })
-      .slice(0, 20);
-
-    return result;
-  }, [groupResponsesByTimePeriod]);
+    return Array.from(allDomains).map(domain => ({
+      name: domain,
+      current: currentCounts[domain] || 0,
+      previous: prevCounts[domain] || 0,
+      change: (currentCounts[domain] || 0) - (prevCounts[domain] || 0),
+      changePercent: 0 // computed at render time using consistent displayed totals
+    })).sort((a, b) => b.current - a.current);
+  }, [getFilteredResponsesByAllFilters, previousPeriodResponses]);
 
   // Get the appropriate citation source based on filter, with company_mentioned filtering applied
   const allTimeCitations = useMemo(() => {
@@ -735,21 +654,26 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
 
   // Merge change data into all-time citations
   const allTimeCitationsWithChanges = useMemo(() => {
-    const changeData = new Map();
+    const changeMap = new Map<string, { change: number; previous: number }>();
     timeBasedCitations.forEach(citation => {
-      changeData.set(citation.name, citation.change);
+      changeMap.set(citation.name, { change: citation.change, previous: citation.previous });
     });
 
-    return displayedSources.map(citation => ({
-      ...citation,
-      change: changeData.get(citation.name) || 0
-    }));
+    return displayedSources.map(citation => {
+      const prev = changeMap.get(citation.name)?.previous || 0;
+      return {
+        ...citation,
+        change: changeMap.get(citation.name)?.change || 0,
+        previousCount: prev,
+        hasPreviousData: prev > 0
+      };
+    });
   }, [displayedSources, timeBasedCitations]);
 
-  const renderAllTimeBar = (data: { name: string; count: number; change?: number }, maxCount: number, totalCitations: number) => {
+  const renderAllTimeBar = (data: { name: string; count: number; change?: number; previousCount?: number; hasPreviousData?: boolean }, maxCount: number, totalCitations: number, totalPreviousCitations: number) => {
     // Calculate the actual percentage width
     const percentage = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
-    
+
     // Calculate percentage of total citations in the CURRENT filtered dataset
     const totalPercentage = totalCitations > 0 ? (data.count / totalCitations) * 100 : 0;
     
@@ -849,10 +773,26 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
           />
         </div>
         
-        {/* Percentage */}
-        <div className="flex items-center min-w-[50px] sm:min-w-[60px] justify-end">
+        {/* Percentage + change */}
+        <div className="flex items-center min-w-[70px] sm:min-w-[100px] justify-end gap-1.5">
           <span className="text-sm font-semibold text-gray-900">
             {totalPercentage.toFixed(1)}%
+          </span>
+          <span className="w-[45px] flex justify-end">
+            {(() => {
+              if (!data.hasPreviousData) return null;
+              const prevPct = totalPreviousCitations > 0 ? ((data.previousCount || 0) / totalPreviousCitations) * 100 : 0;
+              const delta = Math.round(totalPercentage - prevPct);
+              if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
+              return (
+                <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                  delta > 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                  <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+                </span>
+              );
+            })()}
           </span>
         </div>
       </div>
@@ -1025,13 +965,14 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                   // Calculate total citations from the CURRENT filtered dataset
                   // This ensures percentages add up to 100% for the active filters
                   const totalCitations = allTimeCitationsWithChanges.reduce((sum, citation) => sum + citation.count, 0);
+                  const totalPreviousCitations = allTimeCitationsWithChanges.reduce((sum, c) => sum + (c.previousCount || 0), 0);
                   return allTimeCitationsWithChanges.map((citation, idx) => (
-                    <div 
-                      key={idx} 
+                    <div
+                      key={idx}
                       onClick={() => handleSourceClick({ domain: citation.name, count: citation.count })}
                       className="cursor-pointer"
                     >
-                      {renderAllTimeBar(citation, maxCount, totalCitations)}
+                      {renderAllTimeBar(citation, maxCount, totalCitations, totalPreviousCitations)}
                     </div>
                   ));
                 })()

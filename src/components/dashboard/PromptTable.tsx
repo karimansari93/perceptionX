@@ -15,9 +15,12 @@ interface PromptTableProps {
   onPromptClick: (promptText: string) => void;
 }
 
+const INITIAL_ROWS = 50;
+
 export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) => {
   const { isPro } = useSubscription();
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [showAll, setShowAll] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [, startTransition] = useTransition();
   const deferredTypeFilter = useDeferredValue(typeFilter);
@@ -104,6 +107,13 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
       return true;
     });
   }, [prompts, deferredTypeFilter, deferredCategoryFilter]);
+
+  const displayedPrompts = useMemo(() => {
+    return showAll ? filteredPrompts : filteredPrompts.slice(0, INITIAL_ROWS);
+  }, [filteredPrompts, showAll]);
+
+  const hasMore = filteredPrompts.length > INITIAL_ROWS && !showAll;
+
   const getSentimentIcon = (sentiment: number) => {
     if (sentiment > 0.1) return <TrendingUp className="w-4 h-4 text-green-600" />;
     if (sentiment < -0.1) return <TrendingDown className="w-4 h-4 text-red-600" />;
@@ -325,7 +335,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
         isMobile ? (
           // Mobile-friendly card layout
           <>
-            {filteredPrompts.map((prompt, index) => (
+            {displayedPrompts.map((prompt, index) => (
                                  <div
                    key={index}
                    className="p-5 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors mb-4 last:mb-0"
@@ -381,13 +391,13 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
             </>
           ) : (
             // Desktop table layout
-            <Card>
+            <Card className="max-w-full overflow-hidden">
               <CardContent className="p-0">
-                <div className="overflow-x-auto">
-                  <Table>
+                <div>
+                  <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead>
+                  <TableHead className="w-[40%]">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center gap-1 cursor-help">
@@ -400,7 +410,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                       </TooltipContent>
                     </Tooltip>
                   </TableHead>
-                  <TableHead className="text-center">
+                  <TableHead className="text-center w-[90px]">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center justify-center gap-1 cursor-help">
@@ -414,7 +424,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                     </Tooltip>
                   </TableHead>
                   {isPro && (
-                    <TableHead className="text-center">
+                    <TableHead className="text-center w-[100px]">
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <div className="flex items-center justify-center gap-1 cursor-help">
@@ -428,7 +438,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                       </Tooltip>
                     </TableHead>
                   )}
-                  <TableHead className="text-center">
+                  <TableHead className="text-center w-[80px]">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center justify-center gap-1 cursor-help">
@@ -441,7 +451,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                       </TooltipContent>
                     </Tooltip>
                   </TableHead>
-                  <TableHead className="text-center">
+                  <TableHead className="text-center w-[75px]">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center justify-center gap-1 cursor-help">
@@ -454,7 +464,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                       </TooltipContent>
                     </Tooltip>
                   </TableHead>
-                  <TableHead className="text-center">
+                  <TableHead className="text-center w-[60px]">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center justify-center gap-1 cursor-help">
@@ -467,7 +477,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                       </TooltipContent>
                     </Tooltip>
                   </TableHead>
-                  <TableHead className="text-center">
+                  <TableHead className="text-center w-[100px]">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center justify-center gap-1 cursor-help">
@@ -483,13 +493,13 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredPrompts.map((prompt, index) => (
+                {displayedPrompts.map((prompt, index) => (
                   <TableRow 
                     key={index} 
                     className="cursor-pointer hover:bg-gray-50"
                     onClick={() => onPromptClick(prompt.prompt)}
                   >
-                    <TableCell className="font-medium max-w-md">
+                    <TableCell className="font-medium">
                   <div className="truncate" title={prompt.prompt}>
                     {prompt.prompt}
                   </div>
@@ -528,8 +538,10 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                         );
                       })()}
                     </TableCell>
-                    <TableCell className="text-center">
-                      {getCompetitorsDisplay(prompt)}
+                    <TableCell className="text-center overflow-hidden">
+                      <div className="truncate">
+                        {getCompetitorsDisplay(prompt)}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -548,6 +560,16 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
               </div>
             </CardContent>
           </Card>
+        )}
+        {hasMore && (
+          <div className="text-center py-3">
+            <button
+              onClick={() => setShowAll(true)}
+              className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+            >
+              Show all {filteredPrompts.length} prompts
+            </button>
+          </div>
         )}
     </>
   );
