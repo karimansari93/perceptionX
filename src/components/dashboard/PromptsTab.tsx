@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import { PromptData } from "@/types/dashboard";
 import { ResponseDetailsModal } from "./ResponseDetailsModal";
 import { PromptResponse } from "@/types/dashboard";
@@ -24,7 +24,7 @@ interface PromptsTabProps {
   selectedLocation?: string | null;
 }
 
-export const PromptsTab = ({
+export const PromptsTab = memo(({
   promptsData,
   responses,
   companyName = 'your company',
@@ -41,20 +41,27 @@ export const PromptsTab = ({
   const { isPro } = useSubscription();
   const { currentCompany } = useCompany();
 
-  const handlePromptClick = (promptText: string) => {
-    // Find the matching responses for this exact prompt text
-    const matchingResponses = responses.filter(r => {
-      return r.confirmed_prompts?.prompt_text === promptText;
+  // Pre-index responses by prompt text for O(1) lookup instead of O(n) filter
+  const responsesByPrompt = useMemo(() => {
+    const map = new Map<string, PromptResponse[]>();
+    responses.forEach(r => {
+      const text = r.confirmed_prompts?.prompt_text;
+      if (text) {
+        if (!map.has(text)) map.set(text, []);
+        map.get(text)!.push(r);
+      }
     });
+    return map;
+  }, [responses]);
 
+  const handlePromptClick = useCallback((promptText: string) => {
     setSelectedPrompt(promptText);
     setIsModalOpen(true);
-  };
+  }, []);
 
-  const getPromptResponses = (promptText: string) => {
-    const matchingResponses = responses.filter(r => r.confirmed_prompts?.prompt_text === promptText);
-    return matchingResponses;
-  };
+  const getPromptResponses = useCallback((promptText: string) => {
+    return responsesByPrompt.get(promptText) || [];
+  }, [responsesByPrompt]);
 
   // Calculate current vs total prompts
   const currentPrompts = promptsData.length;
@@ -86,7 +93,7 @@ export const PromptsTab = ({
 
   return (
     <>
-      <div className="space-y-6">
+      <div className="space-y-6 min-w-0 max-w-full overflow-hidden">
         {/* Main Section Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="space-y-2">
@@ -158,4 +165,5 @@ export const PromptsTab = ({
       )}
     </>
   );
-};
+});
+PromptsTab.displayName = 'PromptsTab';

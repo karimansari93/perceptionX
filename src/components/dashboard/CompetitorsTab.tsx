@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import ReactMarkdown from 'react-markdown';
-import { Sparkles, Loader2, CheckCircle2 } from 'lucide-react';
+import { Sparkles, Loader2, CheckCircle2, TrendingUp, TrendingDown } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { extractSourceUrl } from "@/utils/citationUtils";
 import { Badge } from "@/components/ui/badge";
@@ -29,9 +29,10 @@ interface CompetitorsTabProps {
   searchResults?: any[];
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
+  previousPeriodResponses?: any[];
 }
 
-export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, searchResults = [], responseTexts = {}, fetchResponseTexts }: CompetitorsTabProps) => {
+export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, searchResults = [], responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [] }: CompetitorsTabProps) => {
   // Modal states - persisted
   const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('competitorsTab.selectedCompetitor', null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = usePersistedState<boolean>('competitorsTab.isCompetitorModalOpen', false);
@@ -237,119 +238,69 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
     return name.charAt(0).toUpperCase() + name.slice(1);
   };
 
-  // Helper to group responses by time period
+  // Group responses into current period and previous period (applying same filter to both)
   const groupResponsesByTimePeriod = useMemo(() => {
-    if (getFilteredResponses.length === 0) return { current: [], previous: [] };
-
-    // Sort responses by tested_at descending
-    const sortedResponses = [...getFilteredResponses].sort((a, b) => 
-      new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime()
-    );
-
-    // Find the most recent date
-    const latestDate = new Date(sortedResponses[0].tested_at);
-    
-    // Group responses into current (latest date) and previous (all other dates)
-    const current = sortedResponses.filter(r => {
-      const responseDate = new Date(r.tested_at);
-      return responseDate.toDateString() === latestDate.toDateString();
-    });
-    
-    const previous = sortedResponses.filter(r => {
-      const responseDate = new Date(r.tested_at);
-      return responseDate.toDateString() !== latestDate.toDateString();
-    });
-
-    // If we only have responses from one date, treat them all as current
-    if (previous.length === 0) {
-      return { current: sortedResponses, previous: [] };
+    let filteredPrevious = previousPeriodResponses;
+    if (deferredCompetitorTypeFilter === 'direct') {
+      filteredPrevious = previousPeriodResponses.filter(response =>
+        response.confirmed_prompts?.prompt_type === 'competitive'
+      );
     }
+    return {
+      current: getFilteredResponses,
+      previous: filteredPrevious
+    };
+  }, [getFilteredResponses, previousPeriodResponses, deferredCompetitorTypeFilter]);
 
-    return { current, previous };
-  }, [getFilteredResponses]);
-
-  // Calculate time-based competitor data
+  // Calculate time-based competitor data with share % deltas
   const timeBasedCompetitors = useMemo(() => {
     const { current, previous } = groupResponsesByTimePeriod;
-    
-    // Get competitor counts for current period
-    const currentCompetitors: Record<string, number> = {};
-    current.forEach(response => {
-      if (response.detected_competitors) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
-        
-        mentions.forEach((mention: any) => {
-          if (mention.name) {
-            const name = normalizeCompetitorName(mention.name);
-            if (name && 
-                name.toLowerCase() !== companyName.toLowerCase() &&
-                name.length > 1) {
-              currentCompetitors[name] = (currentCompetitors[name] || 0) + 1;
-            }
-          }
-        });
-      }
-    });
 
-    // Get competitor counts for previous period and calculate average
-    const previousCompetitors: Record<string, number> = {};
-    const previousUniqueDays = new Set(previous.map(r => new Date(r.tested_at).toDateString()));
-    const numPreviousDays = Math.max(1, previousUniqueDays.size);
-
-    previous.forEach(response => {
-      if (response.detected_competitors) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
-        
-        mentions.forEach((mention: any) => {
-          if (mention.name) {
-            const name = normalizeCompetitorName(mention.name);
-            if (name && 
-                name.toLowerCase() !== companyName.toLowerCase() &&
-                name.length > 1) {
-              previousCompetitors[name] = (previousCompetitors[name] || 0) + 1;
+    const getCompetitorCounts = (responseList: any[]) => {
+      const counts: Record<string, number> = {};
+      responseList.forEach(response => {
+        if (response.detected_competitors) {
+          const mentions = response.detected_competitors
+            .split(',')
+            .map((comp: string) => comp.trim())
+            .filter((comp: string) => comp.length > 0);
+          mentions.forEach((comp: string) => {
+            const name = normalizeCompetitorName(comp);
+            if (name && name.toLowerCase() !== companyName.toLowerCase() && name.length > 1) {
+              counts[name] = (counts[name] || 0) + 1;
             }
-          }
-        });
-      }
-    });
+          });
+        }
+      });
+      return counts;
+    };
+
+    const currentCompetitors = getCompetitorCounts(current);
+    const previousCompetitors = getCompetitorCounts(previous);
 
     // Combine all unique competitors
-    const allCompetitors = new Set([
+    const allNames = new Set([
       ...Object.keys(currentCompetitors),
       ...Object.keys(previousCompetitors)
     ]);
 
-    const timeBasedData: TimeBasedData[] = Array.from(allCompetitors).map(competitor => {
+    const timeBasedData: TimeBasedData[] = Array.from(allNames).map(competitor => {
       const currentCount = currentCompetitors[competitor] || 0;
-      const previousTotalCount = previousCompetitors[competitor] || 0;
-      const previousAverage = Math.round(previousTotalCount / numPreviousDays);
-
-      const change = currentCount - previousAverage;
-      const changePercent = previousAverage > 0 ? (change / previousAverage) * 100 : currentCount > 0 ? 100 : 0;
+      const previousCount = previousCompetitors[competitor] || 0;
 
       return {
         name: competitor,
         current: currentCount,
-        previous: previousAverage,
-        change,
-        changePercent
+        previous: previousCount,
+        change: currentCount - previousCount,
+        changePercent: 0  // computed later in renderAllTimeBar using consistent totals
       };
     });
 
-    // Sort by current count descending
-    let result = timeBasedData
-      .sort((a, b) => b.current - a.current);
+    let result = timeBasedData.sort((a, b) => b.current - a.current);
 
     if (deferredCompetitorTypeFilter === 'direct') {
-      result = result.filter(competitor => 
+      result = result.filter(competitor =>
         directCompetitorNames.has(competitor.name.toLowerCase())
       );
     }
@@ -407,9 +358,9 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
 
   // Merge change data into all-time competitors
   const allTimeCompetitorsWithChanges = useMemo(() => {
-    const changeData = new Map();
+    const changeData = new Map<string, { change: number; changePercent: number; previous: number }>();
     timeBasedCompetitors.forEach(competitor => {
-      changeData.set(competitor.name, competitor.change);
+      changeData.set(competitor.name, { change: competitor.change, changePercent: competitor.changePercent, previous: competitor.previous });
     });
 
     // Excluded competitors and words
@@ -435,10 +386,15 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
         !excludedWords.has(competitor.name.toLowerCase())
       );
 
-    return filteredCompetitors.map(competitor => ({
-      ...competitor,
-      change: changeData.get(competitor.name) || 0
-    }));
+    return filteredCompetitors.map(competitor => {
+      const prev = changeData.get(competitor.name)?.previous || 0;
+      return {
+        ...competitor,
+        change: changeData.get(competitor.name)?.change || 0,
+        previousCount: prev,
+        hasPreviousData: prev > 0
+      };
+    });
   }, [allTimeCompetitors, timeBasedCompetitors]);
 
   // Helper to extract snippets for a competitor from all responses
@@ -658,7 +614,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
     }
   };
 
-  const renderAllTimeBar = (data: { name: string; count: number; change?: number }, maxCount: number, totalMentions: number) => {
+  const renderAllTimeBar = (data: { name: string; count: number; change?: number; previousCount?: number; hasPreviousData?: boolean }, maxCount: number, totalMentions: number, totalPreviousMentions: number) => {
     const barWidth = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
     const mentionPercent = totalMentions > 0 ? (data.count / totalMentions) * 100 : 0;
     
@@ -712,10 +668,26 @@ CRITICAL: When you reference information from a source, add an inline citation l
           />
         </div>
         
-        {/* Percentage */}
-        <div className="flex items-center min-w-[50px] sm:min-w-[60px] justify-end">
+        {/* Percentage + change */}
+        <div className="flex items-center min-w-[70px] sm:min-w-[100px] justify-end gap-1.5">
           <span className="text-sm font-semibold text-gray-900">
             {mentionPercent.toFixed(1)}%
+          </span>
+          <span className="w-[45px] flex justify-end">
+            {(() => {
+              if (!data.hasPreviousData) return null;
+              const prevPct = totalPreviousMentions > 0 ? ((data.previousCount || 0) / totalPreviousMentions) * 100 : 0;
+              const delta = Math.round(mentionPercent - prevPct);
+              if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
+              return (
+                <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                  delta > 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                  <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+                </span>
+              );
+            })()}
           </span>
         </div>
       </div>
@@ -767,13 +739,14 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 (() => {
                   const maxCount = Math.max(...allTimeCompetitorsWithChanges.map(c => c.count), 1);
                   const totalMentions = allTimeCompetitorsWithChanges.reduce((sum, c) => sum + c.count, 0);
-                  
+                  const totalPreviousMentions = allTimeCompetitorsWithChanges.reduce((sum, c) => sum + (c.previousCount || 0), 0);
+
                   return allTimeCompetitorsWithChanges.map((competitor, idx) => (
-                    <div 
-                      key={`${competitor.name}-${deferredCompetitorTypeFilter}-${idx}`} 
+                    <div
+                      key={`${competitor.name}-${deferredCompetitorTypeFilter}-${idx}`}
                       className="cursor-pointer"
                     >
-                      {renderAllTimeBar(competitor, maxCount, totalMentions)}
+                      {renderAllTimeBar(competitor, maxCount, totalMentions, totalPreviousMentions)}
                     </div>
                   ));
                 })()

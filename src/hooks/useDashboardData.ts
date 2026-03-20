@@ -10,15 +10,24 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
 import { parseCompetitors } from "@/utils/competitorUtils";
 
+export interface PeriodInfo {
+  key: string;       // e.g. "2026-03"
+  label: string;     // e.g. "Mar 2026"
+  startDate: Date;
+  endDate: Date;
+}
+
 export const useDashboardData = () => {
   const { user: rawUser, clearSession } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
   const { isPro } = useSubscription();
-  
+
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
   const [responses, setResponses] = useState<PromptResponse[]>([]);
   const [responseTexts, setResponseTexts] = useState<Record<string, string>>({});
+  // Period selection state
+  const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null); // null = latest
   const [responseTextsLoading, setResponseTextsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [competitorLoading, setCompetitorLoading] = useState(false);
@@ -48,6 +57,9 @@ export const useDashboardData = () => {
   const [companySentimentMetrics, setCompanySentimentMetrics] = useState<any | null>(null);
   const [companyRelevanceMetrics, setCompanyRelevanceMetrics] = useState<any | null>(null);
   const [companyMetricsLoading, setCompanyMetricsLoading] = useState(false);
+  // Per-month MV data for period comparison (keyed by "YYYY-MM")
+  const [companyRelevanceByMonth, setCompanyRelevanceByMonth] = useState<Record<string, number>>({});
+  const [companySentimentByMonth, setCompanySentimentByMonth] = useState<Record<string, number>>({});
   // Track if metrics are still being calculated (for UX - show all metrics together)
   // Start as true, will be set to false when all metrics are ready
   const [metricsCalculating, setMetricsCalculating] = useState(true);
@@ -455,10 +467,10 @@ export const useDashboardData = () => {
           acc.totalSentimentScore += (row.avg_sentiment_score || 0) * (row.total_themes || 0);
           acc.totalWeight += row.total_themes || 0;
           return acc;
-        }, { 
-          totalThemes: 0, 
-          positiveThemes: 0, 
-          negativeThemes: 0, 
+        }, {
+          totalThemes: 0,
+          positiveThemes: 0,
+          negativeThemes: 0,
           neutralThemes: 0,
           totalSentimentScore: 0,
           totalWeight: 0
@@ -467,7 +479,7 @@ export const useDashboardData = () => {
         const sentimentRatio = aggregated.totalThemes > 0
           ? aggregated.positiveThemes / aggregated.totalThemes
           : 0;
-        
+
         const avgSentimentScore = aggregated.totalWeight > 0
           ? aggregated.totalSentimentScore / aggregated.totalWeight
           : 0;
@@ -485,9 +497,25 @@ export const useDashboardData = () => {
           // Data exists but has no themes - fallback to frontend
           setCompanySentimentMetrics(null);
         }
+
+        // Build per-month sentiment map (positive_themes / total_themes per month)
+        const sentByMonth: Record<string, { positive: number; total: number }> = {};
+        sentimentResult.data.forEach(row => {
+          if (!row.response_month) return;
+          const monthKey = row.response_month.slice(0, 7); // "YYYY-MM"
+          if (!sentByMonth[monthKey]) sentByMonth[monthKey] = { positive: 0, total: 0 };
+          sentByMonth[monthKey].positive += row.positive_themes || 0;
+          sentByMonth[monthKey].total += row.total_themes || 0;
+        });
+        const sentimentByMonthResult: Record<string, number> = {};
+        for (const [key, val] of Object.entries(sentByMonth)) {
+          sentimentByMonthResult[key] = val.total > 0 ? val.positive / val.total : 0;
+        }
+        setCompanySentimentByMonth(sentimentByMonthResult);
       } else {
         // No data in materialized view - will use frontend calculation
         setCompanySentimentMetrics(null);
+        setCompanySentimentByMonth({});
       }
 
       if (relevanceResult.error && relevanceResult.error.code !== 'PGRST116') {
@@ -523,9 +551,26 @@ export const useDashboardData = () => {
           // Data exists but has no valid citations - fallback to frontend
           setCompanyRelevanceMetrics(null);
         }
+
+        // Build per-month relevance map (weighted avg relevance_score per month)
+        const relByMonth: Record<string, { scoreSum: number; weight: number }> = {};
+        relevanceResult.data.forEach(row => {
+          if (!row.response_month) return;
+          const monthKey = row.response_month.slice(0, 7); // "YYYY-MM"
+          if (!relByMonth[monthKey]) relByMonth[monthKey] = { scoreSum: 0, weight: 0 };
+          const w = row.valid_citations || 0;
+          relByMonth[monthKey].scoreSum += (row.relevance_score || 0) * w;
+          relByMonth[monthKey].weight += w;
+        });
+        const relevanceByMonthResult: Record<string, number> = {};
+        for (const [key, val] of Object.entries(relByMonth)) {
+          relevanceByMonthResult[key] = val.weight > 0 ? val.scoreSum / val.weight : 0;
+        }
+        setCompanyRelevanceByMonth(relevanceByMonthResult);
       } else {
         // No data in materialized view - will use frontend calculation
         setCompanyRelevanceMetrics(null);
+        setCompanyRelevanceByMonth({});
       }
       
     } catch (error: any) {
@@ -533,6 +578,8 @@ export const useDashboardData = () => {
       // Don't set error state - fallback to frontend calculation
       setCompanySentimentMetrics(null);
       setCompanyRelevanceMetrics(null);
+      setCompanySentimentByMonth({});
+      setCompanyRelevanceByMonth({});
     } finally {
       setCompanyMetricsLoading(false);
     }
@@ -715,27 +762,36 @@ export const useDashboardData = () => {
 
     try {
       setAiThemesLoading(true);
-      
-      // OPTIMIZED: Single query using company_id (no batching, no waiting for responses)
-      // This eliminates waterfall and batch processing overhead
-      // company_id column exists on ai_themes table (from migration 20250201000000)
-      const { data: themes, error: themesError } = await retrySupabaseQuery(() =>
-        supabase
-          .from('ai_themes')
-          .select('*')
-          .eq('company_id', currentCompany.id)
-          .order('created_at', { ascending: false })
-      ) as { data: any[] | null; error: any };
 
-      if (themesError) {
-        console.error('Error fetching AI themes:', themesError);
-        setAiThemes([]);
-        return;
-      }
-      
-      // Store all themes - filtering by prompt_type happens in sentiment calculation
-      // when responses are available
-      setAiThemes(themes || []);
+      // Paginate to bypass Supabase 1000-row default cap
+      const PAGE_SIZE = 1000;
+      let allThemes: any[] = [];
+      let page = 0;
+      let chunk: any[] | null;
+      do {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = await retrySupabaseQuery(() =>
+          supabase
+            .from('ai_themes')
+            .select('*')
+            .eq('company_id', currentCompany.id)
+            .order('created_at', { ascending: false })
+            .range(from, to)
+        ) as { data: any[] | null; error: any };
+
+        if (error) {
+          console.error('Error fetching AI themes:', error);
+          setAiThemes([]);
+          return;
+        }
+
+        chunk = data ?? [];
+        allThemes = allThemes.concat(chunk);
+        page += 1;
+      } while (chunk && chunk.length === PAGE_SIZE);
+
+      setAiThemes(allThemes);
     } catch (error) {
       console.error('Error in fetchAIThemes:', error);
       setAiThemes([]);
@@ -1358,9 +1414,103 @@ export const useDashboardData = () => {
     fetchTalentXProPrompts();
   }, [isPro, user]);
 
+  // --- Period detection: group responses by month ---
+  const availablePeriods: PeriodInfo[] = useMemo(() => {
+    if (responses.length === 0) return [];
+    const monthSet = new Map<string, Date[]>();
+    responses.forEach(r => {
+      const d = new Date(r.tested_at);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (!monthSet.has(key)) monthSet.set(key, []);
+      monthSet.get(key)!.push(d);
+    });
+    const periods: PeriodInfo[] = Array.from(monthSet.entries())
+      .map(([key, dates]) => {
+        const [y, m] = key.split('-').map(Number);
+        const startDate = new Date(y, m - 1, 1);
+        const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+        const label = startDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        return { key, label, startDate, endDate };
+      })
+      .sort((a, b) => b.startDate.getTime() - a.startDate.getTime());
+    return periods;
+  }, [responses]);
+
+  // Reset selectedPeriod when company changes
+  useEffect(() => {
+    setSelectedPeriod(null);
+  }, [currentCompany?.id]);
+
+  // Determine effective period (latest if none selected)
+  const effectivePeriod = useMemo(() => {
+    if (availablePeriods.length === 0) return null;
+    if (selectedPeriod) {
+      return availablePeriods.find(p => p.key === selectedPeriod) || availablePeriods[0];
+    }
+    return availablePeriods[0];
+  }, [availablePeriods, selectedPeriod]);
+
+  // Previous period (month before the effective one)
+  const previousPeriodInfo = useMemo(() => {
+    if (!effectivePeriod || availablePeriods.length < 2) return null;
+    const idx = availablePeriods.findIndex(p => p.key === effectivePeriod.key);
+    return idx >= 0 && idx + 1 < availablePeriods.length ? availablePeriods[idx + 1] : null;
+  }, [availablePeriods, effectivePeriod]);
+
+  // Filter responses to the selected period
+  const periodFilteredResponses = useMemo(() => {
+    if (!effectivePeriod || availablePeriods.length <= 1) return responses;
+    return responses.filter(r => {
+      const d = new Date(r.tested_at);
+      return d >= effectivePeriod.startDate && d <= effectivePeriod.endDate;
+    });
+  }, [responses, effectivePeriod, availablePeriods]);
+
+  // Previous period responses for per-tab delta computation
+  const previousPeriodResponses = useMemo(() => {
+    if (!previousPeriodInfo) return [];
+    return responses.filter(r => {
+      const d = new Date(r.tested_at);
+      return d >= previousPeriodInfo.startDate && d <= previousPeriodInfo.endDate;
+    });
+  }, [responses, previousPeriodInfo]);
+
+  // Lightweight previous-period metrics for delta display
+  const previousPeriodMetrics = useMemo(() => {
+    if (!previousPeriodInfo) return null;
+    if (aiThemesLoading) return null; // Don't compute with empty themes — causes sentimentScore=0
+    const prevResponses = responses.filter(r => {
+      const d = new Date(r.tested_at);
+      return d >= previousPeriodInfo.startDate && d <= previousPeriodInfo.endDate;
+    });
+    if (prevResponses.length === 0) return null;
+
+    // Sentiment: positive themes / total themes for prev responses
+    let prevSentiment = 0;
+    if (aiThemes.length > 0) {
+      const prevIds = new Set(prevResponses.map(r => r.id));
+      const prevThemes = aiThemes.filter(t => prevIds.has(t.response_id));
+      const positiveThemes = prevThemes.filter(t => t.sentiment === 'positive').length;
+      prevSentiment = prevThemes.length > 0 ? positiveThemes / prevThemes.length : 0;
+    }
+    const sentimentScore = Math.round(Math.max(0, Math.min(100, prevSentiment * 100)));
+
+    // Visibility: % of responses where company_mentioned
+    const mentionedCount = prevResponses.filter(r => r.company_mentioned === true).length;
+    const visibilityScore = Math.round(prevResponses.length > 0 ? (mentionedCount / prevResponses.length) * 100 : 0);
+
+    // Relevance: use per-month MV data (much more reliable than empty recencyData)
+    const prevMonthKey = previousPeriodInfo.key; // e.g. "2025-11"
+    const relevanceScore = companyRelevanceByMonth[prevMonthKey] !== undefined
+      ? Math.round(companyRelevanceByMonth[prevMonthKey])
+      : 0;
+
+    return { sentimentScore, visibilityScore, relevanceScore };
+  }, [previousPeriodInfo, responses, aiThemes, aiThemesLoading, companyRelevanceByMonth, getCitations]);
+
   const promptsData: PromptData[] = useMemo(() => {
-    // Start with prompts derived from responses
-    const responseBasedPrompts = responses.reduce((acc: PromptData[], response) => {
+    // Start with prompts derived from period-filtered responses
+    const responseBasedPrompts = periodFilteredResponses.reduce((acc: PromptData[], response) => {
       // Use the actual prompt text from confirmed_prompts
       const promptKey = response.confirmed_prompts?.prompt_text;
       const isTalentXResponse = response.confirmed_prompts?.prompt_type?.startsWith('talentx_');
@@ -1500,7 +1650,7 @@ export const useDashboardData = () => {
     });
     
     return promptsWithActive;
-  }, [responses, talentXProPrompts, calculateAIBasedSentiment, activePrompts]);
+  }, [periodFilteredResponses, talentXProPrompts, calculateAIBasedSentiment, activePrompts]);
 
   // Track when metrics calculation is complete (all data loaded)
   // Don't show anything until sentiment loads - this ensures all metrics appear together
@@ -1539,9 +1689,13 @@ export const useDashboardData = () => {
   }, [loading, responses.length, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, aiThemesLoading, recencyDataLoading, aiThemes.length, recencyData.length]);
 
   const metrics: DashboardMetrics = useMemo(() => {
+    // Use period-filtered responses when a period is selected (multi-month companies)
+    // This ensures all downstream metrics reflect the active period
+    const responses = periodFilteredResponses;
+
     // PREFER backend-calculated metrics from materialized views if available
     // Fallback to frontend calculation if backend data is not available
-    
+
     // Don't calculate if still loading AND we don't have backend metrics
     // If backend metrics exist, we can use them even if responses aren't fully loaded yet
     if ((loading || responses.length === 0) && !companySentimentMetrics && !companyRelevanceMetrics) {
@@ -1753,7 +1907,11 @@ export const useDashboardData = () => {
       ? (mentionedCount / responses.length) * 100
       : 0;
 
-    const averageRelevance = companyRelevanceMetrics?.relevance_score ?? 0;
+    // Use period-specific relevance from MV when a period is active, otherwise fall back to all-months aggregate
+    const effectivePeriodKey = effectivePeriod?.key;
+    const averageRelevance = (effectivePeriodKey && companyRelevanceByMonth[effectivePeriodKey] !== undefined)
+      ? companyRelevanceByMonth[effectivePeriodKey]
+      : companyRelevanceMetrics?.relevance_score ?? 0;
 
     // Calculate overall perception score
     const calculatePerceptionScore = () => {
@@ -1803,7 +1961,7 @@ export const useDashboardData = () => {
     };
     
     return metricsResult;
-  }, [responses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companyRelevanceMetrics, getCitations]);
+  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
     const trend = responses.reduce((acc: SentimentTrendData[], response) => {
@@ -2125,7 +2283,8 @@ export const useDashboardData = () => {
   }, [user, currentCompany]);
 
   return {
-    responses,
+    responses: periodFilteredResponses, // period-filtered when multi-month
+    allResponses: responses, // unfiltered, for period detection
     loading,
     competitorLoading,
     metricsLoading,
@@ -2170,5 +2329,13 @@ export const useDashboardData = () => {
     responseTexts,
     responseTextsLoading,
     fetchResponseTexts,
+    // Period comparison
+    availablePeriods,
+    selectedPeriod,
+    setSelectedPeriod,
+    effectivePeriod,
+    previousPeriodMetrics,
+    companyRelevanceByMonth,
+    previousPeriodResponses,
   };
 };
