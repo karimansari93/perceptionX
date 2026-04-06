@@ -1,4 +1,4 @@
-import { BarChart3, FileText, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lock, Lightbulb } from "lucide-react";
+import { BarChart3, FileText, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lock, Lightbulb, Download } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -40,6 +40,12 @@ const navigationGroups: NavigationGroup[] = [
       { title: "Sources", icon: Globe, section: "sources", group: "dashboard", route: "/dashboard/sources" },
       { title: "Competitors", icon: Users, section: "competitors", group: "dashboard", route: "/dashboard/competitors" },
       { title: "Themes", icon: Lightbulb, section: "thematic", group: "dashboard", route: "/dashboard/themes" },
+    ]
+  },
+  {
+    title: "Analyze",
+    items: [
+      { title: "Reports", icon: Download, section: "reports", group: "reports", route: "/analyze/reports" },
     ]
   },
   {
@@ -104,7 +110,7 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
             <SidebarTrigger className="h-8 w-8" />
           </div>
           <nav className="flex flex-col items-center gap-2 flex-1 w-full mt-2">
-            {allNavigationItems.filter(item => item.group !== "monitor").map((item) => (
+            {allNavigationItems.map((item) => (
               <SidebarMenuButton
                 key={item.section}
                 isActive={activeSection === item.section}

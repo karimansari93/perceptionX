@@ -1,11 +1,14 @@
-const REPORT_SERVER_URL = import.meta.env.VITE_REPORT_SERVER_URL || 'http://localhost:3001';
+const REPORT_SERVER_URL = import.meta.env.VITE_REPORT_SERVER_URL || 'http://localhost:3000';
 const REPORT_API_KEY = import.meta.env.VITE_REPORT_API_KEY || '';
 
 export interface PdfReportRequest {
   company_id: string;
-  period1: string; // YYYY-MM
-  period2: string; // YYYY-MM
+  company_name: string;
   market: string;
+  p1_start: string; // YYYY-MM-DD
+  p1_end: string;
+  p2_start: string;
+  p2_end: string;
 }
 
 export async function downloadPdfReport(params: PdfReportRequest): Promise<void> {
@@ -13,7 +16,7 @@ export async function downloadPdfReport(params: PdfReportRequest): Promise<void>
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': REPORT_API_KEY,
+      'x-api-key': REPORT_API_KEY,
     },
     body: JSON.stringify(params),
   });
@@ -27,8 +30,7 @@ export async function downloadPdfReport(params: PdfReportRequest): Promise<void>
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1]
-    || `report_${params.period1}_vs_${params.period2}.pdf`;
+  a.download = `${params.company_name}_${params.market}_AI_Brief.pdf`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
