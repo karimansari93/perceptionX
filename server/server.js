@@ -13,19 +13,21 @@ const {
   VerticalAlign, ImageRun, Footer, TabStopType
 } = require('docx');
 
-const cors = require('cors');
 const app = express();
-app.use(cors({
-  origin: ['http://localhost:8080', 'http://localhost:3001', 'https://app.perceptionx.ai'],
-  methods: ['POST', 'GET'],
-  allowedHeaders: ['Content-Type', 'x-api-key'],
-}));
+
+// ── CORS — manual headers so preflight always works regardless of origin matching ──
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  next();
+});
 app.use(express.json());
 
 // ── Auth middleware ──────────────────────────────────────────────────
 app.use((req, res, next) => {
   if (req.path === '/health') return next();
-  if (req.method === 'OPTIONS') return next(); // allow CORS preflight through
   if (req.headers['x-api-key'] !== (process.env.REPORT_API_KEY || process.env.API_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
