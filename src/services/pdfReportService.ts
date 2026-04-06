@@ -1,4 +1,6 @@
-const REPORT_SERVER_URL = import.meta.env.VITE_REPORT_SERVER_URL || 'http://localhost:3000';
+const _rawUrl = import.meta.env.VITE_REPORT_SERVER_URL || 'http://localhost:3000';
+// Ensure the URL has a protocol — prevents it being treated as a relative path if env var is missing https://
+const REPORT_SERVER_URL = _rawUrl.startsWith('http') ? _rawUrl : `https://${_rawUrl}`;
 const REPORT_API_KEY = import.meta.env.VITE_REPORT_API_KEY || '';
 
 export interface PdfReportRequest {
