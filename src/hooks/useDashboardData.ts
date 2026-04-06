@@ -1658,26 +1658,16 @@ export const useDashboardData = () => {
   useEffect(() => {
     // Metrics are ready when:
     // 1. Responses are loaded (needed for visibility calculation)
-    // 2. Backend metrics query is complete
-    // 3. SENTIMENT is ready (backend metrics exist OR themes fetch completed AND themes are set)
-    // 4. Relevance is ready (backend metrics exist OR recency fetch completed AND recency is set)
+    // 2. Backend metrics query is complete (sentiment comes from MV only)
+    // 3. Relevance is ready (backend metrics exist OR recency fetch completed)
     const responsesReady = !loading && responses.length > 0;
     const backendMetricsReady = !companyMetricsLoading;
     
-    // Check what we have for each metric
-    const hasBackendSentiment = companySentimentMetrics !== null;
+    // Sentiment is ready when MV query completes (MV-only, no frontend fallback)
+    const sentimentReady = !companyMetricsLoading;
+
+    // Relevance is ready if backend metrics exist OR recency fetch completed
     const hasBackendRelevance = companyRelevanceMetrics !== null;
-    
-    // Sentiment is ready if:
-    // - Backend metrics exist (has data), OR
-    // - Frontend fallback: themes fetch completed (not loading) AND themes have been set (even if empty array)
-    //   We check aiThemes.length !== undefined to ensure setAiThemes() was called
-    const themesFetchCompleted = !aiThemesLoading && (aiThemes.length >= 0 || hasBackendSentiment);
-    const sentimentReady = hasBackendSentiment || themesFetchCompleted;
-    
-    // Relevance is ready if:
-    // - Backend metrics exist (has data), OR
-    // - Frontend fallback: recency fetch completed (not loading) AND recency has been set (even if empty array)
     const recencyFetchCompleted = !recencyDataLoading && (recencyData.length >= 0 || hasBackendRelevance);
     const relevanceReady = hasBackendRelevance || recencyFetchCompleted;
     
@@ -1686,7 +1676,7 @@ export const useDashboardData = () => {
     const allReady = responsesReady && backendMetricsReady && sentimentReady && relevanceReady;
     setMetricsCalculating(!allReady);
     
-  }, [loading, responses.length, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, aiThemesLoading, recencyDataLoading, aiThemes.length, recencyData.length]);
+  }, [loading, responses.length, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length]);
 
   const metrics: DashboardMetrics = useMemo(() => {
     // Use period-filtered responses when a period is selected (multi-month companies)
@@ -1723,107 +1713,25 @@ export const useDashboardData = () => {
     let neutralCount = 0;
     let negativeCount = 0;
 
-    // Use backend-calculated sentiment if available
-    if (companySentimentMetrics) {
+    // Use materialized view sentiment only — no frontend fallback
+    const effectivePeriodKey = effectivePeriod?.key;
+    if (effectivePeriodKey && companySentimentByMonth[effectivePeriodKey] !== undefined) {
+      // Period selected — use per-month MV value
+      averageSentiment = companySentimentByMonth[effectivePeriodKey];
+    } else if (companySentimentMetrics) {
+      // No specific period — use all-months aggregate from MV
       averageSentiment = companySentimentMetrics.sentiment_ratio || 0;
-      
-      // Ensure averageSentiment is set correctly (defensive check)
-      if (averageSentiment === 0 && companySentimentMetrics.sentiment_ratio > 0) {
-        averageSentiment = companySentimentMetrics.sentiment_ratio;
-      }
-      
-      // If backend returns 0 but we have themes, check if frontend calculation gives different result
-      // This handles cases where materialized view is stale or calculation differs
-      if (averageSentiment === 0 && aiThemes.length > 0 && responses.length > 0) {
-        const relevantResponses = responses.filter(response => {
-          const promptType = response.confirmed_prompts?.prompt_type;
-          return promptType === 'experience' ||
-                 promptType === 'competitive' ||
-                 promptType === 'talentx_experience' ||
-                 promptType === 'talentx_competitive';
-        });
-        
-        if (relevantResponses.length > 0) {
-          const companyResponseIds = new Set(relevantResponses.map(r => r.id));
-          const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
-          const positiveThemes = companyThemes.filter(theme => theme.sentiment === 'positive').length;
-          const totalThemes = companyThemes.length;
-          
-          if (totalThemes > 0) {
-            // Use frontend calculation if backend returned 0 but themes exist
-            // This handles cases where materialized view is stale
-            averageSentiment = positiveThemes / totalThemes;
-          }
-        }
-      }
-      // Estimate counts based on ratios (for display purposes)
-      const totalResponses = responses.length;
-      if (companySentimentMetrics.total_themes > 0) {
-        const positiveRatio = companySentimentMetrics.positive_themes / companySentimentMetrics.total_themes;
-        const negativeRatio = companySentimentMetrics.negative_themes / companySentimentMetrics.total_themes;
-        const neutralRatio = companySentimentMetrics.neutral_themes / companySentimentMetrics.total_themes;
-        
-        positiveCount = Math.round(totalResponses * positiveRatio);
-        negativeCount = Math.round(totalResponses * negativeRatio);
-        neutralCount = totalResponses - positiveCount - negativeCount;
-      } else {
-        neutralCount = totalResponses;
-      }
+    }
+    // Estimate counts based on ratios (for display purposes)
+    const totalResponses = responses.length;
+    if (companySentimentMetrics && companySentimentMetrics.total_themes > 0) {
+      const positiveRatio = companySentimentMetrics.positive_themes / companySentimentMetrics.total_themes;
+      const negativeRatio = companySentimentMetrics.negative_themes / companySentimentMetrics.total_themes;
+      positiveCount = Math.round(totalResponses * positiveRatio);
+      negativeCount = Math.round(totalResponses * negativeRatio);
+      neutralCount = totalResponses - positiveCount - negativeCount;
     } else {
-      // Fallback to frontend calculation
-      const relevantResponses = responses.filter(response => {
-        const promptType = response.confirmed_prompts?.prompt_type;
-        return promptType === 'experience' ||
-               promptType === 'competitive' ||
-               promptType === 'talentx_experience' ||
-               promptType === 'talentx_competitive';
-      });
-
-      // Only calculate if we have both themes AND responses loaded
-      // This prevents calculation when themes load before responses (parallel fetching)
-      if (aiThemes.length > 0 && relevantResponses.length > 0 && !loading) {
-        // Use AI themes for sentiment calculation
-        // Calculate overall positive ratio directly from all themes (not averaged across responses)
-        const companyResponseIds = new Set(relevantResponses.map(r => r.id));
-        const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
-        
-        const positiveThemes = companyThemes.filter(theme => theme.sentiment === 'positive').length;
-        const totalThemes = companyThemes.length;
-        
-        // Calculate overall positive ratio (0-1 scale): positive themes / total themes
-        averageSentiment = totalThemes > 0 
-          ? positiveThemes / totalThemes 
-          : 0;
-
-        // Calculate sentiment counts based on AI themes (ratio-based)
-        const responseSentiments = relevantResponses.map(response => {
-          return calculateAIBasedSentiment(response.id);
-        });
-        positiveCount = responseSentiments.filter(s => s.sentiment_score > 0.6).length;
-        neutralCount = responseSentiments.filter(s => s.sentiment_score >= 0.4 && s.sentiment_score <= 0.6).length;
-        negativeCount = responseSentiments.filter(s => s.sentiment_score < 0.4).length;
-      } else {
-        // No AI themes available - check if still loading or truly empty
-        if (aiThemesLoading) {
-          // Still loading - return 0 temporarily, will update when themes load
-          averageSentiment = 0;
-          positiveCount = 0;
-          neutralCount = 0;
-          negativeCount = 0;
-        } else if (relevantResponses.length === 0) {
-          // No relevant responses (only discovery prompts) - neutral sentiment
-          averageSentiment = 0;
-          positiveCount = 0;
-          neutralCount = responses.length;
-          negativeCount = 0;
-        } else {
-          // Has relevant responses but no themes - neutral sentiment
-          averageSentiment = 0;
-          positiveCount = 0;
-          neutralCount = responses.length;
-          negativeCount = 0;
-        }
-      }
+      neutralCount = totalResponses;
     }
 
     const sentimentLabel = averageSentiment > 0.6 ? 'Positive' : averageSentiment < 0.4 ? 'Negative' : 'Neutral';
@@ -1908,7 +1816,6 @@ export const useDashboardData = () => {
       : 0;
 
     // Use period-specific relevance from MV when a period is active, otherwise fall back to all-months aggregate
-    const effectivePeriodKey = effectivePeriod?.key;
     const averageRelevance = (effectivePeriodKey && companyRelevanceByMonth[effectivePeriodKey] !== undefined)
       ? companyRelevanceByMonth[effectivePeriodKey]
       : companyRelevanceMetrics?.relevance_score ?? 0;
@@ -1961,7 +1868,7 @@ export const useDashboardData = () => {
     };
     
     return metricsResult;
-  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations]);
+  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companySentimentByMonth, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
     const trend = responses.reduce((acc: SentimentTrendData[], response) => {

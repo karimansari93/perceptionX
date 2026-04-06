@@ -691,12 +691,12 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           showUpgradeModal={showUpgradeModal}
           setShowUpgradeModal={setShowUpgradeModal}
           alwaysMounted={true}
-          selectedLocation={selectedLocation}
-          onLocationChange={setSelectedLocation}
-          onAddLocation={DASHBOARD_ADD_LOCKED ? undefined : () => setShowAddLocationModal(true)}
-          availablePeriods={availablePeriods}
-          selectedPeriod={selectedPeriod}
-          onPeriodChange={setSelectedPeriod}
+          selectedLocation={activeSection === 'reports' ? undefined : selectedLocation}
+          onLocationChange={activeSection === 'reports' ? undefined : setSelectedLocation}
+          onAddLocation={activeSection === 'reports' ? undefined : (DASHBOARD_ADD_LOCKED ? undefined : () => setShowAddLocationModal(true))}
+          availablePeriods={activeSection === 'reports' ? undefined : availablePeriods}
+          selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}
+          onPeriodChange={activeSection === 'reports' ? undefined : setSelectedPeriod}
         />
         <div className="flex-1 overflow-auto">
           {isLoading ? (
