@@ -25,6 +25,7 @@ app.use(express.json());
 // ── Auth middleware ──────────────────────────────────────────────────
 app.use((req, res, next) => {
   if (req.path === '/health') return next();
+  if (req.method === 'OPTIONS') return next(); // allow CORS preflight through
   if (req.headers['x-api-key'] !== (process.env.REPORT_API_KEY || process.env.API_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
