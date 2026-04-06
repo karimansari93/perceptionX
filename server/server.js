@@ -25,7 +25,7 @@ app.use(express.json());
 // ── Auth middleware ──────────────────────────────────────────────────
 app.use((req, res, next) => {
   if (req.path === '/health') return next();
-  if (req.headers['x-api-key'] !== process.env.API_KEY) {
+  if (req.headers['x-api-key'] !== (process.env.REPORT_API_KEY || process.env.API_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();
@@ -34,7 +34,7 @@ app.use((req, res, next) => {
 // ── Supabase client ──────────────────────────────────────────────────
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY // service role key — server only
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY // service role key — server only
 );
 
 // ── Anthropic client ─────────────────────────────────────────────────
