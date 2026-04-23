@@ -140,7 +140,7 @@ export const useDashboardData = () => {
           .from('confirmed_prompts')
           .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, is_pro_prompt, talentx_attribute_id')
           .eq('company_id', currentCompany.id)
-      ) as Promise<{ data: any[] | null; error: any }>;
+      ) as { data: any[] | null; error: any };
 
       const { data: userPrompts, error: promptsError } = promptsResult;
 
@@ -183,7 +183,7 @@ export const useDashboardData = () => {
             .eq('company_id', currentCompany.id)
             .order('tested_at', { ascending: false })
             .range(from, to)
-        ) as Promise<{ data: any[] | null; error: any }>;
+        ) as { data: any[] | null; error: any };
         if (result.error) throw result.error;
         chunk = result.data ?? [];
         data = data.concat(chunk);
@@ -1475,47 +1475,88 @@ export const useDashboardData = () => {
     });
   }, [responses, previousPeriodInfo]);
 
-  // Lightweight previous-period metrics for delta display
-  const previousPeriodMetrics = useMemo(() => {
-    if (!previousPeriodInfo) return null;
-    if (aiThemesLoading) return null; // Don't compute with empty themes — causes sentimentScore=0
-    const prevResponses = responses.filter(r => {
-      const d = new Date(r.tested_at);
-      return d >= previousPeriodInfo.startDate && d <= previousPeriodInfo.endDate;
-    });
-    if (prevResponses.length === 0) return null;
+  // Previous-period metrics for delta display.
+  //
+  // Each metric independently finds the MOST RECENT PRIOR MONTH that actually
+  // has data from its own source. A company with data in Feb + April but no
+  // March should compare April to Feb for sentiment — skipping the gap —
+  // rather than compare against a fake 0.
+  //
+  // Sources (each independent):
+  //   - sentiment: companySentimentByMonth (MV-backed)
+  //   - relevance: companyRelevanceByMonth (MV-backed)
+  //   - visibility: response counts in availablePeriods (response-backed)
+  //
+  // If no prior month with data exists for a given metric, that field is
+  // left UNDEFINED and the render layer skips the delta arrow — preventing
+  // the "delta always equals current" bug where a missing value was
+  // silently coerced to 0.
+  const previousPeriodMetrics = useMemo((): {
+    sentimentScore?: number;
+    visibilityScore?: number;
+    relevanceScore?: number;
+  } | null => {
+    if (!effectivePeriod) return null;
+    const currentKey = effectivePeriod.key;
 
-    // Sentiment: positive themes / total themes for prev responses
-    let prevSentiment = 0;
-    if (aiThemes.length > 0) {
-      const prevIds = new Set(prevResponses.map(r => r.id));
-      const prevThemes = aiThemes.filter(t => prevIds.has(t.response_id));
-      const positiveThemes = prevThemes.filter(t => t.sentiment === 'positive').length;
-      prevSentiment = prevThemes.length > 0 ? positiveThemes / prevThemes.length : 0;
+    // Helper: given a map keyed on "YYYY-MM", find the most recent key
+    // lexically less than currentKey that has a numeric value.
+    const findMostRecentPrior = (map: Record<string, number>): number | undefined => {
+      const priorKeys = Object.keys(map)
+        .filter((k) => k < currentKey && typeof map[k] === 'number')
+        .sort(); // lex sort works for YYYY-MM
+      if (priorKeys.length === 0) return undefined;
+      return map[priorKeys[priorKeys.length - 1]];
+    };
+
+    // Sentiment — most recent prior month in the sentiment MV.
+    const prevSentimentRatio = findMostRecentPrior(companySentimentByMonth);
+    const sentimentScore = typeof prevSentimentRatio === 'number'
+      ? Math.round(Math.max(0, Math.min(100, prevSentimentRatio * 100)))
+      : undefined;
+
+    // Relevance — most recent prior month in the relevance MV.
+    const prevRelevance = findMostRecentPrior(companyRelevanceByMonth);
+    const relevanceScore = typeof prevRelevance === 'number'
+      ? Math.round(prevRelevance)
+      : undefined;
+
+    // Visibility — iterate availablePeriods (sorted desc by startDate) for
+    // the first entry with responses, newer than none but older than current.
+    let visibilityScore: number | undefined;
+    const priorAvailable = availablePeriods.filter((p) => p.key < currentKey);
+    if (priorAvailable.length > 0) {
+      // availablePeriods is already sorted newest-first.
+      const chosen = priorAvailable[0];
+      const chosenResponses = responses.filter((r) => {
+        const d = new Date(r.tested_at);
+        return d >= chosen.startDate && d <= chosen.endDate;
+      });
+      if (chosenResponses.length > 0) {
+        const mentionedCount = chosenResponses.filter((r) => r.company_mentioned === true).length;
+        visibilityScore = Math.round((mentionedCount / chosenResponses.length) * 100);
+      }
     }
-    const sentimentScore = Math.round(Math.max(0, Math.min(100, prevSentiment * 100)));
 
-    // Visibility: % of responses where company_mentioned
-    const mentionedCount = prevResponses.filter(r => r.company_mentioned === true).length;
-    const visibilityScore = Math.round(prevResponses.length > 0 ? (mentionedCount / prevResponses.length) * 100 : 0);
-
-    // Relevance: use per-month MV data (much more reliable than empty recencyData)
-    const prevMonthKey = previousPeriodInfo.key; // e.g. "2025-11"
-    const relevanceScore = companyRelevanceByMonth[prevMonthKey] !== undefined
-      ? Math.round(companyRelevanceByMonth[prevMonthKey])
-      : 0;
-
+    // Return null only if nothing could be computed. Otherwise return a
+    // partial object — consumer checks each field individually.
+    if (sentimentScore === undefined && visibilityScore === undefined && relevanceScore === undefined) {
+      return null;
+    }
     return { sentimentScore, visibilityScore, relevanceScore };
-  }, [previousPeriodInfo, responses, aiThemes, aiThemesLoading, companyRelevanceByMonth, getCitations]);
+  }, [effectivePeriod, availablePeriods, responses, companySentimentByMonth, companyRelevanceByMonth]);
 
   const promptsData: PromptData[] = useMemo(() => {
-    // Start with prompts derived from period-filtered responses
-    const responseBasedPrompts = periodFilteredResponses.reduce((acc: PromptData[], response) => {
-      // Use the actual prompt text from confirmed_prompts
+    // Group responses by prompt text using a Map for O(1) lookup. The prior
+    // implementation used `acc.find()` inside reduce, which is O(N × M) for
+    // N responses and M unique prompts — painful at dashboard scale
+    // (thousands of responses × hundreds of prompts).
+    const byPrompt = new Map<string, PromptData>();
+    for (const response of periodFilteredResponses) {
       const promptKey = response.confirmed_prompts?.prompt_text;
       const isTalentXResponse = response.confirmed_prompts?.prompt_type?.startsWith('talentx_');
-      
-      const existing = acc.find(item => item.prompt === promptKey);
+
+      const existing = promptKey ? byPrompt.get(promptKey) : undefined;
       
       // Get AI-based sentiment for this response
       const aiSentiment = calculateAIBasedSentiment(response.id);
@@ -1574,8 +1615,9 @@ export const useDashboardData = () => {
       } else {
         const promptCategoryValue = response.confirmed_prompts?.prompt_category || 'General';
         const promptThemeValue = response.confirmed_prompts?.prompt_theme || 'General';
-        acc.push({
-          prompt: promptKey || '',
+        const key = promptKey || '';
+        byPrompt.set(key, {
+          prompt: key,
           category: promptThemeValue,
           type: response.confirmed_prompts?.prompt_type || 'experience',
           industryContext: response.confirmed_prompts?.industry_context || undefined,
@@ -1596,60 +1638,52 @@ export const useDashboardData = () => {
           talentXPromptType: response.confirmed_prompts?.prompt_type?.replace('talentx_', '')
         });
       }
-      
-      return acc;
-    }, []);
+    }
+    const responseBasedPrompts: PromptData[] = Array.from(byPrompt.values());
 
-    // Combine with TalentX Pro prompts (including those without responses yet)
-    const allPrompts = [...responseBasedPrompts, ...talentXProPrompts];
-    
-    // Remove duplicates - if a TalentX prompt has both a response and is in talentXProPrompts,
-    // prioritize the one with response data
-    const uniquePrompts = allPrompts.reduce((acc: PromptData[], prompt) => {
-      const existing = acc.find(p => p.prompt === prompt.prompt);
+    // Combine with TalentX Pro prompts (including those without responses yet).
+    // Deduplicate by prompt text using a Map — previously this was a reduce
+    // with nested .find() + .findIndex() (O(N²)).
+    const uniqueByText = new Map<string, PromptData>();
+    for (const p of responseBasedPrompts) uniqueByText.set(p.prompt, p);
+    for (const p of talentXProPrompts) {
+      const existing = uniqueByText.get(p.prompt);
       if (!existing) {
-        acc.push(prompt);
-      } else if (prompt.responses > 0 && existing.responses === 0) {
-        // Replace the prompt without responses with the one that has responses
-        const index = acc.findIndex(p => p.prompt === prompt.prompt);
-        acc[index] = prompt;
+        uniqueByText.set(p.prompt, p);
+      } else if (p.responses > 0 && existing.responses === 0) {
+        // Prefer the variant that actually has response data
+        uniqueByText.set(p.prompt, p);
       }
-      return acc;
-    }, []);
+    }
 
-    const promptsWithActive = [...uniquePrompts];
-
+    // Merge in currently-active prompts that aren't represented yet. Using the
+    // same Map keeps this O(N) instead of O(N × M).
     activePrompts.forEach(prompt => {
-      if (prompt.is_pro_prompt) {
-        return;
-      }
-
-      const existing = promptsWithActive.find(item => item.prompt === prompt.prompt_text);
-      if (!existing) {
-        promptsWithActive.push({
-          prompt: prompt.prompt_text,
-          category: prompt.prompt_theme || 'General',
-          type: prompt.prompt_type || 'experience',
-          industryContext: prompt.industry_context || undefined,
-          jobFunctionContext: prompt.job_function_context || undefined,
-          locationContext: prompt.location_context || undefined,
-          promptCategory: prompt.prompt_category || undefined,
-          promptTheme: prompt.prompt_theme || undefined,
-          responses: 0,
-          avgSentiment: 0,
-          sentimentLabel: 'neutral',
-          mentionRanking: undefined,
-          competitivePosition: undefined,
-          detectedCompetitors: undefined,
-          averageVisibility: (prompt.prompt_type === 'discovery') ? 0 : undefined,
-          totalWords: undefined,
-          firstMentionPosition: undefined,
-          visibilityScores: [],
-        });
-      }
+      if (prompt.is_pro_prompt) return;
+      if (uniqueByText.has(prompt.prompt_text)) return;
+      uniqueByText.set(prompt.prompt_text, {
+        prompt: prompt.prompt_text,
+        category: prompt.prompt_theme || 'General',
+        type: prompt.prompt_type || 'experience',
+        industryContext: prompt.industry_context || undefined,
+        jobFunctionContext: prompt.job_function_context || undefined,
+        locationContext: prompt.location_context || undefined,
+        promptCategory: prompt.prompt_category || undefined,
+        promptTheme: prompt.prompt_theme || undefined,
+        responses: 0,
+        avgSentiment: 0,
+        sentimentLabel: 'neutral',
+        mentionRanking: undefined,
+        competitivePosition: undefined,
+        detectedCompetitors: undefined,
+        averageVisibility: (prompt.prompt_type === 'discovery') ? 0 : undefined,
+        totalWords: undefined,
+        firstMentionPosition: undefined,
+        visibilityScores: [],
+      });
     });
-    
-    return promptsWithActive;
+
+    return Array.from(uniqueByText.values());
   }, [periodFilteredResponses, talentXProPrompts, calculateAIBasedSentiment, activePrompts]);
 
   // Track when metrics calculation is complete (all data loaded)
@@ -1704,7 +1738,12 @@ export const useDashboardData = () => {
         neutralCount: 0,
         negativeCount: 0,
         perceptionScore: 0,
-        perceptionLabel: 'No Data'
+        perceptionLabel: 'No Data',
+        // Required on DashboardMetrics — include them so the early-return
+        // path typechecks. All zero because nothing has loaded yet.
+        sentimentScore: 0,
+        visibilityScore: 0,
+        relevanceScore: 0,
       };
     }
     
@@ -1871,29 +1910,22 @@ export const useDashboardData = () => {
   }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companySentimentByMonth, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
-    const trend = responses.reduce((acc: SentimentTrendData[], response) => {
+    // Group by date via Map (O(1) lookup) instead of reduce+find (O(N²)).
+    const byDate = new Map<string, SentimentTrendData>();
+    for (const response of responses) {
       const date = new Date(response.tested_at).toLocaleDateString();
-      const existing = acc.find(item => item.date === date);
-      
-      // Get AI-based sentiment for this response
       const aiSentiment = calculateAIBasedSentiment(response.id);
-      
+      const existing = byDate.get(date);
       if (existing) {
         existing.sentiment = (existing.sentiment + aiSentiment.sentiment_score) / 2;
         existing.count += 1;
       } else {
-        acc.push({
-          date,
-          sentiment: aiSentiment.sentiment_score,
-          count: 1
-        });
+        byDate.set(date, { date, sentiment: aiSentiment.sentiment_score, count: 1 });
       }
-      
-      return acc;
-    }, []);
-    // Sort by date ascending
+    }
+    const trend = Array.from(byDate.values());
     trend.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    return trend.slice(-7); // get the last 7 days (latest at the end)
+    return trend.slice(-7);
   }, [responses, calculateAIBasedSentiment]);
 
   const topCitations: CitationCount[] = useMemo(() => {

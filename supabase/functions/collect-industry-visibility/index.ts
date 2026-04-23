@@ -1,8 +1,33 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { SOURCES_SECTION_REGEX } from "../_shared/citation-extraction.ts";
+import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts";
 import { COUNTRY_CODE_TO_NAME } from "../_shared/countries.ts";
+
+/**
+ * Apply `unwrapTranslateUrl` to every citation in a list so the stored
+ * prompt_responses.citations never contains translate.google.com redirects.
+ * Re-derives `domain` from the unwrapped URL so analytics aggregates correctly.
+ */
+function unwrapCitations(citations: any[]): any[] {
+  if (!Array.isArray(citations)) return [];
+  return citations
+    .filter((c) => c && typeof c.url === "string" && c.url.trim().length > 0)
+    .map((c) => {
+      const originalUrl = (c.url as string).trim();
+      const url = unwrapTranslateUrl(originalUrl);
+      const wasUnwrapped = url !== originalUrl;
+      let domain = wasUnwrapped ? undefined : c.domain;
+      if (!domain) {
+        try {
+          domain = new URL(url).hostname.replace("www.", "");
+        } catch {
+          domain = url;
+        }
+      }
+      return { ...c, url, domain };
+    });
+}
 
 // Extract citations from OpenAI response (all app languages)
 function extractCitationsFromResponse(text: string): any[] {
@@ -758,11 +783,11 @@ serve(async (req) => {
                   response_text: responseText,
                   citations:
                     model.type === "openai"
-                      ? citations
+                      ? unwrapCitations(citations)
                       : model.type === "perplexity"
-                        ? citations
+                        ? unwrapCitations(citations)
                         : model.type === "google"
-                          ? citations
+                          ? unwrapCitations(citations)
                           : [],
                   company_id: null, // Industry-wide response
                   company_mentioned: false,

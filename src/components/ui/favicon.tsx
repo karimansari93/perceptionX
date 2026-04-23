@@ -17,28 +17,8 @@ export const Favicon: React.FC<FaviconProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [currentSourceIndex, setCurrentSourceIndex] = useState(0);
 
-  if (!domain) {
-    return (
-      <div className={`bg-gray-100 rounded flex items-center justify-center ${getSizeClasses(size)} ${className}`}>
-        <span className={`font-medium text-gray-500 ${getTextSizeClasses(size)}`}>?</span>
-      </div>
-    );
-  }
-
-  const getFaviconUrls = (domain: string): string[] => {
-    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-    return [
-      // Primary: More reliable Google favicon service
-      `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`,
-      // Fallback 1: DuckDuckGo favicon service
-      `https://icons.duckduckgo.com/ip3/${cleanDomain}.ico`,
-      // Fallback 2: Direct favicon.ico
-      `https://${cleanDomain}/favicon.ico`,
-      // Fallback 3: Alternative Google service (less reliable)
-      `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`,
-    ];
-  };
-
+  // Helpers declared BEFORE the early-return so the !domain branch can use
+  // them without hitting TDZ errors. Function expressions (const =) don't hoist.
   const getSizeClasses = (size: string): string => {
     switch (size) {
       case 'sm': return 'w-3 h-3';
@@ -61,6 +41,28 @@ export const Favicon: React.FC<FaviconProps> = ({
       case 'lg': return 'text-sm';
       default: return 'text-xs';
     }
+  };
+
+  if (!domain) {
+    return (
+      <div className={`bg-gray-100 rounded flex items-center justify-center ${getSizeClasses(size)} ${className}`}>
+        <span className={`font-medium text-gray-500 ${getTextSizeClasses(size)}`}>?</span>
+      </div>
+    );
+  }
+
+  const getFaviconUrls = (domain: string): string[] => {
+    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
+    return [
+      // Primary: More reliable Google favicon service
+      `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`,
+      // Fallback 1: DuckDuckGo favicon service
+      `https://icons.duckduckgo.com/ip3/${cleanDomain}.ico`,
+      // Fallback 2: Direct favicon.ico
+      `https://${cleanDomain}/favicon.ico`,
+      // Fallback 3: Alternative Google service (less reliable)
+      `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`,
+    ];
   };
 
   const handleError = (event: React.SyntheticEvent<HTMLImageElement, Event>) => {

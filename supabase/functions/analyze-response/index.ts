@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { SOURCES_SECTION_REGEX } from "../_shared/citation-extraction.ts";
+import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts";
 
 // TalentX Analysis Service removed - focusing on ai-themes only
 
@@ -97,12 +97,17 @@ serve(async (req) => {
       console.log(`Using extracted citations: ${finalCitations.length} citations`);
     }
 
-    // Only persist citations with a valid url so DB and MVs (citation_url, recency) stay consistent
+    // Only persist citations with a valid url so DB and MVs (citation_url, recency) stay consistent.
+    // Unwrap translate.google.com redirects first so the stored URL and domain
+    // reflect the real source (glassdoor.com, etc.) rather than the translate wrapper.
     const citationsForDb = (Array.isArray(finalCitations) ? finalCitations : [])
       .filter((c: Citation) => c && typeof c.url === 'string' && c.url.trim().length > 0)
       .map((c: Citation) => {
-        const url = c.url!.trim();
-        let domain = c.domain;
+        const url = unwrapTranslateUrl(c.url!.trim());
+        // If the URL was unwrapped, c.domain (if the caller passed one) now
+        // points to translate.google.com — recompute from the real URL.
+        const wasUnwrapped = url !== c.url!.trim();
+        let domain = wasUnwrapped ? undefined : c.domain;
         if (!domain) {
           try {
             domain = new URL(url).hostname.replace('www.', '');
@@ -162,42 +167,72 @@ serve(async (req) => {
       
       const promptResponse = inserted;
 
-      // Trigger AI thematic analysis for new responses
+      // Trigger AI thematic analysis for new responses.
+      //
+      // Company name resolution has two paths because prompts can be created
+      // either through onboarding (confirmed_prompts.onboarding_id set) OR
+      // through the admin Expand Coverage flow (onboarding_id = null, but
+      // company_id on the response is set). The original code only handled
+      // the onboarding path, which silently skipped theme analysis for every
+      // response collected from an expand-coverage prompt — causing the
+      // "missing themes" gap we're now backfilling.
       try {
-        // First, get the onboarding_id from the confirmed prompt
+        let resolvedCompanyName: string | null = null;
+
+        // Path A: resolve via confirmed_prompt → onboarding → company_name
         const { data: promptData, error: promptError } = await supabase
           .from('confirmed_prompts')
-          .select('onboarding_id')
+          .select('onboarding_id, company_id')
           .eq('id', confirmed_prompt_id)
           .single();
 
-        if (promptError) {
-          console.warn('Error fetching prompt data:', promptError);
-        } else {
-          // Then get the company name from user_onboarding
-          const { data: onboardingData, error: onboardingError } = await supabase
+        if (!promptError && promptData?.onboarding_id) {
+          const { data: onboardingData } = await supabase
             .from('user_onboarding')
             .select('company_name')
             .eq('id', promptData.onboarding_id)
             .single();
-
-          if (!onboardingError && onboardingData?.company_name) {
-            console.log(`🚀 Triggering AI thematic analysis for response ${inserted.id} (${ai_model})`);
-            // Trigger AI thematic analysis asynchronously (don't wait for completion)
-            supabase.functions.invoke('ai-thematic-analysis', {
-              body: {
-                response_id: inserted.id,
-                company_name: onboardingData.company_name,
-                response_text: insertData.response_text,
-                ai_model: ai_model
-              }
-            }).catch(error => {
-              // Log error but don't fail the response storage
-              console.warn('❌ Failed to trigger AI thematic analysis:', error);
-            });
-          } else {
-            console.warn('⚠️ Cannot trigger AI thematic analysis: missing company name or onboarding data');
+          if (onboardingData?.company_name) {
+            resolvedCompanyName = onboardingData.company_name;
           }
+        }
+
+        // Path B: fall back to the companies table via company_id on the
+        // response (or the confirmed_prompt). This covers expand_setup prompts
+        // which have onboarding_id = null but always carry a company_id.
+        if (!resolvedCompanyName) {
+          const fallbackCompanyId = company_id || promptData?.company_id;
+          if (fallbackCompanyId) {
+            const { data: companyRow } = await supabase
+              .from('companies')
+              .select('name')
+              .eq('id', fallbackCompanyId)
+              .single();
+            if (companyRow?.name) {
+              resolvedCompanyName = companyRow.name;
+            }
+          }
+        }
+
+        if (resolvedCompanyName) {
+          console.log(`🚀 Triggering AI thematic analysis for response ${inserted.id} (${ai_model})`);
+          // Fire-and-forget — don't block the response insert on theme analysis.
+          supabase.functions.invoke('ai-thematic-analysis', {
+            body: {
+              response_id: inserted.id,
+              company_name: resolvedCompanyName,
+              response_text: insertData.response_text,
+              ai_model: ai_model
+            }
+          }).catch(error => {
+            console.warn('❌ Failed to trigger AI thematic analysis:', error);
+          });
+        } else {
+          console.warn(
+            `⚠️ Cannot trigger AI thematic analysis for response ${inserted.id}: ` +
+            `neither user_onboarding nor companies lookup yielded a company_name ` +
+            `(onboarding_id=${promptData?.onboarding_id}, company_id=${company_id || promptData?.company_id})`,
+          );
         }
       } catch (analysisError) {
         // Log error but don't fail the response storage

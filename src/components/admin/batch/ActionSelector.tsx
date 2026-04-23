@@ -1,7 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { RefreshCw, Plus, Building2 } from "lucide-react";
+import { RefreshCw, Plus, Building2, Cpu, LayoutGrid, Sparkles } from "lucide-react";
 
-export type BatchAction = "recollect" | "expand" | "new_company";
+export type BatchAction = "recollect" | "expand" | "bulk_expand" | "collect_model" | "analyze_themes" | "new_company";
 
 type Props = {
   onSelect: (action: BatchAction) => void;
@@ -21,6 +21,24 @@ const actions: { key: BatchAction; icon: typeof RefreshCw; title: string; descri
     description: "Add new locations, industries, or functions to existing companies",
   },
   {
+    key: "bulk_expand",
+    icon: LayoutGrid,
+    title: "Bulk expand",
+    description: "Queue multiple companies with different job functions each, run all together",
+  },
+  {
+    key: "collect_model",
+    icon: Cpu,
+    title: "Collect single model",
+    description: "Re-run only one AI model (e.g. Perplexity) for selected companies",
+  },
+  {
+    key: "analyze_themes",
+    icon: Sparkles,
+    title: "Analyze themes",
+    description: "Fill theme-analysis gaps for responses that never got themes extracted",
+  },
+  {
     key: "new_company",
     icon: Building2,
     title: "Add new company",
@@ -29,7 +47,7 @@ const actions: { key: BatchAction; icon: typeof RefreshCw; title: string; descri
 ];
 
 export const ActionSelector = ({ onSelect }: Props) => (
-  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
     {actions.map(({ key, icon: Icon, title, description }) => (
       <Card
         key={key}

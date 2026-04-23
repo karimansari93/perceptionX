@@ -27,6 +27,19 @@ export interface PromptResponse {
     top_attributes: string[];
     attribute_scores: Record<string, number>;
   };
+
+  // Fields that exist on the underlying DB row but weren't declared here
+  // historically. Report services + admin paths read them off the raw row,
+  // and because the main hook selects `*` from prompt_responses they're
+  // present at runtime. Declared optional to avoid breaking narrower callers.
+  created_at?: string;
+  updated_at?: string;
+  sentiment_score?: number | null;
+  sentiment_label?: string | null;
+  visibility_score?: number | null;
+  mention_ranking?: number | null;
+  for_index?: boolean | null;
+  index_period?: string | null;
 }
 
 export interface Citation {

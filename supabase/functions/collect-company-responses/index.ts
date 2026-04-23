@@ -27,7 +27,25 @@ serve(async (req) => {
       promptCategories,
       batchSize = 5,
       skipExisting = true,
+      // When set ("YYYY-MM", e.g. "2026-04"), a prompt is only considered
+      // "already collected" for a given model if a response exists WITHIN
+      // THAT MONTH. Prompts with no response in that month — even if they
+      // have responses in earlier/later months — will be re-run. Use case:
+      // "fill April's Perplexity gap" — set to "2026-04" and only prompts
+      // missing an April response get run, regardless of Jan/Feb/May data.
+      skipIfCollectedInMonth = null,
     } = body;
+
+    // Derive month window [start, next-month-start) from "YYYY-MM".
+    let skipMonthStart: string | null = null;
+    let skipMonthEnd: string | null = null;
+    if (skipIfCollectedInMonth && /^\d{4}-\d{2}$/.test(skipIfCollectedInMonth)) {
+      const [y, m] = skipIfCollectedInMonth.split("-").map(Number);
+      const start = new Date(Date.UTC(y, m - 1, 1));
+      const end = new Date(Date.UTC(y, m, 1));
+      skipMonthStart = start.toISOString();
+      skipMonthEnd = end.toISOString();
+    }
 
     if (!companyId) {
       console.error("Company ID is required but not provided");
@@ -122,12 +140,12 @@ serve(async (req) => {
       .select("*")
       .eq("is_active", true);
 
-    // If promptIds are provided, use them directly
-    // Otherwise, filter by company_id
+    // If promptIds are provided, use them — but ALSO constrain by company_id
+    // as defense-in-depth. A buggy or malicious caller must not be able to run
+    // responses for another organization's prompts under this company_id
+    // (previously this was a "trust me" comment with no enforcement).
     if (promptIds && promptIds.length > 0) {
-      promptsQuery = promptsQuery.in("id", promptIds);
-      // Note: We trust that promptIds belong to the company
-      // The trigger should have set company_id, but we allow null for prompts not yet linked
+      promptsQuery = promptsQuery.in("id", promptIds).eq("company_id", companyId);
     } else {
       promptsQuery = promptsQuery.eq("company_id", companyId);
     }
@@ -231,11 +249,24 @@ serve(async (req) => {
           // Check existing responses if skipExisting is true
           let modelsToProcess = [...models];
           if (skipExisting) {
-            const { data: existingResponses } = await supabase
+            let existingQuery = supabase
               .from("prompt_responses")
               .select("ai_model")
               .eq("confirmed_prompt_id", prompt.id)
               .eq("company_id", companyId);
+
+            // Month-bounded skip: a prompt is "already collected" for this
+            // model only if a response exists INSIDE the specified month.
+            // Responses in earlier or later months don't count. This is how
+            // "fill April's Perplexity gap" actually works — Netflix prompts
+            // with January + May responses but nothing from April will re-run.
+            if (skipMonthStart && skipMonthEnd) {
+              existingQuery = existingQuery
+                .gte("created_at", skipMonthStart)
+                .lt("created_at", skipMonthEnd);
+            }
+
+            const { data: existingResponses } = await existingQuery;
 
             const existingModels = new Set(
               existingResponses?.map((r: any) => r.ai_model) || [],
@@ -244,7 +275,7 @@ serve(async (req) => {
 
             if (modelsToProcess.length === 0) {
               console.log(
-                `Skipping prompt ${prompt.id}: all models already have responses`,
+                `Skipping prompt ${prompt.id}: all models already have ${skipIfCollectedInMonth ? `responses in ${skipIfCollectedInMonth}` : "responses"}`,
               );
               return;
             }
