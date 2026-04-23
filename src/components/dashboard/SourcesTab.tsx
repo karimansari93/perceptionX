@@ -50,6 +50,84 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     if (!currentCompanyId) return searchResults;
     return searchResults.filter(result => result.company_id === currentCompanyId);
   }, [searchResults, currentCompanyId]);
+
+  // -----------------------------------------------------------------------
+  // SINGLE-PASS CITATION NORMALIZATION
+  //
+  // For orgs like Netflix (~38K responses × ~6 citations each), the prior
+  // implementation invoked JSON.parse + enhanceCitations in 8+ separate memos
+  // and helper functions. That work lives on the main thread and was the
+  // primary reason SourcesTab froze the browser on open.
+  //
+  // We do the parse ONCE here and hand every downstream consumer a cheap
+  // precomputed shape. All downstream memos read `normalizedResponses` and
+  // `responsesByDomain` instead of parsing citations again.
+  // -----------------------------------------------------------------------
+  type NormalizedResponse = {
+    raw: any;
+    id: string;
+    company_mentioned: boolean;
+    promptType: string | undefined;
+    theme: string | undefined;
+    jobFunction: string | null;
+    // Normalized, deduplicated website domains cited by this response.
+    domains: string[];
+  };
+
+  const normalizeResponsesOnce = (input: any[]): NormalizedResponse[] => {
+    return input.map((r) => {
+      let parsed: any = r.citations;
+      if (typeof parsed === 'string') {
+        try { parsed = JSON.parse(parsed); } catch { parsed = null; }
+      }
+      const arr = Array.isArray(parsed) ? enhanceCitations(parsed) : [];
+      const seen = new Set<string>();
+      const domains: string[] = [];
+      for (const c of arr) {
+        if (c.type === 'website' && c.domain) {
+          const d = normalizeDomain(c.domain);
+          if (d && !seen.has(d)) {
+            seen.add(d);
+            domains.push(d);
+          }
+        }
+      }
+      return {
+        raw: r,
+        id: r.id,
+        company_mentioned: r.company_mentioned === true,
+        promptType: r.confirmed_prompts?.prompt_type,
+        theme: r.confirmed_prompts?.prompt_theme,
+        jobFunction: r.confirmed_prompts?.job_function_context?.trim() || null,
+        domains,
+      };
+    });
+  };
+
+  const normalizedResponses = useMemo<NormalizedResponse[]>(
+    () => normalizeResponsesOnce(filteredResponses),
+    [filteredResponses],
+  );
+
+  const normalizedPrevResponses = useMemo<NormalizedResponse[]>(
+    () => normalizeResponsesOnce(previousPeriodResponses),
+    [previousPeriodResponses],
+  );
+
+  // Reverse index: domain → responses that cite it. Used by
+  // getResponsesForSource / isDomainFromAIResponses / isSourceFromJobFunction
+  // which previously re-parsed all responses for every source click/render.
+  const responsesByDomain = useMemo(() => {
+    const map = new Map<string, NormalizedResponse[]>();
+    for (const nr of normalizedResponses) {
+      for (const d of nr.domains) {
+        const list = map.get(d);
+        if (list) list.push(nr);
+        else map.set(d, [nr]);
+      }
+    }
+    return map;
+  }, [normalizedResponses]);
   
   // Calculate citation counts from search results
   const searchResultCitations = useMemo(() => {
@@ -72,15 +150,27 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   // Modal states - persisted
   const [selectedSource, setSelectedSource] = usePersistedState<CitationCount | null>('sourcesTab.selectedSource', null);
   const [isSourceModalOpen, setIsSourceModalOpen] = usePersistedState<boolean>('sourcesTab.isSourceModalOpen', false);
-  const [showAllSources] = useState(true);
+  // Render cap: each row creates Favicon + Badge + Popover + Tooltip. With
+  // 500+ source domains that's thousands of DOM nodes on mount and the tab
+  // feels frozen. Show top N by default, let the user opt in to the full list.
+  const INITIAL_RENDER_LIMIT = 100;
+  const [showAllSources, setShowAllSources] = useState(false);
   // Mentioned/Not Mentioned toggle - persisted
   const [selectedCompanyMentionedFilter, setSelectedCompanyMentionedFilter] = usePersistedState<'mentioned' | 'not-mentioned'>('sourcesTab.selectedCompanyMentionedFilter', 'mentioned');
-  // Other filters hardcoded to defaults (dropdowns removed)
+  // Other filters hardcoded to defaults (dropdowns removed).
+  //
+  // Typed as the full union rather than narrowed-to-literal so the
+  // "filter active" branches downstream stay valid even though the current
+  // constant value never activates them. If these dropdowns get re-enabled,
+  // they can be promoted back to useState without any caller changes.
   const selectedMediaTypeFilter: string | null = null;
-  const selectedSourceTypeFilter: 'all' | 'ai-responses' | 'search-results' = 'all';
-  const selectedJobFunctionFilter = 'all';
-  const selectedThemeFilter = 'all';
-  const selectedPromptTypeFilter = 'all';
+  const selectedSourceTypeFilter = 'all' as 'all' | 'ai-responses' | 'search-results';
+  const selectedJobFunctionFilter = 'all' as string;
+  const selectedThemeFilter = 'all' as string;
+  const selectedPromptTypeFilter = 'all' as string;
+
+  // `selectedCompanyMentionedFilter` is persisted state above; widen below via
+  // comparison sites where we need to handle a legacy 'all' branch.
   
   // Media type editing state
   const [editingMediaType, setEditingMediaType] = useState<string | null>(null);
@@ -168,39 +258,22 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return getFilteredResponsesByAllFilters;
   }, [getFilteredResponsesByAllFilters]);
 
-  // Calculate citation counts directly from prompt_responses for AI responses
-  // Use enhanceCitations to match the same logic as topCitations calculation
+  // Citation counts from AI responses — reads pre-parsed normalizedResponses.
+  // getFilteredResponsesByJobFunction returns filteredResponses verbatim when
+  // the filter dropdowns are at default 'all' (current UI), so we index by
+  // normalizedResponses (same underlying data). If the filters are ever
+  // re-enabled this should be restructured to filter normalizedResponses.
   const aiResponseCitations = useMemo(() => {
     const citationCounts: Record<string, number> = {};
-    
-    getFilteredResponsesByJobFunction.forEach(response => {
-      try {
-        const citations = typeof response.citations === 'string' 
-          ? JSON.parse(response.citations) 
-          : response.citations;
-        
-        if (Array.isArray(citations)) {
-          // Use enhanceCitations to properly extract domains (same as topCitations)
-          const enhancedCitations = enhanceCitations(citations);
-          enhancedCitations.forEach((enhancedCitation) => {
-            // Only count website citations (same as topCitations logic)
-            if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
-              const normalizedDomain = normalizeDomain(enhancedCitation.domain);
-              if (normalizedDomain) {
-                citationCounts[normalizedDomain] = (citationCounts[normalizedDomain] || 0) + 1;
-              }
-            }
-          });
-        }
-      } catch {
-        // Ignore parsing errors
+    for (const nr of normalizedResponses) {
+      for (const d of nr.domains) {
+        citationCounts[d] = (citationCounts[d] || 0) + 1;
       }
-    });
-    
+    }
     return Object.entries(citationCounts)
       .map(([domain, count]) => ({ domain, count }))
       .sort((a, b) => b.count - a.count);
-  }, [getFilteredResponsesByJobFunction]);
+  }, [normalizedResponses]);
 
   // Combine both sources for "all" view
   const allSourcesCitations = useMemo(() => {
@@ -221,13 +294,16 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       .sort((a, b) => b.count - a.count);
   }, [aiResponseCitations, searchResultCitations]);
 
-  // Clear persisted "unknown" source so we never open the modal with unknown (domains are now derived from URLs)
+  // Clear persisted "unknown" source so we never open the modal with unknown (domains are now derived from URLs).
+  // Note: CitationCount's identifying field is `domain`, not `name` — the earlier
+  // implementation referenced `.name` which was silently undefined and never
+  // triggered the cleanup.
   useEffect(() => {
-    if (selectedSource?.name && normalizeDomain(selectedSource.name) === 'unknown') {
+    if (selectedSource?.domain && normalizeDomain(selectedSource.domain) === 'unknown') {
       setSelectedSource(null);
       setIsSourceModalOpen(false);
     }
-  }, [selectedSource?.name]);
+  }, [selectedSource?.domain]);
 
   const handleSourceClick = (citation: CitationCount) => {
     setSelectedSource(citation);
@@ -239,14 +315,12 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     setSelectedSource(null);
   };
 
-  const handleMediaTypeClick = (mediaType: string) => {
-    if (selectedMediaTypeFilter === mediaType) {
-      // If clicking the same media type, clear the filter
-      setSelectedMediaTypeFilter(null);
-    } else {
-      // Set the new filter
-      setSelectedMediaTypeFilter(mediaType);
-    }
+  const handleMediaTypeClick = (_mediaType: string) => {
+    // Media type filtering is disabled — the dropdown was removed and
+    // selectedMediaTypeFilter is a constant `null`. This handler is kept only
+    // because it's still wired up in the JSX; when filtering gets re-enabled,
+    // reintroduce the useState<string | null>(null) and restore the toggle
+    // logic here.
   };
 
 
@@ -282,28 +356,10 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return filteredSearchResults.some(result => normalizeDomain(result.domain) === normalizedDomain);
   };
 
-  // Helper function to check if a domain comes from AI responses
+  // Helper function to check if a domain comes from AI responses. O(1) via
+  // the precomputed responsesByDomain index instead of re-parsing everything.
   const isDomainFromAIResponses = (domain: string) => {
-    const normalizedDomain = normalizeDomain(domain);
-    return filteredResponses.some(response => {
-      try {
-        const citations = typeof response.citations === 'string' 
-          ? JSON.parse(response.citations) 
-          : response.citations;
-        if (Array.isArray(citations)) {
-          // Use enhanceCitations to properly extract domains
-          const enhancedCitations = enhanceCitations(citations);
-          return enhancedCitations.some((enhancedCitation) => {
-            return enhancedCitation.type === 'website' && 
-                   enhancedCitation.domain && 
-                   normalizeDomain(enhancedCitation.domain) === normalizedDomain;
-          });
-        }
-        return false;
-      } catch {
-        return false;
-      }
-    });
+    return responsesByDomain.has(normalizeDomain(domain));
   };
 
   // Helper function to check if a domain has company mentions
@@ -331,57 +387,24 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return Array.from(jobFunctions).sort();
   }, [filteredResponses]);
 
-  // Helper function to check if a source comes from a specific job function context
+  // Helper function to check if a source comes from a specific job function context.
+  // Uses the precomputed domain → responses index + a quick jobFunction scan
+  // instead of re-parsing every response's citations.
   const isSourceFromJobFunction = (domain: string, jobFunction: string) => {
-    const normalizedDomain = normalizeDomain(domain);
-    return filteredResponses.some(response => {
-      const jobFunctionContext = response.confirmed_prompts?.job_function_context?.trim();
-      if (jobFunctionContext !== jobFunction) return false;
-      
-      try {
-        const citations = typeof response.citations === 'string' 
-          ? JSON.parse(response.citations) 
-          : response.citations;
-        if (Array.isArray(citations)) {
-          // Use enhanceCitations to properly extract domains
-          const enhancedCitations = enhanceCitations(citations);
-          return enhancedCitations.some((enhancedCitation) => {
-            return enhancedCitation.type === 'website' && 
-                   enhancedCitation.domain && 
-                   normalizeDomain(enhancedCitation.domain) === normalizedDomain;
-          });
-        }
-        return false;
-      } catch {
-        return false;
-      }
-    });
+    const list = responsesByDomain.get(normalizeDomain(domain));
+    if (!list) return false;
+    for (const nr of list) {
+      if (nr.jobFunction === jobFunction) return true;
+    }
+    return false;
   };
 
   const getResponsesForSource = (domain: string) => {
-    // Get responses that cite this domain (normalized)
-    const normalizedDomain = normalizeDomain(domain);
-    const citationResponses = getFilteredResponsesByJobFunction.filter(response => {
-      try {
-        const citations = typeof response.citations === 'string' 
-          ? JSON.parse(response.citations) 
-          : response.citations;
-        if (Array.isArray(citations)) {
-          // Use enhanceCitations to properly extract domains
-          const enhancedCitations = enhanceCitations(citations);
-          return enhancedCitations.some((enhancedCitation) => {
-            return enhancedCitation.type === 'website' && 
-                   enhancedCitation.domain && 
-                   normalizeDomain(enhancedCitation.domain) === normalizedDomain;
-          });
-        }
-        return false;
-      } catch {
-        return false;
-      }
-    });
-
-    return citationResponses;
+    // Return the raw response rows that cite this domain. The underlying
+    // data is already keyed via responsesByDomain so this is O(1) instead
+    // of iterating and re-parsing every response.
+    const list = responsesByDomain.get(normalizeDomain(domain));
+    return list ? list.map((nr) => nr.raw) : [];
   };
 
   const getFavicon = (domain: string): string => {
@@ -394,30 +417,23 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return domain.replace(/^www\./, ""); // Remove www. if present
   };
 
-  // Cross-period citation counts for delta computation
+  // Cross-period citation counts for delta computation. Reads normalized data
+  // for both periods — no citation re-parsing.
   const timeBasedCitations = useMemo(() => {
-    if (previousPeriodResponses.length === 0) return [];
+    if (normalizedPrevResponses.length === 0) return [];
 
-    const getCitationCounts = (responseList: any[]) => {
+    const countFromNormalized = (list: NormalizedResponse[]) => {
       const counts: Record<string, number> = {};
-      responseList.forEach(response => {
-        try {
-          const raw = typeof response.citations === 'string' ? JSON.parse(response.citations) : response.citations;
-          if (Array.isArray(raw)) {
-            enhanceCitations(raw).forEach(c => {
-              if (c.type === 'website' && c.domain) {
-                const d = normalizeDomain(c.domain);
-                if (d) counts[d] = (counts[d] || 0) + 1;
-              }
-            });
-          }
-        } catch { /* skip */ }
-      });
+      for (const nr of list) {
+        for (const d of nr.domains) {
+          counts[d] = (counts[d] || 0) + 1;
+        }
+      }
       return counts;
     };
 
-    const currentCounts = getCitationCounts(getFilteredResponsesByAllFilters);
-    const prevCounts = getCitationCounts(previousPeriodResponses);
+    const currentCounts = countFromNormalized(normalizedResponses);
+    const prevCounts = countFromNormalized(normalizedPrevResponses);
 
     const allDomains = new Set([...Object.keys(currentCounts), ...Object.keys(prevCounts)]);
 
@@ -428,47 +444,27 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       change: (currentCounts[domain] || 0) - (prevCounts[domain] || 0),
       changePercent: 0 // computed at render time using consistent displayed totals
     })).sort((a, b) => b.current - a.current);
-  }, [getFilteredResponsesByAllFilters, previousPeriodResponses]);
+  }, [normalizedResponses, normalizedPrevResponses]);
 
   // Get the appropriate citation source based on filter, with company_mentioned filtering applied
   const allTimeCitations = useMemo(() => {
     let sourceCitations;
     
     // If company mentioned filter is active and not on search-results, recalculate counts from filtered responses
-    if (selectedCompanyMentionedFilter !== 'all' && selectedSourceTypeFilter !== 'search-results') {
+    if ((selectedCompanyMentionedFilter as string) !== 'all' && selectedSourceTypeFilter !== 'search-results') {
       const filteredCounts: Record<string, number> = {};
-      
-      // Recalculate counts from responses based on company_mentioned filter
-      getFilteredResponsesByJobFunction.forEach(response => {
-        // Check if this response matches the company_mentioned filter
-        const matchesFilter = selectedCompanyMentionedFilter === 'mentioned' 
-          ? response.company_mentioned === true 
-          : response.company_mentioned === false || response.company_mentioned == null;
-        
-        if (!matchesFilter) return;
-        
-        try {
-          const citations = typeof response.citations === 'string' 
-            ? JSON.parse(response.citations) 
-            : response.citations;
-          
-          if (Array.isArray(citations)) {
-            // Use enhanceCitations to properly extract domains (same as topCitations)
-            const enhancedCitations = enhanceCitations(citations);
-            enhancedCitations.forEach((enhancedCitation) => {
-              // Only count website citations (same as topCitations logic)
-              if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
-                const normalizedDomain = normalizeDomain(enhancedCitation.domain);
-                if (normalizedDomain) {
-                  filteredCounts[normalizedDomain] = (filteredCounts[normalizedDomain] || 0) + 1;
-                }
-              }
-            });
-          }
-        } catch {
-          // Ignore parsing errors
+
+      // Recalculate from the normalized, pre-parsed responses. No JSON.parse
+      // on the hot path.
+      for (const nr of normalizedResponses) {
+        const matchesFilter = selectedCompanyMentionedFilter === 'mentioned'
+          ? nr.company_mentioned === true
+          : nr.company_mentioned === false;
+        if (!matchesFilter) continue;
+        for (const d of nr.domains) {
+          filteredCounts[d] = (filteredCounts[d] || 0) + 1;
         }
-      });
+      }
       
       // If source type filter is 'all' and company mentioned filter is 'not-mentioned', 
       // also include search results (they don't have company_mentioned field, so treat as not-mentioned)
@@ -514,39 +510,19 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       count: citation.count,
       change: 0 // Will be updated after timeBasedCitations is calculated
     }));
-  }, [aiResponseCitations, searchResultCitations, allSourcesCitations, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedThemeFilter, getFilteredResponsesByJobFunction, filteredSearchResults]);
+  }, [aiResponseCitations, searchResultCitations, allSourcesCitations, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedThemeFilter, normalizedResponses, filteredSearchResults]);
 
-  // Calculate source counts by data type
+  // Calculate source counts by data type. Reads normalized data — no parsing.
   const sourceCountsByType = useMemo(() => {
     const counts: Record<string, { ai: number; search: number; total: number }> = {};
-    
-    // Count AI response citations
-    filteredResponses.forEach(response => {
-      try {
-        const citations = typeof response.citations === 'string' 
-          ? JSON.parse(response.citations) 
-          : response.citations;
-        if (Array.isArray(citations)) {
-          // Use enhanceCitations to properly extract domains (same as topCitations)
-          const enhancedCitations = enhanceCitations(citations);
-          enhancedCitations.forEach((enhancedCitation) => {
-            // Only count website citations (same as topCitations logic)
-            if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
-              const normalizedDomain = normalizeDomain(enhancedCitation.domain);
-              if (normalizedDomain) {
-                if (!counts[normalizedDomain]) {
-                  counts[normalizedDomain] = { ai: 0, search: 0, total: 0 };
-                }
-                counts[normalizedDomain].ai += 1;
-                counts[normalizedDomain].total += 1;
-              }
-            }
-          });
-        }
-      } catch {
-        // Ignore parsing errors
+
+    for (const nr of normalizedResponses) {
+      for (const d of nr.domains) {
+        if (!counts[d]) counts[d] = { ai: 0, search: 0, total: 0 };
+        counts[d].ai += 1;
+        counts[d].total += 1;
       }
-    });
+    }
     
     // Count search result citations
     filteredSearchResults.forEach(result => {
@@ -563,7 +539,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     });
     
     return counts;
-  }, [filteredResponses, filteredSearchResults]);
+  }, [normalizedResponses, filteredSearchResults]);
 
 
   // Get sources to display based on showAllSources state, media type filter, and company mentioned filter
@@ -584,52 +560,28 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     }
     
     // If company mentioned filter is active AND media type filter is also applied,
-    // we need to recalculate counts because media type filtering might have changed which sources are shown
-    if (selectedCompanyMentionedFilter !== 'all' && selectedSourceTypeFilter !== 'search-results' && selectedMediaTypeFilter) {
-      // Recalculate counts for the filtered sources to ensure accuracy
+    // recalculate counts from normalized data so percentages stay accurate.
+    if ((selectedCompanyMentionedFilter as string) !== 'all' && selectedSourceTypeFilter !== 'search-results' && selectedMediaTypeFilter) {
       const recalculatedCounts: Record<string, number> = {};
       const filteredSourceDomains = new Set(sources.map(s => normalizeDomain(s.name)));
-      
-      getFilteredResponsesByJobFunction.forEach(response => {
-        // Check if this response matches the company_mentioned filter
-        const matchesFilter = selectedCompanyMentionedFilter === 'mentioned' 
-          ? response.company_mentioned === true 
-          : response.company_mentioned === false || response.company_mentioned == null;
-        
-        if (!matchesFilter) return;
-        
-        try {
-          const citations = typeof response.citations === 'string' 
-            ? JSON.parse(response.citations) 
-            : response.citations;
-          
-          if (Array.isArray(citations)) {
-            // Use enhanceCitations to properly extract domains (same as topCitations)
-            const enhancedCitations = enhanceCitations(citations);
-            enhancedCitations.forEach((enhancedCitation) => {
-              // Only count website citations (same as topCitations logic)
-              if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
-                const normalizedDomain = normalizeDomain(enhancedCitation.domain);
-                if (normalizedDomain && filteredSourceDomains.has(normalizedDomain)) {
-                  recalculatedCounts[normalizedDomain] = (recalculatedCounts[normalizedDomain] || 0) + 1;
-                }
-              }
-            });
+
+      for (const nr of normalizedResponses) {
+        const matchesFilter = selectedCompanyMentionedFilter === 'mentioned'
+          ? nr.company_mentioned === true
+          : nr.company_mentioned === false;
+        if (!matchesFilter) continue;
+        for (const d of nr.domains) {
+          if (filteredSourceDomains.has(d)) {
+            recalculatedCounts[d] = (recalculatedCounts[d] || 0) + 1;
           }
-        } catch {
-          // Ignore parsing errors
         }
-      });
-      
-      // Update source counts with recalculated values
+      }
+
       sources = sources.map(source => {
         const normalizedName = normalizeDomain(source.name);
         const newCount = recalculatedCounts[normalizedName] || 0;
-        return {
-          ...source,
-          count: newCount
-        };
-      }).filter(source => source.count > 0); // Remove sources with 0 counts
+        return { ...source, count: newCount };
+      }).filter(source => source.count > 0);
     }
     
     // Filter by job function - only show sources from the selected job function
@@ -645,12 +597,12 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     // Sort by count descending after applying filters
     sources = sources.sort((a, b) => b.count - a.count);
     
-    if (showAllSources) {
-      return sources;
-    }
-    // Show first 20 sources
-    return sources.slice(0, 20);
-  }, [allTimeCitations, showAllSources, selectedMediaTypeFilter, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedJobFunctionFilter, filteredResponses, companyName, customMediaTypes]);
+    return sources;
+  }, [allTimeCitations, selectedMediaTypeFilter, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedJobFunctionFilter, normalizedResponses, companyName, customMediaTypes, responsesByDomain]);
+
+  // Pre-cap count so the "Show all N sources" button can surface the full total
+  // even when only INITIAL_RENDER_LIMIT rows are actually rendered.
+  const totalSourceCount = displayedSources.length;
 
   // Merge change data into all-time citations
   const allTimeCitationsWithChanges = useMemo(() => {
@@ -853,35 +805,11 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     
     const mentionedDomains = new Set<string>();
     const notMentionedDomains = new Set<string>();
-    
-    // Count domains based on responses
-    filteredResponses.forEach(response => {
-      try {
-        const citations = typeof response.citations === 'string' 
-          ? JSON.parse(response.citations) 
-          : response.citations;
-        
-        if (Array.isArray(citations)) {
-          // Use enhanceCitations to properly extract domains (same as topCitations)
-          const enhancedCitations = enhanceCitations(citations);
-          enhancedCitations.forEach((enhancedCitation) => {
-            // Only count website citations (same as topCitations logic)
-            if (enhancedCitation.type === 'website' && enhancedCitation.domain) {
-              const normalizedDomain = normalizeDomain(enhancedCitation.domain);
-              if (normalizedDomain) {
-                if (response.company_mentioned === true) {
-                  mentionedDomains.add(normalizedDomain);
-                } else {
-                  notMentionedDomains.add(normalizedDomain);
-                }
-              }
-            }
-          });
-        }
-      } catch {
-        // Ignore parsing errors
-      }
-    });
+
+    for (const nr of normalizedResponses) {
+      const bucket = nr.company_mentioned ? mentionedDomains : notMentionedDomains;
+      for (const d of nr.domains) bucket.add(d);
+    }
     
     // A domain could appear in both sets if it has mixed mentions
     // For the summary, we want unique domains in each category
@@ -892,7 +820,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       notMentioned: notMentionedDomains.size,
       total: totalUniqueDomains.size
     };
-  }, [selectedSourceTypeFilter, filteredResponses]);
+  }, [selectedSourceTypeFilter, normalizedResponses]);
 
   // Add media type summary section - calculated based on current source filter
   const mediaTypeSummary = useMemo(() => {
@@ -916,7 +844,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     });
     
     return summary;
-  }, [selectedSourceTypeFilter, aiResponseCitations, searchResultCitations, allSourcesCitations, filteredResponses, companyName, customMediaTypes]);
+  }, [selectedSourceTypeFilter, aiResponseCitations, searchResultCitations, allSourcesCitations, responsesByDomain, companyName, customMediaTypes]);
 
   return (
     <div className="flex flex-col gap-6 w-full h-full">
@@ -962,19 +890,35 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
               {allTimeCitationsWithChanges.length > 0 ? (
                 (() => {
                   const maxCount = Math.max(...allTimeCitationsWithChanges.map(c => c.count), 1);
-                  // Calculate total citations from the CURRENT filtered dataset
-                  // This ensures percentages add up to 100% for the active filters
+                  // Totals are across the FULL filtered set so percentages
+                  // still add up correctly even when the render list is capped.
                   const totalCitations = allTimeCitationsWithChanges.reduce((sum, citation) => sum + citation.count, 0);
                   const totalPreviousCitations = allTimeCitationsWithChanges.reduce((sum, c) => sum + (c.previousCount || 0), 0);
-                  return allTimeCitationsWithChanges.map((citation, idx) => (
-                    <div
-                      key={idx}
-                      onClick={() => handleSourceClick({ domain: citation.name, count: citation.count })}
-                      className="cursor-pointer"
-                    >
-                      {renderAllTimeBar(citation, maxCount, totalCitations, totalPreviousCitations)}
-                    </div>
-                  ));
+                  // Only render the first INITIAL_RENDER_LIMIT rows unless the
+                  // user clicks "Show all". Keeps mount fast on Netflix-scale orgs.
+                  const toRender = showAllSources
+                    ? allTimeCitationsWithChanges
+                    : allTimeCitationsWithChanges.slice(0, INITIAL_RENDER_LIMIT);
+                  return (
+                    <>
+                      {toRender.map((citation, idx) => (
+                        <div
+                          key={idx}
+                          onClick={() => handleSourceClick({ domain: citation.name, count: citation.count })}
+                          className="cursor-pointer"
+                        >
+                          {renderAllTimeBar(citation, maxCount, totalCitations, totalPreviousCitations)}
+                        </div>
+                      ))}
+                      {!showAllSources && totalSourceCount > INITIAL_RENDER_LIMIT && (
+                        <div className="pt-3 pb-2 text-center">
+                          <Button variant="outline" size="sm" onClick={() => setShowAllSources(true)}>
+                            Show all {totalSourceCount} sources
+                          </Button>
+                        </div>
+                      )}
+                    </>
+                  );
                 })()
               ) : (
                 <div className="text-center py-12 text-gray-500">

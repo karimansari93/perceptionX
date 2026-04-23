@@ -62,7 +62,10 @@ interface OverviewTabProps {
   metricsCalculating?: boolean; // Whether metrics are still being calculated (for UX - show all together)
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
-  previousPeriodMetrics?: { sentimentScore: number; visibilityScore: number; relevanceScore: number } | null;
+  // Fields are optional because the MV may not yet have per-month data for
+  // the previous period — in that case we skip the delta arrow instead of
+  // silently comparing against 0.
+  previousPeriodMetrics?: { sentimentScore?: number; visibilityScore?: number; relevanceScore?: number } | null;
   companyRelevanceByMonth?: Record<string, number>;
   previousPeriodResponses?: any[];
 }
@@ -1183,11 +1186,21 @@ CRITICAL: When you reference information from a source, add an inline citation l
                   {metrics.perceptionScore}
                 </span>
                 {previousPeriodMetrics && (() => {
-                  const prevEPS = Math.round(
-                    (previousPeriodMetrics.sentimentScore * 0.5) +
-                    (previousPeriodMetrics.visibilityScore * 0.3) +
-                    (previousPeriodMetrics.relevanceScore * 0.2)
-                  );
+                  // EPS is the weighted roll-up — it's only meaningful when
+                  // ALL THREE components have a prior-month value to compare
+                  // against. If any is undefined (MV hasn't caught up, etc.),
+                  // skip the delta entirely rather than produce NaN via the
+                  // `undefined * number` path.
+                  const ps = previousPeriodMetrics.sentimentScore;
+                  const pv = previousPeriodMetrics.visibilityScore;
+                  const pr = previousPeriodMetrics.relevanceScore;
+                  if (typeof ps !== 'number' || typeof pv !== 'number' || typeof pr !== 'number') {
+                    return (
+                      <span className="ml-4 text-xl font-semibold text-gray-400" style={{ marginBottom: 6 }}>-</span>
+                    );
+                  }
+
+                  const prevEPS = Math.round((ps * 0.5) + (pv * 0.3) + (pr * 0.2));
                   const change = metrics.perceptionScore - prevEPS;
                   if (change === 0) return (
                     <span className="ml-4 text-xl font-semibold text-gray-400" style={{marginBottom: 6}}>-</span>
@@ -1218,15 +1231,22 @@ CRITICAL: When you reference information from a source, add an inline citation l
                <ChartContainer config={{ score: { label: "Score", color: "#0DBCBA" } }} className="w-full h-full">
                  <AreaChart
                    data={(() => {
-                     // Build chart data: previous period EPS + current period trend points
+                     // Build chart data: previous period EPS + current period trend points.
+                     // Only prepend a "Prev" anchor when all three components
+                     // have a comparable value — otherwise EPS would be NaN
+                     // and the area chart would collapse.
                      const points = [...perceptionScoreTrend];
-                     if (previousPeriodMetrics && points.length > 0) {
-                       const prevEPS = Math.round(
-                         (previousPeriodMetrics.sentimentScore * 0.5) +
-                         (previousPeriodMetrics.visibilityScore * 0.3) +
-                         (previousPeriodMetrics.relevanceScore * 0.2)
-                       );
-                       points.unshift({ date: 'Prev', score: prevEPS, fullDate: '', responseCount: 0, promptCount: 0, sentiment: previousPeriodMetrics.sentimentScore, visibility: previousPeriodMetrics.visibilityScore, relevance: previousPeriodMetrics.relevanceScore });
+                     const ps = previousPeriodMetrics?.sentimentScore;
+                     const pv = previousPeriodMetrics?.visibilityScore;
+                     const pr = previousPeriodMetrics?.relevanceScore;
+                     if (
+                       points.length > 0 &&
+                       typeof ps === 'number' &&
+                       typeof pv === 'number' &&
+                       typeof pr === 'number'
+                     ) {
+                       const prevEPS = Math.round((ps * 0.5) + (pv * 0.3) + (pr * 0.2));
+                       points.unshift({ date: 'Prev', score: prevEPS, fullDate: '', responseCount: 0, promptCount: 0, sentiment: ps, visibility: pv, relevance: pr });
                      }
                      return points.length > 1 ? points : [
                        { date: 'Start', score: metrics.perceptionScore, fullDate: '', responseCount: responses.length },
@@ -1301,11 +1321,17 @@ CRITICAL: When you reference information from a source, add an inline citation l
               </div>
             ) : (() => {
               const prevMetrics = previousPeriodMetrics;
-              const sentimentChange = prevMetrics ? metrics.sentimentScore - prevMetrics.sentimentScore : 0;
-              const visibilityChange = prevMetrics ? metrics.visibilityScore - prevMetrics.visibilityScore : 0;
-              const relevanceChange = prevMetrics ? metrics.relevanceScore - prevMetrics.relevanceScore : 0;
-              const hasPrevious = !!prevMetrics;
-              
+              // Each delta is only meaningful when both sides exist. Previous
+              // values are optional (undefined when the MV hasn't surfaced data
+              // for the previous month yet) — don't coerce missing values to 0.
+              const hasPrevSentiment = typeof prevMetrics?.sentimentScore === 'number';
+              const hasPrevVisibility = typeof prevMetrics?.visibilityScore === 'number';
+              const hasPrevRelevance = typeof prevMetrics?.relevanceScore === 'number';
+
+              const sentimentChange = hasPrevSentiment ? metrics.sentimentScore - (prevMetrics!.sentimentScore as number) : 0;
+              const visibilityChange = hasPrevVisibility ? metrics.visibilityScore - (prevMetrics!.visibilityScore as number) : 0;
+              const relevanceChange = hasPrevRelevance ? metrics.relevanceScore - (prevMetrics!.relevanceScore as number) : 0;
+
               const currentSentiment = metrics.sentimentScore;
               const currentVisibility = metrics.visibilityScore;
               const currentRelevance = metrics.relevanceScore;
@@ -1320,7 +1346,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
                       <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentSentiment}%</span>
                       <span className="w-[40px] flex justify-end">
-                        {hasPrevious && (sentimentChange !== 0 ? (
+                        {hasPrevSentiment && (sentimentChange !== 0 ? (
                           <span className={`text-xs font-semibold flex items-center gap-0.5 ${
                             sentimentChange > 0 ? 'text-green-600' : 'text-red-600'
                           }`}>
@@ -1340,7 +1366,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
                       <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentVisibility}%</span>
                       <span className="w-[40px] flex justify-end">
-                        {hasPrevious && (visibilityChange !== 0 ? (
+                        {hasPrevVisibility && (visibilityChange !== 0 ? (
                           <span className={`text-xs font-semibold flex items-center gap-0.5 ${
                             visibilityChange > 0 ? 'text-green-600' : 'text-red-600'
                           }`}>
@@ -1360,7 +1386,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
                       <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentRelevance}%</span>
                       <span className="w-[40px] flex justify-end">
-                        {hasPrevious && (relevanceChange !== 0 ? (
+                        {hasPrevRelevance && (relevanceChange !== 0 ? (
                           <span className={`text-xs font-semibold flex items-center gap-0.5 ${
                             relevanceChange > 0 ? 'text-green-600' : 'text-red-600'
                           }`}>

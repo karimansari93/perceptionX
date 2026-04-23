@@ -10,7 +10,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { Loader2, Play, Plus, X, CheckCircle2, AlertCircle } from "lucide-react";
 import { CompanyMultiSelect } from "./CompanyMultiSelect";
-import { useAdminCompanyCollection } from "@/hooks/useAdminCompanyCollection";
 
 const COUNTRY_SUGGESTIONS = [
   "United States", "United Kingdom", "Canada", "Australia", "Germany",
@@ -58,7 +57,6 @@ export const ExpandCoveragePanel = ({ organizationId, onBack }: Props) => {
   const [currentCompanyId, setCurrentCompanyId] = useState<string | null>(null);
   const [queueGenerated, setQueueGenerated] = useState(false);
   const cancelledRef = useRef(false);
-  const { runCollection } = useAdminCompanyCollection();
 
   useEffect(() => {
     loadIndustries();
@@ -132,6 +130,15 @@ export const ExpandCoveragePanel = ({ organizationId, onBack }: Props) => {
       return;
     }
 
+    // Business rule: a company may have AT MOST ONE country at a time.
+    //   - Company with NO country → admin may add exactly one country (+ functions).
+    //   - Company that already has a country → admin may only add functions to
+    //     that existing country. Adding a different country is disallowed.
+    if (newLocations.length > 1) {
+      toast.error("A company can only have one country. Add only one new location.");
+      return;
+    }
+
     setProcessing(true);
     cancelledRef.current = false;
 
@@ -169,7 +176,8 @@ export const ExpandCoveragePanel = ({ organizationId, onBack }: Props) => {
       });
 
       try {
-        // Get existing combos for this company
+        // Load existing prompts so we can detect the company's current country
+        // and the combos already covered.
         const { data: existingPrompts } = await supabase
           .from("confirmed_prompts")
           .select("location_context, industry_context, job_function_context")
@@ -182,6 +190,55 @@ export const ExpandCoveragePanel = ({ organizationId, onBack }: Props) => {
           )
         );
 
+        const existingCountries = [
+          ...new Set(
+            (existingPrompts || [])
+              .map((p: any) => p.location_context)
+              .filter(Boolean) as string[]
+          ),
+        ];
+        const currentCountry = existingCountries[0] || null;
+
+        // --- Business rule enforcement (per company) ----------------------
+        // 1. If the company already has a country, admin cannot assign a
+        //    different country via expand coverage.
+        if (currentCountry && newLocations.length > 0 && !newLocations.includes(currentCountry)) {
+          throw new Error(
+            `${name} already has country "${currentCountry}". Only new job functions can be added — a different country cannot be attached via expand coverage.`,
+          );
+        }
+
+        // 2. If the company has NO country and no new job functions, we need
+        //    at least a new country to make a valid combo.
+        if (!currentCountry && newLocations.length === 0) {
+          throw new Error(
+            `${name} has no country yet. Add a location before expanding functions.`,
+          );
+        }
+
+        // Effective country for this expansion:
+        //   - existing country if the company has one (we append to it), OR
+        //   - the single new country the admin is adding for a country-less company.
+        const effectiveCountry = currentCountry || newLocations[0];
+
+        // Resolve industry — prefer the company's dominant industry_context on
+        // existing prompts, fall back to companies.industry, then "General".
+        const { data: companyRow } = await supabase
+          .from("companies")
+          .select("industry")
+          .eq("id", companyId)
+          .single();
+
+        const industryCounts = new Map<string, number>();
+        for (const p of existingPrompts || []) {
+          const ind = (p as any).industry_context;
+          if (ind) industryCounts.set(ind, (industryCounts.get(ind) || 0) + 1);
+        }
+        const defaultIndustry =
+          [...industryCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+          || (companyRow as any)?.industry
+          || "General";
+
         // Create a batch config for this expansion
         const { data: config } = await supabase
           .from("company_batch_configs")
@@ -190,7 +247,7 @@ export const ExpandCoveragePanel = ({ organizationId, onBack }: Props) => {
             company_name: name,
             org_mode: "existing_org",
             organization_id: organizationId,
-            target_locations: newLocations,
+            target_locations: [effectiveCountry],
             target_industries: newIndustries,
             target_job_functions: newJobFunctions,
           })
@@ -199,39 +256,163 @@ export const ExpandCoveragePanel = ({ organizationId, onBack }: Props) => {
 
         if (!config) throw new Error("Failed to create batch config");
 
-        // Generate queue items for truly new combos
+        // Generate queue items for truly new combos. `expand_setup` attaches
+        // prompts to the EXISTING company_id (no onboarding insert, no
+        // trigger-created duplicate company).
+        const industriesToUse = newIndustries.length > 0 ? newIndustries : [defaultIndustry];
+        const funcsToUse = newJobFunctions.length > 0 ? newJobFunctions : [null];
+
         const jobs: any[] = [];
-        for (const loc of newLocations.length > 0 ? newLocations : [""]) {
-          for (const ind of newIndustries.length > 0 ? newIndustries : [""]) {
-            const funcs = newJobFunctions.length > 0 ? newJobFunctions : [null];
-            for (const jf of funcs) {
-              const key = `${loc}|${ind}|${jf || ""}`;
-              if (!existingCombos.has(key)) {
-                jobs.push({
-                  config_id: config.id,
-                  company_name: name,
-                  location: loc || "Global (All Countries)",
-                  industry: ind || "General",
-                  job_function: jf,
-                  status: "pending",
-                  phase: "setup",
-                });
-              }
+        for (const ind of industriesToUse) {
+          for (const jf of funcsToUse) {
+            const key = `${effectiveCountry}|${ind}|${jf || ""}`;
+            if (!existingCombos.has(key)) {
+              jobs.push({
+                config_id: config.id,
+                company_name: name,
+                company_id: companyId,
+                location: effectiveCountry,
+                industry: ind,
+                job_function: jf,
+                status: "pending",
+                phase: "expand_setup",
+              });
             }
           }
         }
 
+        // Also resume any previously-queued rows for this company that got
+        // stuck (pending / processing / failed) AND that match what the admin
+        // actually selected in this run. We don't silently resume work the
+        // admin didn't ask for (e.g. a completed-but-stuck Product & Technology
+        // job shouldn't come back to life when the admin only selected
+        // Marketing + Content & Production).
+        const { data: existingQueueRows } = await supabase
+          .from("company_batch_queue")
+          .select("id, status, config_id, job_function, location, industry")
+          .eq("company_id", companyId)
+          .in("status", ["pending", "processing", "failed"]);
+
+        const selectedJobFunctions = new Set(newJobFunctions);
+
+        const staleRows = (existingQueueRows || []).filter((r: any) => {
+          // Don't touch rows from the config we just created.
+          if (r.config_id === config.id) return false;
+
+          // Only resume rows whose job function is among what the admin selected
+          // this time. If the admin selected no new job functions, don't resume
+          // anything.
+          if (selectedJobFunctions.size === 0) return false;
+          if (!r.job_function || !selectedJobFunctions.has(r.job_function)) return false;
+
+          // Must match the effective country we resolved above — otherwise we'd
+          // resume a queue row for a completely different country.
+          if (r.location !== effectiveCountry) return false;
+
+          return true;
+        });
+        if (staleRows.length > 0) {
+          await supabase
+            .from("company_batch_queue")
+            .update({
+              status: "pending",
+              is_cancelled: false,
+              retry_count: 0,
+              batch_index: 0,
+              error_log: null,
+              updated_at: new Date().toISOString(),
+            })
+            .in("id", staleRows.map((r: any) => r.id));
+        }
+
+        if (jobs.length === 0 && staleRows.length === 0) {
+          // Nothing new to add, nothing stale to resume.
+          setCompanyProgress((prev) => {
+            const next = new Map(prev);
+            next.set(companyId, { status: "done" });
+            return next;
+          });
+          succeeded++;
+          continue;
+        }
+
         if (jobs.length > 0) {
           await supabase.from("company_batch_queue").insert(jobs);
+        }
 
-          // Start the queue processor for this config
+        // Collect all config IDs we need to drive: the one we just created
+        // (if any new jobs) plus any configs tied to stale rows we resumed.
+        const configIdsToDrive = new Set<string>();
+        if (jobs.length > 0) configIdsToDrive.add(config.id);
+        for (const r of staleRows) configIdsToDrive.add(r.config_id);
+
+        // Kick off the queue processor for each affected config. `invoke`
+        // returns as soon as the FIRST queue tick's HTTP response lands — the
+        // processor then self-chains background fetches to finish the rest.
+        for (const cid of configIdsToDrive) {
           await supabase.functions.invoke("process-company-batch-queue", {
-            body: { configId: config.id },
+            body: { configId: cid },
           });
         }
 
-        // Also re-collect existing prompts
-        await runCollection(companyId, organizationId, name, { skipExisting: false });
+        // Poll company_batch_queue until every job for these configs reaches
+        // a terminal state. `data_collection_progress` on companies (updated
+        // by collect-company-responses) continues driving the per-prompt bar
+        // via the existing poller above.
+        const totalJobs = jobs.length + staleRows.length;
+        const pollStart = Date.now();
+        const POLL_INTERVAL_MS = 3000;
+        // No hard timeout — Netflix-scale expansions can legitimately exceed
+        // 30 min. Admin can hit Cancel to bail out.
+        const configIdArr = Array.from(configIdsToDrive);
+
+        while (!cancelledRef.current) {
+
+          const { data: queueRows, error: queueError } = await supabase
+            .from("company_batch_queue")
+            .select("status, phase, error_log, config_id")
+            .in("config_id", configIdArr)
+            .eq("company_id", companyId);
+
+          if (queueError) {
+            throw new Error(`Queue poll failed: ${queueError.message}`);
+          }
+
+          const rows = queueRows || [];
+          const terminal = rows.filter(
+            (r: any) => r.status === "completed" || r.status === "failed",
+          );
+          const jobsDone = terminal.length;
+
+          // Surface coarse job-level progress (e.g. 0/3, 1/3) alongside the
+          // per-prompt bar driven by data_collection_progress.
+          setCompanyProgress((prev) => {
+            const next = new Map(prev);
+            const existing = next.get(companyId) || { status: "processing" as const };
+            next.set(companyId, {
+              ...existing,
+              status: "processing",
+              progress: existing.progress
+                ? existing.progress
+                : { completed: jobsDone, total: totalJobs },
+            });
+            return next;
+          });
+
+          if (jobsDone === rows.length && rows.length > 0) {
+            const anyFailed = rows.find((r: any) => r.status === "failed");
+            if (anyFailed) {
+              throw new Error(
+                anyFailed.error_log || "One or more queue jobs failed. See company_batch_queue.error_log.",
+              );
+            }
+            break;
+          }
+
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        }
+
+        if (cancelledRef.current) break;
 
         succeeded++;
         setCompanyProgress((prev) => {
@@ -307,12 +488,16 @@ export const ExpandCoveragePanel = ({ organizationId, onBack }: Props) => {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">New Coverage</CardTitle>
-            <CardDescription>Add new locations, industries, or job functions.</CardDescription>
+            <CardDescription>
+              A company can have only one country. Use this to (a) set a country
+              on a company that has none, or (b) add job functions to a company's
+              existing country.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {/* New Locations */}
             <div className="space-y-2">
-              <Label>New Locations</Label>
+              <Label>New Country <span className="text-muted-foreground text-xs">(only if the company has no country yet)</span></Label>
               <div className="flex flex-wrap gap-1 mb-2">
                 {newLocations.map((loc) => (
                   <Badge key={loc} variant="secondary" className="gap-1">
