@@ -16,6 +16,7 @@ import { KeyTakeaways } from "./KeyTakeaways";
 import { SourcesSummaryCard } from "./SourcesSummaryCard";
 import { CompetitorsSummaryCard } from "./CompetitorsSummaryCard";
 import { AttributesSummaryCard } from "./AttributesSummaryCard";
+import { DashboardChatHero } from "./DashboardChatHero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
@@ -1146,6 +1147,12 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
   return (
     <div className="flex flex-col gap-8 w-full">
+      {/* Ask-your-data hero — the primary entry point to the dashboard.
+          Lives above the metric cards so natural-language exploration is
+          the first thing users reach for. See DashboardChatHero for UX
+          details. */}
+      <DashboardChatHero />
+
       {/* Main Section Header */}
       <div className="space-y-2">
         <h2 className="text-2xl font-bold text-gray-900">Overview</h2>

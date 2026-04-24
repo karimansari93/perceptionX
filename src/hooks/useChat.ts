@@ -118,8 +118,15 @@ export function useChat() {
     setMessages([...currentMessages, assistantMessage]);
 
     try {
-      // Build history excluding the current user message (it's sent separately)
-      const history = messages.map(m => ({ role: m.role, content: m.content }));
+      // Build history excluding the current user message (it's sent separately).
+      // Cap at the last N turns to prevent context bloat on long threads —
+      // Claude Opus 4.7 has a large context window, but every extra turn
+      // costs latency and tokens, and relevance drops off fast. 20 messages
+      // (≈10 exchanges) preserves useful short-term memory without
+      // dragging old unrelated queries into every call.
+      const HISTORY_WINDOW = 20;
+      const recent = messages.slice(-HISTORY_WINDOW);
+      const history = recent.map(m => ({ role: m.role, content: m.content }));
 
       const stream = await sendChatMessage(text.trim(), organizationId, history);
       const reader = stream.getReader();
