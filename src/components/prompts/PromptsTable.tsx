@@ -15,7 +15,13 @@ interface GeneratedPrompt {
   id: string;
   text: string;
   category: string;
-  type: 'sentiment' | 'visibility' | 'competitive' | 'talentx';
+  // `type` is intentionally widened to string because callers (usePromptsLogic)
+  // use a different set of labels ('informational' | 'experience' | ...) than
+  // the legacy ones this table was built for ('sentiment' | 'visibility' | ...).
+  // getCategoryColor / getTypeLabel already fall back to a neutral style for
+  // unknown values, so widening here just stops the unrelated-types error
+  // without changing any runtime rendering.
+  type: string;
   sentiment?: string | number;
   visibility?: string | number;
   competitive?: string | number;

@@ -735,7 +735,6 @@ CRITICAL: When you reference information from a source, add an inline citation l
           setThinkingStep(-1);
           setThinkingSteps([]);
           setSummarySources([]);
-          setHoveredCitation(null);
         }
       }}>
         <SheetContent side="right" className="w-full sm:max-w-2xl p-0 flex flex-col gap-0 [&>button]:hidden">

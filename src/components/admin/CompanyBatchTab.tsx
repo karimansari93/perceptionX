@@ -15,13 +15,17 @@ import { Building2 } from "lucide-react";
 import { ActionSelector, type BatchAction } from "./batch/ActionSelector";
 import { RecollectPanel } from "./batch/RecollectPanel";
 import { ExpandCoveragePanel } from "./batch/ExpandCoveragePanel";
+import { BulkExpandPanel } from "./batch/BulkExpandPanel";
+import { CollectModelPanel } from "./batch/CollectModelPanel";
+import { AnalyzeThemesPanel } from "./batch/AnalyzeThemesPanel";
 import { NewCompanyPanel } from "./batch/NewCompanyPanel";
+import { ResumeStuckButton } from "./batch/ResumeStuckButton";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type BatchMode = "idle" | "recollect" | "expand" | "new_company" | "new_org";
+type BatchMode = "idle" | "recollect" | "expand" | "bulk_expand" | "collect_model" | "analyze_themes" | "new_company" | "new_org";
 
 type Organization = {
   id: string;
@@ -148,7 +152,12 @@ export const CompanyBatchTab = () => {
 
       {/* Step 2: Action selector — shown when org is selected and mode is idle */}
       {orgMode === "existing_org" && organizationId && mode === "idle" && (
-        <ActionSelector onSelect={handleActionSelect} />
+        <>
+          <div className="flex justify-end">
+            <ResumeStuckButton organizationId={organizationId} />
+          </div>
+          <ActionSelector onSelect={handleActionSelect} />
+        </>
       )}
 
       {/* Step 3: Scenario panels */}
@@ -158,6 +167,18 @@ export const CompanyBatchTab = () => {
 
       {mode === "expand" && (
         <ExpandCoveragePanel organizationId={organizationId} onBack={handleBack} />
+      )}
+
+      {mode === "bulk_expand" && (
+        <BulkExpandPanel organizationId={organizationId} onBack={handleBack} />
+      )}
+
+      {mode === "collect_model" && (
+        <CollectModelPanel organizationId={organizationId} onBack={handleBack} />
+      )}
+
+      {mode === "analyze_themes" && (
+        <AnalyzeThemesPanel organizationId={organizationId} onBack={handleBack} />
       )}
 
       {(mode === "new_company" || mode === "new_org") && (
