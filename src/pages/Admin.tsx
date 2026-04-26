@@ -5,6 +5,7 @@ import { UsersTab } from '@/components/admin/UsersTab';
 import { CompanyManagementTab } from '@/components/admin/CompanyManagementTab';
 import { VisibilityRankingsTab } from '@/components/admin/VisibilityRankingsTab';
 import { CompanyBatchTab } from '@/components/admin/CompanyBatchTab';
+import { RecencyCoverageTab } from '@/components/admin/RecencyCoverageTab';
 
 export default function Admin() {
   const [activeTab, setActiveTab] = useState<string>('organizations');
@@ -25,6 +26,8 @@ export default function Admin() {
         return <VisibilityRankingsTab />;
       case 'company-batch':
         return <CompanyBatchTab />;
+      case 'recency-coverage':
+        return <RecencyCoverageTab />;
       default:
         return <OrganizationManagementTab />;
     }
