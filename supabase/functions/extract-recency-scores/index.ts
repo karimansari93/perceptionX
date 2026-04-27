@@ -2,9 +2,11 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 
+// Use service role key so cache writes bypass RLS. Edge function is server-side
+// only and never exposes this key to clients.
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
-  Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY') ?? ''
 );
 
 interface CitationWithRecency {
@@ -13,7 +15,7 @@ interface CitationWithRecency {
   url?: string;
   publicationDate?: string;
   recencyScore: number | null; // null = N/A
-  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'problematic-domain';
+  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen';
   sourceType?: 'perplexity' | 'google-ai-overviews' | 'bing-copilot' | 'search-results';
 }
 
@@ -107,10 +109,6 @@ serve(async (req) => {
     const startTime = Date.now();
     const maxProcessingTime = 110000;
     let firecrawlRequestCount = 0;
-    let consecutiveFirecrawlErrors = 0;
-    let rateLimitHit = false;
-    let problematicDomainCount = 0;
-    
     console.log(`Starting to process ${citations.length} citations with intelligent caching and deduplication`);
     
     // Step 1: Deduplicate URLs within this batch
@@ -158,65 +156,100 @@ serve(async (req) => {
     }
     
     console.log(`Cache hits: ${urlResults.size}, URLs to analyze: ${urlsToAnalyze.length}`);
-    
-    // Step 4: Analyze unique URLs not in cache
-    for (let i = 0; i < urlsToAnalyze.length; i++) {
-      const url = urlsToAnalyze[i];
-      
-      // Check timeout
-      if (Date.now() - startTime > maxProcessingTime) {
-        console.log(`Timeout approaching after processing ${i} URLs, stopping`);
-        break;
-      }
-      
-      // Get first citation for this URL to extract metadata
+
+    // Step 4a: Run free tiers (URL pattern + evergreen) synchronously.
+    // Anything that doesn't resolve gets queued for one batch Firecrawl call.
+    const urlsNeedingFirecrawl: string[] = [];
+    for (const url of urlsToAnalyze) {
       const citationsForUrl = urlToCitations.get(url) || [];
       const firstCitation = citationsForUrl[0];
-      
-      // Skip Firecrawl if necessary
-      const skipFirecrawl = rateLimitHit || consecutiveFirecrawlErrors >= 3 || (urlsToAnalyze.length > 200 && firecrawlRequestCount > 50);
-      
-      const result = await extractRecencyScore(firstCitation, firecrawlApiKey, testMode, skipFirecrawl);
-      urlResults.set(url, result);
-      
-      // Track problematic domains
-      if (result.extractionMethod === 'problematic-domain') {
-        problematicDomainCount++;
+
+      const urlDate = extractDateFromUrl(url);
+      if (urlDate) {
+        urlResults.set(url, {
+          domain: firstCitation?.domain || extractDomainFromUrl(url),
+          title: firstCitation?.title,
+          url,
+          publicationDate: urlDate,
+          recencyScore: calculateRecencyScore(urlDate),
+          extractionMethod: 'url-pattern',
+          sourceType: firstCitation?.sourceType,
+        });
+        continue;
       }
-      
-      // Store in cache
-      if (result.extractionMethod !== 'rate-limit-hit') {
-        await storeCachedUrl(result);
+
+      if (isEvergreenUrl(url)) {
+        urlResults.set(url, {
+          domain: firstCitation?.domain || extractDomainFromUrl(url),
+          title: firstCitation?.title,
+          url,
+          recencyScore: 100,
+          extractionMethod: 'evergreen',
+          sourceType: firstCitation?.sourceType,
+        });
+        continue;
       }
-      
-      // Track Firecrawl usage
-      if (!skipFirecrawl && !testMode && firecrawlApiKey) {
-        if (result.extractionMethod === 'firecrawl-metadata' || result.extractionMethod === 'firecrawl-relative' || result.extractionMethod === 'firecrawl-absolute') {
-          firecrawlRequestCount++;
-          consecutiveFirecrawlErrors = 0;
-        } else if (result.extractionMethod === 'not-found') {
-          const isTimeout = result.publicationDate === undefined;
-          if (!isTimeout) {
-            consecutiveFirecrawlErrors++;
-            if (consecutiveFirecrawlErrors >= 5) {
-              console.log(`Too many consecutive Firecrawl failures (${consecutiveFirecrawlErrors}), switching to URL patterns only`);
-            }
-          }
-        } else if (result.extractionMethod === 'rate-limit-hit') {
-          rateLimitHit = true;
-          console.log('Rate limit detected, switching to URL patterns only');
+
+      urlsNeedingFirecrawl.push(url);
+    }
+
+    console.log(`URL pattern + evergreen handled: ${urlResults.size - cachedUrls.size}, Firecrawl needed: ${urlsNeedingFirecrawl.length}`);
+
+    // Step 4b: One batch Firecrawl call (concurrent, much faster than per-URL).
+    if (!testMode && firecrawlApiKey && urlsNeedingFirecrawl.length > 0) {
+      const batchResults = await batchExtractDatesWithFirecrawl(urlsNeedingFirecrawl, firecrawlApiKey, maxProcessingTime - (Date.now() - startTime));
+      firecrawlRequestCount = urlsNeedingFirecrawl.length;
+
+      for (const url of urlsNeedingFirecrawl) {
+        const citationsForUrl = urlToCitations.get(url) || [];
+        const firstCitation = citationsForUrl[0];
+        const batchResult = batchResults.get(url);
+
+        if (batchResult?.date) {
+          urlResults.set(url, {
+            domain: firstCitation?.domain || extractDomainFromUrl(url),
+            title: firstCitation?.title,
+            url,
+            publicationDate: batchResult.date,
+            recencyScore: calculateRecencyScore(batchResult.date),
+            extractionMethod: batchResult.method,
+            sourceType: firstCitation?.sourceType,
+          });
+        } else {
+          urlResults.set(url, {
+            domain: firstCitation?.domain || extractDomainFromUrl(url),
+            title: firstCitation?.title,
+            url,
+            recencyScore: null,
+            extractionMethod: batchResult?.method || 'not-found',
+            sourceType: firstCitation?.sourceType,
+          });
         }
       }
-      
-      console.log(`[${i + 1}/${urlsToAnalyze.length}] ${result.domain} - ${result.extractionMethod} (Firecrawl: ${firecrawlRequestCount})`);
-      
-      // Add delay
-      if (!testMode && i < urlsToAnalyze.length - 1) {
-        const baseDelay = urlsToAnalyze.length > 100 ? 500 : urlsToAnalyze.length > 50 ? 750 : 1000;
-        const delay = result.extractionMethod === 'problematic-domain' ? Math.min(200, baseDelay) : baseDelay;
-        await new Promise(resolve => setTimeout(resolve, delay));
+    } else if (urlsNeedingFirecrawl.length > 0) {
+      // No Firecrawl available — mark as not-found so we don't retry forever
+      for (const url of urlsNeedingFirecrawl) {
+        const citationsForUrl = urlToCitations.get(url) || [];
+        const firstCitation = citationsForUrl[0];
+        urlResults.set(url, {
+          domain: firstCitation?.domain || extractDomainFromUrl(url),
+          title: firstCitation?.title,
+          url,
+          recencyScore: null,
+          extractionMethod: 'not-found',
+          sourceType: firstCitation?.sourceType,
+        });
       }
     }
+
+    // Step 4c: Persist all newly-resolved URLs to cache (parallel writes).
+    const newlyResolvedUrls = urlsToAnalyze.filter(u => urlResults.has(u));
+    await Promise.all(
+      newlyResolvedUrls
+        .map(u => urlResults.get(u)!)
+        .filter(r => r.extractionMethod !== 'rate-limit-hit' && r.extractionMethod !== 'cache-hit')
+        .map(r => storeCachedUrl(r))
+    );
     
     // Step 5: Map results back to all citations (including duplicates)
     const results: CitationWithRecency[] = [];
@@ -269,8 +302,7 @@ serve(async (req) => {
           withoutDates: results.filter(r => r.recencyScore === null).length,
           cacheHits: results.filter(r => r.extractionMethod === 'cache-hit').length,
           newlyAnalyzed: urlsToAnalyze.length,
-          firecrawlRequestsMade: firecrawlRequestCount,
-          problematicDomainsSkipped: problematicDomainCount
+          firecrawlRequestsMade: firecrawlRequestCount
         }
       }),
       { headers: corsHeaders }
@@ -284,94 +316,6 @@ serve(async (req) => {
     );
   }
 });
-
-async function extractRecencyScore(
-  citation: any, 
-  firecrawlApiKey: string | undefined, 
-  testMode: boolean,
-  skipFirecrawl: boolean = false
-): Promise<CitationWithRecency> {
-  const url = citation.url || citation.link;
-  
-  if (!url) {
-    return {
-      domain: citation.domain || 'unknown',
-      title: citation.title,
-      url: undefined,
-      recencyScore: null,
-      extractionMethod: 'not-found',
-      sourceType: citation.sourceType
-    };
-  }
-
-  // Method 1: Try URL pattern matching first (fastest, most reliable)
-  const urlDate = extractDateFromUrl(url);
-  if (urlDate) {
-    return {
-      domain: citation.domain || extractDomainFromUrl(url),
-      title: citation.title,
-      url: url,
-      publicationDate: urlDate,
-      recencyScore: calculateRecencyScore(urlDate),
-      extractionMethod: 'url-pattern',
-      sourceType: citation.sourceType
-    };
-  }
-
-  // Check if this is a problematic domain that we should skip Firecrawl for
-  if (isProblematicDomain(url)) {
-    console.log(`Skipping Firecrawl for problematic domain: ${extractDomainFromUrl(url)}`);
-    return {
-      domain: citation.domain || extractDomainFromUrl(url),
-      title: citation.title,
-      url: url,
-      recencyScore: null,
-      extractionMethod: 'problematic-domain',
-      sourceType: citation.sourceType
-    };
-  }
-
-  // Method 2: Try Firecrawl scraping with metadata + markdown (if not skipped, not in test mode and API key available)
-  if (!testMode && firecrawlApiKey && !skipFirecrawl) {
-    try {
-      const firecrawlDate = await extractDateWithFirecrawl(url, firecrawlApiKey);
-      if (firecrawlDate.date) {
-        return {
-          domain: citation.domain || extractDomainFromUrl(url),
-          title: citation.title,
-          url: url,
-          publicationDate: firecrawlDate.date,
-          recencyScore: calculateRecencyScore(firecrawlDate.date),
-          extractionMethod: firecrawlDate.method,
-          sourceType: citation.sourceType
-        };
-      }
-    } catch (error) {
-      console.log(`Firecrawl extraction failed for ${url}:`, error);
-      // Check if it's a rate limit error
-      if (error.message?.includes('429')) {
-        return {
-          domain: citation.domain || extractDomainFromUrl(url),
-          title: citation.title,
-          url: url,
-          recencyScore: null,
-          extractionMethod: 'rate-limit-hit',
-          sourceType: citation.sourceType
-        };
-      }
-    }
-  }
-
-  // No date found - return N/A
-  return {
-    domain: citation.domain || extractDomainFromUrl(url),
-    title: citation.title,
-    url: url,
-    recencyScore: null,
-    extractionMethod: 'not-found',
-    sourceType: citation.sourceType
-  };
-}
 
 function extractDateFromUrl(url: string): string | null {
   // Helper to validate year is reasonable (web content dates)
@@ -427,224 +371,171 @@ function extractDateFromUrl(url: string): string | null {
   return null;
 }
 
-// Parse relative dates like "1 yr ago", "yesterday", etc.
-// Parse Reddit-specific date format: • 2y ago, • 6mo ago, etc.
-function parseRedditDate(text: string): string | null {
-  // Look for Reddit timestamp pattern: • 2y ago, • 6mo ago, etc.
-  const redditPattern = /•\s*(\d+)(y|mo|d|h|m)\s*ago/i;
-  const match = text.match(redditPattern);
-  
-  if (match) {
-    const value = parseInt(match[1]);
-    const unit = match[2].toLowerCase();
-    
-    const now = new Date();
-    let targetDate = new Date(now);
-    
-    switch (unit) {
-      case 'y': 
-        targetDate.setFullYear(now.getFullYear() - value); 
-        break;
-      case 'mo': 
-        targetDate.setMonth(now.getMonth() - value); 
-        break;
-      case 'd': 
-        targetDate.setDate(now.getDate() - value); 
-        break;
-      case 'h': 
-        targetDate.setHours(now.getHours() - value); 
-        break;
-      case 'm': 
-        targetDate.setMinutes(now.getMinutes() - value); 
-        break;
-    }
-    
-    return targetDate.toISOString().split('T')[0];
-  }
-  
-  return null;
-}
+// Batch scrape: send up to N URLs in one call, get all results back concurrently.
+// Replaces per-URL scrape calls. Same credit cost (1/URL) but eliminates HTTP
+// overhead and uses Firecrawl's internal concurrency.
+async function batchExtractDatesWithFirecrawl(
+  urls: string[],
+  apiKey: string,
+  maxWaitMs: number
+): Promise<Map<string, { date: string | null; method: CitationWithRecency['extractionMethod'] }>> {
+  const results = new Map<string, { date: string | null; method: CitationWithRecency['extractionMethod'] }>();
 
-function parseRelativeDate(text: string): string | null {
-  const now = new Date();
-  
-  // "1 yr ago", "2 years ago"
-  let match = text.match(/(\d+)\s*(?:yr|year)s?\s*ago/i);
-  if (match) {
-    const years = parseInt(match[1], 10);
-    const date = new Date(now);
-    date.setFullYear(date.getFullYear() - years);
-    return date.toISOString().split('T')[0];
+  // Initialize all URLs as not-found in case the batch fails partway
+  for (const url of urls) {
+    results.set(url, { date: null, method: 'not-found' });
   }
-  
-  // "8mo ago", "3 months ago"
-  match = text.match(/(\d+)\s*(?:mo|month)s?\s*ago/i);
-  if (match) {
-    const months = parseInt(match[1], 10);
-    const date = new Date(now);
-    date.setMonth(date.getMonth() - months);
-    return date.toISOString().split('T')[0];
-  }
-  
-  // "5d ago", "10 days ago"
-  match = text.match(/(\d+)\s*(?:d|day)s?\s*ago/i);
-  if (match) {
-    const days = parseInt(match[1], 10);
-    const date = new Date(now);
-    date.setDate(date.getDate() - days);
-    return date.toISOString().split('T')[0];
-  }
-  
-  // "2w ago", "3 weeks ago"
-  match = text.match(/(\d+)\s*(?:w|week)s?\s*ago/i);
-  if (match) {
-    const weeks = parseInt(match[1], 10);
-    const date = new Date(now);
-    date.setDate(date.getDate() - (weeks * 7));
-    return date.toISOString().split('T')[0];
-  }
-  
-  // "yesterday"
-  if (/yesterday/i.test(text)) {
-    const date = new Date(now);
-    date.setDate(date.getDate() - 1);
-    return date.toISOString().split('T')[0];
-  }
-  
-  // "today"
-  if (/today/i.test(text)) {
-    return now.toISOString().split('T')[0];
-  }
-  
-  return null;
-}
 
-async function extractDateWithFirecrawl(url: string, apiKey: string): Promise<{ date: string | null; method: 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' }> {
   try {
-    // Single scrape with markdown format (1 credit)
-    const response = await fetch('https://api.firecrawl.dev/v2/scrape', {
+    const timeoutSeconds = Math.max(60, Math.min(120, Math.floor(maxWaitMs / 1000) - 10));
+    console.log(`Submitting batch scrape: ${urls.length} URLs, wait timeout ${timeoutSeconds}s`);
+
+    const response = await fetch('https://api.firecrawl.dev/v2/batch/scrape', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        url: url,
-        formats: ['markdown'], // Only markdown, NOT json (saves 4 credits!)
-        onlyMainContent: true,
-        timeout: 30000
-      })
+        urls,
+        // JSON mode: LLM-powered date extraction (5 credits/page).
+        // Metadata still comes free with every scrape so we check that first.
+        formats: [{
+          type: 'json',
+          prompt:
+            "Extract the publication date of this article in YYYY-MM-DD format. " +
+            "Look for explicit publish/posted dates near the title, byline, or article header — " +
+            "NOT comment timestamps, copyright years, or dates mentioned in the article body. " +
+            "Date formats vary by region: '2016. 2. 24.' is Korean (Feb 24, 2016), " +
+            "'平成28年2月24日' is Japanese, '2016年2月24日' is Chinese/Japanese. " +
+            "If the page is a job listing, careers page, homepage, or has no clear publication date, return null.",
+          schema: {
+            type: 'object',
+            properties: {
+              publicationDate: {
+                type: ['string', 'null'],
+                description: 'Publication date in YYYY-MM-DD format, or null if no clear publication date is visible',
+              },
+            },
+            required: ['publicationDate'],
+          },
+        }],
+        onlyMainContent: false, // headers/bylines can be outside main content
+        timeout: 30000,
+      }),
     });
 
     if (!response.ok) {
-      if (response.status === 408) {
-        console.log(`Firecrawl timeout (408) for ${url}`);
-        return { date: null, method: 'firecrawl-metadata' };
-      }
+      console.error(`Batch scrape submit failed: ${response.status}`);
       if (response.status === 429) {
-        console.log(`Firecrawl rate limit (429) for ${url}`);
-        throw new Error('429');
+        for (const url of urls) results.set(url, { date: null, method: 'rate-limit-hit' });
       }
-      console.log(`Firecrawl API error: ${response.status} for ${url}`);
-      return { date: null, method: 'firecrawl-metadata' };
+      return results;
     }
 
-    const data = await response.json();
-    
-    // STEP 1: Check metadata (comes FREE with every scrape!)
-    if (data.data?.metadata) {
-      const metadata = data.data.metadata;
-      
-      // Try common metadata fields
-      const dateFields = [
-        metadata.publishedTime,
-        metadata.modifiedTime,
-        metadata.ogPublishedTime,
-        metadata['article:published_time'],
-        metadata.datePublished,
-        metadata['og:published_time']
-      ];
-      
-      for (const field of dateFields) {
-        if (field) {
-          try {
-            const date = new Date(field);
-            if (!isNaN(date.getTime())) {
-              console.log(`Found date in metadata: ${field}`);
-              return { date: date.toISOString().split('T')[0], method: 'firecrawl-metadata' };
-            }
-          } catch (e) {
-            continue;
-          }
+    const submitData = await response.json();
+    const jobId = submitData.id;
+    if (!jobId) {
+      console.error('Batch scrape: no job ID returned');
+      return results;
+    }
+
+    // Poll until complete or we run out of time
+    const pollUrl = `https://api.firecrawl.dev/v2/batch/scrape/${jobId}`;
+    const pollStart = Date.now();
+    const pollIntervalMs = 3000;
+
+    while (Date.now() - pollStart < maxWaitMs) {
+      await new Promise(r => setTimeout(r, pollIntervalMs));
+      const statusRes = await fetch(pollUrl, { headers: { 'Authorization': `Bearer ${apiKey}` } });
+      if (!statusRes.ok) {
+        console.error(`Batch poll failed: ${statusRes.status}`);
+        continue;
+      }
+      const statusData = await statusRes.json();
+      console.log(`Batch progress: ${statusData.completed ?? 0}/${statusData.total ?? urls.length} (${statusData.status})`);
+
+      if (statusData.status === 'completed' || statusData.status === 'failed') {
+        // Process results — Firecrawl returns one entry per URL in data array
+        const data = statusData.data || [];
+        for (const entry of data) {
+          const url = entry?.metadata?.sourceURL || entry?.metadata?.url;
+          if (!url) continue;
+          const dateResult = parseDateFromScrapeData(entry);
+          results.set(url, dateResult);
         }
+        return results;
       }
     }
-    
-    const markdown = data.data?.markdown;
-    if (!markdown) return { date: null, method: 'firecrawl-metadata' };
 
-    // STEP 2: Try Reddit-specific date patterns first (more reliable for Reddit)
-    const redditDate = parseRedditDate(markdown);
-    if (redditDate) {
-      console.log(`Found Reddit date in markdown: ${redditDate}`);
-      return { date: redditDate, method: 'firecrawl-reddit' };
-    }
+    console.warn(`Batch poll timed out after ${maxWaitMs}ms — partial results only`);
+    return results;
+  } catch (err) {
+    console.error('Batch scrape error:', err);
+    return results;
+  }
+}
 
-    // STEP 3: Try relative date patterns (e.g., "1 yr ago", "yesterday")
-    const relativeDate = parseRelativeDate(markdown);
-    if (relativeDate) {
-      console.log(`Found relative date in markdown: ${relativeDate}`);
-      return { date: relativeDate, method: 'firecrawl-relative' };
-    }
+// Extract a date from a Firecrawl batch scrape entry. Tries metadata (free)
+// first, then falls back to the LLM-extracted JSON output.
+function parseDateFromScrapeData(scrapeEntry: any): { date: string | null; method: CitationWithRecency['extractionMethod'] } {
+  const metadata = scrapeEntry?.metadata;
 
-    // STEP 3: Look for absolute date patterns in markdown
-    const datePatterns = [
-      // Month DD, YYYY (e.g., "Mar 14, 2022")
-      /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2}),?\s+(\d{4})/i,
-      // Full month DD, YYYY (e.g., "March 14, 2022")
-      /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/i,
-      // YYYY-MM-DD
-      /(\d{4})-(\d{1,2})-(\d{1,2})/,
-      // MM/DD/YYYY
-      /(\d{1,2})\/(\d{1,2})\/(\d{4})/
+  // STEP 1: Metadata fields (free, comes with every scrape)
+  if (metadata) {
+    const dateFields = [
+      metadata.publishedTime,
+      metadata.modifiedTime,
+      metadata.ogPublishedTime,
+      metadata['article:published_time'],
+      metadata.datePublished,
+      metadata['og:published_time'],
     ];
-
-    for (const pattern of datePatterns) {
-      const match = markdown.match(pattern);
-      if (match) {
-        let dateStr = '';
-        
-        if (pattern === datePatterns[0] || pattern === datePatterns[1]) { // Month DD, YYYY
-          const [, month, day, year] = match;
-          const monthNum = getMonthNumber(month);
-          if (monthNum) {
-            dateStr = `${year}-${monthNum.toString().padStart(2, '0')}-${day.padStart(2, '0')}`;
-          }
-        } else if (pattern === datePatterns[2]) { // YYYY-MM-DD
-          const [, year, month, day] = match;
-          dateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-        } else if (pattern === datePatterns[3]) { // MM/DD/YYYY
-          const [, month, day, year] = match;
-          dateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-        }
-        
-        if (dateStr) {
-          const date = new Date(dateStr);
-          if (!isNaN(date.getTime())) {
-            console.log(`Found absolute date in markdown: ${dateStr}`);
-            return { date: date.toISOString().split('T')[0], method: 'firecrawl-absolute' };
-          }
+    for (const field of dateFields) {
+      if (field) {
+        const validated = validateAndFormatDate(field);
+        if (validated) {
+          return { date: validated, method: 'firecrawl-metadata' };
         }
       }
     }
+  }
 
-    return { date: null, method: 'firecrawl-absolute' };
-  } catch (error) {
-    console.error('Firecrawl extraction error:', error);
-    if (error.message === '429') {
-      throw error;
+  // STEP 2: LLM-extracted publication date (JSON mode, 5 credits/page).
+  // Reliable across languages, scripts, and date formats.
+  const jsonOutput = scrapeEntry?.json;
+  const jsonDate = jsonOutput?.publicationDate;
+  if (jsonDate && typeof jsonDate === 'string') {
+    const validated = validateAndFormatDate(jsonDate);
+    if (validated) {
+      return { date: validated, method: 'firecrawl-json' };
     }
-    return { date: null, method: 'firecrawl-metadata' };
+  }
+
+  return { date: null, method: 'not-found' };
+}
+
+// Reject impossible/suspicious dates:
+// - pre-1995 (web didn't exist meaningfully) or >2050
+// - >30 days in the future (typo or "today" false positive)
+// - exactly today's date (almost always a bug — pages rarely publish and get
+//   scraped on the same UTC day in practice; usually means we matched "today"
+//   somewhere in the page text instead of a real publish date)
+function validateAndFormatDate(input: string): string | null {
+  try {
+    const d = new Date(input);
+    if (isNaN(d.getTime())) return null;
+    const year = d.getFullYear();
+    if (year < 1995 || year > 2050) return null;
+    const now = new Date();
+    const thirtyDaysAhead = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    if (d > thirtyDaysAhead) return null;
+    const formatted = d.toISOString().split('T')[0];
+    const todayFormatted = now.toISOString().split('T')[0];
+    if (formatted === todayFormatted) return null;
+    return formatted;
+  } catch {
+    return null;
   }
 }
 
@@ -691,37 +582,76 @@ function extractDomainFromUrl(url: string): string {
   }
 }
 
-// Domains known to be problematic for scraping (slow, anti-bot measures, etc.)
-function isProblematicDomain(url: string): boolean {
-  const domain = extractDomainFromUrl(url).toLowerCase();
-  const problematicDomains = [
-    'glassdoor.com',
-    'www.glassdoor.com', 
-    'glassdoor.co.uk',
-    'glassdoor.ie',
-    'indeed.com',
-    'www.indeed.com',
-    'in.indeed.com',
-    'linkedin.com',
-    'www.linkedin.com',
-    'facebook.com',
-    'www.facebook.com',
-    'twitter.com',
-    'x.com',
-    // Removed reddit.com - Reddit has consistent date format that can be parsed
-    'yelp.com',
-    'www.yelp.com',
-    'comparably.com',
-    'www.comparably.com',
-    'greatplacetowork.com',
-    'www.greatplacetowork.com',
-    'teamblind.com',
-    'www.teamblind.com',
-    'ambitionbox.com',
-    'www.ambitionbox.com',
-    'ziprecruiter.com',
-    'www.ziprecruiter.com'
+// Evergreen detection: URLs that don't have a meaningful publication date
+// (homepages, /about, /careers, job listings, ATS portals, pricing, etc.).
+// Returns true => skip Firecrawl, treat as always-current (score 100).
+function isEvergreenUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  const path = parsed.pathname.toLowerCase().replace(/\/+$/, '');
+
+  // Bare homepage / domain root
+  if (path === '' || path === '/') return true;
+
+  // ATS / job-board hostnames — treat the whole domain as evergreen
+  const evergreenHosts = [
+    'boards.greenhouse.io',
+    'job-boards.greenhouse.io',
+    'jobs.lever.co',
+    'jobs.ashbyhq.com',
+    'apply.workable.com',
+    'recruiterbox.com',
+    'breezy.hr',
+    'smartrecruiters.com',
+    'myworkdayjobs.com',
   ];
-  
-  return problematicDomains.some(problematic => domain.includes(problematic));
+  if (evergreenHosts.some(h => host === h || host.endsWith('.' + h))) return true;
+
+  // Workday tenant URLs: *.myworkday.com or *.wd*.myworkdayjobs.com
+  if (/(^|\.)myworkdayjobs\.com$/.test(host)) return true;
+
+  // LinkedIn job postings/pages (not articles)
+  if (host.endsWith('linkedin.com') && /^\/jobs(\/|$)/.test(path)) return true;
+  if (host.endsWith('linkedin.com') && /^\/company\/[^/]+\/?$/.test(path)) return true;
+
+  // Indeed job pages (not articles)
+  if (host.endsWith('indeed.com') && /^\/(viewjob|jobs|cmp)(\/|$|\?)/.test(path)) return true;
+
+  // Glassdoor company / job pages (not articles)
+  if (host.endsWith('glassdoor.com') && /^\/(overview|jobs|reviews|salary|salaries|benefits|interview|interviews)(\/|$)/i.test(path)) return true;
+
+  // Path-based patterns. Use exact root or first-segment match to avoid catching
+  // legitimate articles like /blog/the-future-of-careers (only matches /careers,
+  // /careers/, /careers/jobs/...).
+  const evergreenFirstSegments = [
+    'about', 'about-us', 'aboutus',
+    'company', 'our-company', 'who-we-are',
+    'team', 'teams', 'leadership', 'people',
+    'mission', 'values', 'our-story', 'story', 'culture',
+    'careers', 'career', 'jobs', 'job', 'positions', 'openings',
+    'vacancies', 'opportunities', 'work-with-us', 'join-us', 'join',
+    'pricing', 'plans', 'products', 'product', 'features', 'solutions',
+    'contact', 'contact-us', 'support', 'help',
+    'investors', 'press', 'media', 'newsroom',
+  ];
+  const segments = path.split('/').filter(Boolean);
+  if (segments.length >= 1 && evergreenFirstSegments.includes(segments[0])) {
+    return true;
+  }
+
+  // ATS-style sub-paths on company sites: /careers/jobs/12345, /about/team/...
+  // already covered by first-segment match above. Also catch nested /jobs/ later
+  // in path (e.g. /en/careers/jobs/...).
+  if (segments.some(s => ['jobs', 'careers', 'job', 'positions', 'openings'].includes(s))) {
+    return true;
+  }
+
+  return false;
 }
+
