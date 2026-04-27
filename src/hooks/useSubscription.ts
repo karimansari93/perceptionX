@@ -140,7 +140,10 @@ export const useSubscription = () => {
   }, [user]);
 
   const isPro = subscription?.subscription_type === 'pro';
-  const isEnterprise = subscription?.subscription_type === 'enterprise';
+  // `subscription_type` is currently typed as 'free' | 'pro' in the DB types,
+  // but a future 'enterprise' tier is on the roadmap — cast to string here so
+  // the comparison reads its intent rather than being stripped as dead code.
+  const isEnterprise = (subscription?.subscription_type as string) === 'enterprise';
   const isFree = subscription?.subscription_type === 'free';
 
   const canUpdateData = isPro || isEnterprise; // Pro and Enterprise users can update their data

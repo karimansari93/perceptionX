@@ -96,6 +96,15 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     try {
+      // Clear stale state BEFORE fetching. Without this, if a previous user
+      // (especially an admin with every-company access) was just logged in,
+      // `userCompanies` would still hold their data while this async fetch
+      // runs — exposing other tenants' names/locations in dropdowns during
+      // the window. Context consumers see [] instead until the new fetch
+      // resolves.
+      setCurrentCompany(null);
+      setUserCompanies([]);
+      setUserMemberships([]);
       setLoading(true);
 
       // Check if user is admin - admins see ALL companies
@@ -587,30 +596,45 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [user]);
 
-  // CRITICAL: Clear state immediately when user changes to prevent stale data
+  // CRITICAL: Clear state on ANY user identity change — not just logout.
+  //
+  // Previously this only fired on `!user` (logout). That missed the
+  // admin → non-admin account switch case (e.g. karim signs out, rajiv signs
+  // in on the same browser): between `user.id` changing and the new fetch
+  // resolving, React state still held karim's admin-scoped
+  // `userCompanies` — which for admins is EVERY company in the DB. Any
+  // consumer reading the context in that window saw cross-tenant data.
+  //
+  // Fix: every time `user.id` changes, immediately wipe all company state.
+  // The fetch effect below will repopulate with the correct user's data.
+  const userLoadedRef = useRef<string | null>(null);
+  const isInitialLoadRef = useRef(true);
+
   useEffect(() => {
-    if (!user && !authLoading) {
-      // User logged out or auth cleared - immediately clear all company data
+    if (authLoading) return;
+
+    const currentUserId = user?.id || null;
+
+    // On any transition (logout, login, or user swap), drop state so no
+    // rendered consumer can read stale data while the next fetch is pending.
+    if (userLoadedRef.current !== currentUserId) {
       setCurrentCompany(null);
       setUserCompanies([]);
       setUserMemberships([]);
-      setLoading(false);
-      // Reset refs so next login triggers a fresh fetch
-      userLoadedRef.current = null;
-      isInitialLoadRef.current = true;
+      // Reset refs so initial load logic re-runs on next fetch.
+      if (!currentUserId) {
+        setLoading(false);
+        userLoadedRef.current = null;
+        isInitialLoadRef.current = true;
+      }
     }
-  }, [user?.id, authLoading]); // Only depend on user.id, not entire user object
+  }, [user?.id, authLoading]);
 
-  // Load companies when user changes or auth finishes loading
-  // Use refs to track if we've already loaded for this user to prevent refetches when returning to tab
-  const userLoadedRef = useRef<string | null>(null);
-  const isInitialLoadRef = useRef(true);
-  
   useEffect(() => {
     // Only fetch if auth is fully loaded and user exists
     if (!authLoading) {
       const currentUserId = user?.id || null;
-      
+
       // Only fetch if:
       // 1. This is the initial load (isInitialLoadRef.current === true), OR
       // 2. User ID has actually changed (different user logged in)
