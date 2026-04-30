@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Loader2, Play, X, Trash2, RotateCcw, RefreshCw, AlertCircle,
+  Loader2, Play, X, Trash2, RotateCcw, RefreshCw, AlertCircle, PlayCircle,
 } from "lucide-react";
 
 export type QueueItem = {
@@ -29,6 +29,7 @@ type Props = {
   logs: string[];
   onStart: () => void;
   onCancel: () => void;
+  onResume?: () => void;
   onRetryFailed: () => void;
   onClearCompleted: () => void;
   onRefresh: () => void;
@@ -36,7 +37,7 @@ type Props = {
 
 export const BatchQueuePanel = ({
   queue, processing, logs,
-  onStart, onCancel, onRetryFailed, onClearCompleted, onRefresh,
+  onStart, onCancel, onResume, onRetryFailed, onClearCompleted, onRefresh,
 }: Props) => {
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -71,9 +72,25 @@ export const BatchQueuePanel = ({
             {processing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
             {processing ? "Processing..." : "Start Collection"}
           </Button>
-          <Button onClick={onCancel} variant="outline" size="sm" disabled={!processing}>
+          <Button
+            onClick={onCancel}
+            variant="outline"
+            size="sm"
+            disabled={stats.pending === 0 && stats.processing === 0}
+          >
             <X className="h-4 w-4 mr-2" />Cancel
           </Button>
+          {onResume && (
+            <Button
+              onClick={onResume}
+              variant="outline"
+              size="sm"
+              disabled={stats.cancelled === 0 && stats.processing === 0}
+              title="Re-run cancelled jobs and unblock anything stuck mid-run"
+            >
+              <PlayCircle className="h-4 w-4 mr-2" />Resume Queue
+            </Button>
+          )}
           <Button onClick={onRetryFailed} variant="outline" size="sm" disabled={stats.failed === 0}>
             <RotateCcw className="h-4 w-4 mr-2" />Retry Failed
           </Button>

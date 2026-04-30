@@ -142,16 +142,21 @@ export async function createConversation(
 }
 
 /**
- * List all conversations for the current user in an organization.
+ * List conversations for the current user in an organization, most recent
+ * first. Paginated to avoid loading hundreds of rows into the sidebar —
+ * users who need older threads can request the next page.
  */
 export async function listConversations(
-  organizationId: string
+  organizationId: string,
+  { limit = 30, offset = 0 }: { limit?: number; offset?: number } = {}
 ): Promise<ChatConversation[]> {
+  const cappedLimit = Math.max(1, Math.min(100, limit));
   const { data, error } = await supabase
     .from('chat_conversations')
     .select('*')
     .eq('organization_id', organizationId)
-    .order('updated_at', { ascending: false });
+    .order('updated_at', { ascending: false })
+    .range(offset, offset + cappedLimit - 1);
 
   if (error) throw error;
   return (data || []) as ChatConversation[];

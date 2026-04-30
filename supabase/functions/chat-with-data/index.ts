@@ -2,6 +2,44 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { corsHeaders } from "../_shared/cors.ts"
 
+// ─── Utility Helpers ────────────────────────────────────────────────────────
+// UUID shape check. Reject non-UUIDs before hitting the DB to avoid wasted
+// queries and to give the model a clean error it can recover from.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(v: unknown): v is string {
+  return typeof v === 'string' && UUID_RE.test(v);
+}
+
+// Bounded integer parser for tool inputs like `limit`. Clamps to [min, max],
+// returns fallback if non-numeric/NaN. Defends against the model passing
+// floats, negatives, or strings.
+function clampInt(v: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+// Short per-request correlation ID for log tracing. Not secret, only for
+// joining log lines belonging to the same request across the tool loop.
+function genRequestId(): string {
+  try { return (crypto as any).randomUUID().slice(0, 8); }
+  catch { return Math.random().toString(36).slice(2, 10); }
+}
+
+// Coverage metadata helpers. Every tool return embeds a `_coverage` field so
+// the model can write honest refusals when data is missing, instead of
+// guessing or falling back to general knowledge. Tenant isolation is
+// non-negotiable: `_coverage` never names other organizations.
+function coverageFound(meta: Record<string, unknown> = {}): Record<string, unknown> {
+  return { status: 'found', ...meta };
+}
+function coverageNoData(reason: string, meta: Record<string, unknown> = {}): Record<string, unknown> {
+  return { status: 'no_data', reason, ...meta };
+}
+function coveragePartial(note: string, meta: Record<string, unknown> = {}): Record<string, unknown> {
+  return { status: 'partial', note, ...meta };
+}
+
 // ─── Tool Definitions ───────────────────────────────────────────────────────
 
 const tools = [
@@ -155,41 +193,129 @@ const tools = [
 
 // ─── Tool Execution ─────────────────────────────────────────────────────────
 
+// Validate that every required company_id belongs to the caller's org.
+// Returns { ok: true } if all IDs are org-owned, otherwise a structured
+// error the model can read and recover from. Defense-in-depth: even if the
+// model fabricates a company_id it saw elsewhere, we reject it here before
+// any data is read.
+async function validateCompanyOwnership(
+  supabaseAdmin: any,
+  organizationId: string,
+  companyIds: string[]
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!companyIds.length) return { ok: true };
+  const { data, error } = await supabaseAdmin
+    .from('organization_companies')
+    .select('company_id')
+    .eq('organization_id', organizationId)
+    .in('company_id', companyIds);
+  if (error) return { ok: false, error: `Ownership check failed: ${error.message}` };
+  const owned = new Set((data || []).map((r: any) => r.company_id));
+  const unowned = companyIds.filter(id => !owned.has(id));
+  if (unowned.length) {
+    return { ok: false, error: `Company IDs not in your organization: ${unowned.join(', ')}. Call list_companies to see valid IDs.` };
+  }
+  return { ok: true };
+}
+
 async function executeTool(
   supabaseAdmin: any,
   organizationId: string,
   toolName: string,
-  toolInput: any
+  toolInput: any,
+  requestId: string
 ): Promise<string> {
+  const t0 = Date.now();
   try {
+    // Input validation: UUID shape + bounded limits. Rejected here, the model
+    // sees the error text and can self-correct on the next turn instead of
+    // generating a bogus tool result that pollutes its context.
+    const singleIdTools = new Set([
+      'get_company_overview', 'get_company_metrics', 'get_responses',
+      'get_themes', 'get_talentx_breakdown', 'get_competitors',
+      'get_citations', 'get_model_breakdown', 'search_responses',
+    ]);
+    if (singleIdTools.has(toolName) && !isUuid(toolInput?.company_id)) {
+      return JSON.stringify({ error: `Invalid company_id (must be a UUID). Call list_companies first to get valid IDs.` });
+    }
+    if (toolName === 'compare_companies') {
+      if (!Array.isArray(toolInput?.company_ids) || !toolInput.company_ids.every(isUuid)) {
+        return JSON.stringify({ error: `company_ids must be an array of UUIDs.` });
+      }
+    }
+
+    // Tenant isolation: every company_id mentioned in the call must belong
+    // to the authenticated caller's organization. This is the hard security
+    // boundary — RLS is disabled on some tables, so this check is the
+    // primary defense against cross-tenant reads.
+    const idsToCheck: string[] = [];
+    if (singleIdTools.has(toolName) && toolInput?.company_id) idsToCheck.push(toolInput.company_id);
+    if (toolName === 'compare_companies' && Array.isArray(toolInput?.company_ids)) idsToCheck.push(...toolInput.company_ids);
+    if (idsToCheck.length) {
+      const ownership = await validateCompanyOwnership(supabaseAdmin, organizationId, idsToCheck);
+      if (!ownership.ok) {
+        console.warn(`[${requestId}] tool=${toolName} ownership_rejected ids=${idsToCheck.join(',')}`);
+        return JSON.stringify({ error: ownership.error });
+      }
+    }
+
+    let result: string;
     switch (toolName) {
       case "list_companies":
-        return await listCompanies(supabaseAdmin, organizationId);
+        result = await listCompanies(supabaseAdmin, organizationId);
+        break;
       case "get_company_overview":
-        return await getCompanyOverview(supabaseAdmin, toolInput.company_id);
+        result = await getCompanyOverview(supabaseAdmin, toolInput.company_id);
+        break;
       case "get_company_metrics":
-        return await getCompanyMetrics(supabaseAdmin, toolInput.company_id);
+        result = await getCompanyMetrics(supabaseAdmin, toolInput.company_id);
+        break;
       case "get_responses":
-        return await getResponses(supabaseAdmin, toolInput.company_id, toolInput.limit, toolInput.prompt_type, toolInput.ai_model, toolInput.sentiment_filter);
+        result = await getResponses(
+          supabaseAdmin,
+          toolInput.company_id,
+          clampInt(toolInput.limit, 1, 50, 15),
+          toolInput.prompt_type,
+          toolInput.ai_model,
+          toolInput.sentiment_filter
+        );
+        break;
       case "get_themes":
-        return await getThemes(supabaseAdmin, toolInput.company_id);
+        result = await getThemes(supabaseAdmin, toolInput.company_id);
+        break;
       case "get_talentx_breakdown":
-        return await getTalentXBreakdown(supabaseAdmin, toolInput.company_id);
+        result = await getTalentXBreakdown(supabaseAdmin, toolInput.company_id);
+        break;
       case "get_competitors":
-        return await getCompetitors(supabaseAdmin, toolInput.company_id);
+        result = await getCompetitors(supabaseAdmin, toolInput.company_id);
+        break;
       case "get_citations":
-        return await getCitations(supabaseAdmin, toolInput.company_id, toolInput.include_snippets, toolInput.domain_filter);
+        result = await getCitations(supabaseAdmin, toolInput.company_id, !!toolInput.include_snippets, toolInput.domain_filter);
+        break;
       case "compare_companies":
-        return await compareCompanies(supabaseAdmin, toolInput.company_ids);
+        result = await compareCompanies(supabaseAdmin, toolInput.company_ids.slice(0, 10));
+        break;
       case "get_model_breakdown":
-        return await getModelBreakdown(supabaseAdmin, toolInput.company_id);
+        result = await getModelBreakdown(supabaseAdmin, toolInput.company_id);
+        break;
       case "search_responses":
-        return await searchResponses(supabaseAdmin, toolInput.company_id, toolInput.keyword, toolInput.limit);
+        if (typeof toolInput?.keyword !== 'string' || !toolInput.keyword.trim()) {
+          return JSON.stringify({ error: `search_responses requires a non-empty keyword.` });
+        }
+        result = await searchResponses(
+          supabaseAdmin,
+          toolInput.company_id,
+          toolInput.keyword.trim(),
+          clampInt(toolInput.limit, 1, 30, 10)
+        );
+        break;
       default:
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
     }
+    console.log(`[${requestId}] tool=${toolName} ok ms=${Date.now() - t0} size=${result.length}`);
+    return result;
   } catch (err: any) {
-    console.error(`Tool ${toolName} error:`, err);
+    console.error(`[${requestId}] tool=${toolName} error ms=${Date.now() - t0}:`, err);
     return JSON.stringify({ error: `Tool execution failed: ${err.message}` });
   }
 }
@@ -273,7 +399,18 @@ async function listCompanies(supabaseAdmin: any, organizationId: string): Promis
     total_responses: countMap.get(c.id) || 0,
   }));
 
-  return JSON.stringify({ companies, total: companies.length });
+  // Coverage: flag which companies have no AI response data yet so the
+  // model can tell the user "we haven't collected data for X" plainly
+  // instead of silently pretending the company doesn't exist.
+  const emptyCompanies = companies.filter(c => c.total_responses === 0).map(c => c.name);
+  const coverage = emptyCompanies.length === 0
+    ? coverageFound({ total_companies: companies.length })
+    : coveragePartial(
+        `${emptyCompanies.length} of ${companies.length} companies have no response data yet`,
+        { empty_companies: emptyCompanies }
+      );
+
+  return JSON.stringify({ companies, total: companies.length, _coverage: coverage });
 }
 
 async function computeMetrics(supabaseAdmin: any, companyId: string) {
@@ -325,8 +462,17 @@ async function computeMetrics(supabaseAdmin: any, companyId: string) {
 
 async function getCompanyMetrics(supabaseAdmin: any, companyId: string): Promise<string> {
   const metrics = await computeMetrics(supabaseAdmin, companyId);
-  if (metrics.noData) return JSON.stringify({ company: metrics.company, message: "No response data available yet." });
-  return JSON.stringify({ ...metrics, formula: "EPS = 50% sentiment + 30% visibility + 20% relevance" });
+  if (metrics.noData) {
+    return JSON.stringify({
+      company: metrics.company,
+      _coverage: coverageNoData(`No AI response data has been collected yet for ${metrics.company}.`),
+    });
+  }
+  return JSON.stringify({
+    ...metrics,
+    formula: "EPS = 50% sentiment + 30% visibility + 20% relevance",
+    _coverage: coverageFound({ total_responses: metrics.total_responses }),
+  });
 }
 
 async function getCompanyOverview(supabaseAdmin: any, companyId: string): Promise<string> {
@@ -341,11 +487,27 @@ async function getCompanyOverview(supabaseAdmin: any, companyId: string): Promis
   const competitors = JSON.parse(competitorsData);
   const citations = JSON.parse(citationsData);
 
+  // Per-section coverage rolled up so the model knows at a glance which
+  // slices of the overview have data and which don't.
+  const coverage = coverageFound({
+    has_metrics: !metricsData.noData,
+    has_themes: (themes.themes?.length || 0) > 0,
+    has_competitors: (competitors.competitors?.length || 0) > 0,
+    has_citations: (citations.citations?.length || 0) > 0,
+  });
+  if (metricsData.noData) {
+    return JSON.stringify({
+      company: metricsData.company,
+      _coverage: coverageNoData(`No AI response data has been collected yet for ${metricsData.company}.`),
+    });
+  }
+
   return JSON.stringify({
     metrics: metricsData,
     top_themes: themes.themes?.slice(0, 8) || [],
     top_competitors: competitors.competitors?.slice(0, 5) || [],
     top_citations: citations.citations?.slice(0, 5) || [],
+    _coverage: coverage,
   });
 }
 
@@ -410,7 +572,23 @@ async function getResponses(
     };
   });
 
-  return JSON.stringify({ total_returned: responses.length, responses });
+  const coverage = responses.length === 0
+    ? coverageNoData(
+        `No responses found` +
+        (promptType ? ` for prompt_type "${promptType}"` : '') +
+        (aiModel ? ` from ai_model "${aiModel}"` : '') +
+        (sentimentFilter ? ` with sentiment "${sentimentFilter}"` : '') + '.'
+      )
+    : coverageFound({
+        returned: responses.length,
+        filters_applied: {
+          prompt_type: promptType || null,
+          ai_model: aiModel || null,
+          sentiment: sentimentFilter || null,
+        },
+      });
+
+  return JSON.stringify({ total_returned: responses.length, responses, _coverage: coverage });
 }
 
 async function getThemes(supabaseAdmin: any, companyId: string): Promise<string> {
@@ -420,7 +598,10 @@ async function getThemes(supabaseAdmin: any, companyId: string): Promise<string>
     .eq('company_id', companyId);
 
   if (error) return JSON.stringify({ error: error.message });
-  if (!data?.length) return JSON.stringify({ themes: [], message: "No themes extracted for this company yet." });
+  if (!data?.length) return JSON.stringify({
+    themes: [],
+    _coverage: coverageNoData("No themes have been extracted for this company yet."),
+  });
 
   const themeMap = new Map<string, {
     totalScore: number;
@@ -482,7 +663,11 @@ async function getThemes(supabaseAdmin: any, companyId: string): Promise<string>
     }))
     .sort((a, b) => b.total_themes - a.total_themes);
 
-  return JSON.stringify({ themes, talentx_summary });
+  return JSON.stringify({
+    themes,
+    talentx_summary,
+    _coverage: coverageFound({ theme_count: themes.length, talentx_attribute_count: talentx_summary.length }),
+  });
 }
 
 async function getTalentXBreakdown(supabaseAdmin: any, companyId: string): Promise<string> {
@@ -499,11 +684,15 @@ async function getTalentXBreakdown(supabaseAdmin: any, companyId: string): Promi
   ]);
 
   const responseIds = responsesResult.data || [];
-  if (!responseIds.length) return JSON.stringify({ message: "No data available." });
+  if (!responseIds.length) return JSON.stringify({
+    _coverage: coverageNoData("No AI response data has been collected yet for this company."),
+  });
 
   const data = themesResult.data || [];
   if (themesResult.error) return JSON.stringify({ error: themesResult.error.message });
-  if (!data.length) return JSON.stringify({ message: "No TalentX attribute data available." });
+  if (!data.length) return JSON.stringify({
+    _coverage: coverageNoData("No TalentX attributes have been extracted for this company yet."),
+  });
 
   const responseModelMap = new Map(responseIds.map((r: any) => [r.id, r.ai_model]));
 
@@ -551,7 +740,11 @@ async function getTalentXBreakdown(supabaseAdmin: any, companyId: string): Promi
     };
   }).sort((a, b) => b.score_out_of_100 - a.score_out_of_100);
 
-  return JSON.stringify({ talentx_attributes: attributes, total_attributes: attributes.length });
+  return JSON.stringify({
+    talentx_attributes: attributes,
+    total_attributes: attributes.length,
+    _coverage: coverageFound({ attribute_count: attributes.length }),
+  });
 }
 
 async function getCompetitors(supabaseAdmin: any, companyId: string): Promise<string> {
@@ -588,7 +781,10 @@ async function getCompetitors(supabaseAdmin: any, companyId: string): Promise<st
     .sort((a, b) => b.mentions - a.mentions)
     .slice(0, 15);
 
-  return JSON.stringify({ competitors, total_responses: total || 0 });
+  const coverage = competitors.length === 0
+    ? coverageNoData("No competitor mentions have been detected in AI responses for this company yet.")
+    : coverageFound({ competitor_count: competitors.length, analyzed_responses: total || 0 });
+  return JSON.stringify({ competitors, total_responses: total || 0, _coverage: coverage });
 }
 
 async function getCitations(
@@ -681,19 +877,32 @@ async function getCitations(
     return JSON.stringify({
       citations: [],
       total_citations: 0,
-      message: domainFilter
-        ? `No citations found for domain matching "${domainFilter}"`
-        : "No citations found for this company.",
+      _coverage: coverageNoData(
+        domainFilter
+          ? `No citations found for domain matching "${domainFilter}".`
+          : "No citations have been captured for this company yet."
+      ),
     });
   }
 
-  return JSON.stringify({ citations, total_citations: totalCitations });
+  return JSON.stringify({
+    citations,
+    total_citations: totalCitations,
+    _coverage: coverageFound({ unique_domains: citations.length, total_citation_events: totalCitations }),
+  });
 }
 
 async function compareCompanies(supabaseAdmin: any, companyIds: string[]): Promise<string> {
   const ids = companyIds.slice(0, 10);
   const results = await Promise.all(ids.map(id => computeMetrics(supabaseAdmin, id)));
-  return JSON.stringify({ comparison: results });
+  const missing = results.filter((r: any) => r.noData).map((r: any) => r.company);
+  const coverage = missing.length === 0
+    ? coverageFound({ compared: results.length })
+    : coveragePartial(
+        `${missing.length} of ${results.length} companies have no data yet and are excluded from the comparison.`,
+        { companies_without_data: missing }
+      );
+  return JSON.stringify({ comparison: results, _coverage: coverage });
 }
 
 async function getModelBreakdown(supabaseAdmin: any, companyId: string): Promise<string> {
@@ -703,7 +912,9 @@ async function getModelBreakdown(supabaseAdmin: any, companyId: string): Promise
     .eq('company_id', companyId);
 
   if (error) return JSON.stringify({ error: error.message });
-  if (!responses?.length) return JSON.stringify({ message: "No data available." });
+  if (!responses?.length) return JSON.stringify({
+    _coverage: coverageNoData("No AI response data has been collected yet for this company."),
+  });
 
   const sentimentMap = await getResponseSentiments(supabaseAdmin, responses.map((r: any) => r.id));
 
@@ -737,7 +948,10 @@ async function getModelBreakdown(supabaseAdmin: any, companyId: string): Promise
     dominant_sentiment: stats.positive > stats.negative ? 'Positive' : stats.negative > stats.positive ? 'Negative' : 'Neutral',
   })).sort((a, b) => b.total_responses - a.total_responses);
 
-  return JSON.stringify({ model_breakdown: breakdown });
+  return JSON.stringify({
+    model_breakdown: breakdown,
+    _coverage: coverageFound({ model_count: breakdown.length, total_responses: responses.length }),
+  });
 }
 
 async function searchResponses(supabaseAdmin: any, companyId: string, keyword: string, limit?: number): Promise<string> {
@@ -768,7 +982,10 @@ async function searchResponses(supabaseAdmin: any, companyId: string, keyword: s
     date: r.tested_at,
   }));
 
-  return JSON.stringify({ keyword, results_found: results.length, results });
+  const coverage = results.length === 0
+    ? coverageNoData(`No AI responses for this company mention "${keyword}".`)
+    : coverageFound({ matches: results.length, keyword });
+  return JSON.stringify({ keyword, results_found: results.length, results, _coverage: coverage });
 }
 
 function extractSnippet(text: string, keyword: string, maxLength: number): string {
@@ -785,36 +1002,50 @@ function extractSnippet(text: string, keyword: string, maxLength: number): strin
 function buildSystemPrompt(orgName: string): string {
   return `You are a senior employer brand analyst for ${orgName}, with access to their PerceptionX data — a platform that tracks how AI models like ChatGPT, Claude, Gemini, and Perplexity describe the company to job seekers.
 
-You have a rich set of tools to query this data. Your job is to give insightful, data-grounded answers that feel like they're coming from a knowledgeable analyst who's reviewed all the data — not from a query engine.
+Your job is to give insightful, data-grounded answers that feel like they're coming from a knowledgeable analyst who's reviewed the data — not from a query engine.
+
+## HARD RULES — NON-NEGOTIABLE
+
+1. **Only answer from tool results.** Never use general knowledge about ${orgName} or any company, industry, or market. If a tool didn't return it, you don't know it. Do not hallucinate metrics, sources, competitors, themes, or quotes.
+
+2. **Honor coverage signals.** Every tool return includes a \`_coverage\` field with \`status\` of \`found\`, \`partial\`, or \`no_data\`. You MUST read this field on every tool result.
+   - \`no_data\` → Tell the user directly that this data isn't tracked yet for their organization. Example phrasings: "We haven't collected data on that yet." / "There are no AI responses for [topic] in your dataset." / "That market isn't covered in your current tracking." Do NOT invent an answer.
+   - \`partial\` → Answer from what's available and explicitly name what's missing (e.g. "3 of your 5 companies have no response data yet, so this comparison excludes them").
+   - \`found\` → Answer normally.
+
+3. **Tenant isolation — strict.** You are scoped to ${orgName} only. You do not have visibility into any other organization's data. Never mention, reference, speculate about, or imply the existence of other customers, companies outside this organization, or cross-tenant comparisons. If asked something like "how do we compare to other PerceptionX customers?", respond that you can only see this organization's data.
+
+4. **No speculation about missing markets or segments.** If the user asks about a country, language, market, time period, or segment that the tools don't return, say so plainly. Do not extrapolate, estimate, or use world knowledge to fill gaps.
+
+5. **Refusal is honest.** A clear "we don't have data for X" is a correct answer. It is strictly better than inventing one.
 
 ## HOW TO USE TOOLS
 
-**Batch calls aggressively.** Call multiple tools in parallel when you need data from different angles. Don't make the user wait through multiple exchanges.
+**Batch calls aggressively.** Call multiple tools in parallel when you need data from different angles.
 
-**Preferred workflow for company questions:**
-1. If you don't know company IDs: call \`list_companies\` first
-2. For general "how are we doing?" → call \`get_company_overview\` (returns metrics + themes + competitors + citations in one shot)
-3. For "what do AI models say about X" → call \`get_responses\` with relevant \`prompt_type\` filter, or use \`search_responses\` for specific topics
-4. For citation/source questions (e.g. "what sources are cited?", "how is Glassdoor used?") → call ONLY \`get_citations\`. Do NOT also call \`get_responses\` — citation data is self-contained.
-   - For "how is [source] used" or "what content from [source] appears?" → call \`get_citations\` with \`include_snippets: true\` and \`domain_filter: "[domain]"\`
-5. For competitor questions → \`get_competitors\`
-6. For employer brand depth → \`get_talentx_breakdown\`
+**Preferred workflow:**
+1. If you don't know company IDs: call \`list_companies\` first. This also reveals which companies have zero data yet.
+2. "How are we doing?" → \`get_company_overview\` (metrics + themes + competitors + citations in one shot)
+3. "What do AI models say about X" → \`get_responses\` with a relevant \`prompt_type\`, or \`search_responses\` for a specific topic
+4. Citation/source questions → \`get_citations\` only. Use \`include_snippets: true\` and \`domain_filter\` when drilling into a specific source. Do NOT also call \`get_responses\`.
+5. Competitor questions → \`get_competitors\`
+6. Employer brand depth → \`get_talentx_breakdown\`
 7. Comparing locations/subsidiaries → \`compare_companies\`
 
-**IMPORTANT — Schema details you must know:**
-- \`ai_themes\` has columns: \`company_id\`, \`response_id\`, \`theme_name\`, \`theme_description\`, \`sentiment\` (positive/negative/neutral), \`sentiment_score\` (-1 to 1), \`talentx_attribute_name\`, \`confidence_score\`, \`keywords\`, \`context_snippets\`
-- \`prompt_responses\` has: \`id\`, \`company_id\`, \`confirmed_prompt_id\`, \`ai_model\`, \`response_text\`, \`company_mentioned\` (boolean), \`detected_competitors\`, \`citations\` (JSONB array), \`tested_at\`, \`for_index\`, \`index_period\`
-- Sentiment data lives ONLY in \`ai_themes\`, NOT in \`prompt_responses\`. Per-response sentiment is derived by aggregating theme sentiments for that response.
-- EPS formula: 50% sentiment + 30% visibility + 20% relevance
+**Schema reference:**
+- \`ai_themes\`: \`company_id\`, \`response_id\`, \`theme_name\`, \`theme_description\`, \`sentiment\` (positive/negative/neutral), \`sentiment_score\` (-1 to 1), \`talentx_attribute_name\`, \`confidence_score\`, \`keywords\`, \`context_snippets\`
+- \`prompt_responses\`: \`id\`, \`company_id\`, \`confirmed_prompt_id\`, \`ai_model\`, \`response_text\`, \`company_mentioned\`, \`detected_competitors\`, \`citations\` (JSONB), \`tested_at\`
+- Per-response sentiment is derived by aggregating theme sentiments for that response.
+- EPS = 50% sentiment + 30% visibility + 20% relevance
 
 ## HOW TO RESPOND
 
 - Lead with insight, not raw data dumps. Tell a story about what the data means.
-- Use specific numbers and examples from the actual response texts when relevant.
-- When discussing qualitative perception, quote or paraphrase from actual AI model responses you retrieved.
+- Use specific numbers and quote/paraphrase actual AI model responses when relevant.
 - Be direct about weaknesses — users need honest analysis, not spin.
 - Use markdown for readability but keep it concise.
-- If you notice something surprising or concerning in the data, call it out proactively.
+- When a tool result is \`partial\` or \`no_data\`, state the gap before discussing what you do have.
+- If you notice something surprising or concerning, call it out proactively.
 - Max 2–3 tool rounds before producing your answer.`;
 }
 
@@ -893,6 +1124,7 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
+  const requestId = genRequestId();
   try {
     const { message, conversationHistory, organizationId } = await req.json();
 
@@ -908,6 +1140,12 @@ serve(async (req) => {
 
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
+    // Auth: verify JWT, then verify caller belongs to the claimed org.
+    // The caller passes organizationId in the body for routing, but we
+    // validate membership against the token's user — the body is never
+    // trusted on its own. Every tool call is subsequently scoped to the
+    // verified organizationId, and every company_id argument is re-checked
+    // for ownership inside executeTool.
     const authResult = await authenticateAndAuthorize(req, supabaseAdmin, organizationId);
     if (authResult instanceof Response) return authResult;
 
@@ -920,7 +1158,7 @@ serve(async (req) => {
     const orgName = orgData?.name || 'Your Organization';
     const systemPrompt = buildSystemPrompt(orgName);
 
-    console.log(`Chat [${orgName}] user=${authResult.userId}: "${message.substring(0, 100)}"`);
+    console.log(`[${requestId}] chat start org="${orgName}" user=${authResult.userId} msg="${message.substring(0, 100)}"`);
 
     const apiMessages: any[] = [];
     if (conversationHistory && Array.isArray(conversationHistory)) {
@@ -937,32 +1175,34 @@ serve(async (req) => {
 
     const responsePromise = (async () => {
       const ctrl = streamController!;
+      const tStart = Date.now();
       try {
         let currentMessages = [...apiMessages];
         const MAX_TOOL_ROUNDS = 10;
 
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-          console.log(`--- Round ${round + 1} ---`);
+          console.log(`[${requestId}] round ${round + 1}`);
 
           const streamResult = await handleStreamingRound(
-            ctrl, claudeApiKey, systemPrompt, currentMessages, supabaseAdmin, organizationId
+            ctrl, claudeApiKey, systemPrompt, currentMessages, supabaseAdmin, organizationId, requestId
           );
 
           if (streamResult.done) {
             ctrl.enqueue(sseDone());
             ctrl.close();
+            console.log(`[${requestId}] chat done rounds=${round + 1} ms=${Date.now() - tStart}`);
             return;
           }
 
           currentMessages = streamResult.messages;
         }
 
-        console.error('Exhausted tool rounds');
+        console.error(`[${requestId}] exhausted tool rounds`);
         ctrl.enqueue(sseEvent({ text: "I couldn't complete the analysis in time. Please try a more specific question." }));
         ctrl.enqueue(sseDone());
         ctrl.close();
       } catch (err: any) {
-        console.error('Stream error:', err);
+        console.error(`[${requestId}] stream error:`, err);
         try {
           ctrl.enqueue(sseEvent({ error: err.message || 'An unexpected error occurred.' }));
           ctrl.enqueue(sseDone());
@@ -983,9 +1223,9 @@ serve(async (req) => {
     });
 
   } catch (error: any) {
-    console.error('Error in chat-with-data:', error);
+    console.error(`[${requestId}] fatal:`, error);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: error.message, requestId }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
@@ -999,8 +1239,12 @@ async function handleStreamingRound(
   systemPrompt: string,
   currentMessages: any[],
   supabaseAdmin: any,
-  organizationId: string
+  organizationId: string,
+  requestId: string
 ): Promise<{ done: boolean; messages: any[] }> {
+  // Default to Opus 4.7 — best reasoning + refusal judgment for this
+  // feature. Operators can override via CLAUDE_MODEL env var if needed.
+  const model = Deno.env.get('CLAUDE_MODEL') || 'claude-opus-4-7';
   const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -1009,7 +1253,7 @@ async function handleStreamingRound(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: Deno.env.get('CLAUDE_MODEL') || 'claude-sonnet-4-20250514',
+      model,
       max_tokens: 4096,
       system: systemPrompt,
       messages: currentMessages,
@@ -1020,7 +1264,7 @@ async function handleStreamingRound(
 
   if (!claudeResponse.ok) {
     const errorText = await claudeResponse.text();
-    console.error(`Claude streaming error (${claudeResponse.status}):`, errorText);
+    console.error(`[${requestId}] claude error ${claudeResponse.status}:`, errorText);
     throw new Error('AI service error');
   }
 
@@ -1082,7 +1326,7 @@ async function handleStreamingRound(
     }
   }
 
-  console.log(`Round done: stop=${stopReason}, blocks=${contentBlocks.filter(Boolean).length}`);
+  console.log(`[${requestId}] round done stop=${stopReason} blocks=${contentBlocks.filter(Boolean).length}`);
 
   if (stopReason !== 'tool_use') {
     return { done: true, messages: currentMessages };
@@ -1098,9 +1342,7 @@ async function handleStreamingRound(
 
   const toolResults = await Promise.all(
     toolBlocks.map(async (block: any) => {
-      console.log(`  Tool: ${block.name}(${JSON.stringify(block.input).substring(0, 200)})`);
-      const output = await executeTool(supabaseAdmin, organizationId, block.name, block.input);
-      console.log(`  Result: ${output.length} chars`);
+      const output = await executeTool(supabaseAdmin, organizationId, block.name, block.input, requestId);
       return { type: 'tool_result' as const, tool_use_id: block.id, content: output };
     })
   );
