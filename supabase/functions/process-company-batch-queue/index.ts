@@ -230,7 +230,24 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Optional: allow forcing a specific config (for "Start Collection" button)
-    const { configId } = await req.json().catch(() => ({}));
+    // promptTypes / models scope the llm_collection phase to a subset chosen by
+    // the admin in the UI. They self-chain through subsequent invocations.
+    const {
+      configId,
+      promptTypes,
+      models,
+    }: {
+      configId?: string;
+      promptTypes?: string[];
+      models?: string[];
+    } = await req.json().catch(() => ({}));
+
+    const DEFAULT_MODELS = ["openai", "perplexity", "google-ai-overviews", "google-ai-mode"];
+    const effectiveModels = Array.isArray(models) && models.length > 0 ? models : DEFAULT_MODELS;
+    const promptTypeFilter: string[] | null =
+      Array.isArray(promptTypes) && promptTypes.length > 0
+        ? promptTypes.flatMap((t) => [t, `talentx_${t}`])
+        : null;
 
     // If configId supplied, ensure org is created for new_org mode before processing
     if (configId) {
@@ -278,42 +295,64 @@ serve(async (req) => {
     // otherwise a stale pending job from another organization can be picked up
     // (this is how GSK data leaked into a Netflix expand-coverage run).
     // -----------------------------------------------------------------------
-    let jobQuery = supabase
+    // Atomic claim:
+    //   1. SELECT a 'pending' candidate (NOT 'processing' — we never resume
+    //      another worker's in-flight row; that's the watchdog's job, when on).
+    //   2. UPDATE WHERE status='pending' as a compare-and-swap — only one
+    //      worker can flip the row to 'processing'. The loser gets no row
+    //      back and exits cleanly so it can't double-process.
+    //
+    // This — combined with the unique index on prompt_responses — closes the
+    // duplicate-write hole entirely. Two concurrent invocations either both
+    // succeed on different rows or one wins and the other no-ops.
+    let candidateQuery = supabase
       .from("company_batch_queue")
-      .select("*, company_batch_configs!inner(user_id, organization_id, created_org_id, org_mode)")
-      .in("status", ["pending", "processing"])
+      .select("id")
+      .eq("status", "pending")
       .or("is_cancelled.is.null,is_cancelled.eq.false")
       .order("created_at", { ascending: true })
       .limit(1);
 
     if (configId) {
-      jobQuery = jobQuery.eq("config_id", configId);
+      candidateQuery = candidateQuery.eq("config_id", configId);
     }
 
-    const { data: jobs, error: jobError } = await jobQuery;
+    const { data: candidate, error: candidateErr } = await candidateQuery.maybeSingle();
+    if (candidateErr) throw candidateErr;
 
-    if (jobError) throw jobError;
-
-    if (!jobs || jobs.length === 0) {
+    if (!candidate) {
       return new Response(
         JSON.stringify({ processed: 0, message: "No pending jobs" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    const job = jobs[0];
-    const config = job.company_batch_configs;
     const now = new Date().toISOString();
 
-    console.log(`[BatchQueue] Processing job ${job.id}: ${job.company_name} / ${job.location} / ${job.industry} / ${job.job_function || "(all)"} — phase: ${job.phase}`);
+    // CAS claim
+    const { data: claimed, error: claimErr } = await supabase
+      .from("company_batch_queue")
+      .update({ status: "processing", updated_at: now })
+      .eq("id", candidate.id)
+      .eq("status", "pending")
+      .select("*, company_batch_configs!inner(user_id, organization_id, created_org_id, org_mode)")
+      .maybeSingle();
 
-    // Mark pending → processing
-    if (job.status === "pending") {
-      await supabase
-        .from("company_batch_queue")
-        .update({ status: "processing", updated_at: now })
-        .eq("id", job.id);
+    if (claimErr) throw claimErr;
+
+    if (!claimed) {
+      // Another worker beat us to this row. Exit cleanly — the other worker
+      // will self-chain to whatever's next; no need to chain from here.
+      return new Response(
+        JSON.stringify({ processed: 0, message: "Lost claim race — another worker got this row" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
+
+    const job = claimed;
+    const config = job.company_batch_configs;
+
+    console.log(`[BatchQueue] Claimed job ${job.id}: ${job.company_name} / ${job.location} / ${job.industry} / ${job.job_function || "(all)"} — phase: ${job.phase}`);
 
     let result = { processed: 0, message: "Idle" };
 
@@ -525,18 +564,23 @@ serve(async (req) => {
           job.job_function || undefined,
         );
 
-        // 4. Translate if non-English location
-        // Check if location is a known country code that needs translation
+        // 4. Translate if non-English location. Queue rows store free-text
+        // names ("Brazil", "Germany") but translate-prompts expects ISO codes
+        // ("BR", "DE") — resolve first, then skip English-speaking countries.
+        const countryCodeForTranslation = locationToCountryCode(job.location);
         const needsTranslation =
-          job.location !== "GLOBAL" &&
-          !ENGLISH_SPEAKING_COUNTRIES.includes(job.location);
+          countryCodeForTranslation !== null &&
+          countryCodeForTranslation !== "GLOBAL" &&
+          !ENGLISH_SPEAKING_COUNTRIES.includes(countryCodeForTranslation);
 
         let finalPrompts = prompts;
         if (needsTranslation) {
-          console.log(`[BatchQueue] Translating ${prompts.length} prompts for ${job.location}...`);
+          console.log(
+            `[BatchQueue] Translating ${prompts.length} prompts for ${job.location} (code=${countryCodeForTranslation})...`,
+          );
           const { data: translationData, error: translationError } =
             await supabase.functions.invoke("translate-prompts", {
-              body: { prompts: prompts.map((p) => p.text), countryCode: job.location },
+              body: { prompts: prompts.map((p) => p.text), countryCode: countryCodeForTranslation },
             });
 
           if (translationError) {
@@ -591,11 +635,11 @@ serve(async (req) => {
             .maybeSingle();
         }
 
-        // 7. Advance phase
+        // 7. Advance phase — search_insights removed (AI prompts only)
         await supabase
           .from("company_batch_queue")
           .update({
-            phase: "search_insights",
+            phase: "llm_collection",
             company_id: companyId,
             onboarding_id: onboarding.id,
             total_prompts: finalPrompts.length,
@@ -607,38 +651,6 @@ serve(async (req) => {
       }
 
       // =======================================================================
-      // PHASE: search_insights
-      // =======================================================================
-      else if (job.phase === "search_insights") {
-        console.log(`[BatchQueue] Phase: search_insights`);
-
-        try {
-          const { error: searchError } = await supabase.functions.invoke("search-insights", {
-            body: {
-              companyName: job.company_name,
-              company_id: job.company_id,
-              onboarding_id: job.onboarding_id,
-            },
-          });
-
-          if (searchError) {
-            // search-insights timeout is non-fatal per spec §8
-            console.warn(`[BatchQueue] search-insights error (non-fatal): ${searchError.message}`);
-          }
-        } catch (err: any) {
-          console.warn(`[BatchQueue] search-insights exception (non-fatal): ${err.message}`);
-        }
-
-        // Advance to llm_collection regardless of search-insights outcome
-        await supabase
-          .from("company_batch_queue")
-          .update({ phase: "llm_collection", updated_at: new Date().toISOString() })
-          .eq("id", job.id);
-
-        result = { processed: 1, message: "Search insights done, advancing to LLM collection" };
-      }
-
-      // =======================================================================
       // PHASE: llm_collection
       // Chunked to stay under the 150s edge-function timeout. Each invocation
       // processes CHUNK_SIZE prompts, advances batch_index, and self-chains
@@ -646,7 +658,7 @@ serve(async (req) => {
       // job_function) has been collected.
       // =======================================================================
       else if (job.phase === "llm_collection") {
-        const CHUNK_SIZE = 5;
+        const CHUNK_SIZE = 2;
         console.log(`[BatchQueue] Phase: llm_collection (batch_index=${job.batch_index})`);
 
         // Scope the prompt set to THIS job, not all of the company's prompts.
@@ -671,6 +683,9 @@ serve(async (req) => {
         }
         if (job.job_function) {
           promptQuery = promptQuery.eq("job_function_context", job.job_function);
+        }
+        if (promptTypeFilter) {
+          promptQuery = promptQuery.in("prompt_type", promptTypeFilter);
         }
 
         const { data: promptRows, error: promptErr } = await promptQuery;
@@ -724,7 +739,7 @@ serve(async (req) => {
                 body: {
                   companyId: job.company_id,
                   promptIds: chunk,
-                  models: ["openai", "perplexity", "google-ai-overviews", "google-ai-mode"],
+                  models: effectiveModels,
                   batchSize: 1,
                   skipExisting: true,
                   skipIfCollectedInMonth,
@@ -789,14 +804,31 @@ serve(async (req) => {
 
       if (count && count > 0) {
         console.log(`[BatchQueue] ${count} jobs remaining for ${configId ? `config ${configId}` : "global queue"}, self-chaining...`);
-        fetch(`${supabaseUrl}/functions/v1/process-company-batch-queue`, {
+        const chainPromise = fetch(`${supabaseUrl}/functions/v1/process-company-batch-queue`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${supabaseKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(configId ? { configId } : {}),
+          body: JSON.stringify({
+            ...(configId ? { configId } : {}),
+            ...(Array.isArray(promptTypes) && promptTypes.length > 0 ? { promptTypes } : {}),
+            ...(Array.isArray(models) && models.length > 0 ? { models } : {}),
+          }),
         }).catch((e) => console.error("[BatchQueue] Failed to chain:", e));
+
+        // Keep the isolate alive until the chain request actually leaves the
+        // wire. Without this, Deno tears down the function on return and the
+        // pending fetch is silently aborted — that's why the queue keeps
+        // dying mid-run.
+        try {
+          // @ts-ignore — EdgeRuntime is provided by the Supabase Deno runtime
+          (globalThis as any).EdgeRuntime?.waitUntil(chainPromise);
+        } catch {
+          // If waitUntil isn't available (e.g. local supabase dev),
+          // fall back to awaiting; slightly slower but reliable.
+          await chainPromise;
+        }
       }
     } catch (err: any) {
       console.error(`[BatchQueue] Error processing job ${job.id}:`, err);
@@ -816,14 +848,25 @@ serve(async (req) => {
 
       // If not failed, chain to retry — preserve configId scope.
       if (newStatus === "pending") {
-        fetch(`${supabaseUrl}/functions/v1/process-company-batch-queue`, {
+        const retryChain = fetch(`${supabaseUrl}/functions/v1/process-company-batch-queue`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${supabaseKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(configId ? { configId } : {}),
+          body: JSON.stringify({
+            ...(configId ? { configId } : {}),
+            ...(Array.isArray(promptTypes) && promptTypes.length > 0 ? { promptTypes } : {}),
+            ...(Array.isArray(models) && models.length > 0 ? { models } : {}),
+          }),
         }).catch((e) => console.error("[BatchQueue] Failed to chain after error:", e));
+
+        try {
+          // @ts-ignore
+          (globalThis as any).EdgeRuntime?.waitUntil(retryChain);
+        } catch {
+          await retryChain;
+        }
       }
 
       result = { processed: 0, message: `Error (retry ${retryCount}/3): ${err.message}` };
