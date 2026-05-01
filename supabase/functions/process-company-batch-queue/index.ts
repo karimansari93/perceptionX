@@ -1,7 +1,34 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { resolveCountryName } from "../_shared/countries.ts";
+import { resolveCountryName, COUNTRY_NAME_TO_CODE } from "../_shared/countries.ts";
+
+/**
+ * Map a free-text location (e.g. "Germany", "the United Kingdom", "MX") to an
+ * ISO country code understood by translate-prompts. Returns null if the input
+ * doesn't correspond to a country we know about — caller should treat that as
+ * "no translation needed" (pass-through English).
+ */
+function locationToCountryCode(location: string | null | undefined): string | null {
+  if (!location) return null;
+  const trimmed = location.trim();
+  if (!trimmed) return null;
+
+  // Already an ISO code?
+  const upper = trimmed.toUpperCase();
+  if (upper === "GLOBAL") return "GLOBAL";
+  if (COUNTRY_NAME_TO_CODE[trimmed]) return COUNTRY_NAME_TO_CODE[trimmed];
+
+  // Strip leading "the " (e.g. "the United Kingdom" → "United Kingdom").
+  const withoutThe = trimmed.replace(/^the\s+/i, "");
+  if (COUNTRY_NAME_TO_CODE[withoutThe]) return COUNTRY_NAME_TO_CODE[withoutThe];
+
+  // 2-letter strings we don't recognize are almost certainly intended as codes;
+  // pass them through so translate-prompts can try.
+  if (/^[A-Z]{2}$/.test(upper)) return upper;
+
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Prompt generation — server-side port of src/hooks/usePromptsLogic.ts
@@ -203,7 +230,24 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Optional: allow forcing a specific config (for "Start Collection" button)
-    const { configId } = await req.json().catch(() => ({}));
+    // promptTypes / models scope the llm_collection phase to a subset chosen by
+    // the admin in the UI. They self-chain through subsequent invocations.
+    const {
+      configId,
+      promptTypes,
+      models,
+    }: {
+      configId?: string;
+      promptTypes?: string[];
+      models?: string[];
+    } = await req.json().catch(() => ({}));
+
+    const DEFAULT_MODELS = ["openai", "perplexity", "google-ai-overviews", "google-ai-mode"];
+    const effectiveModels = Array.isArray(models) && models.length > 0 ? models : DEFAULT_MODELS;
+    const promptTypeFilter: string[] | null =
+      Array.isArray(promptTypes) && promptTypes.length > 0
+        ? promptTypes.flatMap((t) => [t, `talentx_${t}`])
+        : null;
 
     // If configId supplied, ensure org is created for new_org mode before processing
     if (configId) {
@@ -246,46 +290,231 @@ serve(async (req) => {
     }
 
     // -----------------------------------------------------------------------
-    // Pick one pending/processing job (oldest first), skip cancelled
+    // Pick one pending/processing job (oldest first), skip cancelled.
+    // When a specific configId was supplied, we MUST scope to that config —
+    // otherwise a stale pending job from another organization can be picked up
+    // (this is how GSK data leaked into a Netflix expand-coverage run).
     // -----------------------------------------------------------------------
-    const { data: jobs, error: jobError } = await supabase
+    // Atomic claim:
+    //   1. SELECT a 'pending' candidate (NOT 'processing' — we never resume
+    //      another worker's in-flight row; that's the watchdog's job, when on).
+    //   2. UPDATE WHERE status='pending' as a compare-and-swap — only one
+    //      worker can flip the row to 'processing'. The loser gets no row
+    //      back and exits cleanly so it can't double-process.
+    //
+    // This — combined with the unique index on prompt_responses — closes the
+    // duplicate-write hole entirely. Two concurrent invocations either both
+    // succeed on different rows or one wins and the other no-ops.
+    let candidateQuery = supabase
       .from("company_batch_queue")
-      .select("*, company_batch_configs!inner(user_id, organization_id, created_org_id, org_mode)")
-      .in("status", ["pending", "processing"])
+      .select("id")
+      .eq("status", "pending")
       .or("is_cancelled.is.null,is_cancelled.eq.false")
       .order("created_at", { ascending: true })
       .limit(1);
 
-    if (jobError) throw jobError;
+    if (configId) {
+      candidateQuery = candidateQuery.eq("config_id", configId);
+    }
 
-    if (!jobs || jobs.length === 0) {
+    const { data: candidate, error: candidateErr } = await candidateQuery.maybeSingle();
+    if (candidateErr) throw candidateErr;
+
+    if (!candidate) {
       return new Response(
         JSON.stringify({ processed: 0, message: "No pending jobs" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    const job = jobs[0];
-    const config = job.company_batch_configs;
     const now = new Date().toISOString();
 
-    console.log(`[BatchQueue] Processing job ${job.id}: ${job.company_name} / ${job.location} / ${job.industry} / ${job.job_function || "(all)"} — phase: ${job.phase}`);
+    // CAS claim
+    const { data: claimed, error: claimErr } = await supabase
+      .from("company_batch_queue")
+      .update({ status: "processing", updated_at: now })
+      .eq("id", candidate.id)
+      .eq("status", "pending")
+      .select("*, company_batch_configs!inner(user_id, organization_id, created_org_id, org_mode)")
+      .maybeSingle();
 
-    // Mark pending → processing
-    if (job.status === "pending") {
-      await supabase
-        .from("company_batch_queue")
-        .update({ status: "processing", updated_at: now })
-        .eq("id", job.id);
+    if (claimErr) throw claimErr;
+
+    if (!claimed) {
+      // Another worker beat us to this row. Exit cleanly — the other worker
+      // will self-chain to whatever's next; no need to chain from here.
+      return new Response(
+        JSON.stringify({ processed: 0, message: "Lost claim race — another worker got this row" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
+
+    const job = claimed;
+    const config = job.company_batch_configs;
+
+    console.log(`[BatchQueue] Claimed job ${job.id}: ${job.company_name} / ${job.location} / ${job.industry} / ${job.job_function || "(all)"} — phase: ${job.phase}`);
 
     let result = { processed: 0, message: "Idle" };
 
     try {
       // =======================================================================
+      // PHASE: expand_setup
+      // Append prompts to an EXISTING company_id. Unlike `setup`, this never
+      // inserts user_onboarding and never invokes the auto-create-company
+      // trigger (which would fork a duplicate companies row).
+      // =======================================================================
+      if (job.phase === "expand_setup") {
+        console.log(`[BatchQueue] Phase: expand_setup (company_id=${job.company_id})`);
+
+        if (!job.company_id) {
+          throw new Error("expand_setup job is missing company_id");
+        }
+
+        // 1. Verify the company exists and is linked to this config's organization.
+        // Prevents an admin from appending prompts onto a company in a different org.
+        const orgId = config.org_mode === "new_org" ? config.created_org_id : config.organization_id;
+        if (!orgId) {
+          throw new Error("expand_setup requires an organization_id on the config");
+        }
+
+        const { data: orgLink, error: orgLinkError } = await supabase
+          .from("organization_companies")
+          .select("company_id")
+          .eq("organization_id", orgId)
+          .eq("company_id", job.company_id)
+          .maybeSingle();
+
+        if (orgLinkError) throw new Error(`Org link lookup failed: ${orgLinkError.message}`);
+        if (!orgLink) {
+          throw new Error(
+            `Company ${job.company_id} is not linked to organization ${orgId} — refusing to append prompts`,
+          );
+        }
+
+        // 2. Generate prompts for the new (location, industry, job_function) combo.
+        const prompts = generatePrompts(
+          job.company_name,
+          job.industry,
+          job.location,
+          job.job_function || undefined,
+        );
+
+        // 3. Translate if non-English location. `translate-prompts` expects an
+        // ISO country code (US, DE, MX, AR, BR, NL, ...) — but queue rows store
+        // a free-text location name like "Germany" or "the United Kingdom".
+        // Resolve to a code first; translate-prompts handles English/GLOBAL as
+        // a pass-through, so we don't need to pre-filter.
+        const countryCodeForTranslation = locationToCountryCode(job.location);
+
+        let finalPrompts = prompts;
+        if (countryCodeForTranslation && countryCodeForTranslation !== "GLOBAL") {
+          console.log(
+            `[BatchQueue] Translating ${prompts.length} prompts for ${job.location} (code=${countryCodeForTranslation})...`,
+          );
+          const { data: translationData, error: translationError } =
+            await supabase.functions.invoke("translate-prompts", {
+              body: { prompts: prompts.map((p) => p.text), countryCode: countryCodeForTranslation },
+            });
+
+          if (translationError) throw new Error(`Translation failed: ${translationError.message}`);
+
+          if (translationData?.translatedPrompts?.length === prompts.length) {
+            finalPrompts = prompts.map((p, i) => ({
+              ...p,
+              text: translationData.translatedPrompts[i] || p.text,
+            }));
+          } else {
+            throw new Error("Translation returned incomplete results");
+          }
+        }
+
+        // 4. Insert confirmed_prompts attached to the existing company_id.
+        //    No onboarding_id — these prompts were not created via the onboarding flow.
+        //
+        //    Dedupe in two passes before the INSERT (can't use ON CONFLICT —
+        //    the unique index is partial, PostgREST doesn't support that):
+        //    a) In-memory on (prompt_text, prompt_type) — translation can
+        //       occasionally produce identical output for two different TalentX
+        //       templates within the same batch.
+        //    b) Against existing DB rows for this (company, location) — a
+        //       previous run may have already inserted the same text, and the
+        //       partial unique index would abort the whole batch on any hit.
+        const inMemorySeen = new Set<string>();
+        const candidates: any[] = [];
+        for (const p of finalPrompts) {
+          const promptType = p.talentxAttributeId ? `talentx_${p.type}` : p.type;
+          const key = `${p.text}||${promptType}`;
+          if (inMemorySeen.has(key)) continue;
+          inMemorySeen.add(key);
+          candidates.push({
+            onboarding_id: null,
+            user_id: config.user_id,
+            company_id: job.company_id,
+            prompt_text: p.text,
+            prompt_category: p.promptCategory,
+            prompt_theme: p.promptTheme,
+            prompt_type: promptType,
+            talentx_attribute_id: p.talentxAttributeId || null,
+            industry_context: p.industryContext,
+            job_function_context: p.jobFunctionContext || null,
+            location_context: p.locationContext || null,
+            is_active: true,
+          });
+        }
+
+        // Pull every already-existing prompt for this (company, location) and
+        // build a set of their (prompt_text, prompt_type, industry_context)
+        // signatures — same columns the partial unique index covers (minus
+        // the ones we already fix above).
+        const { data: existingForLocation, error: existingErr } = await supabase
+          .from("confirmed_prompts")
+          .select("prompt_text, prompt_type, industry_context")
+          .eq("company_id", job.company_id)
+          .eq("location_context", job.location);
+        if (existingErr) throw new Error(`Existing prompt check failed: ${existingErr.message}`);
+
+        const existingSig = new Set(
+          (existingForLocation || []).map(
+            (r: any) => `${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`,
+          ),
+        );
+
+        const promptRows = candidates.filter((r) => {
+          const sig = `${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`;
+          return !existingSig.has(sig);
+        });
+
+        if (promptRows.length === 0) {
+          console.log("[BatchQueue] All prompts already exist for this (company, location); skipping insert");
+        } else {
+          const { error: insertError } = await supabase
+            .from("confirmed_prompts")
+            .insert(promptRows);
+
+          if (insertError) throw new Error(`Prompt insert failed: ${insertError.message}`);
+        }
+
+        // 5. Advance directly to llm_collection — no search_insights re-run on expand,
+        //    and no re-link to org (already linked).
+        await supabase
+          .from("company_batch_queue")
+          .update({
+            phase: "llm_collection",
+            total_prompts: finalPrompts.length,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", job.id);
+
+        result = {
+          processed: 1,
+          message: `Expand setup complete: ${finalPrompts.length} prompts appended to company ${job.company_id}`,
+        };
+      }
+
+      // =======================================================================
       // PHASE: setup
       // =======================================================================
-      if (job.phase === "setup") {
+      else if (job.phase === "setup") {
         console.log(`[BatchQueue] Phase: setup`);
 
         // 1. Insert user_onboarding row
@@ -335,18 +564,23 @@ serve(async (req) => {
           job.job_function || undefined,
         );
 
-        // 4. Translate if non-English location
-        // Check if location is a known country code that needs translation
+        // 4. Translate if non-English location. Queue rows store free-text
+        // names ("Brazil", "Germany") but translate-prompts expects ISO codes
+        // ("BR", "DE") — resolve first, then skip English-speaking countries.
+        const countryCodeForTranslation = locationToCountryCode(job.location);
         const needsTranslation =
-          job.location !== "GLOBAL" &&
-          !ENGLISH_SPEAKING_COUNTRIES.includes(job.location);
+          countryCodeForTranslation !== null &&
+          countryCodeForTranslation !== "GLOBAL" &&
+          !ENGLISH_SPEAKING_COUNTRIES.includes(countryCodeForTranslation);
 
         let finalPrompts = prompts;
         if (needsTranslation) {
-          console.log(`[BatchQueue] Translating ${prompts.length} prompts for ${job.location}...`);
+          console.log(
+            `[BatchQueue] Translating ${prompts.length} prompts for ${job.location} (code=${countryCodeForTranslation})...`,
+          );
           const { data: translationData, error: translationError } =
             await supabase.functions.invoke("translate-prompts", {
-              body: { prompts: prompts.map((p) => p.text), countryCode: job.location },
+              body: { prompts: prompts.map((p) => p.text), countryCode: countryCodeForTranslation },
             });
 
           if (translationError) {
@@ -401,11 +635,11 @@ serve(async (req) => {
             .maybeSingle();
         }
 
-        // 7. Advance phase
+        // 7. Advance phase — search_insights removed (AI prompts only)
         await supabase
           .from("company_batch_queue")
           .update({
-            phase: "search_insights",
+            phase: "llm_collection",
             company_id: companyId,
             onboarding_id: onboarding.id,
             total_prompts: finalPrompts.length,
@@ -417,93 +651,126 @@ serve(async (req) => {
       }
 
       // =======================================================================
-      // PHASE: search_insights
-      // =======================================================================
-      else if (job.phase === "search_insights") {
-        console.log(`[BatchQueue] Phase: search_insights`);
-
-        try {
-          const { error: searchError } = await supabase.functions.invoke("search-insights", {
-            body: {
-              companyName: job.company_name,
-              company_id: job.company_id,
-              onboarding_id: job.onboarding_id,
-            },
-          });
-
-          if (searchError) {
-            // search-insights timeout is non-fatal per spec §8
-            console.warn(`[BatchQueue] search-insights error (non-fatal): ${searchError.message}`);
-          }
-        } catch (err: any) {
-          console.warn(`[BatchQueue] search-insights exception (non-fatal): ${err.message}`);
-        }
-
-        // Advance to llm_collection regardless of search-insights outcome
-        await supabase
-          .from("company_batch_queue")
-          .update({ phase: "llm_collection", updated_at: new Date().toISOString() })
-          .eq("id", job.id);
-
-        result = { processed: 1, message: "Search insights done, advancing to LLM collection" };
-      }
-
-      // =======================================================================
       // PHASE: llm_collection
+      // Chunked to stay under the 150s edge-function timeout. Each invocation
+      // processes CHUNK_SIZE prompts, advances batch_index, and self-chains
+      // until every prompt for THIS job (company_id × location × industry ×
+      // job_function) has been collected.
       // =======================================================================
       else if (job.phase === "llm_collection") {
+        const CHUNK_SIZE = 2;
         console.log(`[BatchQueue] Phase: llm_collection (batch_index=${job.batch_index})`);
 
-        // Fetch prompt IDs for this company
-        const { data: promptRows } = await supabase
+        // Scope the prompt set to THIS job, not all of the company's prompts.
+        // Otherwise sibling expand_setup jobs for the same company all fetch
+        // the full superset and do redundant work.
+        let promptQuery = supabase
           .from("confirmed_prompts")
           .select("id")
           .eq("company_id", job.company_id)
-          .eq("is_active", true);
+          .eq("is_active", true)
+          .order("id", { ascending: true });
 
-        const promptIds = promptRows?.map((r: any) => r.id) || [];
+        // Only filter by location when the job specifies one. `location` is
+        // NOT NULL on the queue row, but historical "Global (All Countries)"
+        // may not match the stored location_context, so leave un-filtered if
+        // that's the case.
+        if (job.location && job.location !== "Global (All Countries)") {
+          promptQuery = promptQuery.eq("location_context", job.location);
+        }
+        if (job.industry && job.industry !== "General") {
+          promptQuery = promptQuery.eq("industry_context", job.industry);
+        }
+        if (job.job_function) {
+          promptQuery = promptQuery.eq("job_function_context", job.job_function);
+        }
+        if (promptTypeFilter) {
+          promptQuery = promptQuery.in("prompt_type", promptTypeFilter);
+        }
 
-        if (promptIds.length === 0) {
-          console.warn("[BatchQueue] No prompts found for company, marking done");
+        const { data: promptRows, error: promptErr } = await promptQuery;
+        if (promptErr) throw new Error(`Prompt fetch failed: ${promptErr.message}`);
+
+        const allPromptIds = promptRows?.map((r: any) => r.id) || [];
+        const totalPrompts = allPromptIds.length;
+
+        if (totalPrompts === 0) {
+          console.warn("[BatchQueue] No prompts found for job scope, marking done");
           await supabase
             .from("company_batch_queue")
             .update({ phase: "done", status: "completed", updated_at: new Date().toISOString() })
             .eq("id", job.id);
           result = { processed: 0, message: "No prompts, marked complete" };
         } else {
-          // Call collect-company-responses with claude added as 4th model
-          const { data: collectData, error: collectError } = await supabase.functions.invoke(
-            "collect-company-responses",
-            {
-              body: {
-                companyId: job.company_id,
-                promptIds,
-                models: ["openai", "perplexity", "google-ai-overviews", "google-ai-mode"],
-                batchSize: 2,
-                skipExisting: true,
+          const offset = job.batch_index || 0;
+          const chunk = allPromptIds.slice(offset, offset + CHUNK_SIZE);
+
+          if (chunk.length === 0) {
+            // Cursor past the end — finish this job.
+            await supabase
+              .from("company_batch_queue")
+              .update({
+                phase: "done",
+                status: "completed",
+                batch_index: totalPrompts,
+                total_prompts: totalPrompts,
+                updated_at: new Date().toISOString(),
+                error_log: null,
+              })
+              .eq("id", job.id);
+            result = { processed: 0, message: `LLM collection already complete (${totalPrompts}/${totalPrompts})` };
+          } else {
+            console.log(
+              `[BatchQueue] llm_collection chunk ${offset}..${offset + chunk.length} of ${totalPrompts}`,
+            );
+
+            // If the parent config carries a skip_if_collected_in_month value
+            // (set by the monthly-refresh cron), forward it so each prompt is
+            // only collected if it doesn't already have THIS MONTH's response
+            // for the given model. Without this, skipExisting:true would skip
+            // any prompt that has *any* historical response and our monthly
+            // snapshots would never refresh.
+            const skipIfCollectedInMonth: string | null =
+              (config as any)?.skip_if_collected_in_month ?? null;
+
+            const { data: collectData, error: collectError } = await supabase.functions.invoke(
+              "collect-company-responses",
+              {
+                body: {
+                  companyId: job.company_id,
+                  promptIds: chunk,
+                  models: effectiveModels,
+                  batchSize: 1,
+                  skipExisting: true,
+                  skipIfCollectedInMonth,
+                },
               },
-            },
-          );
+            );
 
-          if (collectError) throw new Error(`LLM collection failed: ${collectError.message}`);
-          if (!collectData?.success) throw new Error(collectData?.error || "LLM collection failed");
+            if (collectError) throw new Error(`LLM collection failed: ${collectError.message}`);
+            if (!collectData?.success) throw new Error(collectData?.error || "LLM collection failed");
 
-          // Mark completed
-          await supabase
-            .from("company_batch_queue")
-            .update({
-              phase: "done",
-              status: "completed",
-              batch_index: promptIds.length,
-              updated_at: new Date().toISOString(),
-              error_log: null,
-            })
-            .eq("id", job.id);
+            const newOffset = offset + chunk.length;
+            const isDone = newOffset >= totalPrompts;
 
-          result = {
-            processed: 1,
-            message: `LLM collection complete: ${collectData.summary?.responsesCollected || 0} responses`,
-          };
+            await supabase
+              .from("company_batch_queue")
+              .update({
+                phase: isDone ? "done" : "llm_collection",
+                status: isDone ? "completed" : "processing",
+                batch_index: newOffset,
+                total_prompts: totalPrompts,
+                updated_at: new Date().toISOString(),
+                error_log: null,
+                retry_count: 0, // reset on successful chunk
+              })
+              .eq("id", job.id);
+
+            result = {
+              processed: 1,
+              message: `LLM collection ${isDone ? "complete" : "chunk done"}: ${newOffset}/${totalPrompts} prompts, +${collectData.summary?.responsesCollected || 0} responses`,
+            };
+          }
         }
       }
 
@@ -519,23 +786,49 @@ serve(async (req) => {
       }
 
       // =======================================================================
-      // Self-chain: check for more pending work
+      // Self-chain: check for more pending work. Scope to this configId when
+      // one was supplied, so an Expand-Coverage run can't drag in stale jobs
+      // from other organizations' configs.
       // =======================================================================
-      const { count } = await supabase
+      let remainingQuery = supabase
         .from("company_batch_queue")
         .select("*", { count: "exact", head: true })
         .in("status", ["pending", "processing"])
         .or("is_cancelled.is.null,is_cancelled.eq.false");
 
+      if (configId) {
+        remainingQuery = remainingQuery.eq("config_id", configId);
+      }
+
+      const { count } = await remainingQuery;
+
       if (count && count > 0) {
-        console.log(`[BatchQueue] ${count} jobs remaining, self-chaining...`);
-        fetch(`${supabaseUrl}/functions/v1/process-company-batch-queue`, {
+        console.log(`[BatchQueue] ${count} jobs remaining for ${configId ? `config ${configId}` : "global queue"}, self-chaining...`);
+        const chainPromise = fetch(`${supabaseUrl}/functions/v1/process-company-batch-queue`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${supabaseKey}`,
             "Content-Type": "application/json",
           },
+          body: JSON.stringify({
+            ...(configId ? { configId } : {}),
+            ...(Array.isArray(promptTypes) && promptTypes.length > 0 ? { promptTypes } : {}),
+            ...(Array.isArray(models) && models.length > 0 ? { models } : {}),
+          }),
         }).catch((e) => console.error("[BatchQueue] Failed to chain:", e));
+
+        // Keep the isolate alive until the chain request actually leaves the
+        // wire. Without this, Deno tears down the function on return and the
+        // pending fetch is silently aborted — that's why the queue keeps
+        // dying mid-run.
+        try {
+          // @ts-ignore — EdgeRuntime is provided by the Supabase Deno runtime
+          (globalThis as any).EdgeRuntime?.waitUntil(chainPromise);
+        } catch {
+          // If waitUntil isn't available (e.g. local supabase dev),
+          // fall back to awaiting; slightly slower but reliable.
+          await chainPromise;
+        }
       }
     } catch (err: any) {
       console.error(`[BatchQueue] Error processing job ${job.id}:`, err);
@@ -553,15 +846,27 @@ serve(async (req) => {
         })
         .eq("id", job.id);
 
-      // If not failed, chain to retry
+      // If not failed, chain to retry — preserve configId scope.
       if (newStatus === "pending") {
-        fetch(`${supabaseUrl}/functions/v1/process-company-batch-queue`, {
+        const retryChain = fetch(`${supabaseUrl}/functions/v1/process-company-batch-queue`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${supabaseKey}`,
             "Content-Type": "application/json",
           },
+          body: JSON.stringify({
+            ...(configId ? { configId } : {}),
+            ...(Array.isArray(promptTypes) && promptTypes.length > 0 ? { promptTypes } : {}),
+            ...(Array.isArray(models) && models.length > 0 ? { models } : {}),
+          }),
         }).catch((e) => console.error("[BatchQueue] Failed to chain after error:", e));
+
+        try {
+          // @ts-ignore
+          (globalThis as any).EdgeRuntime?.waitUntil(retryChain);
+        } catch {
+          await retryChain;
+        }
       }
 
       result = { processed: 0, message: `Error (retry ${retryCount}/3): ${err.message}` };

@@ -787,7 +787,7 @@ export const CompanyManagementTab = () => {
       <CompanyGroupDetailView
         group={selectedGroup}
         onBack={() => setSelectedGroup(null)}
-        onSelectCompany={(c) => setSelectedCompany(c)}
+        onSelectCompany={(c) => setSelectedCompany(c as any)}
         onUpdate={loadData}
         onContinueCollection={async (company) => {
           setContinueCollectionCompanyId(company.id);
@@ -1259,12 +1259,19 @@ export const CompanyManagementTab = () => {
                       {(() => {
                         const items = confirmationData.allPromptCategoryThemes || [];
                         const selected = confirmationData.selectedPromptCategoryThemes || [];
-                        const byCategory = items.reduce((acc: Record<string, { category: string; theme: string }[]>, p: { category: string; theme: string }) => {
-                          if (!acc[p.category]) acc[p.category] = [];
-                          acc[p.category].push(p);
-                          return acc;
-                        }, {});
-                        return Object.entries(byCategory).map(([category, themes]) => (
+                        type CategoryThemeItem = { category: string; theme: string };
+                        // `items` is typed `any` upstream — reduce's generic
+                        // form needs a typed callee, so cast the accumulator
+                        // inline instead of passing <T>.
+                        const byCategory = items.reduce(
+                          (acc: Record<string, CategoryThemeItem[]>, p: CategoryThemeItem) => {
+                            if (!acc[p.category]) acc[p.category] = [];
+                            acc[p.category].push(p);
+                            return acc;
+                          },
+                          {} as Record<string, CategoryThemeItem[]>
+                        );
+                        return (Object.entries(byCategory) as [string, CategoryThemeItem[]][]).map(([category, themes]) => (
                           <div key={category} className="space-y-1">
                             <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">{category}</div>
                             {themes.map(({ theme }) => {

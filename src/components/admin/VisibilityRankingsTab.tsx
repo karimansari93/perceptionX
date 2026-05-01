@@ -1287,15 +1287,12 @@ export const VisibilityRankingsTab = () => {
                         <Progress
                           value={item.progress}
                           className={`h-1.5 ${
-                            item.status === "failed" ? "bg-red-100" : ""
-                          }`}
-                          indicatorClassName={
                             item.status === "failed"
-                              ? "bg-red-500"
+                              ? "bg-red-100 [&>div]:bg-red-500"
                               : item.status === "completed"
-                                ? "bg-green-500"
-                                : "bg-teal"
-                          }
+                                ? "[&>div]:bg-green-500"
+                                : "[&>div]:bg-teal"
+                          }`}
                         />
                         {item.error && (
                           <div className="text-xs text-red-600 mt-1">

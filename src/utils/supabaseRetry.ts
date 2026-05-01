@@ -131,9 +131,15 @@ export async function retrySupabaseQuery<T = any>(
 }
 
 /**
- * Enhanced function invocation with retry logic
+ * Enhanced function invocation with retry logic.
+ *
+ * The generic defaults to `any` on purpose — most call sites don't provide a
+ * type parameter and need to read ad-hoc fields off the response (e.g. `.success`,
+ * `.error`, `.summary`). Without the default, `T` resolved to `unknown` and
+ * every property access errored. Pass an explicit shape when you want real
+ * type safety at the call site.
  */
-export async function retrySupabaseFunction<T>(
+export async function retrySupabaseFunction<T = any>(
   functionName: string,
   body: any,
   options: RetryOptions = {}

@@ -5,9 +5,42 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Plus, X, Building2 } from "lucide-react";
 import { BatchQueuePanel, type QueueItem } from "./BatchQueuePanel";
+
+const ALL_PROMPT_TYPES = [
+  { id: "informational", label: "Informational" },
+  { id: "experience", label: "Experience" },
+  { id: "competitive", label: "Competitive" },
+  { id: "discovery", label: "Discovery" },
+] as const;
+
+const ALL_MODELS = [
+  { id: "openai", label: "OpenAI" },
+  { id: "perplexity", label: "Perplexity" },
+  { id: "google-ai-overviews", label: "Google AI Overviews" },
+  { id: "google-ai-mode", label: "Google AI Mode" },
+] as const;
 
 const COUNTRY_SUGGESTIONS = [
   "United States", "United Kingdom", "Canada", "Australia", "Germany",
@@ -56,6 +89,16 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
   // Saving
   const [saving, setSaving] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Start Collection confirmation / customization
+  const [confirmStartOpen, setConfirmStartOpen] = useState(false);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [selectedPromptTypes, setSelectedPromptTypes] = useState<string[]>(
+    ALL_PROMPT_TYPES.map((p) => p.id),
+  );
+  const [selectedModels, setSelectedModels] = useState<string[]>(
+    ALL_MODELS.map((m) => m.id),
+  );
 
   useEffect(() => {
     loadIndustries();
@@ -186,19 +229,19 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
       }
     }
 
-    // Deduplicate
+    // Deduplicate (per company — same location/industry under a different company is allowed)
     const { data: existing } = await supabase
       .from("company_batch_queue")
-      .select("location, industry, job_function, status")
+      .select("company_name, location, industry, job_function, status")
       .eq("config_id", configId)
       .neq("status", "failed");
 
     const existingKeys = new Set(
-      (existing || []).map((e: any) => `${e.location}|${e.industry}|${e.job_function || ""}`)
+      (existing || []).map((e: any) => `${e.company_name}|${e.location}|${e.industry}|${e.job_function || ""}`)
     );
 
     const newJobs = jobs.filter(
-      (j) => !existingKeys.has(`${j.location}|${j.industry}|${j.job_function || ""}`)
+      (j) => !existingKeys.has(`${j.company_name}|${j.location}|${j.industry}|${j.job_function || ""}`)
     );
 
     if (newJobs.length === 0) {
@@ -219,13 +262,22 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
     await loadQueue();
   };
 
-  const startCollection = async () => {
+  const startCollection = () => {
+    if (!configId) return;
+    setConfirmStartOpen(true);
+  };
+
+  const runCollection = async (promptTypes: string[], models: string[]) => {
     if (!configId) return;
     setProcessing(true);
-    addLog("Starting collection...");
+    const allTypes = promptTypes.length === ALL_PROMPT_TYPES.length;
+    const allModels = models.length === ALL_MODELS.length;
+    addLog(
+      `Starting collection (${allTypes ? "all prompt types" : `types: ${promptTypes.join(", ")}`}; ${allModels ? "all models" : `models: ${models.join(", ")}`})...`,
+    );
 
     const { error } = await supabase.functions.invoke("process-company-batch-queue", {
-      body: { configId },
+      body: { configId, promptTypes, models },
     });
 
     if (error) {
@@ -263,6 +315,81 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
     toast.success("Queue cancelled.");
     addLog("Queue cancelled by admin.");
     setProcessing(false);
+    await loadQueue();
+  };
+
+  // Revives cancelled rows and unblocks stuck "processing" rows whose worker
+  // died, then re-invokes the processor with the current selections.
+  // Done in two passes so it still works on DBs missing the is_cancelled
+  // column (e.g. the create_company_batch_tables migration wasn't applied).
+  const resumeQueue = async () => {
+    if (!configId) return;
+
+    let totalRevived = 0;
+
+    // Pass 1: revive cancelled rows. May fail if is_cancelled column is missing.
+    try {
+      const { data: revivedCancelled, error: cancelErr } = await supabase
+        .from("company_batch_queue")
+        .update({
+          status: "pending",
+          is_cancelled: false,
+          retry_count: 0,
+          error_log: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("config_id", configId)
+        .eq("is_cancelled", true)
+        .select("id");
+
+      if (cancelErr) {
+        addLog(`Skipped cancelled-row revive: ${cancelErr.message}`);
+      } else {
+        totalRevived += revivedCancelled?.length ?? 0;
+      }
+    } catch (err: any) {
+      addLog(`Skipped cancelled-row revive: ${err?.message || err}`);
+    }
+
+    // Pass 2: reset stuck processing rows. Preserve batch_index so
+    // llm_collection picks up from where the chunk cursor was.
+    const { data: revivedStuck, error: stuckErr } = await supabase
+      .from("company_batch_queue")
+      .update({
+        status: "pending",
+        retry_count: 0,
+        error_log: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("config_id", configId)
+      .eq("status", "processing")
+      .select("id");
+
+    if (stuckErr) { toast.error(`Resume failed: ${stuckErr.message}`); return; }
+    totalRevived += revivedStuck?.length ?? 0;
+
+    if (totalRevived === 0) {
+      toast.info("Nothing to resume.");
+      return;
+    }
+
+    const count = totalRevived;
+    addLog(`Revived ${count} job${count === 1 ? "" : "s"}; re-invoking processor...`);
+
+    // 2. Kick the processor with the current selections.
+    const { error: invokeErr } = await supabase.functions.invoke(
+      "process-company-batch-queue",
+      { body: { configId, promptTypes: selectedPromptTypes, models: selectedModels } },
+    );
+
+    if (invokeErr) {
+      toast.error(`Resume failed: ${invokeErr.message}`);
+      addLog(`Error: ${invokeErr.message}`);
+      return;
+    }
+
+    setProcessing(true);
+    toast.success(`Resumed ${count} job${count === 1 ? "" : "s"}.`);
     await loadQueue();
   };
 
@@ -478,11 +605,120 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
           logs={logs}
           onStart={startCollection}
           onCancel={cancelQueue}
+          onResume={resumeQueue}
           onRetryFailed={retryFailed}
           onClearCompleted={clearCompleted}
           onRefresh={loadQueue}
         />
       </div>
+
+      <AlertDialog open={confirmStartOpen} onOpenChange={setConfirmStartOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Run for all prompt types and models?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will collect responses across all prompt types
+              (informational, experience, competitive, discovery) and all
+              models (OpenAI, Perplexity, Google AI Overviews, Google AI Mode).
+              Choose "Customize" to pick a subset.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setConfirmStartOpen(false);
+                setCustomizeOpen(true);
+              }}
+            >
+              Customize
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmStartOpen(false);
+                runCollection(
+                  ALL_PROMPT_TYPES.map((p) => p.id),
+                  ALL_MODELS.map((m) => m.id),
+                );
+              }}
+            >
+              Run all
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={customizeOpen} onOpenChange={setCustomizeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Select prompt types and models</DialogTitle>
+            <DialogDescription>
+              Only the selected prompt types and models will be collected for
+              this run.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-6 py-2">
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Prompt types</Label>
+              {ALL_PROMPT_TYPES.map((p) => (
+                <div key={p.id} className="flex items-center gap-2">
+                  <Checkbox
+                    id={`pt-${p.id}`}
+                    checked={selectedPromptTypes.includes(p.id)}
+                    onCheckedChange={(checked) => {
+                      setSelectedPromptTypes((prev) =>
+                        checked ? [...prev, p.id] : prev.filter((x) => x !== p.id),
+                      );
+                    }}
+                  />
+                  <label htmlFor={`pt-${p.id}`} className="text-sm cursor-pointer">
+                    {p.label}
+                  </label>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Models</Label>
+              {ALL_MODELS.map((m) => (
+                <div key={m.id} className="flex items-center gap-2">
+                  <Checkbox
+                    id={`m-${m.id}`}
+                    checked={selectedModels.includes(m.id)}
+                    onCheckedChange={(checked) => {
+                      setSelectedModels((prev) =>
+                        checked ? [...prev, m.id] : prev.filter((x) => x !== m.id),
+                      );
+                    }}
+                  />
+                  <label htmlFor={`m-${m.id}`} className="text-sm cursor-pointer">
+                    {m.label}
+                  </label>
+                </div>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCustomizeOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedPromptTypes.length === 0) {
+                  toast.error("Select at least one prompt type");
+                  return;
+                }
+                if (selectedModels.length === 0) {
+                  toast.error("Select at least one model");
+                  return;
+                }
+                setCustomizeOpen(false);
+                runCollection(selectedPromptTypes, selectedModels);
+              }}
+            >
+              Run with selected
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
