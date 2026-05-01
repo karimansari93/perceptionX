@@ -145,7 +145,7 @@ const OnboardingLoading = () => {
 
   useEffect(() => {
     if (!onboardingId) {
-      navigate('/onboarding');
+      navigate('/dashboard');
       return;
     }
 
@@ -455,7 +455,7 @@ const OnboardingLoading = () => {
           </div>
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Testing Failed</h2>
           <p className="text-gray-600 mb-6">{error}</p>
-          <Button onClick={() => navigate('/onboarding')} variant="default">
+          <Button onClick={() => navigate('/dashboard')} variant="default">
             Try Again
           </Button>
         </div>

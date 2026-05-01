@@ -92,7 +92,7 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
           } 
         });
       } else {
-        navigate('/onboarding');
+        navigate('/dashboard');
       }
     }
   }, [user, navigate, onboardingData, redirectTo, onOpenChange]);

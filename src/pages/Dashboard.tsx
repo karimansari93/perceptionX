@@ -432,7 +432,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
               To get started, you'll need to set up your first prompts to begin monitoring your AI perception.
             </p>
             <Button 
-              onClick={() => navigate('/onboarding')}
+              onClick={() => navigate('/dashboard')}
               className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
             >
               Get Started

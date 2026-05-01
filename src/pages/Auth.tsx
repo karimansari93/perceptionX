@@ -130,7 +130,7 @@ const Auth = () => {
           // If no basic onboarding data, redirect to onboarding
           if (!userOnboardingData || userOnboardingData.length === 0 || 
               !userOnboardingData[0].company_name || !userOnboardingData[0].industry) {
-            navigate('/onboarding');
+            navigate('/dashboard');
             return;
           }
 
@@ -155,7 +155,7 @@ const Auth = () => {
 
           // If no confirmed prompts, onboarding is incomplete
           if (!promptsData || promptsData.length === 0) {
-            navigate('/onboarding');
+            navigate('/dashboard');
           } else {
             // User has completed onboarding, go to dashboard
             navigate('/dashboard', { 
@@ -317,7 +317,7 @@ const Auth = () => {
             // If no basic onboarding data, redirect to onboarding
             if (!userOnboardingData || userOnboardingData.length === 0 || 
                 !userOnboardingData[0].company_name || !userOnboardingData[0].industry) {
-              navigate('/onboarding');
+              navigate('/dashboard');
               return;
             }
 
@@ -337,7 +337,7 @@ const Auth = () => {
 
             // If no confirmed prompts, onboarding is incomplete
             if (!promptsData || promptsData.length === 0) {
-              navigate('/onboarding');
+              navigate('/dashboard');
             } else {
               // User has completed onboarding, go to dashboard
               navigate('/dashboard');
