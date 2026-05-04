@@ -114,7 +114,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Fetch ALL companies for admin
         const { data: allCompanies, error: allCompaniesError } = await supabase
           .from('companies')
-          .select('id, name, industry, company_size, competitors, settings, created_at, updated_at, created_by')
+          .select('id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by')
           .order('created_at', { ascending: false });
 
         if (allCompaniesError) {
@@ -125,48 +125,24 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (allCompanies && allCompanies.length > 0) {
           const companyIds = allCompanies.map(c => c.id);
           
-          // Fetch industries and countries in parallel for better performance
           let industriesMap = new Map<string, Set<string>>();
-          let countriesMap = new Map<string, string | null>();
-          
-          if (companyIds.length > 0) {
-            // Parallelize both requests to cut load time in half
-            const [industriesResult, countriesResult] = await Promise.all([
-              supabase
-                .from('company_industries')
-                .select('company_id, industry')
-                .in('company_id', companyIds),
-              supabase
-                .from('user_onboarding')
-                .select('company_id, country')
-                .in('company_id', companyIds)
-                .not('company_id', 'is', null)
-                .order('created_at', { ascending: false })
-            ]);
 
-            // Process industries data
-            if (industriesResult.error) {
-              console.error('🔍 Error fetching company industries for admin:', industriesResult.error);
-            } else if (industriesResult.data) {
-              industriesMap = industriesResult.data.reduce((map, row) => {
+          if (companyIds.length > 0) {
+            const { data: industriesData, error: industriesError } = await supabase
+              .from('company_industries')
+              .select('company_id, industry')
+              .in('company_id', companyIds);
+
+            if (industriesError) {
+              console.error('🔍 Error fetching company industries for admin:', industriesError);
+            } else if (industriesData) {
+              industriesMap = industriesData.reduce((map, row) => {
                 if (!map.has(row.company_id)) {
                   map.set(row.company_id, new Set<string>());
                 }
                 map.get(row.company_id)!.add(row.industry);
                 return map;
               }, new Map<string, Set<string>>());
-            }
-
-            // Process countries data
-            if (countriesResult.error) {
-              console.error('🔍 Error fetching company countries for admin:', countriesResult.error);
-            } else if (countriesResult.data) {
-              countriesMap = countriesResult.data.reduce((map, row) => {
-                if (row.company_id && !map.has(row.company_id)) {
-                  map.set(row.company_id, row.country || null);
-                }
-                return map;
-              }, new Map<string, string | null>());
             }
           }
 
@@ -195,27 +171,20 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
               industriesSet.add(company.industry);
             }
             const industries = Array.from(industriesSet);
-            const country = countriesMap.get(company.id) || null;
             const orgInfo = orgMap.get(company.id);
 
-            // Check if admin has a company_members entry (for is_default)
-            const { data: companyMember } = await supabase
-              .from('company_members')
-              .select('is_default, role, joined_at')
-              .eq('user_id', user.id)
-              .eq('company_id', company.id)
-              .maybeSingle();
-
-            const isDefault = companyMember?.is_default || false;
-            const memberRole = companyMember?.role || 'admin'; // Admins default to admin role
-            const joinedAt = companyMember?.joined_at || new Date().toISOString();
+            // company_members has been retired — defaults / role come from
+            // organization_members or sensible fallbacks.
+            const isDefault = false;
+            const memberRole: 'owner' | 'admin' | 'member' = 'admin';
+            const joinedAt = new Date().toISOString();
 
             const companyWithData = {
               ...company,
               organization_id: orgInfo?.id,
               is_default: isDefault,
               industries,
-              country
+              country: company.country ?? null,
             };
 
             companies.push(companyWithData);
@@ -309,7 +278,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const companyIds = orgCompanies.map(oc => oc.company_id);
             const { data: companiesData, error: companyDetailsError } = await supabase
               .from('companies')
-              .select('id, name, industry, company_size, competitors, settings, created_at, updated_at, created_by')
+              .select('id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by')
               .in('id', companyIds);
 
             if (companyDetailsError) {
@@ -338,49 +307,13 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
               }
             }
 
-            // Fetch countries for these companies from user_onboarding
-            // CRITICAL: Filter by user_id to ensure we only get countries for this user's companies
-            let countriesMap = new Map<string, string | null>();
-            if (companyIds.length > 0) {
-              const { data: countriesData, error: countriesError } = await supabase
-                .from('user_onboarding')
-                .select('company_id, country')
-                .eq('user_id', user.id) // CRITICAL: Filter by user_id to prevent seeing other users' data
-                .in('company_id', companyIds)
-                .not('company_id', 'is', null)
-                .order('created_at', { ascending: false });
-
-              if (countriesError) {
-                console.error('🔍 Error fetching company countries:', countriesError);
-              } else if (countriesData) {
-                // Use the most recent onboarding record for each company
-                countriesMap = countriesData.reduce((map, row) => {
-                  if (row.company_id && !map.has(row.company_id)) {
-                    map.set(row.company_id, row.country || null);
-                  }
-                  return map;
-                }, new Map<string, string | null>());
-              }
-            }
-
             for (const company of companiesData || []) {
               if (company) {
                 // Fetch the actual is_default from company_members table
-                // Use maybeSingle() instead of single() to handle cases where no row exists
-                const { data: companyMember, error: memberError } = await supabase
-                  .from('company_members')
-                  .select('is_default, role, joined_at')
-                  .eq('user_id', user.id)
-                  .eq('company_id', company.id)
-                  .maybeSingle();
-
-                if (memberError) {
-                  console.error('🔍 Error fetching company member details:', memberError);
-                }
-
-                const isDefault = companyMember?.is_default || false;
-                const memberRole = companyMember?.role || orgMembership.role;
-                const joinedAt = companyMember?.joined_at || new Date().toISOString();
+                // company_members retired — role/is_default come from organization_members.
+                const isDefault = false;
+                const memberRole = orgMembership.role;
+                const joinedAt = new Date().toISOString();
 
                 const industriesSet = industriesMap.get(company.id) || new Set<string>();
                 if (company.industry) {
@@ -388,14 +321,13 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 }
 
                 const industries = Array.from(industriesSet);
-                const country = countriesMap.get(company.id) || null;
 
                 const companyWithIndustries = {
                   ...company,
                   organization_id: org.id,
                   is_default: isDefault,
                   industries,
-                  country
+                  country: company.country ?? null,
                 };
 
                 companies.push(companyWithIndustries);
@@ -445,144 +377,11 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         });
       } else {
-        // Fallback: Check old company_members table for backwards compatibility
-        
-        const { data: oldMemberships, error: oldError } = await supabase
-          .from('company_members')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('joined_at', { ascending: true });
-
-        if (oldError) {
-          console.error('🔍 Error fetching old memberships:', oldError);
-          throw oldError;
-        }
-
-        if (oldMemberships && oldMemberships.length > 0) {
-          // Fetch company details separately
-          const companyIds = oldMemberships.map(m => m.company_id);
-          const { data: companiesData } = await supabase
-            .from('companies')
-            .select('*')
-            .in('id', companyIds);
-
-          // Fetch industries for these companies
-          let industriesMap = new Map<string, Set<string>>();
-          if (companyIds.length > 0) {
-            const { data: industriesData, error: industriesError } = await supabase
-              .from('company_industries')
-              .select('company_id, industry')
-              .in('company_id', companyIds);
-
-            if (industriesError) {
-              console.error('🔍 Error fetching fallback company industries:', industriesError);
-            } else if (industriesData) {
-              industriesMap = industriesData.reduce((map, row) => {
-                if (!map.has(row.company_id)) {
-                  map.set(row.company_id, new Set<string>());
-                }
-                map.get(row.company_id)!.add(row.industry);
-                return map;
-              }, new Map<string, Set<string>>());
-            }
-          }
-
-          // Fetch countries for these companies from user_onboarding
-          // CRITICAL: Filter by user_id to ensure we only get countries for this user's companies
-          let countriesMap = new Map<string, string | null>();
-          if (companyIds.length > 0) {
-            const { data: countriesData, error: countriesError } = await supabase
-              .from('user_onboarding')
-              .select('company_id, country')
-              .eq('user_id', user.id) // CRITICAL: Filter by user_id to prevent seeing other users' data
-              .in('company_id', companyIds)
-              .not('company_id', 'is', null)
-              .order('created_at', { ascending: false });
-
-            if (countriesError) {
-              console.error('🔍 Error fetching fallback company countries:', countriesError);
-            } else if (countriesData) {
-              // Use the most recent onboarding record for each company
-              countriesMap = countriesData.reduce((map, row) => {
-                if (row.company_id && !map.has(row.company_id)) {
-                  map.set(row.company_id, row.country || null);
-                }
-                return map;
-              }, new Map<string, string | null>());
-            }
-          }
-
-          const companiesMap = new Map<string, any>(
-            (companiesData || []).map(c => {
-              const industriesSet = industriesMap.get(c.id) || new Set<string>();
-              if (c.industry) {
-                industriesSet.add(c.industry);
-              }
-              const country = countriesMap.get(c.id) || null;
-              return [c.id, { ...c, industries: Array.from(industriesSet), country }];
-            })
-          );
-
-          const companies = oldMemberships.map(m => {
-            const company = companiesMap.get(m.company_id);
-            if (!company) return null;
-            return {
-              ...company,
-              is_default: m.is_default
-            };
-          }).filter(Boolean) as Company[];
-
-          setUserCompanies(companies);
-          setUserMemberships(oldMemberships.map(m => ({
-            ...m,
-            company: companiesMap.get(m.company_id)
-          })));
-
-          // Only set current company if none is selected or current company is no longer valid
-          setCurrentCompany(prevCurrent => {
-            if (!prevCurrent) {
-              // No current company, set to default or first
-              const defaultCompany = companies.find(c => c.is_default) || companies[0];
-              if (defaultCompany) {
-                return defaultCompany;
-              }
-              return null;
-            } else {
-              // Check if current company is still valid
-              const stillValid = companies.find(c => c.id === prevCurrent.id);
-              if (stillValid) {
-                return prevCurrent;
-              } else {
-                // Current company no longer valid, set to default or first
-                const defaultCompany = companies.find(c => c.is_default) || companies[0];
-                if (defaultCompany) {
-                  return defaultCompany;
-                }
-                return null;
-              }
-            }
-          });
-        } else {
-          // No companies found - check if user needs to complete onboarding
-          const { data: onboardingData } = await supabase
-            .from('user_onboarding')
-            .select('organization_name, company_name, industry, company_size, competitors')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
-
-          if (onboardingData?.company_name && onboardingData?.industry) {
-            // Don't auto-create here, let the user know they need to complete onboarding
-            setCurrentCompany(null);
-            setUserCompanies([]);
-            setUserMemberships([]);
-          } else {
-            setCurrentCompany(null);
-            setUserCompanies([]);
-            setUserMemberships([]);
-          }
-        }
+        // No org memberships → user has no access to any company yet.
+        // Admin must add them to an organization in the admin panel.
+        setCurrentCompany(null);
+        setUserCompanies([]);
+        setUserMemberships([]);
       }
 
     } catch (error) {
@@ -660,7 +459,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (isAdmin) {
         const { data: companyData } = await supabase
           .from('companies')
-          .select('id, name, industry, company_size, competitors, settings, created_at, updated_at, created_by')
+          .select('id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by')
           .eq('id', companyId)
           .single();
         
@@ -687,17 +486,10 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             ? orgCompany?.organizations[0] 
             : orgCompany?.organizations;
           
-          const { data: companyMember } = await supabase
-            .from('company_members')
-            .select('is_default')
-            .eq('user_id', user.id)
-            .eq('company_id', companyId)
-            .maybeSingle();
-          
           company = {
             ...companyData,
             organization_id: orgCompany?.organization_id,
-            is_default: companyMember?.is_default || false,
+            is_default: false,
             industries: Array.from(industries),
             country: null
           };
@@ -735,53 +527,16 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
               const companyIds = orgCompanies.map(oc => oc.company_id);
               const { data: companiesData } = await supabase
                 .from('companies')
-                .select('id, name, industry, company_size, competitors, settings, created_at, updated_at, created_by')
+                .select('id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by')
                 .in('id', companyIds);
-
-              // Fetch countries and company_members in one batch (avoid N+1 queries)
-              let countriesMap = new Map<string, string | null>();
-              const membersMap = new Map<string, boolean>();
-
-              if (companyIds.length > 0) {
-                const [countriesResult, membersResult] = await Promise.all([
-                  supabase
-                    .from('user_onboarding')
-                    .select('company_id, country')
-                    .eq('user_id', user.id)
-                    .in('company_id', companyIds)
-                    .not('company_id', 'is', null)
-                    .order('created_at', { ascending: false }),
-                  supabase
-                    .from('company_members')
-                    .select('company_id, is_default')
-                    .eq('user_id', user.id)
-                    .in('company_id', companyIds)
-                ]);
-
-                if (countriesResult.data) {
-                  countriesResult.data.forEach(row => {
-                    if (row.company_id && !countriesMap.has(row.company_id)) {
-                      countriesMap.set(row.company_id, row.country || null);
-                    }
-                  });
-                }
-                if (membersResult.data) {
-                  membersResult.data.forEach(row => {
-                    membersMap.set(row.company_id, row.is_default || false);
-                  });
-                }
-              }
 
               for (const companyData of companiesData || []) {
                 if (companyData) {
-                  const isDefault = membersMap.get(companyData.id) || false;
-                  const country = countriesMap.get(companyData.id) || null;
-
                   companies.push({
                     ...companyData,
                     organization_id: org.id,
-                    is_default: isDefault,
-                    country
+                    is_default: false,
+                    country: companyData.country ?? null,
                   });
                 }
               }
@@ -807,35 +562,16 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [fetchUserCompanies]);
 
   const setAsDefaultCompany = useCallback(async (companyId: string) => {
-    try {
-      // Update the default company in company_members table
-      const company = userCompanies.find(c => c.id === companyId);
-      if (!company) {
-        toast.error('Company not found');
-        return;
-      }
-
-      // First, unset all other defaults for this user in company_members
-      await supabase
-        .from('company_members')
-        .update({ is_default: false })
-        .eq('user_id', user?.id);
-
-      // Set this company as default in company_members
-      await supabase
-        .from('company_members')
-        .update({ is_default: true })
-        .eq('user_id', user?.id)
-        .eq('company_id', companyId);
-
-      // Refresh companies to update the UI
-      await refreshCompanies();
-      toast.success('Default company updated');
-    } catch (error) {
-      console.error('Error setting default company:', error);
-      toast.error('Failed to update default company');
+    // Per-user default-company tracking has been retired along with
+    // company_members. Switching company is handled via switchCompany;
+    // there's no persisted default. Keep this as a no-op so existing
+    // call sites don't break.
+    const company = userCompanies.find(c => c.id === companyId);
+    if (!company) {
+      toast.error('Company not found');
+      return;
     }
-  }, [userCompanies, user?.id, refreshCompanies]);
+  }, [userCompanies]);
 
   const isOwnerOrAdmin = useMemo(() => {
     // Admins always have admin access

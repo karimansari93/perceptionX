@@ -1,4 +1,7 @@
-import { TalentXAttribute } from '@/types/talentX';
+// Use a relative path here (not the Vite '@/...' alias) so this file
+// can also be imported by Supabase edge functions, which run on Deno
+// and don't resolve the alias.
+import { TalentXAttribute } from '../types/talentX.ts';
 
 export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
   {

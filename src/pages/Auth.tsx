@@ -102,141 +102,16 @@ const Auth = () => {
         return;
       }
 
-      // Check if user needs onboarding before redirecting
-      setCheckingOnboarding(true);
-      const checkOnboardingAndRedirect = async () => {
-        try {
-          const { data: userOnboardingData, error: onboardingError } = await supabase
-            .from('user_onboarding')
-            .select('id, company_name, industry')
-            .eq('user_id', user.id)
-            .not('company_name', 'is', null)
-            .not('industry', 'is', null)
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (onboardingError) {
-            logger.error('Error checking onboarding status:', onboardingError);
-            // If we can't check, default to dashboard
-            navigate('/dashboard', { 
-              state: { 
-                onboardingData,
-                userId: user.id 
-              } 
-            });
-            return;
-          }
-
-          // If no basic onboarding data, redirect to onboarding
-          if (!userOnboardingData || userOnboardingData.length === 0 || 
-              !userOnboardingData[0].company_name || !userOnboardingData[0].industry) {
-            navigate('/onboarding');
-            return;
-          }
-
-          // Check if there are actual confirmed prompts
-          const { data: promptsData, error: promptsError } = await supabase
-            .from('confirmed_prompts')
-            .select('id')
-            .eq('onboarding_id', userOnboardingData[0].id)
-            .limit(1);
-
-          if (promptsError) {
-            logger.error('Error checking confirmed prompts:', promptsError);
-            // If we can't check, default to dashboard
-            navigate('/dashboard', { 
-              state: { 
-                onboardingData,
-                userId: user.id 
-              } 
-            });
-            return;
-          }
-
-          // If no confirmed prompts, onboarding is incomplete
-          if (!promptsData || promptsData.length === 0) {
-            navigate('/onboarding');
-          } else {
-            // User has completed onboarding, go to dashboard
-            navigate('/dashboard', { 
-              state: { 
-                onboardingData,
-                userId: user.id 
-              } 
-            });
-          }
-        } catch (onboardingCheckError) {
-          logger.error('Error checking onboarding status:', onboardingCheckError);
-          // If we can't check, default to dashboard
-          navigate('/dashboard', { 
-            state: { 
-              onboardingData,
-              userId: user.id 
-            } 
-          });
-        } finally {
-          setCheckingOnboarding(false);
-        }
-      };
-
-      checkOnboardingAndRedirect();
+      // Onboarding flow retired — admin-provisioned users go straight to dashboard.
+      navigate('/dashboard', { state: { onboardingData, userId: user.id } });
     }
   }, [user, authLoading, navigate, onboardingData, redirectTo]);
 
-  const linkOnboardingToUser = async (userId: string) => {
-    if (!onboardingData) return;
-
-    try {
-      // First, check if user already has an onboarding record
-      const { data: existingRecord } = await supabase
-        .from('user_onboarding')
-        .select('id')
-        .eq('user_id', userId)
-        .limit(1);
-
-      if (existingRecord && existingRecord.length > 0) {
-        return;
-      }
-
-      // Look for unlinked onboarding records that match the company name
-      const { data: unlinkedRecords } = await supabase
-        .from('user_onboarding')
-        .select('*')
-        .is('user_id', null)
-        .eq('company_name', onboardingData.companyName)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (unlinkedRecords && unlinkedRecords.length > 0) {
-        // Link existing record to user
-        const { error: linkError } = await supabase
-          .from('user_onboarding')
-          .update({ user_id: userId })
-          .eq('id', unlinkedRecords[0].id);
-
-        if (linkError) {
-          logger.error('Error linking onboarding record:', linkError);
-        }
-      } else {
-        // Create new onboarding record for the user
-        const newRecord = {
-          user_id: userId,
-          company_name: onboardingData.companyName,
-          industry: onboardingData.industry,
-          session_id: `session_${userId}_${Date.now()}`
-        };
-
-        const { error: createError } = await supabase
-          .from('user_onboarding')
-          .insert(newRecord);
-
-        if (createError) {
-          logger.error('Error creating onboarding record:', createError);
-        }
-      }
-    } catch (error) {
-      logger.error('Error in linkOnboardingToUser:', error);
-    }
+  const linkOnboardingToUser = async (_userId: string) => {
+    // Onboarding flow retired — users are provisioned by admins. This used
+    // to write to user_onboarding, which is no longer a runtime data
+    // source. Kept as a no-op so call sites don't break.
+    return;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -294,64 +169,8 @@ const Auth = () => {
           return;
         }
 
-        // Check if user needs onboarding before redirecting
-        setCheckingOnboarding(true);
-        const checkOnboardingAndRedirect = async () => {
-          try {
-            const { data: userOnboardingData, error: onboardingError } = await supabase
-              .from('user_onboarding')
-              .select('id, company_name, industry')
-              .eq('user_id', data.user.id)
-              .not('company_name', 'is', null)
-              .not('industry', 'is', null)
-              .order('created_at', { ascending: false })
-              .limit(1);
-
-            if (onboardingError) {
-              logger.error('Error checking onboarding status:', onboardingError);
-              // If we can't check, default to dashboard
-              navigate('/dashboard');
-              return;
-            }
-
-            // If no basic onboarding data, redirect to onboarding
-            if (!userOnboardingData || userOnboardingData.length === 0 || 
-                !userOnboardingData[0].company_name || !userOnboardingData[0].industry) {
-              navigate('/onboarding');
-              return;
-            }
-
-            // Check if there are actual confirmed prompts
-            const { data: promptsData, error: promptsError } = await supabase
-              .from('confirmed_prompts')
-              .select('id')
-              .eq('onboarding_id', userOnboardingData[0].id)
-              .limit(1);
-
-            if (promptsError) {
-              logger.error('Error checking confirmed prompts:', promptsError);
-              // If we can't check, default to dashboard
-              navigate('/dashboard');
-              return;
-            }
-
-            // If no confirmed prompts, onboarding is incomplete
-            if (!promptsData || promptsData.length === 0) {
-              navigate('/onboarding');
-            } else {
-              // User has completed onboarding, go to dashboard
-              navigate('/dashboard');
-            }
-                  } catch (onboardingCheckError) {
-          logger.error('Error checking onboarding status:', onboardingCheckError);
-          // If we can't check, default to dashboard
-          navigate('/dashboard');
-        } finally {
-          setCheckingOnboarding(false);
-        }
-      };
-
-        checkOnboardingAndRedirect();
+        // Onboarding retired — admin-provisioned users land on dashboard.
+        navigate('/dashboard');
       } else {
         const { data, error } = await supabase.auth.signUp({
           email: sanitizedEmail,

@@ -157,20 +157,26 @@ serve(async (req) => {
       onboardingId = existingPrompts.onboarding_id;
     }
 
-    // If no existing prompts, get from company_members
+    // If no existing prompts, get a user via the company's organization
+    // (company_members retired — membership lives on organization_members).
     if (!userId) {
-      const { data: companyMember, error: membersError } = await supabase
-        .from('company_members')
-        .select('user_id')
+      const { data: orgCompany, error: membersError } = await supabase
+        .from('organization_companies')
+        .select('organization_id, organization_members:organization_id!inner(user_id)')
         .eq('company_id', companyId)
         .limit(1)
         .maybeSingle();
 
-      if (membersError || !companyMember) {
+      const orgMembers = (orgCompany as any)?.organization_members;
+      const fallbackUserId = Array.isArray(orgMembers)
+        ? orgMembers[0]?.user_id
+        : orgMembers?.user_id;
+
+      if (membersError || !fallbackUserId) {
         throw new Error(`No user found for company: ${membersError?.message || 'Company has no members'}`);
       }
 
-      userId = companyMember.user_id;
+      userId = fallbackUserId;
     }
 
     // 3. Get onboarding data if we don't have onboarding_id

@@ -149,13 +149,25 @@ serve(async (req) => {
 
     // Continue with regular processing
     try {
-      // ALWAYS INSERT new responses to preserve historical data
-      // This allows tracking changes over time and comparing different refresh periods
+      // Upsert with ignoreDuplicates so concurrent writers (e.g. the queue
+      // worker racing the watchdog re-kick) don't pile up duplicate
+      // prompt_responses rows for the same (confirmed_prompt_id, ai_model,
+      // response_month). Backed by partial unique index
+      // idx_prompt_responses_unique_per_month.
+      //
+      // Historical-responses semantics are preserved at month granularity:
+      // the unique key includes response_month (a generated column derived
+      // from created_at), so each month gets its own row but within a month
+      // only the first writer wins. That matches the actual product intent
+      // (monthly snapshots) and stops the duplicate-generation cost bleed.
       const { data: inserted, error: insertError } = await supabase
         .from('prompt_responses')
-        .insert(insertData)
+        .upsert(insertData, {
+          onConflict: 'confirmed_prompt_id,ai_model,response_month',
+          ignoreDuplicates: true,
+        })
         .select()
-        .single();
+        .maybeSingle();
 
       if (insertError) {
         console.error('Error storing analysis:', insertError);
@@ -164,7 +176,21 @@ serve(async (req) => {
           { status: 500, headers: corsHeaders }
         );
       }
-      
+
+      // `inserted` is null when ignoreDuplicates skipped the row (duplicate
+      // write attempt). Skip the theme-analysis trigger — themes were already
+      // queued by the original insert that won the race. This is the single
+      // biggest cost-saver: theming was doubling OpenAI spend on every dup.
+      if (!inserted) {
+        console.log(
+          `Duplicate response skipped for prompt ${confirmed_prompt_id} / ${ai_model} this month — no theme analysis triggered.`,
+        );
+        return new Response(
+          JSON.stringify({ success: true, deduplicated: true }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
       const promptResponse = inserted;
 
       // Trigger AI thematic analysis for new responses.

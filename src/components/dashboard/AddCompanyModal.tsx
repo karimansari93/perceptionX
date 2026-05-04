@@ -255,6 +255,13 @@ export const AddCompanyModal = ({
   };
 
   const handleSubmit = async () => {
+    // Self-serve company creation has been retired. Companies are now
+    // created by admins via the admin panel. The previous flow depended
+    // on the auto_create_company_from_onboarding trigger (dropped).
+    toast.error('Adding companies has moved to the admin panel — please contact your admin.');
+    return;
+
+    // eslint-disable-next-line no-unreachable
     if (!companyName.trim() || !industry.trim()) {
       toast.error('Please fill in all required fields');
       return;
@@ -577,13 +584,14 @@ export const AddCompanyModal = ({
         // Check if company exists in userCompanies by refreshing
         await refreshCompanies();
         
+        // Verify company is reachable via the org-membership path now that
+        // company_members has been retired.
         const { data: verifyCompany } = await supabase
-          .from('company_members')
-          .select('company_id, company:companies(*)')
-          .eq('user_id', user.id)
-          .eq('company_id', newCompany.id)
-          .single();
-        
+          .from('companies')
+          .select('id')
+          .eq('id', newCompany.id)
+          .maybeSingle();
+
         if (verifyCompany) {
           companyFound = true;
           break;
