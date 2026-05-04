@@ -577,13 +577,14 @@ export const AddCompanyModal = ({
         // Check if company exists in userCompanies by refreshing
         await refreshCompanies();
         
+        // Verify company is reachable via the org-membership path now that
+        // company_members has been retired.
         const { data: verifyCompany } = await supabase
-          .from('company_members')
-          .select('company_id, company:companies(*)')
-          .eq('user_id', user.id)
-          .eq('company_id', newCompany.id)
-          .single();
-        
+          .from('companies')
+          .select('id')
+          .eq('id', newCompany.id)
+          .maybeSingle();
+
         if (verifyCompany) {
           companyFound = true;
           break;

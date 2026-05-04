@@ -919,6 +919,12 @@ export const useDashboardData = () => {
   }>({ companyId: null, timestamp: 0, data: [] });
 
   const fetchSearchResults = useCallback(async () => {
+    // search_insights feature retired — no network calls.
+    setSearchResults([]);
+    setSearchResultsLoading(false);
+    return;
+
+    // eslint-disable-next-line no-unreachable
     if (!user || !currentCompany) {
       setSearchResults([]);
       setSearchResultsLoading(false);
@@ -940,7 +946,7 @@ export const useDashboardData = () => {
 
     try {
       setSearchResultsLoading(true);
-      
+
       // Get the most recent search session for this company
       const { data: sessionData, error: sessionError } = await retrySupabaseQuery(() =>
         supabase
