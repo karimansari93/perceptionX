@@ -59,7 +59,17 @@ serve(async (req) => {
     const body = await req.json();
     console.log('Request body:', body);
     
-    const { prompt, enableWebSearch = true, batch = false } = body;
+    const {
+      prompt,
+      enableWebSearch = true,
+      batch = false,
+      // Optional caller-overrides. Defaults preserve existing behaviour for
+      // backend pipelines (Sonnet 4, 1500 max tokens). Dashboard AI summaries
+      // pass `model: 'claude-haiku-4-5'` to use Haiku's higher rate-limit tier
+      // and a smaller `maxTokens` for short structured outputs.
+      model: requestedModel,
+      maxTokens: requestedMaxTokens,
+    } = body;
 
     if (!prompt) {
       throw new Error('Prompt is required');
@@ -75,12 +85,17 @@ serve(async (req) => {
     // In batch mode (or when web search is explicitly disabled), omit tools entirely
     // to keep responses fast (~5-10s) and within Supabase edge function timeout limits.
     const useWebSearch = enableWebSearch && !batch;
-    const maxTokens = batch ? 800 : 1500;
+    const model = typeof requestedModel === 'string' && requestedModel.length > 0
+      ? requestedModel
+      : 'claude-sonnet-4-20250514';
+    const maxTokens = typeof requestedMaxTokens === 'number' && requestedMaxTokens > 0
+      ? requestedMaxTokens
+      : (batch ? 800 : 1500);
 
-    console.log(`Making request to Claude API (batch=${batch}, webSearch=${useWebSearch}, maxTokens=${maxTokens})...`)
+    console.log(`Making request to Claude API (model=${model}, batch=${batch}, webSearch=${useWebSearch}, maxTokens=${maxTokens})...`)
 
     const requestBody: Record<string, any> = {
-      model: 'claude-sonnet-4-20250514',
+      model,
       max_tokens: maxTokens,
       messages: [
         {

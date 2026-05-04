@@ -94,10 +94,13 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
 
     const locations = new Set<string>();
     
+    // Treat any country-agnostic variants as the same as the top-level
+    // "Global" sentinel — selecting that already shows all locations combined,
+    // so we don't render a separate row for them.
+    const GLOBAL_LIKE = new Set(['GLOBAL', 'Global', 'Global (All Countries)', 'Worldwide']);
     userCompanies.forEach(company => {
       const country = company.country || 'GLOBAL';
-      // Only add non-GLOBAL countries to the set
-      if (country !== 'GLOBAL') {
+      if (!GLOBAL_LIKE.has(country)) {
         locations.add(country);
       }
     });

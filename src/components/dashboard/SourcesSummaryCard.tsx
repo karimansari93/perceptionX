@@ -148,9 +148,13 @@ export const SourcesSummaryCard = ({
     }));
   }, [mentionedCitations, responses, companyName, sourceTrends]);
 
+  // Use the full list of mentioned citations as the denominator so each
+  // source's % is its actual share of total mentions — matches what the
+  // Sources tab shows when the user clicks "View All". Previously this was
+  // summed across the top 5 only, which inflated each share to ~100%.
   const totalSourceMentions = useMemo(() => {
-    return topSources.reduce((sum, s) => sum + s.count, 0);
-  }, [topSources]);
+    return mentionedCitations.reduce((sum, c) => sum + c.count, 0);
+  }, [mentionedCitations]);
 
   const renderSourceItem = (source: any) => {
     const mediaTypeInfo = getMediaTypeInfo(source.mediaType);

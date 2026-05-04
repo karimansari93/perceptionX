@@ -114,14 +114,17 @@ export const CompetitorsSummaryCard = ({
     return counts;
   }, [previousPeriodResponses]);
 
-  // Get top 5 direct competitors from competitive prompts only (matching Competitors tab default)
-  const topCompetitorsFiltered = useMemo(() => {
+  // Build the FULL list of direct competitors first (not just top 5) so that
+  // percentages are computed against the true total of competitor mentions —
+  // this matches what users see when they click "View All" on the Competitors
+  // tab. Previously the denominator was the sum of just the top 5, which
+  // inflated each share to roughly 100% combined.
+  const allCompetitorsFiltered = useMemo(() => {
     const excludedCompetitors = new Set([
       'glassdoor', 'indeed', 'ambitionbox', 'workday', 'linkedin', 'monster', 'careerbuilder', 'ziprecruiter',
       'dice', 'angelist', 'wellfound', 'builtin', 'stackoverflow', 'github'
     ]);
 
-    // Count competitors from competitive prompt responses only
     const counts: Record<string, number> = {};
     responses
       .filter(r => r.confirmed_prompts?.prompt_type === 'competitive' || r.confirmed_prompts?.prompt_type === 'talentx_competitive')
@@ -141,7 +144,6 @@ export const CompetitorsSummaryCard = ({
 
     return Object.entries(counts)
       .sort(([, a], [, b]) => b - a)
-      .slice(0, 5)
       .map(([name, count]) => ({
         company: name,
         count,
@@ -150,13 +152,18 @@ export const CompetitorsSummaryCard = ({
       }));
   }, [responses, companyName, competitorPreviousCounts]);
 
+  const topCompetitorsFiltered = useMemo(
+    () => allCompetitorsFiltered.slice(0, 5),
+    [allCompetitorsFiltered],
+  );
+
   const totalCompetitorMentions = useMemo(() => {
-    return topCompetitorsFiltered.reduce((sum, c) => sum + c.count, 0);
-  }, [topCompetitorsFiltered]);
+    return allCompetitorsFiltered.reduce((sum, c) => sum + c.count, 0);
+  }, [allCompetitorsFiltered]);
 
   const totalPreviousMentions = useMemo(() => {
-    return topCompetitorsFiltered.reduce((sum, c) => sum + (c.previousCount || 0), 0);
-  }, [topCompetitorsFiltered]);
+    return allCompetitorsFiltered.reduce((sum, c) => sum + (c.previousCount || 0), 0);
+  }, [allCompetitorsFiltered]);
 
   const renderCompetitorItem = (competitor: any) => {
     const faviconUrl = getCompetitorFavicon(competitor.displayName);

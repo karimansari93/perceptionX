@@ -298,7 +298,7 @@ export const useDashboardData = () => {
                   response_text: response.response_text,
                   citations: response.citations,
                   tested_at: response.tested_at || response.updated_at || response.created_at,
-                  company_mentioned: true,
+                  company_mentioned: response.company_mentioned,
                   detected_competitors: response.detected_competitors,
 
                   confirmed_prompts: {

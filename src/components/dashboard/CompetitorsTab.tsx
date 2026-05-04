@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useTransition, useDeferredValue, memo } from "react";
+import { useState, useMemo, useEffect, useRef, useTransition, useDeferredValue, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -44,6 +44,9 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   const [competitorThinkingStep, setCompetitorThinkingStep] = useState<number>(-1);
   const [competitorThinkingSteps, setCompetitorThinkingSteps] = useState<string[]>([]);
   const [competitorSummarySources, setCompetitorSummarySources] = useState<{ domain: string; url: string | null; displayName: string }[]>([]);
+  // Track last competitor we auto-fetched a summary for, so reopening the
+  // sheet for the same competitor doesn't re-fire, but switching does.
+  const lastCompetitorFetchKeyRef = useRef<string>("");
 
   const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = usePersistedState<boolean>('competitorsTab.isMentionsDrawerOpen', false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
@@ -502,19 +505,32 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
 
   const fetchCompetitorSummary = async () => {
     if (!selectedCompetitor) return;
+    // Capture the key this fetch was kicked off for. If the user switches
+    // competitors before the response lands, we'll discard stale results
+    // rather than overwriting the new one.
+    const fetchKey = selectedCompetitor;
     setCompetitorSummary("");
     setCompetitorSummaryError(null);
     setLoadingCompetitorSummary(true);
     setCompetitorThinkingStep(0);
     setCompetitorThinkingSteps([]);
 
-    const relevantResponses = getFullResponsesForCompetitor(selectedCompetitor);
-    if (relevantResponses.length === 0) {
+    const allResponses = getFullResponsesForCompetitor(selectedCompetitor);
+    if (allResponses.length === 0) {
       setCompetitorSummaryError("No responses found for this competitor.");
       setLoadingCompetitorSummary(false);
       setCompetitorThinkingStep(-1);
       return;
     }
+
+    // Cap the prompt size to stay well under Claude's per-minute token budget
+    // (org limit: 30k input tokens/min). Popular competitors can have 200+
+    // mentions; sending all of them blows the budget. Sample down hard.
+    const MAX_RESPONSES = 25;
+    const RESPONSE_EXCERPT_CHARS = 300;
+    const totalResponseCount = allResponses.length;
+    const relevantResponses =
+      totalResponseCount > MAX_RESPONSES ? allResponses.slice(0, MAX_RESPONSES) : allResponses;
 
     let texts = responseTexts;
     const missingTextIds = relevantResponses.filter(r => !r.response_text && !texts[r.id]).map(r => r.id);
@@ -543,26 +559,60 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
     });
     setCompetitorSummarySources(sourceMap);
 
+    // Each step previews a section the user will see in the sheet.
     const steps = [
-      `Reading ${relevantResponses.length} responses mentioning ${selectedCompetitor}...`,
-      `Identifying key themes and comparisons...`,
-      `Evaluating sentiment across mentions...`,
-      `Writing competitive analysis...`,
+      totalResponseCount > MAX_RESPONSES
+        ? `Sampling ${relevantResponses.length} of ${totalResponseCount} responses…`
+        : `Reading ${relevantResponses.length} responses…`,
+      `Writing the summary…`,
+      `Comparing mention frequency vs ${companyName}…`,
+      `Ranking top sources…`,
+      `Counting mentions by model…`,
     ];
     setCompetitorThinkingSteps(steps);
 
     const stepTimers: ReturnType<typeof setTimeout>[] = [];
     for (let i = 1; i < steps.length; i++) {
-      stepTimers.push(setTimeout(() => setCompetitorThinkingStep(i), i * 1800));
+      stepTimers.push(setTimeout(() => setCompetitorThinkingStep(i), i * 1100));
     }
 
     const sourcesList = sourceMap.map((s, i) => `[${i + 1}] ${s.displayName} (${s.domain})`).join('\n');
 
+    // Aggregate location + job function from the responses so the AI can
+    // ground the summary in the specific markets and roles being asked about.
+    const locationCounts = new Map<string, number>();
+    const jobFunctionCounts = new Map<string, number>();
+    relevantResponses.forEach((r: any) => {
+      const loc = r.confirmed_prompts?.location_context;
+      const jf = r.confirmed_prompts?.job_function_context;
+      if (loc) locationCounts.set(loc, (locationCounts.get(loc) ?? 0) + 1);
+      if (jf) jobFunctionCounts.set(jf, (jobFunctionCounts.get(jf) ?? 0) + 1);
+    });
+    const topLocations = [...locationCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([l, c]) => `${l} (${c})`)
+      .join(', ');
+    const topJobFunctions = [...jobFunctionCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([j, c]) => `${j} (${c})`)
+      .join(', ');
+
+    const sampleNote =
+      totalResponseCount > MAX_RESPONSES
+        ? `\n(Below is a sample of ${relevantResponses.length} representative responses out of ${totalResponseCount} total. Don't claim to have read every response.)\n`
+        : "";
+
     const prompt = `You are an employer brand analyst. Write a concise, insightful summary comparing how ${selectedCompetitor} is positioned relative to ${companyName} in the talent market.
+
+Context:
+- Markets covered (count of responses): ${topLocations || 'unspecified'}
+- Job functions covered (count of responses): ${topJobFunctions || 'unspecified'}
 
 Available sources:
 ${sourcesList || 'No sources available'}
-
+${sampleNote}
 Source responses:
 ${relevantResponses.map((r) => {
       let responseSources = '';
@@ -574,12 +624,23 @@ ${relevantResponses.map((r) => {
           if (indices.length > 0) responseSources = ` [Sources: ${indices.join(', ')}]`;
         }
       } catch { /* skip */ }
-      return `${(texts[r.id] || r.response_text || '').slice(0, 800)}${responseSources}`;
+      return `${(texts[r.id] || r.response_text || '').slice(0, RESPONSE_EXCERPT_CHARS)}${responseSources}`;
     }).join('\n---\n')}
 
-Write 2-3 short paragraphs (no bullet points, no headings). Cover: (1) what stands out about ${selectedCompetitor} and how they differ from ${companyName}, (2) areas where ${selectedCompetitor} is stronger or weaker, (3) what this means for ${companyName}'s talent strategy. Be direct and specific. Do not start with "${selectedCompetitor} is..."
+Write a short, actionable analysis with three short sections. Each section uses a markdown bold header on its own line, followed by ONE or TWO short sentences. Total output is short — keep it tight. Where the data points to a specific market or job function, name it explicitly.
 
-CRITICAL: When you reference information from a source, add an inline citation like [1], [2], etc. matching the source numbers above. Place citations naturally at the end of the relevant sentence or claim. Use citations frequently. Only cite sources from the numbered list above.`;
+**What sets them apart**
+What makes ${selectedCompetitor} distinctive as an employer — the one or two things that stand out, naming the relevant market(s) or roles where this is most evident.
+
+**How ${companyName} compares**
+Where ${companyName}'s position differs — be specific about a strength and a weakness vs ${selectedCompetitor}, again grounded in a market or role if the data supports it.
+
+**Your move**
+One concrete, actionable recommendation for ${companyName}'s talent strategy in response to ${selectedCompetitor} — ideally targeted at a specific market or function.
+
+Be direct, specific, professional. No hedging, no preamble, no summary paragraph. Do not open with "${selectedCompetitor} is...". **Do NOT include a top-level title or heading** (no "# Title", no "## Heading"). Only the three bold section headers exactly as specified.
+
+CRITICAL: When you reference information from a source, add an inline citation like [1], [2], etc. matching the source numbers above. Place citations naturally at the end of the relevant sentence. Use citations frequently. Only cite sources from the numbered list above.`;
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -596,23 +657,113 @@ CRITICAL: When you reference information from a source, add an inline citation l
           "Content-Type": "application/json",
           "Authorization": `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({ prompt, enableWebSearch: false })
+        body: JSON.stringify({
+          prompt,
+          enableWebSearch: false,
+          model: "claude-haiku-4-5",
+          maxTokens: 900,
+        })
       });
       const data = await res.json();
       stepTimers.forEach(clearTimeout);
+      // Drop stale responses if the user has since switched competitors.
+      if (lastCompetitorFetchKeyRef.current !== fetchKey) return;
       if (data.response) {
         setCompetitorSummary(data.response.trim());
       } else {
-        setCompetitorSummaryError(data.error || "No summary generated.");
+        const isRateLimit = /rate limit|429/i.test(data.error || "");
+        setCompetitorSummaryError(
+          isRateLimit
+            ? "We're a bit overloaded right now — give it a moment."
+            : "Couldn't generate the summary. Try again?",
+        );
       }
-    } catch (err) {
+    } catch {
       stepTimers.forEach(clearTimeout);
-      setCompetitorSummaryError("Failed to generate summary.");
+      if (lastCompetitorFetchKeyRef.current !== fetchKey) return;
+      setCompetitorSummaryError("Couldn't generate the summary. Try again?");
     } finally {
-      setLoadingCompetitorSummary(false);
-      setCompetitorThinkingStep(-1);
+      if (lastCompetitorFetchKeyRef.current === fetchKey) {
+        setLoadingCompetitorSummary(false);
+        setCompetitorThinkingStep(-1);
+      }
     }
   };
+
+  // Auto-generate the competitor summary whenever the sheet is opened for a
+  // new competitor. Reset stale state so switching competitors re-fetches.
+  useEffect(() => {
+    if (!isCompetitorModalOpen || !selectedCompetitor) return;
+    if (selectedCompetitor === lastCompetitorFetchKeyRef.current) return;
+    setCompetitorSummary("");
+    setCompetitorSummaryError(null);
+    setLoadingCompetitorSummary(false);
+    lastCompetitorFetchKeyRef.current = selectedCompetitor;
+    fetchCompetitorSummary();
+    // fetchCompetitorSummary intentionally omitted — closes over current state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCompetitorModalOpen, selectedCompetitor]);
+
+  // Stagger-reveal the cards below the AI summary. They stay hidden while
+  // the summary is generating, then cascade in once it's ready.
+  const [competitorRevealStep, setCompetitorRevealStep] = useState(0);
+  useEffect(() => {
+    if (!isCompetitorModalOpen) {
+      setCompetitorRevealStep(0);
+      return;
+    }
+    if (loadingCompetitorSummary) {
+      setCompetitorRevealStep(0);
+      return;
+    }
+    if (competitorSummary || competitorSummaryError) {
+      const timers = [
+        setTimeout(() => setCompetitorRevealStep(1), 200),
+        setTimeout(() => setCompetitorRevealStep(2), 500),
+        setTimeout(() => setCompetitorRevealStep(3), 800),
+      ];
+      return () => timers.forEach(clearTimeout);
+    }
+  }, [isCompetitorModalOpen, loadingCompetitorSummary, competitorSummary, competitorSummaryError]);
+
+  const competitorRevealClass = (step: number) =>
+    `transition-all duration-500 ease-out ${
+      competitorRevealStep >= step
+        ? "opacity-100 translate-y-0"
+        : "opacity-0 translate-y-3 pointer-events-none"
+    }`;
+
+  // Top citation domains for the selected competitor — used by the "Top
+  // sources where they appear" card in the sheet. Ordered by frequency.
+  const competitorComparison = useMemo(() => {
+    if (!selectedCompetitor) return null;
+    const competitorResponses = getFullResponsesForCompetitor(selectedCompetitor);
+
+    const domainCounts = new Map<string, number>();
+    for (const r of competitorResponses) {
+      try {
+        const citations =
+          typeof r.citations === "string" ? JSON.parse(r.citations) : r.citations;
+        if (!Array.isArray(citations)) continue;
+        const seen = new Set<string>();
+        for (const c of citations) {
+          const d = (c?.domain || "").toLowerCase().trim();
+          if (!d || seen.has(d)) continue;
+          seen.add(d);
+          domainCounts.set(d, (domainCounts.get(d) ?? 0) + 1);
+        }
+      } catch {
+        /* skip */
+      }
+    }
+    const topDomains = [...domainCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([domain, count]) => ({ domain, count }));
+
+    return { topDomains };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCompetitor, responses]);
 
   const renderAllTimeBar = (data: { name: string; count: number; change?: number; previousCount?: number; hasPreviousData?: boolean }, maxCount: number, totalMentions: number, totalPreviousMentions: number) => {
     const barWidth = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
@@ -775,20 +926,14 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
       {/* Competitor Panel (slide from right) */}
       <Sheet open={isCompetitorModalOpen} onOpenChange={(open) => { if (!open) handleCloseCompetitorModal(); }}>
-        <SheetContent 
-          side="right" 
-          className={`p-0 flex flex-col gap-0 [&>button]:hidden transition-all duration-500 ease-in-out ${
-            competitorSummary || loadingCompetitorSummary || competitorSummaryError 
-              ? 'w-full sm:max-w-2xl inset-y-0 h-full rounded-none' 
-              : 'w-full sm:max-w-sm !h-auto !inset-y-auto !bottom-6 !right-4 !rounded-2xl !border !shadow-2xl'
-          }`}
+        <SheetContent
+          side="right"
+          className="p-0 flex flex-col gap-0 [&>button]:hidden w-full sm:max-w-2xl inset-y-0 h-full rounded-none"
         >
-          <div className={`flex items-center justify-between px-5 py-4 bg-white ${
-            competitorSummary || loadingCompetitorSummary || competitorSummaryError ? 'border-b' : 'rounded-t-2xl'
-          }`}>
+          <div className="flex items-center justify-between px-5 py-4 bg-white border-b">
             <SheetTitle className="flex items-center gap-2 text-base font-semibold">
-              <img 
-                src={getCompetitorFavicon(selectedCompetitor || '')} 
+              <img
+                src={getCompetitorFavicon(selectedCompetitor || '')}
                 alt={`${selectedCompetitor} favicon`}
                 className="w-5 h-5 rounded"
                 onError={(e) => { e.currentTarget.style.display = 'none'; }}
@@ -801,58 +946,15 @@ CRITICAL: When you reference information from a source, add an inline citation l
               })()}
             </SheetTitle>
           </div>
-          <div className={`overflow-y-auto px-5 py-4 ${
-            competitorSummary || loadingCompetitorSummary || competitorSummaryError ? 'flex-1' : ''
-          }`}>
-            <div className="space-y-4">
-              {/* MODELS ROW */}
-              {selectedCompetitor && (() => {
-                const competitorResponses = getFullResponsesForCompetitor(selectedCompetitor);
-                const uniqueLLMs = Array.from(new Set(competitorResponses.map(r => r.ai_model).filter(Boolean)));
-                return (
-                  <div className="flex flex-row gap-8 mt-1 mb-1 w-full">
-                    <div className="flex flex-col items-start min-w-[120px]">
-                      <span className="text-xs text-gray-400 font-medium mb-1">Models</span>
-                      <div className="flex flex-row flex-wrap items-center gap-2">
-                        {uniqueLLMs.length === 0 ? (
-                          <span className="text-xs text-gray-400">None</span>
-                        ) : (
-                          uniqueLLMs.map(model => (
-                            <span key={model} className="inline-flex items-center">
-                              <LLMLogo modelName={model} size="sm" className="mr-1" />
-                              <span className="text-xs text-gray-700 mr-2">{getLLMDisplayName(model)}</span>
-                            </span>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Ask AI — inline for compact state */}
-              {!competitorSummary && !loadingCompetitorSummary && !competitorSummaryError && (
-                <div className="flex justify-center pt-2 pb-1">
-                  <div className="animate-slideUpGlow rounded-full">
-                    <button
-                      onClick={fetchCompetitorSummary}
-                      className="h-11 rounded-full bg-[#13274F] text-white shadow-lg hover:bg-[#1a3468] transition-all hover:scale-105 flex items-center justify-center gap-2 px-5"
-                    >
-                      <img alt="PerceptionX" className="h-5 w-5 object-contain shrink-0 brightness-0 invert" src="/logos/perceptionx-small.png" />
-                      <span className="text-sm font-medium whitespace-nowrap">Ask AI</span>
-                      <span className="text-[10px] font-semibold bg-[#DB5E89] text-white px-1.5 py-0.5 rounded-full leading-none">BETA</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* AI Summary — on demand */}
+          <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className="space-y-5">
+              {/* AI Summary — auto-fires on open */}
               {competitorSummary ? (
-                <Card className="border-blue-100 bg-blue-50/30">
+                <Card className="border-[#0DBCBA]/30 bg-[#0DBCBA]/5">
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-base font-semibold flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-blue-500" />
+                        <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
                         AI Summary
                       </CardTitle>
                       <Button variant="ghost" size="sm" onClick={fetchCompetitorSummary} disabled={loadingCompetitorSummary} className="text-xs text-gray-400 hover:text-gray-600 h-auto py-1">
@@ -864,11 +966,29 @@ CRITICAL: When you reference information from a source, add an inline citation l
                   <CardContent>
                     <div className="text-gray-800 text-sm leading-relaxed">
                       {competitorSummary.split('\n\n').filter(Boolean).map((paragraph, pIdx) => {
-                        const parts = paragraph.split(/(\[\d+(?:\s*,\s*\d+)*\])/g);
+                        const trimmed = paragraph.trim();
+                        // Strip stray markdown ATX headings — the prompt forbids them
+                        // but models occasionally still produce them.
+                        if (/^#{1,6}\s/.test(trimmed)) return null;
+                        // Header-only paragraph (just **Title**) → render as a heading
+                        const headerOnlyMatch = trimmed.match(/^\*\*([^*]+)\*\*$/);
+                        if (headerOnlyMatch) {
+                          return (
+                            <h4
+                              key={pIdx}
+                              className="text-sm font-semibold text-gray-900 mt-4 first:mt-0 mb-1.5"
+                            >
+                              {headerOnlyMatch[1]}
+                            </h4>
+                          );
+                        }
+                        // Mixed paragraph — split on citations AND inline bold
+                        const parts = paragraph.split(/(\[\d+(?:\s*,\s*\d+)*\]|\*\*[^*]+\*\*)/g);
                         return (
                           <p key={pIdx} className="mb-3 last:mb-0">
                             {parts.map((part, partIdx) => {
                               const citationMatch = part.match(/^\[([\d\s,]+)\]$/);
+                              const boldMatch = part.match(/^\*\*([^*]+)\*\*$/);
                               if (citationMatch) {
                                 const nums = citationMatch[1].split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
                                 return (
@@ -890,6 +1010,13 @@ CRITICAL: When you reference information from a source, add an inline citation l
                                   </span>
                                 );
                               }
+                              if (boldMatch) {
+                                return (
+                                  <strong key={partIdx} className="font-semibold text-gray-900">
+                                    {boldMatch[1]}
+                                  </strong>
+                                );
+                              }
                               return <span key={partIdx}>{part}</span>;
                             })}
                           </p>
@@ -899,47 +1026,148 @@ CRITICAL: When you reference information from a source, add an inline citation l
                   </CardContent>
                 </Card>
               ) : loadingCompetitorSummary ? (
-                <Card className="border-blue-100 bg-gradient-to-br from-blue-50/40 to-indigo-50/30 overflow-hidden">
-                  <CardContent className="py-5 px-5">
-                    <div className="flex items-center gap-2 mb-4">
+                <Card className="border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/5 to-[#0DBCBA]/10 overflow-hidden">
+                  <CardContent className="py-4 px-5">
+                    <div className="flex items-center gap-2 mb-3">
                       <div className="relative">
-                        <Sparkles className="w-4 h-4 text-blue-500" />
-                        <div className="absolute inset-0 animate-ping"><Sparkles className="w-4 h-4 text-blue-400 opacity-30" /></div>
+                        <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
+                        <div className="absolute inset-0 animate-ping">
+                          <Sparkles className="w-4 h-4 text-[#0DBCBA] opacity-30" />
+                        </div>
                       </div>
-                      <span className="text-sm font-medium text-blue-700">Analyzing...</span>
+                      <span className="text-sm font-semibold text-[#0A8B89]">Thinking…</span>
                     </div>
-                    <div className="space-y-0.5">
+                    <div className="space-y-1">
                       {competitorThinkingSteps.map((step, i) => {
                         const isActive = i === competitorThinkingStep;
                         const isComplete = i < competitorThinkingStep;
                         const isPending = i > competitorThinkingStep;
                         return (
-                          <div key={i} className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${isActive ? 'bg-blue-100/60' : ''}`}
-                            style={{ opacity: isPending ? 0.3 : 1, transform: isPending ? 'translateX(4px)' : 'translateX(0)', transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }}>
+                          <div
+                            key={i}
+                            className="flex items-center gap-2.5 py-1"
+                            style={{
+                              opacity: isPending ? 0.35 : 1,
+                              transform: isPending ? "translateX(4px)" : "translateX(0)",
+                              transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+                            }}
+                          >
                             <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
-                              {isComplete ? <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" /> : isActive ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
+                              {isComplete ? (
+                                <CheckCircle2 className="w-4 h-4 text-[#0DBCBA]" />
+                              ) : isActive ? (
+                                <Loader2 className="w-4 h-4 text-[#0DBCBA] animate-spin" />
+                              ) : (
+                                <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+                              )}
                             </div>
-                            <span className={`text-xs transition-colors duration-300 ${isActive ? 'text-blue-700 font-medium' : isComplete ? 'text-blue-500' : 'text-gray-400'}`}>{step}</span>
+                            <span
+                              className={`text-sm ${
+                                isActive
+                                  ? "text-[#0A8B89] font-medium"
+                                  : isComplete
+                                    ? "text-[#0DBCBA]"
+                                    : "text-gray-400"
+                              }`}
+                            >
+                              {step}
+                            </span>
                           </div>
                         );
                       })}
                     </div>
-                    <div className="mt-4 h-1 bg-blue-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-blue-400 to-indigo-500 rounded-full transition-all duration-700 ease-out"
-                        style={{ width: `${competitorThinkingSteps.length > 0 ? ((competitorThinkingStep + 1) / competitorThinkingSteps.length) * 100 : 0}%` }} />
-                    </div>
                   </CardContent>
                 </Card>
               ) : competitorSummaryError ? (
-                <Card className="border-red-100 bg-red-50/30">
+                <Card className="border-amber-200 bg-amber-50/40">
                   <CardContent className="py-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-red-600 text-sm">{competitorSummaryError}</span>
-                      <Button variant="ghost" size="sm" onClick={fetchCompetitorSummary} className="text-xs">Retry</Button>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-amber-800 text-sm">{competitorSummaryError}</span>
+                      <Button variant="ghost" size="sm" onClick={fetchCompetitorSummary} className="text-xs">
+                        Retry
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>
               ) : null}
+
+              {/* Top sources where this competitor appears */}
+              {competitorComparison && competitorComparison.topDomains.length > 0 && (
+                <Card className={competitorRevealClass(2)}>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                      Top sources where they appear
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="divide-y">
+                      {competitorComparison.topDomains.map(({ domain, count }) => (
+                        <div key={domain} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <img
+                              src={`https://www.google.com/s2/favicons?domain=${domain}&sz=32`}
+                              alt=""
+                              className="w-4 h-4 rounded shrink-0"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                            />
+                            <span className="text-sm text-gray-900 truncate">{domain}</span>
+                          </div>
+                          <span className="text-xs text-gray-500 shrink-0">{count} response{count === 1 ? "" : "s"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Mentions by model — bar chart */}
+              {selectedCompetitor && (() => {
+                const competitorResponses = getFullResponsesForCompetitor(selectedCompetitor);
+                const modelCounts = new Map<string, number>();
+                competitorResponses.forEach((r) => {
+                  if (r.ai_model) {
+                    modelCounts.set(r.ai_model, (modelCounts.get(r.ai_model) ?? 0) + 1);
+                  }
+                });
+                const sorted = [...modelCounts.entries()]
+                  .map(([model, count]) => ({ model, count }))
+                  .sort((a, b) => b.count - a.count);
+                if (sorted.length === 0) return null;
+                const maxCount = sorted[0].count;
+                return (
+                  <Card className={competitorRevealClass(3)}>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                        Mentions by model
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2.5">
+                        {sorted.map(({ model, count }) => {
+                          const widthPct = maxCount > 0 ? (count / maxCount) * 100 : 0;
+                          return (
+                            <div key={model} className="flex items-center gap-3">
+                              <div className="flex items-center gap-1.5 w-44 shrink-0">
+                                <LLMLogo modelName={model} size="sm" />
+                                <span className="text-sm text-gray-700 truncate">{getLLMDisplayName(model)}</span>
+                              </div>
+                              <div className="flex-1 relative h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-[#0DBCBA] rounded-full transition-all duration-500"
+                                  style={{ width: `${widthPct}%` }}
+                                />
+                              </div>
+                              <span className="text-sm font-semibold text-gray-900 w-10 text-right shrink-0 tabular-nums">
+                                {count}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
             </div>
           </div>
 
