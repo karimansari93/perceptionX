@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -111,6 +111,10 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   const [summarySources, setSummarySources] = useState<{ domain: string; url: string | null; displayName: string }[]>([]);
   const [showAllAttributeSources, setShowAllAttributeSources] = useState(false);
   const [modalView, setModalView] = usePersistedState<'summary' | 'detail'>('thematicTab.modalView', 'summary');
+  // Track last attribute we auto-fetched so reopening for the same attribute doesn't refetch.
+  const lastThemeFetchKeyRef = useRef<string>("");
+  // Cascade reveal: cards below the AI summary appear after it finishes generating.
+  const [themeRevealStep, setThemeRevealStep] = useState(0);
 
   // Filter responses by prompt type (experience by default, excludes discovery)
   const filteredResponses = useMemo(() => {
@@ -431,19 +435,32 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
 
   const fetchAttributeSummary = async () => {
     if (!selectedAttribute) return;
+    // Capture the key this fetch was kicked off for. If the user switches
+    // attributes before the response lands, we'll discard stale results
+    // rather than overwriting the new one.
+    const fetchKey = selectedAttribute;
     setThemeSummary("");
     setThemeSummaryError(null);
     setLoadingThemeSummary(true);
     setThinkingStep(0);
     setThinkingSteps([]);
 
-    const attributeResponses = getResponsesForAttribute(selectedAttribute);
-    if (attributeResponses.length === 0) {
+    const allAttributeResponses = getResponsesForAttribute(selectedAttribute);
+    if (allAttributeResponses.length === 0) {
       setThemeSummaryError("No responses found for this attribute.");
       setLoadingThemeSummary(false);
       setThinkingStep(-1);
       return;
     }
+
+    // Cap the prompt size to stay under Claude's per-minute token budget
+    // (org limit: 30k input tokens/min). Popular attributes can have hundreds
+    // of responses; sample down hard.
+    const MAX_RESPONSES = 25;
+    const RESPONSE_EXCERPT_CHARS = 300;
+    const totalResponseCount = allAttributeResponses.length;
+    const attributeResponses =
+      totalResponseCount > MAX_RESPONSES ? allAttributeResponses.slice(0, MAX_RESPONSES) : allAttributeResponses;
 
     const matchingTheme = filteredThemes.find(t => t.talentx_attribute_id === selectedAttribute);
     const attributeName = matchingTheme?.talentx_attribute_name || 'this attribute';
@@ -455,17 +472,19 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     const positiveRatio = total > 0 ? Math.round((positiveThemes.length / total) * 100) : 0;
 
     const steps = [
-      `Reading ${attributeResponses.length} responses across sources...`,
-      `Analyzing ${total} themes for ${attributeName}...`,
-      `Evaluating sentiment patterns (${positiveRatio}% positive)...`,
-      `Cross-referencing positive and negative signals...`,
-      `Writing summary for ${companyName}...`,
+      totalResponseCount > MAX_RESPONSES
+        ? `Sampling ${attributeResponses.length} of ${totalResponseCount} responses…`
+        : `Reading ${attributeResponses.length} responses…`,
+      `Writing the summary…`,
+      `Counting positive vs negative themes…`,
+      `Computing visibility by model…`,
+      `Building the keyword cloud…`,
     ];
     setThinkingSteps(steps);
 
     const stepTimers: ReturnType<typeof setTimeout>[] = [];
     for (let i = 1; i < steps.length; i++) {
-      stepTimers.push(setTimeout(() => setThinkingStep(i), i * 1800));
+      stepTimers.push(setTimeout(() => setThinkingStep(i), i * 1100));
     }
 
     // Build numbered source list from responses with citations
@@ -492,11 +511,34 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
 
     const sourcesList = sourceMap.map((s, i) => `[${i + 1}] ${s.displayName} (${s.domain})`).join('\n');
 
+    // Aggregate location + job function from attribute-relevant responses so
+    // the AI can ground the summary in specific markets and roles.
+    const locationCounts = new Map<string, number>();
+    const jobFunctionCounts = new Map<string, number>();
+    attributeResponses.forEach((r: any) => {
+      const loc = r.confirmed_prompts?.location_context;
+      const jf = r.confirmed_prompts?.job_function_context;
+      if (loc) locationCounts.set(loc, (locationCounts.get(loc) ?? 0) + 1);
+      if (jf) jobFunctionCounts.set(jf, (jobFunctionCounts.get(jf) ?? 0) + 1);
+    });
+    const topLocations = [...locationCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([l, c]) => `${l} (${c})`)
+      .join(', ');
+    const topJobFunctions = [...jobFunctionCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([j, c]) => `${j} (${c})`)
+      .join(', ');
+
     const prompt = `You are an employer brand analyst. Write a concise, insightful summary of how ${companyName} is perceived regarding "${attributeName}" based on AI-sourced data from job review sites, forums, and LLM responses.
 
 Context:
 - ${total} themes were extracted for this attribute
 - ${positiveRatio}% positive sentiment
+- Markets covered (count of responses): ${topLocations || 'unspecified'}
+- Job functions covered (count of responses): ${topJobFunctions || 'unspecified'}
 - Key positive signals: ${positiveThemes.slice(0, 5).join(', ') || 'None'}
 - Key negative signals: ${negativeThemes.slice(0, 5).join(', ') || 'None'}
 
@@ -514,12 +556,23 @@ ${attributeResponses.map((r, i) => {
           if (indices.length > 0) responseSources = ` [Sources: ${indices.join(', ')}]`;
         }
       } catch { /* skip */ }
-      return `${(responseTexts[r.id] || r.response_text || '').slice(0, 800)}${responseSources}`;
+      return `${(responseTexts[r.id] || r.response_text || '').slice(0, RESPONSE_EXCERPT_CHARS)}${responseSources}`;
     }).join('\n---\n')}
 
-Write 2-3 short paragraphs (no bullet points, no headings). Be direct and specific to ${companyName}. Cover: (1) overall perception and what stands out, (2) any concerns or gaps candidates notice, (3) how this compares to what talent typically looks for. Write in a professional but accessible tone. Do not start with "${companyName} is perceived..." — vary the opening.
+Write a short, actionable analysis with three sections. Each section uses a markdown bold header on its own line, followed by ONE or TWO short sentences. Keep it tight. Where the data points to a specific market or job function, name it explicitly.
 
-CRITICAL: When you reference information from a source, add an inline citation like [1], [2], etc. matching the source numbers above. Place citations naturally at the end of the relevant sentence or claim. Use citations frequently — every key claim should have one. Only cite sources from the numbered list above.`;
+**What stands out**
+The most distinctive aspect of ${companyName}'s perception on "${attributeName}", grounded in a specific market or role where it's most evident.
+
+**Where the gaps are**
+A specific concern, weakness, or thing candidates flag — be concrete and name the market or role if the data supports it.
+
+**Your move**
+One concrete recommendation for ${companyName} — ideally targeted at a specific market or function.
+
+Be direct, professional, specific. No hedging, no preamble. Do not start with "${companyName} is perceived..." — vary the opening. **Do NOT include a top-level title or heading** (no "# Title", no "## Heading"). Only the three bold section headers exactly as specified.
+
+CRITICAL: When you reference information from a source, add an inline citation like [1], [2], etc. matching the source numbers above. Place citations naturally at the end of the relevant sentence. Use citations frequently. Only cite sources from the numbered list above.`;
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -536,23 +589,79 @@ CRITICAL: When you reference information from a source, add an inline citation l
           "Content-Type": "application/json",
           "Authorization": `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({ prompt, enableWebSearch: false })
+        body: JSON.stringify({
+          prompt,
+          enableWebSearch: false,
+          model: "claude-haiku-4-5",
+          maxTokens: 900,
+        })
       });
       const data = await res.json();
       stepTimers.forEach(clearTimeout);
+      if (lastThemeFetchKeyRef.current !== fetchKey) return;
       if (data.response) {
         setThemeSummary(data.response.trim());
       } else {
-        setThemeSummaryError(data.error || "No summary generated.");
+        const isRateLimit = /rate limit|429/i.test(data.error || "");
+        setThemeSummaryError(
+          isRateLimit
+            ? "We're a bit overloaded right now — give it a moment."
+            : "Couldn't generate the summary. Try again?",
+        );
       }
-    } catch (err) {
+    } catch {
       stepTimers.forEach(clearTimeout);
-      setThemeSummaryError("Failed to generate summary.");
+      if (lastThemeFetchKeyRef.current !== fetchKey) return;
+      setThemeSummaryError("Couldn't generate the summary. Try again?");
     } finally {
-      setLoadingThemeSummary(false);
-      setThinkingStep(-1);
+      if (lastThemeFetchKeyRef.current === fetchKey) {
+        setLoadingThemeSummary(false);
+        setThinkingStep(-1);
+      }
     }
   };
+
+  // Auto-generate the theme summary on attribute open. Reset stale state when
+  // switching attributes so the new one re-fetches.
+  useEffect(() => {
+    if (!isModalOpen || !selectedAttribute || modalView !== 'summary') return;
+    if (selectedAttribute === lastThemeFetchKeyRef.current) return;
+    setThemeSummary("");
+    setThemeSummaryError(null);
+    setLoadingThemeSummary(false);
+    lastThemeFetchKeyRef.current = selectedAttribute;
+    fetchAttributeSummary();
+    // fetchAttributeSummary intentionally omitted from deps — closes over current state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isModalOpen, selectedAttribute, modalView]);
+
+  // Cascade-reveal cards below the AI summary once it finishes generating.
+  useEffect(() => {
+    if (!isModalOpen) {
+      setThemeRevealStep(0);
+      return;
+    }
+    if (loadingThemeSummary) {
+      setThemeRevealStep(0);
+      return;
+    }
+    if (themeSummary || themeSummaryError) {
+      const timers = [
+        setTimeout(() => setThemeRevealStep(1), 200),
+        setTimeout(() => setThemeRevealStep(2), 500),
+        setTimeout(() => setThemeRevealStep(3), 800),
+        setTimeout(() => setThemeRevealStep(4), 1100),
+      ];
+      return () => timers.forEach(clearTimeout);
+    }
+  }, [isModalOpen, loadingThemeSummary, themeSummary, themeSummaryError]);
+
+  const themeRevealClass = (step: number) =>
+    `transition-all duration-500 ease-out ${
+      themeRevealStep >= step
+        ? "opacity-100 translate-y-0"
+        : "opacity-0 translate-y-3 pointer-events-none"
+    }`;
 
   const volumeThresholds = useMemo(() => {
     if (themeData.length === 0) return { p20: 0, p40: 0, p60: 0, p80: 0 };
@@ -913,61 +1022,36 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
             return (
               <div className="space-y-6">
-                {/* MODELS ROW - matching CompetitorsTab style */}
-                {(() => {
-                  const attributeResponses = getResponsesForAttribute(selectedAttribute);
-                  const uniqueLLMs = Array.from(new Set(attributeResponses.map(r => r.ai_model).filter(Boolean)));
-                  
-                  return (
-                    <div className="flex flex-row gap-8 mt-1 mb-1 w-full">
-                      <div className="flex flex-col items-start min-w-[120px]">
-                        <span className="text-xs text-gray-400 font-medium mb-1">Models</span>
-                        <div className="flex flex-row flex-wrap items-center gap-2">
-                          {uniqueLLMs.length === 0 ? (
-                            <span className="text-xs text-gray-400">None</span>
-                          ) : (
-                            uniqueLLMs.map(model => (
-                              <span key={model} className="inline-flex items-center">
-                                <LLMLogo modelName={model} size="sm" className="mr-1" />
-                                <span className="text-xs text-gray-700 mr-2">{getLLMDisplayName(model)}</span>
-                              </span>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* AI Summary — on demand */}
+                {/* AI Summary — auto-fires on open */}
                 {themeSummary ? (
-                  <Card className="mb-6 border-blue-100 bg-blue-50/30">
+                  <Card className="border-[#0DBCBA]/30 bg-[#0DBCBA]/5">
                     <CardHeader className="pb-2">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-base font-semibold flex items-center gap-2">
-                          <Sparkles className="w-4 h-4 text-blue-500" />
-                          AI Summary
-                        </CardTitle>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={fetchAttributeSummary}
-                          disabled={loadingThemeSummary}
-                          className="text-xs text-gray-400 hover:text-gray-600 h-auto py-1"
-                        >
-                          {loadingThemeSummary ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-                          Regenerate
-                        </Button>
-                      </div>
+                      <CardTitle className="text-base font-semibold flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
+                        AI Summary
+                      </CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="text-gray-800 text-sm leading-relaxed">
                         {themeSummary.split('\n\n').filter(Boolean).map((paragraph, pIdx) => {
-                          const parts = paragraph.split(/(\[\d+(?:\s*,\s*\d+)*\])/g);
+                          const trimmed = paragraph.trim();
+                          // Strip stray markdown ATX headings (`# Title`, `## Subhead`, etc.)
+                          // — the prompt forbids them but models occasionally still produce them.
+                          if (/^#{1,6}\s/.test(trimmed)) return null;
+                          const headerOnlyMatch = trimmed.match(/^\*\*([^*]+)\*\*$/);
+                          if (headerOnlyMatch) {
+                            return (
+                              <h4 key={pIdx} className="text-sm font-semibold text-gray-900 mt-4 first:mt-0 mb-1.5">
+                                {headerOnlyMatch[1]}
+                              </h4>
+                            );
+                          }
+                          const parts = paragraph.split(/(\[\d+(?:\s*,\s*\d+)*\]|\*\*[^*]+\*\*)/g);
                           return (
                             <p key={pIdx} className="mb-3 last:mb-0">
                               {parts.map((part, partIdx) => {
                                 const citationMatch = part.match(/^\[([\d\s,]+)\]$/);
+                                const boldMatch = part.match(/^\*\*([^*]+)\*\*$/);
                                 if (citationMatch) {
                                   const nums = citationMatch[1].split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
                                   return (
@@ -989,6 +1073,13 @@ CRITICAL: When you reference information from a source, add an inline citation l
                                     </span>
                                   );
                                 }
+                                if (boldMatch) {
+                                  return (
+                                    <strong key={partIdx} className="font-semibold text-gray-900">
+                                      {boldMatch[1]}
+                                    </strong>
+                                  );
+                                }
                                 return <span key={partIdx}>{part}</span>;
                               })}
                             </p>
@@ -998,16 +1089,16 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     </CardContent>
                   </Card>
                 ) : loadingThemeSummary ? (
-                  <Card className="mb-6 border-blue-100 bg-gradient-to-br from-blue-50/40 to-indigo-50/30 overflow-hidden">
+                  <Card className="mb-6 border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/5 to-[#0DBCBA]/10 overflow-hidden">
                     <CardContent className="py-5 px-5">
                       <div className="flex items-center gap-2 mb-4">
                         <div className="relative">
-                          <Sparkles className="w-4 h-4 text-blue-500" />
+                          <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
                           <div className="absolute inset-0 animate-ping">
-                            <Sparkles className="w-4 h-4 text-blue-400 opacity-30" />
+                            <Sparkles className="w-4 h-4 text-[#0DBCBA] opacity-30" />
                           </div>
                         </div>
-                        <span className="text-sm font-medium text-blue-700">Analyzing...</span>
+                        <span className="text-sm font-semibold text-[#0A8B89]">Thinking…</span>
                       </div>
                       <div className="space-y-0.5">
                         {thinkingSteps.map((step, i) => {
@@ -1018,7 +1109,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                             <div
                               key={i}
                               className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${
-                                isActive ? 'bg-blue-100/60' : ''
+                                isActive ? 'bg-[#0DBCBA]/15' : ''
                               }`}
                               style={{
                                 opacity: isPending ? 0.3 : 1,
@@ -1028,15 +1119,15 @@ CRITICAL: When you reference information from a source, add an inline citation l
                             >
                               <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
                                 {isComplete ? (
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-500 transition-all duration-300" />
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-[#0DBCBA] transition-all duration-300" />
                                 ) : isActive ? (
-                                  <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+                                  <Loader2 className="w-3.5 h-3.5 text-[#0DBCBA] animate-spin" />
                                 ) : (
                                   <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />
                                 )}
                               </div>
                               <span className={`text-xs transition-colors duration-300 ${
-                                isActive ? 'text-blue-700 font-medium' : isComplete ? 'text-blue-500' : 'text-gray-400'
+                                isActive ? 'text-[#0A8B89] font-medium' : isComplete ? 'text-[#0DBCBA]' : 'text-gray-400'
                               }`}>
                                 {step}
                               </span>
@@ -1044,19 +1135,19 @@ CRITICAL: When you reference information from a source, add an inline citation l
                           );
                         })}
                       </div>
-                      <div className="mt-4 h-1 bg-blue-100 rounded-full overflow-hidden">
+                      <div className="mt-4 h-1 bg-[#0DBCBA]/20 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-gradient-to-r from-blue-400 to-indigo-500 rounded-full transition-all duration-700 ease-out"
+                          className="h-full bg-gradient-to-r from-[#0DBCBA] to-[#0A8B89] rounded-full transition-all duration-700 ease-out"
                           style={{ width: `${thinkingSteps.length > 0 ? ((thinkingStep + 1) / thinkingSteps.length) * 100 : 0}%` }}
                         />
                       </div>
                     </CardContent>
                   </Card>
                 ) : themeSummaryError ? (
-                  <Card className="mb-6 border-red-100 bg-red-50/30">
+                  <Card className="border-amber-200 bg-amber-50/40">
                     <CardContent className="py-4">
-                      <div className="flex items-center justify-between">
-                        <span className="text-red-600 text-sm">{themeSummaryError}</span>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-amber-800 text-sm">{themeSummaryError}</span>
                         <Button variant="ghost" size="sm" onClick={fetchAttributeSummary} className="text-xs">
                           Retry
                         </Button>
@@ -1065,7 +1156,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
                   </Card>
                 ) : null}
 
-                {/* Summary Stats */}
+                {/* Summary Stats — sentiment counts */}
+                <div className={themeRevealClass(1)}>
                 {(() => {
                   // Compute per-attribute previous period theme counts
                   const prevIds = new Set(previousPeriodResponses.map(r => r.id));
@@ -1115,9 +1207,119 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 </div>
                   );
                 })()}
+                </div>
+
+                {/* Visibility by model — % of attribute-relevant responses where the company was mentioned, per LLM */}
+                <div className={themeRevealClass(2)}>
+                {(() => {
+                  const attributeResponses = getResponsesForAttribute(selectedAttribute);
+                  const byModel = new Map<string, { total: number; mentioned: number }>();
+                  attributeResponses.forEach((r) => {
+                    if (!r.ai_model) return;
+                    const cur = byModel.get(r.ai_model) ?? { total: 0, mentioned: 0 };
+                    cur.total += 1;
+                    if (r.company_mentioned === true) cur.mentioned += 1;
+                    byModel.set(r.ai_model, cur);
+                  });
+                  const rows = [...byModel.entries()]
+                    .map(([model, { total, mentioned }]) => ({
+                      model,
+                      total,
+                      mentioned,
+                      pct: total > 0 ? (mentioned / total) * 100 : 0,
+                    }))
+                    .sort((a, b) => b.pct - a.pct);
+                  if (rows.length === 0) return null;
+                  return (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                          Visibility by model
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-2.5">
+                          {rows.map(({ model, pct }) => (
+                            <div key={model} className="flex items-center gap-3">
+                              <div className="flex items-center gap-1.5 w-44 shrink-0">
+                                <LLMLogo modelName={model} size="sm" />
+                                <span className="text-sm text-gray-700 truncate">{getLLMDisplayName(model)}</span>
+                              </div>
+                              <div className="flex-1 relative h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-[#0DBCBA] rounded-full transition-all duration-500"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                              <span className="text-sm font-semibold text-gray-900 w-12 text-right shrink-0 tabular-nums">
+                                {pct.toFixed(0)}%
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+                </div>
+
+                {/* Keyword cloud */}
+                <div className={themeRevealClass(3)}>
+                {(() => {
+                  const counts = new Map<string, number>();
+                  attributeThemes.forEach((t) => {
+                    if (!Array.isArray(t.keywords)) return;
+                    const seen = new Set<string>();
+                    t.keywords.forEach((k) => {
+                      const key = (k || "").toLowerCase().trim();
+                      if (!key || seen.has(key)) return;
+                      seen.add(key);
+                      counts.set(key, (counts.get(key) ?? 0) + 1);
+                    });
+                  });
+                  if (counts.size === 0) return null;
+                  const entries = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40);
+                  const max = entries[0][1];
+                  const min = entries[entries.length - 1][1];
+                  // Map count → font size between 12px and 26px
+                  const sizeFor = (n: number) => {
+                    if (max === min) return 16;
+                    const t = (n - min) / (max - min);
+                    return 12 + Math.round(t * 14);
+                  };
+                  return (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                          Keyword cloud
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 leading-snug">
+                          {entries.map(([word, n]) => {
+                            const fontSize = sizeFor(n) + "px";
+                            const fontWeight = n >= max * 0.7 ? 600 : 500;
+                            const titleText = n + " " + (n === 1 ? "theme" : "themes");
+                            return (
+                              <span
+                                key={word}
+                                className="text-gray-700 hover:text-[#0A8B89] transition-colors"
+                                style={{ fontSize, fontWeight }}
+                                title={titleText}
+                              >
+                                {word}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()}
+                </div>
 
                 {/* Key Themes List - Clickable */}
-                <div className="space-y-3">
+                <div className={`space-y-3 ${themeRevealClass(4)}`}>
                   <h3 className="text-sm font-semibold text-gray-900">Key Themes</h3>
                   {uniqueThemeNames.map((themeGroup, index) => {
                     const dominantSentiment = Object.entries(themeGroup.dominantSentiment)
@@ -1205,19 +1407,6 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
           </div>
 
-          {/* Floating Ask AI button — bottom right of panel */}
-          {!themeSummary && !loadingThemeSummary && !themeSummaryError && selectedAttribute && modalView === 'summary' && (
-            <div className="absolute bottom-6 right-6 z-10 animate-slideUpGlow rounded-full">
-              <button
-                onClick={fetchAttributeSummary}
-                className="h-12 rounded-full bg-[#13274F] text-white shadow-lg hover:bg-[#1a3468] transition-all hover:scale-105 flex items-center justify-center gap-2 px-5"
-              >
-                <img alt="PerceptionX" className="h-5 w-5 object-contain shrink-0 brightness-0 invert" src="/logos/perceptionx-small.png" />
-                <span className="text-sm font-medium whitespace-nowrap">Ask AI</span>
-                <span className="text-[10px] font-semibold bg-[#DB5E89] text-white px-1.5 py-0.5 rounded-full leading-none">BETA</span>
-              </button>
-            </div>
-          )}
         </SheetContent>
       </Sheet>
     </div>

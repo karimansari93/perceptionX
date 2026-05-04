@@ -45,7 +45,7 @@ const navigationGroups: NavigationGroup[] = [
   {
     title: "Analyze",
     items: [
-      { title: "Reports", icon: Download, section: "reports", group: "reports", route: "/analyze/reports" },
+      { title: "Reports", icon: Download, section: "reports", group: "reports", route: "/analyze/reports", comingSoon: true },
     ]
   },
   {
@@ -80,6 +80,8 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
   const navigate = useNavigate();
 
   const handleSectionClick = (item: NavigationItem) => {
+    // Coming-soon items are locked — keep the entry visible but disable navigation
+    if (item.comingSoon) return;
     // All items now have unique routes, so always navigate
     if (item.route) {
       navigate(item.route);
@@ -115,8 +117,9 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
                 key={item.section}
                 isActive={activeSection === item.section}
                 onClick={() => handleSectionClick(item)}
-                className="w-10 h-10 flex items-center justify-center rounded-lg p-0 relative"
-                title={item.title}
+                aria-disabled={item.comingSoon || undefined}
+                className={`w-10 h-10 flex items-center justify-center rounded-lg p-0 relative ${item.comingSoon ? "cursor-not-allowed opacity-60" : ""}`}
+                title={item.comingSoon ? `${item.title} (Coming Soon)` : item.title}
               >
                 <item.icon className="h-5 w-5" />
                 {item.comingSoon && (
@@ -175,7 +178,8 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
                       <SidebarMenuButton
                         isActive={activeSection === item.section}
                         onClick={() => handleSectionClick(item)}
-                        className="w-full justify-start relative"
+                        aria-disabled={item.comingSoon || undefined}
+                        className={`w-full justify-start relative ${item.comingSoon ? "cursor-not-allowed opacity-60 hover:bg-transparent" : ""}`}
                       >
                         <item.icon className="h-4 w-4" />
                         <span className="text-sm">{item.title}</span>

@@ -155,8 +155,8 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
 
 This source was cited ${source.count} times. Here are ${relevantResponses.length} responses that reference it:
 
-${relevantResponses.slice(0, 10).map((r, i) => {
-  const text = (texts[r.id] || r.response_text || '').slice(0, 1500);
+${relevantResponses.slice(0, 6).map((r, i) => {
+  const text = (texts[r.id] || r.response_text || '').slice(0, 600);
   return `Response ${i + 1}:\n${text}`;
 }).join('\n\n---\n\n')}
 
@@ -177,7 +177,12 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
           "Content-Type": "application/json",
           "Authorization": `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({ prompt, enableWebSearch: false })
+        body: JSON.stringify({
+          prompt,
+          enableWebSearch: false,
+          model: "claude-haiku-4-5",
+          maxTokens: 900,
+        })
       });
       const data = await res.json();
       stepTimers.forEach(clearTimeout);
@@ -718,11 +723,11 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
 
             {/* AI Summary — on demand */}
             {sourceSummary ? (
-              <Card className="border-blue-100 bg-blue-50/30">
+              <Card className="border-[#0DBCBA]/30 bg-[#0DBCBA]/5">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base font-semibold flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-blue-500" />
+                      <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
                       AI Summary
                     </CardTitle>
                     <Button
@@ -746,14 +751,14 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
                 </CardContent>
               </Card>
             ) : loadingSourceSummary ? (
-              <Card className="border-blue-100 bg-gradient-to-br from-blue-50/40 to-indigo-50/30 overflow-hidden">
+              <Card className="border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/5 to-[#0DBCBA]/10 overflow-hidden">
                 <CardContent className="py-5 px-5">
                   <div className="flex items-center gap-2 mb-4">
                     <div className="relative">
-                      <Sparkles className="w-4 h-4 text-blue-500" />
-                      <div className="absolute inset-0 animate-ping"><Sparkles className="w-4 h-4 text-blue-400 opacity-30" /></div>
+                      <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
+                      <div className="absolute inset-0 animate-ping"><Sparkles className="w-4 h-4 text-[#0DBCBA] opacity-30" /></div>
                     </div>
-                    <span className="text-sm font-medium text-blue-700">Analyzing...</span>
+                    <span className="text-sm font-medium text-[#0A8B89]">Analyzing...</span>
                   </div>
                   <div className="space-y-0.5">
                     {sourceThinkingSteps.map((step, i) => {
@@ -761,18 +766,18 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
                       const isComplete = i < sourceThinkingStep;
                       const isPending = i > sourceThinkingStep;
                       return (
-                        <div key={i} className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${isActive ? 'bg-blue-100/60' : ''}`}
+                        <div key={i} className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${isActive ? 'bg-[#0DBCBA]/15' : ''}`}
                           style={{ opacity: isPending ? 0.3 : 1, transform: isPending ? 'translateX(4px)' : 'translateX(0)', transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }}>
                           <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
-                            {isComplete ? <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" /> : isActive ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
+                            {isComplete ? <CheckCircle2 className="w-3.5 h-3.5 text-[#0DBCBA]" /> : isActive ? <Loader2 className="w-3.5 h-3.5 text-[#0DBCBA] animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
                           </div>
-                          <span className={`text-xs transition-colors duration-300 ${isActive ? 'text-blue-700 font-medium' : isComplete ? 'text-blue-500' : 'text-gray-400'}`}>{step}</span>
+                          <span className={`text-xs transition-colors duration-300 ${isActive ? 'text-[#0A8B89] font-medium' : isComplete ? 'text-[#0DBCBA]' : 'text-gray-400'}`}>{step}</span>
                         </div>
                       );
                     })}
                   </div>
-                  <div className="mt-4 h-1 bg-blue-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-blue-400 to-indigo-500 rounded-full transition-all duration-700 ease-out"
+                  <div className="mt-4 h-1 bg-[#0DBCBA]/20 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-[#0DBCBA] to-[#0A8B89] rounded-full transition-all duration-700 ease-out"
                       style={{ width: `${sourceThinkingSteps.length > 0 ? ((sourceThinkingStep + 1) / sourceThinkingSteps.length) * 100 : 0}%` }} />
                   </div>
                 </CardContent>

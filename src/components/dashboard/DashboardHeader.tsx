@@ -8,6 +8,7 @@ import { CompanySwitcher } from "./CompanySwitcher";
 import { LocationFilter } from "./LocationFilter";
 import { PeriodSelector } from "./PeriodSelector";
 import { PeriodInfo } from "@/hooks/useDashboardData";
+import { StarSavedView } from "./StarSavedView";
 
 interface DashboardHeaderProps {
   companyName: string;
@@ -28,6 +29,7 @@ interface DashboardHeaderProps {
   availablePeriods?: PeriodInfo[];
   selectedPeriod?: string | null;
   onPeriodChange?: (period: string | null) => void;
+  userId?: string | null;
 }
 
 export const DashboardHeader = React.memo(({
@@ -49,6 +51,7 @@ export const DashboardHeader = React.memo(({
   availablePeriods,
   selectedPeriod,
   onPeriodChange,
+  userId,
 }: DashboardHeaderProps) => {
   const isMobile = useIsMobile();
 
@@ -91,6 +94,13 @@ export const DashboardHeader = React.memo(({
               onLocationChange={onLocationChange}
               onAddLocation={onAddLocation}
               className={isMobile ? "min-w-[120px]" : ""}
+            />
+          )}
+          {onLocationChange && (
+            <StarSavedView
+              userId={userId}
+              currentLocation={selectedLocation ?? null}
+              currentPeriod={selectedPeriod ?? null}
             />
           )}
           <CompanySwitcher 

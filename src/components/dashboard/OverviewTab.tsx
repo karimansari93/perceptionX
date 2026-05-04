@@ -7,6 +7,8 @@ import { usePersistedState } from "@/hooks/usePersistedState";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { EpsDrilldownSheet } from "./EpsDrilldownSheet";
+import { computeDiscoveryStats } from "@/lib/discoveryStats";
 import ReactMarkdown from 'react-markdown';
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
@@ -68,6 +70,7 @@ interface OverviewTabProps {
   previousPeriodMetrics?: { sentimentScore?: number; visibilityScore?: number; relevanceScore?: number } | null;
   companyRelevanceByMonth?: Record<string, number>;
   previousPeriodResponses?: any[];
+  market?: string | null;
 }
 
 interface TimeBasedData {
@@ -113,8 +116,10 @@ export const OverviewTab = memo(({
   fetchResponseTexts,
   previousPeriodMetrics = null,
   companyRelevanceByMonth = {},
-  previousPeriodResponses = []
+  previousPeriodResponses = [],
+  market = null,
 }: OverviewTabProps) => {
+  const [isEpsDrilldownOpen, setIsEpsDrilldownOpen] = useState(false);
   // Modal states - persisted
   const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('overviewTab.selectedCompetitor', null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = usePersistedState<boolean>('overviewTab.isCompetitorModalOpen', false);
@@ -129,7 +134,6 @@ export const OverviewTab = memo(({
   const [hoveredCompetitorCitation, setHoveredCompetitorCitation] = useState<number | null>(null);
   const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = usePersistedState<boolean>('overviewTab.isMentionsDrawerOpen', false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
-  const [isScoreBreakdownModalOpen, setIsScoreBreakdownModalOpen] = usePersistedState<boolean>('overviewTab.isScoreBreakdownModalOpen', false);
 
   // Responsive check
   const [isMobile, setIsMobile] = useState(false);
@@ -1159,15 +1163,15 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
         {/* Perception Score Card */}
-        <Card className="bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col justify-between hover:shadow-md transition-shadow duration-200 p-0 relative overflow-hidden h-full min-h-[240px]">
+        <Card
+          className="bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col justify-between hover:shadow-md transition-shadow duration-200 p-0 relative overflow-hidden h-full min-h-[240px] cursor-pointer"
+          onClick={() => setIsEpsDrilldownOpen(true)}
+        >
           {/* Top: Score, label, % change */}
           <div className="flex flex-row items-start justify-between px-8 pt-6 pb-1 z-10">
             <div className="flex flex-col items-start">
               <div className="flex items-center gap-2 mb-2">
                 <CardTitle className="text-lg font-bold text-gray-700 tracking-wide">EPS</CardTitle>
-                <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-pink-100 text-pink-700 border-pink-200">
-                  BETA
-                </Badge>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1176,7 +1180,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                       </span>
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                The Employer Perception Score is an aggregate of sentiment, visibility and competitive scores.      
+                The Employer Perception Score is an aggregate of sentiment, visibility and competitive scores.
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -1277,17 +1281,14 @@ CRITICAL: When you reference information from a source, add an inline citation l
              </div>
            </div>
         </Card>
-        {/* Score Breakdown Card */}
-        <Card 
-          className="bg-white rounded-2xl shadow-sm p-0 hover:shadow-md transition-shadow duration-200 cursor-pointer h-full min-h-[240px] flex flex-col" 
-          onClick={() => setIsScoreBreakdownModalOpen(true)}
+        {/* Score Breakdown Card — opens the same EPS drill-down sheet */}
+        <Card
+          className="bg-white rounded-2xl shadow-sm p-0 hover:shadow-md transition-shadow duration-200 cursor-pointer h-full min-h-[240px] flex flex-col"
+          onClick={() => setIsEpsDrilldownOpen(true)}
         >
           <CardHeader className="pb-2 pt-6 px-4 sm:px-8 flex-shrink-0">
             <div className="flex items-center gap-2 mb-2">
               <CardTitle className="text-lg font-bold text-gray-700">Breakdown</CardTitle>
-              <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-pink-100 text-pink-700 border-pink-200">
-                BETA
-              </Badge>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1478,11 +1479,11 @@ CRITICAL: When you reference information from a source, add an inline citation l
           {/* AI Summary — on demand */}
           <div className="mb-4">
             {competitorSummary ? (
-              <Card className="border-blue-100 bg-blue-50/30">
+              <Card className="border-[#0DBCBA]/30 bg-[#0DBCBA]/5">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base font-semibold flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-blue-500" />
+                      <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
                       AI Summary
                     </CardTitle>
                     <Button
@@ -1536,7 +1537,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     })}
                   </div>
                   {competitorSummarySources.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-blue-100">
+                    <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-[#0DBCBA]/30">
                       {competitorSummarySources.map((source, index) => (
                         <button
                           key={index}
@@ -1553,14 +1554,14 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 </CardContent>
               </Card>
             ) : loadingCompetitorSummary ? (
-              <Card className="border-blue-100 bg-gradient-to-br from-blue-50/40 to-indigo-50/30 overflow-hidden">
+              <Card className="border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/5 to-[#0DBCBA]/10 overflow-hidden">
                 <CardContent className="py-5 px-5">
                   <div className="flex items-center gap-2 mb-4">
                     <div className="relative">
-                      <Sparkles className="w-4 h-4 text-blue-500" />
-                      <div className="absolute inset-0 animate-ping"><Sparkles className="w-4 h-4 text-blue-400 opacity-30" /></div>
+                      <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
+                      <div className="absolute inset-0 animate-ping"><Sparkles className="w-4 h-4 text-[#0DBCBA] opacity-30" /></div>
                     </div>
-                    <span className="text-sm font-medium text-blue-700">Analyzing...</span>
+                    <span className="text-sm font-medium text-[#0A8B89]">Analyzing...</span>
                   </div>
                   <div className="space-y-0.5">
                     {competitorThinkingSteps.map((step, i) => {
@@ -1568,18 +1569,18 @@ CRITICAL: When you reference information from a source, add an inline citation l
                       const isComplete = i < competitorThinkingStep;
                       const isPending = i > competitorThinkingStep;
                       return (
-                        <div key={i} className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${isActive ? 'bg-blue-100/60' : ''}`}
+                        <div key={i} className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${isActive ? 'bg-[#0DBCBA]/15' : ''}`}
                           style={{ opacity: isPending ? 0.3 : 1, transform: isPending ? 'translateX(4px)' : 'translateX(0)', transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }}>
                           <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
-                            {isComplete ? <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" /> : isActive ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
+                            {isComplete ? <CheckCircle2 className="w-3.5 h-3.5 text-[#0DBCBA]" /> : isActive ? <Loader2 className="w-3.5 h-3.5 text-[#0DBCBA] animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
                           </div>
-                          <span className={`text-xs transition-colors duration-300 ${isActive ? 'text-blue-700 font-medium' : isComplete ? 'text-blue-500' : 'text-gray-400'}`}>{step}</span>
+                          <span className={`text-xs transition-colors duration-300 ${isActive ? 'text-[#0A8B89] font-medium' : isComplete ? 'text-[#0DBCBA]' : 'text-gray-400'}`}>{step}</span>
                         </div>
                       );
                     })}
                   </div>
-                  <div className="mt-4 h-1 bg-blue-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-blue-400 to-indigo-500 rounded-full transition-all duration-700 ease-out"
+                  <div className="mt-4 h-1 bg-[#0DBCBA]/20 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-[#0DBCBA] to-[#0A8B89] rounded-full transition-all duration-700 ease-out"
                       style={{ width: `${competitorThinkingSteps.length > 0 ? ((competitorThinkingStep + 1) / competitorThinkingSteps.length) * 100 : 0}%` }} />
                   </div>
                 </CardContent>
@@ -1666,239 +1667,30 @@ CRITICAL: When you reference information from a source, add an inline citation l
         </DialogContent>
       </Dialog>
 
-      {/* Score Breakdown Modal */}
-      <Dialog open={isScoreBreakdownModalOpen} onOpenChange={setIsScoreBreakdownModalOpen}>
-        <DialogContent className="max-w-4xl w-full sm:w-[95vw] p-6">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold text-gray-900">
-              Understanding Your Score
-            </DialogTitle>
-          </DialogHeader>
-          
-          {/* Beta Notice */}
-          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 border-blue-200">
-                Beta
-              </Badge>
-              <span className="text-sm text-blue-800 font-medium">
-                This feature is currently in beta. We're actively improving the scoring algorithm and welcome your feedback.
-              </span>
-            </div>
-          </div>
-          
-          <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="grid w-full grid-cols-4 bg-gray-100">
-              <TabsTrigger 
-                value="overview"
-                className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
-              >
-                Overview
-              </TabsTrigger>
-              <TabsTrigger 
-                value="sentiment"
-                className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
-              >
-                Sentiment
-              </TabsTrigger>
-              <TabsTrigger 
-                value="visibility"
-                className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
-              >
-                Visibility
-              </TabsTrigger>
-              <TabsTrigger 
-                value="relevance"
-                className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm"
-              >
-                Relevance
-              </TabsTrigger>
-            </TabsList>
-            
-                        {/* Overview Tab */}
-            <TabsContent value="overview" className="space-y-4">
-              {/* Current Performance Summary */}
-              <Card className="bg-gray-50 border-gray-200">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg font-semibold text-gray-900">
-                    Your Current Performance
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {metricsCalculating ? (
-                    // Show loading skeletons while metrics are calculating
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      <div className="text-center">
-                        <Skeleton className="h-8 w-16 mx-auto mb-2" />
-                        <Skeleton className="h-4 w-20 mx-auto" />
-                      </div>
-                      <div className="text-center">
-                        <Skeleton className="h-8 w-16 mx-auto mb-2" />
-                        <Skeleton className="h-4 w-20 mx-auto" />
-                      </div>
-                      <div className="text-center">
-                        <Skeleton className="h-8 w-16 mx-auto mb-2" />
-                        <Skeleton className="h-4 w-20 mx-auto" />
-                      </div>
-                    </div>
-                  ) : (() => {
-                    const currentSentiment = metrics.sentimentScore;
-                    const currentVisibility = metrics.visibilityScore;
-                    const currentRelevance = metrics.relevanceScore;
-                    const currentPerceptionScore = metrics.perceptionScore;
-                    
-                    return (
-                      <>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-green-600">{currentSentiment}%</div>
-                            <div className="text-sm text-gray-600">Sentiment</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-blue-600">{currentVisibility}%</div>
-                            <div className="text-sm text-gray-600">Visibility</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-2xl font-bold text-orange-600">{currentRelevance}%</div>
-                            <div className="text-sm text-gray-600">Relevance</div>
-                          </div>
-                        </div>
-                        <div className="mt-4 pt-4 border-t border-gray-200">
-                          <div className="text-center">
-                            <div className="text-3xl font-bold text-gray-900">{currentPerceptionScore}</div>
-                            <div className="text-sm text-gray-600">Overall Perception Score</div>
-                          </div>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </CardContent>
-              </Card>
-            </TabsContent>
 
-            {/* Sentiment Tab */}
-            <TabsContent value="sentiment" className="space-y-4">
-              <Card className="border-l-4 border-l-green-500">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                    <div className="w-4 h-4 bg-green-500 rounded-full"></div>
-                    Sentiment Score
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {(() => {
-                    const currentSentiment = metrics.sentimentScore;
-                    
-                    return (
-                      <>
-                        <div className="flex items-center gap-3">
-                          <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
-                            <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${currentSentiment}%` }} />
-                          </div>
-                          <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
-                            {currentSentiment}%
-                          </span>
-                        </div>
-                        <div>
-                          <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
-                          <ul className="text-sm text-gray-700 space-y-2 ml-4">
-                            <li>• Advanced AI-powered thematic analysis of brand perception</li>
-                            <li>• Confidence-weighted sentiment scores from extracted themes</li>
-                            <li>• Whether mentions are favorable, neutral, or unfavorable</li>
-                            <li>• More accurate sentiment analysis beyond simple keyword matching</li>
-                            <li>• Context-aware understanding of how your brand is discussed</li>
-                          </ul>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Visibility Tab */}
-            <TabsContent value="visibility" className="space-y-4">
-              <Card className="border-l-4 border-l-blue-500">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                    <div className="w-4 h-4 bg-blue-500 rounded-full"></div>
-                    Visibility Score
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {(() => {
-                    const currentVisibility = metrics.visibilityScore;
-                    
-                    return (
-                      <>
-                        <div className="flex items-center gap-3">
-                          <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
-                            <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${currentVisibility}%` }} />
-                          </div>
-                          <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
-                            {currentVisibility}%
-                          </span>
-                        </div>
-                        <div>
-                          <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
-                          <ul className="text-sm text-gray-700 space-y-2 ml-4">
-                            <li>• How prominently your brand appears in AI responses</li>
-                            <li>• The frequency and prominence of mentions across platforms</li>
-                            <li>• Whether you're mentioned early or late in responses</li>
-                            <li>• Your brand's recognition and recall value</li>
-                            <li>• How easily AI models can find and reference your company</li>
-                          </ul>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Relevance Tab */}
-            <TabsContent value="relevance" className="space-y-4">
-              <Card className="border-l-4 border-l-orange-500">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                    <div className="w-4 h-4 bg-orange-500 rounded-full"></div>
-                    Relevance Score
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {(() => {
-                    const currentRelevance = metrics.relevanceScore;
-                    
-                    return (
-                      <>
-                        <div className="flex items-center gap-3">
-                          <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
-                            <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${currentRelevance}%` }} />
-                          </div>
-                          <span className="text-xl font-bold text-gray-900 min-w-[60px] text-right">
-                            {currentRelevance}%
-                          </span>
-                        </div>
-                        <div>
-                          <p className="font-semibold text-gray-900 mb-2">What it measures:</p>
-                          <ul className="text-sm text-gray-700 space-y-2 ml-4">
-                            <li>• How recent and timely the content about your brand is</li>
-                            <li>• The freshness of information sources and citations</li>
-                            <li>• Whether AI responses reference up-to-date information</li>
-                            <li>• The recency of news, reviews, and mentions about your company</li>
-                            <li>• How current your brand's online presence appears to be</li>
-                          </ul>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-          </Tabs>
-        </DialogContent>
-      </Dialog>
+      <EpsDrilldownSheet
+        open={isEpsDrilldownOpen}
+        onOpenChange={setIsEpsDrilldownOpen}
+        score={metrics.perceptionScore}
+        label={metrics.perceptionLabel}
+        companyName={companyName}
+        market={market}
+        liveSentiment={metrics.sentimentScore}
+        liveVisibility={metrics.visibilityScore}
+        discoveryStats={computeDiscoveryStats(responses, companyName)}
+        topJobFunctions={(() => {
+          const counts = new Map<string, number>();
+          responses.forEach((r: any) => {
+            const jf = r.confirmed_prompts?.job_function_context;
+            if (jf) counts.set(jf, (counts.get(jf) ?? 0) + 1);
+          });
+          return [...counts.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4)
+            .map(([j, c]) => `${j} (${c})`)
+            .join(", ");
+        })()}
+      />
     </div>
   );
 });

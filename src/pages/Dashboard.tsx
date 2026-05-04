@@ -42,6 +42,7 @@ import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
 import { usePersistedState } from "@/hooks/usePersistedState";
+import { readStarredView } from "@/hooks/useStarredView";
 
 interface DatabaseOnboardingData {
   company_name: string;
@@ -181,6 +182,20 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     previousPeriodResponses,
   } = useDashboardData();
   const { isPro } = useSubscription();
+
+  // Apply the user's starred view (location + period) once when the user
+  // session loads. Re-applies if they sign in as a different user.
+  const starredAppliedForUserRef = useRef<string | null>(null);
+  useEffect(() => {
+    const uid = user?.id ?? null;
+    if (!uid || starredAppliedForUserRef.current === uid) return;
+    const view = readStarredView(uid);
+    if (view) {
+      setSelectedLocation(view.location ?? null);
+      setSelectedPeriod(view.period ?? null);
+    }
+    starredAppliedForUserRef.current = uid;
+  }, [user?.id, setSelectedPeriod]);
 
   // Search insights feature retired — empty array preserved for components
   // that still accept a `searchResults` prop until those are stripped.
@@ -447,6 +462,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
+            market={selectedLocation}
           />
         </div>
       </div>
@@ -523,6 +539,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             previousPeriodMetrics={previousPeriodMetrics}
             companyRelevanceByMonth={companyRelevanceByMonth}
             previousPeriodResponses={previousPeriodResponses}
+            market={selectedLocation}
           />
         </div>
 
@@ -672,6 +689,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           availablePeriods={activeSection === 'reports' ? undefined : availablePeriods}
           selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}
           onPeriodChange={activeSection === 'reports' ? undefined : setSelectedPeriod}
+          userId={user?.id ?? null}
         />
         <div className="flex-1 overflow-auto">
           {isLoading ? (
