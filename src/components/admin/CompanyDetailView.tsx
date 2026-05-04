@@ -3,10 +3,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Building2, Edit, Hash, Search, Clock, Database } from 'lucide-react';
+import { ArrowLeft, Building2, Edit, Clock, Database } from 'lucide-react';
 import { CompanyEditTab } from './company-detail/CompanyEditTab';
-import { CompanySearchTermsTab } from './company-detail/CompanySearchTermsTab';
-import { CompanySearchInsightsTab } from './company-detail/CompanySearchInsightsTab';
 import { CompanyRecencyTestTab } from './company-detail/CompanyRecencyTestTab';
 import { CompanyCollectionTab } from './company-detail/CompanyCollectionTab';
 
@@ -87,20 +85,6 @@ export const CompanyDetailView = ({ company, onBack, onUpdate, onRefresh, onDele
             Overview & Edit
           </TabsTrigger>
           <TabsTrigger
-            value="search-terms"
-            className="data-[state=active]:bg-slate-100 data-[state=active]:text-slate-800 data-[state=active]:shadow-none text-slate-600 text-sm h-8 px-3"
-          >
-            <Hash className="h-3.5 w-3.5 mr-1.5" />
-            Search Terms
-          </TabsTrigger>
-          <TabsTrigger
-            value="search-insights"
-            className="data-[state=active]:bg-slate-100 data-[state=active]:text-slate-800 data-[state=active]:shadow-none text-slate-600 text-sm h-8 px-3"
-          >
-            <Search className="h-3.5 w-3.5 mr-1.5" />
-            Search Insights
-          </TabsTrigger>
-          <TabsTrigger
             value="recency-test"
             className="data-[state=active]:bg-slate-100 data-[state=active]:text-slate-800 data-[state=active]:shadow-none text-slate-600 text-sm h-8 px-3"
           >
@@ -120,14 +104,6 @@ export const CompanyDetailView = ({ company, onBack, onUpdate, onRefresh, onDele
 
         <TabsContent value="overview" className="mt-4">
           <CompanyEditTab company={company} onUpdate={onUpdate} onRefresh={onRefresh} onDelete={onDelete} />
-        </TabsContent>
-
-        <TabsContent value="search-terms" className="mt-4">
-          <CompanySearchTermsTab companyId={company.id} companyName={company.name} />
-        </TabsContent>
-
-        <TabsContent value="search-insights" className="mt-4">
-          <CompanySearchInsightsTab companyId={company.id} companyName={company.name} />
         </TabsContent>
 
         <TabsContent value="recency-test" className="mt-4">

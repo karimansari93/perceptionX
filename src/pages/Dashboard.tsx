@@ -33,7 +33,6 @@ const ThematicAnalysisTab = lazy(() => import("@/components/dashboard/ThematicAn
 const PromptsTab = lazy(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
 const ResponsesTab = lazy(() => import("@/components/dashboard/ResponsesTab").then(module => ({ default: module.ResponsesTab })));
 const AnswerGapsTab = lazy(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
-// const SearchTab = lazy(() => import("@/components/dashboard/SearchTab").then(module => ({ default: module.SearchTab })));
 import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
 import LLMLogo from "@/components/LLMLogo";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -163,10 +162,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     talentXProLoading,
     fixExistingPrompts,
     hasDataIssues,
-    searchResults,
-    searchResultsLoading,
-    searchTermsData,
-    fetchSearchResults,
     aiThemes,
     isOnline,
     connectionError,
@@ -187,10 +182,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   } = useDashboardData();
   const { isPro } = useSubscription();
 
-  const currentCompanySearchResults = useMemo(() =>
-    searchResults.filter(r => r.company_id === currentCompany?.id),
-    [searchResults, currentCompany?.id]
-  );
+  // Search insights feature retired — empty array preserved for components
+  // that still accept a `searchResults` prop until those are stripped.
+  const currentCompanySearchResults: any[] = [];
+  const searchResults: any[] = [];
+  const searchTermsData: any = null;
 
   const handleRefreshPrompts = useCallback(async (ids: string[], name?: string) => {
     const targetName = name || companyName || currentCompany?.name;
@@ -201,12 +197,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     });
   }, [companyName, currentCompany?.name, currentCompany?.id, refreshAllPrompts]);
 
-  // Load search results once when component mounts and company name is available
-  useEffect(() => {
-    if (companyName && searchResults.length === 0 && !searchResultsLoading) {
-      fetchSearchResults();
-    }
-  }, [companyName, searchResults.length, searchResultsLoading]); // Removed fetchSearchResults from deps
+  // Search insights retired — no fetch needed.
 
 
   const [answerGapsData, setAnswerGapsData] = useState<any>(null);
@@ -610,22 +601,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             </Suspense>
           </div>
         )}
-
-        {/* Search tab temporarily hidden
-        {(activeSection === 'search' || hasVisited.search) && (
-          <div style={{ display: activeSection === 'search' ? 'block' : 'none' }}>
-            <Suspense fallback={<div className="flex items-center justify-center h-64"><LoadingSpinner /></div>}>
-              <SearchTab
-                companyName={companyName}
-                activeTab={activeTab}
-                setActiveTab={setActiveTab}
-                searchResults={searchResults}
-                searchTermsData={searchTermsData}
-              />
-            </Suspense>
-          </div>
-        )}
-        */}
 
         {(activeSection === 'answer-gaps' || hasVisited.answerGaps) && (
           <div style={{ display: activeSection === 'answer-gaps' ? 'block' : 'none' }}>
