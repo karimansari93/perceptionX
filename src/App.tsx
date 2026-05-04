@@ -2,11 +2,10 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { CompanyProvider } from "@/contexts/CompanyContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
-import OnboardingGuard from "@/components/OnboardingGuard";
 import Dashboard from "./pages/Dashboard";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
@@ -18,8 +17,6 @@ import Account from "./pages/Account";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { ErrorBoundary } from "react-error-boundary";
 import { usePageTracking } from "@/hooks/usePageTracking";
-import { Onboarding } from "@/pages/Onboarding";
-import OnboardingLoading from "@/pages/OnboardingLoading";
 import Admin from "./pages/Admin";
 import AdminRoute from "./components/AdminRoute";
 import GoogleOneTapCallback from "@/components/GoogleOneTapCallback";
@@ -177,138 +174,93 @@ const App = () => (
                 </ProtectedRoute>
               } />
               
-              {/* Onboarding route */}
-              <Route path="/onboarding" element={
-                <ProtectedRoute>
-                  <Onboarding />
-                </ProtectedRoute>
-              } />
-              
-              {/* Onboarding loading route */}
-              <Route path="/onboarding/loading" element={<OnboardingLoading />} />
-              
+              {/* Onboarding routes removed — users are provisioned from the backend */}
+              <Route path="/onboarding" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/onboarding/loading" element={<Navigate to="/dashboard" replace />} />
+
               {/* Dashboard routes */}
               <Route path="/dashboard" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="dashboard" defaultSection="overview" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               <Route path="/dashboard/sources" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="dashboard" defaultSection="sources" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               <Route path="/dashboard/competitors" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="dashboard" defaultSection="competitors" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               <Route path="/dashboard/themes" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="dashboard" defaultSection="thematic" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               
               {/* New group-based routes */}
               <Route path="/monitor" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="monitor" defaultSection="prompts" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               <Route path="/monitor/responses" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="monitor" defaultSection="responses" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               {/* Search tab temporarily hidden
               <Route path="/monitor/search" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="monitor" defaultSection="search" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               */}
               <Route path="/analyze" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="analyze" defaultSection="thematic" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               <Route path="/analyze/thematic" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="analyze" defaultSection="thematic" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               <Route path="/analyze/answer-gaps" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="analyze" defaultSection="answer-gaps" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               <Route path="/analyze/reports" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Dashboard defaultGroup="analyze" defaultSection="reports" />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               
               <Route path="/usage" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Usage />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               <Route path="/account" element={
                 <ProtectedRoute>
-                  <OnboardingGuard requireOnboarding={true}>
                     <SidebarProvider>
                       <Account />
-                    </SidebarProvider>
-                  </OnboardingGuard>
-                </ProtectedRoute>
+                    </SidebarProvider>                </ProtectedRoute>
               } />
               <Route path="*" element={<NotFound />} />
             </Routes>

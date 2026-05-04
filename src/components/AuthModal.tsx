@@ -92,65 +92,16 @@ const AuthModal = ({ open, onOpenChange, onboardingData, redirectTo = '/dashboar
           } 
         });
       } else {
-        navigate('/onboarding');
+        navigate('/dashboard');
       }
     }
   }, [user, navigate, onboardingData, redirectTo, onOpenChange]);
 
-  const linkOnboardingToUser = async (userId: string) => {
-    if (!onboardingData) return;
-
-    try {
-      // First, check if user already has an onboarding record
-      const { data: existingRecord } = await supabase
-        .from('user_onboarding')
-        .select('id')
-        .eq('user_id', userId)
-        .limit(1);
-
-      if (existingRecord && existingRecord.length > 0) {
-        return;
-      }
-
-      // Look for unlinked onboarding records that match the company name
-      const { data: unlinkedRecords } = await supabase
-        .from('user_onboarding')
-        .select('*')
-        .is('user_id', null)
-        .eq('company_name', onboardingData.companyName)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (unlinkedRecords && unlinkedRecords.length > 0) {
-        // Link existing record to user
-        const { error: linkError } = await supabase
-          .from('user_onboarding')
-          .update({ user_id: userId })
-          .eq('id', unlinkedRecords[0].id);
-
-        if (linkError) {
-          logger.error('Error linking onboarding record:', linkError);
-        }
-      } else {
-        // Create new onboarding record for the user
-        const newRecord = {
-          user_id: userId,
-          company_name: onboardingData.companyName,
-          industry: onboardingData.industry,
-          session_id: `session_${userId}_${Date.now()}`
-        };
-
-        const { error: createError } = await supabase
-          .from('user_onboarding')
-          .insert(newRecord);
-
-        if (createError) {
-          logger.error('Error creating onboarding record:', createError);
-        }
-      }
-    } catch (error) {
-      logger.error('Error in linkOnboardingToUser:', error);
-    }
+  const linkOnboardingToUser = async (_userId: string) => {
+    // Onboarding flow retired — users are provisioned by admins. This used
+    // to write to user_onboarding, which is no longer a runtime data
+    // source. Kept as a no-op so call sites don't break.
+    return;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

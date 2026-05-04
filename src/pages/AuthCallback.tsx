@@ -23,57 +23,8 @@ const AuthCallback = () => {
             return;
           }
 
-          // Check if user needs onboarding
-          try {
-            const { data: userOnboardingData, error: onboardingError } = await supabase
-              .from('user_onboarding')
-              .select('id, company_name, industry')
-              .eq('user_id', session.user.id)
-              .not('company_name', 'is', null)
-              .not('industry', 'is', null)
-              .order('created_at', { ascending: false })
-              .limit(1);
-
-            if (onboardingError) {
-              logger.error('Error checking onboarding status:', onboardingError);
-              // If we can't check, default to dashboard
-              setTimeout(() => navigate('/dashboard'), 0);
-              return;
-            }
-
-            // If no basic onboarding data, redirect to onboarding
-            if (!userOnboardingData || userOnboardingData.length === 0 || 
-                !userOnboardingData[0].company_name || !userOnboardingData[0].industry) {
-              navigate('/onboarding');
-              return;
-            }
-
-            // Check if there are actual confirmed prompts
-            const { data: promptsData, error: promptsError } = await supabase
-              .from('confirmed_prompts')
-              .select('id')
-              .eq('onboarding_id', userOnboardingData[0].id)
-              .limit(1);
-
-            if (promptsError) {
-              logger.error('Error checking confirmed prompts:', promptsError);
-              // If we can't check, default to dashboard
-              navigate('/dashboard');
-              return;
-            }
-
-            // If no confirmed prompts, onboarding is incomplete
-            if (!promptsData || promptsData.length === 0) {
-              navigate('/onboarding');
-            } else {
-              // User has completed onboarding, go to dashboard
-              navigate('/dashboard');
-            }
-          } catch (onboardingCheckError) {
-            logger.error('Error checking onboarding status:', onboardingCheckError);
-            // If we can't check, default to dashboard
-            navigate('/dashboard');
-          }
+          // Onboarding retired — admin-provisioned users land on dashboard.
+          navigate('/dashboard');
         } else {
           toast.error('Authentication failed');
           navigate('/auth');
