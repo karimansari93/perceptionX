@@ -451,18 +451,22 @@ serve(async (req) => {
           resolvedCompanyId = companyData.id
           console.log(`✅ Found company_id from company name: ${resolvedCompanyId}`)
         } else {
-          // Try to get default company for user
+          // Try to get a company for user via organization membership
+          // (company_members retired).
           const { data: memberData, error: memberError } = await supabase
-            .from('company_members')
-            .select('company_id')
+            .from('organization_members')
+            .select('organization_companies:organization_id!inner(company_id)')
             .eq('user_id', user.id)
-            .eq('is_default', true)
             .limit(1)
-            .single()
-          
-          if (!memberError && memberData?.company_id) {
-            resolvedCompanyId = memberData.company_id
-            console.log(`✅ Found company_id from user's default company: ${resolvedCompanyId}`)
+            .maybeSingle()
+
+          const orgCompanies = (memberData as any)?.organization_companies
+          const fallbackCompanyId = Array.isArray(orgCompanies)
+            ? orgCompanies[0]?.company_id
+            : orgCompanies?.company_id
+          if (!memberError && fallbackCompanyId) {
+            resolvedCompanyId = fallbackCompanyId
+            console.log(`✅ Found company_id from user's organization: ${resolvedCompanyId}`)
           } else {
             console.warn(`⚠️ Could not derive company_id. Data will be stored with NULL company_id`)
           }
@@ -918,17 +922,21 @@ serve(async (req) => {
         // Early validation - if company_id is still null, try one more time to resolve it
         if (!resolvedCompanyId) {
         console.warn(`⚠️ WARNING: resolvedCompanyId is still null! Attempting emergency resolution...`)
-        // Try to get from user's default company one more time
+        // Try to get from user's organization one more time
+        // (company_members retired).
         const { data: emergencyCompanyData } = await supabase
-          .from('company_members')
-          .select('company_id')
+          .from('organization_members')
+          .select('organization_companies:organization_id!inner(company_id)')
           .eq('user_id', user.id)
-          .eq('is_default', true)
           .limit(1)
-          .single()
-        
-        if (emergencyCompanyData?.company_id) {
-          resolvedCompanyId = emergencyCompanyData.company_id
+          .maybeSingle()
+
+        const emergencyOrgCompanies = (emergencyCompanyData as any)?.organization_companies
+        const emergencyCompanyId = Array.isArray(emergencyOrgCompanies)
+          ? emergencyOrgCompanies[0]?.company_id
+          : emergencyOrgCompanies?.company_id
+        if (emergencyCompanyId) {
+          resolvedCompanyId = emergencyCompanyId
           console.log(`✅ Emergency resolution successful: company_id = ${resolvedCompanyId}`)
         } else {
           console.error(`❌ CRITICAL: Cannot proceed without company_id. Data will not be stored.`)

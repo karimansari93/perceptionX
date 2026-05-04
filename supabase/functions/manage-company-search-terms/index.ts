@@ -332,15 +332,20 @@ async function handlePut(supabaseAdmin: any, userId: string, body: any) {
     )
   }
 
-  // Check permissions
-  const { data: membership, error: membershipError } = await supabaseAdmin
-    .from('company_members')
-    .select('role')
+  // Check permissions via organization membership.
+  // company_members is retired; access goes through organization_members
+  // -> organization_companies -> companies.
+  const { data: orgMatch, error: membershipError } = await supabaseAdmin
+    .from('organization_companies')
+    .select('organization_id, organization_members:organization_id!inner(role,user_id)')
     .eq('company_id', existingTerm.company_id)
-    .eq('user_id', userId)
-    .single()
+    .eq('organization_members.user_id', userId)
+    .in('organization_members.role', ['owner', 'admin'])
+    .limit(1)
+    .maybeSingle()
 
-  if (membershipError || !membership || !['admin', 'owner'].includes(membership.role)) {
+  const membership = orgMatch as any
+  if (membershipError || !membership) {
     return new Response(
       JSON.stringify({ error: 'Insufficient permissions' }),
       { 
@@ -411,15 +416,20 @@ async function handleDelete(supabaseAdmin: any, userId: string, url: URL) {
     )
   }
 
-  // Check permissions
-  const { data: membership, error: membershipError } = await supabaseAdmin
-    .from('company_members')
-    .select('role')
+  // Check permissions via organization membership.
+  // company_members is retired; access goes through organization_members
+  // -> organization_companies -> companies.
+  const { data: orgMatch, error: membershipError } = await supabaseAdmin
+    .from('organization_companies')
+    .select('organization_id, organization_members:organization_id!inner(role,user_id)')
     .eq('company_id', existingTerm.company_id)
-    .eq('user_id', userId)
-    .single()
+    .eq('organization_members.user_id', userId)
+    .in('organization_members.role', ['owner', 'admin'])
+    .limit(1)
+    .maybeSingle()
 
-  if (membershipError || !membership || !['admin', 'owner'].includes(membership.role)) {
+  const membership = orgMatch as any
+  if (membershipError || !membership) {
     return new Response(
       JSON.stringify({ error: 'Insufficient permissions' }),
       { 

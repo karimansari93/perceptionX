@@ -67,12 +67,11 @@ serve(async (req) => {
 
     console.log('Onboarding data found:', onboardingData);
 
-    // 3. Get user's default company for company-specific prompts
-    const { data: companyMember, error: companyError } = await supabase
-      .from('company_members')
-      .select('company_id')
+    // 3. Get user's first company via organization membership (company_members retired)
+    const { data: orgCompany, error: companyError } = await supabase
+      .from('organization_members')
+      .select('organization_id, organization_companies:organization_id!inner(company_id)')
       .eq('user_id', userId)
-      .eq('is_default', true)
       .limit(1)
       .maybeSingle();
 
@@ -80,7 +79,8 @@ serve(async (req) => {
       console.warn('Could not fetch default company, prompts will be auto-linked:', companyError);
     }
 
-    const companyId = companyMember?.company_id || null;
+    const orgCompanies = (orgCompany as any)?.organization_companies;
+    const companyId = (Array.isArray(orgCompanies) ? orgCompanies[0]?.company_id : orgCompanies?.company_id) || null;
 
     // 4. Check if user already has TalentX prompts and clean them up if they exist
     const { data: existingPrompts, error: checkError } = await supabase

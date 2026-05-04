@@ -627,12 +627,8 @@ serve(async (req) => {
             .insert({ organization_id: orgId, company_id: companyId, added_by: config.user_id })
             .select()
             .maybeSingle(); // ignore duplicate
-
-          await supabase
-            .from("company_members")
-            .insert({ user_id: config.user_id, company_id: companyId, role: "owner" })
-            .select()
-            .maybeSingle();
+          // company_members retired — membership inherits from
+          // organization_members for this org.
         }
 
         // 7. Advance phase — search_insights removed (AI prompts only)

@@ -209,37 +209,10 @@ export default function Account() {
     setSaving(true);
     setSuccess(false);
     try {
-      // First, get the latest onboarding record ID
-      const { data: onboardingData, error: fetchError } = await supabase
-        .from('user_onboarding')
-        .select('id, company_name, industry')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (fetchError) {
-        console.error('Error fetching onboarding data:', fetchError);
-        toast.error('Failed to fetch current data');
-        setSaving(false);
-        return;
-      }
-
-      // Update onboarding data using the specific ID
-      const { error: updateError } = await supabase
-        .from('user_onboarding')
-        .update({ 
-          company_name: form.company, 
-          industry: form.industry 
-        })
-        .eq('id', onboardingData.id);
-
-      if (updateError) {
-        console.error('Error updating onboarding data:', updateError);
-        toast.error('Failed to save changes');
-        setSaving(false);
-        return;
-      }
+      // Editing company info from the user-facing Account page has been
+      // retired — companies are now managed by admins. Old code wrote to
+      // user_onboarding (dead table); we no-op the persistence and let
+      // the prompt-text refresh below run if anything actually changed.
 
       // Update prompt texts if industry changed
       const industryChanged = originalForm.industry !== form.industry;

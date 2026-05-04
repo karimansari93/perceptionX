@@ -255,6 +255,13 @@ export const AddCompanyModal = ({
   };
 
   const handleSubmit = async () => {
+    // Self-serve company creation has been retired. Companies are now
+    // created by admins via the admin panel. The previous flow depended
+    // on the auto_create_company_from_onboarding trigger (dropped).
+    toast.error('Adding companies has moved to the admin panel — please contact your admin.');
+    return;
+
+    // eslint-disable-next-line no-unreachable
     if (!companyName.trim() || !industry.trim()) {
       toast.error('Please fill in all required fields');
       return;

@@ -2107,38 +2107,25 @@ export const useDashboardData = () => {
   }, [mvLlmRankings, responses]);
 
   const fixExistingPrompts = useCallback(async () => {
+    // Legacy migration helper — used to backfill confirmed_prompts.user_id
+    // by joining through user_onboarding. user_onboarding is retired and
+    // there are no more unmigrated rows, so this is now a no-op.
+    return;
+
+    // eslint-disable-next-line no-unreachable
     if (!user) return;
-    
     try {
-      // Find prompts without user_id that belong to this user's onboarding
-      const { data: userOnboarding, error: onboardingError } = await supabase
-        .from('user_onboarding')
-        .select('id')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (onboardingError) {
-        console.error('Error fetching user onboarding:', onboardingError);
-        return;
-      }
-
+      // unreachable
+      const { data: userOnboarding, error: onboardingError } = { data: null, error: null } as any;
+      if (onboardingError) return;
       if (userOnboarding && userOnboarding.length > 0) {
         const onboardingId = userOnboarding[0].id;
-        
-        // Update prompts without user_id to have the current user's ID
-        const { data: updateResult, error: updateError } = await supabase
+        const { error: updateError } = await supabase
           .from('confirmed_prompts')
           .update({ user_id: user.id })
           .eq('onboarding_id', onboardingId)
           .is('user_id', null);
-
-        if (updateError) {
-          console.error('Error updating confirmed prompts:', updateError);
-        } else {
-          // Refresh the data after fixing
-          fetchResponses();
-        }
+        if (!updateError) fetchResponses();
       }
     } catch (error) {
       console.error('Error in fixMissingUserIds:', error);

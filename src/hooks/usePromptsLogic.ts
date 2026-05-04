@@ -64,28 +64,12 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
             return;
           }
 
-          const { data, error } = await supabase
-            .from('user_onboarding')
-            .select('*')
-            .eq('user_id', session.user.id)
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (error) throw error;
-
-          if (!data || data.length === 0) {
-            setError('Please complete onboarding first');
-            return;
-          }
-
-          // Check if the onboarding record has the required fields
-          const onboardingRecord = data[0];
-          if (!onboardingRecord.company_name || !onboardingRecord.industry) {
-            setError('Onboarding data is incomplete. Please complete onboarding first.');
-            return;
-          }
-
-          setOnboardingRecord(onboardingRecord);
+          // Onboarding flow retired; admin-provisioned users have no
+          // user_onboarding row. The downstream confirm-prompts flow is
+          // only reachable from the (deleted) onboarding page, so leaving
+          // onboardingRecord null is safe — the gates downstream will
+          // skip the work cleanly.
+          setOnboardingRecord(null);
         } catch (error) {
           logger.error('Error checking onboarding:', error);
           setError('Failed to check onboarding status');
@@ -247,12 +231,9 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       // Ensure we're in a valid state before navigating
       if (completedOperations > 0) {
         try {
-          // Update the onboarding record to mark prompts as completed (gracefully handle missing field)
-          const { error: updateError } = await supabase
-            .from('user_onboarding')
-            .update({ prompts_completed: true })
-            .eq('id', onboardingRecord.id);
-          
+          // user_onboarding retired — no longer tracking prompts_completed
+          // there. The flag isn't read anywhere anymore.
+          const updateError = null as any;
           if (updateError) {
             console.warn('Could not update prompts_completed field (may not exist in database):', updateError);
             // Continue without failing the process
