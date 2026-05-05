@@ -1161,7 +1161,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+      <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
         {/* Perception Score Card */}
         <Card
           data-tour="eps-card"
