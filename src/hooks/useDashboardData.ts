@@ -591,19 +591,19 @@ export const useDashboardData = () => {
     try {
       const [sourcesResult, competitorsResult, llmResult] = await Promise.all([
         supabase
-          .from('company_top_sources')
+          .from('company_top_sources_mv')
           .select('domain, citation_count')
           .eq('company_id', currentCompany.id)
           .order('citation_count', { ascending: false })
           .limit(30),
         supabase
-          .from('company_competitors')
+          .from('company_competitors_mv')
           .select('competitor_name, mention_count')
           .eq('company_id', currentCompany.id)
           .order('mention_count', { ascending: false })
           .limit(30),
         supabase
-          .from('company_llm_rankings')
+          .from('company_llm_rankings_mv')
           .select('ai_model, mentions')
           .eq('company_id', currentCompany.id)
           .order('mentions', { ascending: false }),
