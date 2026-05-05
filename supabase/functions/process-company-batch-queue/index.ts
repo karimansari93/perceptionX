@@ -517,44 +517,34 @@ serve(async (req) => {
       else if (job.phase === "setup") {
         console.log(`[BatchQueue] Phase: setup`);
 
-        // 1. Insert user_onboarding row
-        const { data: onboarding, error: onbError } = await supabase
-          .from("user_onboarding")
+        // 1. Create the company directly. The auto_create_company_from_onboarding
+        //    trigger has been retired — we don't go through user_onboarding
+        //    anymore.
+        const countryCode = locationToCountryCode(job.location);
+        const { data: createdCompany, error: companyInsertError } = await supabase
+          .from("companies")
           .insert({
-            user_id: config.user_id,
-            company_name: job.company_name,
+            name: job.company_name,
             industry: job.industry,
-            country: job.location,
-            job_function: job.job_function || null,
-            session_id: crypto.randomUUID(),
+            country: countryCode || job.location || null,
+            created_by: config.user_id,
           })
           .select("id")
           .single();
 
-        if (onbError) throw new Error(`Onboarding insert failed: ${onbError.message}`);
-
-        // 2. Wait for DB trigger to create companies row (poll up to 10× with backoff)
-        let companyId: string | null = null;
-        for (let attempt = 0; attempt < 10; attempt++) {
-          const delay = Math.min(500 * Math.pow(2, attempt), 10000);
-          await new Promise((r) => setTimeout(r, delay));
-
-          const { data: onbRow } = await supabase
-            .from("user_onboarding")
-            .select("company_id")
-            .eq("id", onboarding.id)
-            .single();
-
-          if (onbRow?.company_id) {
-            companyId = onbRow.company_id;
-            break;
-          }
-          console.log(`[BatchQueue] Waiting for company... attempt ${attempt + 1}`);
+        if (companyInsertError || !createdCompany) {
+          throw new Error(
+            `Company insert failed: ${companyInsertError?.message || "no row returned"}`,
+          );
         }
 
-        if (!companyId) {
-          throw new Error("Company was not created by DB trigger after 10 attempts");
-        }
+        const companyId: string = createdCompany.id;
+
+        // user_onboarding is retired but downstream code still expects an
+        // onboarding_id reference on confirmed_prompts. Use null — the
+        // column is nullable and confirmed_prompts.onboarding_id is no
+        // longer queried for runtime decisions.
+        const onboarding = { id: null as string | null };
 
         // 3. Generate prompts
         const prompts = generatePrompts(
