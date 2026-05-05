@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -84,6 +84,8 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
   const { currentCompany, userCompanies, switchCompany, loading } = useCompany();
   const [isOpen, setIsOpen] = useState(false);
 
+  const GLOBAL_LIKE = new Set(['GLOBAL', 'Global', 'Global (All Countries)', 'Worldwide']);
+
   // Get unique countries from user's companies
   // CRITICAL: Only compute locations when not loading to prevent showing stale data
   const availableLocations = useMemo(() => {
@@ -93,23 +95,52 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
     }
 
     const locations = new Set<string>();
-    
+
     // Treat any country-agnostic variants as the same as the top-level
     // "Global" sentinel — selecting that already shows all locations combined,
     // so we don't render a separate row for them.
-    const GLOBAL_LIKE = new Set(['GLOBAL', 'Global', 'Global (All Countries)', 'Worldwide']);
     userCompanies.forEach(company => {
       const country = company.country || 'GLOBAL';
       if (!GLOBAL_LIKE.has(country)) {
         locations.add(country);
       }
     });
-    
+
     // Sort locations alphabetically
     return Array.from(locations).sort((a, b) => {
       return getCountryName(a).localeCompare(getCountryName(b));
     });
   }, [userCompanies, loading]);
+
+  // Only show the "Global" entry if the org actually has a global company
+  // (i.e. one with country null/empty or one of the GLOBAL_LIKE variants).
+  const hasGlobalCompany = useMemo(() => {
+    if (loading) return false;
+    return userCompanies.some(company => {
+      const country = company.country;
+      return !country || GLOBAL_LIKE.has(country);
+    });
+  }, [userCompanies, loading]);
+
+  // When the org has no global company and nothing is selected yet, default
+  // to the first available country (alphabetical) so the label matches the
+  // data. Also switch currentCompany to a matching record so the underlying
+  // queries (which filter by company_id, not country) line up with the label.
+  useEffect(() => {
+    if (loading) return;
+    if (selectedLocation) return;
+    if (hasGlobalCompany) return;
+    if (availableLocations.length === 0) return;
+    const first = availableLocations[0];
+    onLocationChange(first);
+    const currentName = currentCompany?.name.toLowerCase();
+    const target =
+      userCompanies.find(c => (c.country || 'GLOBAL') === first && c.name.toLowerCase() === currentName) ||
+      userCompanies.find(c => (c.country || 'GLOBAL') === first);
+    if (target && target.id !== currentCompany?.id) {
+      switchCompany(target.id).catch(err => console.error('Failed to switch company on location default:', err));
+    }
+  }, [loading, selectedLocation, hasGlobalCompany, availableLocations, onLocationChange, currentCompany, userCompanies, switchCompany]);
 
   // Always show the filter if onAddLocation is provided (user can add locations)
   // Only hide if there are no locations AND no way to add locations
@@ -196,25 +227,27 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
         {availableLocations.length > 0 && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => handleLocationSelect(null)}
-              className="cursor-pointer flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2">
-                {!selectedLocation ? (
-                  <Check className="h-4 w-4 text-[#13274F]" />
-                ) : (
-                  <div className="h-4 w-4" />
-                )}
-                <Globe className="h-4 w-4" />
-                <span className={cn(
-                  'text-sm',
-                  !selectedLocation && 'font-semibold text-[#13274F]'
-                )}>
-                  Global
-                </span>
-              </div>
-            </DropdownMenuItem>
+            {hasGlobalCompany && (
+              <DropdownMenuItem
+                onClick={() => handleLocationSelect(null)}
+                className="cursor-pointer flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2">
+                  {!selectedLocation ? (
+                    <Check className="h-4 w-4 text-[#13274F]" />
+                  ) : (
+                    <div className="h-4 w-4" />
+                  )}
+                  <Globe className="h-4 w-4" />
+                  <span className={cn(
+                    'text-sm',
+                    !selectedLocation && 'font-semibold text-[#13274F]'
+                  )}>
+                    Global
+                  </span>
+                </div>
+              </DropdownMenuItem>
+            )}
             {availableLocations.map(location => {
               const isSelected = selectedLocation === location;
               const locationName = getCountryName(location);
