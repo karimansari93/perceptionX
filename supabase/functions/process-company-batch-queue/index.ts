@@ -517,9 +517,10 @@ serve(async (req) => {
       else if (job.phase === "setup") {
         console.log(`[BatchQueue] Phase: setup`);
 
-        // 1. Create the company directly. The auto_create_company_from_onboarding
-        //    trigger has been retired — we don't go through user_onboarding
-        //    anymore.
+        // Create the company directly. The architecture intentionally
+        // produces 1 companies row per (brand, country, job_function) —
+        // each job in the batch becomes its own company so prompts and
+        // metrics are scoped per role-and-region. Don't reuse rows here.
         const countryCode = locationToCountryCode(job.location);
         const { data: createdCompany, error: companyInsertError } = await supabase
           .from("companies")
@@ -621,11 +622,16 @@ serve(async (req) => {
           // organization_members for this org.
         }
 
-        // 7. Advance phase — search_insights removed (AI prompts only)
+        // 7. Advance phase + flip status back to 'pending' so the next
+        //    claim cycle (kicked off by self-chain) actually picks this
+        //    row up for the llm_collection branch. Leaving status as
+        //    'processing' here strands the job — claim only looks at
+        //    pending rows.
         await supabase
           .from("company_batch_queue")
           .update({
             phase: "llm_collection",
+            status: "pending",
             company_id: companyId,
             onboarding_id: onboarding.id,
             total_prompts: finalPrompts.length,
