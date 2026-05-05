@@ -43,6 +43,7 @@ import { LoadingScreen } from "@/components/ui/loading-screen";
 import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { readStarredView } from "@/hooks/useStarredView";
+import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 
 interface DatabaseOnboardingData {
   company_name: string;
@@ -772,7 +773,9 @@ interface DashboardProps {
 
 const Dashboard = ({ defaultGroup, defaultSection }: DashboardProps = {}) => (
   <SidebarProvider>
-    <DashboardContent defaultGroup={defaultGroup} defaultSection={defaultSection} />
+    <WalkthroughProvider>
+      <DashboardContent defaultGroup={defaultGroup} defaultSection={defaultSection} />
+    </WalkthroughProvider>
   </SidebarProvider>
 );
 

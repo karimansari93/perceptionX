@@ -1164,6 +1164,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
         {/* Perception Score Card */}
         <Card
+          data-tour="eps-card"
           className="bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col justify-between hover:shadow-md transition-shadow duration-200 p-0 relative overflow-hidden h-full min-h-[240px] cursor-pointer"
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
@@ -1283,6 +1284,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
         </Card>
         {/* Score Breakdown Card — opens the same EPS drill-down sheet */}
         <Card
+          data-tour="eps-breakdown"
           className="bg-white rounded-2xl shadow-sm p-0 hover:shadow-md transition-shadow duration-200 cursor-pointer h-full min-h-[240px] flex flex-col"
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
@@ -1423,7 +1425,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
       {/* Summary Cards Grid - only render when all metrics (including themes) are ready */}
       {!metricsCalculating && (
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+      <div data-tour="summary-row" className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         <div>
           <SourcesSummaryCard
             topCitations={topCitations}

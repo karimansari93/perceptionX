@@ -848,7 +848,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
   return (
     <div className="flex flex-col gap-6 w-full h-full">
       {/* Main Section Header */}
-      <div className="space-y-2">
+      <div className="space-y-2" data-tour="competitors-heading">
         <h2 className="text-2xl font-bold text-gray-900">Competitors</h2>
         <p className="text-gray-600">
           Track competitor mentions and analyze how {companyName} compares in AI responses and search results.
@@ -896,6 +896,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     <div
                       key={`${competitor.name}-${deferredCompetitorTypeFilter}-${idx}`}
                       className="cursor-pointer"
+                      {...(idx === 0 ? { 'data-tour': 'competitors-first-row' } : {})}
                     >
                       {renderAllTimeBar(competitor, maxCount, totalMentions, totalPreviousMentions)}
                     </div>

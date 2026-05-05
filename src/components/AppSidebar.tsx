@@ -1,4 +1,4 @@
-import { BarChart3, FileText, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lock, Lightbulb, Download } from "lucide-react";
+import { BarChart3, FileText, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lock, Lightbulb, Download, Compass } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -16,6 +16,7 @@ import UserMenu from "@/components/UserMenu";
 import { Badge } from '@/components/ui/badge';
 import { useSubscription } from '@/hooks/useSubscription';
 import { useNavigate } from 'react-router-dom';
+import { useWalkthrough } from '@/contexts/WalkthroughContext';
 
 interface NavigationItem {
   title: string;
@@ -78,6 +79,7 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
   const isCollapsed = state === "collapsed";
   const { isPro } = useSubscription();
   const navigate = useNavigate();
+  const { start: startWalkthrough } = useWalkthrough();
 
   const handleSectionClick = (item: NavigationItem) => {
     // Coming-soon items are locked — keep the entry visible but disable navigation
@@ -201,11 +203,23 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
           ))}
         </SidebarContent>
         <SidebarFooter className="p-4 flex flex-col gap-3">
-          <div className="w-full rounded-lg border border-pink-600 bg-pink-100/60 text-pink-800 text-xs px-4 py-3 mb-1">
-            <span className="font-semibold block mb-1">Dashboard is in BETA</span>
-            Please reach out to <a href="mailto:karim@perceptionx.ai" className="underline font-medium">karim@perceptionx.ai</a> if you have any feedback.
-          </div>
-
+          <button
+            type="button"
+            onClick={startWalkthrough}
+            className="group w-full text-left rounded-xl border border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/10 via-white to-[#13274F]/5 hover:from-[#0DBCBA]/15 hover:to-[#13274F]/10 hover:border-[#0DBCBA]/60 hover:shadow-md transition-all p-3 flex items-center gap-3"
+          >
+            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[#0DBCBA] text-white shadow-sm group-hover:scale-105 transition-transform">
+              <Compass className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-[#13274F] leading-tight">
+                Want a guided tour?
+              </div>
+              <div className="text-[11px] text-gray-500 leading-tight mt-0.5">
+                Try this — a 2 min walkthrough.
+              </div>
+            </div>
+          </button>
           <UserMenu />
         </SidebarFooter>
       </Sidebar>

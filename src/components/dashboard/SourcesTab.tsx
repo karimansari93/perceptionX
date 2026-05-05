@@ -849,7 +849,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   return (
     <div className="flex flex-col gap-6 w-full h-full">
       {/* Main Section Header */}
-      <div className="space-y-2">
+      <div className="space-y-2" data-tour="sources-heading">
         <h2 className="text-2xl font-bold text-gray-900">Sources</h2>
         <p className="text-gray-600">
           Discover where {companyName} is mentioned across the web and analyze source performance over time.
@@ -884,7 +884,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
 
       {/* Main Content with Tabs */}
       <div className="flex-1 min-h-0">
-        <Card className="shadow-sm border border-gray-200 h-full flex flex-col">
+        <Card data-tour="sources-chart" className="shadow-sm border border-gray-200 h-full flex flex-col">
           <CardContent className="flex-1 min-h-0 overflow-hidden p-3 sm:p-6">
             <div className="space-y-2 h-full overflow-y-auto relative">
               {allTimeCitationsWithChanges.length > 0 ? (
@@ -906,6 +906,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                           key={idx}
                           onClick={() => handleSourceClick({ domain: citation.name, count: citation.count })}
                           className="cursor-pointer"
+                          {...(idx === 0 ? { 'data-tour': 'sources-first-row' } : {})}
                         >
                           {renderAllTimeBar(citation, maxCount, totalCitations, totalPreviousCitations)}
                         </div>
