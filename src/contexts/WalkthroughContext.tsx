@@ -46,25 +46,11 @@ const STEPS: WalkthroughStep[] = [
     route: '/dashboard',
   },
   {
-    target: '[data-tour="period-selector"]',
-    title: 'Pick a date range',
-    content: 'Compare against previous periods to see how perception is trending.',
-    disableBeacon: true,
-    route: '/dashboard',
-  },
-  {
-    target: '[data-tour="eps-card"]',
+    target: '[data-tour="score-row"]',
     title: 'Your EPS score',
     content:
-      'The Employer Perception Score blends sentiment, visibility and relevance signals into one number. Click on your scores to get an in-depth analysis.',
-    disableBeacon: true,
-    route: '/dashboard',
-  },
-  {
-    target: '[data-tour="eps-breakdown"]',
-    title: 'Score breakdown',
-    content:
-      'Click any breakdown card to see exactly what drives each score component.',
+      'The Employer Perception Score blends sentiment, visibility and relevance signals into one number. Click either card to get an in-depth breakdown of what drives each component.',
+    placement: 'bottom',
     disableBeacon: true,
     route: '/dashboard',
   },
