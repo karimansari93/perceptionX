@@ -749,7 +749,11 @@ serve(async (req) => {
               .from("company_batch_queue")
               .update({
                 phase: isDone ? "done" : "llm_collection",
-                status: isDone ? "completed" : "processing",
+                // Flip back to 'pending' between chunks so the next claim
+                // cycle can re-pick this row. Leaving 'processing' here
+                // strands the job after each chunk — claim only matches
+                // pending rows.
+                status: isDone ? "completed" : "pending",
                 batch_index: newOffset,
                 total_prompts: totalPrompts,
                 updated_at: new Date().toISOString(),
