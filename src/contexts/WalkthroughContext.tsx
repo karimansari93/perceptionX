@@ -220,24 +220,46 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
         return;
       }
 
-      // Target missing on a step (lazy chunk still loading) — pause and let
-      // the resume effect retry once the element appears, instead of skipping.
+      // Target missing — could be a lazy chunk still loading, OR an element
+      // that never renders (e.g. PeriodSelector hides when only one period).
+      // Poll briefly for it; if it never appears, advance past the step
+      // instead of looping forever.
       if (type === EVENTS.TARGET_NOT_FOUND) {
-        setIsRunning(false);
-        pendingNavRef.current = index;
-        // Trigger the resume effect even though pathname didn't change
-        // by scheduling a microtask retry.
         const targetSelector = STEPS[index]?.target;
+        // eslint-disable-next-line no-console
+        console.warn('[walkthrough] target not found for step', index, targetSelector);
+        setIsRunning(false);
         let attempts = 0;
+        const MAX = 30; // ~3s
         const retry = () => {
           const found =
             typeof targetSelector === 'string' && targetSelector !== 'body'
               ? document.querySelector(targetSelector)
               : true;
-          if (found || attempts >= 50) {
-            pendingNavRef.current = null;
+          if (found) {
             setStepIndex(index);
             setIsRunning(true);
+            return;
+          }
+          if (attempts >= MAX) {
+            // Give up on this step — advance to the next one.
+            const advance = index + 1;
+            // eslint-disable-next-line no-console
+            console.warn('[walkthrough] giving up on step', index, '-> advancing to', advance);
+            if (advance >= STEPS.length) {
+              stop();
+              setStepIndex(0);
+              return;
+            }
+            const nextStep = STEPS[advance];
+            const targetRoute = nextStep.route;
+            if (targetRoute && targetRoute !== location.pathname) {
+              pendingNavRef.current = advance;
+              navigate(targetRoute);
+            } else {
+              setStepIndex(advance);
+              setIsRunning(true);
+            }
             return;
           }
           attempts += 1;
