@@ -172,17 +172,42 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
     } catch {}
   }, []);
 
-  // Resume after route change
+  // Resume after route change — poll until the target element is mounted
+  // (lazy-loaded tabs aren't in the DOM immediately after navigation)
   useEffect(() => {
-    if (pendingNavRef.current !== null) {
-      const next = pendingNavRef.current;
-      pendingNavRef.current = null;
-      const t = setTimeout(() => {
+    if (pendingNavRef.current === null) return;
+
+    const next = pendingNavRef.current;
+    pendingNavRef.current = null;
+    const targetSelector = STEPS[next]?.target;
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 80; // ~8s at 100ms intervals
+
+    const resume = () => {
+      if (cancelled) return;
+      const found =
+        typeof targetSelector === 'string' && targetSelector !== 'body'
+          ? document.querySelector(targetSelector)
+          : true;
+
+      if (found || attempts >= MAX_ATTEMPTS) {
         setStepIndex(next);
         setIsRunning(true);
-      }, 350);
-      return () => clearTimeout(t);
-    }
+        return;
+      }
+
+      attempts += 1;
+      timeoutId = setTimeout(resume, 100);
+    };
+
+    timeoutId = setTimeout(resume, 100);
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [location.pathname]);
 
   const handleCallback = useCallback(
@@ -195,7 +220,34 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
         return;
       }
 
-      if (type === EVENTS.STEP_AFTER || type === EVENTS.TARGET_NOT_FOUND) {
+      // Target missing on a step (lazy chunk still loading) — pause and let
+      // the resume effect retry once the element appears, instead of skipping.
+      if (type === EVENTS.TARGET_NOT_FOUND) {
+        setIsRunning(false);
+        pendingNavRef.current = index;
+        // Trigger the resume effect even though pathname didn't change
+        // by scheduling a microtask retry.
+        const targetSelector = STEPS[index]?.target;
+        let attempts = 0;
+        const retry = () => {
+          const found =
+            typeof targetSelector === 'string' && targetSelector !== 'body'
+              ? document.querySelector(targetSelector)
+              : true;
+          if (found || attempts >= 50) {
+            pendingNavRef.current = null;
+            setStepIndex(index);
+            setIsRunning(true);
+            return;
+          }
+          attempts += 1;
+          setTimeout(retry, 100);
+        };
+        setTimeout(retry, 100);
+        return;
+      }
+
+      if (type === EVENTS.STEP_AFTER) {
         const next = action === 'prev' ? index - 1 : index + 1;
         if (next < 0 || next >= STEPS.length) {
           stop();
