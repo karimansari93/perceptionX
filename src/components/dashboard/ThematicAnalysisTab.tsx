@@ -686,7 +686,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
       {/* Main Section Header */}
       <div className="space-y-4">
         <div className="flex items-start justify-between">
-          <div className="space-y-2 flex-1">
+          <div className="space-y-2 flex-1" data-tour="themes-heading">
             <h2 className="text-2xl font-bold text-gray-900">Thematic Analysis</h2>
             <p className="text-gray-600">
               Analyze themes and sentiment patterns to understand {companyName}'s employer brand perception.
@@ -737,7 +737,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
       {/* Ranking */}
       {filteredThemes.length > 0 && (
       <>
-          <div className="mt-4">
+          <div className="mt-4" data-tour="themes-chart">
             <div className="space-y-1">
               {/* Column Headers — clickable to sort */}
               <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-100 select-none">
@@ -777,6 +777,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     <div
                       key={index}
                       className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                      {...(index === 0 ? { 'data-tour': 'themes-first-row' } : {})}
                       onClick={() => {
                         if (attributeId) {
                           setSelectedAttribute(attributeId);

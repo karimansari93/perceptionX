@@ -81,38 +81,46 @@ export const DashboardHeader = React.memo(({
         <div className="flex-1" />
         <div className="flex items-center gap-2 sm:gap-3">
           {onPeriodChange && availablePeriods && availablePeriods.length > 1 && (
-            <PeriodSelector
-              availablePeriods={availablePeriods}
-              selectedPeriod={selectedPeriod ?? null}
-              onPeriodChange={onPeriodChange}
-              className={isMobile ? "min-w-[120px]" : ""}
-            />
+            <div data-tour="period-selector">
+              <PeriodSelector
+                availablePeriods={availablePeriods}
+                selectedPeriod={selectedPeriod ?? null}
+                onPeriodChange={onPeriodChange}
+                className={isMobile ? "min-w-[120px]" : ""}
+              />
+            </div>
           )}
           {onLocationChange && (
-            <LocationFilter
-              selectedLocation={selectedLocation || null}
-              onLocationChange={onLocationChange}
-              onAddLocation={onAddLocation}
-              className={isMobile ? "min-w-[120px]" : ""}
-            />
+            <div data-tour="location-filter">
+              <LocationFilter
+                selectedLocation={selectedLocation || null}
+                onLocationChange={onLocationChange}
+                onAddLocation={onAddLocation}
+                className={isMobile ? "min-w-[120px]" : ""}
+              />
+            </div>
           )}
           {onLocationChange && (
-            <StarSavedView
-              userId={userId}
-              currentLocation={selectedLocation ?? null}
-              currentPeriod={selectedPeriod ?? null}
-            />
+            <div data-tour="saved-view">
+              <StarSavedView
+                userId={userId}
+                currentLocation={selectedLocation ?? null}
+                currentPeriod={selectedPeriod ?? null}
+              />
+            </div>
           )}
-          <CompanySwitcher 
-            variant="outline" 
-            showAddCompanyModal={showAddCompanyModal} 
-            setShowAddCompanyModal={setShowAddCompanyModal} 
-            showUpgradeModal={showUpgradeModal} 
-            setShowUpgradeModal={setShowUpgradeModal} 
-            alwaysMounted={alwaysMounted}
-            locationFilter={selectedLocation || undefined}
-            className={isMobile ? "min-w-[120px] text-xs" : ""}
-          />
+          <div data-tour="company-switcher">
+            <CompanySwitcher
+              variant="outline"
+              showAddCompanyModal={showAddCompanyModal}
+              setShowAddCompanyModal={setShowAddCompanyModal}
+              showUpgradeModal={showUpgradeModal}
+              setShowUpgradeModal={setShowUpgradeModal}
+              alwaysMounted={alwaysMounted}
+              locationFilter={selectedLocation || undefined}
+              className={isMobile ? "min-w-[120px] text-xs" : ""}
+            />
+          </div>
           {hasDataIssues && onFixData && (
             <Button
               variant="outline"
