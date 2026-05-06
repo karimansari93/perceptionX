@@ -101,13 +101,13 @@ async function retryWithBackoff<T>(
   throw lastError
 }
 
-// Call GPT-5.2 Chat Completions (no web search)
+// Call GPT-5.5 Chat Completions (no web search)
 async function callGPT52(prompt: string): Promise<{ response: string; citations: any[] }> {
-  // Try GPT-5.2 variants in order (no fallback to older models)
+  // Try GPT-5.5 variants in order (no fallback to older models)
   // Start with chat-latest which is confirmed to work
   const models = [
-    { name: 'gpt-5.2-chat-latest', description: 'GPT-5.2 Instant (fastest)' }
-    // Note: Other variants (gpt-5.2, gpt-5.2-pro) may require different endpoints or parameters
+    { name: 'gpt-5.5-chat-latest', description: 'GPT-5.5 Instant (fastest)' }
+    // Note: Other variants (gpt-5.5, gpt-5.5-pro) may require different endpoints or parameters
   ]
   
   for (const modelConfig of models) {
@@ -132,8 +132,8 @@ When you reference information, include the specific sources you would naturally
               content: prompt
             }
           ],
-          max_completion_tokens: 2000 // GPT-5.2 uses tokens for reasoning + content, need higher limit
-          // Note: GPT-5.2 may use reasoning tokens, so we need enough tokens for both reasoning and actual content
+          max_completion_tokens: 2000 // GPT-5.5 uses tokens for reasoning + content, need higher limit
+          // Note: GPT-5.5 may use reasoning tokens, so we need enough tokens for both reasoning and actual content
         }
         
         const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -164,7 +164,7 @@ When you reference information, include the specific sources you would naturally
           throw error
         }
         
-        // Handle GPT-5.2 response format - check multiple possible locations
+        // Handle GPT-5.5 response format - check multiple possible locations
         const content = data.choices?.[0]?.message?.content || 
                        data.choices?.[0]?.message?.text ||
                        data.content ||
@@ -216,13 +216,13 @@ When you reference information, include the specific sources you would naturally
       
       // If it's not a rate limit error and not the last model, try next variant
       if (modelError.status !== 429 && modelConfig !== models[models.length - 1]) {
-        console.log(`Trying next GPT-5.2 variant...`)
+        console.log(`Trying next GPT-5.5 variant...`)
         continue
       }
       
       // If it's the last model or a non-retryable error, throw with debug info
       if (modelConfig === models[models.length - 1]) {
-        let errorMessage = `All GPT-5.2 variants failed. Last error: ${modelError.message}`
+        let errorMessage = `All GPT-5.5 variants failed. Last error: ${modelError.message}`
         if (modelError.debugInfo) {
           const debugStr = JSON.stringify(modelError.debugInfo, null, 2)
           console.error('Debug info from failed model:', debugStr)
@@ -237,7 +237,7 @@ When you reference information, include the specific sources you would naturally
     }
   }
   
-  throw new Error('All GPT-5.2 models failed')
+  throw new Error('All GPT-5.5 models failed')
 }
 
 serve(async (req) => {
@@ -257,7 +257,7 @@ serve(async (req) => {
       throw new Error('Prompt is required')
     }
 
-    // Use GPT-5.2 Chat Completions API with enhanced prompting for citations
+    // Use GPT-5.5 Chat Completions API with enhanced prompting for citations
     const result = await callGPT52(prompt)
     
     return new Response(
