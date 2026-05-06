@@ -622,7 +622,7 @@ serve(async (req) => {
             .from("prompt_responses")
             .select("id, ai_model, tested_at")
             .eq("confirmed_prompt_id", promptId)
-            .eq("ai_model", "gpt-5.5-chat-latest")
+            .eq("ai_model", "gpt-5.2-chat-latest")
             .maybeSingle();
 
         const {
@@ -646,11 +646,11 @@ serve(async (req) => {
           .maybeSingle();
 
         // Collect responses for each model that doesn't exist yet.
-        // OpenAI model is gpt-5.5-chat-latest (matches the default model
+        // OpenAI model is gpt-5.2-chat-latest (matches the default model
         // ChatGPT serves to logged-in consumer users).
         const modelsToCollect = [
           {
-            name: "gpt-5.5-chat-latest",
+            name: "gpt-5.2-chat-latest",
             exists: !!existingResponseGPT,
             type: "openai",
           },
@@ -690,7 +690,7 @@ serve(async (req) => {
                         content: promptData.text,
                       },
                     ],
-                    // max_tokens: 1000, // Not supported by gpt-5.5-chat-latest (o1/o3 style models)
+                    // max_tokens: 1000, // Not supported by gpt-5.2-chat-latest (o1/o3 style models)
                     max_completion_tokens: 1000,
                     // temperature: 0.7 // Not supported by some newer reasoning models, safer to omit if using reasoning models or set to 1
                   }),
