@@ -339,6 +339,12 @@ const OrgDrillDown = ({
       toast.error(`Failed to queue rescore: ${error.message}`);
       return;
     }
+    // Kick the worker immediately — fire-and-forget. The edge function
+    // self-chains, so this single call is enough to start the run; the
+    // pg_cron tick is a backup that revives the worker if the chain dies.
+    supabase.functions
+      .invoke('process-recency-rescore-tick', { body: {} })
+      .catch((e) => console.error('Failed to bootstrap rescore worker:', e));
     toast.success('Rescore queued — runs in the background.');
     // Pull the freshly-created (or already-active) row so we can start polling.
     await loadActiveJob();
