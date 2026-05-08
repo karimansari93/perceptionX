@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import {
   Table,
   TableBody,
@@ -11,9 +12,21 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Loader2, RefreshCw, ArrowLeft, Play, ExternalLink, Save } from 'lucide-react';
+import { Loader2, RefreshCw, ArrowLeft, Play, ExternalLink, Save, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
+
+interface RescoreJob {
+  id: string;
+  organization_id: string;
+  status: 'queued' | 'running' | 'cancelled' | 'done' | 'error';
+  total: number;
+  processed: number;
+  is_cancelled: boolean;
+  last_error: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
 
 interface CoverageRow {
   organization_id: string;
@@ -242,7 +255,8 @@ interface UrlRow {
   publication_date: string | null;
 }
 
-const BATCH_SIZE_RESCORE = 50;
+const TEST_BATCH_SIZE = 50;
+const JOB_POLL_INTERVAL_MS = 5000;
 
 const OrgDrillDown = ({
   org,
@@ -256,11 +270,94 @@ const OrgDrillDown = ({
   const [missing, setMissing] = useState<string[]>([]);
   const [nullScored, setNullScored] = useState<UrlRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [rescoring, setRescoring] = useState(false);
+  const [testRunning, setTestRunning] = useState(false);
+  const [job, setJob] = useState<RescoreJob | null>(null);
+  const [enqueueing, setEnqueueing] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const pollTimer = useRef<number | null>(null);
 
   useEffect(() => {
     loadUrls();
+    loadActiveJob();
+    return () => {
+      if (pollTimer.current) window.clearInterval(pollTimer.current);
+    };
   }, [org.organization_id]);
+
+  // Poll the job row whenever one is active so the user sees live progress.
+  useEffect(() => {
+    if (pollTimer.current) {
+      window.clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    }
+    if (job && (job.status === 'queued' || job.status === 'running')) {
+      pollTimer.current = window.setInterval(refreshJob, JOB_POLL_INTERVAL_MS);
+    }
+    return () => {
+      if (pollTimer.current) window.clearInterval(pollTimer.current);
+    };
+  }, [job?.id, job?.status]);
+
+  const loadActiveJob = async () => {
+    const { data } = await supabase
+      .from('recency_rescore_jobs' as any)
+      .select('*')
+      .eq('organization_id', org.organization_id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data) setJob(data as unknown as RescoreJob);
+  };
+
+  const refreshJob = async () => {
+    if (!job) return;
+    const { data } = await supabase
+      .from('recency_rescore_jobs' as any)
+      .select('*')
+      .eq('id', job.id)
+      .maybeSingle();
+    if (data) {
+      const next = data as unknown as RescoreJob;
+      setJob(next);
+      // When the job finishes, refresh the URL lists so counts reflect reality.
+      if (
+        (next.status === 'done' || next.status === 'cancelled' || next.status === 'error') &&
+        (job.status === 'queued' || job.status === 'running')
+      ) {
+        loadUrls();
+      }
+    }
+  };
+
+  const enqueueJob = async () => {
+    setEnqueueing(true);
+    const { data, error } = await supabase.rpc('enqueue_recency_rescore' as any, {
+      p_org: org.organization_id,
+    });
+    setEnqueueing(false);
+    if (error) {
+      toast.error(`Failed to queue rescore: ${error.message}`);
+      return;
+    }
+    toast.success('Rescore queued — runs in the background.');
+    // Pull the freshly-created (or already-active) row so we can start polling.
+    await loadActiveJob();
+  };
+
+  const cancelJob = async () => {
+    if (!job) return;
+    setCancelling(true);
+    const { error } = await supabase.rpc('cancel_recency_rescore' as any, {
+      p_job_id: job.id,
+    });
+    setCancelling(false);
+    if (error) {
+      toast.error(`Cancel failed: ${error.message}`);
+      return;
+    }
+    toast.info('Cancellation requested.');
+    refreshJob();
+  };
 
   const loadUrls = async () => {
     setLoading(true);
@@ -314,39 +411,35 @@ const OrgDrillDown = ({
     setLoading(false);
   };
 
-  const rescoreMissing = async (limit?: number) => {
+  // "Test 50" still runs in the browser — a quick spot-check that doesn't
+  // need the queue. Anything bigger goes through enqueueJob().
+  const testRescore = async () => {
     if (missing.length === 0) return;
-    const target = limit ? missing.slice(0, limit) : missing;
-    setRescoring(true);
-    let processed = 0;
+    const target = missing.slice(0, TEST_BATCH_SIZE);
+    setTestRunning(true);
     const startedAt = Date.now();
-    let summary: any = null;
-    for (let i = 0; i < target.length; i += BATCH_SIZE_RESCORE) {
-      const batch = target.slice(i, i + BATCH_SIZE_RESCORE);
-      const { data, error } = await supabase.functions.invoke('extract-recency-scores', {
-        body: {
-          citations: batch.map((url) => ({ url })),
-        },
-      });
-      if (error) {
-        toast.error(`Batch ${i / BATCH_SIZE_RESCORE + 1} failed: ${error.message}`);
-        break;
-      }
-      summary = data?.summary ?? summary;
-      processed += batch.length;
-      toast.info(`Processed ${processed}/${target.length}`);
-    }
+    const { data, error } = await supabase.functions.invoke('extract-recency-scores', {
+      body: { citations: target.map((url) => ({ url })) },
+    });
     const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-    setRescoring(false);
-    if (summary) {
-      toast.success(
-        `Done in ${elapsed}s — ${summary.withDates ?? 0} scored, ${summary.firecrawlRequestsMade ?? 0} Firecrawl calls`
-      );
-    } else {
-      toast.success(`Done in ${elapsed}s`);
+    setTestRunning(false);
+    if (error) {
+      toast.error(`Test failed: ${error.message}`);
+      return;
     }
+    const summary = data?.summary;
+    toast.success(
+      summary
+        ? `Done in ${elapsed}s — ${summary.withDates ?? 0} scored, ${summary.firecrawlRequestsMade ?? 0} Firecrawl calls`
+        : `Done in ${elapsed}s`
+    );
     await loadUrls();
   };
+
+  const jobActive = job?.status === 'queued' || job?.status === 'running';
+  const progressPct = job && job.total > 0
+    ? Math.min(100, (job.processed / job.total) * 100)
+    : 0;
 
   const retryableNull = nullScored.filter(
     (r) =>
@@ -407,30 +500,85 @@ const OrgDrillDown = ({
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => rescoreMissing(50)}
-                    disabled={rescoring || missing.length === 0}
+                    onClick={testRescore}
+                    disabled={testRunning || missing.length === 0 || jobActive}
                   >
-                    {rescoring ? (
+                    {testRunning ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     ) : (
                       <Play className="h-4 w-4 mr-2" />
                     )}
                     Test 50
                   </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => rescoreMissing()}
-                    disabled={rescoring || missing.length === 0}
-                  >
-                    {rescoring ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Play className="h-4 w-4 mr-2" />
-                    )}
-                    Rescore all
-                  </Button>
+                  {jobActive ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={cancelJob}
+                      disabled={cancelling}
+                    >
+                      {cancelling ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <X className="h-4 w-4 mr-2" />
+                      )}
+                      Cancel
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={enqueueJob}
+                      disabled={enqueueing || missing.length === 0}
+                    >
+                      {enqueueing ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4 mr-2" />
+                      )}
+                      Queue rescore
+                    </Button>
+                  )}
                 </div>
               </div>
+              {job && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-slate-600">
+                    <span>
+                      <Badge
+                        variant="outline"
+                        className={
+                          job.status === 'running'
+                            ? 'border-blue-300 text-blue-700 bg-blue-50'
+                            : job.status === 'queued'
+                            ? 'border-amber-300 text-amber-700 bg-amber-50'
+                            : job.status === 'done'
+                            ? 'border-green-300 text-green-700 bg-green-50'
+                            : job.status === 'cancelled'
+                            ? 'border-slate-300 text-slate-600 bg-slate-50'
+                            : 'border-red-300 text-red-700 bg-red-50'
+                        }
+                      >
+                        {job.status}
+                      </Badge>
+                    </span>
+                    <span className="font-mono">
+                      {job.processed.toLocaleString()} / {job.total.toLocaleString()}
+                      {job.total > 0 && ` (${progressPct.toFixed(1)}%)`}
+                    </span>
+                  </div>
+                  <Progress value={progressPct} className="h-2" />
+                  {job.last_error && (
+                    <p className="text-xs text-red-600">
+                      Last error: {job.last_error}
+                    </p>
+                  )}
+                  {jobActive && (
+                    <p className="text-xs text-slate-500">
+                      Runs in the background — you can leave this page.
+                    </p>
+                  )}
+                </div>
+              )}
             </CardHeader>
             <CardContent>
               {missing.length === 0 ? (
