@@ -13,6 +13,7 @@ import { LoadingModal } from '@/components/prompts/LoadingModal';
 import { generateAndInsertPrompts, ProgressInfo } from '@/hooks/usePromptsLogic';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { validateEmail, sanitizeInput, logger } from '@/lib/utils';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 
 // Google Material Button component
 const GoogleMaterialButton = ({ onClick, loading, mode }) => (
@@ -60,6 +61,7 @@ const GoogleMaterialButton = ({ onClick, loading, mode }) => (
 );
 
 const Auth = () => {
+  useDocumentTitle('Sign in');
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();

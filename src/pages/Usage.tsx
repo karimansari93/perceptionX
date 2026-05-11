@@ -15,6 +15,7 @@ import { useSubscription } from '@/hooks/useSubscription';
 import { TalentXProService } from '@/services/talentXProService';
 import { supabase } from '@/integrations/supabase/client';
 import { UpgradeModal } from '@/components/upgrade/UpgradeModal';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 
 const USAGE_LIMITS = {
   prompts: 3,
@@ -85,6 +86,7 @@ function UsageSidebar({ activeSection, onSectionChange }) {
 }
 
 export default function Usage() {
+  useDocumentTitle('Usage');
   const [activeSection, setActiveSection] = React.useState('usage');
   const navigate = useNavigate();
   const { companyName } = useDashboardData();

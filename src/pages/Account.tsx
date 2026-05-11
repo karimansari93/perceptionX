@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { useSubscription } from '@/hooks/useSubscription';
 import { UpgradeModal } from '@/components/upgrade/UpgradeModal';
 import { updatePromptText, isValidPromptUpdate } from '@/utils/promptUtils';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 
 function AccountSidebar({ activeSection, onSectionChange }) {
   const { state } = useSidebar();
@@ -69,6 +70,7 @@ function AccountSidebar({ activeSection, onSectionChange }) {
 }
 
 export default function Account() {
+  useDocumentTitle('Account');
   const [activeSection, setActiveSection] = useState('account');
   const { user } = useAuth();
   const { isPro, canUpdateData, getLimits } = useSubscription();

@@ -44,6 +44,18 @@ import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { readStarredView } from "@/hooks/useStarredView";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+
+const SECTION_TITLES: Record<string, string> = {
+  overview: "Overview",
+  sources: "Sources",
+  competitors: "Competitors",
+  thematic: "Themes",
+  prompts: "Prompts",
+  responses: "Responses",
+  reports: "Reports",
+  "answer-gaps": "Answer Gaps",
+};
 
 interface DatabaseOnboardingData {
   company_name: string;
@@ -219,6 +231,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const [answerGapsData, setAnswerGapsData] = useState<any>(null);
   const [activeSection, setActiveSection] = useState(defaultSection || "overview");
   const [activeGroup, setActiveGroup] = useState(defaultGroup || "dashboard");
+  useDocumentTitle(SECTION_TITLES[activeSection]);
   const { state, isMobile } = useSidebar();
   const location = useLocation();
   const navigate = useNavigate();
