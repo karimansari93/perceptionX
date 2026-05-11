@@ -103,7 +103,11 @@ serve(async (req) => {
       skipResponses = false,
       batchOffset = 0,
       batchSize = null,
+      // Optional subset of models to collect — defaults to all 3.
+      // Valid values: 'openai', 'perplexity', 'google-ai-overviews'
+      models = null,
     } = body;
+    const modelsFilter: string[] | null = Array.isArray(models) && models.length > 0 ? models : null;
 
     if (!industry) {
       console.error("Industry is required but not provided");
@@ -663,7 +667,11 @@ serve(async (req) => {
             exists: !!existingResponseGoogle,
             type: "google",
           },
-        ].filter((m) => !m.exists);
+        ]
+          .filter((m) => !m.exists)
+          // If caller passed `models`, restrict to that subset. Match by `type`
+          // (e.g. 'openai') so the UI can pass simple identifiers.
+          .filter((m) => !modelsFilter || modelsFilter.includes(m.type) || modelsFilter.includes(m.name));
 
         // Run models in PARALLEL to avoid timeouts
         const modelPromises = modelsToCollect.map(async (model) => {
