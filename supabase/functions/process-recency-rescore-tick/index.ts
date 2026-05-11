@@ -8,6 +8,11 @@ import { corsHeaders } from "../_shared/cors.ts";
 // if Firecrawl can keep up.
 const BATCH_SIZE = 50;
 const MAX_BATCHES_PER_TICK = 4;
+// A job is considered "stalled" if its updated_at hasn't moved in this long
+// — at that point another worker is allowed to take over. Has to be longer
+// than the worst-case batch time (extract-recency-scores can run ~90s on a
+// bad day) to avoid preempting a healthy worker mid-batch.
+const STALE_LEASE_MS = 180_000;
 
 interface JobRow {
   id: string;
@@ -29,11 +34,18 @@ serve(async (req) => {
 
   try {
     // -----------------------------------------------------------------------
-    // Pick the oldest active job. Mark it running.
+    // Pick & atomically claim the oldest active job.
+    //
+    // Multiple ticks can fire simultaneously (UI bootstrap + cron + self-chain
+    // retries). Without a lease they all claim the same job and process the
+    // same URLs in parallel — that's what caused job 9f486166 to overshoot
+    // processed by 25k and hammer the DB. The claim below only succeeds if
+    // the row is either 'queued' OR 'running' with a stale heartbeat. Other
+    // ticks get null and exit.
     // -----------------------------------------------------------------------
     const { data: candidate, error: pickErr } = await supabase
       .from("recency_rescore_jobs")
-      .select("id, organization_id, status, total, processed, is_cancelled")
+      .select("id")
       .in("status", ["queued", "running"])
       .eq("is_cancelled", false)
       .order("created_at", { ascending: true })
@@ -49,20 +61,31 @@ serve(async (req) => {
       return jsonResponse({ message: "No active jobs" }, 200);
     }
 
-    let job = candidate as JobRow;
+    const now = new Date();
+    const staleCutoff = new Date(now.getTime() - STALE_LEASE_MS).toISOString();
 
-    if (job.status === "queued") {
-      const { error: claimErr } = await supabase
-        .from("recency_rescore_jobs")
-        .update({ status: "running", updated_at: new Date().toISOString() })
-        .eq("id", job.id);
-      if (claimErr) {
-        console.error(`[RecencyRescore] Failed to claim job ${job.id}:`, claimErr);
-        return jsonResponse({ error: claimErr.message }, 500);
-      }
+    const { data: claimedRows, error: claimErr } = await supabase
+      .from("recency_rescore_jobs")
+      .update({ status: "running", updated_at: now.toISOString() })
+      .eq("id", candidate.id)
+      .eq("is_cancelled", false)
+      .or(`status.eq.queued,and(status.eq.running,updated_at.lt.${staleCutoff})`)
+      .select("id, organization_id, status, total, processed, is_cancelled");
+
+    if (claimErr) {
+      console.error(`[RecencyRescore] Failed to claim job ${candidate.id}:`, claimErr);
+      return jsonResponse({ error: claimErr.message }, 500);
     }
 
-    console.log(`[RecencyRescore] Working job ${job.id} for org ${job.organization_id}, processed=${job.processed}/${job.total}`);
+    if (!claimedRows || claimedRows.length === 0) {
+      // Another worker holds the lease — exit cleanly. They'll keep working
+      // and chain themselves; if they die, the cron picks up the slack via
+      // the stale-lease branch above.
+      return jsonResponse({ skipped: "lease held by another worker" }, 200);
+    }
+
+    const job = claimedRows[0] as JobRow;
+    console.log(`[RecencyRescore] Claimed job ${job.id} for org ${job.organization_id}, processed=${job.processed}/${job.total}`);
 
     // -----------------------------------------------------------------------
     // Process up to MAX_BATCHES_PER_TICK batches.
@@ -115,10 +138,24 @@ serve(async (req) => {
 
       totalProcessedThisTick += urls.length;
 
+      // Truthful progress: count what's actually been scored, not what we
+      // optimistically fired off. Capped at total so the bar can't overshoot
+      // when total drifts (orgs can pick up new citation URLs over time).
+      const { count: missingCount } = await supabase
+        .from("v_organization_url_status")
+        .select("*", { count: "exact", head: true })
+        .eq("organization_id", job.organization_id)
+        .is("extraction_method", null);
+
+      const realProcessed = Math.min(
+        job.total,
+        Math.max(0, job.total - (missingCount ?? 0)),
+      );
+
       const { error: progressErr } = await supabase
         .from("recency_rescore_jobs")
         .update({
-          processed: job.processed + totalProcessedThisTick,
+          processed: realProcessed,
           updated_at: new Date().toISOString(),
         })
         .eq("id", job.id);
@@ -144,11 +181,11 @@ serve(async (req) => {
       await supabase.rpc("send_batch_alert", {
         payload: {
           event: "recency_rescore_done",
-          text: `Recency rescore for org \`${job.organization_id}\` completed. ${job.processed + totalProcessedThisTick} URLs processed.`,
+          text: `Recency rescore for org \`${job.organization_id}\` completed. ${job.total} URLs processed.`,
           fields: [
             { label: "Job", value: job.id },
             { label: "Org", value: job.organization_id },
-            { label: "Processed", value: String(job.processed + totalProcessedThisTick) },
+            { label: "Total", value: String(job.total) },
           ],
         },
       });
