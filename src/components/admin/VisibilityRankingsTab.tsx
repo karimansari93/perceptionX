@@ -40,7 +40,19 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -92,6 +104,18 @@ export const VisibilityRankingsTab = () => {
   const [processing, setProcessing] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // Start Collection confirmation / customization (mirrors NewCompanyPanel)
+  const ALL_INDUSTRY_MODELS = [
+    { id: "openai", label: "OpenAI (gpt-5.2-chat-latest)" },
+    { id: "perplexity", label: "Perplexity" },
+    { id: "google-ai-overviews", label: "Google AI Overviews" },
+  ];
+  const [confirmStartOpen, setConfirmStartOpen] = useState(false);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [selectedModels, setSelectedModels] = useState<string[]>(
+    ALL_INDUSTRY_MODELS.map((m) => m.id),
+  );
 
   // Recent Results State
   const [recentResults, setRecentResults] = useState<any[]>([]);
@@ -575,7 +599,7 @@ export const VisibilityRankingsTab = () => {
     setLogs([]);
   };
 
-  const processQueue = async () => {
+  const processQueue = async (models?: string[]) => {
     if (processing) return;
 
     const pendingItems = queue.filter((i) => i.status === "pending");
@@ -584,8 +608,16 @@ export const VisibilityRankingsTab = () => {
       return;
     }
 
+    const effectiveModels =
+      models && models.length > 0 ? models : ALL_INDUSTRY_MODELS.map((m) => m.id);
+    const allModels = effectiveModels.length === ALL_INDUSTRY_MODELS.length;
+
     setProcessing(true);
-    addLog(`Starting batch processing of ${pendingItems.length} items...`);
+    addLog(
+      `Starting batch processing of ${pendingItems.length} items (${
+        allModels ? "all models" : `models: ${effectiveModels.join(", ")}`
+      })...`,
+    );
 
     // Process items sequentially
     for (const item of pendingItems) {
@@ -624,6 +656,7 @@ export const VisibilityRankingsTab = () => {
               country: countryCode, // Send Code (e.g. GB) if found, else Name
               countryName: countryName, // Send Full Name
               skipResponses: true,
+              models: effectiveModels,
             },
           },
         );
@@ -656,6 +689,7 @@ export const VisibilityRankingsTab = () => {
                 batchOffset: offset,
                 batchSize: BATCH_SIZE,
                 skipResponses: false,
+                models: effectiveModels,
               },
             },
           );
@@ -1215,7 +1249,7 @@ export const VisibilityRankingsTab = () => {
                   )}
                 </div>
                 <Button
-                  onClick={processQueue}
+                  onClick={() => setConfirmStartOpen(true)}
                   disabled={
                     processing ||
                     queue.filter((i) => i.status === "pending").length === 0
@@ -1424,6 +1458,88 @@ export const VisibilityRankingsTab = () => {
           </div>
         </CardContent>
       </Card>
+
+      <AlertDialog open={confirmStartOpen} onOpenChange={setConfirmStartOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Run for all models?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will collect responses across all models (OpenAI, Perplexity,
+              Google AI Overviews) for the pending queue items. Choose
+              "Customize" to pick a subset (e.g. only OpenAI when re-collecting
+              after an outage).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setConfirmStartOpen(false);
+                setCustomizeOpen(true);
+              }}
+            >
+              Customize
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmStartOpen(false);
+                processQueue(ALL_INDUSTRY_MODELS.map((m) => m.id));
+              }}
+            >
+              Run all
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={customizeOpen} onOpenChange={setCustomizeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Select models</DialogTitle>
+            <DialogDescription>
+              Only the selected models will be collected for this run. Existing
+              responses for unselected models will not be touched.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            {ALL_INDUSTRY_MODELS.map((m) => (
+              <div key={m.id} className="flex items-center gap-2">
+                <Checkbox
+                  id={`iv-m-${m.id}`}
+                  checked={selectedModels.includes(m.id)}
+                  onCheckedChange={(checked) => {
+                    setSelectedModels((prev) =>
+                      checked ? [...prev, m.id] : prev.filter((x) => x !== m.id),
+                    );
+                  }}
+                />
+                <label
+                  htmlFor={`iv-m-${m.id}`}
+                  className="text-sm cursor-pointer"
+                >
+                  {m.label}
+                </label>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCustomizeOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedModels.length === 0) {
+                  toast.error("Select at least one model");
+                  return;
+                }
+                setCustomizeOpen(false);
+                processQueue(selectedModels);
+              }}
+            >
+              Run with selected
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

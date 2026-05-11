@@ -113,7 +113,7 @@ Example invalid responses:
         'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4.1-nano',
         messages: [
           {
             role: 'system',
@@ -129,8 +129,25 @@ Example invalid responses:
       })
     });
 
+    if (!openAIResponse.ok) {
+      const errBody = await openAIResponse.text();
+      console.error(`OpenAI error ${openAIResponse.status}: ${errBody}`);
+      return new Response(
+        JSON.stringify({ error: 'openai_error', status: openAIResponse.status, body: errBody }),
+        { status: 502, headers: corsHeaders }
+      );
+    }
+
     const data = await openAIResponse.json();
-    let detectedCompetitors = data.choices?.[0]?.message?.content?.trim() || '';
+    const content = data.choices?.[0]?.message?.content;
+    if (typeof content !== 'string') {
+      console.error('OpenAI returned no content:', JSON.stringify(data));
+      return new Response(
+        JSON.stringify({ error: 'openai_no_content', raw: data }),
+        { status: 502, headers: corsHeaders }
+      );
+    }
+    let detectedCompetitors = content.trim();
 
     // Filter out responses that indicate no competitors were found
     if (

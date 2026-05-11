@@ -40,6 +40,8 @@ const ALL_MODELS = [
   { id: "perplexity", label: "Perplexity" },
   { id: "google-ai-overviews", label: "Google AI Overviews" },
   { id: "google-ai-mode", label: "Google AI Mode" },
+  { id: "deepseek", label: "DeepSeek" },
+  { id: "gemini", label: "Gemini" },
 ] as const;
 
 const COUNTRY_SUGGESTIONS = [
@@ -619,8 +621,8 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
             <AlertDialogDescription>
               This will collect responses across all prompt types
               (informational, experience, competitive, discovery) and all
-              models (OpenAI, Perplexity, Google AI Overviews, Google AI Mode).
-              Choose "Customize" to pick a subset.
+              models (OpenAI, Perplexity, Google AI Overviews, Google AI Mode,
+              DeepSeek, Gemini). Choose "Customize" to pick a subset.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

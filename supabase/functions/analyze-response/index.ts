@@ -27,7 +27,7 @@ interface Citation {
 interface AnalysisResult {
   citations: Citation[];
   company_mentioned: boolean;
-  detected_competitors: string;
+  detected_competitors: string | null;
 }
 
 
@@ -302,8 +302,10 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
   // Get company mention data
   const companyMentionData = detectCompanyMention(text, companyName);
 
-  // Competitor detection: use LLM edge function output only
-  let detectedCompetitors = '';
+  // Competitor detection: use LLM edge function output only.
+  // null = detection failed (e.g. OpenAI 401/429/5xx); '' = ran successfully but no competitors.
+  // Distinguishing the two lets a backfill job re-process only the failed rows.
+  let detectedCompetitors: string | null = null;
 
   try {
     const competitorResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/detect-competitors`, {
@@ -337,13 +339,13 @@ async function analyzeResponse(text: string, companyName: string, promptType: st
 
       detectedCompetitors = names.join(', ');
     } else {
-      // Edge function failed; do not fallback to local
-      detectedCompetitors = '';
+      const body = await competitorResponse.text().catch(() => '');
+      console.error(`detect-competitors returned ${competitorResponse.status}: ${body}`);
+      detectedCompetitors = null;
     }
   } catch (err) {
-    // Network/edge error; do not fallback to local
     console.error('detect-competitors failed:', err);
-    detectedCompetitors = '';
+    detectedCompetitors = null;
   }
 
   // Extract citations from the response text

@@ -15,7 +15,7 @@ interface CitationWithRecency {
   url?: string;
   publicationDate?: string;
   recencyScore: number | null; // null = N/A
-  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen';
+  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'firecrawl-json' | 'meta-tag' | 'json-ld' | 'time-tag' | 'openai-html' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen';
   sourceType?: 'perplexity' | 'google-ai-overviews' | 'bing-copilot' | 'search-results';
 }
 
@@ -193,11 +193,45 @@ serve(async (req) => {
       urlsNeedingFirecrawl.push(url);
     }
 
-    console.log(`URL pattern + evergreen handled: ${urlResults.size - cachedUrls.size}, Firecrawl needed: ${urlsNeedingFirecrawl.length}`);
+    console.log(`URL pattern + evergreen handled: ${urlResults.size - cachedUrls.size}, candidates for cheap tiers: ${urlsNeedingFirecrawl.length}`);
 
-    // Step 4b: One batch Firecrawl call (concurrent, much faster than per-URL).
+    // Step 4b: Cheap tiers — plain HTTP fetch + meta-tag parse, then OpenAI on the
+    // fetched HTML if no meta tag found. Both are vastly cheaper than Firecrawl.
+    // Anything that still doesn't resolve goes to the Firecrawl batch below.
+    const openAIKey = Deno.env.get('OPENAI_API_KEY') || null;
+    let tier2Hits = 0;
+    let tier3Hits = 0;
+    if (!testMode && urlsNeedingFirecrawl.length > 0) {
+      const cheapResults = await runTier2And3(urlsNeedingFirecrawl, openAIKey);
+      const stillNeedingFirecrawl: string[] = [];
+      for (const url of urlsNeedingFirecrawl) {
+        const r = cheapResults.get(url);
+        if (r) {
+          const citationsForUrl = urlToCitations.get(url) || [];
+          const firstCitation = citationsForUrl[0];
+          urlResults.set(url, {
+            domain: firstCitation?.domain || extractDomainFromUrl(url),
+            title: firstCitation?.title,
+            url,
+            publicationDate: r.date,
+            recencyScore: calculateRecencyScore(r.date),
+            extractionMethod: r.method,
+            sourceType: firstCitation?.sourceType,
+          });
+          if (r.method === 'openai-html') tier3Hits++;
+          else tier2Hits++;
+        } else {
+          stillNeedingFirecrawl.push(url);
+        }
+      }
+      urlsNeedingFirecrawl.length = 0;
+      urlsNeedingFirecrawl.push(...stillNeedingFirecrawl);
+      console.log(`Cheap tiers: meta/json-ld/time-tag=${tier2Hits}, openai-html=${tier3Hits}, still need Firecrawl=${urlsNeedingFirecrawl.length}`);
+    }
+
+    // Step 4c: One batch Firecrawl call (concurrent, much faster than per-URL).
     if (!testMode && firecrawlApiKey && urlsNeedingFirecrawl.length > 0) {
-      const batchResults = await batchExtractDatesWithFirecrawl(urlsNeedingFirecrawl, firecrawlApiKey, maxProcessingTime - (Date.now() - startTime));
+      const batchResults = await batchExtractDatesWithFirecrawl(urlsNeedingFirecrawl, firecrawlApiKey, maxProcessingTime - (Date.now() - startTime), openAIKey);
       firecrawlRequestCount = urlsNeedingFirecrawl.length;
 
       for (const url of urlsNeedingFirecrawl) {
@@ -242,7 +276,7 @@ serve(async (req) => {
       }
     }
 
-    // Step 4c: Persist all newly-resolved URLs to cache (parallel writes).
+    // Step 4d: Persist all newly-resolved URLs to cache (parallel writes).
     const newlyResolvedUrls = urlsToAnalyze.filter(u => urlResults.has(u));
     await Promise.all(
       newlyResolvedUrls
@@ -371,13 +405,168 @@ function extractDateFromUrl(url: string): string | null {
   return null;
 }
 
+// ----------------------------------------------------------------------------
+// Tier 2: plain fetch + HTML meta-tag parsing. Free. Catches ~50% of URLs that
+// would otherwise hit Firecrawl. Returns {date, method, html?} — html is kept
+// so Tier 3 can run OpenAI extraction on the same HTML without a second fetch.
+// ----------------------------------------------------------------------------
+const TIER2_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+function normalizeDateString(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const slash = s.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+  if (slash) return `${slash[1]}-${slash[2].padStart(2, '0')}-${slash[3].padStart(2, '0')}`;
+  const t = Date.parse(s);
+  if (!isNaN(t)) {
+    const d = new Date(t);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
+  return null;
+}
+
+function extractDateFromHtml(html: string): { date: string | null; method: 'meta-tag' | 'json-ld' | 'time-tag' | null } {
+  // OpenGraph article:published_time (most reliable)
+  let m = html.match(/<meta[^>]+property=["']article:published_time["'][^>]+content=["']([^"']+)["']/i);
+  if (m) { const d = normalizeDateString(m[1]); if (d) return { date: d, method: 'meta-tag' }; }
+  m = html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']article:published_time["']/i);
+  if (m) { const d = normalizeDateString(m[1]); if (d) return { date: d, method: 'meta-tag' }; }
+
+  // Other standard meta names
+  const metaNames = ['date', 'DC.date.issued', 'pubdate', 'publishdate', 'publication_date', 'article:published', 'sailthru.date', 'parsely-pub-date'];
+  for (const n of metaNames) {
+    const re = new RegExp(`<meta[^>]+name=["']${n.replace(/\./g, '\\.')}["'][^>]+content=["']([^"']+)["']`, 'i');
+    const mm = html.match(re);
+    if (mm) { const d = normalizeDateString(mm[1]); if (d) return { date: d, method: 'meta-tag' }; }
+  }
+
+  // JSON-LD datePublished / dateCreated / uploadDate (covers YouTube too)
+  const ldRe = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let ld;
+  while ((ld = ldRe.exec(html)) !== null) {
+    try {
+      const cleaned = ld[1].trim().replace(/^﻿/, '');
+      const obj = JSON.parse(cleaned);
+      const stack: any[] = [obj];
+      while (stack.length) {
+        const cur = stack.pop();
+        if (cur && typeof cur === 'object') {
+          for (const key of ['datePublished', 'dateCreated', 'uploadDate', 'datePosted']) {
+            if (cur[key]) {
+              const d = normalizeDateString(cur[key]);
+              if (d) return { date: d, method: 'json-ld' };
+            }
+          }
+          if (Array.isArray(cur)) stack.push(...cur);
+          else stack.push(...Object.values(cur));
+        }
+      }
+    } catch { /* malformed JSON-LD, skip */ }
+  }
+
+  // YouTube fallback: "uploadDate":"..." appears in ytInitialPlayerResponse
+  const yt = html.match(/"uploadDate"\s*:\s*"([^"]+)"/);
+  if (yt) { const d = normalizeDateString(yt[1]); if (d) return { date: d, method: 'json-ld' }; }
+
+  // <time datetime="...">
+  const time = html.match(/<time[^>]+datetime=["']([^"']+)["']/i);
+  if (time) { const d = normalizeDateString(time[1]); if (d) return { date: d, method: 'time-tag' }; }
+
+  return { date: null, method: null };
+}
+
+async function tier2FetchAndExtract(url: string, timeoutMs = 8000): Promise<{ date: string | null; method: 'meta-tag' | 'json-ld' | 'time-tag' | null; html: string | null; error: string | null }> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, {
+      headers: { 'User-Agent': TIER2_UA, 'Accept-Language': 'en-US,en;q=0.9' },
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return { date: null, method: null, html: null, error: `HTTP ${res.status}` };
+    // Cap response size to 1MB to avoid pulling huge PDFs/binaries into memory
+    const html = (await res.text()).slice(0, 1_000_000);
+    const { date, method } = extractDateFromHtml(html);
+    return { date, method, html, error: null };
+  } catch (e: any) {
+    return { date: null, method: null, html: null, error: e.name === 'AbortError' ? 'timeout' : (e?.message ?? 'fetch_error') };
+  }
+}
+
+// Tier 3: OpenAI gpt-4.1-nano extraction on Tier-2's HTML. Only called when meta
+// parsing returned nothing. ~$0.0005 per call vs ~25 Firecrawl credits.
+async function tier3OpenAIExtract(html: string, openAIKey: string): Promise<string | null> {
+  // Strip scripts/styles, then take a 6k-char window near the top where bylines live.
+  const cleaned = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .slice(0, 6000);
+  if (cleaned.length < 200) return null;
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${openAIKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4.1-nano',
+        temperature: 0,
+        max_tokens: 30,
+        messages: [
+          { role: 'system', content: "Extract the publication date of this article in YYYY-MM-DD format. Look for explicit publish/posted dates near the title, byline, or article header — NOT comment timestamps, copyright years, or dates mentioned in the article body. If you can't find a clear publication date, respond with exactly 'null'. Respond with ONLY the date or 'null', nothing else." },
+          { role: 'user', content: cleaned },
+        ],
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const out = (data.choices?.[0]?.message?.content ?? '').trim();
+    if (!out || out.toLowerCase() === 'null') return null;
+    return normalizeDateString(out);
+  } catch {
+    return null;
+  }
+}
+
+// Run Tier 2 (and Tier 3 fallback) for a list of URLs in parallel. Returns a
+// map of url => result. URLs that produced no date stay missing from the map.
+async function runTier2And3(urls: string[], openAIKey: string | null, concurrency = 12): Promise<Map<string, { date: string; method: CitationWithRecency['extractionMethod'] }>> {
+  const results = new Map<string, { date: string; method: CitationWithRecency['extractionMethod'] }>();
+  let idx = 0;
+  async function worker() {
+    while (idx < urls.length) {
+      const myIdx = idx++;
+      const url = urls[myIdx];
+      const r = await tier2FetchAndExtract(url);
+      if (r.date && r.method) {
+        results.set(url, { date: r.date, method: r.method });
+        continue;
+      }
+      // Tier 3 only if fetch succeeded but no date found
+      if (r.html && openAIKey) {
+        const aiDate = await tier3OpenAIExtract(r.html, openAIKey);
+        if (aiDate) {
+          results.set(url, { date: aiDate, method: 'openai-html' });
+        }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, urls.length) }, () => worker()));
+  return results;
+}
+
 // Batch scrape: send up to N URLs in one call, get all results back concurrently.
 // Replaces per-URL scrape calls. Same credit cost (1/URL) but eliminates HTTP
 // overhead and uses Firecrawl's internal concurrency.
 async function batchExtractDatesWithFirecrawl(
   urls: string[],
   apiKey: string,
-  maxWaitMs: number
+  maxWaitMs: number,
+  openAIKey: string | null
 ): Promise<Map<string, { date: string | null; method: CitationWithRecency['extractionMethod'] }>> {
   const results = new Map<string, { date: string | null; method: CitationWithRecency['extractionMethod'] }>();
 
@@ -398,29 +587,11 @@ async function batchExtractDatesWithFirecrawl(
       },
       body: JSON.stringify({
         urls,
-        // JSON mode: LLM-powered date extraction (5 credits/page).
-        // Metadata still comes free with every scrape so we check that first.
-        formats: [{
-          type: 'json',
-          prompt:
-            "Extract the publication date of this article in YYYY-MM-DD format. " +
-            "Look for explicit publish/posted dates near the title, byline, or article header — " +
-            "NOT comment timestamps, copyright years, or dates mentioned in the article body. " +
-            "Date formats vary by region: '2016. 2. 24.' is Korean (Feb 24, 2016), " +
-            "'平成28年2月24日' is Japanese, '2016年2月24日' is Chinese/Japanese. " +
-            "If the page is a job listing, careers page, homepage, or has no clear publication date, return null.",
-          schema: {
-            type: 'object',
-            properties: {
-              publicationDate: {
-                type: ['string', 'null'],
-                description: 'Publication date in YYYY-MM-DD format, or null if no clear publication date is visible',
-              },
-            },
-            required: ['publicationDate'],
-          },
-        }],
-        onlyMainContent: false, // headers/bylines can be outside main content
+        // markdown only — base credit cost. Firecrawl's JSON extraction was billing
+        // 25-290 credits/page; we now run gpt-4.1-nano on the markdown ourselves
+        // for a fraction of the cost. Metadata still comes free with every scrape.
+        formats: ['markdown'],
+        onlyMainContent: true,
         timeout: 30000,
       }),
     });
@@ -456,13 +627,42 @@ async function batchExtractDatesWithFirecrawl(
       console.log(`Batch progress: ${statusData.completed ?? 0}/${statusData.total ?? urls.length} (${statusData.status})`);
 
       if (statusData.status === 'completed' || statusData.status === 'failed') {
-        // Process results — Firecrawl returns one entry per URL in data array
+        // Process results — Firecrawl returns one entry per URL in data array.
+        // For each entry: first try metadata (free), then OpenAI on the returned
+        // markdown (cheap). We do the OpenAI pass in parallel.
         const data = statusData.data || [];
+        const entries: Array<{ url: string; entry: any }> = [];
         for (const entry of data) {
           const url = entry?.metadata?.sourceURL || entry?.metadata?.url;
           if (!url) continue;
-          const dateResult = parseDateFromScrapeData(entry);
-          results.set(url, dateResult);
+          entries.push({ url, entry });
+        }
+
+        // Phase 1: metadata-only (synchronous, no network)
+        const needsOpenAI: Array<{ url: string; markdown: string }> = [];
+        for (const { url, entry } of entries) {
+          const metaResult = parseDateFromScrapeMetadata(entry);
+          if (metaResult.date) {
+            results.set(url, metaResult);
+          } else if (openAIKey && typeof entry?.markdown === 'string' && entry.markdown.length > 100) {
+            needsOpenAI.push({ url, markdown: entry.markdown });
+          } else {
+            results.set(url, { date: null, method: 'not-found' });
+          }
+        }
+
+        // Phase 2: parallel OpenAI extraction on the markdown
+        if (needsOpenAI.length > 0 && openAIKey) {
+          console.log(`Running gpt-4.1-nano on ${needsOpenAI.length} markdowns from Firecrawl`);
+          await Promise.all(needsOpenAI.map(async ({ url, markdown }) => {
+            const cleaned = markdown.replace(/\s+/g, ' ').slice(0, 6000);
+            const aiDate = await tier3OpenAIExtract(cleaned, openAIKey);
+            if (aiDate) {
+              results.set(url, { date: aiDate, method: 'openai-html' });
+            } else {
+              results.set(url, { date: null, method: 'not-found' });
+            }
+          }));
         }
         return results;
       }
@@ -476,12 +676,9 @@ async function batchExtractDatesWithFirecrawl(
   }
 }
 
-// Extract a date from a Firecrawl batch scrape entry. Tries metadata (free)
-// first, then falls back to the LLM-extracted JSON output.
-function parseDateFromScrapeData(scrapeEntry: any): { date: string | null; method: CitationWithRecency['extractionMethod'] } {
+// Extract a date from Firecrawl's free metadata fields. No LLM call.
+function parseDateFromScrapeMetadata(scrapeEntry: any): { date: string | null; method: CitationWithRecency['extractionMethod'] } {
   const metadata = scrapeEntry?.metadata;
-
-  // STEP 1: Metadata fields (free, comes with every scrape)
   if (metadata) {
     const dateFields = [
       metadata.publishedTime,
@@ -500,18 +697,6 @@ function parseDateFromScrapeData(scrapeEntry: any): { date: string | null; metho
       }
     }
   }
-
-  // STEP 2: LLM-extracted publication date (JSON mode, 5 credits/page).
-  // Reliable across languages, scripts, and date formats.
-  const jsonOutput = scrapeEntry?.json;
-  const jsonDate = jsonOutput?.publicationDate;
-  if (jsonDate && typeof jsonDate === 'string') {
-    const validated = validateAndFormatDate(jsonDate);
-    if (validated) {
-      return { date: validated, method: 'firecrawl-json' };
-    }
-  }
-
   return { date: null, method: 'not-found' };
 }
 
@@ -599,6 +784,10 @@ function isEvergreenUrl(url: string): boolean {
   // Bare homepage / domain root
   if (path === '' || path === '/') return true;
 
+  // PDFs: Firecrawl charges 1 credit per page of PDF (can be 50+ credits for one URL).
+  // Date extraction from PDFs is also unreliable. Skip them entirely.
+  if (/\.pdf(\?|$)/i.test(path) || /\.pdf(\?|$)/i.test(parsed.search)) return true;
+
   // ATS / job-board hostnames — treat the whole domain as evergreen
   const evergreenHosts = [
     'boards.greenhouse.io',
@@ -623,8 +812,20 @@ function isEvergreenUrl(url: string): boolean {
   // Indeed job pages (not articles)
   if (host.endsWith('indeed.com') && /^\/(viewjob|jobs|cmp)(\/|$|\?)/.test(path)) return true;
 
-  // Glassdoor company / job pages (not articles)
-  if (host.endsWith('glassdoor.com') && /^\/(overview|jobs|reviews|salary|salaries|benefits|interview|interviews)(\/|$)/i.test(path)) return true;
+  // Glassdoor company / job pages (not articles) — covers all TLDs (.com, .de, .br, .com.mx, etc.)
+  if (/(^|\.)glassdoor\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host)
+      && /^\/(überblick|uberblick|overview|jobs|reviews|salary|salaries|salarios|salaires|gehalt|gehälter|stipendi|beneficios|benefits|benefícios|beneficios|interview|interviews|entrevista|entrevistas|empleos|empleo|empresas|arbeiten-bei)(\/|$)/i.test(path)) {
+    return true;
+  }
+
+  // Social media — only treat *profile/account* pages as evergreen. Individual
+  // posts (Reddit comments, FB posts, IG photos, etc.) have real publication
+  // dates that matter for recency scoring — don't mask them with evergreen.
+  // The cheap-tier pipeline (plain fetch + Firecrawl markdown) will try; if it
+  // fails, the URL ends up as not-found which is the honest answer.
+  if (/(^|\.)twitter\.com$/.test(host) && (path === '' || /^\/[^/]+\/?$/.test(path))) return true;
+  if (/(^|\.)x\.com$/.test(host) && (path === '' || /^\/[^/]+\/?$/.test(path))) return true;
+  if (host.endsWith('linkedin.com') && /^\/company\/[^/]+\/?$/.test(path)) return true;
 
   // Path-based patterns. Use exact root or first-segment match to avoid catching
   // legitimate articles like /blog/the-future-of-careers (only matches /careers,
@@ -639,9 +840,26 @@ function isEvergreenUrl(url: string): boolean {
     'pricing', 'plans', 'products', 'product', 'features', 'solutions',
     'contact', 'contact-us', 'support', 'help',
     'investors', 'press', 'media', 'newsroom',
+    'finance', 'financing', 'credit',
+    'responsibilities', 'responsibility', 'sustainability', 'esg',
+    'corporate', 'corporate-info', 'overview',
+    'benefits', 'rewards', 'compensation', 'perks',
+    // Multi-language careers/about
+    'karriere', 'karriär', 'karriere-bei-uns', 'arbeit', 'arbeitgeber',
+    'empleo', 'empleos', 'empleo-y-carrera', 'trabajo', 'trabajos', 'ofertas',
+    'carriere', 'carrière', 'carrieres', 'carrières', 'recrutement',
+    'lavoro', 'lavora-con-noi', 'opportunita',
+    'trabalhe-conosco', 'carreiras', 'vagas',
+    'unternehmen', 'firma', 'wer-wir-sind', 'über-uns', 'uber-uns',
+    'nachhaltigkeit', 'duurzaamheid', 'soziales-engagement',
   ];
   const segments = path.split('/').filter(Boolean);
   if (segments.length >= 1 && evergreenFirstSegments.includes(segments[0])) {
+    return true;
+  }
+  // Brand-prefixed first segments: /about-ford/..., /experience-ford/..., /about_toyota/...
+  // These are evergreen corporate pages on company websites (sustainability, benefits, etc.).
+  if (segments.length >= 1 && /^(about|experience|our|nuestra|nossa|chez)[-_]/.test(segments[0])) {
     return true;
   }
 
