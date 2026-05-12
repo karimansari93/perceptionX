@@ -15,7 +15,7 @@ interface CitationWithRecency {
   url?: string;
   publicationDate?: string;
   recencyScore: number | null; // null = N/A
-  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'firecrawl-json' | 'meta-tag' | 'json-ld' | 'time-tag' | 'openai-html' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen';
+  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'firecrawl-json' | 'meta-tag' | 'json-ld' | 'time-tag' | 'openai-html' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen' | 'youtube-api' | 'reddit-api';
   sourceType?: 'perplexity' | 'google-ai-overviews' | 'bing-copilot' | 'search-results';
 }
 
@@ -92,7 +92,7 @@ serve(async (req) => {
   }
 
   try {
-    const { citations, testMode = false } = await req.json();
+    const { citations, testMode = false, bypassCache = false } = await req.json();
 
     if (!citations || !Array.isArray(citations)) {
       return new Response(
@@ -128,9 +128,10 @@ serve(async (req) => {
     
     console.log(`Deduplication: ${citations.length} citations reduced to ${uniqueUrls.length} unique URLs`);
     
-    // Step 2: Check cache for unique URLs
-    console.log(`Looking up ${uniqueUrls.length} unique URLs in cache`);
-    const cachedUrls = await getCachedUrls(uniqueUrls);
+    // Step 2: Check cache for unique URLs (unless bypassCache is set — used by
+    // backfill jobs that want to re-score existing rows via the new pipeline)
+    console.log(`Looking up ${uniqueUrls.length} unique URLs in cache (bypassCache=${bypassCache})`);
+    const cachedUrls = bypassCache ? new Map() : await getCachedUrls(uniqueUrls);
     console.log(`Cache lookup complete: Found ${cachedUrls.size} cached URLs`);
     
     // Step 3: Build results map for unique URLs
@@ -157,9 +158,14 @@ serve(async (req) => {
     
     console.log(`Cache hits: ${urlResults.size}, URLs to analyze: ${urlsToAnalyze.length}`);
 
-    // Step 4a: Run free tiers (URL pattern + evergreen) synchronously.
-    // Anything that doesn't resolve gets queued for one batch Firecrawl call.
+    // Step 4a: Run free tiers (URL pattern + evergreen) synchronously, then
+    // batched YouTube / concurrent Reddit API calls. Anything that doesn't
+    // resolve gets queued for one batch Firecrawl call.
+    const youtubeApiKey = Deno.env.get('YOUTUBE_API_KEY') || null;
+    const youtubeCandidates = new Map<string, string>(); // url -> videoId
+    const redditCandidates: string[] = [];
     const urlsNeedingFirecrawl: string[] = [];
+
     for (const url of urlsToAnalyze) {
       const citationsForUrl = urlToCitations.get(url) || [];
       const firstCitation = citationsForUrl[0];
@@ -190,10 +196,77 @@ serve(async (req) => {
         continue;
       }
 
+      if (youtubeApiKey) {
+        const videoId = parseYouTubeVideoId(url);
+        if (videoId) {
+          youtubeCandidates.set(url, videoId);
+          continue;
+        }
+      }
+
+      if (isRedditUrl(url)) {
+        redditCandidates.push(url);
+        continue;
+      }
+
       urlsNeedingFirecrawl.push(url);
     }
 
-    console.log(`URL pattern + evergreen handled: ${urlResults.size - cachedUrls.size}, candidates for cheap tiers: ${urlsNeedingFirecrawl.length}`);
+    console.log(`URL pattern + evergreen handled: ${urlResults.size - cachedUrls.size}, youtube candidates: ${youtubeCandidates.size}, reddit candidates: ${redditCandidates.length}, candidates for cheap tiers: ${urlsNeedingFirecrawl.length}`);
+
+    // Step 4a.i: YouTube Data API (batched, up to 50 IDs per call)
+    if (!testMode && youtubeApiKey && youtubeCandidates.size > 0) {
+      const ytResults = await extractYouTubeDates(youtubeCandidates, youtubeApiKey);
+      for (const [url, videoId] of youtubeCandidates) {
+        const citationsForUrl = urlToCitations.get(url) || [];
+        const firstCitation = citationsForUrl[0];
+        const date = ytResults.get(url);
+        if (date) {
+          urlResults.set(url, {
+            domain: firstCitation?.domain || extractDomainFromUrl(url),
+            title: firstCitation?.title,
+            url,
+            publicationDate: date,
+            recencyScore: calculateRecencyScore(date),
+            extractionMethod: 'youtube-api',
+            sourceType: firstCitation?.sourceType,
+          });
+        } else {
+          // API failed / quota exhausted / video not found — fall through
+          urlsNeedingFirecrawl.push(url);
+        }
+      }
+      console.log(`YouTube API resolved ${ytResults.size}/${youtubeCandidates.size}`);
+    } else if (youtubeCandidates.size > 0) {
+      // testMode or no key — fall through
+      for (const url of youtubeCandidates.keys()) urlsNeedingFirecrawl.push(url);
+    }
+
+    // Step 4a.ii: Reddit .json endpoint (concurrent, capped)
+    if (!testMode && redditCandidates.length > 0) {
+      const rdResults = await extractRedditDates(redditCandidates);
+      for (const url of redditCandidates) {
+        const citationsForUrl = urlToCitations.get(url) || [];
+        const firstCitation = citationsForUrl[0];
+        const date = rdResults.get(url);
+        if (date) {
+          urlResults.set(url, {
+            domain: firstCitation?.domain || extractDomainFromUrl(url),
+            title: firstCitation?.title,
+            url,
+            publicationDate: date,
+            recencyScore: calculateRecencyScore(date),
+            extractionMethod: 'reddit-api',
+            sourceType: firstCitation?.sourceType,
+          });
+        } else {
+          urlsNeedingFirecrawl.push(url);
+        }
+      }
+      console.log(`Reddit API resolved ${rdResults.size}/${redditCandidates.length}`);
+    } else if (redditCandidates.length > 0) {
+      for (const url of redditCandidates) urlsNeedingFirecrawl.push(url);
+    }
 
     // Step 4b: Cheap tiers — plain HTTP fetch + meta-tag parse, then OpenAI on the
     // fetched HTML if no meta tag found. Both are vastly cheaper than Firecrawl.
@@ -871,5 +944,181 @@ function isEvergreenUrl(url: string): boolean {
   }
 
   return false;
+}
+
+// ----------------------------------------------------------------------------
+// YouTube Data API v3 extractor. Free (10K quota units/day; 1 unit per
+// videos.list call covering up to 50 IDs). Replaces Firecrawl for YouTube URLs.
+// ----------------------------------------------------------------------------
+function parseYouTubeVideoId(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  const validId = (id: string | null | undefined): string | null =>
+    id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+
+  if (host === 'youtu.be') {
+    const seg = parsed.pathname.split('/').filter(Boolean)[0];
+    return validId(seg);
+  }
+  if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
+    if (parsed.pathname === '/watch') return validId(parsed.searchParams.get('v'));
+    const m = parsed.pathname.match(/^\/(embed|shorts|v|live)\/([^/?#]+)/);
+    if (m) return validId(m[2]);
+  }
+  return null;
+}
+
+async function extractYouTubeDates(
+  urlsToIds: Map<string, string>,
+  apiKey: string
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const ids = Array.from(new Set(urlsToIds.values()));
+  if (ids.length === 0) return result;
+
+  const idToDate = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${chunk.join(',')}&key=${apiKey}`;
+    try {
+      const res = await fetch(apiUrl);
+      if (!res.ok) {
+        console.warn(`YouTube API non-200 (${res.status}); falling through for ${chunk.length} IDs`);
+        continue;
+      }
+      const data = await res.json();
+      for (const item of data.items ?? []) {
+        const id = item?.id;
+        const publishedAt = item?.snippet?.publishedAt;
+        const validated = publishedAt ? validateAndFormatDate(publishedAt) : null;
+        if (id && validated) idToDate.set(id, validated);
+      }
+    } catch (err) {
+      console.warn('YouTube API fetch error; falling through:', err);
+    }
+  }
+
+  for (const [url, id] of urlsToIds) {
+    const date = idToDate.get(id);
+    if (date) result.set(url, date);
+  }
+  return result;
+}
+
+// ----------------------------------------------------------------------------
+// Reddit JSON-endpoint extractor. Append .json to any public Reddit URL;
+// returns full thread JSON including created_utc (Unix seconds). Free, no key,
+// unauthenticated rate limit ~60 req/min. Cap concurrency to ~5 to stay under.
+// ----------------------------------------------------------------------------
+function isRedditUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  if (host !== 'reddit.com' && host !== 'old.reddit.com' && host !== 'np.reddit.com' && host !== 'new.reddit.com') {
+    return false;
+  }
+  // Only individual threads/comments have a useful created_utc. Skip subreddit
+  // index pages and the homepage.
+  return /\/comments\/[a-z0-9]+/i.test(parsed.pathname);
+}
+
+// Reddit blocks unauthenticated .json requests from data-center IPs (returns
+// 403 from Supabase egress). OAuth via a "script" app bypasses that block and
+// raises the rate limit to 600 req / 10 min.
+const REDDIT_UA = 'perceptionx-recency/1.0 (by /u/Virtual_Composer_770)';
+
+async function getRedditToken(): Promise<string | null> {
+  const id = Deno.env.get('REDDIT_CLIENT_ID');
+  const secret = Deno.env.get('REDDIT_CLIENT_SECRET');
+  if (!id || !secret) {
+    console.warn('Reddit OAuth: REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET not set');
+    return null;
+  }
+  try {
+    const res = await fetch('https://www.reddit.com/api/v1/access_token', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Basic ' + btoa(`${id}:${secret}`),
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': REDDIT_UA,
+      },
+      // "client_credentials" doesn't work for script-type apps; they use
+      // "https://oauth.reddit.com/grants/installed_client" or a password grant.
+      // For script apps the documented grant is password, but Reddit also accepts
+      // a synthetic "client_credentials"-style call for read-only access via the
+      // installed_client grant with a device_id.
+      body: 'grant_type=https%3A%2F%2Foauth.reddit.com%2Fgrants%2Finstalled_client&device_id=DO_NOT_TRACK_THIS_DEVICE',
+    });
+    if (!res.ok) {
+      console.warn(`Reddit token fetch ${res.status}: ${await res.text().then(t => t.slice(0, 200))}`);
+      return null;
+    }
+    const data = await res.json();
+    return data.access_token || null;
+  } catch (err) {
+    console.warn('Reddit token error:', err);
+    return null;
+  }
+}
+
+async function fetchRedditDate(url: string, token: string): Promise<string | null> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  // OAuth endpoint uses oauth.reddit.com; same path with .json suffix.
+  const jsonUrl = `https://oauth.reddit.com${parsed.pathname.replace(/\/$/, '')}.json`;
+  try {
+    const res = await fetch(jsonUrl, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': REDDIT_UA,
+        'Accept': 'application/json',
+      },
+    });
+    if (!res.ok) {
+      console.warn(`Reddit fetch ${res.status} for ${jsonUrl}`);
+      return null;
+    }
+    const data = await res.json();
+    const createdUtc = Array.isArray(data)
+      ? data[0]?.data?.children?.[0]?.data?.created_utc
+      : null;
+    if (typeof createdUtc !== 'number') return null;
+    const iso = new Date(createdUtc * 1000).toISOString();
+    return validateAndFormatDate(iso);
+  } catch (err) {
+    console.warn(`Reddit fetch error for ${url}:`, err);
+    return null;
+  }
+}
+
+async function extractRedditDates(urls: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const token = await getRedditToken();
+  if (!token) return result; // No token -> fall-through to existing pipeline
+  const concurrency = 5;
+  let i = 0;
+  async function worker() {
+    while (i < urls.length) {
+      const idx = i++;
+      const url = urls[idx];
+      const date = await fetchRedditDate(url, token);
+      if (date) result.set(url, date);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, urls.length) }, worker));
+  return result;
 }
 
