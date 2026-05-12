@@ -46,7 +46,7 @@ const navigationGroups: NavigationGroup[] = [
   {
     title: "Analyze",
     items: [
-      { title: "Reports", icon: Download, section: "reports", group: "reports", route: "/analyze/reports", comingSoon: true },
+      { title: "Reports", icon: Download, section: "reports", group: "reports", route: "/analyze/reports" },
     ]
   },
   {

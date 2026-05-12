@@ -4,7 +4,7 @@ import { useDashboardData } from "@/hooks/useDashboardData";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { lazy, Suspense } from "react";
-import { ReportGenerator } from "@/components/dashboard/ReportGenerator";
+import { CustomReports } from "@/components/dashboard/CustomReports";
 import { AppSidebar } from "@/components/AppSidebar";
 import { UpgradeModal } from "@/components/upgrade/UpgradeModal";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -518,14 +518,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     }
 
     const reportsContent = activeSection === 'reports' ? (
-      <ReportGenerator
-        companyName={companyName}
-        responses={responses}
-        metrics={metrics}
-        sentimentTrend={sentimentTrend}
-        topCitations={topCitations}
-        promptsData={promptsData}
-      />
+      <CustomReports />
     ) : null;
 
     return (
@@ -642,30 +635,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         )}
 
         {activeSection === 'reports' && reportsContent && (
-          <div>
-            {isPro ? reportsContent : (
-              <div className="relative min-h-[600px]">
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm" style={{ pointerEvents: 'all' }}>
-                  <div className="text-center p-8 max-w-lg mx-auto">
-                    <h2 className="text-2xl font-bold mb-4 text-gray-800">Reports - Pro Feature</h2>
-                    <p className="text-gray-600 mb-6 leading-relaxed">
-                      Generate comprehensive reports about your AI perception and performance.
-                      Get detailed insights, competitor analysis, and actionable recommendations.
-                    </p>
-                    <Button
-                      onClick={() => setShowUpgradeModal(true)}
-                      className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
-                    >
-                      Upgrade to Pro
-                    </Button>
-                  </div>
-                </div>
-                <div className="blur-sm pointer-events-none select-none opacity-60">
-                  {reportsContent}
-                </div>
-              </div>
-            )}
-          </div>
+          <div>{reportsContent}</div>
         )}
       </div>
     );
