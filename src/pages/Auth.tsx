@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { X, ArrowRight, Sparkles, BarChart3, Target, Users, Mail, Medal } from 'lucide-react';
+import { X, ArrowRight, Sparkles, BarChart3, Target, Users, Mail, Medal, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -78,6 +77,7 @@ const Auth = () => {
   const [showVerifyEmailMessage, setShowVerifyEmailMessage] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [checkingOnboarding, setCheckingOnboarding] = useState(false);
 
   // Get onboarding data and redirect destination from location state
@@ -248,48 +248,54 @@ const Auth = () => {
     return <LoadingScreen />;
   }
 
+  // Orbit icons — files in /public/logos/. Angles are hand-tuned so they scatter unevenly.
+  const innerOrbit = [
+    { src: '/logos/chatgpt.png', alt: 'ChatGPT', angle: 20 },
+    { src: '/logos/Gemini.png', alt: 'Gemini', angle: 110 },
+    { src: '/logos/perplexity.png', alt: 'Perplexity', angle: 200 },
+    { src: '/logos/google.png', alt: 'Google', angle: 290 },
+  ];
+  const outerOrbit = [
+    { src: '/logos/LinkedIn.png', alt: 'LinkedIn', angle: 55 },
+    { src: '/logos/Glassdoor.svg', alt: 'Glassdoor', angle: 135 },
+    { src: '/logos/Reddit.svg', alt: 'Reddit', angle: 215 },
+    { src: '/logos/YouTube.png', alt: 'YouTube', angle: 320 },
+  ];
+
   return (
-    <div className="min-h-screen w-screen flex items-center justify-center relative" style={{ background: '#f7dee7' }}>
-      {/* Top left logo */}
-      <div className="absolute top-6 left-6 z-10">
-        <a href="https://perceptionx.ai" target="_blank" rel="noopener noreferrer">
-          <img src="/logos/PinkBadge.png" alt="PerceptionX" className="h-8 rounded-md shadow-md" />
-        </a>
-      </div>
-      
-      {/* Top right demo link */}
-      <div className="absolute top-6 z-10 right-6 md:right-6 left-1/2 md:left-auto transform md:transform-none -translate-x-1/2 md:translate-x-0">
-        <div className="flex items-center gap-2 text-sm text-nightsky font-medium text-center whitespace-nowrap" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
-          <span>Looking to learn more?</span>
-          <a 
-            href="https://meetings-eu1.hubspot.com/karim-al-ansari" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="border-2 border-pink text-pink bg-transparent px-3 py-1 rounded-full hover:bg-pink hover:text-white transition-colors font-bold text-xs"
-          >
-            Book a demo
-          </a>
-        </div>
-      </div>
-      <div className="w-full max-w-md flex items-center justify-center p-8 relative flex-col">
-        <Card className="w-full bg-white rounded-2xl border border-silver">
-          <CardHeader>
-            <div className="flex items-center justify-center gap-3">
-              <CardTitle className="text-2xl text-center text-nightsky font-bold" style={{ fontFamily: 'Geologica, sans-serif' }}>
-                {showVerifyEmailMessage
-                  ? 'Verify your email'
-                  : isPasswordReset
-                    ? 'Reset Password'
-                    : isLogin
-                      ? 'Sign In'
-                      : 'Get Started'}
-              </CardTitle>
-              <Badge className="bg-pink text-white px-2 py-0.5 text-xs font-bold">
-                BETA
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
+    <div
+      className="min-h-screen w-screen flex items-center justify-center relative p-4 sm:p-6"
+      style={{ background: '#f7dee7' }}
+    >
+      <div className="relative w-full max-w-6xl bg-white rounded-3xl border border-silver shadow-xl overflow-hidden flex flex-col lg:flex-row">
+        {/* Left column — auth form */}
+        <div className="w-full lg:w-1/2 flex flex-col p-6 sm:p-10 lg:p-12">
+          <div className="lg:flex-1 flex items-center justify-center lg:py-8">
+          <div className="w-full max-w-sm flex flex-col">
+          <div className="mb-6">
+            <a href="https://perceptionx.ai" target="_blank" rel="noopener noreferrer" className="inline-block">
+              <img src="/logos/PerceptionX-PrimaryLogo.png" alt="PerceptionX" className="h-8" />
+            </a>
+          </div>
+          <div className="mb-8">
+            <h1 className="text-3xl text-nightsky font-bold" style={{ fontFamily: 'Geologica, sans-serif' }}>
+              {showVerifyEmailMessage
+                ? 'Verify your email'
+                : isPasswordReset
+                  ? 'Reset Password'
+                  : isLogin
+                    ? 'Sign In'
+                    : 'Get Started'}
+            </h1>
+            <p className="text-sm text-nightsky/60 mt-1" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
+              {showVerifyEmailMessage
+                ? 'Check your inbox to verify your account.'
+                : isPasswordReset
+                  ? "We'll send you a reset link."
+                  : 'Welcome back. Please log in to continue.'}
+            </p>
+          </div>
+          <div>
             {showVerifyEmailMessage ? (
               <div className="text-center space-y-6">
                 <p className="mb-6 text-nightsky text-base" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
@@ -342,24 +348,34 @@ const Auth = () => {
                     value={formData.email}
                     onChange={handleInputChange}
                     required
-                    className="border-silver focus:border-nightsky focus:ring-nightsky text-base"
+                    className="border-silver focus:border-nightsky focus:ring-nightsky text-base placeholder:text-nightsky/40 placeholder:font-normal"
                     style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
                   />
                 </div>
                 {!isPasswordReset && (
                   <div className="space-y-2">
                     <Label htmlFor="password" className="text-nightsky font-medium" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>Password</Label>
-                    <Input
-                      id="password"
-                      name="password"
-                      type="password"
-                      placeholder="Enter your password"
-                      value={formData.password}
-                      onChange={handleInputChange}
-                      required
-                      className="border-silver focus:border-nightsky focus:ring-nightsky text-base"
-                      style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
-                    />
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        name="password"
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="Enter your password"
+                        value={formData.password}
+                        onChange={handleInputChange}
+                        required
+                        className="border-silver focus:border-nightsky focus:ring-nightsky text-base pr-10 placeholder:text-nightsky/40 placeholder:font-normal"
+                        style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        className="absolute inset-y-0 right-0 flex items-center pr-3 text-nightsky/50 hover:text-nightsky transition-colors"
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
                   </div>
                 )}
                 {/* Remember Me and Forgot Password */}
@@ -424,29 +440,113 @@ const Auth = () => {
                 </div>
               </form>
             )}
-          </CardContent>
-        </Card>
-        
-        {/* Footer links */}
-        <div className="mt-8 text-center space-x-6">
-          <a 
-            href="https://perceptionx.ai/privacy" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="text-sm text-nightsky hover:text-pink-500 transition-colors"
+          </div>
+          </div>
+          </div>
+
+          {/* Footer links */}
+          <div className="mt-8 text-center space-x-6">
+            <a
+              href="https://perceptionx.ai/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-nightsky hover:text-pink-500 transition-colors"
+              style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
+            >
+              Privacy Policy
+            </a>
+            <a
+              href="https://perceptionx.ai/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-nightsky hover:text-pink-500 transition-colors"
+              style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
+            >
+              Terms & Conditions
+            </a>
+          </div>
+
+          {/* Book a demo */}
+          <div className="mt-6 flex items-center justify-center gap-2 text-sm text-nightsky font-medium whitespace-nowrap" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
+            <span>Looking to learn more?</span>
+            <a
+              href="https://meetings-eu1.hubspot.com/karim-al-ansari"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-pink text-white px-4 py-1.5 rounded-full hover:bg-pink/90 transition-colors font-bold text-xs"
+            >
+              Book a demo
+            </a>
+          </div>
+        </div>
+
+        {/* Right column — orbit panel */}
+        <div className="hidden lg:flex w-1/2 bg-gradient-to-br from-blue-50 via-white to-pink-50 p-8 flex-col items-center justify-center gap-6">
+          <h2
+            className="text-2xl font-bold text-center text-nightsky leading-tight max-w-lg"
+            style={{ fontFamily: 'Geologica, sans-serif' }}
+          >
+            AI Employer Brand Intelligence for
+            <br />
+            <span className="text-pink">Enterprise Talent Teams</span>
+          </h2>
+
+          {/* Orbit */}
+          <div className="relative w-[360px] h-[360px] flex items-center justify-center">
+            {/* Concentric rings */}
+            <svg
+              className="absolute inset-0 w-full h-full"
+              viewBox="0 0 360 360"
+              fill="none"
+              aria-hidden="true"
+            >
+              <circle cx="180" cy="180" r="70" stroke="#dbe2f0" strokeWidth="1" />
+              <circle cx="180" cy="180" r="120" stroke="#dbe2f0" strokeWidth="1" />
+              <circle cx="180" cy="180" r="170" stroke="#dbe2f0" strokeWidth="1" />
+            </svg>
+
+            {/* Center logo badge */}
+            <div className="relative z-10 w-14 h-14 rounded-full shadow-lg overflow-hidden">
+              <img
+                src="/logos/PinkBadge.png"
+                alt="PerceptionX"
+                className="w-full h-full object-cover"
+              />
+            </div>
+
+            {/* Inner ring — AI models */}
+            {innerOrbit.map((icon) => (
+              <div
+                key={icon.alt}
+                className="absolute top-1/2 left-1/2 w-12 h-12 -ml-6 -mt-6 rounded-full bg-white shadow-md flex items-center justify-center"
+                style={{
+                  transform: `rotate(${icon.angle}deg) translateY(-120px) rotate(-${icon.angle}deg)`,
+                }}
+              >
+                <img src={icon.src} alt={icon.alt} className="w-7 h-7 object-contain" />
+              </div>
+            ))}
+
+            {/* Outer ring — review/talent sites */}
+            {outerOrbit.map((icon) => (
+              <div
+                key={icon.alt}
+                className="absolute top-1/2 left-1/2 w-12 h-12 -ml-6 -mt-6 rounded-full bg-white shadow-md flex items-center justify-center"
+                style={{
+                  transform: `rotate(${icon.angle}deg) translateY(-170px) rotate(-${icon.angle}deg)`,
+                }}
+              >
+                <img src={icon.src} alt={icon.alt} className="w-7 h-7 object-contain" />
+              </div>
+            ))}
+          </div>
+
+          <p
+            className="text-center text-sm text-nightsky/70 max-w-md leading-relaxed"
             style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
           >
-            Privacy Policy
-          </a>
-          <a 
-            href="https://perceptionx.ai/terms" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="text-sm text-nightsky hover:text-pink-500 transition-colors"
-            style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}
-          >
-            Terms & Conditions
-          </a>
+            Give every team — across every market — one source of truth for shaping AI answers about your employer brand.
+          </p>
         </div>
       </div>
       {showLoadingModal && (
