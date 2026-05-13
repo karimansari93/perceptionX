@@ -105,11 +105,6 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
                 className="object-contain h-8 w-8"
                 src="/logos/perceptionx-small.png"
               />
-              {isPro && (
-                <Badge className="absolute -top-1 -right-1 bg-[#0DBCBA] text-white px-1.5 py-0.5 text-[8px] font-bold border-2 border-white">
-                  PRO
-                </Badge>
-              )}
             </div>
             <SidebarTrigger className="h-8 w-8" />
           </div>
@@ -149,11 +144,6 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
               className="object-contain h-4"
               src="/logos/PerceptionX-PrimaryLogo.png"
             />
-            {isPro && (
-              <Badge className="bg-[#0DBCBA] text-white px-2 py-0.5 text-xs font-bold">
-                PRO
-              </Badge>
-            )}
           </div>
         </SidebarHeader>
         <SidebarContent className="flex-1">
