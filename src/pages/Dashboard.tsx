@@ -16,11 +16,15 @@ import { AlertTriangle, ChevronRight, LayoutDashboard, Lock, Globe, Users, Trend
 import { Button } from "@/components/ui/button";
 import { NetworkStatus } from "@/components/NetworkStatus";
 import { 
-  OverviewSkeleton, 
-  PromptsSkeleton, 
-  ResponsesSkeleton, 
-  AnswerGapsSkeleton, 
-  ReportsSkeleton 
+  OverviewSkeleton,
+  PromptsSkeleton,
+  ResponsesSkeleton,
+  AnswerGapsSkeleton,
+  ReportsSkeleton,
+  SourcesSkeleton,
+  CompetitorsSkeleton,
+  ThematicSkeleton,
+  SearchSkeleton
 } from "@/components/dashboard/SectionSkeletons";
 
 // OverviewTab is eagerly imported — it's the default landing tab
@@ -491,11 +495,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         case "responses": return <ResponsesSkeleton />;
         case "answer-gaps": return <AnswerGapsSkeleton />;
         case "reports": return <ReportsSkeleton />;
-        case "sources":
-        case "competitors":
-        case "thematic":
-        case "search":
-          return <div className="flex items-center justify-center h-64"><LoadingSpinner /></div>;
+        case "sources": return <SourcesSkeleton />;
+        case "competitors": return <CompetitorsSkeleton />;
+        case "thematic": return <ThematicSkeleton />;
+        case "search": return <SearchSkeleton />;
         default: return <OverviewSkeleton />;
       }
     }
@@ -553,7 +556,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         {/* Lazy tabs — mount on first visit, then stay alive */}
         {(activeSection === 'sources' || hasVisited.sources) && (
           <div style={{ display: activeSection === 'sources' ? 'block' : 'none' }}>
-            <Suspense fallback={<OverviewSkeleton />}>
+            <Suspense fallback={<SourcesSkeleton />}>
               <SourcesTab
                 topCitations={topCitations}
                 responses={responses}
@@ -571,7 +574,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
 
         {(activeSection === 'competitors' || hasVisited.competitors) && (
           <div style={{ display: activeSection === 'competitors' ? 'block' : 'none' }}>
-            <Suspense fallback={<OverviewSkeleton />}>
+            <Suspense fallback={<CompetitorsSkeleton />}>
               <CompetitorsTab
                 topCompetitors={topCompetitors}
                 responses={responses}
@@ -587,7 +590,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
 
         {(activeSection === 'thematic' || hasVisited.thematic) && (
           <div style={{ display: activeSection === 'thematic' ? 'block' : 'none' }}>
-            <Suspense fallback={<OverviewSkeleton />}>
+            <Suspense fallback={<ThematicSkeleton />}>
               <ThematicAnalysisTab
                 responses={responses}
                 companyName={companyName}

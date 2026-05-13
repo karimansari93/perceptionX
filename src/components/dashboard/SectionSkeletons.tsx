@@ -234,6 +234,150 @@ export const AnswerGapsSkeleton = () => {
   );
 };
 
+export const SourcesSkeleton = () => {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-4 w-96" />
+      </div>
+      <div className="flex gap-2">
+        <Skeleton className="h-9 w-32" />
+        <Skeleton className="h-9 w-32" />
+        <Skeleton className="h-9 w-24" />
+      </div>
+      <Card>
+        <CardHeader className="pb-3">
+          <Skeleton className="h-6 w-48" />
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-0 border rounded-lg overflow-hidden">
+            <div className="grid grid-cols-12 gap-4 p-4 border-b bg-gray-50">
+              <Skeleton className="h-4 w-24 col-span-5" />
+              <Skeleton className="h-4 w-20 col-span-2" />
+              <Skeleton className="h-4 w-full col-span-3" />
+              <Skeleton className="h-4 w-12 col-span-2" />
+            </div>
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+              <div key={i} className="grid grid-cols-12 gap-4 p-4 border-b last:border-b-0 items-center">
+                <div className="flex items-center gap-3 col-span-5 min-w-0">
+                  <Skeleton className="h-6 w-6 rounded flex-shrink-0" />
+                  <Skeleton className="h-4 w-48" />
+                </div>
+                <Skeleton className="h-5 w-16 col-span-2" />
+                <Skeleton className="h-2 w-full col-span-3" />
+                <Skeleton className="h-4 w-10 col-span-2" />
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export const CompetitorsSkeleton = () => {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-4 w-96" />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {[1, 2, 3].map((i) => (
+          <Card key={i} className="h-full min-h-[140px]">
+            <CardHeader className="pb-2">
+              <Skeleton className="h-4 w-32" />
+            </CardHeader>
+            <CardContent>
+              <Skeleton className="h-10 w-24 mb-2" />
+              <Skeleton className="h-4 w-40" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <Card>
+        <CardHeader className="pb-3">
+          <Skeleton className="h-6 w-56" />
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="flex items-center gap-4 py-2">
+                <Skeleton className="h-8 w-8 rounded-full flex-shrink-0" />
+                <Skeleton className="h-4 w-40 flex-shrink-0" />
+                <Skeleton className="h-2 flex-1" />
+                <Skeleton className="h-4 w-12 flex-shrink-0" />
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
+export const ThematicSkeleton = () => {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-4 w-96" />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <Card key={i} className="min-h-[200px]">
+            <CardHeader>
+              <Skeleton className="h-6 w-40 mb-2" />
+              <Skeleton className="h-4 w-24" />
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-5/6" />
+                <Skeleton className="h-4 w-3/4" />
+              </div>
+              <div className="flex gap-2 mt-4">
+                <Skeleton className="h-6 w-16" />
+                <Skeleton className="h-6 w-20" />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export const SearchSkeleton = () => {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-32" />
+        <Skeleton className="h-4 w-96" />
+      </div>
+      <Skeleton className="h-10 w-full max-w-xl" />
+      <Card>
+        <CardContent className="p-6">
+          <div className="space-y-6">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="space-y-2 pb-4 border-b last:border-b-0">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-5 w-5 rounded flex-shrink-0" />
+                  <Skeleton className="h-4 w-48" />
+                </div>
+                <Skeleton className="h-5 w-2/3" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-5/6" />
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
+
 export const ReportsSkeleton = () => {
   return (
     <div className="space-y-6">
