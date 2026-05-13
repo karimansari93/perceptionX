@@ -160,6 +160,7 @@ const App = () => (
               <Routes>
               <Route path="/" element={<Auth />} />
               <Route path="/auth" element={<Auth />} />
+              <Route path="/login" element={<Auth />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/auth/google-onetap" element={<GoogleOneTapCallback />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
