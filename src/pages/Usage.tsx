@@ -14,7 +14,6 @@ import LLMLogo from '@/components/LLMLogo';
 import { useSubscription } from '@/hooks/useSubscription';
 import { TalentXProService } from '@/services/talentXProService';
 import { supabase } from '@/integrations/supabase/client';
-import { UpgradeModal } from '@/components/upgrade/UpgradeModal';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 
 const USAGE_LIMITS = {
@@ -91,10 +90,9 @@ export default function Usage() {
   const navigate = useNavigate();
   const { companyName } = useDashboardData();
   const { isRefreshing, progress, refreshAllPrompts } = useRefreshPrompts();
-  const { subscription, isPro, getLimits } = useSubscription();
+  const { subscription, getLimits } = useSubscription();
   const { user } = useAuth();
   const [isResetting, setIsResetting] = React.useState(false);
-  const [showUpgradeModal, setShowUpgradeModal] = React.useState(false);
 
   const handleRefresh = async (modelType?: string) => {
     if (!companyName) return;
@@ -163,23 +161,11 @@ export default function Usage() {
                 </CardHeader>
                 <CardContent>
                   <div className="mb-2 font-semibold text-lg">
-                    {isPro ? 'Pro Plan' : 'Free Plan'}
+                    Full Access
                   </div>
                   <div className="mb-4 text-gray-600">
-                    {isPro 
-                      ? 'You have access to unlimited prompts and advanced features.'
-                      : 'Upgrade to Pro for unlimited prompts and advanced features.'
-                    }
+                    You have access to unlimited prompts and all features.
                   </div>
-                  {!isPro && (
-                    <Button 
-                      variant="outline" 
-                      className="w-full"
-                      onClick={() => setShowUpgradeModal(true)}
-                    >
-                      Upgrade to Pro
-                    </Button>
-                  )}
                 </CardContent>
               </Card>
               <Card>
@@ -218,10 +204,6 @@ export default function Usage() {
           </SidebarInset>
         </div>
       </div>
-      <UpgradeModal 
-        open={showUpgradeModal}
-        onOpenChange={setShowUpgradeModal}
-      />
     </SidebarProvider>
   );
-} 
+}

@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSubscription } from '@/hooks/useSubscription';
 
 export interface RefreshProgress {
   currentPrompt: string;
@@ -17,12 +16,10 @@ interface RefreshOptions {
   companyId?: string;
 }
 
-const FREE_MODELS = ['openai', 'perplexity', 'google-ai-overviews', 'google-ai-mode'];
 const PRO_MODELS = ['openai', 'perplexity', 'google-ai-overviews', 'google-ai-mode', 'gemini', 'deepseek'];
 
 export const useRefreshPrompts = () => {
   const { user } = useAuth();
-  const { isPro } = useSubscription();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [progress, setProgress] = useState<RefreshProgress | null>(null);
 
@@ -37,17 +34,9 @@ export const useRefreshPrompts = () => {
     setProgress({ currentPrompt: '', currentModel: '', completed: 0, total: 0 });
 
     try {
-      // Restrict free users to allowed models
-      if (!isPro && modelType && !FREE_MODELS.includes(modelType)) {
-        toast.error('This AI model is only available for Pro users. Upgrade to Pro to access all AI models.');
-        return;
-      }
-
       const modelNames = modelType
         ? [modelType]
-        : isPro
-          ? PRO_MODELS
-          : FREE_MODELS;
+        : PRO_MODELS;
 
       if (modelNames.length === 0) {
         toast.error('No AI models available for testing. Please try again.');

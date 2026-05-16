@@ -17,7 +17,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { addCustomPrompts } from '@/services/promptManagement';
 import { toast } from 'sonner';
 import { Loader2, X, Plus } from 'lucide-react';
-import { useSubscription } from '@/hooks/useSubscription';
 import type { RefreshProgress } from '@/hooks/useRefreshPrompts';
 
 function getCountryDisplayName(code: string | null | undefined): string {
@@ -122,7 +121,6 @@ export const AddIndustryPromptModal = ({
   const [error, setError] = useState<string | null>(null);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [queue, setQueue] = useState<QueuedVariant[]>([]);
-  const { isPro } = useSubscription();
 
   const normalizedExistingIndustries = useMemo(
     () => existingIndustries.map(industry => industry.toLowerCase()),
@@ -199,11 +197,6 @@ export const AddIndustryPromptModal = ({
   };
 
   const handleModeChange = (newMode: PromptVariant) => {
-    if (!isPro && (newMode === 'job-function' || newMode === 'location')) {
-      toast.error('Upgrade to Pro to add job function or location prompts.');
-      return;
-    }
-
     setMode(newMode);
     setError(null);
   };
@@ -232,11 +225,6 @@ export const AddIndustryPromptModal = ({
 
   const addToQueue = () => {
     setError(null);
-
-    if (!isPro && (mode === 'job-function' || mode === 'location')) {
-      toast.error('Upgrade to Pro to add job function or location prompts.');
-      return;
-    }
 
     const trimmedValue = getCurrentInputValue().trim();
 
@@ -275,11 +263,6 @@ export const AddIndustryPromptModal = ({
     // If there's text in the input, add it to the queue first
     if (trimmedValue) {
       setError(null);
-
-      if (!isPro && (mode === 'job-function' || mode === 'location')) {
-        toast.error('Upgrade to Pro to add job function or location prompts.');
-        return;
-      }
 
       if (
         mode === 'industry' &&
@@ -336,7 +319,7 @@ export const AddIndustryPromptModal = ({
             companyId,
             companyName,
             userId,
-            isProUser: isPro,
+            isProUser: true,
             variant: {
               type: item.type,
               value: item.value,
@@ -412,7 +395,6 @@ export const AddIndustryPromptModal = ({
             <Label>What would you like to add prompts for?</Label>
             <div className="flex flex-wrap gap-2">
               {VARIANT_OPTIONS.map(option => {
-                const disabled = option.proOnly && !isPro;
                 const isSelected = mode === option.id;
 
                 return (
@@ -421,15 +403,9 @@ export const AddIndustryPromptModal = ({
                     type="button"
                     variant={isSelected ? 'default' : 'outline'}
                     size="sm"
-                    disabled={disabled}
                     onClick={() => handleModeChange(option.id)}
                   >
                     {option.label}
-                    {option.proOnly && (
-                      <span className="ml-2 rounded-full bg-gray-900/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gray-700">
-                        Pro
-                      </span>
-                    )}
                   </Button>
                 );
               })}

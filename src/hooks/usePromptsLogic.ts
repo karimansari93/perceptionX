@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { TALENTX_ATTRIBUTES, getProOnlyAttributes, getFreeAttributes, generateTalentXPrompts } from '@/config/talentXAttributes';
-import { useSubscription } from '@/hooks/useSubscription';
 import { logger, sanitizeInput, safeStorePromptResponse, checkExistingPromptResponse } from '@/lib/utils';
 import { extractSourceUrl, extractDomain } from '@/utils/citationUtils';
 
@@ -40,7 +39,6 @@ export interface ProgressInfo {
 export const usePromptsLogic = (onboardingData?: OnboardingData) => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { isPro } = useSubscription();
   const [prompts, setPrompts] = useState<GeneratedPrompt[]>([]);
   const [isConfirming, setIsConfirming] = useState(false);
   const [onboardingRecord, setOnboardingRecord] = useState<any>(null);
@@ -97,7 +95,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         country: onboardingData.country,
         jobFunction: onboardingData.jobFunction || onboardingData.job_function,
       },
-      isPro
+      true
     );
 
     // For onboarding preview we only need the core prompts
@@ -136,8 +134,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
     
     setIsConfirming(true);
     try {
-      // Use subscription status from useSubscription hook
-      const isProUser = isPro;
+      const isProUser = true;
 
       // Use the new generateAndInsertPrompts function
       const onboardingData = {
@@ -385,7 +382,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
 };
 
 // New utility function to generate and insert prompts
-export const generateAndInsertPrompts = async (user: any, onboardingRecord: any, onboardingData: OnboardingData, setProgress: (progress: ProgressInfo) => void, isProUser: boolean = false) => {
+export const generateAndInsertPrompts = async (user: any, onboardingRecord: any, onboardingData: OnboardingData, setProgress: (progress: ProgressInfo) => void, isProUser: boolean = true) => {
   if (!user || !onboardingRecord) {
     throw new Error('Missing user or onboarding data');
   }
@@ -833,7 +830,7 @@ const appendPromptContext = (text: string, jobFunction?: string, location?: stri
 };
 
 // Helper function to generate prompts from onboarding data
-export const generatePromptsFromData = (onboardingData: OnboardingData, isProUser: boolean = false): GeneratedPrompt[] => {
+export const generatePromptsFromData = (onboardingData: OnboardingData, isProUser: boolean = true): GeneratedPrompt[] => {
   const { companyName, industry, country } = onboardingData;
   const jobFunction = onboardingData.jobFunction || onboardingData.job_function || undefined;
   const customLocation = onboardingData.customLocation;

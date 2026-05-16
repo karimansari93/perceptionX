@@ -462,7 +462,7 @@ export const CompanyManagementTab = () => {
       // Then fetch profile data separately to avoid RLS issues
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
-        .select('email, subscription_type')
+        .select('email')
         .eq('id', orgMember.user_id)
         .single();
 
@@ -471,7 +471,8 @@ export const CompanyManagementTab = () => {
         throw profileError;
       }
 
-      const isProUser = profileData?.subscription_type === 'pro';
+      // Subscription tiers were removed — every user has full model access.
+      const isProUser = true;
       const userEmail = profileData?.email || 'admin@perceptionx.ai';
 
       // Fetch prompts for this specific company

@@ -13,11 +13,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/components/ui/sidebar';
 import { useNavigate, Link } from 'react-router-dom';
 import { getEmailDomainFavicon } from '@/utils/citationUtils';
-import { useSubscription } from '@/hooks/useSubscription';
 
 export default function UserMenu() {
   const { user, signOut } = useAuth();
-  const { subscription } = useSubscription();
   const sidebar = useSidebar(); // Always call the hook
 
   const handleSignOut = async () => {

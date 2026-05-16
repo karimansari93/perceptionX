@@ -1,4 +1,4 @@
-import { BarChart3, FileText, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lock, Lightbulb, Download, Compass } from "lucide-react";
+import { BarChart3, FileText, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/sidebar";
 import UserMenu from "@/components/UserMenu";
 import { Badge } from '@/components/ui/badge';
-import { useSubscription } from '@/hooks/useSubscription';
 import { useNavigate } from 'react-router-dom';
 import { useWalkthrough } from '@/contexts/WalkthroughContext';
 
@@ -23,7 +22,6 @@ interface NavigationItem {
   icon: any;
   section: string;
   comingSoon?: boolean;
-  requiresPro?: boolean;
   group: string;
   route?: string;
 }
@@ -77,7 +75,6 @@ interface AppSidebarProps {
 export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) {
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
-  const { isPro } = useSubscription();
   const navigate = useNavigate();
   const { start: startWalkthrough } = useWalkthrough();
 
@@ -122,9 +119,6 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
                 {item.comingSoon && (
                   <span className="absolute top-1 right-1 block w-2 h-2 rounded-full bg-gray-400" title="Coming Soon"></span>
                 )}
-                {item.requiresPro && !isPro && (
-                  <Lock className="absolute top-1 right-1 h-3 w-3 text-gray-400" />
-                )}
               </SidebarMenuButton>
             ))}
                   </nav>
@@ -155,13 +149,6 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
                     <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
                       {group.title}
                     </h3>
-                    {/* Temporarily hidden - Analyze section Pro badge */}
-                    {/* {group.title === "Analyze" && !isPro && (
-                      <Badge className="bg-[#0DBCBA] text-white px-1.5 py-0.5 text-[8px] font-bold flex items-center gap-1">
-                        <Lock className="h-3 w-3" />
-                        Pro
-                      </Badge>
-                    )} */}
                   </div>
                 </div>
                 <SidebarMenu>
@@ -177,12 +164,6 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
                         <span className="text-sm">{item.title}</span>
                         {item.comingSoon && (
                           <Badge className="ml-2 bg-gray-200 text-gray-700 px-2 py-0.5 text-[10px] font-semibold">Coming Soon</Badge>
-                        )}
-                        {item.requiresPro && !isPro && (
-                          <Badge className="ml-2 bg-[#0DBCBA] text-white px-2 py-0.5 text-[10px] font-semibold flex items-center gap-1">
-                            <Lock className="h-3 w-3" />
-                            Pro
-                          </Badge>
                         )}
                       </SidebarMenuButton>
                     </SidebarMenuItem>

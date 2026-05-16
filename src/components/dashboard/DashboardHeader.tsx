@@ -20,8 +20,6 @@ interface DashboardHeaderProps {
   hasDataIssues?: boolean;
   showAddCompanyModal?: boolean;
   setShowAddCompanyModal?: (show: boolean) => void;
-  showUpgradeModal?: boolean;
-  setShowUpgradeModal?: (show: boolean) => void;
   alwaysMounted?: boolean;
   selectedLocation?: string | null;
   onLocationChange?: (location: string | null) => void;
@@ -42,8 +40,6 @@ export const DashboardHeader = React.memo(({
   hasDataIssues,
   showAddCompanyModal,
   setShowAddCompanyModal,
-  showUpgradeModal,
-  setShowUpgradeModal,
   alwaysMounted,
   selectedLocation,
   onLocationChange,
@@ -114,8 +110,6 @@ export const DashboardHeader = React.memo(({
               variant="outline"
               showAddCompanyModal={showAddCompanyModal}
               setShowAddCompanyModal={setShowAddCompanyModal}
-              showUpgradeModal={showUpgradeModal}
-              setShowUpgradeModal={setShowUpgradeModal}
               alwaysMounted={alwaysMounted}
               locationFilter={selectedLocation || undefined}
               className={isMobile ? "min-w-[120px] text-xs" : ""}

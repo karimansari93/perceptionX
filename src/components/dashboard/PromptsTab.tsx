@@ -3,8 +3,6 @@ import { PromptData } from "@/types/dashboard";
 import { ResponseDetailsModal } from "./ResponseDetailsModal";
 import { PromptResponse } from "@/types/dashboard";
 import { PromptTable } from "./PromptTable";
-import { UpgradeBanner } from "./UpgradeBanner";
-import { useSubscription } from "@/hooks/useSubscription";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { useCompany } from "@/contexts/CompanyContext";
@@ -38,7 +36,6 @@ export const PromptsTab = memo(({
   const [selectedPrompt, setSelectedPrompt] = usePersistedState<string | null>('promptsTab.selectedPrompt', null);
   const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('promptsTab.isModalOpen', false);
   const [isAddPromptModalOpen, setIsAddPromptModalOpen] = usePersistedState<boolean>('promptsTab.isAddPromptModalOpen', false);
-  const { isPro } = useSubscription();
   const { currentCompany } = useCompany();
 
   // Pre-index responses by prompt text for O(1) lookup instead of O(n) filter
@@ -62,10 +59,6 @@ export const PromptsTab = memo(({
   const getPromptResponses = useCallback((promptText: string) => {
     return responsesByPrompt.get(promptText) || [];
   }, [responsesByPrompt]);
-
-  // Calculate current vs total prompts
-  const currentPrompts = promptsData.length;
-  const totalPrompts = 68; // 68 total prompts available (4 base + 64 Employee/Candidate Experience prompts, 4 types per attribute)
 
   const existingIndustries = (currentCompany?.industries && currentCompany.industries.length > 0)
     ? currentCompany.industries
@@ -112,15 +105,6 @@ export const PromptsTab = memo(({
             Add new prompt
           </Button>
         </div>
-
-        {/* Upgrade Banner - Only show for non-Pro users */}
-        {!isPro && (
-          <UpgradeBanner
-            currentPrompts={currentPrompts}
-            totalPrompts={totalPrompts}
-            companyName={companyName}
-          />
-        )}
 
         {/* Single Combined Table */}
         <PromptTable

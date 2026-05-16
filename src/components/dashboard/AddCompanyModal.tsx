@@ -9,7 +9,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { retrySupabaseFunction } from '@/utils/supabaseRetry';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCompany } from '@/contexts/CompanyContext';
-import { useSubscription } from '@/hooks/useSubscription';
 import { toast } from 'sonner';
 import { generatePromptsFromData } from '@/hooks/usePromptsLogic';
 import { Star, RefreshCw } from 'lucide-react';
@@ -158,7 +157,6 @@ export const AddCompanyModal = ({
 }: AddCompanyModalProps) => {
   const { user } = useAuth();
   const { refreshCompanies, switchCompany } = useCompany();
-  const { isPro } = useSubscription();
   const [companyName, setCompanyName] = useState('');
   const [industry, setIndustry] = useState('');
   const [country, setCountry] = useState('GLOBAL');
@@ -316,7 +314,7 @@ export const AddCompanyModal = ({
         companyName,
         industry,
         country
-      }, isPro);
+      }, true);
 
       // 3.5. Translate prompts if country is not GLOBAL and language is not English
       // CRITICAL: Translation is REQUIRED for non-English countries - cannot proceed without it
