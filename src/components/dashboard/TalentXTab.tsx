@@ -9,24 +9,20 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { TalentXAnalysis } from '@/types/talentX';
 import { TALENTX_ATTRIBUTES, generatePlaceholderTalentXData, getPromptsByAttribute } from '@/config/talentXAttributes';
 import { TalentXPrompts } from './TalentXPrompts';
-import { useSubscription } from '@/hooks/useSubscription';
 import { TrendingUp, TrendingDown, Minus, Target, Users, Award, BarChart3, Lightbulb, Star, AlertTriangle, CheckCircle, X, MessageSquare, FileText, Copy, ExternalLink } from 'lucide-react';
 import { TalentXAnalysisService } from '@/services/talentXAnalysis';
-import { UpgradeModal } from '@/components/upgrade/UpgradeModal';
 
 interface TalentXTabProps {
   talentXData: TalentXAnalysis[];
-  isProUser: boolean;
   companyName?: string;
   industry?: string;
 }
 
-export const TalentXTab = ({ talentXData, isProUser, companyName = 'Your Company', industry = 'Technology' }: TalentXTabProps) => {
+export const TalentXTab = ({ talentXData, companyName = 'Your Company', industry = 'Technology' }: TalentXTabProps) => {
   const [selectedAttribute, setSelectedAttribute] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedAttributeForModal, setSelectedAttributeForModal] = useState<TalentXAnalysis | null>(null);
   const [isContextModalOpen, setIsContextModalOpen] = useState(false);
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [activeModalTab, setActiveModalTab] = useState('overview');
 
   // Fallback to placeholder data if none is provided

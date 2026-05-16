@@ -371,11 +371,24 @@ export class TalentXProService {
    */
   static async getAggregatedProAnalysis(userId: string, companyId?: string): Promise<any[]> {
     try {
-      // Fetch TalentX responses from prompt_responses table joined with confirmed_prompts
+      // Bound by 180 days so this join stays under the 8s Postgres statement
+      // timeout for accounts with a lot of history. Older rows are not needed
+      // for the aggregated perception scores shown on the dashboard.
+      const PRO_ANALYSIS_DAYS = 180;
+      const cutoffIso = new Date(Date.now() - PRO_ANALYSIS_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+      // Fetch TalentX responses from prompt_responses table joined with
+      // confirmed_prompts. Select only the columns the aggregation uses
+      // instead of `*` (avoids pulling every wide/JSONB column per row).
       let query = supabase
         .from('prompt_responses')
         .select(`
-          *,
+          id,
+          ai_model,
+          response_text,
+          citations,
+          detected_competitors,
+          created_at,
           confirmed_prompts!inner(
             user_id,
             prompt_type,
@@ -386,13 +399,14 @@ export class TalentXProService {
           )
         `)
         .eq('confirmed_prompts.user_id', userId)
-        .like('confirmed_prompts.prompt_category', 'TalentX:%');
-      
+        .like('confirmed_prompts.prompt_category', 'TalentX:%')
+        .gte('created_at', cutoffIso);
+
       // Only filter by company_id if it's provided
       if (companyId) {
         query = query.eq('confirmed_prompts.company_id', companyId);
       }
-      
+
       const { data: talentXResponses, error } = await query
         .order('created_at', { ascending: false });
 
@@ -422,7 +436,7 @@ export class TalentXProService {
       // Group by attribute and aggregate scores
       const aggregated: Record<string, any> = {};
 
-      talentXResponses.forEach(response => {
+      (talentXResponses as any[]).forEach((response: any) => {
         const promptType = response.confirmed_prompts.prompt_type;
         const attributeId = response.confirmed_prompts.talentx_attribute_id ||
                            response.confirmed_prompts.prompt_category?.replace('TalentX: ', '') || 'unknown';

@@ -6,7 +6,6 @@ import { PromptResponse, DashboardMetrics, SentimentTrendData, CitationCount, Pr
 import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { TalentXProService } from "@/services/talentXProService";
-import { useSubscription } from "@/hooks/useSubscription";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
 import { parseCompetitors } from "@/utils/competitorUtils";
 
@@ -20,7 +19,6 @@ export interface PeriodInfo {
 export const useDashboardData = () => {
   const { user: rawUser, clearSession } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
-  const { isPro } = useSubscription();
 
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
@@ -144,8 +142,13 @@ export const useDashboardData = () => {
 
       const { data: userPrompts, error: promptsError } = promptsResult;
 
-      // Fetch ALL prompt_responses for the company (paginate to bypass Supabase 1000-row default cap)
+      // Fetch recent prompt_responses for the company. Bounded by 180 days to
+      // keep the eager query under the 8s statement timeout for accounts with
+      // a lot of history. Older rows are fetched on demand by tabs that need
+      // historical drilldowns.
       const PAGE_SIZE = 1000;
+      const EAGER_DAYS = 180;
+      const eagerCutoffIso = new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000).toISOString();
       let data: any[] = [];
       let page = 0;
       let chunk: any[] | null;
@@ -181,6 +184,7 @@ export const useDashboardData = () => {
               )
             `)
             .eq('company_id', currentCompany.id)
+            .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
             .range(from, to)
         ) as { data: any[] | null; error: any };
@@ -221,9 +225,10 @@ export const useDashboardData = () => {
 
       let allResponses = data || [];
       
-      // If user is Pro, fetch TalentX responses in parallel with regular responses
-      // (We already fetched regular responses above, so fetch TalentX now)
-      if (isPro) {
+      // TalentX rows feed both the Thematic tab and Overview's attribute
+      // cards, so fetch them eagerly. The query is bounded to 180 days (see
+      // below) to stay under the Postgres statement timeout.
+      {
         try {
           // Paginate TalentX responses to bypass 1000-row cap
           const talentXPageSize = 1000;
@@ -262,6 +267,7 @@ export const useDashboardData = () => {
               `)
               .eq('confirmed_prompts.company_id', currentCompany.id)
               .like('confirmed_prompts.prompt_type', 'talentx_%')
+              .gte('tested_at', eagerCutoffIso)
               .order('tested_at', { ascending: false })
               .range(from, to);
             if (talentXResult.error) throw talentXResult.error;
@@ -763,6 +769,12 @@ export const useDashboardData = () => {
     try {
       setAiThemesLoading(true);
 
+      // Bound by 180 days so this stays under the 8s Postgres statement
+      // timeout for accounts with a lot of history (the RLS policy on
+      // ai_themes joins through prompt_responses, which is expensive at scale).
+      const AI_THEMES_DAYS = 180;
+      const aiThemesCutoffIso = new Date(Date.now() - AI_THEMES_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
       // Paginate to bypass Supabase 1000-row default cap
       const PAGE_SIZE = 1000;
       let allThemes: any[] = [];
@@ -776,6 +788,7 @@ export const useDashboardData = () => {
             .from('ai_themes')
             .select('*')
             .eq('company_id', currentCompany.id)
+            .gte('created_at', aiThemesCutoffIso)
             .order('created_at', { ascending: false })
             .range(from, to)
         ) as { data: any[] | null; error: any };
@@ -893,7 +906,7 @@ export const useDashboardData = () => {
   }, [currentCompany]);
 
   const fetchTalentXProData = useCallback(async () => {
-    if (!user || !isPro) {
+    if (!user) {
       setTalentXProData([]);
       setTalentXProLoading(false);
       return;
@@ -909,7 +922,7 @@ export const useDashboardData = () => {
     } finally {
       setTalentXProLoading(false);
     }
-  }, [user, currentCompany, isPro]);
+  }, [user, currentCompany]);
 
   // Cache for search results to prevent duplicate requests
   const searchResultsCache = useRef<{
@@ -1191,11 +1204,9 @@ export const useDashboardData = () => {
           // On explicit refresh, also refetch AI themes and clear search cache
           ...(isExplicitRefresh ? [fetchAIThemes()] : []),
         ]);
-        if (isPro) {
-          fetchTalentXProData();
-          if (isExplicitRefresh) {
-            searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
-          }
+        fetchTalentXProData();
+        if (isExplicitRefresh) {
+          searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
         }
       }
     } else {
@@ -1203,7 +1214,7 @@ export const useDashboardData = () => {
       fetchedCompanyUserKeyRef.current = null;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, currentCompany?.id, isPro, shouldRefetch]);
+  }, [user?.id, currentCompany?.id, shouldRefetch]);
 
   // Clear switching flag when data is actually loaded
   useEffect(() => {
@@ -1253,20 +1264,19 @@ export const useDashboardData = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [responses.length]); // Only depend on responses length - fetch immediately
 
-  // Fetch AI themes immediately when company changes (PARALLEL with responses)
-  // Don't wait for responses to load - fetch directly from database using company_id
-  // This eliminates waterfall and makes themes load in parallel with responses
+  // Fetch AI themes eagerly when the company changes. The query is bounded to
+  // the last 180 days (see fetchAIThemes) so it stays under the Postgres
+  // statement timeout without deferring — Overview's AttributesSummaryCard
+  // renders attribute mentions directly from these themes.
   useEffect(() => {
     if (user && currentCompany?.id) {
-      // Fetch themes immediately in parallel with responses
-      // No need to wait for responses state - fetch directly from DB
       fetchAIThemes();
     } else {
       setAiThemes([]);
       setAiThemesLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, currentCompany?.id]); // Fetch when company changes, not when responses load
+  }, [user?.id, currentCompany?.id]);
 
   // Track when metrics are ready
   // Backend metrics (from materialized views) are available immediately
@@ -1294,10 +1304,10 @@ export const useDashboardData = () => {
 
   // Fetch search results when company is available
   useEffect(() => {
-    if (user && isPro && currentCompany) {
+    if (user && currentCompany) {
       fetchSearchResults();
     }
-  }, [user?.id, isPro, currentCompany?.id]); // Only depend on IDs, not the function
+  }, [user?.id, currentCompany?.id]); // Only depend on IDs, not the function
 
   const refreshData = useCallback(async () => {
     searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
@@ -1337,10 +1347,10 @@ export const useDashboardData = () => {
     return parsedCitationsMap.get(responseId) || [];
   }, [parsedCitationsMap]);
 
-  // Fetch TalentX Pro prompts if user is Pro
+  // Fetch TalentX prompts
   useEffect(() => {
     const fetchTalentXProPrompts = async () => {
-      if (!isPro || !user) {
+      if (!user) {
         setTalentXProPrompts([]);
         return;
       }
@@ -1418,7 +1428,7 @@ export const useDashboardData = () => {
     };
 
     fetchTalentXProPrompts();
-  }, [isPro, user]);
+  }, [user]);
 
   // --- Period detection: group responses by month ---
   const availablePeriods: PeriodInfo[] = useMemo(() => {

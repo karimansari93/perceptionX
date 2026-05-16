@@ -7,7 +7,6 @@ import { PromptData } from "@/types/dashboard";
 import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter, HelpCircle } from "lucide-react";
 import { useState, useMemo, useTransition, useDeferredValue, memo } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useSubscription } from "@/hooks/useSubscription";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
 
 interface PromptTableProps {
@@ -18,7 +17,6 @@ interface PromptTableProps {
 const INITIAL_ROWS = 50;
 
 export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) => {
-  const { isPro } = useSubscription();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [showAll, setShowAll] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
@@ -303,7 +301,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
   return (
     <>
       {/* Filters above the card - Only show for Pro users */}
-      {isPro && (
+      {(
         <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 mb-4">
           <Select value={typeFilter} onValueChange={(v) => startTransition(() => setTypeFilter(v))}>
             <SelectTrigger className="w-full">
@@ -351,7 +349,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                                                         {/* Badges row - Type, Theme */}
                   <div className="flex items-center gap-2 mb-3">
                     {getTypeBadge(prompt)}
-                    {isPro && getCategoryBadge(prompt)}
+                    {getCategoryBadge(prompt)}
                     {prompt.jobFunctionContext && (
                       <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
                         {prompt.jobFunctionContext}
@@ -423,7 +421,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                       </TooltipContent>
                     </Tooltip>
                   </TableHead>
-                  {isPro && (
+                  {(
                     <TableHead className="text-center w-[100px]">
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -507,7 +505,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                     <TableCell className="text-center">
                       {getTypeBadge(prompt)}
                     </TableCell>
-                    {isPro && (
+                    {(
                       <TableCell className="text-center">
                         {getCategoryBadge(prompt)}
                       </TableCell>

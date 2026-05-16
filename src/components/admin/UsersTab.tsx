@@ -7,13 +7,12 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Users, RefreshCw, Mail, Building2, Briefcase, Calendar, Search, Crown, Loader2 } from 'lucide-react';
+import { Users, RefreshCw, Mail, Building2, Briefcase, Calendar, Search } from 'lucide-react';
 
 interface UserRow {
   id: string;
   email: string;
   created_at: string;
-  subscription_type?: 'free' | 'pro' | null;
   organizations: {
     id: string;
     name: string;
@@ -26,7 +25,6 @@ export const UsersTab = () => {
   const [filteredUsers, setFilteredUsers] = useState<UserRow[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
-  const [upgradingUserId, setUpgradingUserId] = useState<string | null>(null);
 
   useEffect(() => {
     loadUsers();
@@ -42,7 +40,7 @@ export const UsersTab = () => {
       // Get all users with subscription status
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
-        .select('id, email, created_at, subscription_type')
+        .select('id, email, created_at')
         .order('created_at', { ascending: false });
 
       if (profilesError) throw profilesError;
@@ -97,30 +95,6 @@ export const UsersTab = () => {
     setFilteredUsers(filtered);
   };
 
-  const handleUpgradeToPro = async (userId: string) => {
-    setUpgradingUserId(userId);
-    try {
-      const { data, error } = await supabase.functions.invoke('admin-upgrade-user', {
-        body: { userId }
-      });
-
-      if (error) {
-        console.error('Error upgrading user:', error);
-        toast.error(`Failed to upgrade user: ${error.message || 'Unknown error'}`);
-        return;
-      }
-
-      toast.success(data?.message || 'User upgraded to Pro successfully!');
-      
-      // Reload users to refresh subscription status
-      await loadUsers();
-    } catch (error: any) {
-      console.error('Error upgrading user:', error);
-      toast.error(`Failed to upgrade user: ${error.message || 'Unknown error'}`);
-    } finally {
-      setUpgradingUserId(null);
-    }
-  };
 
   if (loading) {
     return (
@@ -158,21 +132,6 @@ export const UsersTab = () => {
               <div>
                 <p className="text-xl font-semibold text-slate-800">{users.length}</p>
                 <p className="text-xs text-slate-500">Total Users</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border border-slate-200 shadow-sm bg-white">
-          <CardContent className="py-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-md bg-slate-100 text-slate-500">
-                <Crown className="h-5 w-5" />
-              </div>
-              <div>
-                <p className="text-xl font-semibold text-slate-800">
-                  {users.filter(u => u.subscription_type === 'pro').length}
-                </p>
-                <p className="text-xs text-slate-500">Pro Users</p>
               </div>
             </div>
           </CardContent>
@@ -249,16 +208,12 @@ export const UsersTab = () => {
                 <TableHeader>
                   <TableRow className="border-slate-200 hover:bg-transparent bg-slate-50/80">
                     <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Email</TableHead>
-                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Subscription</TableHead>
                     <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Organizations</TableHead>
                     <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Joined</TableHead>
-                    <TableHead className="h-9 px-3 text-right text-xs font-medium text-slate-600">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredUsers.map(user => {
-                    const isPro = user.subscription_type === 'pro';
-                    const isUpgrading = upgradingUserId === user.id;
                     return (
                       <TableRow key={user.id} className="border-slate-200">
                         <TableCell className="py-2 px-3 text-sm">
@@ -266,17 +221,6 @@ export const UsersTab = () => {
                             <Mail className="h-3.5 w-3.5 text-slate-400" />
                             <span className="font-medium text-slate-800">{user.email}</span>
                           </div>
-                        </TableCell>
-                        <TableCell className="py-2 px-3">
-                          <Badge
-                            variant={isPro ? 'default' : 'outline'}
-                            className={isPro
-                              ? 'bg-pink text-white border-pink text-xs font-normal'
-                              : 'border-slate-200 text-slate-600 bg-slate-50 text-xs font-normal'
-                            }
-                          >
-                            {isPro ? <><Crown className="h-3 w-3 mr-1" />Pro</> : 'Free'}
-                          </Badge>
                         </TableCell>
                         <TableCell className="py-2 px-3">
                           {user.organizations.length === 0 ? (
@@ -304,22 +248,6 @@ export const UsersTab = () => {
                             <Calendar className="h-3.5 w-3.5" />
                             {new Date(user.created_at).toLocaleDateString()}
                           </div>
-                        </TableCell>
-                        <TableCell className="py-2 px-3 text-right">
-                          {!isPro && (
-                            <Button
-                              onClick={() => handleUpgradeToPro(user.id)}
-                              disabled={isUpgrading}
-                              size="sm"
-                              className="bg-pink hover:bg-pink/90 text-white h-7 text-xs"
-                            >
-                              {isUpgrading ? (
-                                <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Upgrading...</>
-                              ) : (
-                                <><Crown className="h-3.5 w-3.5 mr-1.5" />Upgrade to Pro</>
-                              )}
-                            </Button>
-                          )}
                         </TableCell>
                       </TableRow>
                     );

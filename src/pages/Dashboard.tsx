@@ -6,7 +6,6 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { lazy, Suspense } from "react";
 import { CustomReports } from "@/components/dashboard/CustomReports";
 import { AppSidebar } from "@/components/AppSidebar";
-import { UpgradeModal } from "@/components/upgrade/UpgradeModal";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { DASHBOARD_ADD_LOCKED } from "@/config/featureFlags";
@@ -39,8 +38,6 @@ const ResponsesTab = lazy(() => import("@/components/dashboard/ResponsesTab").th
 const AnswerGapsTab = lazy(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
 import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
 import LLMLogo from "@/components/LLMLogo";
-import { useSubscription } from "@/hooks/useSubscription";
-import { WelcomeProModal } from "@/components/upgrade/WelcomeProModal";
 import { AddCompanyModal } from "@/components/dashboard/AddCompanyModal";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen } from "@/components/ui/loading-screen";
@@ -81,8 +78,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const { currentCompany, loading: companyLoading } = useCompany();
   // Persist initial load state so we don't show loading screen on every navigation
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = usePersistedState<boolean>('dashboard.hasInitiallyLoaded', false);
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [showWelcomeProModal, setShowWelcomeProModal] = useState(false);
   // Use sessionStorage to persist modal state across tab switches
   const [showAddCompanyModal, setShowAddCompanyModal] = useState(() => {
     try {
@@ -198,7 +193,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     companyRelevanceByMonth,
     previousPeriodResponses,
   } = useDashboardData();
-  const { isPro } = useSubscription();
 
   // Apply the user's starred view (location + period) once when the user
   // session loads. Re-applies if they sign in as a different user.
@@ -474,7 +468,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             companyName={companyName}
             llmMentionRankings={llmMentionRankings}
             talentXProData={talentXProData}
-            isPro={isPro}
+            isPro={true}
             searchResults={searchResults}
             aiThemes={aiThemes}
             recencyData={recencyData}
@@ -537,7 +531,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             companyName={companyName}
             llmMentionRankings={llmMentionRankings}
             talentXProData={talentXProData}
-            isPro={isPro}
+            isPro={true}
             searchResults={searchResults}
             aiThemes={aiThemes}
             recencyData={recencyData}
@@ -667,8 +661,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           hasDataIssues={hasDataIssues}
           showAddCompanyModal={showAddCompanyModal}
           setShowAddCompanyModal={setShowAddCompanyModal}
-          showUpgradeModal={showUpgradeModal}
-          setShowUpgradeModal={setShowUpgradeModal}
           alwaysMounted={true}
           selectedLocation={activeSection === 'reports' ? undefined : selectedLocation}
           onLocationChange={activeSection === 'reports' ? undefined : setSelectedLocation}
@@ -739,15 +731,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         existingIndustry={currentCompany?.industry}
         mode="add-location"
       />
-      <UpgradeModal 
-        open={showUpgradeModal}
-        onOpenChange={setShowUpgradeModal}
-      />
-      <WelcomeProModal 
-        open={showWelcomeProModal}
-        onOpenChange={setShowWelcomeProModal}
-      />
-
     </div>
   );
 };

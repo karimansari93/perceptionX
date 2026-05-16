@@ -7,7 +7,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useSubscription } from "@/hooks/useSubscription";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { Button } from "@/components/ui/button";
@@ -95,7 +94,6 @@ export const ResponsesTab = memo(function ResponsesTab({
   responseTextsLoading = false,
   fetchResponseTexts,
 }: ResponsesTabProps) {
-  const { isPro } = useSubscription();
   const [categoryFilter, setCategoryFilter] = usePersistedState<string>('responsesTab.categoryFilter', 'all');
   const [selectedResponse, setSelectedResponse] = usePersistedState<any | null>('responsesTab.selectedResponse', null);
   const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('responsesTab.isModalOpen', false);
@@ -171,8 +169,8 @@ export const ResponsesTab = memo(function ResponsesTab({
         </p>
       </div>
 
-      {/* Filters - Only show for Pro users */}
-      {isPro && availableCategories.length > 0 && (
+      {/* Category filters */}
+      {availableCategories.length > 0 && (
         <div className="w-full">
           <Select value={categoryFilter} onValueChange={handleFilterChange}>
             <SelectTrigger className="w-full max-w-xs">

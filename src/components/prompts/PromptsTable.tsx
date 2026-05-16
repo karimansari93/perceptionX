@@ -4,11 +4,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEffect, useState } from "react";
-import { SubscriptionService } from "@/services/subscription";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
-import { useSubscription } from '@/hooks/useSubscription';
 import { CheckCircle, Info } from 'lucide-react';
 
 interface GeneratedPrompt {
@@ -33,46 +31,8 @@ interface PromptsTableProps {
   companyName?: string;
 }
 
-export const PromptsLimitIndicator = () => {
-  const { user } = useAuth();
-  const { subscription, isPro, getLimits } = useSubscription();
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-
-  if (!subscription) return null;
-
-  const limits = getLimits();
-  const used = subscription.prompts_used || 0;
-  const isUnlimited = isPro;
-  const percentage = isUnlimited ? 0 : (used / limits.prompts) * 100;
-  const isNearLimit = !isUnlimited && percentage >= 80;
-
-  return (
-    <div className="mb-6">
-      {isUnlimited ? (
-        <div className="flex items-center gap-2 text-green-600">
-          <CheckCircle className="w-4 h-4" />
-          <span className="text-sm font-medium">Pro Plan - Unlimited Prompts</span>
-        </div>
-      ) : (
-        <>
-          <Progress value={percentage} className="h-2 mb-2" />
-          <div className="flex justify-between text-sm text-gray-600">
-            <span>{used} of {limits.prompts} prompts used</span>
-            {isNearLimit && (
-              <Button
-                variant="link"
-                className="text-primary p-0 h-auto"
-                onClick={() => setShowUpgradeModal(true)}
-              >
-                Upgrade to Pro
-              </Button>
-            )}
-          </div>
-        </>
-      )}
-    </div>
-  );
-};
+// PromptsLimitIndicator was removed — subscription tiers no longer exist, so
+// there is no prompt limit to display.
 
 export const PromptsHeader = ({ companyName }: { companyName?: string }) => {
   return (

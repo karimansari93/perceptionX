@@ -9,7 +9,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useCompany } from '@/contexts/CompanyContext';
-import { useSubscription } from '@/hooks/useSubscription';
 import { Building2, Check, ChevronDown, Star, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -22,15 +21,12 @@ interface CompanySwitcherProps {
   variant?: 'default' | 'outline' | 'ghost';
   showAddCompanyModal?: boolean;
   setShowAddCompanyModal?: (show: boolean) => void;
-  showUpgradeModal?: boolean;
-  setShowUpgradeModal?: (show: boolean) => void;
   alwaysMounted?: boolean;
   locationFilter?: string | null;
 }
 
-export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyModal, setShowAddCompanyModal, showUpgradeModal, setShowUpgradeModal, alwaysMounted = false, locationFilter }: CompanySwitcherProps) => {
+export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyModal, setShowAddCompanyModal, alwaysMounted = false, locationFilter }: CompanySwitcherProps) => {
   const { currentCompany, userCompanies, switchCompany, setAsDefaultCompany, loading } = useCompany();
-  const { isPro } = useSubscription();
   const [isOpen, setIsOpen] = useState(false);
 
 
@@ -58,14 +54,6 @@ export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyMo
       setIsOpen(false);
       return;
     }
-    // Pro users have no limit; free users are limited to 3 companies
-    if (!isPro && userCompanies.length >= 3) {
-      toast.error('You\'ve reached the 3-company limit. Upgrade to Pro for unlimited companies.');
-      setShowUpgradeModal?.(true);
-      setIsOpen(false);
-      return;
-    }
-
     setIsOpen(false);
     setShowAddCompanyModal?.(true);
   };
@@ -251,15 +239,15 @@ export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyMo
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              disabled={!isPro || DASHBOARD_ADD_LOCKED}
-              onClick={isPro && !DASHBOARD_ADD_LOCKED ? handleAddNewCompany : undefined}
+              disabled={DASHBOARD_ADD_LOCKED}
+              onClick={!DASHBOARD_ADD_LOCKED ? handleAddNewCompany : undefined}
               className={cn(
                 "font-medium",
-                (isPro && !DASHBOARD_ADD_LOCKED) ? "cursor-pointer" : "cursor-not-allowed opacity-50"
+                !DASHBOARD_ADD_LOCKED ? "cursor-pointer" : "cursor-not-allowed opacity-50"
               )}
               title={DASHBOARD_ADD_LOCKED ? "Temporarily unavailable" : undefined}
             >
-              {DASHBOARD_ADD_LOCKED || !isPro ? (
+              {DASHBOARD_ADD_LOCKED ? (
                 <Lock className="h-4 w-4 mr-2" />
               ) : (
                 <Building2 className="h-4 w-4 mr-2" />
