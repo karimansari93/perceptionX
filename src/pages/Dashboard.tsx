@@ -40,7 +40,7 @@ import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
 import LLMLogo from "@/components/LLMLogo";
 import { AddCompanyModal } from "@/components/dashboard/AddCompanyModal";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
-import { LoadingScreen } from "@/components/ui/loading-screen";
+import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen";
 import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { readStarredView } from "@/hooks/useStarredView";
@@ -264,19 +264,53 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     }
   }, [companyLoading, loading, isLoading, currentCompany, setHasInitiallyLoaded, hasInitiallyLoaded]);
 
+  // Session-scoped (in-memory) flag for "the dashboard has fully loaded at
+  // least once since this Dashboard component mounted". This is intentionally
+  // NOT the persisted `hasInitiallyLoaded` — that one lives in sessionStorage,
+  // so logging out/in within the same tab leaves it stuck `true` and the
+  // branded loader would resolve before data is ready, flashing skeletons.
+  // A useRef resets on every fresh Dashboard mount (every real login/reload),
+  // so the first data load is always covered by the branded loader.
+  // Latched only when the branded loader has genuinely FINISHED (faded out),
+  // not on the raw `isFullyLoaded` flag — that flag has a false-positive
+  // window during refetch flicker, and latching on it lets the lenient
+  // branch take over too early and flash a skeleton.
+  const sessionFirstLoadDoneRef = useRef(false);
+
   // Show loading screen during initial load
   // Only show loading if we haven't loaded before OR if company is actually loading
   // CRITICAL: Never show loading when returning to tab - use persisted state and refs
   const isInitialLoading = useMemo(() => {
-    // If we've loaded before (persisted state), never show loading again unless explicitly switching companies
+    // Genuine first data load of this page session: hold the branded loader
+    // until the dashboard data is actually ready, so we never hand off to a
+    // skeleton flash. isFullyLoaded === !loading && !metricsLoading &&
+    // !competitorLoading, which always settles (even for empty/setup
+    // accounts), so this can't hang.
+    if (!sessionFirstLoadDoneRef.current) {
+      return companyLoading || isLoading || !isFullyLoaded;
+    }
+    // After the first full load this session, fall back to the original
+    // persisted-state behavior so in-app tab returns / company switches don't
+    // re-show the full loader.
     if (hasInitiallyLoaded) {
-      // Only show loading if company is actively loading AND we don't have a current company yet
-      // This prevents showing loading when returning to tab
       return companyLoading && currentCompany === null;
     }
-    // First time load - show loading while data is being fetched
-    return companyLoading || loading || isLoading;
-  }, [companyLoading, loading, isLoading, hasInitiallyLoaded, currentCompany]);
+    return companyLoading || isLoading || !isFullyLoaded;
+  }, [companyLoading, isLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany]);
+
+  // Keep the loading screen mounted long enough to play its completion
+  // (bar snaps to 100% + fade) before the dashboard is revealed.
+  const loadingHandoff = useLoadingHandoff(isInitialLoading);
+
+  // Latch "first load done this session" only when the loader actually
+  // finishes (show goes true -> false after a stable, debounced ready).
+  const prevHandoffShow = useRef(loadingHandoff.show);
+  useEffect(() => {
+    if (prevHandoffShow.current && !loadingHandoff.show) {
+      sessionFirstLoadDoneRef.current = true;
+    }
+    prevHandoffShow.current = loadingHandoff.show;
+  }, [loadingHandoff.show]);
 
   // Check if user is new (less than 24 hours old)
   useEffect(() => {
@@ -638,9 +672,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     );
   };
 
-  // Show full loading screen during initial load
-  if (isInitialLoading) {
-    return <LoadingScreen />;
+  // Show full loading screen during initial load (and through its completion).
+  if (loadingHandoff.show) {
+    return <LoadingScreen completing={loadingHandoff.completing} />;
   }
 
   // Always render the sidebar and main layout, only show loading in content area
