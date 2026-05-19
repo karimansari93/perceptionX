@@ -769,29 +769,44 @@ export const useDashboardData = () => {
     try {
       setAiThemesLoading(true);
 
-      // Bound by 180 days so this stays under the 8s Postgres statement
-      // timeout for accounts with a lot of history (the RLS policy on
-      // ai_themes joins through prompt_responses, which is expensive at scale).
+      // Bound by 180 days. Served by idx_ai_themes_company_created
+      // (company_id, created_at DESC): an index range scan, no sort.
       const AI_THEMES_DAYS = 180;
       const aiThemesCutoffIso = new Date(Date.now() - AI_THEMES_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-      // Paginate to bypass Supabase 1000-row default cap
+      // Only the columns the Overview themes/attributes cards consume —
+      // skips heavy theme_description / context_snippets[] / keywords[]
+      // (cuts row width ~609B -> ~100B).
+      const COLS =
+        'id, response_id, theme_name, sentiment, sentiment_score, talentx_attribute_id, talentx_attribute_name, created_at';
       const PAGE_SIZE = 1000;
+
+      // Keyset pagination on (created_at DESC, id DESC) instead of OFFSET.
+      // OFFSET re-walks all skipped rows every page (O(n^2/page)); keyset
+      // keeps every page O(PAGE_SIZE) by seeking past the last cursor.
       let allThemes: any[] = [];
-      let page = 0;
-      let chunk: any[] | null;
-      do {
-        const from = page * PAGE_SIZE;
-        const to = from + PAGE_SIZE - 1;
-        const { data, error } = await retrySupabaseQuery(() =>
-          supabase
-            .from('ai_themes')
-            .select('*')
-            .eq('company_id', currentCompany.id)
-            .gte('created_at', aiThemesCutoffIso)
-            .order('created_at', { ascending: false })
-            .range(from, to)
-        ) as { data: any[] | null; error: any };
+      let cursor: { created_at: string; id: string } | null = null;
+      // Hard cap to avoid an unbounded loop if data is pathological.
+      for (let guard = 0; guard < 200; guard += 1) {
+        let q = supabase
+          .from('ai_themes')
+          .select(COLS)
+          .eq('company_id', currentCompany.id)
+          .gte('created_at', aiThemesCutoffIso)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .limit(PAGE_SIZE);
+
+        if (cursor) {
+          q = q.or(
+            `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
+          );
+        }
+
+        const { data, error } = (await retrySupabaseQuery(() => q)) as {
+          data: any[] | null;
+          error: any;
+        };
 
         if (error) {
           console.error('Error fetching AI themes:', error);
@@ -799,10 +814,13 @@ export const useDashboardData = () => {
           return;
         }
 
-        chunk = data ?? [];
+        const chunk = data ?? [];
         allThemes = allThemes.concat(chunk);
-        page += 1;
-      } while (chunk && chunk.length === PAGE_SIZE);
+        if (chunk.length < PAGE_SIZE) break;
+
+        const last = chunk[chunk.length - 1];
+        cursor = { created_at: last.created_at, id: last.id };
+      }
 
       setAiThemes(allThemes);
     } catch (error) {
