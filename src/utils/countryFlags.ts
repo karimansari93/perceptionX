@@ -113,6 +113,7 @@ export function getCountryFlag(countryCode: string | null | undefined): string {
     'GB': '🇬🇧',
     'US': '🇺🇸',
     'VA': '🇻🇦',
+    'VE': '🇻🇪',
     'VN': '🇻🇳',
     'WF': '🇼🇫',
   };
