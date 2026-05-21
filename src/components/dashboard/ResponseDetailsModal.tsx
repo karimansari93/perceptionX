@@ -55,6 +55,11 @@ export const ResponseDetailsModal = ({
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryCache, setSummaryCache] = useState<{ [prompt: string]: string }>({});
+  // Set to true once the lazy fetch for response texts has finished (success
+  // or failure) for the current open. Lets the summary effect distinguish
+  // "text not loaded yet, wait" from "lazy load done, still no text — give up
+  // and show a fallback message" instead of stalling on the skeleton forever.
+  const [lazyLoadAttempted, setLazyLoadAttempted] = useState(false);
   const [isRefreshingPrompt, setIsRefreshingPrompt] = useState(false);
   const [translatedSummary, setTranslatedSummary] = useState<string>("");
   const [isTranslating, setIsTranslating] = useState(false);
@@ -69,15 +74,32 @@ export const ResponseDetailsModal = ({
 
   const getResponseText = (r: PromptResponse) => responseTexts[r.id] || r.response_text || '';
 
-  // Lazy-load response texts when modal opens
+  // Lazy-load response texts when modal opens. Track completion via
+  // `lazyLoadAttempted` so the summary effect can fall back to a friendly
+  // message if texts genuinely never load (no fetchResponseTexts wired in,
+  // or the rows just have empty response_text in the DB).
   useEffect(() => {
-    if (isOpen && responses.length > 0 && fetchResponseTexts) {
-      const ids = responses.map(r => r.id).filter(id => !responseTexts[id]);
-      if (ids.length > 0) {
-        fetchResponseTexts(ids);
-      }
+    if (!isOpen) {
+      setLazyLoadAttempted(false);
+      return;
     }
-  }, [isOpen, responses]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (responses.length === 0 || !fetchResponseTexts) {
+      setLazyLoadAttempted(true);
+      return;
+    }
+    const ids = responses.map(r => r.id).filter(id => !responseTexts[id]);
+    if (ids.length === 0) {
+      setLazyLoadAttempted(true);
+      return;
+    }
+    let cancelled = false;
+    fetchResponseTexts(ids).finally(() => {
+      if (!cancelled) setLazyLoadAttempted(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, responses]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally exclude responseTexts to avoid re-firing on every text arrival
 
   // Find the matching PromptData for this promptText
   const promptData = promptsData.find ? promptsData.find(p => p.prompt === promptText) : undefined;
@@ -155,13 +177,17 @@ export const ResponseDetailsModal = ({
       previousResponsesKeyRef.current = "";
     }
 
-    // Create a stable key from responses content (calculated inside effect to avoid dependency issues)
+    // Create a stable key from responses content (calculated inside effect to avoid dependency issues).
+    // Include a flag for whether the actual text has been lazy-loaded yet — texts arrive after
+    // the modal opens, and without this the key wouldn't change when they do, so we'd never
+    // re-run the summary fetch with the real text.
     const responsesContentKey = responses.length === 0 ? "" : responses
       .map(r => {
+        const hasText = getResponseText(r).length > 0 ? 't' : 'n';
         if (r.id && r.tested_at) {
-          return `${r.id}-${r.tested_at}`;
+          return `${r.id}-${r.tested_at}-${hasText}`;
         }
-        return getResponseText(r).slice(0, 100) || 'unknown';
+        return `${getResponseText(r).slice(0, 100) || 'unknown'}-${hasText}`;
       })
       .sort()
       .join('|');
@@ -219,8 +245,32 @@ export const ResponseDetailsModal = ({
         return acc;
       }, {} as Record<string, typeof responses[0]>)
     );
+    // Only include responses whose text has actually loaded. Without this guard, the lazy-loaded
+    // text map can be empty on first render and we'd send the LLM an empty Responses block —
+    // it would dutifully reply "no responses were provided" and that useless summary would be
+    // cached for the prompt.
+    const latestWithText = latestByModel.filter(r => getResponseText(r).trim().length > 0);
+    if (latestWithText.length === 0) {
+      if (!lazyLoadAttempted) {
+        // Lazy fetch still in flight — hold the skeleton and wait for it to land;
+        // the effect will re-run when `responseTexts` updates (content key flips n→t).
+        previousResponsesKeyRef.current = "";
+        fetchingPromptRef.current = null;
+        return;
+      }
+      // Lazy load completed but there's still no text to summarize. Don't call the LLM
+      // (it would just hallucinate a "no responses" reply that gets cached). Show a
+      // friendly fallback so the UI doesn't stall on the skeleton forever.
+      setLoadingSummary(false);
+      setSummary("_No AI response text is available for this prompt yet._");
+      fetchingPromptRef.current = null;
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
+      return;
+    }
     // Build the prompt with only the latest response per model
-    const prompt = `Summarize the following AI model responses to the question: "${promptText}" in one concise paragraph, highlighting key themes, sentiment, and any notable mentions.\n\nResponses:\n${latestByModel.map(r => getResponseText(r).slice(0, 1000)).join('\n---\n')}`;
+    const prompt = `Summarize the following AI model responses to the question: "${promptText}" in one concise paragraph, highlighting key themes, sentiment, and any notable mentions.\n\nResponses:\n${latestWithText.map(r => getResponseText(r).slice(0, 1000)).join('\n---\n')}`;
     
     // Get the current session
     const getSession = async () => {
@@ -316,7 +366,7 @@ export const ResponseDetailsModal = ({
         fetchingPromptRef.current = null;
       }
     };
-  }, [isOpen, promptText, responses, summaryCache]); // Include responses but use content-based key check inside effect
+  }, [isOpen, promptText, responses, responseTexts, lazyLoadAttempted, summaryCache]); // responseTexts + lazyLoadAttempted required so the effect re-runs once lazy-loaded text arrives or the fetch resolves empty
 
   const getSentimentColor = (score: number | null) => {
     if (!score) return "text-gray-500";

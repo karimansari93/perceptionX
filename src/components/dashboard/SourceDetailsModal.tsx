@@ -230,7 +230,14 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
       
       
       const citationsMap = new Map<string, any>();
-      
+      // Tally for citations that match this domain but have no parseable URL
+      // (e.g. YouTube/source-name-only citations from AI responses). Without
+      // this, those matches were silently dropped — the modal would say "No
+      // unique URLs found" for a domain that has thousands of citations.
+      let urllessMatchCount = 0;
+      let urllessExampleCitation: any = null;
+      let urllessExampleDomain = '';
+
       // Only add search results if no theme filter is active (search results don't have theme data)
       if (selectedThemeFilter === 'all') {
         // First, add search results from the passed searchResults prop
@@ -416,9 +423,21 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
               }
             }
             
-            if (isMatch && citationUrl) {
-              // Use URL as key to avoid duplicates, but store the full citation object
-              citationsMap.set(citationUrl, citation);
+            if (isMatch) {
+              if (citationUrl) {
+                // Use URL as key to avoid duplicates, but store the full citation object
+                citationsMap.set(citationUrl, citation);
+              } else {
+                // No usable URL on this citation — keep a running count and a sample
+                // citation so we can synthesize one aggregate row for the domain after
+                // the loop. (Common for YouTube / source-name-only mentions where
+                // the model cites a brand instead of a specific page.)
+                urllessMatchCount += 1;
+                if (!urllessExampleCitation) {
+                  urllessExampleCitation = citation;
+                  urllessExampleDomain = (citationDomain || domain).replace(/^www\./, '');
+                }
+              }
             }
           });
         } catch (error) {
@@ -457,6 +476,26 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
         });
       }
 
+      // If we saw citations that matched this domain but had no usable URL,
+      // surface them as a single aggregate row pointing at the domain root.
+      // We pre-bake the mentionCount onto the entry (`__urllessCount`) because
+      // the downstream counting loop matches by URL and would otherwise return 1
+      // for this synthesized URL even when hundreds of citations contributed.
+      if (urllessMatchCount > 0) {
+        const fallbackDomain = urllessExampleDomain || domain.replace(/^www\./, '');
+        const syntheticKey = `https://${fallbackDomain}/`;
+        if (!citationsMap.has(syntheticKey)) {
+          citationsMap.set(syntheticKey, {
+            ...(urllessExampleCitation || {}),
+            url: syntheticKey,
+            domain: fallbackDomain,
+            title: (urllessExampleCitation?.title?.trim()) || `${fallbackDomain} (source mentions)`,
+            snippet: urllessExampleCitation?.snippet || '',
+            __urllessCount: urllessMatchCount,
+          });
+        }
+      }
+
       // Group citations by title first, then by URL
       const titleGroups = new Map<string, any[]>();
       
@@ -476,10 +515,26 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
         // For each title group, combine all URLs and count total mentions
         const allUrls = citations.map(c => c.url);
         const uniqueUrls = [...new Set(allUrls)]; // Remove duplicate URLs within the same title group
-        
+
+        // If this title group is the synthesized URL-less aggregate, use the
+        // pre-tallied count directly — the per-URL counting loop below would
+        // miss it because the synthetic URL doesn't match any real citation.
+        const urllessAggregate = citations.find(c => typeof c.__urllessCount === 'number');
+        if (urllessAggregate) {
+          return {
+            ...urllessAggregate,
+            title,
+            urls: uniqueUrls,
+            urlCount: uniqueUrls.length,
+            mentionCount: urllessAggregate.__urllessCount,
+            grouped: uniqueUrls.length > 1,
+            url: urllessAggregate.url,
+          };
+        }
+
         // Calculate total mention count for this title group
         let totalMentionCount = 0;
-        
+
         citations.forEach(citation => {
           let mentionCount = 1; // Start with 1 for the current citation
           

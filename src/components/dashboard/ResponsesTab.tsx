@@ -179,7 +179,10 @@ export const ResponsesTab = memo(function ResponsesTab({
             <SelectContent>
               <SelectItem value="all">All Categories</SelectItem>
               {availableCategories.map(category => (
-                <SelectItem key={category} value={category}>{category}</SelectItem>
+                // Display the attribute name without the "TalentX:" prefix —
+                // the prefix is kept in the value because it's used as a filter
+                // key and matches `prompt_category` in the DB.
+                <SelectItem key={category} value={category}>{category.replace(/^TalentX:\s*/, '')}</SelectItem>
               ))}
             </SelectContent>
           </Select>

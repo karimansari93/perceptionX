@@ -123,23 +123,48 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
     });
   }, [userCompanies, loading]);
 
-  // When the org has no global company and nothing is selected yet, default
-  // to the first available country (alphabetical) so the label matches the
-  // data. Also switch currentCompany to a matching record so the underlying
-  // queries (which filter by company_id, not country) line up with the label.
+  // Keep the LocationFilter label and the active company in sync on load.
+  //
+  // Two cases this handles:
+  //  1. No selectedLocation yet (fresh sign-in, no starred view) — default to
+  //     the current company's country if it's one of the available ones,
+  //     otherwise to the alphabetical first. Avoids auto-switching the active
+  //     company just because another country sorts earlier.
+  //  2. selectedLocation is set (e.g. restored from a starred view) but the
+  //     currently-loaded `currentCompany` belongs to a different country —
+  //     switch `currentCompany` to a record matching the selected location
+  //     so the dashboard data (which is filtered by company_id, not country)
+  //     lines up with the displayed flag.
   useEffect(() => {
     if (loading) return;
-    if (selectedLocation) return;
-    if (hasGlobalCompany) return;
-    if (availableLocations.length === 0) return;
-    const first = availableLocations[0];
-    onLocationChange(first);
-    const currentName = currentCompany?.name.toLowerCase();
+    if (!currentCompany) return;
+
+    // Resolve the target location for this render.
+    let targetLocation: string | null = selectedLocation;
+    if (!targetLocation) {
+      if (hasGlobalCompany) return; // user has chosen / defaulted to Global — leave alone
+      if (availableLocations.length === 0) return;
+      const currentCountry = currentCompany.country;
+      targetLocation =
+        currentCountry && availableLocations.includes(currentCountry)
+          ? currentCountry
+          : availableLocations[0];
+      if (targetLocation !== selectedLocation) {
+        onLocationChange(targetLocation);
+      }
+    }
+
+    // If the active company already matches the target, nothing to do.
+    const companyCountry = currentCompany.country || 'GLOBAL';
+    if (companyCountry === targetLocation) return;
+
+    // Otherwise, find a sibling company in the target location (prefer same name).
+    const currentName = currentCompany.name.toLowerCase();
     const target =
-      userCompanies.find(c => (c.country || 'GLOBAL') === first && c.name.toLowerCase() === currentName) ||
-      userCompanies.find(c => (c.country || 'GLOBAL') === first);
-    if (target && target.id !== currentCompany?.id) {
-      switchCompany(target.id).catch(err => console.error('Failed to switch company on location default:', err));
+      userCompanies.find(c => (c.country || 'GLOBAL') === targetLocation && c.name.toLowerCase() === currentName) ||
+      userCompanies.find(c => (c.country || 'GLOBAL') === targetLocation);
+    if (target && target.id !== currentCompany.id) {
+      switchCompany(target.id).catch(err => console.error('Failed to sync company with location:', err));
     }
   }, [loading, selectedLocation, hasGlobalCompany, availableLocations, onLocationChange, currentCompany, userCompanies, switchCompany]);
 
