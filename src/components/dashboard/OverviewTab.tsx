@@ -1214,14 +1214,16 @@ CRITICAL: When you reference information from a source, add an inline citation l
       </div>
 
       {getUniqueJobFunctions.length > 0 && (
-        <ScrollablePills
-          selected={selectedJobFunctionFilter}
-          onSelect={setSelectedJobFunctionFilter}
-          options={[
-            { value: 'all', label: 'All functions' },
-            ...getUniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
-          ]}
-        />
+        <div data-tour="job-function-filter">
+          <ScrollablePills
+            selected={selectedJobFunctionFilter}
+            onSelect={setSelectedJobFunctionFilter}
+            options={[
+              { value: 'all', label: 'All functions' },
+              ...getUniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
+            ]}
+          />
+        </div>
       )}
 
       <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">

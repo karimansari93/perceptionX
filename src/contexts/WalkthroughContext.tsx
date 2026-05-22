@@ -46,6 +46,15 @@ const STEPS: WalkthroughStep[] = [
     route: '/dashboard',
   },
   {
+    target: '[data-tour="job-function-filter"]',
+    title: 'Filter by job function',
+    content:
+      'Slice the dashboard by the job functions we built for your company — pick a function to focus every metric on that audience, or keep "All functions" for the full picture.',
+    placement: 'bottom',
+    disableBeacon: true,
+    route: '/dashboard',
+  },
+  {
     target: '[data-tour="score-row"]',
     title: 'Your EPS score',
     content:
