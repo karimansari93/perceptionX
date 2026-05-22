@@ -189,7 +189,7 @@ export const OrganizationManagementTab = () => {
     try {
       const { data: membersData, error: membersError } = await supabase
         .from('organization_members')
-        .select('id, user_id, role, created_at')
+        .select('id, user_id, role, joined_at')
         .eq('organization_id', orgId);
 
       if (membersError) throw membersError;
@@ -209,7 +209,7 @@ export const OrganizationManagementTab = () => {
           user_id: member.user_id,
           email: profilesData?.find(p => p.id === member.user_id)?.email || 'Unknown',
           role: member.role,
-          joined_at: member.created_at
+          joined_at: member.joined_at
         }));
 
         setOrgMembers(members);
