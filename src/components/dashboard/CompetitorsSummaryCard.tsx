@@ -91,34 +91,45 @@ export const CompetitorsSummaryCard = ({
     return trimmedName.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
   };
 
-  // Calculate competitor previous counts from competitive prompts only
+  // Competitive responses for each period — the analyzed sets. A competitor's
+  // percentage is "share of these responses that mention it", matching the
+  // Competitors tab.
+  const competitiveResponses = useMemo(
+    () => responses.filter(r => r.confirmed_prompts?.prompt_type === 'competitive' || r.confirmed_prompts?.prompt_type === 'talentx_competitive'),
+    [responses]
+  );
+  const prevCompetitiveResponses = useMemo(
+    () => previousPeriodResponses.filter(r => r.confirmed_prompts?.prompt_type === 'competitive' || r.confirmed_prompts?.prompt_type === 'talentx_competitive'),
+    [previousPeriodResponses]
+  );
+
+  // Calculate competitor previous counts (responses mentioning each competitor,
+  // deduped per response).
   const competitorPreviousCounts = useMemo(() => {
-    if (previousPeriodResponses.length === 0) return {};
+    if (prevCompetitiveResponses.length === 0) return {};
 
     const counts: { [key: string]: number } = {};
-    previousPeriodResponses
-      .filter(r => r.confirmed_prompts?.prompt_type === 'competitive' || r.confirmed_prompts?.prompt_type === 'talentx_competitive')
-      .forEach(response => {
-        if (!response.detected_competitors) return;
-        response.detected_competitors
-          .split(',')
-          .map((c: string) => c.trim())
-          .filter((c: string) => c.length > 0)
-          .forEach((c: string) => {
-            const name = normalizeCompetitorName(c);
-            if (name) {
-              counts[name] = (counts[name] || 0) + 1;
-            }
-          });
-      });
+    prevCompetitiveResponses.forEach(response => {
+      if (!response.detected_competitors) return;
+      const seen = new Set<string>();
+      response.detected_competitors
+        .split(',')
+        .map((c: string) => c.trim())
+        .filter((c: string) => c.length > 0)
+        .forEach((c: string) => {
+          const name = normalizeCompetitorName(c);
+          if (name && !seen.has(name)) {
+            seen.add(name);
+            counts[name] = (counts[name] || 0) + 1;
+          }
+        });
+    });
     return counts;
-  }, [previousPeriodResponses]);
+  }, [prevCompetitiveResponses]);
 
-  // Build the FULL list of direct competitors first (not just top 5) so that
-  // percentages are computed against the true total of competitor mentions —
-  // this matches what users see when they click "View All" on the Competitors
-  // tab. Previously the denominator was the sum of just the top 5, which
-  // inflated each share to roughly 100% combined.
+  // Build the FULL list of direct competitors. Each competitor's count is the
+  // number of competitive responses that mention it (deduped per response),
+  // so the percentage is response coverage — matching the Competitors tab.
   const allCompetitorsFiltered = useMemo(() => {
     const excludedCompetitors = new Set([
       'glassdoor', 'indeed', 'ambitionbox', 'workday', 'linkedin', 'monster', 'careerbuilder', 'ziprecruiter',
@@ -126,21 +137,21 @@ export const CompetitorsSummaryCard = ({
     ]);
 
     const counts: Record<string, number> = {};
-    responses
-      .filter(r => r.confirmed_prompts?.prompt_type === 'competitive' || r.confirmed_prompts?.prompt_type === 'talentx_competitive')
-      .forEach(response => {
-        if (!response.detected_competitors) return;
-        response.detected_competitors
-          .split(',')
-          .map((c: string) => c.trim())
-          .filter((c: string) => c.length > 0)
-          .forEach((c: string) => {
-            const name = normalizeCompetitorName(c);
-            if (name && name.toLowerCase() !== companyName.toLowerCase() && !excludedCompetitors.has(name.toLowerCase())) {
-              counts[name] = (counts[name] || 0) + 1;
-            }
-          });
-      });
+    competitiveResponses.forEach(response => {
+      if (!response.detected_competitors) return;
+      const seen = new Set<string>();
+      response.detected_competitors
+        .split(',')
+        .map((c: string) => c.trim())
+        .filter((c: string) => c.length > 0)
+        .forEach((c: string) => {
+          const name = normalizeCompetitorName(c);
+          if (name && name.toLowerCase() !== companyName.toLowerCase() && !excludedCompetitors.has(name.toLowerCase()) && !seen.has(name)) {
+            seen.add(name);
+            counts[name] = (counts[name] || 0) + 1;
+          }
+        });
+    });
 
     return Object.entries(counts)
       .sort(([, a], [, b]) => b - a)
@@ -150,25 +161,20 @@ export const CompetitorsSummaryCard = ({
         displayName: name,
         previousCount: competitorPreviousCounts[name] || 0
       }));
-  }, [responses, companyName, competitorPreviousCounts]);
+  }, [competitiveResponses, companyName, competitorPreviousCounts]);
 
   const topCompetitorsFiltered = useMemo(
     () => allCompetitorsFiltered.slice(0, 5),
     [allCompetitorsFiltered],
   );
 
-  const totalCompetitorMentions = useMemo(() => {
-    return allCompetitorsFiltered.reduce((sum, c) => sum + c.count, 0);
-  }, [allCompetitorsFiltered]);
-
-  const totalPreviousMentions = useMemo(() => {
-    return allCompetitorsFiltered.reduce((sum, c) => sum + (c.previousCount || 0), 0);
-  }, [allCompetitorsFiltered]);
-
   const renderCompetitorItem = (competitor: any) => {
     const faviconUrl = getCompetitorFavicon(competitor.displayName);
     const initials = competitor.displayName.charAt(0).toUpperCase();
-    const mentionPercent = totalCompetitorMentions > 0 ? (competitor.count / totalCompetitorMentions) * 100 : 0;
+    // Coverage: share of competitive responses that mention this competitor.
+    const mentionPercent = competitiveResponses.length > 0
+      ? Math.min(100, (competitor.count / competitiveResponses.length) * 100)
+      : 0;
     
     return (
       <div className="flex items-center justify-between py-2 hover:bg-gray-50/50 transition-colors rounded-lg px-2">
@@ -200,28 +206,30 @@ export const CompetitorsSummaryCard = ({
           </span>
         </div>
         
-        {/* Percentage and trend */}
-        <div className="flex items-center gap-1 min-w-[40px] justify-end">
-          <span className="text-xs font-semibold text-gray-900">
+        {/* Percentage and trend — fixed-width columns so values align right */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span className="text-xs font-semibold text-gray-900 w-10 text-right">
             {mentionPercent.toFixed(1)}%
           </span>
-          <span className="w-[40px] flex justify-end">
-            {(() => {
-              if (!competitor.previousCount || totalPreviousMentions === 0) return null;
-              const prevPct = (competitor.previousCount / totalPreviousMentions) * 100;
-              const delta = Math.round(mentionPercent - prevPct);
-              if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
+          {prevCompetitiveResponses.length > 0 && (
+            <span className="w-[40px] flex justify-end">
+              {(() => {
+                if (!competitor.previousCount) return null;
+                const prevPct = Math.min(100, (competitor.previousCount / prevCompetitiveResponses.length) * 100);
+                const delta = Math.round(mentionPercent - prevPct);
+                if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
 
-              return (
-                <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                  delta > 0 ? 'text-green-600' : 'text-red-600'
-                }`}>
-                  {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                  <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
-                </span>
-              );
-            })()}
-          </span>
+                return (
+                  <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                    delta > 0 ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                    <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+                  </span>
+                );
+              })()}
+            </span>
+          )}
         </div>
       </div>
     );

@@ -18,6 +18,7 @@ import { KeyTakeaways } from "./KeyTakeaways";
 import { SourcesSummaryCard } from "./SourcesSummaryCard";
 import { CompetitorsSummaryCard } from "./CompetitorsSummaryCard";
 import { AttributesSummaryCard } from "./AttributesSummaryCard";
+import { ScrollablePills } from "./ScrollablePills";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
@@ -71,6 +72,14 @@ interface OverviewTabProps {
   companyRelevanceByMonth?: Record<string, number>;
   previousPeriodResponses?: any[];
   market?: string | null;
+  // Per-job-function scorecard metrics — lets the function filter rescope EPS/Breakdown.
+  metricsByJobFunction?: Record<string, {
+    perceptionScore: number;
+    perceptionLabel: string;
+    sentimentScore: number;
+    visibilityScore: number;
+    relevanceScore: number;
+  }>;
 }
 
 interface TimeBasedData {
@@ -118,6 +127,7 @@ export const OverviewTab = memo(({
   companyRelevanceByMonth = {},
   previousPeriodResponses = [],
   market = null,
+  metricsByJobFunction = {},
 }: OverviewTabProps) => {
   const [isEpsDrilldownOpen, setIsEpsDrilldownOpen] = useState(false);
   // Modal states - persisted
@@ -134,6 +144,48 @@ export const OverviewTab = memo(({
   const [hoveredCompetitorCitation, setHoveredCompetitorCitation] = useState<number | null>(null);
   const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = usePersistedState<boolean>('overviewTab.isMentionsDrawerOpen', false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
+
+  // Job function filter — scopes the Sources / Competitors / Themes summary
+  // cards. The headline EPS / Breakdown scorecard stays global (it comes from
+  // per-company materialized views with no job-function dimension).
+  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('overviewTab.selectedJobFunctionFilter', 'all');
+
+  const getUniqueJobFunctions = useMemo(() => {
+    const fns = new Set<string>();
+    responses.forEach(r => {
+      const fn = r.confirmed_prompts?.job_function_context?.trim();
+      if (fn) fns.add(fn);
+    });
+    return Array.from(fns).sort();
+  }, [responses]);
+
+  const fnResponses = useMemo(() => (
+    selectedJobFunctionFilter === 'all'
+      ? responses
+      : responses.filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter)
+  ), [responses, selectedJobFunctionFilter]);
+
+  const fnPreviousResponses = useMemo(() => (
+    selectedJobFunctionFilter === 'all'
+      ? previousPeriodResponses
+      : previousPeriodResponses.filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter)
+  ), [previousPeriodResponses, selectedJobFunctionFilter]);
+
+  const fnThemes = useMemo(() => {
+    if (selectedJobFunctionFilter === 'all') return aiThemes;
+    const ids = new Set(fnResponses.map(r => r.id));
+    return aiThemes.filter(t => ids.has(t.response_id));
+  }, [aiThemes, fnResponses, selectedJobFunctionFilter]);
+
+  const isFunctionFiltered = selectedJobFunctionFilter !== 'all';
+
+  // EPS / Breakdown scorecard values for the selected function. Falls back to
+  // the global metrics for "All functions" or if the function has no data.
+  const scorecardMetrics = useMemo(() => {
+    if (!isFunctionFiltered) return metrics;
+    const fn = metricsByJobFunction[selectedJobFunctionFilter];
+    return fn ? { ...metrics, ...fn } : metrics;
+  }, [metrics, metricsByJobFunction, selectedJobFunctionFilter, isFunctionFiltered]);
 
   // Responsive check
   const [isMobile, setIsMobile] = useState(false);
@@ -1161,6 +1213,17 @@ CRITICAL: When you reference information from a source, add an inline citation l
         </p>
       </div>
 
+      {getUniqueJobFunctions.length > 0 && (
+        <ScrollablePills
+          selected={selectedJobFunctionFilter}
+          onSelect={setSelectedJobFunctionFilter}
+          options={[
+            { value: 'all', label: 'All functions' },
+            ...getUniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
+          ]}
+        />
+      )}
+
       <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
         {/* Perception Score Card */}
         <Card
@@ -1188,9 +1251,9 @@ CRITICAL: When you reference information from a source, add an inline citation l
               </div>
               <div className="flex items-end gap-3 mb-1 mt-2">
                 <span className="text-6xl font-extrabold text-gray-900 drop-shadow-sm leading-none">
-                  {metrics.perceptionScore}
+                  {scorecardMetrics.perceptionScore}
                 </span>
-                {previousPeriodMetrics && (() => {
+                {!isFunctionFiltered && previousPeriodMetrics && (() => {
                   // EPS is the weighted roll-up — it's only meaningful when
                   // ALL THREE components have a prior-month value to compare
                   // against. If any is undefined (MV hasn't caught up, etc.),
@@ -1206,7 +1269,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                   }
 
                   const prevEPS = Math.round((ps * 0.5) + (pv * 0.3) + (pr * 0.2));
-                  const change = metrics.perceptionScore - prevEPS;
+                  const change = scorecardMetrics.perceptionScore - prevEPS;
                   if (change === 0) return (
                     <span className="ml-4 text-xl font-semibold text-gray-400" style={{marginBottom: 6}}>-</span>
                   );
@@ -1226,8 +1289,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
             {/* Badge in top right */}
             <div className="flex items-start">
               <span className={`px-3 py-1 rounded-full text-base font-semibold mt-1 ${
-                metrics.perceptionScore >= 80 ? 'bg-green-100 text-green-800' : metrics.perceptionScore >= 65 ? 'bg-blue-100 text-blue-800' : metrics.perceptionScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
-              }`}>{metrics.perceptionLabel}</span>
+                scorecardMetrics.perceptionScore >= 80 ? 'bg-green-100 text-green-800' : scorecardMetrics.perceptionScore >= 65 ? 'bg-blue-100 text-blue-800' : scorecardMetrics.perceptionScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+              }`}>{scorecardMetrics.perceptionLabel}</span>
             </div>
           </div>
           {/* Bottom: Chart, visually anchored */}
@@ -1240,11 +1303,14 @@ CRITICAL: When you reference information from a source, add an inline citation l
                      // Only prepend a "Prev" anchor when all three components
                      // have a comparable value — otherwise EPS would be NaN
                      // and the area chart would collapse.
-                     const points = [...perceptionScoreTrend];
+                     // The trend series is global; when a function is filtered
+                     // show a flat line at the function-scoped EPS instead.
+                     const points = isFunctionFiltered ? [] : [...perceptionScoreTrend];
                      const ps = previousPeriodMetrics?.sentimentScore;
                      const pv = previousPeriodMetrics?.visibilityScore;
                      const pr = previousPeriodMetrics?.relevanceScore;
                      if (
+                       !isFunctionFiltered &&
                        points.length > 0 &&
                        typeof ps === 'number' &&
                        typeof pv === 'number' &&
@@ -1254,8 +1320,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
                        points.unshift({ date: 'Prev', score: prevEPS, fullDate: '', responseCount: 0, promptCount: 0, sentiment: ps, visibility: pv, relevance: pr });
                      }
                      return points.length > 1 ? points : [
-                       { date: 'Start', score: metrics.perceptionScore, fullDate: '', responseCount: responses.length },
-                       { date: 'Today', score: metrics.perceptionScore, fullDate: '', responseCount: responses.length }
+                       { date: 'Start', score: scorecardMetrics.perceptionScore, fullDate: '', responseCount: responses.length },
+                       { date: 'Today', score: scorecardMetrics.perceptionScore, fullDate: '', responseCount: responses.length }
                      ];
                    })()}
                    width={undefined}
@@ -1323,7 +1389,9 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 </div>
               </div>
             ) : (() => {
-              const prevMetrics = previousPeriodMetrics;
+              // No per-function previous-period baseline exists, so deltas are
+              // suppressed while a function is filtered.
+              const prevMetrics = isFunctionFiltered ? null : previousPeriodMetrics;
               // Each delta is only meaningful when both sides exist. Previous
               // values are optional (undefined when the MV hasn't surfaced data
               // for the previous month yet) — don't coerce missing values to 0.
@@ -1331,13 +1399,13 @@ CRITICAL: When you reference information from a source, add an inline citation l
               const hasPrevVisibility = typeof prevMetrics?.visibilityScore === 'number';
               const hasPrevRelevance = typeof prevMetrics?.relevanceScore === 'number';
 
-              const sentimentChange = hasPrevSentiment ? metrics.sentimentScore - (prevMetrics!.sentimentScore as number) : 0;
-              const visibilityChange = hasPrevVisibility ? metrics.visibilityScore - (prevMetrics!.visibilityScore as number) : 0;
-              const relevanceChange = hasPrevRelevance ? metrics.relevanceScore - (prevMetrics!.relevanceScore as number) : 0;
+              const sentimentChange = hasPrevSentiment ? scorecardMetrics.sentimentScore - (prevMetrics!.sentimentScore as number) : 0;
+              const visibilityChange = hasPrevVisibility ? scorecardMetrics.visibilityScore - (prevMetrics!.visibilityScore as number) : 0;
+              const relevanceChange = hasPrevRelevance ? scorecardMetrics.relevanceScore - (prevMetrics!.relevanceScore as number) : 0;
 
-              const currentSentiment = metrics.sentimentScore;
-              const currentVisibility = metrics.visibilityScore;
-              const currentRelevance = metrics.relevanceScore;
+              const currentSentiment = scorecardMetrics.sentimentScore;
+              const currentVisibility = scorecardMetrics.visibilityScore;
+              const currentRelevance = scorecardMetrics.relevanceScore;
               
               return (
                 <>
@@ -1425,39 +1493,41 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
       {/* Summary Cards Grid - only render when all metrics (including themes) are ready */}
       {!metricsCalculating && (
-      <div data-tour="summary-row" className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        <div>
-          <SourcesSummaryCard
-            topCitations={topCitations}
-            responses={responses}
-            companyName={companyName}
-            searchResults={searchResults}
-            perceptionScoreTrend={perceptionScoreTrend}
-            previousPeriodResponses={previousPeriodResponses}
-          />
-        </div>
+      <div className="space-y-3">
+        <div data-tour="summary-row" className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+          <div>
+            <SourcesSummaryCard
+              topCitations={topCitations}
+              responses={fnResponses}
+              companyName={companyName}
+              searchResults={searchResults}
+              perceptionScoreTrend={perceptionScoreTrend}
+              previousPeriodResponses={fnPreviousResponses}
+            />
+          </div>
 
-        <div>
-          <CompetitorsSummaryCard
-            topCompetitors={normalizedTopCompetitors}
-            responses={responses}
-            companyName={companyName}
-            searchResults={searchResults}
-            perceptionScoreTrend={perceptionScoreTrend}
-            previousPeriodResponses={previousPeriodResponses}
-          />
-        </div>
+          <div>
+            <CompetitorsSummaryCard
+              topCompetitors={normalizedTopCompetitors}
+              responses={fnResponses}
+              companyName={companyName}
+              searchResults={searchResults}
+              perceptionScoreTrend={perceptionScoreTrend}
+              previousPeriodResponses={fnPreviousResponses}
+            />
+          </div>
 
-        <div className="lg:col-span-2 xl:col-span-1">
-          <AttributesSummaryCard
-            talentXProData={talentXProData}
-            aiThemes={aiThemes}
-            companyName={companyName}
-            perceptionScoreTrend={perceptionScoreTrend}
-            previousPeriodResponses={previousPeriodResponses}
-            responses={responses}
-            aiThemesLoading={aiThemesLoading}
-          />
+          <div className="lg:col-span-2 xl:col-span-1">
+            <AttributesSummaryCard
+              talentXProData={talentXProData}
+              aiThemes={fnThemes}
+              companyName={companyName}
+              perceptionScoreTrend={perceptionScoreTrend}
+              previousPeriodResponses={fnPreviousResponses}
+              responses={fnResponses}
+              aiThemesLoading={aiThemesLoading}
+            />
+          </div>
         </div>
       </div>
       )}

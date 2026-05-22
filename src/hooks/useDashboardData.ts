@@ -58,6 +58,9 @@ export const useDashboardData = () => {
   // Per-month MV data for period comparison (keyed by "YYYY-MM")
   const [companyRelevanceByMonth, setCompanyRelevanceByMonth] = useState<Record<string, number>>({});
   const [companySentimentByMonth, setCompanySentimentByMonth] = useState<Record<string, number>>({});
+  // Raw MV rows kept so the Overview tab can re-aggregate per job function.
+  const [sentimentMvRows, setSentimentMvRows] = useState<any[]>([]);
+  const [relevanceMvRows, setRelevanceMvRows] = useState<any[]>([]);
   // Track if metrics are still being calculated (for UX - show all metrics together)
   // Start as true, will be set to false when all metrics are ready
   const [metricsCalculating, setMetricsCalculating] = useState(true);
@@ -458,6 +461,10 @@ export const useDashboardData = () => {
           .order('response_month', { ascending: false })
           .limit(100) // Get all months, limit to prevent huge queries
       ]);
+
+      // Keep the raw rows so the Overview tab can re-aggregate per job function.
+      setSentimentMvRows(sentimentResult.data || []);
+      setRelevanceMvRows(relevanceResult.data || []);
 
       if (sentimentResult.error && sentimentResult.error.code !== 'PGRST116') {
         console.warn('Error fetching sentiment metrics from materialized view:', sentimentResult.error);
@@ -1943,6 +1950,70 @@ export const useDashboardData = () => {
     return metricsResult;
   }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companySentimentByMonth, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations]);
 
+  // Per-job-function scorecard metrics, so the Overview tab can rescope EPS /
+  // Breakdown when a function is selected. Sentiment & relevance come from the
+  // MV rows (which now carry job_function_context); visibility is the
+  // company_mentioned rate of that function's responses. EPS uses the same
+  // 50/30/20 weighting as the global score.
+  const metricsByJobFunction = useMemo(() => {
+    const result: Record<string, {
+      perceptionScore: number; perceptionLabel: string;
+      sentimentScore: number; visibilityScore: number; relevanceScore: number;
+    }> = {};
+
+    const fns = new Set<string>();
+    sentimentMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    relevanceMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    periodFilteredResponses.forEach(r => {
+      const f = r.confirmed_prompts?.job_function_context?.trim();
+      if (f) fns.add(f);
+    });
+
+    fns.forEach(fn => {
+      // Sentiment — positive themes / total themes across this function's rows
+      let totalThemes = 0, positiveThemes = 0;
+      sentimentMvRows.forEach(r => {
+        if (r.job_function_context !== fn) return;
+        totalThemes += r.total_themes || 0;
+        positiveThemes += r.positive_themes || 0;
+      });
+      const sentimentScore = totalThemes > 0
+        ? Math.round(Math.max(0, Math.min(100, (positiveThemes / totalThemes) * 100)))
+        : 0;
+
+      // Relevance — citation-weighted average recency score
+      let relWeighted = 0, relWeight = 0;
+      relevanceMvRows.forEach(r => {
+        if (r.job_function_context !== fn) return;
+        relWeighted += (r.relevance_score || 0) * (r.valid_citations || 0);
+        relWeight += r.valid_citations || 0;
+      });
+      const relevanceScore = relWeight > 0 ? Math.round(relWeighted / relWeight) : 0;
+
+      // Visibility — company_mentioned rate of this function's responses
+      const fnResponses = periodFilteredResponses.filter(
+        r => r.confirmed_prompts?.job_function_context?.trim() === fn
+      );
+      const mentioned = fnResponses.filter(r => r.company_mentioned === true).length;
+      const visibilityScore = fnResponses.length > 0
+        ? Math.round((mentioned / fnResponses.length) * 100)
+        : 0;
+
+      const perceptionScore = Math.round(
+        (sentimentScore * 0.5) + (visibilityScore * 0.3) + (relevanceScore * 0.2)
+      );
+      let perceptionLabel = 'Poor';
+      if (perceptionScore >= 80) perceptionLabel = 'Excellent';
+      else if (perceptionScore >= 65) perceptionLabel = 'Good';
+      else if (perceptionScore >= 50) perceptionLabel = 'Fair';
+      else if (perceptionScore >= 30) perceptionLabel = 'Poor';
+
+      result[fn] = { perceptionScore, perceptionLabel, sentimentScore, visibilityScore, relevanceScore };
+    });
+
+    return result;
+  }, [sentimentMvRows, relevanceMvRows, periodFilteredResponses]);
+
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
     // Group by date via Map (O(1) lookup) instead of reduce+find (O(N²)).
     const byDate = new Map<string, SentimentTrendData>();
@@ -2251,6 +2322,7 @@ export const useDashboardData = () => {
     isFullyLoaded,
     companyName,
     metrics,
+    metricsByJobFunction, // Per-job-function scorecard metrics for the Overview filter
     sentimentTrend,
     topCitations,
     promptsData,

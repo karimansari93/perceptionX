@@ -37,12 +37,17 @@ export const SourcesSummaryCard = ({
     return domain.replace(/^www\./, "");
   };
 
-  // Compute citations from responses where company was mentioned,
-  // using enhanceCitations + normalizeDomain (consistent with SourcesTab default view)
+  // Responses where the company was mentioned — the analyzed set, matching the
+  // Sources tab's default "Mentioned" view.
+  const mentionedResponses = useMemo(
+    () => responses.filter(r => r.company_mentioned === true),
+    [responses]
+  );
+
+  // Count, per domain, how many mentioned responses cite it (deduped per
+  // response). This is the coverage numerator — consistent with SourcesTab.
   const mentionedCitations = useMemo(() => {
     const citationCounts: Record<string, number> = {};
-
-    const mentionedResponses = responses.filter(r => r.company_mentioned === true);
 
     mentionedResponses.forEach(response => {
       try {
@@ -52,10 +57,12 @@ export const SourcesSummaryCard = ({
 
         if (Array.isArray(raw)) {
           const enhanced = enhanceCitations(raw);
+          const seen = new Set<string>();
           enhanced.forEach(citation => {
             if (citation.type === 'website' && citation.domain) {
               const normalized = normalizeDomain(citation.domain);
-              if (normalized) {
+              if (normalized && !seen.has(normalized)) {
+                seen.add(normalized);
                 citationCounts[normalized] = (citationCounts[normalized] || 0) + 1;
               }
             }
@@ -69,7 +76,7 @@ export const SourcesSummaryCard = ({
     return Object.entries(citationCounts)
       .map(([domain, count]) => ({ domain, count }))
       .sort((a, b) => b.count - a.count);
-  }, [responses]);
+  }, [mentionedResponses]);
 
   const getResponsesForSource = (domain: string) => {
     const normalized = normalizeDomain(domain);
@@ -91,11 +98,12 @@ export const SourcesSummaryCard = ({
     });
   };
 
-  // Calculate source trends: compare share % between current and previous periods
+  // Calculate source trends: compare coverage % (responses citing the source ÷
+  // mentioned responses) between current and previous periods.
   const sourceTrends = useMemo(() => {
     if (previousPeriodResponses.length === 0) return {};
 
-    const getCitationCounts = (responseList: any[]) => {
+    const getCoverage = (responseList: any[]) => {
       const counts: Record<string, number> = {};
       const mentioned = responseList.filter(r => r.company_mentioned === true);
       mentioned.forEach(response => {
@@ -105,10 +113,12 @@ export const SourcesSummaryCard = ({
             : response.citations;
           if (Array.isArray(raw)) {
             const enhanced = enhanceCitations(raw);
+            const seen = new Set<string>();
             enhanced.forEach(c => {
               if (c.type === 'website' && c.domain) {
                 const normalized = normalizeDomain(c.domain);
-                if (normalized) {
+                if (normalized && !seen.has(normalized)) {
+                  seen.add(normalized);
                   counts[normalized] = (counts[normalized] || 0) + 1;
                 }
               }
@@ -118,20 +128,16 @@ export const SourcesSummaryCard = ({
           // Ignore invalid citations
         }
       });
-      return counts;
+      return { counts, total: mentioned.length };
     };
 
-    const currentCounts = getCitationCounts(responses);
-    const previousCounts = getCitationCounts(previousPeriodResponses);
-
-    // Convert counts to percentages of their respective totals
-    const currentTotal = Object.values(currentCounts).reduce((s, c) => s + c, 0);
-    const previousTotal = Object.values(previousCounts).reduce((s, c) => s + c, 0);
+    const current = getCoverage(responses);
+    const previous = getCoverage(previousPeriodResponses);
 
     const trends: Record<string, number> = {};
-    Object.keys(currentCounts).forEach(domain => {
-      const currentPct = currentTotal > 0 ? ((currentCounts[domain] || 0) / currentTotal) * 100 : 0;
-      const previousPct = previousTotal > 0 ? ((previousCounts[domain] || 0) / previousTotal) * 100 : 0;
+    Object.keys(current.counts).forEach(domain => {
+      const currentPct = current.total > 0 ? ((current.counts[domain] || 0) / current.total) * 100 : 0;
+      const previousPct = previous.total > 0 ? ((previous.counts[domain] || 0) / previous.total) * 100 : 0;
       trends[domain] = currentPct - previousPct;
     });
 
@@ -148,18 +154,13 @@ export const SourcesSummaryCard = ({
     }));
   }, [mentionedCitations, responses, companyName, sourceTrends]);
 
-  // Use the full list of mentioned citations as the denominator so each
-  // source's % is its actual share of total mentions — matches what the
-  // Sources tab shows when the user clicks "View All". Previously this was
-  // summed across the top 5 only, which inflated each share to ~100%.
-  const totalSourceMentions = useMemo(() => {
-    return mentionedCitations.reduce((sum, c) => sum + c.count, 0);
-  }, [mentionedCitations]);
-
   const renderSourceItem = (source: any) => {
     const mediaTypeInfo = getMediaTypeInfo(source.mediaType);
-    const mentionPercent = totalSourceMentions > 0 ? (source.count / totalSourceMentions) * 100 : 0;
-    
+    // Coverage: share of mentioned responses that cite this source.
+    const mentionPercent = mentionedResponses.length > 0
+      ? Math.min(100, (source.count / mentionedResponses.length) * 100)
+      : 0;
+
     return (
       <div className="flex items-center justify-between py-2 hover:bg-gray-50/50 transition-colors rounded-lg px-2">
         {/* Source name and favicon */}
@@ -174,24 +175,28 @@ export const SourcesSummaryCard = ({
             </Badge>
           </div>
         </div>
-        
-        {/* Percentage and trend */}
-        <div className="flex items-center gap-1 min-w-[40px] justify-end">
-          <span className="text-xs font-semibold text-gray-900">
+
+        {/* Percentage and trend — fixed-width columns so values align right */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span className="text-xs font-semibold text-gray-900 w-10 text-right">
             {mentionPercent.toFixed(1)}%
           </span>
-          {(() => {
-            const delta = Math.round(source.trendChange);
-            if (delta === 0) return previousPeriodResponses.length > 0 ? <span className="text-xs text-gray-400">-</span> : null;
-            return (
-              <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                delta > 0 ? 'text-green-600' : 'text-red-600'
-              }`}>
-                {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
-              </span>
-            );
-          })()}
+          {previousPeriodResponses.length > 0 && (
+            <span className="w-[40px] flex justify-end">
+              {(() => {
+                const delta = Math.round(source.trendChange);
+                if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
+                return (
+                  <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                    delta > 0 ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                    <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+                  </span>
+                );
+              })()}
+            </span>
+          )}
         </div>
       </div>
     );

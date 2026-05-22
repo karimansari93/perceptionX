@@ -188,24 +188,26 @@ export const AttributesSummaryCard = ({
           </div>
         </div>
         
-        <div className="flex items-center gap-1 min-w-[40px] justify-end">
-          <span className="text-xs font-semibold text-gray-900">
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <span className="text-xs font-semibold text-gray-900 w-10 text-right">
             {sentimentScore}%
           </span>
-          <span className="w-[40px] flex justify-end">
-            {(() => {
-              const delta = Math.round(attribute.trendChange);
-              if (delta === 0) return previousPeriodResponses.length > 0 ? <span className="text-xs text-gray-400">-</span> : null;
-              return (
-                <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                  delta > 0 ? 'text-green-600' : 'text-red-600'
-                }`}>
-                  {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                  <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
-                </span>
-              );
-            })()}
-          </span>
+          {previousPeriodResponses.length > 0 && (
+            <span className="w-[40px] flex justify-end">
+              {(() => {
+                const delta = Math.round(attribute.trendChange);
+                if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
+                return (
+                  <span className={`text-xs font-semibold flex items-center gap-0.5 ${
+                    delta > 0 ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+                    <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+                  </span>
+                );
+              })()}
+            </span>
+          )}
         </div>
       </div>
     );

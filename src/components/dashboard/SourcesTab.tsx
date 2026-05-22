@@ -1,7 +1,7 @@
-import { useState, useMemo, useEffect, memo } from "react";
+import { useState, useMemo, useEffect, useCallback, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { CitationCount } from "@/types/dashboard";
-import { FileText, TrendingUp, TrendingDown, Check, X } from 'lucide-react';
+import { FileText, TrendingUp, TrendingDown, Check, X, Info } from 'lucide-react';
 import { SourceDetailsModal } from "./SourceDetailsModal";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { extractSourceUrl, extractDomain, enhanceCitations } from "@/utils/citationUtils";
+import { ScrollablePills } from "./ScrollablePills";
 
 interface TimeBasedData {
   name: string;
@@ -165,7 +166,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   // they can be promoted back to useState without any caller changes.
   const selectedMediaTypeFilter: string | null = null;
   const selectedSourceTypeFilter = 'all' as 'all' | 'ai-responses' | 'search-results';
-  const selectedJobFunctionFilter = 'all' as string;
+  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('sourcesTab.selectedJobFunctionFilter', 'all');
   const selectedThemeFilter = 'all' as string;
   const selectedPromptTypeFilter = 'all' as string;
 
@@ -387,18 +388,6 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return Array.from(jobFunctions).sort();
   }, [filteredResponses]);
 
-  // Helper function to check if a source comes from a specific job function context.
-  // Uses the precomputed domain → responses index + a quick jobFunction scan
-  // instead of re-parsing every response's citations.
-  const isSourceFromJobFunction = (domain: string, jobFunction: string) => {
-    const list = responsesByDomain.get(normalizeDomain(domain));
-    if (!list) return false;
-    for (const nr of list) {
-      if (nr.jobFunction === jobFunction) return true;
-    }
-    return false;
-  };
-
   const getResponsesForSource = (domain: string) => {
     // Return the raw response rows that cite this domain. The underlying
     // data is already keyed via responsesByDomain so this is O(1) instead
@@ -419,12 +408,37 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
 
   // Cross-period citation counts for delta computation. Reads normalized data
   // for both periods — no citation re-parsing.
+  // Does a response belong in the currently-analyzed set? Used as the shared
+  // basis for both the source counts (numerator) and the response total
+  // (denominator) so coverage percentages stay consistent.
+  const responseMatchesFilters = useCallback((nr: NormalizedResponse) => {
+    const mentionOk = selectedCompanyMentionedFilter === 'mentioned'
+      ? nr.company_mentioned === true
+      : nr.company_mentioned === false;
+    if (!mentionOk) return false;
+    if (selectedJobFunctionFilter !== 'all' && nr.jobFunction !== selectedJobFunctionFilter) return false;
+    return true;
+  }, [selectedCompanyMentionedFilter, selectedJobFunctionFilter]);
+
+  // Coverage denominators: how many responses are in the analyzed set for the
+  // current and previous periods. A source's percentage is "share of these
+  // responses that cite it", so these do NOT sum to 100 across sources.
+  const totalResponsesAnalyzed = useMemo(
+    () => normalizedResponses.filter(responseMatchesFilters).length,
+    [normalizedResponses, responseMatchesFilters]
+  );
+  const totalPrevResponsesAnalyzed = useMemo(
+    () => normalizedPrevResponses.filter(responseMatchesFilters).length,
+    [normalizedPrevResponses, responseMatchesFilters]
+  );
+
   const timeBasedCitations = useMemo(() => {
     if (normalizedPrevResponses.length === 0) return [];
 
     const countFromNormalized = (list: NormalizedResponse[]) => {
       const counts: Record<string, number> = {};
       for (const nr of list) {
+        if (!responseMatchesFilters(nr)) continue;
         for (const d of nr.domains) {
           counts[d] = (counts[d] || 0) + 1;
         }
@@ -444,7 +458,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       change: (currentCounts[domain] || 0) - (prevCounts[domain] || 0),
       changePercent: 0 // computed at render time using consistent displayed totals
     })).sort((a, b) => b.current - a.current);
-  }, [normalizedResponses, normalizedPrevResponses]);
+  }, [normalizedResponses, normalizedPrevResponses, responseMatchesFilters]);
 
   // Get the appropriate citation source based on filter, with company_mentioned filtering applied
   const allTimeCitations = useMemo(() => {
@@ -584,11 +598,20 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       }).filter(source => source.count > 0);
     }
     
-    // Filter by job function - only show sources from the selected job function
+    // Filter by job function - recalculate counts so each source's count
+    // reflects only responses within the selected function (keeps the
+    // coverage percentage consistent with totalResponsesAnalyzed).
     if (selectedJobFunctionFilter !== 'all') {
-      sources = sources.filter(source => 
-        source.count > 0 && isSourceFromJobFunction(source.name, selectedJobFunctionFilter)
-      );
+      const jfCounts: Record<string, number> = {};
+      for (const nr of normalizedResponses) {
+        if (!responseMatchesFilters(nr)) continue;
+        for (const d of nr.domains) {
+          jfCounts[d] = (jfCounts[d] || 0) + 1;
+        }
+      }
+      sources = sources
+        .map(source => ({ ...source, count: jfCounts[normalizeDomain(source.name)] || 0 }))
+        .filter(source => source.count > 0);
     }
     
     // Filter out any sources with 0 counts (shouldn't happen, but safety check)
@@ -598,7 +621,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     sources = sources.sort((a, b) => b.count - a.count);
     
     return sources;
-  }, [allTimeCitations, selectedMediaTypeFilter, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedJobFunctionFilter, normalizedResponses, companyName, customMediaTypes, responsesByDomain]);
+  }, [allTimeCitations, selectedMediaTypeFilter, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedJobFunctionFilter, normalizedResponses, companyName, customMediaTypes, responsesByDomain, responseMatchesFilters]);
 
   // Pre-cap count so the "Show all N sources" button can surface the full total
   // even when only INITIAL_RENDER_LIMIT rows are actually rendered.
@@ -622,12 +645,13 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     });
   }, [displayedSources, timeBasedCitations]);
 
-  const renderAllTimeBar = (data: { name: string; count: number; change?: number; previousCount?: number; hasPreviousData?: boolean }, maxCount: number, totalCitations: number, totalPreviousCitations: number) => {
+  const renderAllTimeBar = (data: { name: string; count: number; change?: number; previousCount?: number; hasPreviousData?: boolean }, maxCount: number, totalResponses: number, totalPreviousResponses: number) => {
     // Calculate the actual percentage width
     const percentage = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
 
-    // Calculate percentage of total citations in the CURRENT filtered dataset
-    const totalPercentage = totalCitations > 0 ? (data.count / totalCitations) * 100 : 0;
+    // Coverage: share of analyzed responses that cite this source. Capped at
+    // 100 as a safety net (search-result-only sources have no response basis).
+    const totalPercentage = totalResponses > 0 ? Math.min(100, (data.count / totalResponses) * 100) : 0;
     
     // Truncate labels to 15 characters
     const displayName = getSourceDisplayName(data.name);
@@ -733,7 +757,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
           <span className="w-[45px] flex justify-end">
             {(() => {
               if (!data.hasPreviousData) return null;
-              const prevPct = totalPreviousCitations > 0 ? ((data.previousCount || 0) / totalPreviousCitations) * 100 : 0;
+              const prevPct = totalPreviousResponses > 0 ? Math.min(100, ((data.previousCount || 0) / totalPreviousResponses) * 100) : 0;
               const delta = Math.round(totalPercentage - prevPct);
               if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
               return (
@@ -856,31 +880,19 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
         </p>
       </div>
 
-      {/* Toggle: Mentioned / Not Mentioned */}
-      <div className="sticky top-0 z-10 bg-white pb-2">
-        <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100">
-          <button
-            onClick={() => setSelectedCompanyMentionedFilter('mentioned')}
-            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-              selectedCompanyMentionedFilter === 'mentioned'
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Mentioned
-          </button>
-          <button
-            onClick={() => setSelectedCompanyMentionedFilter('not-mentioned')}
-            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-              selectedCompanyMentionedFilter === 'not-mentioned'
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Not Mentioned
-          </button>
+      {/* Job function filter */}
+      {getUniqueJobFunctions.length > 0 && (
+        <div className="sticky top-0 z-10 bg-white pb-2">
+          <ScrollablePills
+            selected={selectedJobFunctionFilter}
+            onSelect={setSelectedJobFunctionFilter}
+            options={[
+              { value: 'all', label: 'All functions' },
+              ...getUniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
+            ]}
+          />
         </div>
-      </div>
+      )}
 
       {/* Main Content with Tabs */}
       <div className="flex-1 min-h-0">
@@ -890,10 +902,6 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
               {allTimeCitationsWithChanges.length > 0 ? (
                 (() => {
                   const maxCount = Math.max(...allTimeCitationsWithChanges.map(c => c.count), 1);
-                  // Totals are across the FULL filtered set so percentages
-                  // still add up correctly even when the render list is capped.
-                  const totalCitations = allTimeCitationsWithChanges.reduce((sum, citation) => sum + citation.count, 0);
-                  const totalPreviousCitations = allTimeCitationsWithChanges.reduce((sum, c) => sum + (c.previousCount || 0), 0);
                   // Only render the first INITIAL_RENDER_LIMIT rows unless the
                   // user clicks "Show all". Keeps mount fast on Netflix-scale orgs.
                   const toRender = showAllSources
@@ -901,6 +909,47 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                     : allTimeCitationsWithChanges.slice(0, INITIAL_RENDER_LIMIT);
                   return (
                     <>
+                      <div className="sticky top-0 z-10 bg-white flex items-center justify-between gap-3 px-2 sm:px-3 pb-2">
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="flex items-center gap-1 text-xs font-medium text-gray-400 cursor-help">
+                                % of responses
+                                <Info className="w-3.5 h-3.5" />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-[260px]">
+                              <p className="text-xs">
+                                Share of the analyzed AI responses that cite this source. A
+                                response usually cites several sources, so these percentages
+                                don't add up to 100%.
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100">
+                          <button
+                            onClick={() => setSelectedCompanyMentionedFilter('mentioned')}
+                            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                              selectedCompanyMentionedFilter === 'mentioned'
+                                ? 'bg-white text-gray-900 shadow-sm'
+                                : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                          >
+                            Mentioned
+                          </button>
+                          <button
+                            onClick={() => setSelectedCompanyMentionedFilter('not-mentioned')}
+                            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                              selectedCompanyMentionedFilter === 'not-mentioned'
+                                ? 'bg-white text-gray-900 shadow-sm'
+                                : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                          >
+                            Not Mentioned
+                          </button>
+                        </div>
+                      </div>
                       {toRender.map((citation, idx) => (
                         <div
                           key={idx}
@@ -908,7 +957,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                           className="cursor-pointer"
                           {...(idx === 0 ? { 'data-tour': 'sources-first-row' } : {})}
                         >
-                          {renderAllTimeBar(citation, maxCount, totalCitations, totalPreviousCitations)}
+                          {renderAllTimeBar(citation, maxCount, totalResponsesAnalyzed, totalPrevResponsesAnalyzed)}
                         </div>
                       ))}
                       {!showAllSources && totalSourceCount > INITIAL_RENDER_LIMIT && (

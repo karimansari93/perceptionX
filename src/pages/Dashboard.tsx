@@ -163,6 +163,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     isFullyLoaded,
     companyName,
     metrics,
+    metricsByJobFunction,
     sentimentTrend,
     topCitations,
     promptsData,
@@ -496,6 +497,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           <OverviewTab 
             responses={responses}
             metrics={metrics}
+            metricsByJobFunction={metricsByJobFunction}
             topCitations={topCitations}
             topCompetitors={topCompetitors}
             competitorLoading={competitorLoading}
@@ -559,6 +561,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           <OverviewTab
             responses={responses}
             metrics={metrics}
+            metricsByJobFunction={metricsByJobFunction}
             topCitations={topCitations}
             topCompetitors={topCompetitors}
             competitorLoading={competitorLoading}

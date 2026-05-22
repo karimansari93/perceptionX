@@ -3,7 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import ReactMarkdown from 'react-markdown';
-import { Sparkles, Loader2, CheckCircle2, TrendingUp, TrendingDown } from 'lucide-react';
+import { Sparkles, Loader2, CheckCircle2, TrendingUp, TrendingDown, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ScrollablePills } from "./ScrollablePills";
 import { Button } from "@/components/ui/button";
 import { extractSourceUrl } from "@/utils/citationUtils";
 import { Badge } from "@/components/ui/badge";
@@ -56,7 +58,19 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   // Filter state - persisted
   const [selectedCompetitorTypeFilter, setSelectedCompetitorTypeFilter] = usePersistedState<'all' | 'direct'>('competitorsTab.selectedCompetitorTypeFilter', 'direct');
   const deferredCompetitorTypeFilter = useDeferredValue(selectedCompetitorTypeFilter);
+  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('competitorsTab.selectedJobFunctionFilter', 'all');
+  const deferredJobFunctionFilter = useDeferredValue(selectedJobFunctionFilter);
   const [, startTransition] = useTransition();
+
+  // Distinct job functions present on the prompts behind these responses.
+  const getUniqueJobFunctions = useMemo(() => {
+    const fns = new Set<string>();
+    responses.forEach(response => {
+      const fn = response.confirmed_prompts?.job_function_context?.trim();
+      if (fn) fns.add(fn);
+    });
+    return Array.from(fns).sort();
+  }, [responses]);
 
   const directCompetitorNames = useMemo(() => {
     const names = new Set<string>();
@@ -84,8 +98,14 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
       });
     }
 
+    if (deferredJobFunctionFilter !== 'all') {
+      filtered = filtered.filter(response =>
+        response.confirmed_prompts?.job_function_context?.trim() === deferredJobFunctionFilter
+      );
+    }
+
     return filtered;
-  }, [responses, deferredCompetitorTypeFilter]);
+  }, [responses, deferredCompetitorTypeFilter, deferredJobFunctionFilter]);
 
   const handleCompetitorTypeToggle = (value: 'all' | 'direct') => {
     startTransition(() => {
@@ -245,15 +265,26 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   const groupResponsesByTimePeriod = useMemo(() => {
     let filteredPrevious = previousPeriodResponses;
     if (deferredCompetitorTypeFilter === 'direct') {
-      filteredPrevious = previousPeriodResponses.filter(response =>
+      filteredPrevious = filteredPrevious.filter(response =>
         response.confirmed_prompts?.prompt_type === 'competitive'
+      );
+    }
+    if (deferredJobFunctionFilter !== 'all') {
+      filteredPrevious = filteredPrevious.filter(response =>
+        response.confirmed_prompts?.job_function_context?.trim() === deferredJobFunctionFilter
       );
     }
     return {
       current: getFilteredResponses,
       previous: filteredPrevious
     };
-  }, [getFilteredResponses, previousPeriodResponses, deferredCompetitorTypeFilter]);
+  }, [getFilteredResponses, previousPeriodResponses, deferredCompetitorTypeFilter, deferredJobFunctionFilter]);
+
+  // Coverage denominators: how many responses are analyzed. A competitor's
+  // percentage is "share of these responses that mention it", so they do NOT
+  // sum to 100 across competitors.
+  const totalResponsesAnalyzed = getFilteredResponses.length;
+  const totalPrevResponsesAnalyzed = groupResponsesByTimePeriod.previous.length;
 
   // Calculate time-based competitor data with share % deltas
   const timeBasedCompetitors = useMemo(() => {
@@ -267,9 +298,11 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
             .split(',')
             .map((comp: string) => comp.trim())
             .filter((comp: string) => comp.length > 0);
+          const seen = new Set<string>();
           mentions.forEach((comp: string) => {
             const name = normalizeCompetitorName(comp);
-            if (name && name.toLowerCase() !== companyName.toLowerCase() && name.length > 1) {
+            if (name && name.toLowerCase() !== companyName.toLowerCase() && name.length > 1 && !seen.has(name)) {
+              seen.add(name);
               counts[name] = (counts[name] || 0) + 1;
             }
           });
@@ -324,11 +357,16 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
           .map((comp: string) => comp.trim())
           .filter((comp: string) => comp.length > 0);
         
+        // Dedupe per response: a competitor counts once per response so the
+        // count is "responses mentioning it", not raw mention occurrences.
+        const seen = new Set<string>();
         mentions.forEach((name: string) => {
           const normalized = normalizeCompetitorName(name);
-          if (normalized && 
+          if (normalized &&
               normalized.toLowerCase() !== companyName.toLowerCase() &&
-              normalized.length > 1) {
+              normalized.length > 1 &&
+              !seen.has(normalized)) {
+            seen.add(normalized);
             competitorCounts[normalized] = (competitorCounts[normalized] || 0) + 1;
           }
         });
@@ -765,9 +803,10 @@ CRITICAL: When you reference information from a source, add an inline citation l
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCompetitor, responses]);
 
-  const renderAllTimeBar = (data: { name: string; count: number; change?: number; previousCount?: number; hasPreviousData?: boolean }, maxCount: number, totalMentions: number, totalPreviousMentions: number) => {
+  const renderAllTimeBar = (data: { name: string; count: number; change?: number; previousCount?: number; hasPreviousData?: boolean }, maxCount: number, totalResponses: number, totalPreviousResponses: number) => {
     const barWidth = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
-    const mentionPercent = totalMentions > 0 ? (data.count / totalMentions) * 100 : 0;
+    // Coverage: share of analyzed responses that mention this competitor.
+    const mentionPercent = totalResponses > 0 ? Math.min(100, (data.count / totalResponses) * 100) : 0;
     
     const displayName = data.name;
     const truncatedName = displayName.length > 15 ? displayName.substring(0, 15) + '...' : displayName;
@@ -827,7 +866,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
           <span className="w-[45px] flex justify-end">
             {(() => {
               if (!data.hasPreviousData) return null;
-              const prevPct = totalPreviousMentions > 0 ? ((data.previousCount || 0) / totalPreviousMentions) * 100 : 0;
+              const prevPct = totalPreviousResponses > 0 ? Math.min(100, ((data.previousCount || 0) / totalPreviousResponses) * 100) : 0;
               const delta = Math.round(mentionPercent - prevPct);
               if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
               return (
@@ -855,42 +894,69 @@ CRITICAL: When you reference information from a source, add an inline citation l
         </p>
       </div>
 
-      {/* Toggle: Direct Competitors / All Competitors */}
-      <div className="sticky top-0 z-10 bg-white pb-2">
-        <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100">
-          <button
-            onClick={() => handleCompetitorTypeToggle('direct')}
-            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-              selectedCompetitorTypeFilter === 'direct'
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Direct Competitors
-          </button>
-          <button
-            onClick={() => handleCompetitorTypeToggle('all')}
-            className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-              selectedCompetitorTypeFilter === 'all'
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            All Competitors
-          </button>
+      {/* Job function filter */}
+      {getUniqueJobFunctions.length > 0 && (
+        <div className="sticky top-0 z-10 bg-white pb-2">
+          <ScrollablePills
+            selected={selectedJobFunctionFilter}
+            onSelect={setSelectedJobFunctionFilter}
+            options={[
+              { value: 'all', label: 'All functions' },
+              ...getUniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
+            ]}
+          />
         </div>
-      </div>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 min-h-0">
         <Card className="shadow-sm border border-gray-200 h-full flex flex-col">
           <CardContent className="flex-1 min-h-0 overflow-hidden p-6">
             <div className="space-y-2 h-full overflow-y-auto relative">
+              <div className="sticky top-0 z-10 bg-white flex items-center justify-between gap-3 px-3 pb-2">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="flex items-center gap-1 text-xs font-medium text-gray-400 cursor-help">
+                        % of responses
+                        <Info className="w-3.5 h-3.5" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[260px]">
+                      <p className="text-xs">
+                        Share of the analyzed AI responses that mention this competitor. A
+                        response often mentions several competitors, so these percentages
+                        don't add up to 100%.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100">
+                  <button
+                    onClick={() => handleCompetitorTypeToggle('direct')}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                      selectedCompetitorTypeFilter === 'direct'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Direct Competitors
+                  </button>
+                  <button
+                    onClick={() => handleCompetitorTypeToggle('all')}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
+                      selectedCompetitorTypeFilter === 'all'
+                        ? 'bg-white text-gray-900 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    All Competitors
+                  </button>
+                </div>
+              </div>
               {allTimeCompetitorsWithChanges.length > 0 ? (
                 (() => {
                   const maxCount = Math.max(...allTimeCompetitorsWithChanges.map(c => c.count), 1);
-                  const totalMentions = allTimeCompetitorsWithChanges.reduce((sum, c) => sum + c.count, 0);
-                  const totalPreviousMentions = allTimeCompetitorsWithChanges.reduce((sum, c) => sum + (c.previousCount || 0), 0);
 
                   return allTimeCompetitorsWithChanges.map((competitor, idx) => (
                     <div
@@ -898,7 +964,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                       className="cursor-pointer"
                       {...(idx === 0 ? { 'data-tour': 'competitors-first-row' } : {})}
                     >
-                      {renderAllTimeBar(competitor, maxCount, totalMentions, totalPreviousMentions)}
+                      {renderAllTimeBar(competitor, maxCount, totalResponsesAnalyzed, totalPrevResponsesAnalyzed)}
                     </div>
                   ));
                 })()

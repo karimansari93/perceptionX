@@ -38,6 +38,7 @@ import { TALENTX_ATTRIBUTES } from '@/config/talentXAttributes';
 import LLMLogo from '@/components/LLMLogo';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { extractSourceUrl } from '@/utils/citationUtils';
+import { ScrollablePills } from './ScrollablePills';
 
 interface ThematicAnalysisTabProps {
   responses: PromptResponse[];
@@ -94,6 +95,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
   const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('thematicTab.isModalOpen', false);
   const [selectedPromptType, setSelectedPromptType] = usePersistedState<'all' | 'experience' | 'competitive'>('thematicTab.selectedPromptType', 'experience');
+  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('thematicTab.selectedJobFunctionFilter', 'all');
   const [rankingSort, setRankingSort] = usePersistedState<'sentiment' | 'volume' | 'az'>('thematicTab.rankingSort', 'sentiment');
   const [analysisProgress, setAnalysisProgress] = useState({
     current: 0,
@@ -116,18 +118,29 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   // Cascade reveal: cards below the AI summary appear after it finishes generating.
   const [themeRevealStep, setThemeRevealStep] = useState(0);
 
+  // Distinct job functions present on the prompts behind these responses.
+  const getUniqueJobFunctions = useMemo(() => {
+    const fns = new Set<string>();
+    responses.forEach(response => {
+      const fn = response.confirmed_prompts?.job_function_context?.trim();
+      if (fn) fns.add(fn);
+    });
+    return Array.from(fns).sort();
+  }, [responses]);
+
   // Filter responses by prompt type (experience by default, excludes discovery)
+  // and by the selected job function.
   const filteredResponses = useMemo(() => {
     return responses.filter(response => {
       const promptType = response.confirmed_prompts?.prompt_type;
-      
+
       const isValidType = promptType === 'experience' ||
                           promptType === 'competitive' ||
                           promptType === 'talentx_experience' ||
                           promptType === 'talentx_competitive';
-      
+
       if (!isValidType) return false;
-      
+
       if (selectedPromptType !== 'all') {
         if (selectedPromptType === 'experience') {
           if (promptType !== 'experience' && promptType !== 'talentx_experience') return false;
@@ -135,10 +148,15 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
           if (promptType !== 'competitive' && promptType !== 'talentx_competitive') return false;
         }
       }
-      
+
+      if (selectedJobFunctionFilter !== 'all' &&
+          response.confirmed_prompts?.job_function_context?.trim() !== selectedJobFunctionFilter) {
+        return false;
+      }
+
       return true;
     });
-  }, [responses, selectedPromptType]);
+  }, [responses, selectedPromptType, selectedJobFunctionFilter]);
 
 
   // Run AI analysis on filtered responses
@@ -220,13 +238,30 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   };
 
   // Only include themes with a valid known attribute ID
-  const validAttributeIds = new Set(TALENTX_ATTRIBUTES.map(a => a.id));
-  const filteredThemes = aiThemes.filter(theme => validAttributeIds.has(theme.talentx_attribute_id));
+  const validAttributeIds = useMemo(() => new Set(TALENTX_ATTRIBUTES.map(a => a.id)), []);
+
+  // Themes are tied to responses via response_id. Keep only themes whose
+  // response belongs to the selected job function (when one is selected).
+  const filteredThemes = useMemo(() => {
+    let themes = aiThemes.filter(theme => validAttributeIds.has(theme.talentx_attribute_id));
+    if (selectedJobFunctionFilter !== 'all') {
+      const fnResponseIds = new Set(
+        responses
+          .filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter)
+          .map(r => r.id)
+      );
+      themes = themes.filter(t => fnResponseIds.has(t.response_id));
+    }
+    return themes;
+  }, [aiThemes, validAttributeIds, selectedJobFunctionFilter, responses]);
 
   // Previous period theme counts for delta display
   const prevThemeCounts = useMemo(() => {
     if (previousPeriodResponses.length === 0) return null;
-    const prevIds = new Set(previousPeriodResponses.map(r => r.id));
+    const prevByFunction = selectedJobFunctionFilter === 'all'
+      ? previousPeriodResponses
+      : previousPeriodResponses.filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter);
+    const prevIds = new Set(prevByFunction.map(r => r.id));
     const prevThemes = aiThemes.filter(t => validAttributeIds.has(t.talentx_attribute_id) && prevIds.has(t.response_id));
     return {
       positive: prevThemes.filter(t => t.sentiment === 'positive').length,
@@ -234,7 +269,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       neutral: prevThemes.filter(t => t.sentiment === 'neutral').length,
       total: prevThemes.length
     };
-  }, [previousPeriodResponses, aiThemes, validAttributeIds]);
+  }, [previousPeriodResponses, aiThemes, validAttributeIds, selectedJobFunctionFilter]);
 
   // Helper to get favicon for a domain
   const getFavicon = (domain: string): string => {
@@ -693,6 +728,16 @@ CRITICAL: When you reference information from a source, add an inline citation l
             </p>
           </div>
         </div>
+        {getUniqueJobFunctions.length > 0 && (
+          <ScrollablePills
+            selected={selectedJobFunctionFilter}
+            onSelect={setSelectedJobFunctionFilter}
+            options={[
+              { value: 'all', label: 'All functions' },
+              ...getUniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
+            ]}
+          />
+        )}
       </div>
 
       {/* No Data Message */}

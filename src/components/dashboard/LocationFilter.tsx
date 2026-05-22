@@ -142,13 +142,22 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
     // Resolve the target location for this render.
     let targetLocation: string | null = selectedLocation;
     if (!targetLocation) {
-      if (hasGlobalCompany) return; // user has chosen / defaulted to Global — leave alone
-      if (availableLocations.length === 0) return;
-      const currentCountry = currentCompany.country;
-      targetLocation =
-        currentCountry && availableLocations.includes(currentCountry)
-          ? currentCountry
-          : availableLocations[0];
+      // When the user hasn't starred a location, prefer the United States as
+      // the default landing — it overrides both the Global default and the
+      // current company's own country.
+      if (availableLocations.includes('US')) {
+        targetLocation = 'US';
+      } else if (hasGlobalCompany) {
+        return; // user has chosen / defaulted to Global — leave alone
+      } else if (availableLocations.length === 0) {
+        return;
+      } else {
+        const currentCountry = currentCompany.country;
+        targetLocation =
+          currentCountry && availableLocations.includes(currentCountry)
+            ? currentCountry
+            : availableLocations[0];
+      }
       if (targetLocation !== selectedLocation) {
         onLocationChange(targetLocation);
       }
