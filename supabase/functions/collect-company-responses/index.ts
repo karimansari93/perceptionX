@@ -92,48 +92,6 @@ serve(async (req) => {
 
     console.log(`Processing company: ${company.name} (${companyId})`);
 
-    // Resolve organization_id from organization_companies (company can belong to one or more orgs)
-    const { data: orgLink } = await supabase
-      .from("organization_companies")
-      .select("organization_id")
-      .eq("company_id", companyId)
-      .limit(1)
-      .single();
-
-    const organizationId = orgLink?.organization_id ?? null;
-
-    // Get organization owner to determine subscription type (only if company is linked to an org)
-    let orgMember: { user_id: string; role: string } | null = null;
-    let orgMemberError: Error | null = null;
-    if (organizationId) {
-      const res = await supabase
-        .from("organization_members")
-        .select("user_id, role")
-        .eq("organization_id", organizationId)
-        .eq("role", "owner")
-        .limit(1)
-        .single();
-      orgMember = res.data;
-      orgMemberError = res.error;
-    }
-
-    if (orgMemberError) {
-      console.warn("Could not determine subscription, defaulting to free models");
-    }
-
-    let isProUser = false;
-    if (!orgMemberError && orgMember) {
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("subscription_type")
-        .eq("id", orgMember.user_id)
-        .single();
-
-      isProUser = profileData?.subscription_type === "pro";
-    }
-
-    console.log(`Subscription type: ${isProUser ? "Pro" : "Free"}`);
-
     // Fetch prompts for this company
     let promptsQuery = supabase
       .from("confirmed_prompts")
