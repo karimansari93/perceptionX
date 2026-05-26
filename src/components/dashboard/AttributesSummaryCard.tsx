@@ -214,6 +214,7 @@ export const AttributesSummaryCard = ({
   };
 
   if (mostMentionedThemes.length === 0) {
+    const hasResponses = responses.length > 0;
     return (
       <Card className="shadow-sm border border-gray-200">
         <CardHeader className="pb-2 px-4 sm:px-6">
@@ -237,7 +238,23 @@ export const AttributesSummaryCard = ({
               <div className="w-8 h-8 mx-auto mb-2 bg-gray-100 rounded-full flex items-center justify-center">
                 <Target className="w-4 h-4 text-gray-400" />
               </div>
-              <p className="text-sm">No attribute mentions found yet.</p>
+              {hasResponses ? (
+                <p className="text-sm">Themes are still being extracted from this period's responses.</p>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-gray-700 mb-1">No analysis run yet for this location</p>
+                  <p className="text-xs text-gray-500 mb-4">Themes appear once AI responses have been collected and analyzed.</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigate('/prompts')}
+                    className="text-xs"
+                  >
+                    Configure prompts
+                    <ExternalLink className="w-3 h-3 ml-1" />
+                  </Button>
+                </>
+              )}
             </div>
           )}
         </CardContent>

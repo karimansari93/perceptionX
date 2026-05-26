@@ -203,6 +203,7 @@ export const SourcesSummaryCard = ({
   };
 
   if (topSources.length === 0) {
+    const hasResponses = responses.length > 0;
     return (
       <Card className="shadow-sm border border-gray-200">
         <CardHeader className="pb-2 px-4 sm:px-6">
@@ -211,7 +212,23 @@ export const SourcesSummaryCard = ({
         <CardContent className="px-4 sm:px-6">
           <div className="text-center py-8 text-gray-500">
             <FileText className="w-8 h-8 mx-auto mb-2 text-gray-300" />
-            <p className="text-sm">No sources found yet.</p>
+            {hasResponses ? (
+              <p className="text-sm">No source citations detected in the AI responses for this period.</p>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-gray-700 mb-1">No analysis run yet for this location</p>
+                <p className="text-xs text-gray-500 mb-4">Sources appear once AI responses have been collected.</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate('/prompts')}
+                  className="text-xs"
+                >
+                  Configure prompts
+                  <ExternalLink className="w-3 h-3 ml-1" />
+                </Button>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>

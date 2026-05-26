@@ -1226,6 +1226,41 @@ CRITICAL: When you reference information from a source, add an inline citation l
         </div>
       )}
 
+      {(() => {
+        // Single source of truth for "this view has nothing to score yet" —
+        // gates both EPS and Breakdown cards so they can't render confident
+        // numeric values for a company/period with no underlying responses.
+        // Without this, a stale prior-company metric could leak through the
+        // memo's fallback path and produce phantom scores for an empty view.
+        const hasNoData =
+          !metricsCalculating &&
+          metrics.totalResponses === 0 &&
+          metrics.perceptionScore === 0 &&
+          metrics.sentimentScore === 0 &&
+          metrics.visibilityScore === 0 &&
+          metrics.relevanceScore === 0;
+
+        if (hasNoData) {
+          return (
+            <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+              <Card
+                data-tour="eps-card"
+                className="bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col items-center justify-center h-full min-h-[240px] text-center px-8"
+              >
+                <CardTitle className="text-lg font-bold text-gray-700 tracking-wide mb-3">EPS</CardTitle>
+                <span className="text-6xl font-extrabold text-gray-300 leading-none mb-3">—</span>
+                <p className="text-sm font-medium text-gray-700">No analysis run yet for this location</p>
+                <p className="text-xs text-gray-500 mt-1">The Employer Perception Score appears once AI responses have been collected.</p>
+              </Card>
+              <Card className="bg-white rounded-2xl shadow-sm h-full min-h-[240px] flex flex-col items-center justify-center text-center px-8">
+                <CardTitle className="text-lg font-bold text-gray-700 mb-3">Breakdown</CardTitle>
+                <p className="text-sm text-gray-500">Sentiment, visibility and relevance scores will appear here once data is collected.</p>
+              </Card>
+            </div>
+          );
+        }
+
+        return (
       <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
         {/* Perception Score Card */}
         <Card
@@ -1477,6 +1512,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
           </CardContent>
         </Card>
       </div>
+        );
+      })()}
       {/* Key Takeaways - Temporarily Hidden */}
       {/* <div>
         <KeyTakeaways 

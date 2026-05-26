@@ -87,6 +87,11 @@ export const useDashboardData = () => {
   // Cache company dashboard data for instant restore when switching back (stale-while-revalidate)
   const COMPANY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   const companyDataCacheRef = useRef<Record<string, { responses: PromptResponse[]; lastUpdated?: Date; timestamp: number }>>({});
+  // Same stale-while-revalidate pattern for AI themes — the eager themes
+  // fetch is the dominant cost on company switch (it paginates the full
+  // 180-day window per company), and themes don't change minute-to-minute,
+  // so caching makes switching back to a recently-viewed company instant.
+  const aiThemesCacheRef = useRef<Record<string, { themes: any[]; timestamp: number }>>({});
 
   // Network status monitoring - FIXED
   // Track if we're coming back online from being offline (vs just tab visibility change)
@@ -122,7 +127,15 @@ export const useDashboardData = () => {
     if (!user || !currentCompany) {
       return;
     }
-    
+
+    // Capture the company at fetch start. If currentCompanyIdRef changes
+    // before we commit results, the user switched companies mid-flight and
+    // the result is for the wrong company — drop it. Without this guard a
+    // slow US fetch can finish AFTER the user moved to Japan and overwrite
+    // Japan's (correctly empty) state with US data under the Japan flag.
+    const fetchedCompanyId = currentCompany.id;
+    const isStale = () => currentCompanyIdRef.current !== fetchedCompanyId;
+
     // Check network status first
     if (!isOnline) {
       setConnectionError('No internet connection. Please check your network.');
@@ -215,6 +228,7 @@ export const useDashboardData = () => {
       }
 
       if (!userPrompts || userPrompts.length === 0) {
+        if (isStale()) return;
         setActivePrompts([]);
         setResponses([]);
         setLoading(false);
@@ -222,6 +236,7 @@ export const useDashboardData = () => {
         return;
       }
 
+      if (isStale()) return;
       setActivePrompts(userPrompts);
       setHasDataIssues(false);
       setHasMoreResponses(false);
@@ -334,6 +349,7 @@ export const useDashboardData = () => {
       // (clicks, scrolls) can be processed before the useMemo cascade fires.
       await new Promise(resolve => setTimeout(resolve, 0));
 
+      if (isStale()) return;
       setResponses(allResponses);
 
       // Set lastUpdated to the most recent response collection time
@@ -346,9 +362,12 @@ export const useDashboardData = () => {
         setLastUpdated(undefined);
       }
 
-      // Update company cache for instant restore when switching back
-      if (currentCompany?.id && allResponses.length > 0) {
-        companyDataCacheRef.current[currentCompany.id] = {
+      // Update company cache for instant restore when switching back.
+      // Use the captured fetchedCompanyId, not currentCompany.id — if the
+      // user has since switched, we must not cache this result under the new
+      // company's ID.
+      if (allResponses.length > 0) {
+        companyDataCacheRef.current[fetchedCompanyId] = {
           responses: allResponses,
           lastUpdated: lastUpdatedDate,
           timestamp: Date.now()
@@ -440,10 +459,14 @@ export const useDashboardData = () => {
   // Fetch company metrics from materialized views (backend-calculated)
   const fetchCompanyMetrics = useCallback(async () => {
     if (!user || !currentCompany?.id) return;
-    
+
+    // Drop result if the user switches companies during the round-trip.
+    const fetchedCompanyId = currentCompany.id;
+    const isStale = () => currentCompanyIdRef.current !== fetchedCompanyId;
+
     try {
       setCompanyMetricsLoading(true);
-      
+
       // Fetch sentiment and relevance metrics from materialized views
       // Get the most recent month with data (not just current month)
       // This handles cases where data is from previous months
@@ -451,16 +474,18 @@ export const useDashboardData = () => {
         supabase
           .from('company_sentiment_scores_mv')
           .select('*')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', fetchedCompanyId)
           .order('response_month', { ascending: false })
           .limit(100), // Get all months, limit to prevent huge queries
         supabase
           .from('company_relevance_scores_mv')
           .select('*')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', fetchedCompanyId)
           .order('response_month', { ascending: false })
           .limit(100) // Get all months, limit to prevent huge queries
       ]);
+
+      if (isStale()) return;
 
       // Keep the raw rows so the Overview tab can re-aggregate per job function.
       setSentimentMvRows(sentimentResult.data || []);
@@ -588,62 +613,67 @@ export const useDashboardData = () => {
       
     } catch (error: any) {
       console.warn('Error fetching company metrics from materialized views:', error);
+      if (isStale()) return;
       // Don't set error state - fallback to frontend calculation
       setCompanySentimentMetrics(null);
       setCompanyRelevanceMetrics(null);
       setCompanySentimentByMonth({});
       setCompanyRelevanceByMonth({});
     } finally {
-      setCompanyMetricsLoading(false);
+      if (!isStale()) setCompanyMetricsLoading(false);
     }
   }, [user, currentCompany?.id]);
 
   const fetchMVData = useCallback(async () => {
     if (!user || !currentCompany?.id) return;
 
+    // Drop result if the user switches companies during the round-trip.
+    const fetchedCompanyId = currentCompany.id;
+    const isStale = () => currentCompanyIdRef.current !== fetchedCompanyId;
+
     try {
       const [sourcesResult, competitorsResult, llmResult] = await Promise.all([
         supabase
           .from('company_top_sources_mv')
           .select('domain, citation_count')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', fetchedCompanyId)
           .order('citation_count', { ascending: false })
           .limit(30),
         supabase
           .from('company_competitors_mv')
           .select('competitor_name, mention_count')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', fetchedCompanyId)
           .order('mention_count', { ascending: false })
           .limit(30),
         supabase
           .from('company_llm_rankings_mv')
           .select('ai_model, mentions')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', fetchedCompanyId)
           .order('mentions', { ascending: false }),
       ]);
 
-      if (sourcesResult.data) {
-        setMvTopCitations(
-          sourcesResult.data.map(row => ({ domain: row.domain, count: row.citation_count }))
-        );
-      }
+      if (isStale()) return;
 
-      if (competitorsResult.data) {
-        setMvTopCompetitors(
-          competitorsResult.data.map(row => ({ company: row.competitor_name, count: row.mention_count }))
-        );
-      }
+      // Always commit, even when result.data is an empty array. The previous
+      // `if (result.data)` guard left prior-company values in place when a
+      // newly-selected company had no MV rows yet — the source of stale
+      // sources/competitors rendering under the wrong country flag.
+      setMvTopCitations(
+        (sourcesResult.data || []).map(row => ({ domain: row.domain, count: row.citation_count }))
+      );
 
-      if (llmResult.data) {
-        setMvLlmRankings(
-          llmResult.data.map(row => ({
-            model: row.ai_model,
-            displayName: getLLMDisplayName(row.ai_model),
-            mentions: row.mentions,
-            logoUrl: getLLMLogo(row.ai_model),
-          }))
-        );
-      }
+      setMvTopCompetitors(
+        (competitorsResult.data || []).map(row => ({ company: row.competitor_name, count: row.mention_count }))
+      );
+
+      setMvLlmRankings(
+        (llmResult.data || []).map(row => ({
+          model: row.ai_model,
+          displayName: getLLMDisplayName(row.ai_model),
+          mentions: row.mentions,
+          logoUrl: getLLMLogo(row.ai_model),
+        }))
+      );
     } catch (err) {
       console.warn('[fetchMVData] error — will fall back to frontend calculation:', err);
     }
@@ -773,9 +803,25 @@ export const useDashboardData = () => {
       return;
     }
 
-    try {
-      setAiThemesLoading(true);
+    // Drop result if the user switches companies during the round-trip —
+    // this fetch is paginated and can take several seconds for heavy
+    // accounts, so it has the biggest staleness window of any fetch here.
+    const fetchedCompanyId = currentCompany.id;
+    const isStale = () => currentCompanyIdRef.current !== fetchedCompanyId;
 
+    // Serve from cache while we revalidate in the background. Themes don't
+    // change minute-to-minute, so an instant restore on switch-back is
+    // the right UX even if a fresh fetch is also in flight.
+    const cached = aiThemesCacheRef.current[fetchedCompanyId];
+    const cacheHit = cached && (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL;
+    if (cacheHit) {
+      setAiThemes(cached.themes);
+      setAiThemesLoading(false);
+    } else {
+      setAiThemesLoading(true);
+    }
+
+    try {
       // Bound by 180 days. Served by idx_ai_themes_company_created
       // (company_id, created_at DESC): an index range scan, no sort.
       const AI_THEMES_DAYS = 180;
@@ -787,54 +833,67 @@ export const useDashboardData = () => {
       const COLS =
         'id, response_id, theme_name, sentiment, sentiment_score, talentx_attribute_id, talentx_attribute_name, created_at';
       const PAGE_SIZE = 1000;
+      // Parallel range pagination — issue a fixed window of range requests
+      // in flight at once instead of waiting for each page to return
+      // before sending the next. Range-based pagination (vs keyset) means
+      // each page is independent and can ride a separate connection.
+      // For a 30k-theme account this turns 30 serial round-trips into
+      // ~5 parallel waves of 6, cutting wall time ~5x.
+      const PARALLEL_WINDOW = 6;
+      const MAX_PAGES = 200; // safety cap (= 200k themes); same upper bound as before
 
-      // Keyset pagination on (created_at DESC, id DESC) instead of OFFSET.
-      // OFFSET re-walks all skipped rows every page (O(n^2/page)); keyset
-      // keeps every page O(PAGE_SIZE) by seeking past the last cursor.
+      const fetchPage = async (page: number) => {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = (await retrySupabaseQuery(() =>
+          supabase
+            .from('ai_themes')
+            .select(COLS)
+            .eq('company_id', fetchedCompanyId)
+            .gte('created_at', aiThemesCutoffIso)
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .range(from, to)
+        )) as { data: any[] | null; error: any };
+        if (error) throw error;
+        return data ?? [];
+      };
+
       let allThemes: any[] = [];
-      let cursor: { created_at: string; id: string } | null = null;
-      // Hard cap to avoid an unbounded loop if data is pathological.
-      for (let guard = 0; guard < 200; guard += 1) {
-        let q = supabase
-          .from('ai_themes')
-          .select(COLS)
-          .eq('company_id', currentCompany.id)
-          .gte('created_at', aiThemesCutoffIso)
-          .order('created_at', { ascending: false })
-          .order('id', { ascending: false })
-          .limit(PAGE_SIZE);
-
-        if (cursor) {
-          q = q.or(
-            `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
-          );
+      let nextPage = 0;
+      let done = false;
+      while (!done && nextPage < MAX_PAGES) {
+        const pages: number[] = [];
+        for (let i = 0; i < PARALLEL_WINDOW && nextPage + i < MAX_PAGES; i += 1) {
+          pages.push(nextPage + i);
         }
-
-        const { data, error } = (await retrySupabaseQuery(() => q)) as {
-          data: any[] | null;
-          error: any;
-        };
-
-        if (error) {
-          console.error('Error fetching AI themes:', error);
-          setAiThemes([]);
-          return;
+        const results = await Promise.all(pages.map(fetchPage));
+        if (isStale()) return; // user switched mid-window — drop everything
+        for (const chunk of results) {
+          allThemes = allThemes.concat(chunk);
+          if (chunk.length < PAGE_SIZE) done = true;
         }
-
-        const chunk = data ?? [];
-        allThemes = allThemes.concat(chunk);
-        if (chunk.length < PAGE_SIZE) break;
-
-        const last = chunk[chunk.length - 1];
-        cursor = { created_at: last.created_at, id: last.id };
+        nextPage += pages.length;
       }
 
+      if (isStale()) return;
+
+      // Cache under the captured company id (not currentCompany.id — that
+      // may have changed in the unlikely event we get here while stale).
+      aiThemesCacheRef.current[fetchedCompanyId] = {
+        themes: allThemes,
+        timestamp: Date.now(),
+      };
       setAiThemes(allThemes);
     } catch (error) {
       console.error('Error in fetchAIThemes:', error);
-      setAiThemes([]);
+      if (isStale()) return;
+      // On error, leave any cached themes in place rather than wiping the
+      // view — a transient network failure shouldn't blank out attributes
+      // the user was just looking at.
+      if (!cacheHit) setAiThemes([]);
     } finally {
-      setAiThemesLoading(false);
+      if (!isStale()) setAiThemesLoading(false);
     }
   }, [user, currentCompany?.id]);
 
@@ -1163,10 +1222,15 @@ export const useDashboardData = () => {
       setIsSwitchingCompany(true);
       currentCompanyIdRef.current = currentCompany?.id;
 
-      // Clear all data immediately when switching companies
+      // Clear all data immediately when switching companies.
+      // CRITICAL: every piece of company-scoped state must be reset here.
+      // Anything left behind will render under the new company's flag and
+      // mislead the user (e.g. prior company's EPS/Breakdown numbers showing
+      // for a company that has no analysis yet).
       setResponses([]);
       setResponseTexts({});
       setAiThemes([]);
+      setActivePrompts([]);
       setSearchResults([]);
       setSearchTermsData([]);
       setTalentXProData([]);
@@ -1176,6 +1240,14 @@ export const useDashboardData = () => {
       setMvTopCitations([]);
       setMvTopCompetitors([]);
       setMvLlmRankings([]);
+      setCompanySentimentMetrics(null);
+      setCompanyRelevanceMetrics(null);
+      setCompanySentimentByMonth({});
+      setCompanyRelevanceByMonth({});
+      setSentimentMvRows([]);
+      setRelevanceMvRows([]);
+      setHasDataIssues(false);
+      setSelectedPeriod(null);
 
       // Clear search results cache when switching companies
       searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
@@ -1241,12 +1313,15 @@ export const useDashboardData = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, currentCompany?.id, shouldRefetch]);
 
-  // Clear switching flag when data is actually loaded
+  // Clear switching flag when data is actually loaded — OR when the
+  // response fetch has finished with zero rows (a company can legitimately
+  // have no analysis yet; we still need the dashboard to render its empty
+  // state instead of staying frozen in the switch transition).
   useEffect(() => {
-    if (isSwitchingCompany && (responses.length > 0 || searchResults.length > 0)) {
+    if (isSwitchingCompany && (responses.length > 0 || searchResults.length > 0 || !loading)) {
       setIsSwitchingCompany(false);
     }
-  }, [isSwitchingCompany, responses.length, searchResults.length]);
+  }, [isSwitchingCompany, responses.length, searchResults.length, loading]);
 
   // Reset pagination when company changes
   useEffect(() => {
@@ -1732,12 +1807,15 @@ export const useDashboardData = () => {
   // CRITICAL: Only show metrics when data is ACTUALLY ready and calculated
   useEffect(() => {
     // Metrics are ready when:
-    // 1. Responses are loaded (needed for visibility calculation)
+    // 1. The response fetch is done (regardless of result count — an
+    //    empty result is still a finished result. The prior `&& responses.length > 0`
+    //    gate left a company with zero responses stuck in "calculating"
+    //    forever, hiding the entire summary grid).
     // 2. Backend metrics query is complete (sentiment comes from MV only)
     // 3. Relevance is ready (backend metrics exist OR recency fetch completed)
-    const responsesReady = !loading && responses.length > 0;
+    const responsesReady = !loading;
     const backendMetricsReady = !companyMetricsLoading;
-    
+
     // Sentiment is ready when MV query completes (MV-only, no frontend fallback)
     const sentimentReady = !companyMetricsLoading;
 
@@ -1745,12 +1823,12 @@ export const useDashboardData = () => {
     const hasBackendRelevance = companyRelevanceMetrics !== null;
     const recencyFetchCompleted = !recencyDataLoading && (recencyData.length >= 0 || hasBackendRelevance);
     const relevanceReady = hasBackendRelevance || recencyFetchCompleted;
-    
+
     // CRITICAL: Don't show anything until sentiment is ready
     // All metrics ready when responses are loaded, backend query complete, AND sentiment/relevance are ready
     const allReady = responsesReady && backendMetricsReady && sentimentReady && relevanceReady;
     setMetricsCalculating(!allReady);
-    
+
   }, [loading, responses.length, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length]);
 
   const metrics: DashboardMetrics = useMemo(() => {
@@ -1761,9 +1839,18 @@ export const useDashboardData = () => {
     // PREFER backend-calculated metrics from materialized views if available
     // Fallback to frontend calculation if backend data is not available
 
-    // Don't calculate if still loading AND we don't have backend metrics
-    // If backend metrics exist, we can use them even if responses aren't fully loaded yet
-    if ((loading || responses.length === 0) && !companySentimentMetrics && !companyRelevanceMetrics) {
+    // Return zeros if:
+    //  - We're mid-switch (the reset effect has cleared the company-scoped
+    //    state and a stale memo recomputation could still observe a
+    //    prior-company MV value before the next render commits), OR
+    //  - The view genuinely has no responses for this period. Previously
+    //    this gate only fired when BOTH MV objects were null, which let a
+    //    prior-company MV value leak through and produce phantom EPS for
+    //    an empty company.
+    // We deliberately do NOT zero on a normal in-place refetch (responses
+    // present, loading true) — that would flicker EPS to "—" and back on
+    // every manual refresh.
+    if (isSwitchingCompany || responses.length === 0) {
       return {
         averageSentiment: 0,
         sentimentLabel: 'Neutral',
@@ -1780,8 +1867,6 @@ export const useDashboardData = () => {
         negativeCount: 0,
         perceptionScore: 0,
         perceptionLabel: 'No Data',
-        // Required on DashboardMetrics — include them so the early-return
-        // path typechecks. All zero because nothing has loaded yet.
         sentimentScore: 0,
         visibilityScore: 0,
         relevanceScore: 0,
@@ -1948,7 +2033,7 @@ export const useDashboardData = () => {
     };
     
     return metricsResult;
-  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companySentimentByMonth, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations]);
+  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companySentimentByMonth, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations, isSwitchingCompany]);
 
   // Per-job-function scorecard metrics, so the Overview tab can rescope EPS /
   // Breakdown when a function is selected. Sentiment & relevance come from the

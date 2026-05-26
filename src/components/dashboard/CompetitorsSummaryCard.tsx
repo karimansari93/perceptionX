@@ -236,6 +236,7 @@ export const CompetitorsSummaryCard = ({
   };
 
   if (topCompetitorsFiltered.length === 0) {
+    const hasResponses = responses.length > 0;
     return (
       <Card className="shadow-sm border border-gray-200">
         <CardHeader className="pb-2 px-4 sm:px-6">
@@ -246,7 +247,23 @@ export const CompetitorsSummaryCard = ({
             <div className="w-8 h-8 mx-auto mb-2 bg-gray-100 rounded-full flex items-center justify-center">
               <span className="text-lg font-bold text-gray-400">🏢</span>
             </div>
-            <p className="text-sm">No competitor mentions found yet.</p>
+            {hasResponses ? (
+              <p className="text-sm">No competitor mentions detected in the AI responses for this period.</p>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-gray-700 mb-1">No analysis run yet for this location</p>
+                <p className="text-xs text-gray-500 mb-4">Competitor mentions appear once AI responses have been collected.</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate('/prompts')}
+                  className="text-xs"
+                >
+                  Configure prompts
+                  <ExternalLink className="w-3 h-3 ml-1" />
+                </Button>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>
