@@ -97,7 +97,11 @@ export const AnalyzeThemesPanel = ({ organizationId, onBack }: Props) => {
         // the edge function.
         //
         // Pass 1: collect the set of response_ids that already have at least
-        //         one ai_themes row for this company.
+        //         one ai_themes row for this company. ai_themes carries
+        //         company_id directly (100% populated, indexed via
+        //         idx_ai_themes_company_id), so we filter on it instead of
+        //         joining through prompt_responses — the embedded-join path
+        //         was timing out at ~260k themes.
         // Pass 2: fetch prompt_responses for this company, client-side exclude
         //         any id present in that set.
         //
@@ -107,15 +111,13 @@ export const AnalyzeThemesPanel = ({ organizationId, onBack }: Props) => {
         const themedIds = new Set<string>();
 
         if (!clearExisting) {
-          // Need the response_ids that already have themes FOR THIS COMPANY.
-          // Join through prompt_responses so the filter stays scoped.
           let page2Offset = 0;
           for (;;) {
             if (cancelledRef.current) break;
             const { data: themedPage, error: themedErr } = await supabase
               .from("ai_themes")
-              .select("response_id, prompt_responses!inner(company_id)")
-              .eq("prompt_responses.company_id", companyId)
+              .select("response_id")
+              .eq("company_id", companyId)
               .range(page2Offset, page2Offset + PAGE - 1);
             if (themedErr) throw new Error(`themed lookup failed: ${themedErr.message}`);
             for (const row of themedPage || []) {
