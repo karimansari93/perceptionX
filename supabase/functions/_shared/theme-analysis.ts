@@ -95,9 +95,7 @@ IMPORTANT CLASSIFICATION RULES:
 7. Extract relevant keywords
 8. Provide 1-2 context snippets from the response that support this theme
 
-Focus on themes that would be relevant to potential employees evaluating "${companyName}" as a workplace. Look for both positive and negative themes.
-
-If the response primarily discusses competitors or other companies without substantial information about "${companyName}", return an empty array.
+Focus on themes that would be relevant to potential employees evaluating "${companyName}" as a workplace. Look for both positive and negative themes. Always return at least one theme if the response contains ANY information, positive, negative, or neutral, about "${companyName}" — even if the response also discusses competitors or comparisons. Only return an empty array if the response truly contains no information whatsoever about "${companyName}".
 
 Response to analyze:
 """
@@ -149,11 +147,19 @@ export async function analyzeThemes(
       // Native JSON mode — Gemini guarantees parseable output, so we don't
       // need the markdown-fence / regex rescue dance the OpenAI version had.
       responseMimeType: "application/json",
-      responseSchema: RESPONSE_SCHEMA,
       // Low temp = consistent extraction. Theme classification is not a
       // creative task; we'd rather two runs of the same text agree.
       temperature: 0.2,
-      maxOutputTokens: 4096,
+      // Gemini 2.5 Flash bills internal "thinking" against the same
+      // maxOutputTokens budget that the JSON output uses. Observed live:
+      // a 764-token prompt produced 2392 thinking tokens + 1246 output
+      // tokens — a more complex response easily eats 4096, leaving no
+      // room for the JSON and finishing with empty content. We don't
+      // need chain-of-thought for structured extraction, so disable it.
+      thinkingConfig: { thinkingBudget: 0 },
+      // Headroom even at thinkingBudget=0 — extraction output can run
+      // ~3-5k tokens for very rich responses with many themes.
+      maxOutputTokens: 8192,
     },
   };
 
@@ -192,7 +198,7 @@ export async function analyzeThemes(
 
   const content = candidate?.content?.parts?.[0]?.text;
   if (!content) {
-    console.warn("[theme-analysis] Gemini returned no content parts", candidate);
+    console.warn("[theme-analysis] Gemini returned no content parts. finishReason=" + candidate.finishReason, JSON.stringify(candidate).slice(0, 500));
     return [];
   }
 
@@ -210,6 +216,14 @@ export async function analyzeThemes(
   if (!Array.isArray(parsed)) {
     console.warn("[theme-analysis] Gemini returned non-array:", parsed);
     return [];
+  }
+
+  // Diagnostic: log empty arrays so we can see whether Gemini is being too
+  // strict with the "discusses competitors mostly, return empty" guidance.
+  if (parsed.length === 0) {
+    console.warn(
+      `[theme-analysis] Gemini returned empty array for "${companyName}" (finishReason=${candidate.finishReason}). First 200 chars of input: ${responseText.slice(0, 200)}`,
+    );
   }
 
   return parsed.map(validateAndCleanTheme);
