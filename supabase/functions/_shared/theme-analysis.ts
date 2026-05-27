@@ -2,14 +2,29 @@
 // response at a time, called fire-and-forget from analyze-response) and
 // ai-thematic-analysis-bulk (cron + admin backfill panel). Kept in one place
 // so the prompt, attribute taxonomy, and validation behaviour can't drift
-// between the two paths — a response themed by the real-time trigger should
-// be indistinguishable from one themed by the backfill cron.
+// between the two paths.
 //
-// Backed by Gemini 2.5 Flash with `responseMimeType: "application/json"` so
-// the model is forced to emit a JSON array directly. That removed the
-// markdown-fence cleanup + regex rescue logic the OpenAI version needed —
-// every response is JSON.parse-safe. Faster (~1-3s vs 3-8s for gpt-4o-mini)
-// and ~50% cheaper, so we can fit larger chunks under the 150s edge timeout.
+// Backed by Claude Haiku 4.5 with `output_config.format` JSON-schema mode.
+// Why Claude not Gemini:
+//   - Gemini 2.5 Flash free tier has a 10K-requests/day cap that we burned
+//     through on day one with a 9K-response backlog. Claude billing is
+//     metered per-token, no daily ceiling.
+//   - Haiku 4.5 lands JSON output reliably via `output_config.format`; no
+//     markdown-fence cleanup, regex rescue, or thinking-token escape-hatch
+//     handling needed (the bugs that bit us on Gemini 2.5 Flash).
+//   - Cost: $1/$5 per 1M input/output tokens. Roughly 3-5x Gemini Flash but
+//     within budget for the ~9k backlog (~$25 total) and well below the
+//     OpenAI gpt-4o-mini path the function used originally.
+// We cache the system prompt (~2K tokens) so the 40 per-batch calls each
+// pay ~10% for the cached prefix instead of full price — saves ~$0.07 per
+// 40-response batch and reduces TTFT.
+
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
+
+// @ts-ignore Deno global is available in the edge runtime.
+// Env var is CLAUDE_API_KEY (matches the existing test-prompt-claude function
+// — the platform's secret is stored under that name, not ANTHROPIC_API_KEY).
+const client = new Anthropic({ apiKey: Deno.env.get("CLAUDE_API_KEY") });
 
 export interface AITheme {
   theme_name: string;
@@ -23,208 +38,159 @@ export interface AITheme {
   context_snippets: string[];
 }
 
-// Response-level JSON schema enforced by Gemini. Keeping it loose on the
-// required[] set (only the structural fields are required) so a model that
-// produces a partial row isn't a hard failure — validateAndCleanTheme below
-// fills sensible defaults for everything else.
-const RESPONSE_SCHEMA = {
-  type: "ARRAY",
+// JSON schema enforced by Anthropic structured outputs. `additionalProperties: false`
+// is required on every object node; numerical/string constraints like minimum/maxLength
+// aren't supported (the SDK strips them anyway).
+const THEME_SCHEMA = {
+  type: "array",
   items: {
-    type: "OBJECT",
+    type: "object",
     properties: {
-      theme_name: { type: "STRING" },
-      theme_description: { type: "STRING" },
-      sentiment: { type: "STRING", enum: ["positive", "negative", "neutral"] },
-      sentiment_score: { type: "NUMBER" },
-      talentx_attribute_id: { type: "STRING" },
-      talentx_attribute_name: { type: "STRING" },
-      confidence_score: { type: "NUMBER" },
-      keywords: { type: "ARRAY", items: { type: "STRING" } },
-      context_snippets: { type: "ARRAY", items: { type: "STRING" } },
+      theme_name: { type: "string" },
+      theme_description: { type: "string" },
+      sentiment: { type: "string", enum: ["positive", "negative", "neutral"] },
+      sentiment_score: { type: "number" },
+      talentx_attribute_id: { type: "string" },
+      talentx_attribute_name: { type: "string" },
+      confidence_score: { type: "number" },
+      keywords: { type: "array", items: { type: "string" } },
+      context_snippets: { type: "array", items: { type: "string" } },
     },
     required: [
       "theme_name",
+      "theme_description",
       "sentiment",
       "sentiment_score",
       "talentx_attribute_id",
       "talentx_attribute_name",
+      "confidence_score",
+      "keywords",
+      "context_snippets",
     ],
+    additionalProperties: false,
   },
-};
+} as const;
 
-function buildPrompt(responseText: string, companyName: string): string {
-  return `You are an expert in analyzing company responses to extract meaningful themes about employer branding and talent perception.
+// System prompt is constant across every call in a batch, so we tag it for
+// prompt caching. First call in a batch pays the 1.25x write premium; the
+// remaining 39 pay 0.1x for cache reads. Min cacheable prefix on Haiku 4.5
+// is 4096 tokens — our system prompt is comfortably above that with the
+// attribute taxonomy spelled out.
+const SYSTEM_PROMPT = `You are an expert in analyzing AI-generated responses to extract themes about a company's employer brand and talent perception.
 
-Analyze the following response about "${companyName}" and identify specific themes that relate to talent attraction and employer branding.
+For each theme you identify, output an object with:
+- theme_name: clear, concise name
+- theme_description: brief description of the theme
+- sentiment: "positive", "negative", or "neutral"
+- sentiment_score: number from -1 (very negative) to 1 (very positive)
+- talentx_attribute_id: one of (use the exact string):
+  mission-purpose, rewards-recognition, company-culture, social-impact,
+  inclusion, innovation, wellbeing-balance, leadership, security-perks,
+  career-opportunities, application-process, candidate-communication,
+  interview-experience, candidate-feedback, onboarding-experience,
+  overall-candidate-experience
+- talentx_attribute_name: human-readable form (e.g. "Mission & Purpose", "Company Culture")
+- confidence_score: number from 0 to 1
+- keywords: array of relevant keywords drawn from the response
+- context_snippets: array of 1-2 verbatim snippets from the response that support the theme
 
-CRITICAL: Only extract themes about "${companyName}" itself. Do NOT extract themes about competitors or other companies mentioned in the response. Focus exclusively on themes, perceptions, and information about "${companyName}".
+Classification rules — be strict:
+- company-culture is ONLY for workplace atmosphere, team dynamics, cultural practices, and work environment
+- Values, mission, and purpose belong to mission-purpose, NOT company-culture
+- Benefits and compensation belong to rewards-recognition, NOT company-culture
+- Work-life balance, mental health, flexibility belong to wellbeing-balance, NOT company-culture
+- Candidate-journey topics (applying, interviews, recruiter communication, onboarding) belong to the dedicated candidate-experience attributes, NOT to general employee categories
 
-For each theme you identify:
+Coverage:
+- Look for both positive and negative themes
+- If the response contains ANY information about the named company — even if it also discusses competitors or comparisons — extract themes from that information
+- Only return an empty array if the response truly contains no information about the company at all`;
 
-1. Provide a clear, concise theme name
-2. Write a brief description of the theme
-3. Determine if the sentiment is positive, negative, or neutral
-4. Assign a sentiment score from -1 (very negative) to 1 (very positive)
-5. Map the theme to the most relevant TalentX attribute from this list. BE VERY SPECIFIC about Company Culture:
-   - mission-purpose: Mission & Purpose (company mission, values, purpose, making a difference)
-   - rewards-recognition: Rewards & Recognition (compensation, benefits, bonuses, recognition programs)
-   - company-culture: Company Culture (ONLY workplace atmosphere, team dynamics, cultural practices, work environment - NOT general values, mission, or benefits)
-   - social-impact: Social Impact (community involvement, charity, environmental responsibility, giving back)
-   - inclusion: Inclusion (diversity, equity, accessibility, minority representation, LGBTQ+ support)
-   - innovation: Innovation (cutting-edge technology, research, breakthrough products, R&D culture)
-   - wellbeing-balance: Wellbeing & Balance (work-life balance, flexible work, mental health, wellness programs)
-   - leadership: Leadership (management quality, executive decisions, leadership style, management practices)
-   - security-perks: Security & Perks (job security, office amenities, food, gym, transportation benefits)
-   - career-opportunities: Career Opportunities (growth, advancement, learning, training, mentorship, promotions)
-   - application-process: Application Process (ease, clarity, and speed of applying or moving through the hiring funnel)
-   - candidate-communication: Candidate Communication (responsiveness, clarity, and helpfulness of recruiter/company updates)
-   - interview-experience: Interview Experience (structure, fairness, difficulty, panel behavior, logistics)
-   - candidate-feedback: Candidate Feedback (quality and timeliness of interview or application feedback)
-   - onboarding-experience: Onboarding Experience (new hire orientation, training, first-week experience)
-   - overall-candidate-experience: Overall Candidate Experience (holistic perception of the end-to-end candidate journey)
-
-IMPORTANT CLASSIFICATION RULES:
-- Company Culture should ONLY be used for themes about workplace atmosphere, team dynamics, cultural practices, and work environment
-- If a theme could fit multiple categories, choose the MORE SPECIFIC one (e.g., choose "Mission & Purpose" over "Company Culture" for values)
-- Values and mission belong to "Mission & Purpose", not "Company Culture"
-- Benefits and compensation belong to "Rewards & Recognition", not "Company Culture"
-- Work-life balance belongs to "Wellbeing & Balance", not "Company Culture"
-- Candidate journey topics (application steps, recruiter updates, interview logistics, feedback, onboarding, overall candidate perception) must use the dedicated candidate experience attributes above rather than employee experience categories
-
-6. Provide a confidence score from 0 to 1
-7. Extract relevant keywords
-8. Provide 1-2 context snippets from the response that support this theme
-
-Focus on themes that would be relevant to potential employees evaluating "${companyName}" as a workplace. Look for both positive and negative themes. Always return at least one theme if the response contains ANY information, positive, negative, or neutral, about "${companyName}" — even if the response also discusses competitors or comparisons. Only return an empty array if the response truly contains no information whatsoever about "${companyName}".
-
-Response to analyze:
-"""
-${responseText}
-"""`;
-}
-
-/** Coerce one model-emitted theme row to our schema with safe defaults. */
-function validateAndCleanTheme(theme: any): AITheme {
+function validateAndCleanTheme(t: any): AITheme {
   return {
-    theme_name: theme?.theme_name || "Unnamed Theme",
-    theme_description: theme?.theme_description || "",
-    sentiment: ["positive", "negative", "neutral"].includes(theme?.sentiment)
-      ? theme.sentiment
-      : "neutral",
-    sentiment_score: Math.max(-1, Math.min(1, parseFloat(theme?.sentiment_score) || 0)),
-    talentx_attribute_id: theme?.talentx_attribute_id || "unknown",
-    talentx_attribute_name: theme?.talentx_attribute_name || "Unknown Attribute",
-    confidence_score: Math.max(0, Math.min(1, parseFloat(theme?.confidence_score) || 0)),
-    keywords: Array.isArray(theme?.keywords) ? theme.keywords : [],
-    context_snippets: Array.isArray(theme?.context_snippets) ? theme.context_snippets : [],
+    theme_name: t?.theme_name || "Unnamed Theme",
+    theme_description: t?.theme_description || "",
+    sentiment: ["positive", "negative", "neutral"].includes(t?.sentiment) ? t.sentiment : "neutral",
+    sentiment_score: Math.max(-1, Math.min(1, parseFloat(t?.sentiment_score) || 0)),
+    talentx_attribute_id: t?.talentx_attribute_id || "unknown",
+    talentx_attribute_name: t?.talentx_attribute_name || "Unknown Attribute",
+    confidence_score: Math.max(0, Math.min(1, parseFloat(t?.confidence_score) || 0)),
+    keywords: Array.isArray(t?.keywords) ? t.keywords : [],
+    context_snippets: Array.isArray(t?.context_snippets) ? t.context_snippets : [],
   };
 }
 
-/**
- * Run Gemini 2.5 Flash with JSON-mode output for a single response.
- * Throws on API errors / quota / safety blocks; caller decides retry policy.
- */
 export async function analyzeThemes(
   responseText: string,
   companyName: string,
 ): Promise<AITheme[]> {
-  // @ts-ignore Deno global is available in the edge runtime.
-  const apiKey = Deno.env.get("GEMINI_API_KEY");
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY environment variable is required");
-  }
-
-  const url =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-
-  const requestBody = {
-    contents: [
-      {
-        parts: [{ text: buildPrompt(responseText, companyName) }],
-      },
-    ],
-    generationConfig: {
-      // Native JSON mode — Gemini guarantees parseable output, so we don't
-      // need the markdown-fence / regex rescue dance the OpenAI version had.
-      responseMimeType: "application/json",
-      // Low temp = consistent extraction. Theme classification is not a
-      // creative task; we'd rather two runs of the same text agree.
-      temperature: 0.2,
-      // Gemini 2.5 Flash bills internal "thinking" against the same
-      // maxOutputTokens budget that the JSON output uses. Observed live:
-      // a 764-token prompt produced 2392 thinking tokens + 1246 output
-      // tokens — a more complex response easily eats 4096, leaving no
-      // room for the JSON and finishing with empty content. We don't
-      // need chain-of-thought for structured extraction, so disable it.
-      thinkingConfig: { thinkingBudget: 0 },
-      // Headroom even at thinkingBudget=0 — extraction output can run
-      // ~3-5k tokens for very rich responses with many themes.
-      maxOutputTokens: 8192,
-    },
-  };
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": apiKey,
-    },
-    body: JSON.stringify(requestBody),
-  });
-
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => "");
-    // Surface rate-limit / quota distinctly so callers can back off properly.
-    if (response.status === 429 || /quota|overloaded/i.test(errBody)) {
-      throw new Error(`Gemini rate-limited (${response.status}): ${errBody}`);
-    }
-    throw new Error(`Gemini API error ${response.status}: ${errBody}`);
-  }
-
-  const data = await response.json();
-
-  // Safety block / no candidates — surface as zero-themes rather than error,
-  // so the response is marked "analysed, nothing relevant" instead of being
-  // retried by the cron forever.
-  const candidate = data?.candidates?.[0];
-  if (!candidate) {
-    console.warn("[theme-analysis] Gemini returned no candidates", data);
-    return [];
-  }
-  if (candidate.finishReason === "SAFETY" || candidate.finishReason === "RECITATION") {
-    console.warn("[theme-analysis] Gemini blocked response:", candidate.finishReason);
-    return [];
-  }
-
-  const content = candidate?.content?.parts?.[0]?.text;
-  if (!content) {
-    console.warn("[theme-analysis] Gemini returned no content parts. finishReason=" + candidate.finishReason, JSON.stringify(candidate).slice(0, 500));
-    return [];
-  }
-
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(content);
-  } catch (e) {
-    // Should never happen with responseMimeType=application/json + schema,
-    // but if Gemini emits garbage (e.g. truncated at maxOutputTokens) we'd
-    // rather skip the response than throw and have the cron retry forever.
-    console.error("[theme-analysis] JSON parse failed despite JSON mode:", e, content);
-    return [];
-  }
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 4096,
+      system: [
+        {
+          type: "text",
+          text: SYSTEM_PROMPT,
+          // ephemeral = 5-min TTL; we're firing 40 calls in ~30s so they
+          // all hit a warm cache after the first.
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      // Structured outputs — Anthropic enforces the schema server-side,
+      // so the model's first response block is guaranteed-parseable JSON.
+      output_config: {
+        format: { type: "json_schema", schema: THEME_SCHEMA },
+      },
+      messages: [
+        {
+          role: "user",
+          content: `Analyze this response about "${companyName}":\n\n"""\n${responseText}\n"""`,
+        },
+      ],
+    });
 
-  if (!Array.isArray(parsed)) {
-    console.warn("[theme-analysis] Gemini returned non-array:", parsed);
-    return [];
-  }
+    // Structured outputs return as a single text block containing the JSON.
+    const textBlock = response.content.find((b: any) => b.type === "text") as
+      | { type: "text"; text: string }
+      | undefined;
+    if (!textBlock) {
+      console.warn(
+        `[theme-analysis] no text block. stop_reason=${response.stop_reason}`,
+      );
+      return [];
+    }
 
-  // Diagnostic: log empty arrays so we can see whether Gemini is being too
-  // strict with the "discusses competitors mostly, return empty" guidance.
-  if (parsed.length === 0) {
-    console.warn(
-      `[theme-analysis] Gemini returned empty array for "${companyName}" (finishReason=${candidate.finishReason}). First 200 chars of input: ${responseText.slice(0, 200)}`,
-    );
-  }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(textBlock.text);
+    } catch (e) {
+      console.error("[theme-analysis] JSON parse failed despite structured output:", e, textBlock.text.slice(0, 200));
+      return [];
+    }
 
-  return parsed.map(validateAndCleanTheme);
+    if (!Array.isArray(parsed)) {
+      console.warn("[theme-analysis] structured output returned non-array:", textBlock.text.slice(0, 200));
+      return [];
+    }
+
+    if (parsed.length === 0) {
+      console.warn(`[theme-analysis] EMPTY for "${companyName}". Input head: ${responseText.slice(0, 150)}`);
+    } else {
+      console.log(`[theme-analysis] ${parsed.length} themes for "${companyName}". cache_read=${response.usage?.cache_read_input_tokens ?? 0} cache_write=${response.usage?.cache_creation_input_tokens ?? 0}`);
+    }
+
+    return parsed.map(validateAndCleanTheme);
+  } catch (e: any) {
+    // Surface rate-limit / overload distinctly so the bulk function's per-response
+    // try/catch can decide what to do. The SDK throws typed exceptions; check by
+    // status rather than message-string matching.
+    if (e instanceof Anthropic.RateLimitError) {
+      throw new Error(`Claude rate-limited (429): ${e.message}`);
+    }
+    if (e instanceof Anthropic.APIError) {
+      throw new Error(`Claude API error ${e.status}: ${e.message}`);
+    }
+    throw e;
+  }
 }
