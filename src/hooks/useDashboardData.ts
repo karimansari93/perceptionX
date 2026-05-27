@@ -87,6 +87,11 @@ export const useDashboardData = () => {
   // Cache company dashboard data for instant restore when switching back (stale-while-revalidate)
   const COMPANY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   const companyDataCacheRef = useRef<Record<string, { responses: PromptResponse[]; lastUpdated?: Date; timestamp: number }>>({});
+  // Tracks which company the user is currently looking at. Each fetch captures
+  // the id at call time and compares against this ref before committing state,
+  // so a slow response for a previously-selected company can't overwrite the
+  // active company's data when the user switches quickly.
+  const currentCompanyIdRef = useRef<string | undefined>(currentCompany?.id);
 
   // Network status monitoring - FIXED
   // Track if we're coming back online from being offline (vs just tab visibility change)
@@ -122,26 +127,33 @@ export const useDashboardData = () => {
     if (!user || !currentCompany) {
       return;
     }
-    
+
     // Check network status first
     if (!isOnline) {
       setConnectionError('No internet connection. Please check your network.');
       return;
     }
-    
-    
+
+    // Capture the company at request time. Any state writes after an await
+    // must check this against currentCompanyIdRef so a slow fetch for the
+    // previously-selected company can't overwrite the active company's data.
+    const requestedCompanyId = currentCompany.id;
+    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+
     try {
       setLoading(true);
       setCompetitorLoading(true);
       setConnectionError(null);
-      
+
       // Fetch prompts first
       const promptsResult = await retrySupabaseQuery(() =>
         supabase
           .from('confirmed_prompts')
           .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, is_pro_prompt, talentx_attribute_id')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', requestedCompanyId)
       ) as { data: any[] | null; error: any };
+
+      if (isStale()) return;
 
       const { data: userPrompts, error: promptsError } = promptsResult;
 
@@ -186,11 +198,12 @@ export const useDashboardData = () => {
                 talentx_attribute_id
               )
             `)
-            .eq('company_id', currentCompany.id)
+            .eq('company_id', requestedCompanyId)
             .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
             .range(from, to)
         ) as { data: any[] | null; error: any };
+        if (isStale()) return;
         if (result.error) throw result.error;
         chunk = result.data ?? [];
         data = data.concat(chunk);
@@ -215,6 +228,7 @@ export const useDashboardData = () => {
       }
 
       if (!userPrompts || userPrompts.length === 0) {
+        if (isStale()) return;
         setActivePrompts([]);
         setResponses([]);
         setLoading(false);
@@ -222,6 +236,7 @@ export const useDashboardData = () => {
         return;
       }
 
+      if (isStale()) return;
       setActivePrompts(userPrompts);
       setHasDataIssues(false);
       setHasMoreResponses(false);
@@ -268,11 +283,12 @@ export const useDashboardData = () => {
                   location_context
                 )
               `)
-              .eq('confirmed_prompts.company_id', currentCompany.id)
+              .eq('confirmed_prompts.company_id', requestedCompanyId)
               .like('confirmed_prompts.prompt_type', 'talentx_%')
               .gte('tested_at', eagerCutoffIso)
               .order('tested_at', { ascending: false })
               .range(from, to);
+            if (isStale()) return;
             if (talentXResult.error) throw talentXResult.error;
             talentXChunk = talentXResult.data ?? [];
             talentXRaw = talentXRaw.concat(talentXChunk);
@@ -334,6 +350,7 @@ export const useDashboardData = () => {
       // (clicks, scrolls) can be processed before the useMemo cascade fires.
       await new Promise(resolve => setTimeout(resolve, 0));
 
+      if (isStale()) return;
       setResponses(allResponses);
 
       // Set lastUpdated to the most recent response collection time
@@ -346,9 +363,10 @@ export const useDashboardData = () => {
         setLastUpdated(undefined);
       }
 
-      // Update company cache for instant restore when switching back
-      if (currentCompany?.id && allResponses.length > 0) {
-        companyDataCacheRef.current[currentCompany.id] = {
+      // Cache by the captured id (not currentCompany?.id, which could be a
+      // different company by now if the user switched mid-fetch).
+      if (allResponses.length > 0) {
+        companyDataCacheRef.current[requestedCompanyId] = {
           responses: allResponses,
           lastUpdated: lastUpdatedDate,
           timestamp: Date.now()
@@ -358,16 +376,19 @@ export const useDashboardData = () => {
       setLoading(false);
       setCompetitorLoading(false);
     } catch (error) {
+      // If the user has switched away, swallow the error silently — the new
+      // fetch owns the UI state now and shouldn't see error toasts from us.
+      if (isStale()) return;
       console.error('Error in fetchResponses:', error);
-      
+
       // Handle authentication errors specifically
-      if (error?.message?.includes('Invalid login credentials') || 
+      if (error?.message?.includes('Invalid login credentials') ||
           error?.message?.includes('Invalid Refresh Token') ||
           error?.message?.includes('JWT') ||
           error?.status === 401) {
         setConnectionError('Authentication expired. Please sign in again.');
         clearSession(); // Clear the invalid session
-        
+
         // Clear any stored auth data and reload to reset the app state
         try {
           localStorage.removeItem('sb-ofyjvfmcgtntwamkubui-auth-token');
@@ -379,13 +400,13 @@ export const useDashboardData = () => {
         } catch (e) {
           console.error('Error clearing auth data:', e);
         }
-        
+
         // Don't retry on auth errors
         setLoading(false);
         setCompetitorLoading(false);
         return;
       }
-      
+
       // Provide more specific error messages
       if (error?.message?.includes('network') || error?.message?.includes('fetch')) {
         setConnectionError('Network error. Please check your internet connection and try again.');
@@ -440,10 +461,13 @@ export const useDashboardData = () => {
   // Fetch company metrics from materialized views (backend-calculated)
   const fetchCompanyMetrics = useCallback(async () => {
     if (!user || !currentCompany?.id) return;
-    
+
+    const requestedCompanyId = currentCompany.id;
+    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+
     try {
       setCompanyMetricsLoading(true);
-      
+
       // Fetch sentiment and relevance metrics from materialized views
       // Get the most recent month with data (not just current month)
       // This handles cases where data is from previous months
@@ -451,16 +475,19 @@ export const useDashboardData = () => {
         supabase
           .from('company_sentiment_scores_mv')
           .select('*')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', requestedCompanyId)
           .order('response_month', { ascending: false })
           .limit(100), // Get all months, limit to prevent huge queries
         supabase
           .from('company_relevance_scores_mv')
           .select('*')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', requestedCompanyId)
           .order('response_month', { ascending: false })
           .limit(100) // Get all months, limit to prevent huge queries
       ]);
+
+      // Drop the result if the user already moved on to a different company.
+      if (isStale()) return;
 
       // Keep the raw rows so the Overview tab can re-aggregate per job function.
       setSentimentMvRows(sentimentResult.data || []);
@@ -587,6 +614,7 @@ export const useDashboardData = () => {
       }
       
     } catch (error: any) {
+      if (isStale()) return;
       console.warn('Error fetching company metrics from materialized views:', error);
       // Don't set error state - fallback to frontend calculation
       setCompanySentimentMetrics(null);
@@ -594,33 +622,40 @@ export const useDashboardData = () => {
       setCompanySentimentByMonth({});
       setCompanyRelevanceByMonth({});
     } finally {
-      setCompanyMetricsLoading(false);
+      if (!isStale()) {
+        setCompanyMetricsLoading(false);
+      }
     }
   }, [user, currentCompany?.id]);
 
   const fetchMVData = useCallback(async () => {
     if (!user || !currentCompany?.id) return;
 
+    const requestedCompanyId = currentCompany.id;
+    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+
     try {
       const [sourcesResult, competitorsResult, llmResult] = await Promise.all([
         supabase
           .from('company_top_sources_mv')
           .select('domain, citation_count')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', requestedCompanyId)
           .order('citation_count', { ascending: false })
           .limit(30),
         supabase
           .from('company_competitors_mv')
           .select('competitor_name, mention_count')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', requestedCompanyId)
           .order('mention_count', { ascending: false })
           .limit(30),
         supabase
           .from('company_llm_rankings_mv')
           .select('ai_model, mentions')
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', requestedCompanyId)
           .order('mentions', { ascending: false }),
       ]);
+
+      if (isStale()) return;
 
       if (sourcesResult.data) {
         setMvTopCitations(
@@ -645,6 +680,7 @@ export const useDashboardData = () => {
         );
       }
     } catch (err) {
+      if (isStale()) return;
       console.warn('[fetchMVData] error — will fall back to frontend calculation:', err);
     }
   }, [user, currentCompany?.id]);
@@ -773,6 +809,14 @@ export const useDashboardData = () => {
       return;
     }
 
+    // Up to 200 paginated queries — easily the slowest fetch on the dashboard
+    // and the one most likely to land after the user has already switched
+    // companies. requestedCompanyId pins this call to the company that
+    // triggered it; anything not matching the live ref at commit time is
+    // discarded so it can't overwrite the new company's themes.
+    const requestedCompanyId = currentCompany.id;
+    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+
     try {
       setAiThemesLoading(true);
 
@@ -798,7 +842,7 @@ export const useDashboardData = () => {
         let q = supabase
           .from('ai_themes')
           .select(COLS)
-          .eq('company_id', currentCompany.id)
+          .eq('company_id', requestedCompanyId)
           .gte('created_at', aiThemesCutoffIso)
           .order('created_at', { ascending: false })
           .order('id', { ascending: false })
@@ -815,6 +859,10 @@ export const useDashboardData = () => {
           error: any;
         };
 
+        // Abandon early if the user already moved on — no point fetching
+        // the remaining pages for a company we won't display.
+        if (isStale()) return;
+
         if (error) {
           console.error('Error fetching AI themes:', error);
           setAiThemes([]);
@@ -829,12 +877,18 @@ export const useDashboardData = () => {
         cursor = { created_at: last.created_at, id: last.id };
       }
 
+      if (isStale()) return;
       setAiThemes(allThemes);
     } catch (error) {
+      if (isStale()) return;
       console.error('Error in fetchAIThemes:', error);
       setAiThemes([]);
     } finally {
-      setAiThemesLoading(false);
+      // Don't flip the loading flag off if a newer fetch is in flight — it
+      // owns the spinner now.
+      if (!isStale()) {
+        setAiThemesLoading(false);
+      }
     }
   }, [user, currentCompany?.id]);
 
@@ -937,15 +991,22 @@ export const useDashboardData = () => {
       return;
     }
 
+    const requestedCompanyId = currentCompany?.id;
+    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+
     try {
       setTalentXProLoading(true);
-      const data = await TalentXProService.getAggregatedProAnalysis(user.id, currentCompany?.id);
+      const data = await TalentXProService.getAggregatedProAnalysis(user.id, requestedCompanyId);
+      if (isStale()) return;
       setTalentXProData(data);
     } catch (error) {
+      if (isStale()) return;
       console.error('Error fetching TalentX Pro data:', error);
       setTalentXProData([]);
     } finally {
-      setTalentXProLoading(false);
+      if (!isStale()) {
+        setTalentXProLoading(false);
+      }
     }
   }, [user, currentCompany]);
 
@@ -1141,7 +1202,8 @@ export const useDashboardData = () => {
 
   // Add refs to track initial loading state
   const hasInitiallyLoadedRef = useRef(false);
-  const currentCompanyIdRef = useRef(currentCompany?.id);
+  // currentCompanyIdRef is declared near the top of the hook so the fetch
+  // callbacks above can use it for stale-response checks.
   // Track if we've fetched for this specific company/user combination
   const fetchedCompanyUserKeyRef = useRef<string | null>(null);
   const [shouldRefetch, setShouldRefetch] = useState(false);

@@ -6,7 +6,10 @@ import { componentTagger } from "lovable-tagger";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
-    host: "::",
+    // Listen on all interfaces (IPv4 + IPv6 when available). The previous
+    // "::" only bound IPv6, which fails on IPv4-only hosts (Claude Code web
+    // sandboxes, some CI runners) with EAFNOSUPPORT and blocks preview.
+    host: true,
     port: 8080,
   },
   plugins: [
