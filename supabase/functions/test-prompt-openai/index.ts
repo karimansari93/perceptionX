@@ -185,7 +185,10 @@ async function callOpenAIWebSearch(prompt: string, useWebSearch: boolean): Promi
           ...(model.startsWith('gpt-5')
             ? { reasoning: { effort: useWebSearch ? 'low' : 'minimal' } }
             : {}),
-          ...(useWebSearch ? { tools: [{ type: 'web_search' }] } : {}),
+          // search_context_size 'low' keeps real search + url_citation sources
+          // while cutting the dominant input-token cost (the retrieved page
+          // content). We care about which sources are cited, not deep synthesis.
+          ...(useWebSearch ? { tools: [{ type: 'web_search', search_context_size: 'low' }] } : {}),
         }
 
         const res = await fetch('https://api.openai.com/v1/responses', {
