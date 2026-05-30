@@ -295,7 +295,8 @@ export const ResponseDetailsModal = ({
             "Content-Type": "application/json",
             "Authorization": `Bearer ${session.access_token}`
           },
-          body: JSON.stringify({ prompt }),
+          // Summarizing existing responses — no web search needed (fast/cheap).
+          body: JSON.stringify({ prompt, enableWebSearch: false }),
           signal: abortController.signal
         });
 
@@ -565,7 +566,7 @@ export const ResponseDetailsModal = ({
           "Content-Type": "application/json",
           "Authorization": `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({ prompt: detectPrompt })
+        body: JSON.stringify({ prompt: detectPrompt, enableWebSearch: false })
       });
 
       if (!detectResponse.ok) {
@@ -593,7 +594,7 @@ export const ResponseDetailsModal = ({
           "Content-Type": "application/json",
           "Authorization": `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({ prompt: translatePrompt })
+        body: JSON.stringify({ prompt: translatePrompt, enableWebSearch: false })
       });
 
       if (!translateResponse.ok) {
