@@ -157,7 +157,7 @@ function parseResponsesOutput(data: any): {
 // (default on) so the GEO data-collection paths get grounded citations
 // automatically; utility callers (summaries, language detect/translate) pass
 // enableWebSearch:false to keep those calls fast and cheap.
-async function callOpenAIWebSearch(prompt: string, useWebSearch: boolean): Promise<{
+async function callOpenAIWebSearch(prompt: string, useWebSearch: boolean, modelOverride?: string): Promise<{
   response: string
   citations: any[]
   webSearchCalls: number
@@ -168,7 +168,9 @@ async function callOpenAIWebSearch(prompt: string, useWebSearch: boolean): Promi
   const apiKey = Deno.env.get('OPENAI_API_KEY')
   if (!apiKey) throw new Error('OPENAI_API_KEY not configured')
 
-  const models = [PRIMARY_MODEL, ...MODEL_FALLBACKS]
+  // modelOverride forces a single exact model (used for A/B tests, e.g. comparing
+  // gpt-5.5 vs gpt-5.4-mini); without it we use the primary + fallback chain.
+  const models = modelOverride ? [modelOverride] : [PRIMARY_MODEL, ...MODEL_FALLBACKS]
 
   // One request at a specific service tier. `serviceTier` undefined = standard.
   const callOnce = async (model: string, serviceTier?: string) => {
@@ -266,11 +268,11 @@ serve(async (req) => {
     // enableWebSearch defaults true so GEO collection gets grounded citations.
     // `batch` is accepted as an alias to disable web search, mirroring the
     // Claude function's contract.
-    const { prompt, enableWebSearch = true, batch = false } = await req.json()
+    const { prompt, enableWebSearch = true, batch = false, model: modelOverride } = await req.json()
     if (!prompt) throw new Error('Prompt is required')
 
     const useWebSearch = enableWebSearch && !batch
-    const result = await callOpenAIWebSearch(prompt, useWebSearch)
+    const result = await callOpenAIWebSearch(prompt, useWebSearch, modelOverride)
 
     return new Response(
       JSON.stringify({
