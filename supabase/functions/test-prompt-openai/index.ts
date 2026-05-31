@@ -163,58 +163,82 @@ async function callOpenAIWebSearch(prompt: string, useWebSearch: boolean): Promi
   webSearchCalls: number
   model: string
   usage: any
+  serviceTier: string
 }> {
   const apiKey = Deno.env.get('OPENAI_API_KEY')
   if (!apiKey) throw new Error('OPENAI_API_KEY not configured')
 
   const models = [PRIMARY_MODEL, ...MODEL_FALLBACKS]
+
+  // One request at a specific service tier. `serviceTier` undefined = standard.
+  const callOnce = async (model: string, serviceTier?: string) => {
+    const body: Record<string, any> = {
+      model,
+      ...(serviceTier ? { service_tier: serviceTier } : {}),
+      instructions: useWebSearch ? SYSTEM_INSTRUCTIONS : undefined,
+      input: prompt,
+      max_output_tokens: useWebSearch ? 4000 : 2000,
+      // Low effort keeps grounded answers close to ChatGPT's default "Instant"
+      // experience; minimal effort keeps the no-search utility calls fast. Only
+      // the reasoning (gpt-5.x) models accept this parameter.
+      ...(model.startsWith('gpt-5')
+        ? { reasoning: { effort: useWebSearch ? 'low' : 'minimal' } }
+        : {}),
+      // search_context_size 'low' keeps real search + url_citation sources while
+      // trimming the retrieved page content fed into the prompt.
+      ...(useWebSearch ? { tools: [{ type: 'web_search', search_context_size: 'low' }] } : {}),
+    }
+
+    const res = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json()
+
+    if (!res.ok) {
+      const err: any = new Error(data?.error?.message || `OpenAI API error: ${res.status}`)
+      err.status = res.status
+      err.code = data?.error?.code
+      throw err
+    }
+
+    const { response, citations, webSearchCalls } = parseResponsesOutput(data)
+    if (!response) throw new Error(`No text in Responses output (status=${data?.status})`)
+    return {
+      response,
+      citations,
+      webSearchCalls,
+      model: data.model || model,
+      usage: data.usage,
+      serviceTier: data.service_tier || serviceTier || 'default',
+    }
+  }
+
   let lastError: any
 
   for (const model of models) {
+    // Grounded collection is scheduled/async-tolerant, so try the discounted
+    // flex tier first (~50% off tokens). If flex rejects the request or has no
+    // capacity, fall back to standard immediately so collection never fails.
+    // Interactive no-search calls (summaries/translate) skip flex to stay fast.
+    if (useWebSearch) {
+      try {
+        const r = await callOnce(model, 'flex')
+        console.log(`✅ ${model} [flex]: ${r.response.length} chars, ${r.citations.length} citations, ${r.webSearchCalls} searches`)
+        return r
+      } catch (error: any) {
+        console.warn(`flex unavailable for ${model} (status=${error?.status}, code=${error?.code}); falling back to standard`)
+        lastError = error
+        // fall through to the standard-tier attempt below
+      }
+    }
+
     try {
       return await retryWithBackoff(async () => {
-        const body: Record<string, any> = {
-          model,
-          instructions: useWebSearch ? SYSTEM_INSTRUCTIONS : undefined,
-          input: prompt,
-          max_output_tokens: useWebSearch ? 4000 : 2000,
-          // Low effort keeps grounded answers close to ChatGPT's default
-          // "Instant" experience and within the edge-function time budget;
-          // minimal effort keeps the no-search utility calls fast. Only the
-          // reasoning (gpt-5.x) models accept this parameter.
-          ...(model.startsWith('gpt-5')
-            ? { reasoning: { effort: useWebSearch ? 'low' : 'minimal' } }
-            : {}),
-          // search_context_size 'low' keeps real search + url_citation sources
-          // while cutting the dominant input-token cost (the retrieved page
-          // content). We care about which sources are cited, not deep synthesis.
-          ...(useWebSearch ? { tools: [{ type: 'web_search', search_context_size: 'low' }] } : {}),
-        }
-
-        const res = await fetch('https://api.openai.com/v1/responses', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
-        })
-
-        const data = await res.json()
-
-        if (!res.ok) {
-          const err: any = new Error(data?.error?.message || `OpenAI API error: ${res.status}`)
-          err.status = res.status
-          throw err
-        }
-
-        const { response, citations, webSearchCalls } = parseResponsesOutput(data)
-        if (!response) {
-          throw new Error(`No text in Responses output (status=${data?.status})`)
-        }
-
-        console.log(`✅ ${model}: ${response.length} chars, ${citations.length} citations, ${webSearchCalls} web searches`)
-        return { response, citations, webSearchCalls, model: data.model || model, usage: data.usage }
+        const r = await callOnce(model, undefined)
+        console.log(`✅ ${model} [standard]: ${r.response.length} chars, ${r.citations.length} citations, ${r.webSearchCalls} searches`)
+        return r
       })
     } catch (error: any) {
       console.error(`❌ Model ${model} failed:`, error?.message)
@@ -255,6 +279,7 @@ serve(async (req) => {
         webSearchEnabled: useWebSearch,
         webSearchCalls: result.webSearchCalls,
         model: result.model,
+        serviceTier: result.serviceTier,
         usage: result.usage,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
