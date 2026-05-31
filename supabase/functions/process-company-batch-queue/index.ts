@@ -654,16 +654,15 @@ serve(async (req) => {
       // job_function) has been collected.
       // =======================================================================
       else if (job.phase === "llm_collection") {
-        // Each prompt now waits on a ~20-40s grounded web-search call, so the old
-        // sequential setup (CHUNK_SIZE 2 + batchSize 1 = 2 prompts in series per
-        // tick) capped throughput at ~125 prompts/hr. We process the whole chunk
-        // CONCURRENTLY (batchSize === CHUNK_SIZE below), so each tick is one
-        // ~40s parallel wave instead of N serial calls — ~6x faster (a full run
-        // drops from ~37h to ~6h). Kept at 8 (not higher) so: (a) flex keeps
-        // capacity — bursts that exceed it fall back to standard automatically,
-        // (b) we stay within provider rate limits, and (c) parallel wall-time ≈
-        // the slowest single call, comfortably inside the edge-function timeout.
-        const CHUNK_SIZE = 8;
+        // NOTE: widening this in-invocation (CHUNK_SIZE 8 + batchSize=CHUNK_SIZE)
+        // did NOT speed collection up — measured ~122 prompts/hr either way — and
+        // pushed a single collect-company-responses call to ~147s, right at the
+        // 150s edge-function timeout. One edge invocation can't truly parallelize
+        // ~40 concurrent sub-calls (CPU/runtime serialization), so a bigger batch
+        // just runs proportionally longer at the same rate, with timeout risk.
+        // Reverted to the proven-stable 2. Real throughput fix = fan out across
+        // multiple concurrent invocations, not a bigger single batch.
+        const CHUNK_SIZE = 2;
         console.log(`[BatchQueue] Phase: llm_collection (batch_index=${job.batch_index})`);
 
         // Scope the prompt set to THIS job, not all of the company's prompts.
@@ -745,9 +744,7 @@ serve(async (req) => {
                   companyId: job.company_id,
                   promptIds: chunk,
                   models: effectiveModels,
-                  // Run the whole chunk concurrently (one parallel wave per tick)
-                  // instead of one prompt at a time — this is the throughput fix.
-                  batchSize: CHUNK_SIZE,
+                  batchSize: 1,
                   skipExisting: true,
                   skipIfCollectedInMonth,
                 },
