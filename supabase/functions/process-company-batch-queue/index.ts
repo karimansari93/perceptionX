@@ -808,8 +808,15 @@ serve(async (req) => {
             await supabase
               .from("company_batch_queue")
               .update({
+                // Not done yet → leave as 'pending' (not 'processing') so the
+                // self-chained invocation can immediately re-claim this row and
+                // collect the next chunk. Marking it 'processing' here strands
+                // it until the 5-minute watchdog flips it back, which throttles
+                // collection to one chunk per job every ~5 min and floods Slack
+                // with reset alerts. The atomic CAS claim still prevents two
+                // workers grabbing the same row, so 'pending' is safe.
                 phase: isDone ? "done" : "llm_collection",
-                status: isDone ? "completed" : "processing",
+                status: isDone ? "completed" : "pending",
                 batch_index: newOffset,
                 total_prompts: totalPrompts,
                 updated_at: new Date().toISOString(),
