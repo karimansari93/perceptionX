@@ -533,28 +533,29 @@ serve(async (req) => {
 
         if (onbError) throw new Error(`Onboarding insert failed: ${onbError.message}`);
 
-        // 2. Wait for DB trigger to create companies row (poll up to 10× with backoff)
-        let companyId: string | null = null;
-        for (let attempt = 0; attempt < 10; attempt++) {
-          const delay = Math.min(500 * Math.pow(2, attempt), 10000);
-          await new Promise((r) => setTimeout(r, delay));
+        // 2. Create company directly — the auto_create_company trigger on
+        //    user_onboarding was dropped in migration 20260504063318 to prevent
+        //    phantom orgs spawning during backfills, so we insert companies directly.
+        const { data: companyData, error: companyError } = await supabase
+          .from("companies")
+          .insert({
+            name: job.company_name,
+            industry: job.industry,
+            created_by: config.user_id,
+            onboarding_id: onboarding.id,
+          })
+          .select("id")
+          .single();
 
-          const { data: onbRow } = await supabase
-            .from("user_onboarding")
-            .select("company_id")
-            .eq("id", onboarding.id)
-            .single();
+        if (companyError) throw new Error(`Company insert failed: ${companyError.message}`);
 
-          if (onbRow?.company_id) {
-            companyId = onbRow.company_id;
-            break;
-          }
-          console.log(`[BatchQueue] Waiting for company... attempt ${attempt + 1}`);
-        }
+        const companyId = companyData.id;
 
-        if (!companyId) {
-          throw new Error("Company was not created by DB trigger after 10 attempts");
-        }
+        // Keep user_onboarding.company_id in sync for any legacy reads.
+        await supabase
+          .from("user_onboarding")
+          .update({ company_id: companyId })
+          .eq("id", onboarding.id);
 
         // 3. Generate prompts
         const prompts = generatePrompts(
