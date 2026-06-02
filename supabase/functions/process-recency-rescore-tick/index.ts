@@ -8,6 +8,10 @@ import { corsHeaders } from "../_shared/cors.ts";
 // if Firecrawl can keep up.
 const BATCH_SIZE = 50;
 const MAX_BATCHES_PER_TICK = 4;
+// Consecutive ticks with zero newly-cached URLs before we give up on a job.
+// Guards against an infinite loop over URLs that can never be resolved
+// (persistent rate-limits / dead links) or a pull query that keeps timing out.
+const MAX_STALL_TICKS = 5;
 
 interface JobRow {
   id: string;
@@ -16,6 +20,7 @@ interface JobRow {
   total: number;
   processed: number;
   is_cancelled: boolean;
+  stall_ticks: number;
 }
 
 serve(async (req) => {
@@ -33,7 +38,7 @@ serve(async (req) => {
     // -----------------------------------------------------------------------
     const { data: candidate, error: pickErr } = await supabase
       .from("recency_rescore_jobs")
-      .select("id, organization_id, status, total, processed, is_cancelled")
+      .select("id, organization_id, status, total, processed, is_cancelled, stall_ticks")
       .in("status", ["queued", "running"])
       .eq("is_cancelled", false)
       .order("created_at", { ascending: true })
@@ -67,7 +72,7 @@ serve(async (req) => {
     // -----------------------------------------------------------------------
     // Process up to MAX_BATCHES_PER_TICK batches.
     // -----------------------------------------------------------------------
-    let totalProcessedThisTick = 0;
+    let cachedThisTick = 0;   // real progress = rows newly written to url_recency_cache
     let drained = false;
     let batchError: string | null = null;
 
@@ -81,7 +86,7 @@ serve(async (req) => {
 
       if (fresh?.is_cancelled || fresh?.status === "cancelled") {
         console.log(`[RecencyRescore] Job ${job.id} cancelled by user, stopping.`);
-        return jsonResponse({ cancelled: true, processedThisTick: totalProcessedThisTick }, 200);
+        return jsonResponse({ cancelled: true, processedThisTick: cachedThisTick }, 200);
       }
 
       // Pull the next batch of URLs that have never been scored.
@@ -103,8 +108,10 @@ serve(async (req) => {
         break;
       }
 
+      const batchUrls = urls.map((u: { url: string }) => u.url);
+
       const { error: invokeErr } = await supabase.functions.invoke("extract-recency-scores", {
-        body: { citations: urls.map((u: { url: string }) => ({ url: u.url })) },
+        body: { citations: batchUrls.map((url: string) => ({ url })) },
       });
 
       if (invokeErr) {
@@ -113,12 +120,21 @@ serve(async (req) => {
         break;
       }
 
-      totalProcessedThisTick += urls.length;
+      // Real progress = how many of this batch now have a cache row. URLs that
+      // can't be resolved (rate-limit, fetch timeout) are intentionally left
+      // uncached by the extractor, so they don't count here -- which is exactly
+      // what lets us detect a stall instead of re-pulling them forever.
+      const { count: nowCached } = await supabase
+        .from("url_recency_cache")
+        .select("url", { count: "exact", head: true })
+        .in("url", batchUrls);
+
+      cachedThisTick += nowCached ?? 0;
 
       const { error: progressErr } = await supabase
         .from("recency_rescore_jobs")
         .update({
-          processed: job.processed + totalProcessedThisTick,
+          processed: job.processed + cachedThisTick,
           updated_at: new Date().toISOString(),
         })
         .eq("id", job.id);
@@ -135,6 +151,7 @@ serve(async (req) => {
         .from("recency_rescore_jobs")
         .update({
           status: "done",
+          stall_ticks: 0,
           finished_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
@@ -144,48 +161,93 @@ serve(async (req) => {
       await supabase.rpc("send_batch_alert", {
         payload: {
           event: "recency_rescore_done",
-          text: `Recency rescore for org \`${job.organization_id}\` completed. ${job.processed + totalProcessedThisTick} URLs processed.`,
+          text: `Recency rescore for org \`${job.organization_id}\` completed. ${job.processed + cachedThisTick} URLs processed.`,
           fields: [
             { label: "Job", value: job.id },
             { label: "Org", value: job.organization_id },
-            { label: "Processed", value: String(job.processed + totalProcessedThisTick) },
+            { label: "Processed", value: String(job.processed + cachedThisTick) },
           ],
         },
       });
 
       return jsonResponse({
         done: true,
-        processedThisTick: totalProcessedThisTick,
+        processedThisTick: cachedThisTick,
       }, 200);
     }
 
-    if (batchError) {
-      // Soft-fail: leave the job running so the next cron tick retries.
-      // Persist the last error message for observability.
+    // Made real progress this tick: reset the stall counter and self-chain to
+    // keep the worker hot (otherwise we'd idle up to 60s until the next cron).
+    if (cachedThisTick > 0) {
       await supabase
         .from("recency_rescore_jobs")
         .update({
-          last_error: batchError,
+          stall_ticks: 0,
+          last_error: batchError, // null clears any prior transient error
           updated_at: new Date().toISOString(),
         })
         .eq("id", job.id);
 
+      chainSelf(supabaseUrl, supabaseKey).catch((e) =>
+        console.error("[RecencyRescore] Failed to self-chain:", e),
+      );
+
       return jsonResponse({
-        error: batchError,
-        processedThisTick: totalProcessedThisTick,
+        processedThisTick: cachedThisTick,
+        chained: true,
       }, 200);
     }
 
-    // Still work to do — self-chain to keep the worker hot, otherwise we'd
-    // wait for the next cron tick (up to 60s of idle time).
-    chainSelf(supabaseUrl, supabaseKey).catch((e) =>
-      console.error("[RecencyRescore] Failed to self-chain:", e),
-    );
+    // No progress this tick: every pulled URL was unresolvable (rate-limit /
+    // dead link) or the pull query timed out. Count the stall and, once we cross
+    // the threshold, finalize the job instead of looping forever. We deliberately
+    // do NOT self-chain here -- let the 1-minute cron pace the retries so a stuck
+    // job can't hammer the database (this was the runaway Disk IO source).
+    const stallTicks = (job.stall_ticks ?? 0) + 1;
+    const unresolved = Math.max(0, job.total - (job.processed + cachedThisTick));
 
-    return jsonResponse({
-      processedThisTick: totalProcessedThisTick,
-      chained: true,
-    }, 200);
+    if (stallTicks >= MAX_STALL_TICKS) {
+      const note = batchError
+        ? `Stopped after ${stallTicks} stalled ticks; last error: ${batchError}`
+        : `Stopped after ${stallTicks} stalled ticks; ${unresolved} URLs could not be resolved`;
+
+      await supabase
+        .from("recency_rescore_jobs")
+        .update({
+          status: "done",
+          stall_ticks: stallTicks,
+          last_error: note,
+          finished_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+
+      await supabase.rpc("send_batch_alert", {
+        payload: {
+          event: "recency_rescore_stalled",
+          text: `Recency rescore for org \`${job.organization_id}\` stopped: no progress for ${stallTicks} ticks, ${unresolved} URLs unresolved.`,
+          fields: [
+            { label: "Job", value: job.id },
+            { label: "Org", value: job.organization_id },
+            { label: "Processed", value: String(job.processed + cachedThisTick) },
+            { label: "Unresolved", value: String(unresolved) },
+          ],
+        },
+      });
+
+      return jsonResponse({ stalled: true, stallTicks, processedThisTick: 0 }, 200);
+    }
+
+    await supabase
+      .from("recency_rescore_jobs")
+      .update({
+        stall_ticks: stallTicks,
+        last_error: batchError,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", job.id);
+
+    return jsonResponse({ stalled: true, stallTicks, processedThisTick: 0 }, 200);
   } catch (err: any) {
     console.error("[RecencyRescore] Uncaught:", err);
     return jsonResponse({ error: err?.message ?? String(err) }, 500);
