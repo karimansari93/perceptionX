@@ -533,23 +533,46 @@ serve(async (req) => {
 
         if (onbError) throw new Error(`Onboarding insert failed: ${onbError.message}`);
 
-        // 2. Create company directly — the auto_create_company trigger on
-        //    user_onboarding was dropped in migration 20260504063318 to prevent
-        //    phantom orgs spawning during backfills, so we insert companies directly.
-        const { data: companyData, error: companyError } = await supabase
-          .from("companies")
-          .insert({
-            name: job.company_name,
-            industry: job.industry,
-            created_by: config.user_id,
-            onboarding_id: onboarding.id,
-          })
-          .select("id")
-          .single();
+        // 2. Resolve the company. Hierarchy is Org → Company (one per name +
+        //    industry) → Locations → Functions, so every (location, function)
+        //    setup job for the same company must converge on ONE companies row.
+        //    The auto_create_company trigger that used to dedupe was dropped in
+        //    migration 20260504063318, so we dedupe here: reuse the existing
+        //    company linked to this org for (name, industry); only create it if
+        //    none exists yet. This prevents the duplicate-company fan-out where
+        //    each job spawned its own "Netflix Animation Studios".
+        const setupOrgId =
+          config.org_mode === "new_org" ? config.created_org_id : config.organization_id;
 
-        if (companyError) throw new Error(`Company insert failed: ${companyError.message}`);
+        let companyId: string | null = null;
 
-        const companyId = companyData.id;
+        if (setupOrgId) {
+          const { data: existingCompany } = await supabase
+            .from("companies")
+            .select("id, organization_companies!inner(organization_id)")
+            .eq("name", job.company_name)
+            .eq("industry", job.industry)
+            .eq("organization_companies.organization_id", setupOrgId)
+            .limit(1)
+            .maybeSingle();
+          if (existingCompany) companyId = existingCompany.id;
+        }
+
+        if (!companyId) {
+          const { data: companyData, error: companyError } = await supabase
+            .from("companies")
+            .insert({
+              name: job.company_name,
+              industry: job.industry,
+              created_by: config.user_id,
+              onboarding_id: onboarding.id,
+            })
+            .select("id")
+            .single();
+
+          if (companyError) throw new Error(`Company insert failed: ${companyError.message}`);
+          companyId = companyData.id;
+        }
 
         // Keep user_onboarding.company_id in sync for any legacy reads.
         await supabase
@@ -598,8 +621,12 @@ serve(async (req) => {
           }
         }
 
-        // 5. Insert confirmed_prompts
-        const promptRows = finalPrompts.map((p) => ({
+        // 5. Insert confirmed_prompts. Dedupe against any rows already present
+        //    for this (company, location) — because the company may now be
+        //    shared across sibling setup jobs (and across retries), a plain
+        //    insert could otherwise collide on the partial unique index and
+        //    abort the whole batch.
+        const setupCandidates = finalPrompts.map((p) => ({
           onboarding_id: onboarding.id,
           user_id: config.user_id,
           company_id: companyId,
@@ -614,18 +641,38 @@ serve(async (req) => {
           is_active: true,
         }));
 
-        const { error: insertError } = await supabase
+        const { data: setupExisting, error: setupExistingErr } = await supabase
           .from("confirmed_prompts")
-          .insert(promptRows);
+          .select("prompt_text, prompt_type, industry_context")
+          .eq("company_id", companyId)
+          .eq("location_context", finalPrompts[0]?.locationContext ?? null);
+        if (setupExistingErr) throw new Error(`Existing prompt check failed: ${setupExistingErr.message}`);
 
-        if (insertError) throw new Error(`Prompt insert failed: ${insertError.message}`);
+        const setupExistingSig = new Set(
+          (setupExisting || []).map(
+            (r: any) => `${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`,
+          ),
+        );
 
-        // 6. Link company to organization
-        const orgId = config.org_mode === "new_org" ? config.created_org_id : config.organization_id;
-        if (orgId) {
+        const promptRows = setupCandidates.filter((r) => {
+          const sig = `${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`;
+          return !setupExistingSig.has(sig);
+        });
+
+        if (promptRows.length > 0) {
+          const { error: insertError } = await supabase
+            .from("confirmed_prompts")
+            .insert(promptRows);
+
+          if (insertError) throw new Error(`Prompt insert failed: ${insertError.message}`);
+        }
+
+        // 6. Link company to organization (idempotent — may already be linked
+        //    from a sibling setup job that created/reused the same company).
+        if (setupOrgId) {
           await supabase
             .from("organization_companies")
-            .insert({ organization_id: orgId, company_id: companyId, added_by: config.user_id })
+            .insert({ organization_id: setupOrgId, company_id: companyId, added_by: config.user_id })
             .select()
             .maybeSingle(); // ignore duplicate
           // company_members retired — membership inherits from
