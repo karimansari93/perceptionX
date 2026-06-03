@@ -9,6 +9,9 @@ import { TALENTX_ATTRIBUTES } from "@/config/talentXAttributes";
 interface AttributesSummaryCardProps {
   talentXProData?: any[];
   aiThemes?: any[];
+  // Pre-aggregated attribute scores from company_attribute_themes_mv. When
+  // present, the card renders from these instead of scanning raw aiThemes.
+  attributeThemes?: any[];
   companyName?: string;
   perceptionScoreTrend?: any[];
   previousPeriodResponses?: any[];
@@ -30,9 +33,10 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
   'career-opportunities': TrendingUp
 };
 
-export const AttributesSummaryCard = ({ 
-  talentXProData = [], 
-  aiThemes = [], 
+export const AttributesSummaryCard = ({
+  talentXProData = [],
+  aiThemes = [],
+  attributeThemes = [],
   companyName,
   perceptionScoreTrend = [],
   previousPeriodResponses = [],
@@ -40,6 +44,72 @@ export const AttributesSummaryCard = ({
   aiThemesLoading = false
 }: AttributesSummaryCardProps) => {
   const navigate = useNavigate();
+
+  // Pre-aggregated path: build the top attributes from the MV rows
+  // (company_attribute_themes_mv) instead of scanning raw themes. Scope is
+  // derived from the (month, job function) of the in-scope `responses`, which
+  // are already period/function-filtered upstream — this mirrors the old
+  // "themes belonging to these responses" semantics at the MV's grain.
+  const mvAttributeScores = useMemo(() => {
+    if (!attributeThemes || attributeThemes.length === 0) return null;
+
+    const monthFn = (jf: any, dateLike: any) => {
+      const d = new Date(dateLike);
+      const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return `${month}|${(jf || '').trim()}`;
+    };
+    const respKey = (r: any) => monthFn(r.confirmed_prompts?.job_function_context, r.tested_at);
+    const rowKey = (row: any) => `${String(row.response_month).slice(0, 7)}|${(row.job_function_context || '').trim()}`;
+
+    const currentKeys = new Set(responses.map(respKey));
+    const prevKeys = new Set(previousPeriodResponses.map(respKey));
+    const scopeCurrent = currentKeys.size > 0; // before responses load, include all MV rows
+
+    const agg: Record<string, { count: number; positive: number; negative: number; neutral: number; scoreSum: number }> = {};
+    const prevCounts: Record<string, number> = {};
+    let currTotal = 0;
+    let prevTotal = 0;
+
+    attributeThemes.forEach(row => {
+      const k = rowKey(row);
+      const total = Number(row.total_themes) || 0;
+      if (!scopeCurrent || currentKeys.has(k)) {
+        if (!agg[row.attribute_id]) agg[row.attribute_id] = { count: 0, positive: 0, negative: 0, neutral: 0, scoreSum: 0 };
+        const a = agg[row.attribute_id];
+        a.count += total;
+        a.positive += Number(row.positive_themes) || 0;
+        a.negative += Number(row.negative_themes) || 0;
+        a.neutral += Number(row.neutral_themes) || 0;
+        a.scoreSum += (Number(row.avg_sentiment_score) || 0) * total;
+        currTotal += total;
+      }
+      if (prevKeys.has(k)) {
+        prevCounts[row.attribute_id] = (prevCounts[row.attribute_id] || 0) + total;
+        prevTotal += total;
+      }
+    });
+
+    const attrName = (id: string) => TALENTX_ATTRIBUTES.find(a => a.id === id)?.name || id;
+
+    return Object.entries(agg)
+      .map(([id, a]) => {
+        const currPct = currTotal > 0 ? (a.count / currTotal) * 100 : 0;
+        const prevPct = prevTotal > 0 ? ((prevCounts[id] || 0) / prevTotal) * 100 : 0;
+        return {
+          id,
+          name: attrName(id),
+          count: a.count,
+          positiveCount: a.positive,
+          negativeCount: a.negative,
+          neutralCount: a.neutral,
+          avgSentimentScore: a.count > 0 ? a.scoreSum / a.count : 0,
+          trendChange: previousPeriodResponses.length > 0 ? Math.round(currPct - prevPct) : 0,
+        };
+      })
+      .filter(a => a.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [attributeThemes, responses, previousPeriodResponses]);
 
   // Calculate theme trends: share of mentions % (current period) - share of mentions % (previous period)
   const themeTrends = useMemo(() => {
@@ -146,15 +216,20 @@ export const AttributesSummaryCard = ({
       .slice(0, 5); // Top 5 most mentioned
   }, [aiThemes, themeTrends]);
 
+  // Prefer the pre-aggregated MV path; fall back to the raw-themes computation.
+  const displayedThemes = (mvAttributeScores && mvAttributeScores.length > 0)
+    ? mvAttributeScores
+    : mostMentionedThemes;
+
   const volumeThresholds = useMemo(() => {
-    if (mostMentionedThemes.length === 0) return { p20: 0, p40: 0, p60: 0, p80: 0 };
-    const sorted = [...mostMentionedThemes.map(t => t.count)].sort((a, b) => a - b);
+    if (displayedThemes.length === 0) return { p20: 0, p40: 0, p60: 0, p80: 0 };
+    const sorted = [...displayedThemes.map(t => t.count)].sort((a, b) => a - b);
     const percentile = (p: number) => {
       const idx = Math.max(0, Math.ceil((p / 100) * sorted.length) - 1);
       return sorted[idx];
     };
     return { p20: percentile(20), p40: percentile(40), p60: percentile(60), p80: percentile(80) };
-  }, [mostMentionedThemes]);
+  }, [displayedThemes]);
 
   const getVolumeLabel = (count: number) => {
     if (count > volumeThresholds.p80) return { text: 'Very High', style: 'bg-blue-100 text-blue-700' };
@@ -213,7 +288,7 @@ export const AttributesSummaryCard = ({
     );
   };
 
-  if (mostMentionedThemes.length === 0) {
+  if (displayedThemes.length === 0) {
     return (
       <Card className="shadow-sm border border-gray-200">
         <CardHeader className="pb-2 px-4 sm:px-6">
@@ -263,7 +338,7 @@ export const AttributesSummaryCard = ({
       </CardHeader>
       <CardContent className="px-4 sm:px-6">
         <div className="space-y-1">
-          {mostMentionedThemes.map((attribute, idx) => (
+          {displayedThemes.map((attribute, idx) => (
             <div key={idx}>
               {renderAttributeItem(attribute)}
             </div>

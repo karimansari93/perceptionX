@@ -212,12 +212,8 @@ const App = () => (
                       <Dashboard defaultGroup="monitor" defaultSection="prompts" />
                     </SidebarProvider>                </ProtectedRoute>
               } />
-              <Route path="/monitor/responses" element={
-                <ProtectedRoute>
-                    <SidebarProvider>
-                      <Dashboard defaultGroup="monitor" defaultSection="responses" />
-                    </SidebarProvider>                </ProtectedRoute>
-              } />
+              {/* Responses tab removed — redirect old bookmarks to Prompts */}
+              <Route path="/monitor/responses" element={<Navigate to="/monitor" replace />} />
               {/* Search tab temporarily hidden
               <Route path="/monitor/search" element={
                 <ProtectedRoute>

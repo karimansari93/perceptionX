@@ -3,7 +3,8 @@ import { SidebarProvider, SidebarInset, SidebarTrigger, useSidebar } from "@/com
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
+import { lazyWithRetry } from "@/utils/lazyWithRetry";
 import { CustomReports } from "@/components/dashboard/CustomReports";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -17,7 +18,6 @@ import { NetworkStatus } from "@/components/NetworkStatus";
 import { 
   OverviewSkeleton,
   PromptsSkeleton,
-  ResponsesSkeleton,
   AnswerGapsSkeleton,
   ReportsSkeleton,
   SourcesSkeleton,
@@ -29,13 +29,14 @@ import {
 // OverviewTab is eagerly imported — it's the default landing tab
 import { OverviewTab } from "@/components/dashboard/OverviewTab";
 
-// All other tabs are lazy-loaded — mounted on first visit, then kept alive
-const SourcesTab = lazy(() => import("@/components/dashboard/SourcesTab").then(module => ({ default: module.SourcesTab })));
-const CompetitorsTab = lazy(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
-const ThematicAnalysisTab = lazy(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
-const PromptsTab = lazy(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
-const ResponsesTab = lazy(() => import("@/components/dashboard/ResponsesTab").then(module => ({ default: module.ResponsesTab })));
-const AnswerGapsTab = lazy(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
+// All other tabs are lazy-loaded — mounted on first visit, then kept alive.
+// lazyWithRetry auto-reloads once if a chunk 404s after a new deploy (stale
+// index.html) instead of throwing the "Failed to load module script" error.
+const SourcesTab = lazyWithRetry(() => import("@/components/dashboard/SourcesTab").then(module => ({ default: module.SourcesTab })));
+const CompetitorsTab = lazyWithRetry(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
+const ThematicAnalysisTab = lazyWithRetry(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
+const PromptsTab = lazyWithRetry(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
+const AnswerGapsTab = lazyWithRetry(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
 import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
 import LLMLogo from "@/components/LLMLogo";
 import { AddCompanyModal } from "@/components/dashboard/AddCompanyModal";
@@ -53,7 +54,6 @@ const SECTION_TITLES: Record<string, string> = {
   competitors: "Competitors",
   thematic: "Themes",
   prompts: "Prompts",
-  responses: "Responses",
   reports: "Reports",
   "answer-gaps": "Answer Gaps",
 };
@@ -98,7 +98,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     competitors: false,
     thematic: false,
     prompts: false,
-    responses: false,
     search: false,
     answerGaps: false,
   });
@@ -107,7 +106,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   useEffect(() => {
     if (currentCompany?.id && currentCompany.id !== prevCompanyIdRef.current) {
       prevCompanyIdRef.current = currentCompany.id;
-      setHasVisited({ sources: false, competitors: false, thematic: false, prompts: false, responses: false, search: false, answerGaps: false });
+      setHasVisited({ sources: false, competitors: false, thematic: false, prompts: false, search: false, answerGaps: false });
     }
   }, [currentCompany?.id]);
   const { isRefreshing, progress: refreshProgress, refreshAllPrompts } = useRefreshPrompts();
@@ -177,6 +176,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     fixExistingPrompts,
     hasDataIssues,
     aiThemes,
+    fetchAIThemes,
+    attributeThemes,
+    responseSentimentRows,
     isOnline,
     connectionError,
     recencyDataError,
@@ -185,7 +187,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     aiThemesLoading,
     metricsCalculating,
     responseTexts,
-    responseTextsLoading,
     fetchResponseTexts,
     availablePeriods,
     selectedPeriod,
@@ -447,8 +448,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       setActiveGroup('monitor');
       if (path === '/monitor') {
         setActiveSection('prompts');
-      } else if (path === '/monitor/responses') {
-        setActiveSection('responses');
       }
     } else if (path.startsWith('/analyze')) {
       setActiveGroup('analyze');
@@ -475,13 +474,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     });
   }, [activeSection]);
 
-  // Lazy-load response texts when the responses tab becomes visible
-  useEffect(() => {
-    if (activeSection === 'responses' && responses.length > 0) {
-      fetchResponseTexts(responses.map(r => r.id));
-    }
-  }, [activeSection, responses.length]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const handleSectionChange = (section: string) => {
     // Wrap in startTransition so the UI stays responsive during tab switch
     startTransition(() => {
@@ -502,8 +494,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     } else if (activeGroup === 'monitor') {
       if (section === 'prompts') {
         navigate('/monitor');
-      } else if (section === 'responses') {
-        navigate('/monitor/responses');
       }
     } else if (activeGroup === 'analyze') {
       if (section === 'thematic') {
@@ -549,6 +539,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             isPro={true}
             searchResults={searchResults}
             aiThemes={aiThemes}
+            attributeThemes={attributeThemes}
+            responseSentimentRows={responseSentimentRows}
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
@@ -566,7 +558,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       switch (activeSection) {
         case "overview": return <OverviewSkeleton />;
         case "prompts": return <PromptsSkeleton />;
-        case "responses": return <ResponsesSkeleton />;
         case "answer-gaps": return <AnswerGapsSkeleton />;
         case "reports": return <ReportsSkeleton />;
         case "sources": return <SourcesSkeleton />;
@@ -615,6 +606,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             isPro={true}
             searchResults={searchResults}
             aiThemes={aiThemes}
+            attributeThemes={attributeThemes}
+            responseSentimentRows={responseSentimentRows}
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
@@ -681,6 +674,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 companyName={companyName}
                 aiThemes={aiThemes}
                 aiThemesLoading={aiThemesLoading}
+                attributeThemes={attributeThemes}
+                fetchAIThemes={fetchAIThemes}
                 onRefreshThemes={refreshData}
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
@@ -704,14 +699,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 refreshProgress={refreshProgress}
                 selectedLocation={selectedLocation}
               />
-            </Suspense>
-          </div>
-        )}
-
-        {(activeSection === 'responses' || hasVisited.responses) && (
-          <div style={{ display: activeSection === 'responses' ? 'block' : 'none' }}>
-            <Suspense fallback={<ResponsesSkeleton />}>
-              <ResponsesTab responses={responses} parseCitations={parseCitations} companyName={companyName} responseTexts={responseTexts} responseTextsLoading={responseTextsLoading} fetchResponseTexts={fetchResponseTexts} />
             </Suspense>
           </div>
         )}
