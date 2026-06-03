@@ -193,6 +193,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     previousPeriodMetrics,
     companyRelevanceByMonth,
     previousPeriodResponses,
+    epsTrend,
+    epsChange,
+    epsTrendByJobFunction,
+    epsChangeByJobFunction,
   } = useDashboardData();
 
   // Apply the user's starred view (location + period) once when the user
@@ -580,6 +584,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             previousPeriodMetrics={previousPeriodMetrics}
             companyRelevanceByMonth={companyRelevanceByMonth}
             previousPeriodResponses={previousPeriodResponses}
+            epsTrend={epsTrend}
+            epsChange={epsChange}
+            epsTrendByJobFunction={epsTrendByJobFunction}
+            epsChangeByJobFunction={epsChangeByJobFunction}
             market={selectedLocation}
           />
         </div>
