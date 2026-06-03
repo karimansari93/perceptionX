@@ -358,7 +358,7 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
           disabled={enqueuing || loading || selectedList.length === 0 || runActive || !canRecollect}
         >
           {enqueuing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Server className="h-4 w-4 mr-2" />}
-          Recollect {monthLabel(month)} ({selectedList.length} compan{selectedList.length === 1 ? "y" : "ies"})
+          Recollect missing for {monthLabel(month)} ({selectedList.length} compan{selectedList.length === 1 ? "y" : "ies"})
         </Button>
         <span className="text-xs text-muted-foreground">
           {totalMissingSelected.toLocaleString()} missing prompts in selection

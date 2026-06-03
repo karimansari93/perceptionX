@@ -335,7 +335,7 @@ serve(async (req) => {
       .update({ status: "processing", updated_at: now })
       .eq("id", candidate.id)
       .eq("status", "pending")
-      .select("*, company_batch_configs!inner(user_id, organization_id, created_org_id, org_mode)")
+      .select("*, company_batch_configs!inner(user_id, organization_id, created_org_id, org_mode, skip_if_collected_in_month)")
       .maybeSingle();
 
     if (claimErr) throw claimErr;
