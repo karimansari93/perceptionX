@@ -23,27 +23,50 @@ export function useAdminCompanyCollection() {
       companyId: string,
       organizationId: string,
       companyName: string,
-      options: { skipExisting: boolean }
+      options: {
+        skipExisting: boolean;
+        // When provided, ONLY these prompts are collected instead of every
+        // active prompt for the company. Used by the "Recollect missing" flow
+        // to re-run just the prompts that have no response for a given month.
+        promptIds?: string[];
+        // Optional "YYYY-MM". Forwarded to collect-company-responses so a prompt
+        // counts as "already collected" only if it has a response in that month.
+        // Note: the edge function only applies this when skipExisting is true.
+        skipIfCollectedInMonth?: string | null;
+      }
     ): Promise<boolean> => {
       setIsRunning(true);
       try {
         const modelNames = PRO_MODELS;
 
-        const { data: allPrompts, error: promptsError } = await supabase
-          .from('confirmed_prompts')
-          .select('id')
-          .eq('is_active', true)
-          .eq('company_id', companyId);
+        let promptIds: string[];
+        if (options.promptIds) {
+          // Caller supplied an explicit target set (e.g. only the missing
+          // prompts). An empty set means there's nothing to do.
+          if (options.promptIds.length === 0) {
+            toast.info(`${companyName}: nothing to collect — already complete.`);
+            return true;
+          }
+          promptIds = options.promptIds;
+        } else {
+          const { data: allPrompts, error: promptsError } = await supabase
+            .from('confirmed_prompts')
+            .select('id')
+            .eq('is_active', true)
+            .eq('company_id', companyId);
 
-        if (promptsError || !allPrompts?.length) {
-          toast.error('No active prompts found for this company');
-          return false;
+          if (promptsError || !allPrompts?.length) {
+            toast.error('No active prompts found for this company');
+            return false;
+          }
+          promptIds = allPrompts.map((p) => p.id);
         }
 
-        const promptIds = allPrompts.map((p) => p.id);
         const totalOps = promptIds.length * modelNames.length;
         const totalChunks = Math.ceil(promptIds.length / PROMPT_CHUNK_SIZE);
-        const label = options.skipExisting ? 'Continue collection' : 'Full refresh';
+        const label = options.promptIds
+          ? 'Recollect missing'
+          : options.skipExisting ? 'Continue collection' : 'Full refresh';
         toast.info(`${label}: ${totalOps} operations for ${companyName} (${totalChunks} chunks)`);
 
         let totalCollected = 0;
@@ -65,6 +88,7 @@ export function useAdminCompanyCollection() {
               models: modelNames,
               batchSize: 1,
               skipExisting: options.skipExisting,
+              skipIfCollectedInMonth: options.skipIfCollectedInMonth ?? null,
             },
           });
 
