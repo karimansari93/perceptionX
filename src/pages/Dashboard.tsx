@@ -3,7 +3,8 @@ import { SidebarProvider, SidebarInset, SidebarTrigger, useSidebar } from "@/com
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
+import { lazyWithRetry } from "@/utils/lazyWithRetry";
 import { CustomReports } from "@/components/dashboard/CustomReports";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -28,12 +29,14 @@ import {
 // OverviewTab is eagerly imported — it's the default landing tab
 import { OverviewTab } from "@/components/dashboard/OverviewTab";
 
-// All other tabs are lazy-loaded — mounted on first visit, then kept alive
-const SourcesTab = lazy(() => import("@/components/dashboard/SourcesTab").then(module => ({ default: module.SourcesTab })));
-const CompetitorsTab = lazy(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
-const ThematicAnalysisTab = lazy(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
-const PromptsTab = lazy(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
-const AnswerGapsTab = lazy(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
+// All other tabs are lazy-loaded — mounted on first visit, then kept alive.
+// lazyWithRetry auto-reloads once if a chunk 404s after a new deploy (stale
+// index.html) instead of throwing the "Failed to load module script" error.
+const SourcesTab = lazyWithRetry(() => import("@/components/dashboard/SourcesTab").then(module => ({ default: module.SourcesTab })));
+const CompetitorsTab = lazyWithRetry(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
+const ThematicAnalysisTab = lazyWithRetry(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
+const PromptsTab = lazyWithRetry(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
+const AnswerGapsTab = lazyWithRetry(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
 import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
 import LLMLogo from "@/components/LLMLogo";
 import { AddCompanyModal } from "@/components/dashboard/AddCompanyModal";
