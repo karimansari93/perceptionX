@@ -189,7 +189,6 @@ export const useDashboardData = () => {
               updated_at,
               company_mentioned,
               detected_competitors,
-              citations,
               for_index,
               index_period,
               confirmed_prompts!inner(
@@ -274,7 +273,6 @@ export const useDashboardData = () => {
                 updated_at,
                 company_mentioned,
                 detected_competitors,
-                citations,
                 for_index,
                 index_period,
                 confirmed_prompts!inner(
@@ -357,6 +355,23 @@ export const useDashboardData = () => {
       await new Promise(resolve => setTimeout(resolve, 0));
 
       if (isStale()) return;
+      // Seed citations from a recent cache entry (switch-back) so the
+      // citation-derived numbers don't blink to 0 before the background
+      // citations fetch below re-populates them.
+      const cachedForCitations = companyDataCacheRef.current[requestedCompanyId];
+      if (cachedForCitations?.responses?.length) {
+        const cachedCitations: Record<string, any> = {};
+        cachedForCitations.responses.forEach((r: any) => {
+          if (r.citations !== undefined) cachedCitations[r.id] = r.citations;
+        });
+        if (Object.keys(cachedCitations).length > 0) {
+          allResponses = allResponses.map(r =>
+            r.citations === undefined && cachedCitations[r.id] !== undefined
+              ? { ...r, citations: cachedCitations[r.id] }
+              : r
+          );
+        }
+      }
       setResponses(allResponses);
 
       // Set lastUpdated to the most recent response collection time
@@ -385,6 +400,51 @@ export const useDashboardData = () => {
 
       setLoading(false);
       setCompetitorLoading(false);
+
+      // Stream citations in the background. citations is by far the heaviest
+      // column (~5-6MB for large companies, ~85% of the responses payload) and
+      // the dashboard renders fine without it — every consumer reads
+      // r.citations, which simply fills in once this merge lands. Keeping it off
+      // the first-paint path makes company/country switches feel instant; the
+      // citation-derived bits (total citations, Sources card) populate a beat
+      // later. Scoped by pr.company_id + the same 180-day window, which covers
+      // regular and TalentX rows alike.
+      void (async () => {
+        try {
+          const CIT_PAGE_SIZE = 1000;
+          const citMap: Record<string, any> = {};
+          let citPage = 0;
+          let citChunk: any[] | null;
+          do {
+            const from = citPage * CIT_PAGE_SIZE;
+            const citResult = await retrySupabaseQuery(() =>
+              supabase
+                .from('prompt_responses')
+                .select('id, citations')
+                .eq('company_id', requestedCompanyId)
+                .gte('tested_at', eagerCutoffIso)
+                .range(from, from + CIT_PAGE_SIZE - 1)
+            ) as { data: any[] | null; error: any };
+            if (isStale()) return;
+            if (citResult.error) return; // non-fatal: citations just won't populate
+            citChunk = citResult.data ?? [];
+            citChunk.forEach(row => { citMap[row.id] = row.citations; });
+            citPage += 1;
+            if (citChunk.length === CIT_PAGE_SIZE) {
+              await new Promise(resolve => setTimeout(resolve, 0));
+            }
+          } while (citChunk && citChunk.length === CIT_PAGE_SIZE);
+
+          if (isStale()) return;
+          const mergeCitations = (arr: any[]) =>
+            arr.map(r => (citMap[r.id] !== undefined ? { ...r, citations: citMap[r.id] } : r));
+          setResponses(prev => mergeCitations(prev));
+          const cached = companyDataCacheRef.current[requestedCompanyId];
+          if (cached) cached.responses = mergeCitations(cached.responses);
+        } catch {
+          // non-fatal — citation-derived numbers just stay empty
+        }
+      })();
     } catch (error) {
       // If the user has switched away, swallow the error silently — the new
       // fetch owns the UI state now and shouldn't see error toasts from us.
