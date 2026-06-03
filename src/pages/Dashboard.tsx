@@ -195,6 +195,44 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     previousPeriodResponses,
   } = useDashboardData();
 
+  // -----------------------------------------------------------------------
+  // GLOBAL JOB-FUNCTION FILTER
+  //
+  // Shared across every dashboard tab (Overview, Sources, Competitors,
+  // Themes) so a selection made on one tab carries over to the others instead
+  // of silently resetting. Lifted here rather than kept per-tab because all
+  // tabs stay mounted simultaneously (display:none) — a per-tab
+  // usePersistedState never propagates a live change to an already-mounted
+  // sibling, and each tab used its own storage key. Persisted so it survives
+  // reloads; defaults to 'all' (All functions) until the user picks one.
+  const [selectedJobFunction, setSelectedJobFunction] = usePersistedState<string>('dashboard.selectedJobFunction', 'all');
+
+  // The set of job functions that actually exist in the current company's
+  // responses — the only valid (non-'all') filter values.
+  const availableJobFunctions = useMemo(() => {
+    const fns = new Set<string>();
+    responses.forEach(r => {
+      const fn = r.confirmed_prompts?.job_function_context?.trim();
+      if (fn) fns.add(fn);
+    });
+    return fns;
+  }, [responses]);
+
+  // GUARANTEE: never strand the dashboard in a no-data state. If the persisted
+  // selection points at a function that isn't in the current dataset (e.g.
+  // after switching company/period, or stale sessionStorage), every tab would
+  // filter down to zero rows with no selected pill to explain it. Fall back to
+  // 'all' once responses have loaded.
+  useEffect(() => {
+    if (
+      selectedJobFunction !== 'all' &&
+      responses.length > 0 &&
+      !availableJobFunctions.has(selectedJobFunction)
+    ) {
+      setSelectedJobFunction('all');
+    }
+  }, [selectedJobFunction, availableJobFunctions, responses.length, setSelectedJobFunction]);
+
   // Apply the user's starred view (location + period) once when the user
   // session loads. Re-applies if they sign in as a different user.
   const starredAppliedForUserRef = useRef<string | null>(null);
@@ -511,6 +549,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
             market={selectedLocation}
+            selectedJobFunction={selectedJobFunction}
+            onJobFunctionChange={setSelectedJobFunction}
           />
         </div>
       </div>
@@ -581,6 +621,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             companyRelevanceByMonth={companyRelevanceByMonth}
             previousPeriodResponses={previousPeriodResponses}
             market={selectedLocation}
+            selectedJobFunction={selectedJobFunction}
+            onJobFunctionChange={setSelectedJobFunction}
           />
         </div>
 
@@ -598,6 +640,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
                 previousPeriodResponses={previousPeriodResponses}
+                selectedJobFunction={selectedJobFunction}
+                onJobFunctionChange={setSelectedJobFunction}
               />
             </Suspense>
           </div>
@@ -614,6 +658,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
                 previousPeriodResponses={previousPeriodResponses}
+                selectedJobFunction={selectedJobFunction}
+                onJobFunctionChange={setSelectedJobFunction}
               />
             </Suspense>
           </div>
@@ -631,6 +677,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
                 previousPeriodResponses={previousPeriodResponses}
+                selectedJobFunction={selectedJobFunction}
+                onJobFunctionChange={setSelectedJobFunction}
               />
             </Suspense>
           </div>

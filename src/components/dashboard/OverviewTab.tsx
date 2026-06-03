@@ -80,6 +80,10 @@ interface OverviewTabProps {
     visibilityScore: number;
     relevanceScore: number;
   }>;
+  // Global job-function filter, shared across all dashboard tabs and owned by
+  // the parent Dashboard so a selection persists when switching tabs.
+  selectedJobFunction?: string;
+  onJobFunctionChange?: (value: string) => void;
 }
 
 interface TimeBasedData {
@@ -128,6 +132,8 @@ export const OverviewTab = memo(({
   previousPeriodResponses = [],
   market = null,
   metricsByJobFunction = {},
+  selectedJobFunction = 'all',
+  onJobFunctionChange,
 }: OverviewTabProps) => {
   const [isEpsDrilldownOpen, setIsEpsDrilldownOpen] = useState(false);
   // Modal states - persisted
@@ -148,7 +154,10 @@ export const OverviewTab = memo(({
   // Job function filter — scopes the Sources / Competitors / Themes summary
   // cards. The headline EPS / Breakdown scorecard stays global (it comes from
   // per-company materialized views with no job-function dimension).
-  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('overviewTab.selectedJobFunctionFilter', 'all');
+  // Controlled by the parent Dashboard so the selection is shared across all
+  // tabs (Sources, Competitors, Themes) and never resets on tab switch.
+  const selectedJobFunctionFilter = selectedJobFunction;
+  const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
 
   const getUniqueJobFunctions = useMemo(() => {
     const fns = new Set<string>();

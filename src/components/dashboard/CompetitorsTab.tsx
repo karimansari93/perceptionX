@@ -32,9 +32,13 @@ interface CompetitorsTabProps {
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   previousPeriodResponses?: any[];
+  // Global job-function filter, shared across all dashboard tabs and owned by
+  // the parent Dashboard so a selection persists when switching tabs.
+  selectedJobFunction?: string;
+  onJobFunctionChange?: (value: string) => void;
 }
 
-export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, searchResults = [], responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [] }: CompetitorsTabProps) => {
+export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, searchResults = [], responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: CompetitorsTabProps) => {
   // Modal states - persisted
   const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('competitorsTab.selectedCompetitor', null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = usePersistedState<boolean>('competitorsTab.isCompetitorModalOpen', false);
@@ -58,7 +62,10 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   // Filter state - persisted
   const [selectedCompetitorTypeFilter, setSelectedCompetitorTypeFilter] = usePersistedState<'all' | 'direct'>('competitorsTab.selectedCompetitorTypeFilter', 'direct');
   const deferredCompetitorTypeFilter = useDeferredValue(selectedCompetitorTypeFilter);
-  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('competitorsTab.selectedJobFunctionFilter', 'all');
+  // Controlled by the parent Dashboard so the job-function selection is shared
+  // across all tabs and never resets on tab switch.
+  const selectedJobFunctionFilter = selectedJobFunction;
+  const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
   const deferredJobFunctionFilter = useDeferredValue(selectedJobFunctionFilter);
   const [, startTransition] = useTransition();
 
