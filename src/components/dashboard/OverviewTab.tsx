@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { MetricCard } from "./MetricCard";
 import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dashboard";
-import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown, Sparkles, Loader2, CheckCircle2 } from 'lucide-react';
+import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown, Sparkles, Loader2, CheckCircle2, Minus } from 'lucide-react';
 import { usePersistedState } from "@/hooks/usePersistedState";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -71,6 +71,13 @@ interface OverviewTabProps {
   previousPeriodMetrics?: { sentimentScore?: number; visibilityScore?: number; relevanceScore?: number } | null;
   companyRelevanceByMonth?: Record<string, number>;
   previousPeriodResponses?: any[];
+  // Per-month EPS series (oldest → selected period) for the headline sparkline,
+  // and the period-over-period EPS delta. Both are global (un-filtered).
+  epsTrend?: Array<{ key: string; date: string; score: number; sentiment: number; visibility: number; relevance: number; responseCount: number }>;
+  epsChange?: number | null;
+  // Same, keyed by job function — used when the function filter is active.
+  epsTrendByJobFunction?: Record<string, Array<{ key: string; date: string; score: number; sentiment: number; visibility: number; relevance: number; responseCount: number }>>;
+  epsChangeByJobFunction?: Record<string, number | null>;
   market?: string | null;
   // Per-job-function scorecard metrics — lets the function filter rescope EPS/Breakdown.
   metricsByJobFunction?: Record<string, {
@@ -130,6 +137,10 @@ export const OverviewTab = memo(({
   previousPeriodMetrics = null,
   companyRelevanceByMonth = {},
   previousPeriodResponses = [],
+  epsTrend = [],
+  epsChange = null,
+  epsTrendByJobFunction = {},
+  epsChangeByJobFunction = {},
   market = null,
   metricsByJobFunction = {},
   selectedJobFunction = 'all',
@@ -1196,12 +1207,38 @@ CRITICAL: When you reference information from a source, add an inline citation l
     });
     
     // Step 3: Sort by date ascending
-    const sorted = collectionPeriods.sort((a, b) => 
+    const sorted = collectionPeriods.sort((a, b) =>
       new Date(a.fullDate).getTime() - new Date(b.fullDate).getTime()
     );
-    
+
     return sorted;
   }, [responses, aiThemes, recencyData, companyRelevanceByMonth, calculateAIBasedSentiment]);
+
+  // Active per-month EPS trend + delta: the function-scoped series when a
+  // function filter is active, otherwise the global series. Both come from the
+  // hook and end on the selected period so the last point equals the headline.
+  const activeEpsTrend = isFunctionFiltered
+    ? (epsTrendByJobFunction?.[selectedJobFunctionFilter] ?? [])
+    : epsTrend;
+  const activeEpsChange = isFunctionFiltered
+    ? (epsChangeByJobFunction?.[selectedJobFunctionFilter] ?? null)
+    : epsChange;
+
+  // EPS sparkline data. Uses the active per-month trend so the line spans every
+  // month of data and its last point equals the headline EPS. Falls back to a
+  // flat line at the current EPS when there's only a single month of data.
+  const epsChartData = useMemo(() => {
+    if (Array.isArray(activeEpsTrend) && activeEpsTrend.length > 1) {
+      return activeEpsTrend;
+    }
+    return [
+      { date: 'Start', score: scorecardMetrics.perceptionScore, responseCount: responses.length },
+      { date: 'Today', score: scorecardMetrics.perceptionScore, responseCount: responses.length },
+    ];
+  }, [activeEpsTrend, scorecardMetrics.perceptionScore, responses.length]);
+
+  // Period-over-period EPS delta for the active scope.
+  const epsDelta = typeof activeEpsChange === 'number' ? activeEpsChange : null;
 
   // Prepare chart data for LLM mentions
   const llmMentionChartData = useMemo(() => {
@@ -1264,37 +1301,21 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 <span className="text-6xl font-extrabold text-gray-900 drop-shadow-sm leading-none">
                   {scorecardMetrics.perceptionScore}
                 </span>
-                {!isFunctionFiltered && previousPeriodMetrics && (() => {
-                  // EPS is the weighted roll-up — it's only meaningful when
-                  // ALL THREE components have a prior-month value to compare
-                  // against. If any is undefined (MV hasn't caught up, etc.),
-                  // skip the delta entirely rather than produce NaN via the
-                  // `undefined * number` path.
-                  const ps = previousPeriodMetrics.sentimentScore;
-                  const pv = previousPeriodMetrics.visibilityScore;
-                  const pr = previousPeriodMetrics.relevanceScore;
-                  if (typeof ps !== 'number' || typeof pv !== 'number' || typeof pr !== 'number') {
-                    return (
-                      <span className="ml-4 text-xl font-semibold text-gray-400" style={{ marginBottom: 6 }}>-</span>
-                    );
-                  }
-
-                  const prevEPS = Math.round((ps * 0.5) + (pv * 0.3) + (pr * 0.2));
-                  const change = scorecardMetrics.perceptionScore - prevEPS;
-                  if (change === 0) return (
-                    <span className="ml-4 text-xl font-semibold text-gray-400" style={{marginBottom: 6}}>-</span>
-                  );
-                  const direction = change > 0 ? 'up' : 'down';
-
-                  return (
-                    <span className={`ml-4 flex items-center gap-1 text-xl font-semibold ${direction === 'up' ? 'text-green-600' : 'text-red-600'}`}
-                  style={{marginBottom: 6}}>
-                      {direction === 'up' && <TrendingUp className="w-5 h-5" />}
-                      {direction === 'down' && <TrendingDown className="w-5 h-5" />}
-                      {Math.abs(change)}
-                </span>
-                  );
-                })()}
+                {epsDelta !== null && (
+                  epsDelta === 0 ? (
+                    <span className="ml-4 flex items-center gap-1 text-xl font-semibold text-gray-400" style={{ marginBottom: 6 }}>
+                      <Minus className="w-5 h-5" />0
+                    </span>
+                  ) : (
+                    <span
+                      className={`ml-4 flex items-center gap-1 text-xl font-semibold ${epsDelta > 0 ? 'text-green-600' : 'text-red-600'}`}
+                      style={{ marginBottom: 6 }}
+                    >
+                      {epsDelta > 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+                      {Math.abs(epsDelta)}
+                    </span>
+                  )
+                )}
               </div>
             </div>
             {/* Badge in top right */}
@@ -1306,53 +1327,52 @@ CRITICAL: When you reference information from a source, add an inline citation l
           </div>
           {/* Bottom: Chart, visually anchored */}
            <div className="w-full flex-1 flex items-end" style={{ minHeight: 0 }}>
-             <div className="w-full" style={{ height: '60px' }}>
+             <div className="w-full" style={{ height: '96px' }}>
                <ChartContainer config={{ score: { label: "Score", color: "#0DBCBA" } }} className="w-full h-full">
                  <AreaChart
-                   data={(() => {
-                     // Build chart data: previous period EPS + current period trend points.
-                     // Only prepend a "Prev" anchor when all three components
-                     // have a comparable value — otherwise EPS would be NaN
-                     // and the area chart would collapse.
-                     // The trend series is global; when a function is filtered
-                     // show a flat line at the function-scoped EPS instead.
-                     const points = isFunctionFiltered ? [] : [...perceptionScoreTrend];
-                     const ps = previousPeriodMetrics?.sentimentScore;
-                     const pv = previousPeriodMetrics?.visibilityScore;
-                     const pr = previousPeriodMetrics?.relevanceScore;
-                     if (
-                       !isFunctionFiltered &&
-                       points.length > 0 &&
-                       typeof ps === 'number' &&
-                       typeof pv === 'number' &&
-                       typeof pr === 'number'
-                     ) {
-                       const prevEPS = Math.round((ps * 0.5) + (pv * 0.3) + (pr * 0.2));
-                       points.unshift({ date: 'Prev', score: prevEPS, fullDate: '', responseCount: 0, promptCount: 0, sentiment: ps, visibility: pv, relevance: pr });
-                     }
-                     return points.length > 1 ? points : [
-                       { date: 'Start', score: scorecardMetrics.perceptionScore, fullDate: '', responseCount: responses.length },
-                       { date: 'Today', score: scorecardMetrics.perceptionScore, fullDate: '', responseCount: responses.length }
-                     ];
-                   })()}
-                   width={undefined}
-                   height={60}
-                   margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
+                   data={epsChartData}
+                   margin={{ top: 8, right: 6, left: 0, bottom: 0 }}
                  >
                 <defs>
                   <linearGradient id="colorPerceptionBg" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#0DBCBA" stopOpacity={0.18}/>
-                    <stop offset="100%" stopColor="#0DBCBA" stopOpacity={0.04}/>
+                    <stop offset="0%" stopColor="#0DBCBA" stopOpacity={0.32}/>
+                    <stop offset="55%" stopColor="#0DBCBA" stopOpacity={0.10}/>
+                    <stop offset="100%" stopColor="#0DBCBA" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                 <Area 
-                   type="monotone" 
-                   dataKey="score" 
-                   stroke="#0DBCBA" 
-                   strokeWidth={3} 
-                   fill="url(#colorPerceptionBg)" 
-                   dot={false}
-                   isAnimationActive={false} 
+                {/* Pad the domain so the curve floats with fill beneath it
+                    instead of hugging the baseline as a thin sliver. */}
+                <YAxis
+                  hide
+                  domain={[
+                    (dataMin: number) => Math.max(0, Math.floor(dataMin) - 6),
+                    (dataMax: number) => Math.min(100, Math.ceil(dataMax) + 4),
+                  ]}
+                />
+                 <Area
+                   type="natural"
+                   dataKey="score"
+                   stroke="#0DBCBA"
+                   strokeWidth={2.5}
+                   fill="url(#colorPerceptionBg)"
+                   dot={(props: any) => {
+                     const { cx, cy, index } = props;
+                     const isLast = index === epsChartData.length - 1;
+                     return (
+                       <circle
+                         key={`eps-dot-${index}`}
+                         cx={cx}
+                         cy={cy}
+                         r={isLast ? 4 : 0}
+                         fill="#0DBCBA"
+                         stroke="#ffffff"
+                         strokeWidth={isLast ? 2 : 0}
+                       />
+                     );
+                   }}
+                   activeDot={{ r: 4, fill: '#0DBCBA', stroke: '#ffffff', strokeWidth: 2 }}
+                   isAnimationActive={true}
+                   animationDuration={900}
                  />
                  </AreaChart>
                </ChartContainer>
@@ -1400,19 +1420,21 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 </div>
               </div>
             ) : (() => {
-              // No per-function previous-period baseline exists, so deltas are
-              // suppressed while a function is filtered.
-              const prevMetrics = isFunctionFiltered ? null : previousPeriodMetrics;
-              // Each delta is only meaningful when both sides exist. Previous
-              // values are optional (undefined when the MV hasn't surfaced data
-              // for the previous month yet) — don't coerce missing values to 0.
-              const hasPrevSentiment = typeof prevMetrics?.sentimentScore === 'number';
-              const hasPrevVisibility = typeof prevMetrics?.visibilityScore === 'number';
-              const hasPrevRelevance = typeof prevMetrics?.relevanceScore === 'number';
+              // Breakdown deltas share the EPS sparkline's source: the previous
+              // point of the active per-month trend. This keeps all three
+              // components consistent with each other and with the headline EPS
+              // delta, and makes them work under the function filter too —
+              // unlike the old path, which sourced each component differently
+              // (sentiment/relevance from MVs that may lack a prior month,
+              // visibility recomputed) so only some ever resolved.
+              const prevPoint = activeEpsTrend.length >= 2 ? activeEpsTrend[activeEpsTrend.length - 2] : null;
+              const hasPrevSentiment = !!prevPoint;
+              const hasPrevVisibility = !!prevPoint;
+              const hasPrevRelevance = !!prevPoint;
 
-              const sentimentChange = hasPrevSentiment ? scorecardMetrics.sentimentScore - (prevMetrics!.sentimentScore as number) : 0;
-              const visibilityChange = hasPrevVisibility ? scorecardMetrics.visibilityScore - (prevMetrics!.visibilityScore as number) : 0;
-              const relevanceChange = hasPrevRelevance ? scorecardMetrics.relevanceScore - (prevMetrics!.relevanceScore as number) : 0;
+              const sentimentChange = prevPoint ? scorecardMetrics.sentimentScore - prevPoint.sentiment : 0;
+              const visibilityChange = prevPoint ? scorecardMetrics.visibilityScore - prevPoint.visibility : 0;
+              const relevanceChange = prevPoint ? scorecardMetrics.relevanceScore - prevPoint.relevance : 0;
 
               const currentSentiment = scorecardMetrics.sentimentScore;
               const currentVisibility = scorecardMetrics.visibilityScore;

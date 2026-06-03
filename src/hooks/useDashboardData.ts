@@ -471,19 +471,28 @@ export const useDashboardData = () => {
       // Fetch sentiment and relevance metrics from materialized views
       // Get the most recent month with data (not just current month)
       // This handles cases where data is from previous months
+      // NOTE: the rows are already scoped to one company and grouped per
+      // (month, prompt_type, category, theme, industry, job_function), so the
+      // per-company count is bounded (low thousands even for heavy accounts).
+      // A small LIMIT here is a silent bug: ordering by month desc means the
+      // cap drops the OLDEST months first, so any month whose rows alone exceed
+      // the cap (relevance can have 200+ rows in a single month) leaves the
+      // per-month maps with only the current month — and every prior-month
+      // delta collapses to "no data". Fetch the company's full set instead.
+      const MV_ROW_CAP = 10000;
       const [sentimentResult, relevanceResult] = await Promise.all([
         supabase
           .from('company_sentiment_scores_mv')
           .select('*')
           .eq('company_id', requestedCompanyId)
           .order('response_month', { ascending: false })
-          .limit(100), // Get all months, limit to prevent huge queries
+          .limit(MV_ROW_CAP),
         supabase
           .from('company_relevance_scores_mv')
           .select('*')
           .eq('company_id', requestedCompanyId)
           .order('response_month', { ascending: false })
-          .limit(100) // Get all months, limit to prevent huge queries
+          .limit(MV_ROW_CAP)
       ]);
 
       // Drop the result if the user already moved on to a different company.
@@ -2012,6 +2021,60 @@ export const useDashboardData = () => {
     return metricsResult;
   }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companySentimentByMonth, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations]);
 
+  // Per-month EPS trend powering the Overview headline sparkline. One point per
+  // available month (oldest → selected period), each computed with the SAME
+  // 50/30/20 weighting as the headline metric so the latest point equals the
+  // big EPS number. Sentiment/relevance come from the monthly MVs (falling back
+  // to the all-months aggregate when a month is missing, mirroring the headline
+  // fallback); visibility is computed from that month's responses.
+  const epsTrend = useMemo(() => {
+    if (availablePeriods.length === 0) return [];
+    const periodsAsc = [...availablePeriods].sort(
+      (a, b) => a.startDate.getTime() - b.startDate.getTime()
+    );
+    const sentimentAgg = companySentimentMetrics?.sentiment_ratio;
+    const relevanceAgg = companyRelevanceMetrics?.relevance_score;
+
+    const full = periodsAsc.map((p) => {
+      const monthResponses = responses.filter((r) => {
+        const d = new Date(r.tested_at);
+        return d >= p.startDate && d <= p.endDate;
+      });
+      const mentioned = monthResponses.filter((r) => r.company_mentioned === true).length;
+      const visibility = monthResponses.length > 0
+        ? Math.round((mentioned / monthResponses.length) * 100)
+        : 0;
+
+      const sRatio = companySentimentByMonth[p.key] ?? sentimentAgg ?? 0;
+      const sentiment = Math.round(Math.max(0, Math.min(100, sRatio * 100)));
+
+      const rVal = companyRelevanceByMonth[p.key] ?? relevanceAgg ?? 0;
+      const relevance = Math.round(rVal);
+
+      const score = Math.round(sentiment * 0.5 + visibility * 0.3 + relevance * 0.2);
+      return {
+        key: p.key,
+        date: p.label,
+        score,
+        sentiment,
+        visibility,
+        relevance,
+        responseCount: monthResponses.length,
+      };
+    });
+
+    // Trim to the selected period so the line ends on the month whose EPS the
+    // card headline is showing (default selection is the latest month).
+    const selIdx = effectivePeriod ? full.findIndex((d) => d.key === effectivePeriod.key) : full.length - 1;
+    return selIdx >= 0 ? full.slice(0, selIdx + 1) : full;
+  }, [availablePeriods, responses, companySentimentByMonth, companyRelevanceByMonth, companySentimentMetrics, companyRelevanceMetrics, effectivePeriod]);
+
+  // Period-over-period EPS delta — last two points of the trimmed trend.
+  const epsChange = useMemo<number | null>(() => {
+    if (epsTrend.length < 2) return null;
+    return epsTrend[epsTrend.length - 1].score - epsTrend[epsTrend.length - 2].score;
+  }, [epsTrend]);
+
   // Per-job-function scorecard metrics, so the Overview tab can rescope EPS /
   // Breakdown when a function is selected. Sentiment & relevance come from the
   // MV rows (which now carry job_function_context); visibility is the
@@ -2075,6 +2138,96 @@ export const useDashboardData = () => {
 
     return result;
   }, [sentimentMvRows, relevanceMvRows, periodFilteredResponses]);
+
+  // Per-job-function monthly EPS trend — same 50/30/20 formula as
+  // metricsByJobFunction, resolved one month at a time, so the headline
+  // sparkline + delta work while a function filter is active. Only months
+  // where the function actually has responses are included; when a month is
+  // missing sentiment/relevance from the MVs we fall back to that function's
+  // all-months aggregate so the line never dips to an artificial zero. The
+  // selected-period point is aligned to metricsByJobFunction so the endpoint
+  // equals the big EPS number on the card.
+  const epsTrendByJobFunction = useMemo<Record<string, Array<{ key: string; date: string; score: number; sentiment: number; visibility: number; relevance: number; responseCount: number }>>>(() => {
+    if (availablePeriods.length === 0) return {};
+    const periodsAsc = [...availablePeriods].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+
+    const fns = new Set<string>();
+    sentimentMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    relevanceMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    responses.forEach(r => { const f = r.confirmed_prompts?.job_function_context?.trim(); if (f) fns.add(f); });
+
+    // Pre-bucket MV rows by "fn YYYY-MM" so each (fn, month) lookup is O(1).
+    const sentBucket = new Map<string, { pos: number; tot: number }>();
+    sentimentMvRows.forEach(r => {
+      if (!r.job_function_context || !r.response_month) return;
+      const k = `${r.job_function_context} ${r.response_month.slice(0, 7)}`;
+      const b = sentBucket.get(k) || { pos: 0, tot: 0 };
+      b.pos += r.positive_themes || 0; b.tot += r.total_themes || 0;
+      sentBucket.set(k, b);
+    });
+    const relBucket = new Map<string, { w: number; wt: number }>();
+    relevanceMvRows.forEach(r => {
+      if (!r.job_function_context || !r.response_month) return;
+      const k = `${r.job_function_context} ${r.response_month.slice(0, 7)}`;
+      const b = relBucket.get(k) || { w: 0, wt: 0 };
+      b.w += (r.relevance_score || 0) * (r.valid_citations || 0); b.wt += r.valid_citations || 0;
+      relBucket.set(k, b);
+    });
+
+    const result: Record<string, any[]> = {};
+    fns.forEach(fn => {
+      const agg = metricsByJobFunction[fn]; // all-months aggregate (fallback + endpoint match)
+      const series: any[] = [];
+      periodsAsc.forEach(p => {
+        const monthResponses = responses.filter(r => {
+          if (r.confirmed_prompts?.job_function_context?.trim() !== fn) return false;
+          const d = new Date(r.tested_at);
+          return d >= p.startDate && d <= p.endDate;
+        });
+        if (monthResponses.length === 0) return; // not measured this month
+        const mentioned = monthResponses.filter(r => r.company_mentioned === true).length;
+        const visibility = Math.round((mentioned / monthResponses.length) * 100);
+
+        const sb = sentBucket.get(`${fn} ${p.key}`);
+        const sentiment = sb && sb.tot > 0
+          ? Math.round(Math.max(0, Math.min(100, (sb.pos / sb.tot) * 100)))
+          : (agg?.sentimentScore ?? 0);
+
+        const rb = relBucket.get(`${fn} ${p.key}`);
+        const relevance = rb && rb.wt > 0 ? Math.round(rb.w / rb.wt) : (agg?.relevanceScore ?? 0);
+
+        const score = Math.round(sentiment * 0.5 + visibility * 0.3 + relevance * 0.2);
+        series.push({ key: p.key, date: p.label, score, sentiment, visibility, relevance, responseCount: monthResponses.length });
+      });
+
+      // Trim to the selected period; pin the endpoint to the headline metric.
+      const selIdx = effectivePeriod ? series.findIndex(d => d.key === effectivePeriod.key) : series.length - 1;
+      const trimmed = selIdx >= 0 ? series.slice(0, selIdx + 1) : series;
+      if (trimmed.length > 0 && agg && effectivePeriod && trimmed[trimmed.length - 1].key === effectivePeriod.key) {
+        const last = trimmed[trimmed.length - 1];
+        trimmed[trimmed.length - 1] = {
+          ...last,
+          score: agg.perceptionScore,
+          sentiment: agg.sentimentScore,
+          visibility: agg.visibilityScore,
+          relevance: agg.relevanceScore,
+        };
+      }
+      result[fn] = trimmed;
+    });
+    return result;
+  }, [availablePeriods, sentimentMvRows, relevanceMvRows, responses, effectivePeriod, metricsByJobFunction]);
+
+  // Per-function period-over-period EPS delta (last two trend points).
+  const epsChangeByJobFunction = useMemo<Record<string, number | null>>(() => {
+    const result: Record<string, number | null> = {};
+    Object.entries(epsTrendByJobFunction).forEach(([fn, series]) => {
+      result[fn] = series.length >= 2
+        ? series[series.length - 1].score - series[series.length - 2].score
+        : null;
+    });
+    return result;
+  }, [epsTrendByJobFunction]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
     // Group by date via Map (O(1) lookup) instead of reduce+find (O(N²)).
@@ -2385,6 +2538,10 @@ export const useDashboardData = () => {
     companyName,
     metrics,
     metricsByJobFunction, // Per-job-function scorecard metrics for the Overview filter
+    epsTrend, // Per-month EPS series for the Overview headline sparkline
+    epsChange, // Period-over-period EPS delta
+    epsTrendByJobFunction, // Per-function per-month EPS series (for the function filter)
+    epsChangeByJobFunction, // Per-function period-over-period EPS delta
     sentimentTrend,
     topCitations,
     promptsData,
