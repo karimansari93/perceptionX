@@ -57,6 +57,12 @@ export const useDashboardData = () => {
   const [recencyDataLoading, setRecencyDataLoading] = useState(false);
   const [aiThemes, setAiThemes] = useState<any[]>([]);
   const [aiThemesLoading, setAiThemesLoading] = useState(false);
+  // Pre-aggregated theme data from materialized views (replaces the eager
+  // ~24-page ai_themes pull on the dashboard's critical path).
+  // - attributeThemes: per attribute x month x job_function rollup (company_attribute_themes_mv)
+  // - responseSentimentRows: per-response positive/total themes + ratio (company_response_sentiment_mv)
+  const [attributeThemes, setAttributeThemes] = useState<any[]>([]);
+  const [responseSentimentRows, setResponseSentimentRows] = useState<any[]>([]);
   const [activePrompts, setActivePrompts] = useState<any[]>([]);
   const [isOnline, setIsOnline] = useState(networkMonitor.online);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -100,7 +106,7 @@ export const useDashboardData = () => {
   const previousResponseIdsRef = useRef<string>(''); // Track previous response IDs to detect changes
   // Cache company dashboard data for instant restore when switching back (stale-while-revalidate)
   const COMPANY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-  const companyDataCacheRef = useRef<Record<string, { responses: PromptResponse[]; lastUpdated?: Date; timestamp: number }>>({});
+  const companyDataCacheRef = useRef<Record<string, { responses: PromptResponse[]; aiThemes?: any[]; attributeThemes?: any[]; responseSentimentRows?: any[]; lastUpdated?: Date; timestamp: number }>>({});
   // Tracks which company the user is currently looking at. Each fetch captures
   // the id at call time and compares against this ref before committing state,
   // so a slow response for a previously-selected company can't overwrite the
@@ -385,6 +391,10 @@ export const useDashboardData = () => {
       if (allResponses.length > 0) {
         companyDataCacheRef.current[requestedCompanyId] = {
           responses: allResponses,
+          // Preserve any AI themes already cached for this company so a
+          // background responses refetch doesn't wipe them (themes are the
+          // slowest fetch — we don't want to drop a usable cached copy).
+          aiThemes: companyDataCacheRef.current[requestedCompanyId]?.aiThemes,
           lastUpdated: lastUpdatedDate,
           timestamp: Date.now()
         };
@@ -488,19 +498,28 @@ export const useDashboardData = () => {
       // Fetch sentiment and relevance metrics from materialized views
       // Get the most recent month with data (not just current month)
       // This handles cases where data is from previous months
+      // NOTE: the rows are already scoped to one company and grouped per
+      // (month, prompt_type, category, theme, industry, job_function), so the
+      // per-company count is bounded (low thousands even for heavy accounts).
+      // A small LIMIT here is a silent bug: ordering by month desc means the
+      // cap drops the OLDEST months first, so any month whose rows alone exceed
+      // the cap (relevance can have 200+ rows in a single month) leaves the
+      // per-month maps with only the current month — and every prior-month
+      // delta collapses to "no data". Fetch the company's full set instead.
+      const MV_ROW_CAP = 10000;
       const [sentimentResult, relevanceResult] = await Promise.all([
         supabase
           .from('company_sentiment_scores_mv')
           .select('*')
           .eq('company_id', requestedCompanyId)
           .order('response_month', { ascending: false })
-          .limit(100), // Get all months, limit to prevent huge queries
+          .limit(MV_ROW_CAP),
         supabase
           .from('company_relevance_scores_mv')
           .select('*')
           .eq('company_id', requestedCompanyId)
           .order('response_month', { ascending: false })
-          .limit(100) // Get all months, limit to prevent huge queries
+          .limit(MV_ROW_CAP)
       ]);
 
       // Drop the result if the user already moved on to a different company.
@@ -909,59 +928,122 @@ export const useDashboardData = () => {
     }
   }, [user, currentCompany?.id]);
 
+  // Pre-aggregated attribute scores from company_attribute_themes_mv. A few
+  // hundred rows per company (16 attributes x months x job functions) instead
+  // of the tens of thousands of raw theme rows the dashboard used to pull.
+  const fetchAttributeThemes = useCallback(async () => {
+    if (!user || !currentCompany?.id) {
+      setAttributeThemes([]);
+      return;
+    }
+    const requestedCompanyId = currentCompany.id;
+    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    try {
+      const PAGE_SIZE = 1000;
+      let all: any[] = [];
+      let page = 0;
+      let chunk: any[] | null;
+      do {
+        const from = page * PAGE_SIZE;
+        const result = await retrySupabaseQuery(() =>
+          supabase
+            .from('company_attribute_themes_mv')
+            .select('attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count')
+            .eq('company_id', requestedCompanyId)
+            .range(from, from + PAGE_SIZE - 1)
+        ) as { data: any[] | null; error: any };
+        if (isStale()) return;
+        if (result.error) {
+          console.error('Error fetching attribute themes:', result.error);
+          return;
+        }
+        chunk = result.data ?? [];
+        all = all.concat(chunk);
+        page += 1;
+      } while (chunk && chunk.length === PAGE_SIZE);
+      if (isStale()) return;
+      setAttributeThemes(all);
+    } catch (err: any) {
+      if (!isStale()) console.error('Error in fetchAttributeThemes:', err?.message);
+    }
+  }, [user, currentCompany?.id]);
+
+  // Per-response sentiment ratios from company_response_sentiment_mv. Feeds the
+  // sentiment cache (trend chart, trend arrows, per-prompt sentiment) without
+  // shipping raw theme rows.
+  const fetchResponseSentiment = useCallback(async () => {
+    if (!user || !currentCompany?.id) {
+      setResponseSentimentRows([]);
+      return;
+    }
+    const requestedCompanyId = currentCompany.id;
+    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    try {
+      const PAGE_SIZE = 1000;
+      let all: any[] = [];
+      let page = 0;
+      let chunk: any[] | null;
+      do {
+        const from = page * PAGE_SIZE;
+        const result = await retrySupabaseQuery(() =>
+          supabase
+            .from('company_response_sentiment_mv')
+            .select('response_id, total_themes, positive_themes, sentiment_ratio')
+            .eq('company_id', requestedCompanyId)
+            .range(from, from + PAGE_SIZE - 1)
+        ) as { data: any[] | null; error: any };
+        if (isStale()) return;
+        if (result.error) {
+          console.error('Error fetching response sentiment:', result.error);
+          return;
+        }
+        chunk = result.data ?? [];
+        all = all.concat(chunk);
+        page += 1;
+        if (chunk.length === PAGE_SIZE) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      } while (chunk && chunk.length === PAGE_SIZE);
+      if (isStale()) return;
+      setResponseSentimentRows(all);
+    } catch (err: any) {
+      if (!isStale()) console.error('Error in fetchResponseSentiment:', err?.message);
+    }
+  }, [user, currentCompany?.id]);
+
   // Memoized cache of sentiment calculations per response ID
   // OPTIMIZED: Only recalculates when themes change, not on every render
   // This prevents expensive calculations on every render
   const [sentimentCacheState, setSentimentCacheState] = useState<Map<string, { sentiment_score: number; sentiment_label: string }>>(new Map());
   
-  // Calculate sentiment cache only when themes change (debounced)
+  // Build the per-response sentiment cache from the pre-aggregated MV
+  // (company_response_sentiment_mv) instead of scanning raw ai_themes. The MV
+  // already gives positive/total themes and the ratio per response; we apply
+  // the same 0-1 ratio and label thresholds the frontend used before.
   useEffect(() => {
-    if (aiThemes.length === 0 && responses.length === 0) {
+    if (responseSentimentRows.length === 0) {
       setSentimentCacheState(new Map());
       return;
     }
-    
-    const cache = new Map<string, { sentiment_score: number; sentiment_label: string }>();
-    
-    // Create a Set of response IDs from the current company's responses
-    // This ensures we only count themes from responses belonging to the current company
+
+    // Scope to the current company's loaded responses when available. The MV is
+    // already company-scoped by the fetch, so before responses load we keep all
+    // rows rather than dropping them.
     const companyResponseIds = new Set(responses.map(r => r.id));
-    
-    // Filter themes to only include those from the current company's responses
-    const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
-    
-    // Group themes by response_id for efficient processing
-    const themesByResponseId = new Map<string, typeof aiThemes>();
-    companyThemes.forEach(theme => {
-      if (!themesByResponseId.has(theme.response_id)) {
-        themesByResponseId.set(theme.response_id, []);
-      }
-      themesByResponseId.get(theme.response_id)!.push(theme);
+    const scopeToResponses = companyResponseIds.size > 0;
+
+    const cache = new Map<string, { sentiment_score: number; sentiment_label: string }>();
+    responseSentimentRows.forEach(row => {
+      if (scopeToResponses && !companyResponseIds.has(row.response_id)) return;
+      const ratio = typeof row.sentiment_ratio === 'number'
+        ? row.sentiment_ratio
+        : Number(row.sentiment_ratio) || 0;
+      const sentimentLabel = ratio > 0.6 ? 'positive' : ratio < 0.4 ? 'negative' : 'neutral';
+      cache.set(row.response_id, { sentiment_score: ratio, sentiment_label: sentimentLabel });
     });
-    
-    // Calculate sentiment for each response ID once
-    themesByResponseId.forEach((responseThemes, responseId) => {
-      const totalThemes = responseThemes.length;
-      
-      if (totalThemes === 0) {
-        cache.set(responseId, { sentiment_score: 0, sentiment_label: 'neutral' });
-        return;
-      }
-      
-      const positiveThemes = responseThemes.filter(theme => theme.sentiment === 'positive').length;
-      
-      // Sentiment score: positive themes / total themes (0-1 scale)
-      const sentimentRatio = positiveThemes / totalThemes;
-      const sentimentLabel = sentimentRatio > 0.6 ? 'positive' : sentimentRatio < 0.4 ? 'negative' : 'neutral';
-      
-      cache.set(responseId, { 
-        sentiment_score: sentimentRatio, 
-        sentiment_label: sentimentLabel 
-      });
-    });
-    
+
     setSentimentCacheState(cache);
-  }, [aiThemes, responses]);
+  }, [responseSentimentRows, responses]);
   
   // Use state-based cache instead of useMemo (prevents recalculation on every render)
   const sentimentCache = sentimentCacheState;
@@ -1234,6 +1316,9 @@ export const useDashboardData = () => {
       if (previousCompanyId && responses.length > 0) {
         companyDataCacheRef.current[previousCompanyId] = {
           responses,
+          aiThemes, // cache lazily-loaded raw themes (Thematic tab) if present
+          attributeThemes, // pre-aggregated attribute scores (MV-backed)
+          responseSentimentRows, // per-response sentiment ratios (MV-backed)
           lastUpdated: lastUpdated,
           timestamp: Date.now()
         };
@@ -1246,6 +1331,8 @@ export const useDashboardData = () => {
       setResponses([]);
       setResponseTexts({});
       setAiThemes([]);
+      setAttributeThemes([]);
+      setResponseSentimentRows([]);
       setSearchResults([]);
       setSearchTermsData([]);
       setTalentXProData([]);
@@ -1264,7 +1351,7 @@ export const useDashboardData = () => {
       // Reset the fetched key so new data will be loaded
       fetchedCompanyUserKeyRef.current = null;
     }
-  }, [currentCompany?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally omit responses/lastUpdated to avoid saving on every response change
+  }, [currentCompany?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally omit responses/aiThemes/lastUpdated to avoid saving on every data change
   
   // Initial data fetch - only run when user or company ID actually changes, or when shouldRefetch is true
   // CRITICAL: Prevent refetch when returning to tab by tracking what we've already loaded
@@ -1368,14 +1455,30 @@ export const useDashboardData = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [responses.length]); // Only depend on responses length - fetch immediately
 
-  // Fetch AI themes eagerly when the company changes. The query is bounded to
-  // the last 180 days (see fetchAIThemes) so it stays under the Postgres
-  // statement timeout without deferring — Overview's AttributesSummaryCard
-  // renders attribute mentions directly from these themes.
+  // On company change, load the pre-aggregated theme MVs (attribute scores +
+  // per-response sentiment) instead of the old eager raw-themes pull. These are
+  // small/fast and serve everything the Overview renders. Raw ai_themes are now
+  // fetched lazily — only when the Thematic tab mounts (see fetchAIThemes,
+  // wired through ThematicAnalysisTab).
   useEffect(() => {
     if (user && currentCompany?.id) {
-      fetchAIThemes();
+      // Restore from the per-company cache on quick switch-back.
+      const cached = companyDataCacheRef.current[currentCompany.id];
+      if (
+        cached &&
+        (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL &&
+        cached.attributeThemes &&
+        cached.responseSentimentRows
+      ) {
+        setAttributeThemes(cached.attributeThemes);
+        setResponseSentimentRows(cached.responseSentimentRows);
+        return;
+      }
+      fetchAttributeThemes();
+      fetchResponseSentiment();
     } else {
+      setAttributeThemes([]);
+      setResponseSentimentRows([]);
       setAiThemes([]);
       setAiThemesLoading(false);
     }
@@ -1909,7 +2012,7 @@ export const useDashboardData = () => {
         let currentSentimentAvg: number;
         let previousSentimentAvg: number;
 
-        if (aiThemes.length > 0) {
+        if (sentimentCacheState.size > 0) {
           const currentAISentiments = currentResponses.map(r => calculateAIBasedSentiment(r.id));
           const previousAISentiments = previousResponses.map(r => calculateAIBasedSentiment(r.id));
           
@@ -2023,6 +2126,60 @@ export const useDashboardData = () => {
     return metricsResult;
   }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companySentimentByMonth, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations]);
 
+  // Per-month EPS trend powering the Overview headline sparkline. One point per
+  // available month (oldest → selected period), each computed with the SAME
+  // 50/30/20 weighting as the headline metric so the latest point equals the
+  // big EPS number. Sentiment/relevance come from the monthly MVs (falling back
+  // to the all-months aggregate when a month is missing, mirroring the headline
+  // fallback); visibility is computed from that month's responses.
+  const epsTrend = useMemo(() => {
+    if (availablePeriods.length === 0) return [];
+    const periodsAsc = [...availablePeriods].sort(
+      (a, b) => a.startDate.getTime() - b.startDate.getTime()
+    );
+    const sentimentAgg = companySentimentMetrics?.sentiment_ratio;
+    const relevanceAgg = companyRelevanceMetrics?.relevance_score;
+
+    const full = periodsAsc.map((p) => {
+      const monthResponses = responses.filter((r) => {
+        const d = new Date(r.tested_at);
+        return d >= p.startDate && d <= p.endDate;
+      });
+      const mentioned = monthResponses.filter((r) => r.company_mentioned === true).length;
+      const visibility = monthResponses.length > 0
+        ? Math.round((mentioned / monthResponses.length) * 100)
+        : 0;
+
+      const sRatio = companySentimentByMonth[p.key] ?? sentimentAgg ?? 0;
+      const sentiment = Math.round(Math.max(0, Math.min(100, sRatio * 100)));
+
+      const rVal = companyRelevanceByMonth[p.key] ?? relevanceAgg ?? 0;
+      const relevance = Math.round(rVal);
+
+      const score = Math.round(sentiment * 0.5 + visibility * 0.3 + relevance * 0.2);
+      return {
+        key: p.key,
+        date: p.label,
+        score,
+        sentiment,
+        visibility,
+        relevance,
+        responseCount: monthResponses.length,
+      };
+    });
+
+    // Trim to the selected period so the line ends on the month whose EPS the
+    // card headline is showing (default selection is the latest month).
+    const selIdx = effectivePeriod ? full.findIndex((d) => d.key === effectivePeriod.key) : full.length - 1;
+    return selIdx >= 0 ? full.slice(0, selIdx + 1) : full;
+  }, [availablePeriods, responses, companySentimentByMonth, companyRelevanceByMonth, companySentimentMetrics, companyRelevanceMetrics, effectivePeriod]);
+
+  // Period-over-period EPS delta — last two points of the trimmed trend.
+  const epsChange = useMemo<number | null>(() => {
+    if (epsTrend.length < 2) return null;
+    return epsTrend[epsTrend.length - 1].score - epsTrend[epsTrend.length - 2].score;
+  }, [epsTrend]);
+
   // Per-job-function scorecard metrics, so the Overview tab can rescope EPS /
   // Breakdown when a function is selected. Sentiment & relevance come from the
   // MV rows (which now carry job_function_context); visibility is the
@@ -2086,6 +2243,96 @@ export const useDashboardData = () => {
 
     return result;
   }, [sentimentMvRows, relevanceMvRows, periodFilteredResponses]);
+
+  // Per-job-function monthly EPS trend — same 50/30/20 formula as
+  // metricsByJobFunction, resolved one month at a time, so the headline
+  // sparkline + delta work while a function filter is active. Only months
+  // where the function actually has responses are included; when a month is
+  // missing sentiment/relevance from the MVs we fall back to that function's
+  // all-months aggregate so the line never dips to an artificial zero. The
+  // selected-period point is aligned to metricsByJobFunction so the endpoint
+  // equals the big EPS number on the card.
+  const epsTrendByJobFunction = useMemo<Record<string, Array<{ key: string; date: string; score: number; sentiment: number; visibility: number; relevance: number; responseCount: number }>>>(() => {
+    if (availablePeriods.length === 0) return {};
+    const periodsAsc = [...availablePeriods].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+
+    const fns = new Set<string>();
+    sentimentMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    relevanceMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    responses.forEach(r => { const f = r.confirmed_prompts?.job_function_context?.trim(); if (f) fns.add(f); });
+
+    // Pre-bucket MV rows by "fn YYYY-MM" so each (fn, month) lookup is O(1).
+    const sentBucket = new Map<string, { pos: number; tot: number }>();
+    sentimentMvRows.forEach(r => {
+      if (!r.job_function_context || !r.response_month) return;
+      const k = `${r.job_function_context} ${r.response_month.slice(0, 7)}`;
+      const b = sentBucket.get(k) || { pos: 0, tot: 0 };
+      b.pos += r.positive_themes || 0; b.tot += r.total_themes || 0;
+      sentBucket.set(k, b);
+    });
+    const relBucket = new Map<string, { w: number; wt: number }>();
+    relevanceMvRows.forEach(r => {
+      if (!r.job_function_context || !r.response_month) return;
+      const k = `${r.job_function_context} ${r.response_month.slice(0, 7)}`;
+      const b = relBucket.get(k) || { w: 0, wt: 0 };
+      b.w += (r.relevance_score || 0) * (r.valid_citations || 0); b.wt += r.valid_citations || 0;
+      relBucket.set(k, b);
+    });
+
+    const result: Record<string, any[]> = {};
+    fns.forEach(fn => {
+      const agg = metricsByJobFunction[fn]; // all-months aggregate (fallback + endpoint match)
+      const series: any[] = [];
+      periodsAsc.forEach(p => {
+        const monthResponses = responses.filter(r => {
+          if (r.confirmed_prompts?.job_function_context?.trim() !== fn) return false;
+          const d = new Date(r.tested_at);
+          return d >= p.startDate && d <= p.endDate;
+        });
+        if (monthResponses.length === 0) return; // not measured this month
+        const mentioned = monthResponses.filter(r => r.company_mentioned === true).length;
+        const visibility = Math.round((mentioned / monthResponses.length) * 100);
+
+        const sb = sentBucket.get(`${fn} ${p.key}`);
+        const sentiment = sb && sb.tot > 0
+          ? Math.round(Math.max(0, Math.min(100, (sb.pos / sb.tot) * 100)))
+          : (agg?.sentimentScore ?? 0);
+
+        const rb = relBucket.get(`${fn} ${p.key}`);
+        const relevance = rb && rb.wt > 0 ? Math.round(rb.w / rb.wt) : (agg?.relevanceScore ?? 0);
+
+        const score = Math.round(sentiment * 0.5 + visibility * 0.3 + relevance * 0.2);
+        series.push({ key: p.key, date: p.label, score, sentiment, visibility, relevance, responseCount: monthResponses.length });
+      });
+
+      // Trim to the selected period; pin the endpoint to the headline metric.
+      const selIdx = effectivePeriod ? series.findIndex(d => d.key === effectivePeriod.key) : series.length - 1;
+      const trimmed = selIdx >= 0 ? series.slice(0, selIdx + 1) : series;
+      if (trimmed.length > 0 && agg && effectivePeriod && trimmed[trimmed.length - 1].key === effectivePeriod.key) {
+        const last = trimmed[trimmed.length - 1];
+        trimmed[trimmed.length - 1] = {
+          ...last,
+          score: agg.perceptionScore,
+          sentiment: agg.sentimentScore,
+          visibility: agg.visibilityScore,
+          relevance: agg.relevanceScore,
+        };
+      }
+      result[fn] = trimmed;
+    });
+    return result;
+  }, [availablePeriods, sentimentMvRows, relevanceMvRows, responses, effectivePeriod, metricsByJobFunction]);
+
+  // Per-function period-over-period EPS delta (last two trend points).
+  const epsChangeByJobFunction = useMemo<Record<string, number | null>>(() => {
+    const result: Record<string, number | null> = {};
+    Object.entries(epsTrendByJobFunction).forEach(([fn, series]) => {
+      result[fn] = series.length >= 2
+        ? series[series.length - 1].score - series[series.length - 2].score
+        : null;
+    });
+    return result;
+  }, [epsTrendByJobFunction]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
     // Group by date via Map (O(1) lookup) instead of reduce+find (O(N²)).
@@ -2396,6 +2643,10 @@ export const useDashboardData = () => {
     companyName,
     metrics,
     metricsByJobFunction, // Per-job-function scorecard metrics for the Overview filter
+    epsTrend, // Per-month EPS series for the Overview headline sparkline
+    epsChange, // Period-over-period EPS delta
+    epsTrendByJobFunction, // Per-function per-month EPS series (for the function filter)
+    epsChangeByJobFunction, // Per-function period-over-period EPS delta
     sentimentTrend,
     topCitations,
     promptsData,
@@ -2414,8 +2665,10 @@ export const useDashboardData = () => {
     searchResultsLoading,
     searchTermsData,
     fetchSearchResults,
-    aiThemes, // Export AI themes for use in components
-    fetchAIThemes, // Export function to refresh AI themes
+    aiThemes, // Raw AI themes — now fetched lazily (Thematic tab only)
+    fetchAIThemes, // Lazy raw-themes fetch (called when Thematic tab mounts)
+    attributeThemes, // Pre-aggregated attribute scores (company_attribute_themes_mv)
+    responseSentimentRows, // Per-response sentiment ratios (company_response_sentiment_mv)
     fetchHistoricalResponses, // Fetch responses for a specific time range
     fetchCollectionDates, // Get all collection dates for timeline/comparison
     isOnline, // Network status

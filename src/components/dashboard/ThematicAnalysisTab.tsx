@@ -45,10 +45,22 @@ interface ThematicAnalysisTabProps {
   companyName: string;
   aiThemes: AITheme[];
   aiThemesLoading: boolean;
+  // Pre-aggregated attribute scores (company_attribute_themes_mv). Powers the
+  // attribute rankings instantly; raw ai_themes load in the background only for
+  // the per-attribute drilldown.
+  attributeThemes?: any[];
+  // Lazily loads the raw ai_themes for this company. The dashboard no longer
+  // pulls raw themes eagerly; this tab triggers the fetch when it mounts since
+  // it needs subtheme-level detail the attribute MVs don't carry.
+  fetchAIThemes?: () => Promise<void> | void;
   onRefreshThemes: () => Promise<void>;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   previousPeriodResponses?: PromptResponse[];
+  // Global job-function filter, shared across all dashboard tabs and owned by
+  // the parent Dashboard so a selection persists when switching tabs.
+  selectedJobFunction?: string;
+  onJobFunctionChange?: (value: string) => void;
 }
 
 interface AITheme {
@@ -88,14 +100,26 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
   'overall-candidate-experience': Briefcase
 };
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [] }: ThematicAnalysisTabProps) => {
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = [], fetchAIThemes, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
+  // Lazily pull raw themes the first time this tab mounts (and when the company
+  // changes and it's already open). The Overview no longer fetches them eagerly.
+  useEffect(() => {
+    if (fetchAIThemes && aiThemes.length === 0 && !aiThemesLoading) {
+      fetchAIThemes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyName]);
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   // Modal and filter states - persisted
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
   const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('thematicTab.isModalOpen', false);
   const [selectedPromptType, setSelectedPromptType] = usePersistedState<'all' | 'experience' | 'competitive'>('thematicTab.selectedPromptType', 'experience');
-  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('thematicTab.selectedJobFunctionFilter', 'all');
+  // Controlled by the parent Dashboard so the job-function selection is shared
+  // across all tabs and never resets on tab switch.
+  const selectedJobFunctionFilter = selectedJobFunction;
+  const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
   const [rankingSort, setRankingSort] = usePersistedState<'sentiment' | 'volume' | 'az'>('thematicTab.rankingSort', 'sentiment');
   const [analysisProgress, setAnalysisProgress] = useState({
     current: 0,
@@ -361,102 +385,71 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     return responses.filter(response => responseIds.has(response.id));
   };
 
-  // Group AI themes by TalentX attribute and sort for bar chart
+  // Attribute rankings built from the pre-aggregated MV (company_attribute_themes_mv)
+  // so the tab renders instantly. Scoped to the in-scope responses' (month, job
+  // function) — mirroring the old "themes of these responses" semantics at the
+  // MV grain. Raw ai_themes are only needed for the per-attribute drilldown.
+  // `themes` is left empty here; the drilldown fills subtheme detail from raw.
   const themeData = useMemo(() => {
-    const attributeMap = new Map<string, { 
-      name: string; 
-      count: number; 
-      sentiment: string; 
-      sentimentRatio: number; // Ratio of positive sentiment (0 to 1)
-      positiveCount: number;
-      negativeCount: number;
-      neutralCount: number;
-      themes: string[] 
-    }>();
-    
-    // Track unique responses per attribute for response-based counting
-    const responseAttributeMap = new Map<string, Set<string>>(); // attribute -> response_ids
-    const attributeSentimentMap = new Map<string, Map<string, number>>(); // attribute -> sentiment -> count
-    
-    filteredThemes.forEach(theme => {
-      const key = theme.talentx_attribute_id;
-      
-      // Initialize response tracking for this attribute
-      if (!responseAttributeMap.has(key)) {
-        responseAttributeMap.set(key, new Set());
-        attributeSentimentMap.set(key, new Map([
-          ['positive', 0],
-          ['negative', 0], 
-          ['neutral', 0]
-        ]));
-      }
-      
-      // Track unique responses per attribute
-      responseAttributeMap.get(key)!.add(theme.response_id);
-      
-      // Track sentiment counts per attribute
-      const sentimentMap = attributeSentimentMap.get(key)!;
-      sentimentMap.set(theme.sentiment, (sentimentMap.get(theme.sentiment) || 0) + 1);
-      
-      // Build or update attribute data
-      if (attributeMap.has(key)) {
-        const existing = attributeMap.get(key)!;
-        existing.themes.push(theme.theme_name);
-      } else {
-        attributeMap.set(key, { 
-          name: theme.talentx_attribute_name, 
-          count: 0, // Will be set below
-          sentiment: theme.sentiment,
-          sentimentRatio: 0, // Will be calculated below
-          positiveCount: 0,
-          negativeCount: 0,
-          neutralCount: 0,
-          themes: [theme.theme_name]
-        });
-      }
+    if (!attributeThemes || attributeThemes.length === 0) return [] as any[];
+
+    const scopedResponses = selectedJobFunctionFilter === 'all'
+      ? responses
+      : responses.filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter);
+
+    const monthFn = (jf: any, dateLike: any) => {
+      const d = new Date(dateLike);
+      const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return `${month}|${(jf || '').trim()}`;
+    };
+    const keys = new Set(scopedResponses.map(r => monthFn(r.confirmed_prompts?.job_function_context, r.tested_at)));
+    const rowKey = (row: any) => `${String(row.response_month).slice(0, 7)}|${(row.job_function_context || '').trim()}`;
+    const scope = keys.size > 0;
+
+    const agg: Record<string, { positive: number; negative: number; neutral: number; responses: number }> = {};
+    attributeThemes.forEach(row => {
+      if (scope && !keys.has(rowKey(row))) return;
+      if (!agg[row.attribute_id]) agg[row.attribute_id] = { positive: 0, negative: 0, neutral: 0, responses: 0 };
+      const a = agg[row.attribute_id];
+      a.positive += Number(row.positive_themes) || 0;
+      a.negative += Number(row.negative_themes) || 0;
+      a.neutral += Number(row.neutral_themes) || 0;
+      a.responses += Number(row.response_count) || 0; // each response is in exactly one (month, fn) cell
     });
 
-    // Calculate response-based counts and sentiment ratios
-    responseAttributeMap.forEach((responseIds, attributeId) => {
-      const attribute = attributeMap.get(attributeId);
-      if (attribute) {
-        // Count unique responses (response-based counting)
-        attribute.count = responseIds.size;
-        
-        // Get sentiment counts for this attribute
-        const sentimentMap = attributeSentimentMap.get(attributeId)!;
-        attribute.positiveCount = sentimentMap.get('positive') || 0;
-        attribute.negativeCount = sentimentMap.get('negative') || 0;
-        attribute.neutralCount = sentimentMap.get('neutral') || 0;
-        
-        // Calculate sentiment ratio (positive / total)
-        const total = attribute.positiveCount + attribute.negativeCount + attribute.neutralCount;
-        attribute.sentimentRatio = total > 0 ? attribute.positiveCount / total : 0;
-        
-        // Determine dominant sentiment
-        if (attribute.positiveCount > attribute.negativeCount && attribute.positiveCount > attribute.neutralCount) {
-          attribute.sentiment = 'positive';
-        } else if (attribute.negativeCount > attribute.positiveCount && attribute.negativeCount > attribute.neutralCount) {
-          attribute.sentiment = 'negative';
-        } else {
-          attribute.sentiment = 'neutral';
-        }
-      }
-    });
+    const attrName = (id: string) => TALENTX_ATTRIBUTES.find(x => x.id === id)?.name || id;
 
-    return Array.from(attributeMap.values())
-      .sort((a, b) => b.count - a.count)
-;
-  }, [filteredThemes]);
+    return Object.entries(agg)
+      .map(([id, a]) => {
+        const total = a.positive + a.negative + a.neutral;
+        const sentimentRatio = total > 0 ? a.positive / total : 0;
+        const sentiment = a.positive > a.negative && a.positive > a.neutral
+          ? 'positive'
+          : a.negative > a.positive && a.negative > a.neutral
+            ? 'negative'
+            : 'neutral';
+        return {
+          id,
+          name: attrName(id),
+          count: a.responses,
+          sentiment,
+          sentimentRatio,
+          positiveCount: a.positive,
+          negativeCount: a.negative,
+          neutralCount: a.neutral,
+          themes: [] as string[],
+        };
+      })
+      .filter(a => (a.positiveCount + a.negativeCount + a.neutralCount) > 0)
+      .sort((a, b) => b.count - a.count);
+  }, [attributeThemes, responses, selectedJobFunctionFilter]);
 
   // Process data for bubble chart (attributes as data points, sentiment ratio vs volume)
   const bubbleChartData = useMemo(() => {
     return themeData.map(attribute => {
-      // Find the attribute ID from the first theme that matches this attribute
-      const firstTheme = filteredThemes.find(theme => theme.talentx_attribute_name === attribute.name);
       return {
         attributeName: attribute.name,
-        attributeId: firstTheme?.talentx_attribute_id || 'unknown',
+        attributeId: attribute.id || 'unknown',
         sentiment: attribute.sentiment,
         sentimentRatio: attribute.sentimentRatio,
         positiveCount: attribute.positiveCount,
@@ -466,7 +459,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         themes: attribute.themes
       };
     });
-  }, [themeData, filteredThemes]);
+  }, [themeData]);
 
   const fetchAttributeSummary = async () => {
     if (!selectedAttribute) return;
@@ -765,7 +758,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
       )}
 
       {/* Empty State — only show after loading completes */}
-      {!aiThemesLoading && filteredThemes.length === 0 && filteredResponses.length > 0 && (
+      {!aiThemesLoading && themeData.length === 0 && filteredResponses.length > 0 && (
         <Card>
           <CardContent className="p-6">
             <div className="text-center">
@@ -780,7 +773,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
       )}
 
       {/* Ranking */}
-      {filteredThemes.length > 0 && (
+      {themeData.length > 0 && (
       <>
           <div className="mt-4" data-tour="themes-chart">
             <div className="space-y-1">
@@ -810,8 +803,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 .map((attribute, index) => {
                   const totalThemes = attribute.positiveCount + attribute.negativeCount + attribute.neutralCount;
                   const sentimentScore = totalThemes > 0 ? Math.round((attribute.positiveCount / totalThemes) * 100) : 0;
-                  const attributeTheme = filteredThemes.find(theme => theme.talentx_attribute_name === attribute.name);
-                  const attributeId = attributeTheme?.talentx_attribute_id;
+                  const attributeId = attribute.id;
                   const IconComponent = attributeId ? (ATTRIBUTE_ICONS[attributeId] || Activity) : Activity;
 
                   const barColor = sentimentScore >= 80 ? 'bg-green-400' : sentimentScore >= 60 ? 'bg-yellow-300' : sentimentScore >= 40 ? 'bg-orange-300' : 'bg-red-400';
