@@ -173,6 +173,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     fixExistingPrompts,
     hasDataIssues,
     aiThemes,
+    fetchAIThemes,
+    attributeThemes,
+    responseSentimentRows,
     isOnline,
     connectionError,
     recencyDataError,
@@ -529,6 +532,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             isPro={true}
             searchResults={searchResults}
             aiThemes={aiThemes}
+            attributeThemes={attributeThemes}
+            responseSentimentRows={responseSentimentRows}
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
@@ -594,6 +599,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             isPro={true}
             searchResults={searchResults}
             aiThemes={aiThemes}
+            attributeThemes={attributeThemes}
+            responseSentimentRows={responseSentimentRows}
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
@@ -656,6 +663,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 companyName={companyName}
                 aiThemes={aiThemes}
                 aiThemesLoading={aiThemesLoading}
+                fetchAIThemes={fetchAIThemes}
                 onRefreshThemes={refreshData}
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}

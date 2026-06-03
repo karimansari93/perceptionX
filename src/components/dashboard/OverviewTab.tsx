@@ -59,6 +59,8 @@ interface OverviewTabProps {
   isPro?: boolean; // Add Pro subscription status
   searchResults?: any[]; // Add search results
   aiThemes?: AITheme[]; // Add AI themes as prop
+  attributeThemes?: any[]; // Pre-aggregated attribute scores (company_attribute_themes_mv)
+  responseSentimentRows?: any[]; // Per-response sentiment ratios (company_response_sentiment_mv)
   recencyData?: any[]; // Add recency data for relevance calculation
   recencyDataLoading?: boolean; // Loading state for recency data
   aiThemesLoading?: boolean; // Loading state for AI themes
@@ -121,6 +123,8 @@ export const OverviewTab = memo(({
   isPro = false,
   searchResults = [],
   aiThemes = [],
+  attributeThemes = [],
+  responseSentimentRows = [],
   recencyData = [],
   recencyDataLoading = false,
   aiThemesLoading = false,
@@ -185,6 +189,19 @@ export const OverviewTab = memo(({
     const ids = new Set(fnResponses.map(r => r.id));
     return aiThemes.filter(t => ids.has(t.response_id));
   }, [aiThemes, fnResponses, selectedJobFunctionFilter]);
+
+  // Per-response positive/total theme counts from company_response_sentiment_mv.
+  // Replaces scanning raw aiThemes for the perception-score-over-time chart.
+  const responseSentimentMap = useMemo(() => {
+    const map = new Map<string, { total: number; positive: number }>();
+    (responseSentimentRows || []).forEach(row => {
+      map.set(row.response_id, {
+        total: Number(row.total_themes) || 0,
+        positive: Number(row.positive_themes) || 0,
+      });
+    });
+    return map;
+  }, [responseSentimentRows]);
 
   const isFunctionFiltered = selectedJobFunctionFilter !== 'all';
 
@@ -1127,14 +1144,19 @@ CRITICAL: When you reference information from a source, add an inline citation l
                promptType === 'talentx_competitive';
       });
       
-      // Sentiment: positive themes / total themes from ai_themes for this period
+      // Sentiment: positive themes / total themes for this period, summed from
+      // the pre-aggregated per-response sentiment MV (company_response_sentiment_mv).
       let avgSentiment = 0;
-      if (aiThemes.length > 0) {
-        const periodResponseIds = new Set(periodResponses.map(r => r.id));
-        const periodThemes = aiThemes.filter(theme => periodResponseIds.has(theme.response_id));
-        const totalThemes = periodThemes.length;
-        const positiveThemes = periodThemes.filter(theme => theme.sentiment === 'positive').length;
-        
+      if (responseSentimentMap.size > 0) {
+        let totalThemes = 0;
+        let positiveThemes = 0;
+        periodResponses.forEach(r => {
+          const s = responseSentimentMap.get(r.id);
+          if (s) {
+            totalThemes += s.total;
+            positiveThemes += s.positive;
+          }
+        });
         avgSentiment = totalThemes > 0 ? positiveThemes / totalThemes : 0;
       }
       // Convert ratio (0-1) to percentage (0-100)
@@ -1201,7 +1223,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
     );
     
     return sorted;
-  }, [responses, aiThemes, recencyData, companyRelevanceByMonth, calculateAIBasedSentiment]);
+  }, [responses, responseSentimentMap, recencyData, companyRelevanceByMonth, calculateAIBasedSentiment]);
 
   // Prepare chart data for LLM mentions
   const llmMentionChartData = useMemo(() => {
@@ -1532,6 +1554,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
             <AttributesSummaryCard
               talentXProData={talentXProData}
               aiThemes={fnThemes}
+              attributeThemes={attributeThemes}
               companyName={companyName}
               perceptionScoreTrend={perceptionScoreTrend}
               previousPeriodResponses={fnPreviousResponses}
