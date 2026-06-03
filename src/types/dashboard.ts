@@ -40,6 +40,10 @@ export interface PromptResponse {
   mention_ranking?: number | null;
   for_index?: boolean | null;
   index_period?: string | null;
+  // Optional reporting-cycle override (first day of cycle month, "YYYY-MM-DD").
+  // When set, groups this response into a named collection cycle regardless of
+  // tested_at/created_at; null/absent => bucket by collection month as before.
+  collection_cycle?: string | null;
 }
 
 export interface Citation {

@@ -16,6 +16,22 @@ export interface PeriodInfo {
   endDate: Date;
 }
 
+// Month key ("YYYY-MM") of a response's collection timestamp, in local time —
+// this matches the dashboard's historical period bucketing.
+const testedMonthKey = (tested_at: string): string => {
+  const d = new Date(tested_at);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
+// The reporting period a response rolls into. If an explicit `collection_cycle`
+// label is set (an analyst grouped this run / recollection into a named cycle),
+// it wins; otherwise we fall back to the month it was actually collected. This
+// lets a single logical collection that spans several days — or a later
+// recollection — show as ONE period without ever rewriting tested_at/created_at.
+// Untagged responses (collection_cycle == null) behave exactly as before.
+const periodKeyOf = (r: { collection_cycle?: string | null; tested_at: string }): string =>
+  r.collection_cycle ? r.collection_cycle.slice(0, 7) : testedMonthKey(r.tested_at);
+
 export const useDashboardData = () => {
   const { user: rawUser, clearSession } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
@@ -186,6 +202,7 @@ export const useDashboardData = () => {
               citations,
               for_index,
               index_period,
+              collection_cycle,
               confirmed_prompts!inner(
                 id,
                 prompt_text,
@@ -271,6 +288,7 @@ export const useDashboardData = () => {
                 citations,
                 for_index,
                 index_period,
+                collection_cycle,
                 confirmed_prompts!inner(
                   id,
                   user_id,
@@ -323,6 +341,8 @@ export const useDashboardData = () => {
                   response_text: response.response_text,
                   citations: response.citations,
                   tested_at: response.tested_at || response.updated_at || response.created_at,
+                  created_at: response.created_at,
+                  collection_cycle: response.collection_cycle,
                   company_mentioned: response.company_mentioned,
                   detected_competitors: response.detected_competitors,
 
@@ -1517,18 +1537,17 @@ export const useDashboardData = () => {
     fetchTalentXProPrompts();
   }, [user]);
 
-  // --- Period detection: group responses by month ---
+  // --- Period detection: group responses by collection cycle ---
+  // A "period" is a collection cycle, keyed by `collection_cycle` when set and
+  // otherwise by the month the response was collected (see periodKeyOf). This
+  // keeps each response in exactly one period, so a collection that spans a
+  // calendar-month boundary or a later recollection still shows as ONE period.
   const availablePeriods: PeriodInfo[] = useMemo(() => {
     if (responses.length === 0) return [];
-    const monthSet = new Map<string, Date[]>();
-    responses.forEach(r => {
-      const d = new Date(r.tested_at);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (!monthSet.has(key)) monthSet.set(key, []);
-      monthSet.get(key)!.push(d);
-    });
-    const periods: PeriodInfo[] = Array.from(monthSet.entries())
-      .map(([key, dates]) => {
+    const keys = new Set<string>();
+    responses.forEach(r => keys.add(periodKeyOf(r)));
+    const periods: PeriodInfo[] = Array.from(keys)
+      .map(key => {
         const [y, m] = key.split('-').map(Number);
         const startDate = new Date(y, m - 1, 1);
         const endDate = new Date(y, m, 0, 23, 59, 59, 999);
@@ -1560,22 +1579,16 @@ export const useDashboardData = () => {
     return idx >= 0 && idx + 1 < availablePeriods.length ? availablePeriods[idx + 1] : null;
   }, [availablePeriods, effectivePeriod]);
 
-  // Filter responses to the selected period
+  // Filter responses to the selected period (by collection cycle, see periodKeyOf)
   const periodFilteredResponses = useMemo(() => {
     if (!effectivePeriod || availablePeriods.length <= 1) return responses;
-    return responses.filter(r => {
-      const d = new Date(r.tested_at);
-      return d >= effectivePeriod.startDate && d <= effectivePeriod.endDate;
-    });
+    return responses.filter(r => periodKeyOf(r) === effectivePeriod.key);
   }, [responses, effectivePeriod, availablePeriods]);
 
   // Previous period responses for per-tab delta computation
   const previousPeriodResponses = useMemo(() => {
     if (!previousPeriodInfo) return [];
-    return responses.filter(r => {
-      const d = new Date(r.tested_at);
-      return d >= previousPeriodInfo.startDate && d <= previousPeriodInfo.endDate;
-    });
+    return responses.filter(r => periodKeyOf(r) === previousPeriodInfo.key);
   }, [responses, previousPeriodInfo]);
 
   // Previous-period metrics for delta display.
@@ -1602,11 +1615,23 @@ export const useDashboardData = () => {
     if (!effectivePeriod) return null;
     const currentKey = effectivePeriod.key;
 
-    // Helper: given a map keyed on "YYYY-MM", find the most recent key
-    // lexically less than currentKey that has a numeric value.
+    // Month keys (UTC month of collection, matching response_month in the
+    // sentiment/relevance MVs) that belong to the CURRENT cycle. A cycle can
+    // span a month boundary (e.g. a June collection that began May 31), so these
+    // are excluded from the "previous period" search below — otherwise the
+    // current cycle would be compared against its own earlier half.
+    const currentCycleMonths = new Set(
+      periodFilteredResponses.map((r) => {
+        const d = new Date(r.created_at ?? r.tested_at);
+        return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+      })
+    );
+
+    // Helper: given a map keyed on "YYYY-MM", find the most recent key lexically
+    // less than currentKey (and not part of the current cycle) with a numeric value.
     const findMostRecentPrior = (map: Record<string, number>): number | undefined => {
       const priorKeys = Object.keys(map)
-        .filter((k) => k < currentKey && typeof map[k] === 'number')
+        .filter((k) => k < currentKey && !currentCycleMonths.has(k) && typeof map[k] === 'number')
         .sort(); // lex sort works for YYYY-MM
       if (priorKeys.length === 0) return undefined;
       return map[priorKeys[priorKeys.length - 1]];
@@ -1631,10 +1656,7 @@ export const useDashboardData = () => {
     if (priorAvailable.length > 0) {
       // availablePeriods is already sorted newest-first.
       const chosen = priorAvailable[0];
-      const chosenResponses = responses.filter((r) => {
-        const d = new Date(r.tested_at);
-        return d >= chosen.startDate && d <= chosen.endDate;
-      });
+      const chosenResponses = responses.filter((r) => periodKeyOf(r) === chosen.key);
       if (chosenResponses.length > 0) {
         const mentionedCount = chosenResponses.filter((r) => r.company_mentioned === true).length;
         visibilityScore = Math.round((mentionedCount / chosenResponses.length) * 100);
@@ -1647,7 +1669,7 @@ export const useDashboardData = () => {
       return null;
     }
     return { sentimentScore, visibilityScore, relevanceScore };
-  }, [effectivePeriod, availablePeriods, responses, companySentimentByMonth, companyRelevanceByMonth]);
+  }, [effectivePeriod, availablePeriods, responses, periodFilteredResponses, companySentimentByMonth, companyRelevanceByMonth]);
 
   const promptsData: PromptData[] = useMemo(() => {
     // Group responses by prompt text using a Map for O(1) lookup. The prior
