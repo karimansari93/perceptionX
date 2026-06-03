@@ -45,6 +45,10 @@ interface ThematicAnalysisTabProps {
   companyName: string;
   aiThemes: AITheme[];
   aiThemesLoading: boolean;
+  // Lazily loads the raw ai_themes for this company. The dashboard no longer
+  // pulls raw themes eagerly; this tab triggers the fetch when it mounts since
+  // it needs subtheme-level detail the attribute MVs don't carry.
+  fetchAIThemes?: () => Promise<void> | void;
   onRefreshThemes: () => Promise<void>;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
@@ -92,7 +96,16 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
   'overall-candidate-experience': Briefcase
 };
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, fetchAIThemes, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
+  // Lazily pull raw themes the first time this tab mounts (and when the company
+  // changes and it's already open). The Overview no longer fetches them eagerly.
+  useEffect(() => {
+    if (fetchAIThemes && aiThemes.length === 0 && !aiThemesLoading) {
+      fetchAIThemes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyName]);
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   // Modal and filter states - persisted
