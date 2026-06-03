@@ -663,6 +663,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 companyName={companyName}
                 aiThemes={aiThemes}
                 aiThemesLoading={aiThemesLoading}
+                attributeThemes={attributeThemes}
                 fetchAIThemes={fetchAIThemes}
                 onRefreshThemes={refreshData}
                 responseTexts={responseTexts}
