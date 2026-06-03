@@ -49,6 +49,10 @@ interface ThematicAnalysisTabProps {
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   previousPeriodResponses?: PromptResponse[];
+  // Global job-function filter, shared across all dashboard tabs and owned by
+  // the parent Dashboard so a selection persists when switching tabs.
+  selectedJobFunction?: string;
+  onJobFunctionChange?: (value: string) => void;
 }
 
 interface AITheme {
@@ -88,14 +92,17 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
   'overall-candidate-experience': Briefcase
 };
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [] }: ThematicAnalysisTabProps) => {
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   // Modal and filter states - persisted
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
   const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('thematicTab.isModalOpen', false);
   const [selectedPromptType, setSelectedPromptType] = usePersistedState<'all' | 'experience' | 'competitive'>('thematicTab.selectedPromptType', 'experience');
-  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('thematicTab.selectedJobFunctionFilter', 'all');
+  // Controlled by the parent Dashboard so the job-function selection is shared
+  // across all tabs and never resets on tab switch.
+  const selectedJobFunctionFilter = selectedJobFunction;
+  const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
   const [rankingSort, setRankingSort] = usePersistedState<'sentiment' | 'volume' | 'az'>('thematicTab.rankingSort', 'sentiment');
   const [analysisProgress, setAnalysisProgress] = useState({
     current: 0,

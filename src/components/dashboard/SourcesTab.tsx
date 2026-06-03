@@ -31,6 +31,10 @@ interface SourcesTabProps {
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   previousPeriodResponses?: any[];
+  // Global job-function filter, shared across all dashboard tabs and owned by
+  // the parent Dashboard so a selection persists when switching tabs.
+  selectedJobFunction?: string;
+  onJobFunctionChange?: (value: string) => void;
 }
 
 // Helper function to normalize domains for consistent counting
@@ -39,7 +43,7 @@ const normalizeDomain = (domain: string): string => {
   return domain.trim().toLowerCase().replace(/^www\./, '');
 };
 
-export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [] }: SourcesTabProps) => {
+export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: SourcesTabProps) => {
   
   // Filter responses and searchResults by currentCompanyId to ensure we only show sources for the current company
   const filteredResponses = useMemo(() => {
@@ -166,7 +170,10 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   // they can be promoted back to useState without any caller changes.
   const selectedMediaTypeFilter: string | null = null;
   const selectedSourceTypeFilter = 'all' as 'all' | 'ai-responses' | 'search-results';
-  const [selectedJobFunctionFilter, setSelectedJobFunctionFilter] = usePersistedState<string>('sourcesTab.selectedJobFunctionFilter', 'all');
+  // Controlled by the parent Dashboard so the job-function selection is shared
+  // across all tabs and never resets on tab switch.
+  const selectedJobFunctionFilter = selectedJobFunction;
+  const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
   const selectedThemeFilter = 'all' as string;
   const selectedPromptTypeFilter = 'all' as string;
 
