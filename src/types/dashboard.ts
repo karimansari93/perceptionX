@@ -40,6 +40,11 @@ export interface PromptResponse {
   mention_ranking?: number | null;
   for_index?: boolean | null;
   index_period?: string | null;
+  // Canonical monthly-snapshot bucket: generated as
+  // COALESCE(collection_cycle, date_trunc('month', created_at)). This is the
+  // field the dashboard groups periods by — NOT tested_at/created_at, which is
+  // just when the row was physically written.
+  response_month?: string | null;
 }
 
 export interface Citation {
