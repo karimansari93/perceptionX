@@ -16,6 +16,20 @@ export interface PeriodInfo {
   endDate: Date;
 }
 
+// Canonical month bucket for a response: the monthly-snapshot month
+// (response_month, e.g. "2026-06-01" → "2026-06"), NOT when the row was
+// physically written (tested_at/created_at). A run collected on May 30 but
+// tagged collection_cycle = June must show under June everywhere. Falls back
+// to tested_at/created_at only for legacy rows missing response_month.
+export const responseMonthKey = (r: { response_month?: string | null; tested_at?: string; created_at?: string }): string | null => {
+  if (r.response_month) return String(r.response_month).slice(0, 7);
+  const t = r.tested_at || r.created_at;
+  if (!t) return null;
+  const d = new Date(t);
+  if (isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
 export const useDashboardData = () => {
   const { user: rawUser, clearSession } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
@@ -187,6 +201,7 @@ export const useDashboardData = () => {
               tested_at,
               created_at,
               updated_at,
+              response_month,
               company_mentioned,
               detected_competitors,
               citations,
@@ -272,6 +287,7 @@ export const useDashboardData = () => {
                 tested_at,
                 created_at,
                 updated_at,
+                response_month,
                 company_mentioned,
                 detected_competitors,
                 citations,
@@ -329,6 +345,7 @@ export const useDashboardData = () => {
                   response_text: response.response_text,
                   citations: response.citations,
                   tested_at: response.tested_at || response.updated_at || response.created_at,
+                  response_month: response.response_month,
                   company_mentioned: response.company_mentioned,
                   detected_competitors: response.detected_competitors,
 
@@ -1620,18 +1637,18 @@ export const useDashboardData = () => {
     fetchTalentXProPrompts();
   }, [user]);
 
-  // --- Period detection: group responses by month ---
+  // --- Period detection: group responses by their snapshot month
+  // (response_month), so a run tagged for a given collection cycle shows under
+  // that month regardless of when it was physically written. ---
   const availablePeriods: PeriodInfo[] = useMemo(() => {
     if (responses.length === 0) return [];
-    const monthSet = new Map<string, Date[]>();
+    const monthSet = new Set<string>();
     responses.forEach(r => {
-      const d = new Date(r.tested_at);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (!monthSet.has(key)) monthSet.set(key, []);
-      monthSet.get(key)!.push(d);
+      const key = responseMonthKey(r);
+      if (key) monthSet.add(key);
     });
-    const periods: PeriodInfo[] = Array.from(monthSet.entries())
-      .map(([key, dates]) => {
+    const periods: PeriodInfo[] = Array.from(monthSet)
+      .map((key) => {
         const [y, m] = key.split('-').map(Number);
         const startDate = new Date(y, m - 1, 1);
         const endDate = new Date(y, m, 0, 23, 59, 59, 999);
@@ -1663,22 +1680,16 @@ export const useDashboardData = () => {
     return idx >= 0 && idx + 1 < availablePeriods.length ? availablePeriods[idx + 1] : null;
   }, [availablePeriods, effectivePeriod]);
 
-  // Filter responses to the selected period
+  // Filter responses to the selected period (by snapshot month).
   const periodFilteredResponses = useMemo(() => {
     if (!effectivePeriod || availablePeriods.length <= 1) return responses;
-    return responses.filter(r => {
-      const d = new Date(r.tested_at);
-      return d >= effectivePeriod.startDate && d <= effectivePeriod.endDate;
-    });
+    return responses.filter(r => responseMonthKey(r) === effectivePeriod.key);
   }, [responses, effectivePeriod, availablePeriods]);
 
-  // Previous period responses for per-tab delta computation
+  // Previous period responses for per-tab delta computation (by snapshot month).
   const previousPeriodResponses = useMemo(() => {
     if (!previousPeriodInfo) return [];
-    return responses.filter(r => {
-      const d = new Date(r.tested_at);
-      return d >= previousPeriodInfo.startDate && d <= previousPeriodInfo.endDate;
-    });
+    return responses.filter(r => responseMonthKey(r) === previousPeriodInfo.key);
   }, [responses, previousPeriodInfo]);
 
   // Previous-period metrics for delta display.

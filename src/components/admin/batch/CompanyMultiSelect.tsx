@@ -84,6 +84,9 @@ export const CompanyMultiSelect = ({ organizationId, selectedIds, onSelectionCha
           .select("company_id, location_context")
           .eq("is_active", true)
           .in("company_id", companyIds)
+          // Stable sort key — .range() pagination over an unordered scan can
+          // drop rows non-deterministically, dropping whole companies.
+          .order("id", { ascending: true })
           .range(from, to);
         chunk = data ?? [];
         allPromptData = allPromptData.concat(chunk);
