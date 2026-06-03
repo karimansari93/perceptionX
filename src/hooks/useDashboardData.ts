@@ -86,7 +86,7 @@ export const useDashboardData = () => {
   const previousResponseIdsRef = useRef<string>(''); // Track previous response IDs to detect changes
   // Cache company dashboard data for instant restore when switching back (stale-while-revalidate)
   const COMPANY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-  const companyDataCacheRef = useRef<Record<string, { responses: PromptResponse[]; lastUpdated?: Date; timestamp: number }>>({});
+  const companyDataCacheRef = useRef<Record<string, { responses: PromptResponse[]; aiThemes?: any[]; lastUpdated?: Date; timestamp: number }>>({});
   // Tracks which company the user is currently looking at. Each fetch captures
   // the id at call time and compares against this ref before committing state,
   // so a slow response for a previously-selected company can't overwrite the
@@ -368,6 +368,10 @@ export const useDashboardData = () => {
       if (allResponses.length > 0) {
         companyDataCacheRef.current[requestedCompanyId] = {
           responses: allResponses,
+          // Preserve any AI themes already cached for this company so a
+          // background responses refetch doesn't wipe them (themes are the
+          // slowest fetch — we don't want to drop a usable cached copy).
+          aiThemes: companyDataCacheRef.current[requestedCompanyId]?.aiThemes,
           lastUpdated: lastUpdatedDate,
           timestamp: Date.now()
         };
@@ -1226,6 +1230,7 @@ export const useDashboardData = () => {
       if (previousCompanyId && responses.length > 0) {
         companyDataCacheRef.current[previousCompanyId] = {
           responses,
+          aiThemes, // cache themes too — they're the slowest fetch to rebuild
           lastUpdated: lastUpdated,
           timestamp: Date.now()
         };
@@ -1256,7 +1261,7 @@ export const useDashboardData = () => {
       // Reset the fetched key so new data will be loaded
       fetchedCompanyUserKeyRef.current = null;
     }
-  }, [currentCompany?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally omit responses/lastUpdated to avoid saving on every response change
+  }, [currentCompany?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally omit responses/aiThemes/lastUpdated to avoid saving on every data change
   
   // Initial data fetch - only run when user or company ID actually changes, or when shouldRefetch is true
   // CRITICAL: Prevent refetch when returning to tab by tracking what we've already loaded
@@ -1366,6 +1371,17 @@ export const useDashboardData = () => {
   // renders attribute mentions directly from these themes.
   useEffect(() => {
     if (user && currentCompany?.id) {
+      // Restore AI themes from the per-company cache when switching back to a
+      // recently-viewed company (within COMPANY_CACHE_TTL). AI themes are the
+      // slowest fetch on the dashboard (a ~200-page paginated query), so reusing
+      // a recent copy makes switch-back instant instead of re-fetching. Stale
+      // by at most a few minutes, which is fine for collection-driven data.
+      const cached = companyDataCacheRef.current[currentCompany.id];
+      if (cached?.aiThemes && (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL) {
+        setAiThemes(cached.aiThemes);
+        setAiThemesLoading(false);
+        return;
+      }
       fetchAIThemes();
     } else {
       setAiThemes([]);
