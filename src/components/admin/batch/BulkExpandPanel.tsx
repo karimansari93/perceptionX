@@ -99,6 +99,9 @@ export const BulkExpandPanel = ({ organizationId, onBack }: Props) => {
           .in("company_id", ids)
           .eq("is_active", true)
           .not("location_context", "is", null)
+          // Stable sort key — see note in useOrgMonthlyCoverage: unordered
+          // .range() pagination can silently drop rows on large orgs.
+          .order("id", { ascending: true })
           .range(from, to);
         chunk = data ?? [];
         allPromptRows = allPromptRows.concat(chunk);

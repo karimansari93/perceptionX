@@ -81,6 +81,11 @@ export function useOrgMonthlyCoverage(organizationId: string, month: string) {
             .select('id, company_id, location_context')
             .eq('is_active', true)
             .in('company_id', companyIds)
+            // Stable sort key is REQUIRED for correct .range() pagination —
+            // without it Postgres returns scans in a non-deterministic order
+            // across requests, so OFFSET paging silently drops/duplicates rows
+            // (e.g. a whole location going missing from the coverage table).
+            .order('id', { ascending: true })
             .range(from, to);
           if (pErr) throw pErr;
           chunk = data ?? [];
@@ -111,6 +116,9 @@ export function useOrgMonthlyCoverage(organizationId: string, month: string) {
             .in('company_id', companyIds)
             .gte('response_month', start)
             .lt('response_month', end)
+            // Stable sort key for correct .range() pagination (see note above).
+            // Missing rows here would undercount coverage / overcount gaps.
+            .order('id', { ascending: true })
             .range(from, to);
           if (rErr) throw rErr;
           chunk = data ?? [];
