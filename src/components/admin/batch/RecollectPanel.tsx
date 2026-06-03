@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -11,21 +11,30 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
-  Loader2, Play, CheckCircle2, AlertCircle, X, RefreshCw, Calendar,
+  Loader2, Play, CheckCircle2, AlertCircle, X, RefreshCw, Calendar, Server,
 } from "lucide-react";
-import { useAdminCompanyCollection } from "@/hooks/useAdminCompanyCollection";
-import { useOrgMonthlyCoverage, type CompanyCoverage } from "@/hooks/useOrgMonthlyCoverage";
-
-type CompanyProgress = {
-  status: "pending" | "processing" | "done" | "error";
-  error?: string;
-  progress?: { completed: number; total: number };
-};
+import { useOrgMonthlyCoverage } from "@/hooks/useOrgMonthlyCoverage";
 
 type Props = {
   organizationId: string;
   onBack: () => void;
 };
+
+type QueueRow = {
+  id: string;
+  config_id: string;
+  company_id: string | null;
+  company_name: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  phase: string;
+  batch_index: number | null;
+  total_prompts: number | null;
+  error_log: string | null;
+  is_cancelled: boolean | null;
+};
+
+const isTerminal = (r: QueueRow) =>
+  r.is_cancelled === true || r.status === "completed" || r.status === "failed";
 
 // Current month + previous 5, as "YYYY-MM".
 function recentMonths(count = 6): string[] {
@@ -47,15 +56,20 @@ function monthLabel(month: string): string {
 
 export const RecollectPanel = ({ organizationId, onBack }: Props) => {
   const months = useMemo(() => recentMonths(6), []);
-  const [month, setMonth] = useState<string>(months[0]);
+  const currentMonth = months[0];
+  const [month, setMonth] = useState<string>(currentMonth);
   const { coverage, loading, error, reload } = useOrgMonthlyCoverage(organizationId, month);
-  const { runCollection } = useAdminCompanyCollection();
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [companyProgress, setCompanyProgress] = useState<Map<string, CompanyProgress>>(new Map());
-  const [processing, setProcessing] = useState(false);
-  const [currentCompanyId, setCurrentCompanyId] = useState<string | null>(null);
-  const cancelledRef = useRef(false);
+  const [enqueuing, setEnqueuing] = useState(false);
+
+  // Server-side run we're currently watching (survives tab reloads).
+  const [runConfigId, setRunConfigId] = useState<string | null>(null);
+  const [queueRows, setQueueRows] = useState<QueueRow[]>([]);
+
+  // Recollection writes responses dated to the current month, so it can only
+  // fill the current month. Past months are view-only.
+  const canRecollect = month === currentMonth;
 
   // When coverage (re)loads, default-select the companies that have gaps.
   useEffect(() => {
@@ -63,42 +77,73 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
     setSelectedIds(new Set(coverage.filter((c) => c.missingCount > 0).map((c) => c.companyId)));
   }, [coverage, loading]);
 
-  // Poll live progress for the company currently being collected.
+  // On mount / org change: adopt any in-flight server-side recollect run so the
+  // progress shows up even if the user closed and reopened the tab.
   useEffect(() => {
-    if (!currentCompanyId || !processing) return;
+    let cancelled = false;
+    (async () => {
+      const { data: cfgs } = await supabase
+        .from("company_batch_configs")
+        .select("id")
+        .eq("organization_id", organizationId)
+        .not("skip_if_collected_in_month", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      const ids = (cfgs || []).map((c: any) => c.id);
+      if (ids.length === 0) return;
+      const { data: active } = await supabase
+        .from("company_batch_queue")
+        .select("config_id")
+        .in("config_id", ids)
+        .in("status", ["pending", "processing"])
+        .limit(1);
+      if (!cancelled && active && active.length > 0) {
+        setRunConfigId((active[0] as any).config_id);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [organizationId]);
+
+  // Poll the watched run's queue rows.
+  const pollRun = useCallback(async (configId: string) => {
+    const { data } = await supabase
+      .from("company_batch_queue")
+      .select("id, config_id, company_id, company_name, status, phase, batch_index, total_prompts, error_log, is_cancelled")
+      .eq("config_id", configId)
+      .order("company_name", { ascending: true });
+    setQueueRows((data as QueueRow[]) || []);
+    return (data as QueueRow[]) || [];
+  }, []);
+
+  useEffect(() => {
+    if (!runConfigId) return;
+    let stop = false;
+    pollRun(runConfigId);
     const interval = setInterval(async () => {
-      const { data } = await supabase
-        .from("companies")
-        .select("data_collection_progress")
-        .eq("id", currentCompanyId)
-        .single();
-      if (data?.data_collection_progress) {
-        const p = data.data_collection_progress as { completed: number; total: number };
-        setCompanyProgress((prev) => {
-          const next = new Map(prev);
-          const existing = next.get(currentCompanyId) || { status: "processing" as const };
-          next.set(currentCompanyId, { ...existing, progress: p });
-          return next;
-        });
+      if (stop) return;
+      const rows = await pollRun(runConfigId);
+      if (rows.length > 0 && rows.every(isTerminal)) {
+        stop = true;
+        clearInterval(interval);
+        reload(); // refresh coverage now that the run finished
+        const failed = rows.filter((r) => r.status === "failed").length;
+        if (failed > 0) toast.warning(`Recollection finished with ${failed} failed job(s).`);
+        else toast.success("Recollection finished.");
       }
     }, 5000);
-    return () => clearInterval(interval);
-  }, [currentCompanyId, processing]);
+    return () => { stop = true; clearInterval(interval); };
+  }, [runConfigId, pollRun, reload]);
 
   const selectedList = useMemo(
     () => coverage.filter((c) => selectedIds.has(c.companyId)),
     [coverage, selectedIds]
   );
-
   const totalMissingSelected = useMemo(
-    () => selectedList.reduce((sum, c) => sum + c.missingCount, 0),
+    () => selectedList.reduce((s, c) => s + c.missingCount, 0),
     [selectedList]
   );
 
-  const totalActiveSelected = useMemo(
-    () => selectedList.reduce((sum, c) => sum + c.activeCount, 0),
-    [selectedList]
-  );
+  const runActive = queueRows.length > 0 && !queueRows.every(isTerminal);
 
   const toggle = (id: string) => {
     setSelectedIds((prev) => {
@@ -107,109 +152,104 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
       return next;
     });
   };
-
   const selectWithGaps = () =>
     setSelectedIds(new Set(coverage.filter((c) => c.missingCount > 0).map((c) => c.companyId)));
   const selectAll = () => setSelectedIds(new Set(coverage.map((c) => c.companyId)));
   const selectNone = () => setSelectedIds(new Set());
 
-  // Run collection for a list of companies sequentially, with progress.
-  // mode "missing" → only the company's missing prompts for the month.
-  // mode "full"    → re-collect every active prompt (ignores existing).
-  const runFor = async (companies: CompanyCoverage[], mode: "missing" | "full") => {
-    if (companies.length === 0) {
+  // Enqueue a server-side run: one config + one queue row per selected company.
+  const handleRecollect = async () => {
+    if (selectedList.length === 0) {
       toast.error("Select at least one company");
       return;
     }
-    if (mode === "missing" && companies.every((c) => c.missingCount === 0)) {
-      toast.info(`Nothing missing for ${monthLabel(month)} — all selected companies are complete.`);
-      return;
-    }
+    setEnqueuing(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { toast.error("Not signed in"); return; }
 
-    setProcessing(true);
-    cancelledRef.current = false;
+      // Config carries the month so the queue's llm_collection phase forwards
+      // skipIfCollectedInMonth → only prompts missing for this month are run.
+      const { data: config, error: cfgErr } = await supabase
+        .from("company_batch_configs")
+        .insert({
+          user_id: user.id,
+          company_name: `Recollect ${monthLabel(month)}`,
+          org_mode: "existing_org",
+          organization_id: organizationId,
+          target_locations: [],
+          target_industries: [],
+          target_job_functions: [],
+          skip_if_collected_in_month: month,
+        })
+        .select("id")
+        .single();
+      if (cfgErr || !config) throw new Error(cfgErr?.message || "Failed to create batch config");
 
-    const initial = new Map<string, CompanyProgress>();
-    companies.forEach((c) => initial.set(c.companyId, { status: "pending" }));
-    setCompanyProgress(initial);
+      // One job per company. Location "Global (All Countries)" + industry
+      // "General" tell llm_collection NOT to filter, so it covers every active
+      // prompt for the company_id (across its locations/functions).
+      const jobs = selectedList.map((c) => ({
+        config_id: config.id,
+        company_name: c.name,
+        company_id: c.companyId,
+        location: "Global (All Countries)",
+        industry: "General",
+        job_function: null,
+        status: "pending",
+        phase: "llm_collection",
+      }));
+      const { error: qErr } = await supabase.from("company_batch_queue").insert(jobs);
+      if (qErr) throw new Error(qErr.message);
 
-    let succeeded = 0;
-    let failed = 0;
-    let skipped = 0;
-
-    for (const c of companies) {
-      if (cancelledRef.current) break;
-
-      // In "missing" mode, skip companies that are already complete.
-      if (mode === "missing" && c.missingCount === 0) {
-        skipped++;
-        setCompanyProgress((prev) => {
-          const next = new Map(prev);
-          next.set(c.companyId, { status: "done" });
-          return next;
-        });
-        continue;
-      }
-
-      setCurrentCompanyId(c.companyId);
-      setCompanyProgress((prev) => {
-        const next = new Map(prev);
-        next.set(c.companyId, { status: "processing" });
-        return next;
+      // Kick the processor once; it self-chains server-side from here.
+      await supabase.functions.invoke("process-company-batch-queue", {
+        body: { configId: config.id },
       });
 
-      const ok = await runCollection(c.companyId, organizationId, c.name, {
-        skipExisting: false,
-        ...(mode === "missing"
-          ? { promptIds: c.missingPromptIds, skipIfCollectedInMonth: month }
-          : {}),
-      });
-
-      setCompanyProgress((prev) => {
-        const next = new Map(prev);
-        next.set(c.companyId, ok ? { status: "done" } : { status: "error", error: "Collection failed" });
-        return next;
-      });
-      ok ? succeeded++ : failed++;
+      setRunConfigId(config.id);
+      toast.success(
+        `Queued ${jobs.length} compan${jobs.length === 1 ? "y" : "ies"} for ${monthLabel(month)}. ` +
+        `Running in the background — you can close this tab.`
+      );
+    } catch (e: any) {
+      toast.error(`Failed to start recollection: ${e.message}`);
+    } finally {
+      setEnqueuing(false);
     }
-
-    setCurrentCompanyId(null);
-    setProcessing(false);
-
-    if (cancelledRef.current) {
-      toast.info("Re-collection cancelled.");
-    } else if (failed === 0) {
-      toast.success(`Done: ${succeeded} processed${skipped ? `, ${skipped} already complete` : ""}.`);
-    } else {
-      toast.warning(`Done: ${succeeded} succeeded, ${failed} failed.`);
-    }
-
-    // Refresh coverage so the table reflects the newly collected prompts.
-    reload();
   };
 
-  const handleCancel = () => {
-    cancelledRef.current = true;
-    toast.info("Cancelling after current company finishes...");
+  const handleStop = async () => {
+    if (!runConfigId) return;
+    // Cancel anything not yet finished; in-flight chunk will still complete.
+    await supabase
+      .from("company_batch_queue")
+      .update({ is_cancelled: true, updated_at: new Date().toISOString() })
+      .eq("config_id", runConfigId)
+      .in("status", ["pending", "processing"]);
+    toast.info("Stopping run — in-flight jobs will finish, the rest are cancelled.");
+    pollRun(runConfigId);
   };
 
-  const completedCount = [...companyProgress.values()].filter((p) => p.status === "done").length;
-  const totalCount = companyProgress.size;
-
-  // Org-level rollup for the header.
   const orgTotals = useMemo(() => {
     const active = coverage.reduce((s, c) => s + c.activeCount, 0);
     const missing = coverage.reduce((s, c) => s + c.missingCount, 0);
-    const companiesWithGaps = coverage.filter((c) => c.missingCount > 0).length;
-    return { active, missing, covered: active - missing, companiesWithGaps };
+    return { active, missing, covered: active - missing, withGaps: coverage.filter((c) => c.missingCount > 0).length };
   }, [coverage]);
+
+  const runStats = useMemo(() => ({
+    total: queueRows.length,
+    pending: queueRows.filter((r) => r.status === "pending" && !r.is_cancelled).length,
+    processing: queueRows.filter((r) => r.status === "processing").length,
+    completed: queueRows.filter((r) => r.status === "completed").length,
+    failed: queueRows.filter((r) => r.status === "failed").length,
+    cancelled: queueRows.filter((r) => r.is_cancelled).length,
+  }), [queueRows]);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={onBack} disabled={processing}>
-          Back
-        </Button>
+        <Button variant="ghost" size="sm" onClick={onBack} disabled={enqueuing}>Back</Button>
         <h3 className="font-semibold">Re-collect Data</h3>
       </div>
 
@@ -222,22 +262,22 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
                 <Calendar className="h-4 w-4" /> Coverage health
               </CardTitle>
               <CardDescription>
-                See coverage for a month, then recollect everything (e.g. a fresh month) or just the
-                gaps for the companies you pick.
+                Pick the companies to recollect. The run happens server-side, so it keeps going even
+                if you close the tab.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              <Select value={month} onValueChange={setMonth} disabled={processing}>
-                <SelectTrigger className="w-[150px]">
-                  <SelectValue />
-                </SelectTrigger>
+              <Select value={month} onValueChange={setMonth} disabled={enqueuing}>
+                <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {months.map((m) => (
-                    <SelectItem key={m} value={m}>{monthLabel(m)}</SelectItem>
+                    <SelectItem key={m} value={m}>
+                      {monthLabel(m)}{m === currentMonth ? " (current)" : ""}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <Button variant="ghost" size="sm" onClick={reload} disabled={loading || processing}>
+              <Button variant="ghost" size="sm" onClick={reload} disabled={loading}>
                 <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               </Button>
             </div>
@@ -250,7 +290,6 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
             </p>
           )}
 
-          {/* Org rollup */}
           <div className="flex flex-wrap gap-2 text-sm">
             <Badge variant="outline">{orgTotals.covered.toLocaleString()} covered</Badge>
             {orgTotals.missing > 0 ? (
@@ -258,19 +297,17 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
             ) : (
               <Badge variant="secondary" className="bg-green-100 text-green-800">fully covered</Badge>
             )}
-            <Badge variant="outline">{orgTotals.companiesWithGaps} compan{orgTotals.companiesWithGaps === 1 ? "y" : "ies"} with gaps</Badge>
+            <Badge variant="outline">{orgTotals.withGaps} with gaps</Badge>
           </div>
 
-          {/* Selection helpers */}
           <div className="flex items-center gap-2 text-xs">
             <span className="text-muted-foreground">Select:</span>
-            <button className="underline hover:no-underline" onClick={selectWithGaps} disabled={processing}>with gaps</button>
-            <button className="underline hover:no-underline" onClick={selectAll} disabled={processing}>all</button>
-            <button className="underline hover:no-underline" onClick={selectNone} disabled={processing}>none</button>
+            <button className="underline hover:no-underline" onClick={selectWithGaps}>with gaps</button>
+            <button className="underline hover:no-underline" onClick={selectAll}>all</button>
+            <button className="underline hover:no-underline" onClick={selectNone}>none</button>
           </div>
 
-          {/* Coverage table */}
-          <ScrollArea className="h-[340px] border rounded-md">
+          <ScrollArea className="h-[300px] border rounded-md">
             {loading ? (
               <div className="flex items-center justify-center py-10 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading coverage…
@@ -282,40 +319,18 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
             ) : (
               <div className="divide-y">
                 {coverage.map((c) => {
-                  const prog = companyProgress.get(c.companyId);
                   const health = c.activeCount > 0 ? Math.round((c.coveredCount / c.activeCount) * 100) : 0;
                   return (
                     <div
                       key={c.companyId}
                       className="flex items-center gap-3 px-3 py-2 hover:bg-accent/40 cursor-pointer"
-                      onClick={() => !processing && toggle(c.companyId)}
+                      onClick={() => toggle(c.companyId)}
                     >
-                      <Checkbox
-                        checked={selectedIds.has(c.companyId)}
-                        onCheckedChange={() => toggle(c.companyId)}
-                        disabled={processing}
-                      />
+                      <Checkbox checked={selectedIds.has(c.companyId)} onCheckedChange={() => toggle(c.companyId)} />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium truncate">{c.name}</span>
-                          {c.country && (
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{c.country}</Badge>
-                          )}
-                          {prog?.status === "processing" && (
-                            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                          )}
-                          {prog?.status === "done" && (
-                            <CheckCircle2 className="h-3 w-3 text-green-600" />
-                          )}
-                          {prog?.status === "error" && (
-                            <AlertCircle className="h-3 w-3 text-destructive" />
-                          )}
-                        </div>
-                        {prog?.status === "processing" && prog.progress && prog.progress.total > 0 && (
-                          <Progress
-                            value={(prog.progress.completed / prog.progress.total) * 100}
-                            className="h-1 mt-1"
-                          />
+                        <span className="text-sm font-medium truncate">{c.name}</span>
+                        {c.country && (
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-2">{c.country}</Badge>
                         )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0 text-xs">
@@ -336,50 +351,96 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
         </CardContent>
       </Card>
 
-      {/* Actions */}
+      {/* Action */}
       <div className="flex flex-wrap items-center gap-2">
-        {/* Original behaviour: recollect every active prompt for the selected
-            companies. This is how you stand up a fresh month for a company. */}
         <Button
-          onClick={() => runFor(selectedList, "full")}
-          disabled={processing || loading || selectedList.length === 0}
+          onClick={handleRecollect}
+          disabled={enqueuing || loading || selectedList.length === 0 || runActive || !canRecollect}
         >
-          {processing ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Play className="h-4 w-4 mr-2" />
-          )}
-          {processing
-            ? `Processing ${completedCount}/${totalCount}…`
-            : `Recollect all (${totalActiveSelected.toLocaleString()} prompts)`}
+          {enqueuing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Server className="h-4 w-4 mr-2" />}
+          Recollect {monthLabel(month)} ({selectedList.length} compan{selectedList.length === 1 ? "y" : "ies"})
         </Button>
-
-        {/* New: only the prompts with no response for the selected month. */}
-        <Button
-          variant="outline"
-          onClick={() => runFor(selectedList, "missing")}
-          disabled={processing || loading || selectedList.length === 0 || totalMissingSelected === 0}
-        >
-          Recollect missing only ({totalMissingSelected.toLocaleString()} for {monthLabel(month)})
-        </Button>
-
-        {processing && (
-          <Button variant="ghost" onClick={handleCancel}>
-            <X className="h-4 w-4 mr-2" /> Cancel
-          </Button>
-        )}
-
         <span className="text-xs text-muted-foreground">
-          {selectedList.length} selected
+          {totalMissingSelected.toLocaleString()} missing prompts in selection
         </span>
       </div>
 
+      {!canRecollect && (
+        <p className="text-xs text-amber-600">
+          Viewing a past month. Recollection always fills the current month ({monthLabel(currentMonth)}),
+          so switch to it to run.
+        </p>
+      )}
       <p className="text-xs text-muted-foreground">
-        <strong>Recollect all</strong> re-runs every active prompt for the selected companies — use it to
-        collect a fresh month. <strong>Recollect missing only</strong> runs just the prompts with no
-        response for {monthLabel(month)}, skipping what's already collected. Either way, new responses are
-        dated to the current month.
+        Runs on the server queue: it collects every prompt with no response for {monthLabel(currentMonth)},
+        skipping what's already collected this month, and self-resumes if a chunk stalls. Safe to close the tab.
       </p>
+
+      {/* Live run progress (server-side) */}
+      {queueRows.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Server className="h-4 w-4" /> Server-side run
+                {runActive && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <div className="flex flex-wrap gap-1.5 text-xs">
+                  {runStats.processing > 0 && <Badge>{runStats.processing} running</Badge>}
+                  {runStats.pending > 0 && <Badge variant="outline">{runStats.pending} pending</Badge>}
+                  <Badge variant="secondary" className="bg-green-100 text-green-800">{runStats.completed} done</Badge>
+                  {runStats.failed > 0 && <Badge variant="destructive">{runStats.failed} failed</Badge>}
+                  {runStats.cancelled > 0 && <Badge variant="outline" className="text-orange-600">{runStats.cancelled} cancelled</Badge>}
+                </div>
+                {runActive && (
+                  <Button variant="outline" size="sm" onClick={handleStop}>
+                    <X className="h-4 w-4 mr-1" /> Stop
+                  </Button>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <ScrollArea className="h-[220px]">
+              <div className="divide-y">
+                {queueRows.map((r) => {
+                  const total = r.total_prompts || 0;
+                  const done = r.batch_index || 0;
+                  const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
+                  return (
+                    <div key={r.id} className="px-3 py-2 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium truncate">{r.company_name}</span>
+                        <Badge
+                          variant={
+                            r.is_cancelled ? "outline" :
+                            r.status === "completed" ? "secondary" :
+                            r.status === "failed" ? "destructive" :
+                            r.status === "processing" ? "default" : "outline"
+                          }
+                          className={r.status === "completed" ? "bg-green-100 text-green-800" : ""}
+                        >
+                          {r.status === "completed" && <CheckCircle2 className="h-3 w-3 mr-1" />}
+                          {r.status === "failed" && <AlertCircle className="h-3 w-3 mr-1" />}
+                          {r.is_cancelled ? "cancelled" : r.status}
+                        </Badge>
+                      </div>
+                      {r.status !== "completed" && total > 0 && (
+                        <div className="flex items-center gap-2">
+                          <Progress value={pct} className="h-1.5 flex-1" />
+                          <span className="text-[10px] text-muted-foreground w-16 text-right">{done}/{total}</span>
+                        </div>
+                      )}
+                      {r.error_log && <p className="text-xs text-destructive">{r.error_log}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 };
