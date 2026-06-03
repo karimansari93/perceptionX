@@ -95,6 +95,11 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
     [selectedList]
   );
 
+  const totalActiveSelected = useMemo(
+    () => selectedList.reduce((sum, c) => sum + c.activeCount, 0),
+    [selectedList]
+  );
+
   const toggle = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -217,7 +222,8 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
                 <Calendar className="h-4 w-4" /> Coverage health
               </CardTitle>
               <CardDescription>
-                Prompts that have no response for the selected month. Recollect to fill the gaps.
+                See coverage for a month, then recollect everything (e.g. a fresh month) or just the
+                gaps for the companies you pick.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -332,9 +338,11 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-2">
+        {/* Original behaviour: recollect every active prompt for the selected
+            companies. This is how you stand up a fresh month for a company. */}
         <Button
-          onClick={() => runFor(selectedList, "missing")}
-          disabled={processing || loading || selectedList.length === 0 || totalMissingSelected === 0}
+          onClick={() => runFor(selectedList, "full")}
+          disabled={processing || loading || selectedList.length === 0}
         >
           {processing ? (
             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -343,27 +351,20 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
           )}
           {processing
             ? `Processing ${completedCount}/${totalCount}…`
-            : `Recollect ${totalMissingSelected.toLocaleString()} missing for ${monthLabel(month)}`}
+            : `Recollect all (${totalActiveSelected.toLocaleString()} prompts)`}
         </Button>
 
+        {/* New: only the prompts with no response for the selected month. */}
         <Button
           variant="outline"
-          onClick={() => {
-            if (window.confirm(
-              `Full refresh re-collects EVERY active prompt for ${selectedList.length} selected ` +
-              `compan${selectedList.length === 1 ? "y" : "ies"}, ignoring what's already collected. ` +
-              `This costs more and overwrites nothing — it adds fresh responses. Continue?`
-            )) {
-              runFor(selectedList, "full");
-            }
-          }}
-          disabled={processing || loading || selectedList.length === 0}
+          onClick={() => runFor(selectedList, "missing")}
+          disabled={processing || loading || selectedList.length === 0 || totalMissingSelected === 0}
         >
-          Full refresh selected
+          Recollect missing only ({totalMissingSelected.toLocaleString()} for {monthLabel(month)})
         </Button>
 
         {processing && (
-          <Button variant="outline" onClick={handleCancel}>
+          <Button variant="ghost" onClick={handleCancel}>
             <X className="h-4 w-4 mr-2" /> Cancel
           </Button>
         )}
@@ -374,8 +375,10 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        "Recollect missing" only runs prompts with no response for {monthLabel(month)} — anything
-        already collected this month is skipped. New responses are dated to the current month.
+        <strong>Recollect all</strong> re-runs every active prompt for the selected companies — use it to
+        collect a fresh month. <strong>Recollect missing only</strong> runs just the prompts with no
+        response for {monthLabel(month)}, skipping what's already collected. Either way, new responses are
+        dated to the current month.
       </p>
     </div>
   );
