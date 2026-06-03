@@ -179,9 +179,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     fetchAIThemes,
     attributeThemes,
     responseSentimentRows,
-    overviewStats,
-    overviewDomains,
-    companySentimentByMonth,
     isOnline,
     connectionError,
     recencyDataError,
@@ -540,8 +537,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             aiThemes={aiThemes}
             attributeThemes={attributeThemes}
             responseSentimentRows={responseSentimentRows}
-            overviewStats={overviewStats}
-            companySentimentByMonth={companySentimentByMonth}
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
@@ -609,8 +604,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             aiThemes={aiThemes}
             attributeThemes={attributeThemes}
             responseSentimentRows={responseSentimentRows}
-            overviewStats={overviewStats}
-            companySentimentByMonth={companySentimentByMonth}
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}

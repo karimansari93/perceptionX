@@ -49,12 +49,6 @@ export const useDashboardData = () => {
   // - responseSentimentRows: per-response positive/total themes + ratio (company_response_sentiment_mv)
   const [attributeThemes, setAttributeThemes] = useState<any[]>([]);
   const [responseSentimentRows, setResponseSentimentRows] = useState<any[]>([]);
-  // Per company x month (x job function) overview aggregates from
-  // company_overview_stats_mv / company_overview_domains_mv. These let the
-  // Overview render its headline numbers (responses, visibility, citations,
-  // periods) without downloading raw prompt_responses on load.
-  const [overviewStats, setOverviewStats] = useState<any[]>([]);
-  const [overviewDomains, setOverviewDomains] = useState<any[]>([]);
   const [activePrompts, setActivePrompts] = useState<any[]>([]);
   const [isOnline, setIsOnline] = useState(networkMonitor.online);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -153,9 +147,8 @@ export const useDashboardData = () => {
     const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
 
     try {
-      // Note: fetchResponses no longer drives the global loading gate — the
-      // Overview renders from MVs and is gated by fetchOverviewStats. This runs
-      // in the background to populate the detail cards/tabs.
+      setLoading(true);
+      setCompetitorLoading(true);
       setConnectionError(null);
 
       // Fetch prompts first
@@ -243,6 +236,8 @@ export const useDashboardData = () => {
         if (isStale()) return;
         setActivePrompts([]);
         setResponses([]);
+        setLoading(false);
+        setCompetitorLoading(false);
         return;
       }
 
@@ -403,6 +398,9 @@ export const useDashboardData = () => {
         };
       }
 
+      setLoading(false);
+      setCompetitorLoading(false);
+
       // Stream citations in the background. citations is by far the heaviest
       // column (~5-6MB for large companies, ~85% of the responses payload) and
       // the dashboard renders fine without it — every consumer reads
@@ -474,6 +472,8 @@ export const useDashboardData = () => {
         }
 
         // Don't retry on auth errors
+        setLoading(false);
+        setCompetitorLoading(false);
         return;
       }
 
@@ -487,6 +487,8 @@ export const useDashboardData = () => {
       } else {
         setConnectionError('Unable to load data. Please refresh the page or try again later.');
       }
+      setLoading(false);
+      setCompetitorLoading(false);
     }
   }, [user, currentCompany, isOnline]);
 
@@ -1043,48 +1045,6 @@ export const useDashboardData = () => {
     }
   }, [user, currentCompany?.id]);
 
-  // Overview headline aggregates from the MVs. This is what lets the
-  // Overview/loading path avoid the raw prompt_responses pull entirely. Drives
-  // the `loading`/`competitorLoading` flags so the dashboard's ready-state no
-  // longer waits on fetchResponses (which is now lazy — tabs trigger it).
-  const fetchOverviewStats = useCallback(async () => {
-    if (!user || !currentCompany?.id) {
-      setOverviewStats([]);
-      setOverviewDomains([]);
-      return;
-    }
-    const requestedCompanyId = currentCompany.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
-    try {
-      setLoading(true);
-      setCompetitorLoading(true);
-      const [statsRes, domainsRes] = await Promise.all([
-        retrySupabaseQuery(() =>
-          supabase
-            .from('company_overview_stats_mv')
-            .select('response_month, job_function_context, response_count, mentioned_count, total_citations')
-            .eq('company_id', requestedCompanyId)
-        ) as Promise<{ data: any[] | null; error: any }>,
-        retrySupabaseQuery(() =>
-          supabase
-            .from('company_overview_domains_mv')
-            .select('response_month, unique_domains')
-            .eq('company_id', requestedCompanyId)
-        ) as Promise<{ data: any[] | null; error: any }>,
-      ]);
-      if (isStale()) return;
-      if (!statsRes.error) setOverviewStats(statsRes.data ?? []);
-      if (!domainsRes.error) setOverviewDomains(domainsRes.data ?? []);
-    } catch (err: any) {
-      if (!isStale()) console.error('Error in fetchOverviewStats:', err?.message);
-    } finally {
-      if (!isStale()) {
-        setLoading(false);
-        setCompetitorLoading(false);
-      }
-    }
-  }, [user, currentCompany?.id]);
-
   // Memoized cache of sentiment calculations per response ID
   // OPTIMIZED: Only recalculates when themes change, not on every render
   // This prevents expensive calculations on every render
@@ -1407,8 +1367,6 @@ export const useDashboardData = () => {
       setAiThemes([]);
       setAttributeThemes([]);
       setResponseSentimentRows([]);
-      setOverviewStats([]);
-      setOverviewDomains([]);
       setSearchResults([]);
       setSearchTermsData([]);
       setTalentXProData([]);
@@ -1462,27 +1420,15 @@ export const useDashboardData = () => {
           }
         }
 
-        // Always fetch fresh data (in background if cache was used).
-        // The Overview renders entirely from materialized views — overview
-        // stats/domains + sentiment/relevance/sources/competitors/rankings/
-        // attribute themes. Raw prompt_responses are NO LONGER fetched here;
-        // they load lazily via ensureResponses() only when a detail tab
-        // (Sources/Competitors/Thematic/Prompts) that needs row-level data
-        // mounts. This removes the ~8-round-trip responses pull from the
-        // company/country switch.
+        // Always fetch fresh data (in background if cache was used)
         setCompanyName(currentCompany.name || '');
-        // The Overview's ready-state is gated by these MV fetches (fast).
         Promise.all([
           fetchMVData(),
           fetchCompanyMetrics(),
-          fetchOverviewStats(),
+          fetchResponses(),
           // On explicit refresh, also refetch AI themes and clear search cache
           ...(isExplicitRefresh ? [fetchAIThemes()] : []),
         ]);
-        // Raw responses load in the background — they no longer gate the
-        // Overview (which renders from MVs), only the detail cards/tabs that
-        // need per-response citation/competitor data.
-        fetchResponses();
         fetchTalentXProData();
         if (isExplicitRefresh) {
           searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
@@ -1727,21 +1673,16 @@ export const useDashboardData = () => {
 
   // --- Period detection: group responses by month ---
   const availablePeriods: PeriodInfo[] = useMemo(() => {
-    // Prefer the months present in the overview-stats MV (so the period
-    // selector works without loading raw responses); fall back to responses'
-    // tested_at months when the MV hasn't populated.
-    const monthKeys = new Set<string>();
-    if (overviewStats.length > 0) {
-      overviewStats.forEach(r => { monthKeys.add(String(r.response_month).slice(0, 7)); });
-    } else {
-      responses.forEach(r => {
-        const d = new Date(r.tested_at);
-        monthKeys.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-      });
-    }
-    if (monthKeys.size === 0) return [];
-    return Array.from(monthKeys)
-      .map(key => {
+    if (responses.length === 0) return [];
+    const monthSet = new Map<string, Date[]>();
+    responses.forEach(r => {
+      const d = new Date(r.tested_at);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (!monthSet.has(key)) monthSet.set(key, []);
+      monthSet.get(key)!.push(d);
+    });
+    const periods: PeriodInfo[] = Array.from(monthSet.entries())
+      .map(([key, dates]) => {
         const [y, m] = key.split('-').map(Number);
         const startDate = new Date(y, m - 1, 1);
         const endDate = new Date(y, m, 0, 23, 59, 59, 999);
@@ -1749,7 +1690,8 @@ export const useDashboardData = () => {
         return { key, label, startDate, endDate };
       })
       .sort((a, b) => b.startDate.getTime() - a.startDate.getTime());
-  }, [overviewStats, responses]);
+    return periods;
+  }, [responses]);
 
   // Reset selectedPeriod when company changes
   useEffect(() => {
@@ -2006,11 +1948,10 @@ export const useDashboardData = () => {
   // CRITICAL: Only show metrics when data is ACTUALLY ready and calculated
   useEffect(() => {
     // Metrics are ready when:
-    // 1. Overview aggregates are loaded (from the MV) — or raw responses, as a
-    //    fallback. The Overview no longer waits on the background responses pull.
+    // 1. Responses are loaded (needed for visibility calculation)
     // 2. Backend metrics query is complete (sentiment comes from MV only)
     // 3. Relevance is ready (backend metrics exist OR recency fetch completed)
-    const responsesReady = !loading && (overviewStats.length > 0 || responses.length > 0);
+    const responsesReady = !loading && responses.length > 0;
     const backendMetricsReady = !companyMetricsLoading;
     
     // Sentiment is ready when MV query completes (MV-only, no frontend fallback)
@@ -2026,46 +1967,19 @@ export const useDashboardData = () => {
     const allReady = responsesReady && backendMetricsReady && sentimentReady && relevanceReady;
     setMetricsCalculating(!allReady);
     
-  }, [loading, responses.length, overviewStats.length, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length]);
+  }, [loading, responses.length, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length]);
 
   const metrics: DashboardMetrics = useMemo(() => {
     // Use period-filtered responses when a period is selected (multi-month companies)
     // This ensures all downstream metrics reflect the active period
     const responses = periodFilteredResponses;
 
-    // ---- Overview aggregates from the MVs (no raw responses needed) ----
-    // Response/visibility/citation/domain numbers come from
-    // company_overview_stats_mv / company_overview_domains_mv, scoped to the
-    // effective period's month. Raw responses are only a fallback when the MVs
-    // haven't populated (and once a detail tab has lazily loaded them).
-    const periodKey = effectivePeriod?.key ?? null; // 'YYYY-MM' or null = all
-    const prevKey = previousPeriodInfo?.key ?? null;
-    const monthKey = (m: any) => String(m).slice(0, 7);
-    const sumStats = (key: string | null) => {
-      let resp = 0, ment = 0, cit = 0;
-      overviewStats.forEach(r => {
-        if (key && monthKey(r.response_month) !== key) return;
-        resp += Number(r.response_count) || 0;
-        ment += Number(r.mentioned_count) || 0;
-        cit += Number(r.total_citations) || 0;
-      });
-      return { resp, ment, cit };
-    };
-    const domainsFor = (key: string | null) => {
-      let d = 0;
-      overviewDomains.forEach(r => {
-        if (key && monthKey(r.response_month) !== key) return;
-        d = Math.max(d, Number(r.unique_domains) || 0);
-      });
-      return d;
-    };
-    const useMv = overviewStats.length > 0;
-    const mvCur = sumStats(periodKey);
-    const mvPrev = sumStats(prevKey);
+    // PREFER backend-calculated metrics from materialized views if available
+    // Fallback to frontend calculation if backend data is not available
 
-    // Bail only when nothing is available (no MV rows, no responses, no backend
-    // sentiment/relevance).
-    if (!useMv && (loading || responses.length === 0) && !companySentimentMetrics && !companyRelevanceMetrics) {
+    // Don't calculate if still loading AND we don't have backend metrics
+    // If backend metrics exist, we can use them even if responses aren't fully loaded yet
+    if ((loading || responses.length === 0) && !companySentimentMetrics && !companyRelevanceMetrics) {
       return {
         averageSentiment: 0,
         sentimentLabel: 'Neutral',
@@ -2105,7 +2019,7 @@ export const useDashboardData = () => {
       averageSentiment = companySentimentMetrics.sentiment_ratio || 0;
     }
     // Estimate counts based on ratios (for display purposes)
-    const totalResponses = useMv ? mvCur.resp : responses.length;
+    const totalResponses = responses.length;
     if (companySentimentMetrics && companySentimentMetrics.total_themes > 0) {
       const positiveRatio = companySentimentMetrics.positive_themes / companySentimentMetrics.total_themes;
       const negativeRatio = companySentimentMetrics.negative_themes / companySentimentMetrics.total_themes;
@@ -2186,47 +2100,16 @@ export const useDashboardData = () => {
       }
     }
 
-    // When MV data is present, compute the trend arrows as current-month vs
-    // previous-month (the data is collected monthly, so month-over-month is the
-    // meaningful comparison and needs no raw responses).
-    if (useMv && prevKey && mvPrev.resp > 0) {
-      const curVis = mvCur.resp > 0 ? (mvCur.ment / mvCur.resp) * 100 : 0;
-      const prevVis = (mvPrev.ment / mvPrev.resp) * 100;
-      const visChange = curVis - prevVis;
-      visibilityTrendComparison = {
-        value: Math.abs(visChange),
-        direction: visChange > 1 ? 'up' : visChange < -1 ? 'down' : 'neutral',
-      };
-      const citChange = mvCur.cit - mvPrev.cit;
-      citationsTrendComparison = {
-        value: Math.abs(Math.round(citChange)),
-        direction: citChange > 0.1 ? 'up' : citChange < -0.1 ? 'down' : 'neutral',
-      };
-      const curSent = companySentimentByMonth[periodKey as string];
-      const prevSent = companySentimentByMonth[prevKey];
-      if (curSent !== undefined && prevSent !== undefined) {
-        const sentChange = curSent - prevSent;
-        sentimentTrendComparison = {
-          value: Math.abs(Math.round(sentChange * 100)),
-          direction: sentChange > 0.05 ? 'up' : sentChange < -0.05 ? 'down' : 'neutral',
-        };
-      }
-    }
+    const totalCitations = responses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
+    const uniqueDomains = new Set(
+      responses.flatMap(r => getCitations(r.id).map((c: Citation) => c.domain).filter(Boolean))
+    ).size;
 
-    const totalCitations = useMv
-      ? mvCur.cit
-      : responses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
-    const uniqueDomains = useMv
-      ? domainsFor(periodKey)
-      : new Set(
-          responses.flatMap(r => getCitations(r.id).map((c: Citation) => c.domain).filter(Boolean))
-        ).size;
-
-    // Average visibility = % of responses where company_mentioned is TRUE
+    // Calculate average visibility as the percentage of responses where company_mentioned is TRUE
     const mentionedCount = responses.filter(r => r.company_mentioned === true).length;
-    const averageVisibility = useMv
-      ? (mvCur.resp > 0 ? (mvCur.ment / mvCur.resp) * 100 : 0)
-      : (responses.length > 0 ? (mentionedCount / responses.length) * 100 : 0);
+    const averageVisibility = responses.length > 0
+      ? (mentionedCount / responses.length) * 100
+      : 0;
 
     // Use period-specific relevance from MV when a period is active, otherwise fall back to all-months aggregate
     const averageRelevance = (effectivePeriodKey && companyRelevanceByMonth[effectivePeriodKey] !== undefined)
@@ -2281,7 +2164,7 @@ export const useDashboardData = () => {
     };
     
     return metricsResult;
-  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companySentimentByMonth, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, previousPeriodInfo, overviewStats, overviewDomains, getCitations]);
+  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companySentimentByMonth, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations]);
 
   // Per-job-function scorecard metrics, so the Overview tab can rescope EPS /
   // Breakdown when a function is selected. Sentiment & relevance come from the
@@ -2297,13 +2180,10 @@ export const useDashboardData = () => {
     const fns = new Set<string>();
     sentimentMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
     relevanceMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
-    overviewStats.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
     periodFilteredResponses.forEach(r => {
       const f = r.confirmed_prompts?.job_function_context?.trim();
       if (f) fns.add(f);
     });
-    const ovMonthKey = (m: any) => String(m).slice(0, 7);
-    const ovPeriodKey = effectivePeriod?.key ?? null;
 
     fns.forEach(fn => {
       // Sentiment — positive themes / total themes across this function's rows
@@ -2326,27 +2206,14 @@ export const useDashboardData = () => {
       });
       const relevanceScore = relWeight > 0 ? Math.round(relWeighted / relWeight) : 0;
 
-      // Visibility — company_mentioned rate for this function. Prefer the
-      // overview-stats MV (effective period), fall back to raw responses.
-      let visibilityScore = 0;
-      if (overviewStats.length > 0) {
-        let resp = 0, ment = 0;
-        overviewStats.forEach(r => {
-          if (r.job_function_context !== fn) return;
-          if (ovPeriodKey && ovMonthKey(r.response_month) !== ovPeriodKey) return;
-          resp += Number(r.response_count) || 0;
-          ment += Number(r.mentioned_count) || 0;
-        });
-        visibilityScore = resp > 0 ? Math.round((ment / resp) * 100) : 0;
-      } else {
-        const fnResponses = periodFilteredResponses.filter(
-          r => r.confirmed_prompts?.job_function_context?.trim() === fn
-        );
-        const mentioned = fnResponses.filter(r => r.company_mentioned === true).length;
-        visibilityScore = fnResponses.length > 0
-          ? Math.round((mentioned / fnResponses.length) * 100)
-          : 0;
-      }
+      // Visibility — company_mentioned rate of this function's responses
+      const fnResponses = periodFilteredResponses.filter(
+        r => r.confirmed_prompts?.job_function_context?.trim() === fn
+      );
+      const mentioned = fnResponses.filter(r => r.company_mentioned === true).length;
+      const visibilityScore = fnResponses.length > 0
+        ? Math.round((mentioned / fnResponses.length) * 100)
+        : 0;
 
       const perceptionScore = Math.round(
         (sentimentScore * 0.5) + (visibilityScore * 0.3) + (relevanceScore * 0.2)
@@ -2361,7 +2228,7 @@ export const useDashboardData = () => {
     });
 
     return result;
-  }, [sentimentMvRows, relevanceMvRows, periodFilteredResponses, overviewStats, effectivePeriod]);
+  }, [sentimentMvRows, relevanceMvRows, periodFilteredResponses]);
 
   const sentimentTrend: SentimentTrendData[] = useMemo(() => {
     // Group by date via Map (O(1) lookup) instead of reduce+find (O(N²)).
@@ -2694,8 +2561,6 @@ export const useDashboardData = () => {
     fetchAIThemes, // Lazy raw-themes fetch (called when Thematic tab mounts)
     attributeThemes, // Pre-aggregated attribute scores (company_attribute_themes_mv)
     responseSentimentRows, // Per-response sentiment ratios (company_response_sentiment_mv)
-    overviewStats, // Per company x month x job_function counts/visibility/citations (MV)
-    overviewDomains, // Per company x month unique citation domains (MV)
     fetchHistoricalResponses, // Fetch responses for a specific time range
     fetchCollectionDates, // Get all collection dates for timeline/comparison
     isOnline, // Network status
@@ -2721,7 +2586,6 @@ export const useDashboardData = () => {
     effectivePeriod,
     previousPeriodMetrics,
     companyRelevanceByMonth,
-    companySentimentByMonth,
     previousPeriodResponses,
   };
 };

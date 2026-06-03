@@ -72,8 +72,6 @@ interface OverviewTabProps {
   // silently comparing against 0.
   previousPeriodMetrics?: { sentimentScore?: number; visibilityScore?: number; relevanceScore?: number } | null;
   companyRelevanceByMonth?: Record<string, number>;
-  companySentimentByMonth?: Record<string, number>;
-  overviewStats?: any[];
   previousPeriodResponses?: any[];
   market?: string | null;
   // Per-job-function scorecard metrics — lets the function filter rescope EPS/Breakdown.
@@ -135,8 +133,6 @@ export const OverviewTab = memo(({
   fetchResponseTexts,
   previousPeriodMetrics = null,
   companyRelevanceByMonth = {},
-  companySentimentByMonth = {},
-  overviewStats = [],
   previousPeriodResponses = [],
   market = null,
   metricsByJobFunction = {},
@@ -1088,46 +1084,146 @@ CRITICAL: When you reference information from a source, add an inline citation l
   // Compute perception score trend based on confirmed_prompts and tested_at dates
   // This groups responses by collection period (tested_at) and calculates scores for each period
   const perceptionScoreTrend = useMemo(() => {
-    // Per-month perception trend built entirely from the overview-stats MV — no
-    // raw responses. One point per month: visibility from the MV, sentiment and
-    // relevance from the per-month MV maps. Same EPS weighting as the scorecard
-    // (50% sentiment + 30% visibility + 20% relevance).
-    if (!overviewStats || overviewStats.length === 0) return [];
-
-    const byMonth = new Map<string, { resp: number; ment: number }>();
-    overviewStats.forEach(r => {
-      const key = String(r.response_month).slice(0, 7); // 'YYYY-MM'
-      const cur = byMonth.get(key) || { resp: 0, ment: 0 };
-      cur.resp += Number(r.response_count) || 0;
-      cur.ment += Number(r.mentioned_count) || 0;
-      byMonth.set(key, cur);
+    if (!responses || responses.length === 0) return [];
+    
+    // Helper to parse citations
+    const parseCitations = (citations: any) => {
+      if (!citations) return [];
+      try {
+        return typeof citations === 'string' ? JSON.parse(citations) : citations;
+      } catch {
+        return [];
+      }
+    };
+    
+    // Build a map of URL to recency_score for quick lookup
+    const recencyMap = new Map<string, number>();
+    recencyData.forEach(item => {
+      if (item.url && item.recency_score !== null && item.recency_score !== undefined) {
+        recencyMap.set(item.url, item.recency_score);
+      }
     });
-
-    return Array.from(byMonth.entries())
-      .map(([key, { resp, ment }]) => {
-        const [y, m] = key.split('-').map(Number);
-        const visibility = resp > 0 ? (ment / resp) * 100 : 0;
-        const sentiment = (companySentimentByMonth[key] ?? 0) * 100;
-        const relevance = companyRelevanceByMonth[key] ?? 0;
-        const roundedSentiment = Math.round(Math.max(0, Math.min(100, sentiment)));
-        const roundedVisibility = Math.round(visibility);
-        const roundedRelevance = Math.round(relevance);
-        const score = Math.round(
-          (roundedSentiment * 0.5) + (roundedVisibility * 0.3) + (roundedRelevance * 0.2)
-        );
-        return {
-          date: new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-          fullDate: `${key}-01`,
-          score,
-          responseCount: resp,
-          promptCount: 0,
-          sentiment: roundedSentiment,
-          visibility: roundedVisibility,
-          relevance: roundedRelevance,
-        };
-      })
-      .sort((a, b) => new Date(a.fullDate).getTime() - new Date(b.fullDate).getTime());
-  }, [overviewStats, companySentimentByMonth, companyRelevanceByMonth]);
+    
+    // Step 1: Get all unique tested_at dates (collection periods)
+    const uniqueDates = new Set<string>();
+    responses.forEach(r => {
+      const date = new Date(r.tested_at).toISOString().split('T')[0];
+      uniqueDates.add(date);
+    });
+    
+    
+    // Step 2: For each collection period, get the latest response per prompt+model combination
+    const collectionPeriods = Array.from(uniqueDates).map(date => {
+      // Get all responses from this date
+      const dateResponses = responses.filter(r => {
+        const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
+        return responseDate === date;
+      });
+      
+      
+      // For this collection period, get unique prompt+model combinations
+      // This ensures we're comparing the same set of prompts across periods
+      const promptModelMap = new Map<string, any>();
+      dateResponses.forEach(r => {
+        const key = `${r.confirmed_prompt_id}_${r.ai_model}`;
+        // Only keep if this is the latest for this prompt+model on this date
+        if (!promptModelMap.has(key) || 
+            new Date(r.tested_at).getTime() > new Date(promptModelMap.get(key).tested_at).getTime()) {
+          promptModelMap.set(key, r);
+        }
+      });
+      
+      const periodResponses = Array.from(promptModelMap.values());
+      
+      // Filter for experience and competitive responses only for score calculation
+      const relevantResponses = periodResponses.filter(r => {
+        const promptType = r.confirmed_prompts?.prompt_type;
+        return promptType === 'experience' ||
+               promptType === 'competitive' ||
+               promptType === 'talentx_experience' ||
+               promptType === 'talentx_competitive';
+      });
+      
+      // Sentiment: positive themes / total themes for this period, summed from
+      // the pre-aggregated per-response sentiment MV (company_response_sentiment_mv).
+      let avgSentiment = 0;
+      if (responseSentimentMap.size > 0) {
+        let totalThemes = 0;
+        let positiveThemes = 0;
+        periodResponses.forEach(r => {
+          const s = responseSentimentMap.get(r.id);
+          if (s) {
+            totalThemes += s.total;
+            positiveThemes += s.positive;
+          }
+        });
+        avgSentiment = totalThemes > 0 ? positiveThemes / totalThemes : 0;
+      }
+      // Convert ratio (0-1) to percentage (0-100)
+      const normalizedSentiment = Math.max(0, Math.min(100, avgSentiment * 100));
+      
+      // Calculate visibility (percentage of responses where company was mentioned)
+      const mentionedCount = periodResponses.filter(r => r.company_mentioned === true).length;
+      const avgVisibility = periodResponses.length > 0 
+        ? (mentionedCount / periodResponses.length) * 100 
+        : 0;
+      
+      // Calculate relevance: prefer MV per-month data, fall back to recency data
+      const dateMonthKey = `${new Date(date).getFullYear()}-${String(new Date(date).getMonth() + 1).padStart(2, '0')}`;
+      let avgRelevance = 0;
+      if (companyRelevanceByMonth[dateMonthKey] !== undefined) {
+        avgRelevance = companyRelevanceByMonth[dateMonthKey];
+      } else {
+        // Fallback to recency data (may be empty)
+        const periodCitations = periodResponses.flatMap(r => parseCitations(r.citations));
+        const recencyScores: number[] = [];
+        periodCitations.forEach((citation: any) => {
+          const originalUrl = citation.url || citation.link;
+          if (originalUrl) {
+            const url = extractSourceUrl(originalUrl);
+            if (recencyMap.has(url)) {
+              recencyScores.push(recencyMap.get(url)!);
+            }
+          }
+        });
+        avgRelevance = recencyScores.length > 0
+          ? recencyScores.reduce((sum, score) => sum + score, 0) / recencyScores.length
+          : 0;
+      }
+      
+      // Round values first so they match what's displayed in the breakdown
+      const roundedSentiment = Math.round(normalizedSentiment);
+      const roundedVisibility = Math.round(avgVisibility);
+      const roundedRelevance = Math.round(avgRelevance);
+      
+      // Weighted formula: 50% sentiment + 30% visibility + 20% relevance
+      // Use rounded values so EPS matches what's shown in the breakdown card
+      const perceptionScore = Math.round(
+        (roundedSentiment * 0.5) +
+        (roundedVisibility * 0.3) +
+        (roundedRelevance * 0.2)
+      );
+      
+      
+      return {
+        date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        fullDate: date,
+        score: perceptionScore,
+        responseCount: periodResponses.length,
+        promptCount: promptModelMap.size,
+        sentiment: roundedSentiment,
+        visibility: roundedVisibility,
+        relevance: roundedRelevance
+      };
+    });
+    
+    // Step 3: Sort by date ascending
+    const sorted = collectionPeriods.sort((a, b) => 
+      new Date(a.fullDate).getTime() - new Date(b.fullDate).getTime()
+    );
+    
+    return sorted;
+  }, [responses, responseSentimentMap, recencyData, companyRelevanceByMonth, calculateAIBasedSentiment]);
 
   // Prepare chart data for LLM mentions
   const llmMentionChartData = useMemo(() => {
