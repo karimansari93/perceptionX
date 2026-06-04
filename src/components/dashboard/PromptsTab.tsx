@@ -1,13 +1,9 @@
-import { useState, useMemo, useCallback, memo } from "react";
+import { useMemo, useCallback, memo } from "react";
 import { PromptData } from "@/types/dashboard";
 import { ResponseDetailsModal } from "./ResponseDetailsModal";
 import { PromptResponse } from "@/types/dashboard";
 import { PromptTable } from "./PromptTable";
-import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
-import { useCompany } from "@/contexts/CompanyContext";
-import { DASHBOARD_ADD_LOCKED } from "@/config/featureFlags";
-import { AddIndustryPromptModal } from "./AddIndustryPromptModal";
+import { ScrollablePills } from "./ScrollablePills";
 import type { RefreshProgress } from "@/hooks/useRefreshPrompts";
 import { usePersistedState } from "@/hooks/usePersistedState";
 
@@ -20,23 +16,27 @@ interface PromptsTabProps {
   isRefreshing: boolean;
   refreshProgress: RefreshProgress | null;
   selectedLocation?: string | null;
+  responseTexts?: Record<string, string>;
+  fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
+  selectedJobFunction?: string;
+  onJobFunctionChange?: (value: string) => void;
 }
 
 export const PromptsTab = memo(({
   promptsData,
   responses,
   companyName = 'your company',
-  onRefresh,
   onRefreshPrompts,
   isRefreshing,
   refreshProgress,
-  selectedLocation,
+  responseTexts,
+  fetchResponseTexts,
+  selectedJobFunction = 'all',
+  onJobFunctionChange,
 }: PromptsTabProps) => {
-  // Modal states - persisted
+  // Modal state - persisted
   const [selectedPrompt, setSelectedPrompt] = usePersistedState<string | null>('promptsTab.selectedPrompt', null);
   const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('promptsTab.isModalOpen', false);
-  const [isAddPromptModalOpen, setIsAddPromptModalOpen] = usePersistedState<boolean>('promptsTab.isAddPromptModalOpen', false);
-  const { currentCompany } = useCompany();
 
   // Pre-index responses by prompt text for O(1) lookup instead of O(n) filter
   const responsesByPrompt = useMemo(() => {
@@ -60,10 +60,6 @@ export const PromptsTab = memo(({
     return responsesByPrompt.get(promptText) || [];
   }, [responsesByPrompt]);
 
-  const existingIndustries = (currentCompany?.industries && currentCompany.industries.length > 0)
-    ? currentCompany.industries
-    : (currentCompany?.industry ? [currentCompany.industry] : []);
-
   const existingJobFunctions = useMemo(() => {
     const functions = new Set<string>();
     promptsData.forEach(p => {
@@ -72,82 +68,62 @@ export const PromptsTab = memo(({
     return Array.from(functions).sort((a, b) => a.localeCompare(b));
   }, [promptsData]);
 
-  const existingLocations = useMemo(() => {
-    const locations = new Set<string>();
-    promptsData.forEach(p => {
-      if (p.locationContext) locations.add(p.locationContext);
-    });
-    return Array.from(locations).sort((a, b) => a.localeCompare(b));
-  }, [promptsData]);
-
-  const handlePromptsAdded = () => {
-    onRefresh?.();
-  };
+  // Filter the table by the shared job-function pill selection (matches Overview/Sources/Competitors)
+  const filteredPromptsData = useMemo(() => {
+    if (!selectedJobFunction || selectedJobFunction === 'all') return promptsData;
+    return promptsData.filter(p => (p.jobFunctionContext || '').trim() === selectedJobFunction);
+  }, [promptsData, selectedJobFunction]);
 
   return (
-    <>
-      <div className="space-y-6 min-w-0 max-w-full overflow-hidden">
-        {/* Main Section Header */}
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-2">
-            <h2 className="text-2xl font-bold text-gray-900">Prompts</h2>
-            <p className="text-gray-600">
-              Monitor and analyze {companyName}'s prompt performance across different AI models and track response quality.
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            onClick={() => !DASHBOARD_ADD_LOCKED && setIsAddPromptModalOpen(true)}
-            disabled={!currentCompany || DASHBOARD_ADD_LOCKED}
-            title={DASHBOARD_ADD_LOCKED ? "Temporarily unavailable" : undefined}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add new prompt
-          </Button>
-        </div>
-
-        {/* Single Combined Table */}
-        <PromptTable
-          prompts={promptsData}
-          onPromptClick={handlePromptClick}
-        />
-
-        {/* Response Details Modal */}
-        {selectedPrompt && (
-          <ResponseDetailsModal
-            isOpen={isModalOpen}
-            onClose={() => {
-              setIsModalOpen(false);
-              // Keep selectedPrompt so it can be restored
-            }}
-            promptText={selectedPrompt}
-            responses={getPromptResponses(selectedPrompt)}
-            promptsData={promptsData}
-            companyName={companyName}
-            onRefreshPrompt={onRefreshPrompts}
-            isRefreshing={isRefreshing}
-            refreshProgress={refreshProgress}
-          />
-        )}
+    <div className="space-y-6 min-w-0 max-w-full overflow-hidden">
+      {/* Main Section Header */}
+      <div className="space-y-2">
+        <h2 className="text-2xl font-bold text-gray-900">Prompts</h2>
+        <p className="text-gray-600">
+          Monitor and analyze {companyName}'s prompt performance across different AI models and track response quality.
+        </p>
       </div>
 
-      {currentCompany && (
-        <AddIndustryPromptModal
-          isOpen={isAddPromptModalOpen}
-          onClose={() => setIsAddPromptModalOpen(false)}
-          companyId={currentCompany.id}
+      {/* Job function filter — shared with Overview, Sources, Competitors */}
+      {existingJobFunctions.length > 0 && (
+        <div className="sticky top-0 z-10 bg-white pb-2">
+          <ScrollablePills
+            selected={selectedJobFunction}
+            onSelect={onJobFunctionChange ?? (() => {})}
+            options={[
+              { value: 'all', label: 'All functions' },
+              ...existingJobFunctions.map((fn) => ({ value: fn, label: fn })),
+            ]}
+          />
+        </div>
+      )}
+
+      {/* Single Combined Table */}
+      <PromptTable
+        prompts={filteredPromptsData}
+        onPromptClick={handlePromptClick}
+      />
+
+      {/* Response Details Modal */}
+      {selectedPrompt && (
+        <ResponseDetailsModal
+          isOpen={isModalOpen}
+          onClose={() => {
+            setIsModalOpen(false);
+            // Keep selectedPrompt so it can be restored
+          }}
+          promptText={selectedPrompt}
+          responses={getPromptResponses(selectedPrompt)}
+          promptsData={promptsData}
           companyName={companyName}
-          existingIndustries={existingIndustries}
-          existingJobFunctions={existingJobFunctions}
-          existingLocations={existingLocations}
-          onPromptsAdded={handlePromptsAdded}
-          onRefreshPrompts={onRefreshPrompts}
+          onRefreshPrompt={onRefreshPrompts}
           isRefreshing={isRefreshing}
           refreshProgress={refreshProgress}
-          selectedLocation={selectedLocation}
+          responseTexts={responseTexts}
+          fetchResponseTexts={fetchResponseTexts}
         />
       )}
-    </>
+    </div>
   );
 });
 PromptsTab.displayName = 'PromptsTab';

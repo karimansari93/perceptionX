@@ -255,7 +255,7 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
     const competitorMap = new Map();
     responses.forEach(response => {
       if (response.detected_competitors && response.detected_competitors.trim()) {
-        const competitors = response.detected_competitors.split(',').map(c => c.trim()).filter(c => c.length > 0);
+        const competitors = response.detected_competitors.split(',').map(c => c.trim()).filter(c => c.length > 0 && !/^(none|n\/?a|na|null|undefined)[.,:;)\]}_\-]*$/i.test(c));
         competitors.forEach((competitor: string) => {
           if (!competitorMap.has(competitor)) {
             competitorMap.set(competitor, { competitor, frequency: 0, sentiment: 0 });

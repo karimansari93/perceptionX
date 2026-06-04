@@ -14,7 +14,6 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import LLMLogo from "@/components/LLMLogo";
-import { KeyTakeaways } from "./KeyTakeaways";
 import { SourcesSummaryCard } from "./SourcesSummaryCard";
 import { CompetitorsSummaryCard } from "./CompetitorsSummaryCard";
 import { AttributesSummaryCard } from "./AttributesSummaryCard";
@@ -1530,21 +1529,6 @@ CRITICAL: When you reference information from a source, add an inline citation l
           </CardContent>
         </Card>
       </div>
-      {/* Key Takeaways - Temporarily Hidden */}
-      {/* <div>
-        <KeyTakeaways 
-          metrics={metrics}
-          topCompetitors={normalizedTopCompetitors}
-          topCitations={topCitations}
-          themesBySentiment={themesBySentiment}
-          llmMentionRankings={llmMentionRankings}
-          responses={responses}
-          talentXProData={talentXProData}
-          isPro={isPro}
-          attributeInsights={attributeInsights}
-          searchResults={searchResults}
-        />
-      </div> */}
 
       {/* Summary Cards Grid - only render when all metrics (including themes) are ready */}
       {!metricsCalculating && (

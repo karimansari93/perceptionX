@@ -34,7 +34,6 @@ const CompetitorsTab = lazy(() => import("@/components/dashboard/CompetitorsTab"
 const ThematicAnalysisTab = lazy(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
 const PromptsTab = lazy(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
 const AnswerGapsTab = lazy(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
-import { KeyTakeaways } from "@/components/dashboard/KeyTakeaways";
 import LLMLogo from "@/components/LLMLogo";
 import { AddCompanyModal } from "@/components/dashboard/AddCompanyModal";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
@@ -695,6 +694,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 isRefreshing={isRefreshing}
                 refreshProgress={refreshProgress}
                 selectedLocation={selectedLocation}
+                responseTexts={responseTexts}
+                fetchResponseTexts={fetchResponseTexts}
+                selectedJobFunction={selectedJobFunction}
+                onJobFunctionChange={setSelectedJobFunction}
               />
             </Suspense>
           </div>
