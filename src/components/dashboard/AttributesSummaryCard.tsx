@@ -19,7 +19,7 @@ interface AttributesSummaryCardProps {
   aiThemesLoading?: boolean;
 }
 
-// Attribute icon mapping (shared with KeyTakeaways)
+// Attribute icon mapping
 const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   'mission-purpose': Target,
   'rewards-recognition': Award,

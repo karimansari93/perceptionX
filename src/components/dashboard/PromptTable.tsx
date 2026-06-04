@@ -2,9 +2,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PromptData } from "@/types/dashboard";
-import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter, HelpCircle } from "lucide-react";
+import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter, HelpCircle, Lightbulb, Search } from "lucide-react";
 import { useState, useMemo, useTransition, useDeferredValue, memo } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
@@ -20,9 +21,11 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [showAll, setShowAll] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [, startTransition] = useTransition();
   const deferredTypeFilter = useDeferredValue(typeFilter);
   const deferredCategoryFilter = useDeferredValue(categoryFilter);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const isMobile = useIsMobile();
 
   // Helper function to format kebab-case attribute IDs to Title Case
@@ -75,6 +78,12 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
   // Filter prompts based on selected filters
   const filteredPrompts = useMemo(() => {
     return prompts.filter(prompt => {
+      // Search by prompt text
+      const q = deferredSearchQuery.trim().toLowerCase();
+      if (q && !prompt.prompt.toLowerCase().includes(q)) {
+        return false;
+      }
+
       // Type filter
       let typeLabel = prompt.type;
       if (prompt.type.startsWith('talentx_')) {
@@ -104,7 +113,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
 
       return true;
     });
-  }, [prompts, deferredTypeFilter, deferredCategoryFilter]);
+  }, [prompts, deferredTypeFilter, deferredCategoryFilter, deferredSearchQuery]);
 
   const displayedPrompts = useMemo(() => {
     return showAll ? filteredPrompts : filteredPrompts.slice(0, INITIAL_ROWS);
@@ -227,7 +236,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
       badgeClass = "bg-purple-100 text-purple-800 border-purple-200";
     }
     
-    return <Badge variant="outline" className={badgeClass}>{displayLabel}</Badge>;
+    return <Badge variant="outline" className={`${badgeClass} whitespace-nowrap`}>{displayLabel}</Badge>;
   };
 
   const getCategoryBadge = (prompt: PromptData) => {
@@ -237,62 +246,77 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
     // Format attribute names (kebab-case to Title Case)
     const formattedLabel = formatAttributeName(categoryLabel);
     
-    return <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">{formattedLabel}</Badge>;
+    return (
+      <Badge variant="outline" title={formattedLabel} className="max-w-full bg-gray-50 text-gray-700 border-gray-200">
+        <span className="min-w-0 truncate">{formattedLabel}</span>
+      </Badge>
+    );
   };
 
   const getCompetitorsDisplay = (prompt: PromptData) => {
     if (!prompt.detectedCompetitors) {
-      return <span className="text-xs text-gray-400">None</span>;
+      return <span className="text-gray-400">—</span>;
     }
-    
+
+    // Drop placeholder values that aren't real competitors — otherwise they
+    // render as a generic globe favicon (e.g. "No competitors" -> nocompetitors.com).
+    const NON_COMPETITOR = /^(none|n\/?a|not applicable|unknown|no(ne)? (other )?competitors?( (found|mentioned|identified|listed|detected))?|no other companies)$/i;
     const competitors = prompt.detectedCompetitors
       .split(',')
       .map((comp: string) => comp.trim())
-      .filter((comp: string) => comp.length > 0);
-    
+      .filter((comp: string) => comp.length > 0 && !NON_COMPETITOR.test(comp));
+
     if (competitors.length === 0) {
-      return <span className="text-xs text-gray-400">None</span>;
+      return <span className="text-gray-400">—</span>;
     }
-    
-    const maxToShow = 1;
+
+    const maxToShow = 3;
     const extraCount = competitors.length - maxToShow;
-    
+
     return (
-      <div className="flex flex-wrap gap-1 justify-center items-center">
+      <div className="flex flex-nowrap gap-1 justify-center items-center overflow-hidden">
         {competitors.slice(0, maxToShow).map((name: string, idx: number) => {
           const faviconUrl = getCompetitorFavicon(name);
           const initials = name.charAt(0).toUpperCase();
-          
+          // Swap favicon → initials. Fires on a real load error (404) and also
+          // when Google returns its 16×16 generic globe (no real favicon found).
+          const fallbackToInitials = (img: HTMLImageElement) => {
+            img.style.display = 'none';
+            const fallback = img.nextElementSibling as HTMLElement | null;
+            if (fallback) fallback.style.display = 'flex';
+          };
+
           return (
-            <Badge key={idx} variant="secondary" className="text-xs flex items-center gap-1.5 px-2 py-0.5 bg-gray-100 text-gray-700">
-              <div className="w-3 h-3 flex-shrink-0 bg-gray-100 rounded flex items-center justify-center">
-                {faviconUrl ? (
-                  <img 
-                    src={faviconUrl} 
-                    alt={`${name} favicon`}
-                    className="w-full h-full rounded object-contain"
-                    onError={(e) => {
-                      // Fallback to initials if favicon fails to load
-                      e.currentTarget.style.display = 'none';
-                      const fallback = e.currentTarget.nextElementSibling as HTMLElement;
-                      if (fallback) fallback.style.display = 'flex';
-                    }}
-                    style={{ display: 'block' }}
-                  />
-                ) : null}
-                <span 
-                  className="text-[8px] font-bold text-gray-600"
-                  style={{ display: faviconUrl ? 'none' : 'flex' }}
-                >
-                  {initials}
-                </span>
-              </div>
-              <span className="truncate max-w-[120px]" title={name}>{name}</span>
-            </Badge>
+            <span
+              key={idx}
+              title={name}
+              className="w-5 h-5 flex-shrink-0 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center overflow-hidden"
+            >
+              {faviconUrl ? (
+                <img
+                  src={faviconUrl}
+                  alt={`${name} favicon`}
+                  className="w-full h-full rounded-full object-contain"
+                  onLoad={(e) => {
+                    if (e.currentTarget.naturalWidth > 0 && e.currentTarget.naturalWidth <= 16) {
+                      fallbackToInitials(e.currentTarget);
+                    }
+                  }}
+                  onError={(e) => fallbackToInitials(e.currentTarget)}
+                  style={{ display: 'block' }}
+                />
+              ) : null}
+              <span
+                className="text-[9px] font-bold text-gray-600"
+                style={{ display: faviconUrl ? 'none' : 'flex' }}
+              >
+                {initials}
+              </span>
+            </span>
           );
         })}
         {extraCount > 0 && (
-          <Badge variant="secondary" className="text-xs bg-gray-100 text-gray-700">+{extraCount} more</Badge>
+          <span className="flex-shrink-0 whitespace-nowrap text-[10px] font-medium text-gray-500">+{extraCount}</span>
         )}
       </div>
     );
@@ -300,34 +324,43 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
 
   return (
     <>
-      {/* Filters above the card - Only show for Pro users */}
-      {(
-        <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 mb-4">
-          <Select value={typeFilter} onValueChange={(v) => startTransition(() => setTypeFilter(v))}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="All Types" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              {uniqueTypes.map(type => (
-                <SelectItem key={type} value={type}>{type}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          
-          <Select value={categoryFilter} onValueChange={(v) => startTransition(() => setCategoryFilter(v))}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="All Themes" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Themes</SelectItem>
-              {uniqueCategories.map(category => (
-                <SelectItem key={category} value={category}>{category}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      {/* Search (full-width) + Type & Theme filters on the right */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search prompts..."
+            className="h-8 w-full pl-8 rounded-lg border-gray-200 bg-white text-xs shadow-sm"
+          />
         </div>
-      )}
+        <Select value={typeFilter} onValueChange={(v) => startTransition(() => setTypeFilter(v))}>
+          <SelectTrigger className="h-8 w-auto min-w-[120px] gap-1.5 rounded-lg border-gray-200 bg-white text-xs font-medium text-gray-600 shadow-sm">
+            <Filter className="w-3.5 h-3.5 shrink-0 text-gray-400" />
+            <SelectValue placeholder="All types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All types</SelectItem>
+            {uniqueTypes.map(type => (
+              <SelectItem key={type} value={type}>{type}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={categoryFilter} onValueChange={(v) => startTransition(() => setCategoryFilter(v))}>
+          <SelectTrigger className="h-8 w-auto min-w-[120px] gap-1.5 rounded-lg border-gray-200 bg-white text-xs font-medium text-gray-600 shadow-sm">
+            <Lightbulb className="w-3.5 h-3.5 shrink-0 text-gray-400" />
+            <SelectValue placeholder="All themes" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All themes</SelectItem>
+            {uniqueCategories.map(category => (
+              <SelectItem key={category} value={category}>{category}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
       {filteredPrompts.length > 0 ? (
         isMobile ? (
@@ -350,11 +383,6 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                   <div className="flex items-center gap-2 mb-3">
                     {getTypeBadge(prompt)}
                     {getCategoryBadge(prompt)}
-                    {prompt.jobFunctionContext && (
-                      <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
-                        {prompt.jobFunctionContext}
-                      </Badge>
-                    )}
                   </div>
                    
                    {/* Responses row */}
@@ -392,7 +420,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
             <Card className="max-w-full overflow-hidden">
               <CardContent className="p-0">
                 <div>
-                  <Table className="table-fixed w-full">
+                  <Table className="table-fixed w-full text-xs font-medium [&_th]:h-9 [&_th]:px-3 [&_td]:px-3 [&_td]:py-2 [&_td_.rounded-full]:font-medium">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[40%]">
@@ -408,7 +436,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                       </TooltipContent>
                     </Tooltip>
                   </TableHead>
-                  <TableHead className="text-center w-[90px]">
+                  <TableHead className="text-center w-[110px]">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center justify-center gap-1 cursor-help">
@@ -422,7 +450,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                     </Tooltip>
                   </TableHead>
                   {(
-                    <TableHead className="text-center w-[100px]">
+                    <TableHead className="text-center w-[140px]">
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <div className="flex items-center justify-center gap-1 cursor-help">
@@ -436,19 +464,6 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                       </Tooltip>
                     </TableHead>
                   )}
-                  <TableHead className="text-center w-[80px]">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center justify-center gap-1 cursor-help">
-                          <span>Function</span>
-                          <HelpCircle className="w-3 h-3 text-gray-400" />
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Job function this prompt relates to</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TableHead>
                   <TableHead className="text-center w-[75px]">
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -475,7 +490,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                       </TooltipContent>
                     </Tooltip>
                   </TableHead>
-                  <TableHead className="text-center w-[100px]">
+                  <TableHead className="text-center w-[120px]">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <div className="flex items-center justify-center gap-1 cursor-help">
@@ -510,15 +525,6 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
                         {getCategoryBadge(prompt)}
                       </TableCell>
                     )}
-                    <TableCell className="text-center">
-                      {prompt.jobFunctionContext ? (
-                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
-                          {prompt.jobFunctionContext}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="bg-gray-50 text-gray-500 border-gray-200">General</Badge>
-                      )}
-                    </TableCell>
                     <TableCell className="text-center">
                       <Badge variant="secondary" className="bg-gray-100 text-gray-700">{prompt.responses}</Badge>
                     </TableCell>

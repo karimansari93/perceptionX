@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -289,14 +289,15 @@ export const ResponseDetailsModal = ({
           return;
         }
 
-        const response = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-openai", {
+        const response = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-claude", {
           method: "POST",
-          headers: { 
+          headers: {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${session.access_token}`
           },
           // Summarizing existing responses — no web search needed (fast/cheap).
-          body: JSON.stringify({ prompt, enableWebSearch: false }),
+          // Uses Claude Haiku 4.5, the same model as the EPS and Sources AI summaries.
+          body: JSON.stringify({ prompt, enableWebSearch: false, model: "claude-haiku-4-5", maxTokens: 700 }),
           signal: abortController.signal
         });
 
@@ -632,18 +633,18 @@ export const ResponseDetailsModal = ({
   }, [summary, isOpen, user]);
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className={`max-w-4xl ${companyMentionSnippets.length > 0 ? 'h-[90vh] sm:h-[95vh]' : 'h-[85vh] sm:h-[90vh]'} flex flex-col w-full mx-auto p-0`}>
-        <DialogHeader className="pb-3 sm:pb-4 flex-shrink-0 px-6 pt-6">
+    <Sheet open={isOpen} onOpenChange={onClose}>
+      <SheetContent side="right" className="w-full sm:max-w-2xl p-0 gap-0 flex flex-col">
+        <SheetHeader className="pb-3 sm:pb-4 flex-shrink-0 px-6 pt-6 pr-12 space-y-0 text-left">
           <div className="flex-1">
-            <DialogTitle className="text-base sm:text-lg font-semibold mb-2 text-[#13274F] leading-tight text-left">
+            <SheetTitle className="text-base sm:text-lg font-semibold mb-2 text-[#13274F] leading-tight text-left">
               {promptText}
-            </DialogTitle>
-            <DialogDescription className="text-xs sm:text-sm text-[#13274F] text-left">
+            </SheetTitle>
+            <SheetDescription className="text-xs sm:text-sm text-[#13274F] text-left">
               Generated {responses.length > 0 ? new Date(responses[0].tested_at).toLocaleDateString() : 'recently'}
-            </DialogDescription>
+            </SheetDescription>
           </div>
-        </DialogHeader>
+        </SheetHeader>
         
         {/* Progress Banner */}
         {isRefreshing && refreshProgress && companyName && (
@@ -1005,7 +1006,7 @@ export const ResponseDetailsModal = ({
           </div>
         )}
         </ScrollArea>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 };

@@ -12,6 +12,8 @@
 //     total discovery responses, so the numbers are directly comparable
 //     to the target's visibility.
 
+import { isValidCompetitor } from "@/utils/competitorUtils";
+
 const DISCOVERY_PROMPT_TYPES = new Set(["discovery", "talentx_discovery"]);
 
 export interface SurfacedEntity {
@@ -76,6 +78,9 @@ export function computeDiscoveryStats(
       if (!key || seenInResponse.has(key)) continue;
       // Drop the target itself if it shows up in detected_competitors
       if (key === targetKey || key.includes(targetKey)) continue;
+      // Drop non-companies — "None"/"N/A" placeholders, job boards, etc. — so they
+      // never surface as a competitor in the visibility comparison or EPS summary.
+      if (!isValidCompetitor(item, targetCompanyName)) continue;
       seenInResponse.add(key);
       const existing = counts.get(key);
       if (existing) {

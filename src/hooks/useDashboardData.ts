@@ -30,6 +30,15 @@ export const responseMonthKey = (r: { response_month?: string | null; tested_at?
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
 
+// "Overall Candidate Experience" is being deprecated and removed soon. Hide its
+// prompts/responses from every dashboard view by filtering them out centrally.
+export const isOverallCandidateExperience = (r: { confirmed_prompts?: any }): boolean => {
+  const cp = r?.confirmed_prompts || {};
+  const attr = String(cp.talentx_attribute_id || '').toLowerCase().trim();
+  const theme = String(cp.prompt_theme || '').toLowerCase().trim();
+  return attr === 'overall-candidate-experience' || theme === 'overall candidate experience';
+};
+
 export const useDashboardData = () => {
   const { user: rawUser, clearSession } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
@@ -1681,16 +1690,25 @@ export const useDashboardData = () => {
   }, [availablePeriods, effectivePeriod]);
 
   // Filter responses to the selected period (by snapshot month).
+  // Responses surfaced across the app, with deprecated prompt sets hidden
+  // (Overall Candidate Experience is being removed soon). Everything the UI
+  // consumes flows through here, so hiding once covers prompts, themes,
+  // competitors, sources, and the EPS/discovery stats.
+  const visibleResponses = useMemo(
+    () => responses.filter(r => !isOverallCandidateExperience(r)),
+    [responses]
+  );
+
   const periodFilteredResponses = useMemo(() => {
-    if (!effectivePeriod || availablePeriods.length <= 1) return responses;
-    return responses.filter(r => responseMonthKey(r) === effectivePeriod.key);
-  }, [responses, effectivePeriod, availablePeriods]);
+    if (!effectivePeriod || availablePeriods.length <= 1) return visibleResponses;
+    return visibleResponses.filter(r => responseMonthKey(r) === effectivePeriod.key);
+  }, [visibleResponses, effectivePeriod, availablePeriods]);
 
   // Previous period responses for per-tab delta computation (by snapshot month).
   const previousPeriodResponses = useMemo(() => {
     if (!previousPeriodInfo) return [];
-    return responses.filter(r => responseMonthKey(r) === previousPeriodInfo.key);
-  }, [responses, previousPeriodInfo]);
+    return visibleResponses.filter(r => responseMonthKey(r) === previousPeriodInfo.key);
+  }, [visibleResponses, previousPeriodInfo]);
 
   // Previous-period metrics for delta display.
   //
