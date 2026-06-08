@@ -102,6 +102,29 @@ export const EntityCanonicalizationTab = () => {
   const [selectedCanonicalIds, setSelectedCanonicalIds] = useState<Set<string>>(new Set());
   const [bulkCanonicalType, setBulkCanonicalType] = useState<string>("other");
 
+  // Surface Supabase / Postgrest error objects (which aren't Error instances
+  // and stringify to "[object Object]") with the actual message and code so
+  // we can debug failed approves / saves without the browser console.
+  const fmtError = (e: unknown): string => {
+    if (e instanceof Error) return e.message;
+    if (e && typeof e === "object") {
+      const err = e as { message?: string; details?: string; hint?: string; code?: string };
+      const parts: string[] = [];
+      if (err.message) parts.push(err.message);
+      if (err.details) parts.push(err.details);
+      if (err.hint) parts.push(`hint: ${err.hint}`);
+      if (err.code) parts.push(`(${err.code})`);
+      const joined = parts.filter(Boolean).join(" — ");
+      if (joined) return joined;
+      try {
+        return JSON.stringify(e);
+      } catch {
+        return String(e);
+      }
+    }
+    return String(e);
+  };
+
   // Scope for the LLM suggestion job. Two-level: pick an organization first;
   // if a specific org is chosen, a second dropdown lets you narrow further to
   // a single company in that org (e.g. "Netflix Japan" within Netflix).
@@ -148,7 +171,7 @@ export const EntityCanonicalizationTab = () => {
       setCanonicals((c.data ?? []) as Canonical[]);
       setAliases((a.data ?? []) as Alias[]);
     } catch (e: unknown) {
-      toast.error("Failed to load: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Failed to load: " + fmtError(e));
     } finally {
       setLoading(false);
     }
@@ -234,7 +257,7 @@ export const EntityCanonicalizationTab = () => {
       toast.success(`Processed ${data?.processed ?? 0} new variants`);
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Job failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Job failed: " + fmtError(e));
     } finally {
       setRunningJob(false);
     }
@@ -247,7 +270,7 @@ export const EntityCanonicalizationTab = () => {
       if (error) throw error;
       toast.success("Competitors MV refreshed");
     } catch (e: unknown) {
-      toast.error("Refresh failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Refresh failed: " + fmtError(e));
     } finally {
       setRefreshing(false);
     }
@@ -259,8 +282,20 @@ export const EntityCanonicalizationTab = () => {
     isActive: boolean
   ): Promise<Canonical> => {
     const normalized = normalizeClient(name);
-    const existing = canonicals.find((c) => c.normalized_name === normalized);
-    if (existing) return existing;
+    // Fast path: local state already has it. Cheap, avoids a roundtrip.
+    const localHit = canonicals.find((c) => c.normalized_name === normalized);
+    if (localHit) return localHit;
+
+    // Authoritative path: check the DB by normalized key. Local state can be
+    // stale when a seed migration / another approve / the auto-trigger has
+    // created this canonical since the page last loaded.
+    const lookup = await supabase
+      .from("canonical_entities")
+      .select("*")
+      .eq("normalized_name", normalized)
+      .maybeSingle();
+    if (lookup.data) return lookup.data as Canonical;
+
     const { data, error } = await supabase
       .from("canonical_entities")
       .insert({
@@ -271,7 +306,21 @@ export const EntityCanonicalizationTab = () => {
       })
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      // Race: someone created this canonical between our lookup and insert
+      // (the auto-self-alias trigger or a parallel approve). Re-fetch instead
+      // of erroring — both unique constraints we care about (normalized_name,
+      // canonical_name) point at the same logical row.
+      if (typeof error.code === "string" && error.code === "23505") {
+        const retry = await supabase
+          .from("canonical_entities")
+          .select("*")
+          .or(`normalized_name.eq.${normalized},canonical_name.eq.${name}`)
+          .maybeSingle();
+        if (retry.data) return retry.data as Canonical;
+      }
+      throw error;
+    }
     return data as Canonical;
   };
 
@@ -318,7 +367,7 @@ export const EntityCanonicalizationTab = () => {
       setEditing(null);
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Approve failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Approve failed: " + fmtError(e));
     }
   };
 
@@ -389,7 +438,7 @@ export const EntityCanonicalizationTab = () => {
       setEditingCanonical(null);
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Save failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Save failed: " + fmtError(e));
     }
   };
 
@@ -421,7 +470,7 @@ export const EntityCanonicalizationTab = () => {
       setSelectedCanonicalIds(new Set());
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Bulk update failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Bulk update failed: " + fmtError(e));
     }
   };
 
@@ -447,7 +496,7 @@ export const EntityCanonicalizationTab = () => {
       setSelectedCanonicalIds(new Set());
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Bulk delete failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Bulk delete failed: " + fmtError(e));
     }
   };
 
@@ -469,7 +518,7 @@ export const EntityCanonicalizationTab = () => {
       toast.success("Canonical deleted");
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Delete failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Delete failed: " + fmtError(e));
     }
   };
 
@@ -521,7 +570,7 @@ export const EntityCanonicalizationTab = () => {
       setEditingAlias(null);
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Save failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Save failed: " + fmtError(e));
     }
   };
 
@@ -548,7 +597,7 @@ export const EntityCanonicalizationTab = () => {
       toast.success("Alias deleted");
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Delete failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Delete failed: " + fmtError(e));
     }
   };
 
@@ -575,7 +624,7 @@ export const EntityCanonicalizationTab = () => {
       toast.success(`Reopened "${s.raw_alias}"`);
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Reopen failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Reopen failed: " + fmtError(e));
     }
   };
 
@@ -589,7 +638,7 @@ export const EntityCanonicalizationTab = () => {
       toast.success("Rejected");
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Reject failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Reject failed: " + fmtError(e));
     }
   };
 
@@ -639,7 +688,7 @@ export const EntityCanonicalizationTab = () => {
       setSelectedIds(new Set());
       await loadAll();
     } catch (e: unknown) {
-      toast.error("Reject failed: " + (e instanceof Error ? e.message : String(e)));
+      toast.error("Reject failed: " + fmtError(e));
     } finally {
       setBulkRunning(false);
     }
