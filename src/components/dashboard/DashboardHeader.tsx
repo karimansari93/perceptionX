@@ -18,12 +18,11 @@ interface DashboardHeaderProps {
   lastUpdated?: Date;
   onFixData?: () => Promise<void>;
   hasDataIssues?: boolean;
-  showAddCompanyModal?: boolean;
-  setShowAddCompanyModal?: (show: boolean) => void;
   alwaysMounted?: boolean;
   selectedLocation?: string | null;
   onLocationChange?: (location: string | null) => void;
-  onAddLocation?: () => void;
+  selectedLocationContext?: string | null;
+  onLocationContextChange?: (locationContext: string | null) => void;
   availablePeriods?: PeriodInfo[];
   selectedPeriod?: string | null;
   onPeriodChange?: (period: string | null) => void;
@@ -38,12 +37,11 @@ export const DashboardHeader = React.memo(({
   lastUpdated,
   onFixData,
   hasDataIssues,
-  showAddCompanyModal,
-  setShowAddCompanyModal,
   alwaysMounted,
   selectedLocation,
   onLocationChange,
-  onAddLocation,
+  selectedLocationContext,
+  onLocationContextChange,
   availablePeriods,
   selectedPeriod,
   onPeriodChange,
@@ -91,7 +89,8 @@ export const DashboardHeader = React.memo(({
               <LocationFilter
                 selectedLocation={selectedLocation || null}
                 onLocationChange={onLocationChange}
-                onAddLocation={onAddLocation}
+                selectedLocationContext={selectedLocationContext || null}
+                onLocationContextChange={onLocationContextChange}
                 className={isMobile ? "min-w-[120px]" : ""}
               />
             </div>
@@ -108,10 +107,10 @@ export const DashboardHeader = React.memo(({
           <div data-tour="company-switcher">
             <CompanySwitcher
               variant="outline"
-              showAddCompanyModal={showAddCompanyModal}
-              setShowAddCompanyModal={setShowAddCompanyModal}
               alwaysMounted={alwaysMounted}
-              locationFilter={selectedLocation || undefined}
+              onLocationChange={onLocationChange}
+              onLocationContextChange={onLocationContextChange}
+              selectedLocationContext={selectedLocationContext}
               className={isMobile ? "min-w-[120px] text-xs" : ""}
             />
           </div>

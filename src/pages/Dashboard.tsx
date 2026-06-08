@@ -8,7 +8,6 @@ import { CustomReports } from "@/components/dashboard/CustomReports";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { DASHBOARD_ADD_LOCKED } from "@/config/featureFlags";
 import { useCompany } from "@/contexts/CompanyContext";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertTriangle, ChevronRight, LayoutDashboard, Lock, Globe, Users, TrendingUp, BarChart3, Activity, RefreshCw } from "lucide-react";
@@ -35,7 +34,6 @@ const ThematicAnalysisTab = lazy(() => import("@/components/dashboard/ThematicAn
 const PromptsTab = lazy(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
 const AnswerGapsTab = lazy(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
 import LLMLogo from "@/components/LLMLogo";
-import { AddCompanyModal } from "@/components/dashboard/AddCompanyModal";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen";
 import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
@@ -74,19 +72,13 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const { currentCompany, loading: companyLoading } = useCompany();
   // Persist initial load state so we don't show loading screen on every navigation
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = usePersistedState<boolean>('dashboard.hasInitiallyLoaded', false);
-  // Use sessionStorage to persist modal state across tab switches
-  const [showAddCompanyModal, setShowAddCompanyModal] = useState(() => {
-    try {
-      const saved = sessionStorage.getItem('showAddCompanyModal');
-      return saved === 'true';
-    } catch {
-      return false;
-    }
-  });
   const [activeTab, setActiveTab] = useState<'terms' | 'results'>('results');
   const [chartView, setChartView] = useState<'bubble' | 'bar'>('bubble');
   const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
-  const [showAddLocationModal, setShowAddLocationModal] = useState(false);
+  // Within-company location focus for companies whose locations live in
+  // `confirmed_prompts.location_context` (e.g. Netflix Animation Studios →
+  // Burbank). null = all of the current company's locations.
+  const [selectedLocationContext, setSelectedLocationContext] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   // Track which lazy tabs have been visited so they stay mounted after first visit
   const [hasVisited, setHasVisited] = useState({
@@ -126,30 +118,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
 
-  // Sync modal state with sessionStorage
-  useEffect(() => {
-    try {
-      if (showAddCompanyModal) {
-        sessionStorage.setItem('showAddCompanyModal', 'true');
-      } else {
-        sessionStorage.removeItem('showAddCompanyModal');
-      }
-    } catch (error) {
-      console.warn('Failed to sync modal state with sessionStorage:', error);
-    }
-  }, [showAddCompanyModal]);
-
-  // Cleanup sessionStorage on unmount
-  useEffect(() => {
-    return () => {
-      try {
-        sessionStorage.removeItem('showAddCompanyModal');
-      } catch (error) {
-        console.warn('Failed to cleanup modal state from sessionStorage:', error);
-      }
-    };
-  }, []);
-  
   const {
     responses,
     loading,
@@ -194,7 +162,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     epsChange,
     epsTrendByJobFunction,
     epsChangeByJobFunction,
-  } = useDashboardData();
+  } = useDashboardData(selectedLocationContext);
 
   // -----------------------------------------------------------------------
   // GLOBAL JOB-FUNCTION FILTER
@@ -739,12 +707,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           lastUpdated={lastUpdated}
           onFixData={fixExistingPrompts}
           hasDataIssues={hasDataIssues}
-          showAddCompanyModal={showAddCompanyModal}
-          setShowAddCompanyModal={setShowAddCompanyModal}
           alwaysMounted={true}
           selectedLocation={activeSection === 'reports' ? undefined : selectedLocation}
           onLocationChange={activeSection === 'reports' ? undefined : setSelectedLocation}
-          onAddLocation={activeSection === 'reports' ? undefined : (DASHBOARD_ADD_LOCKED ? undefined : () => setShowAddLocationModal(true))}
+          selectedLocationContext={activeSection === 'reports' ? undefined : selectedLocationContext}
+          onLocationContextChange={activeSection === 'reports' ? undefined : setSelectedLocationContext}
           availablePeriods={activeSection === 'reports' ? undefined : availablePeriods}
           selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}
           onPeriodChange={activeSection === 'reports' ? undefined : setSelectedPeriod}
@@ -796,21 +763,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           )}
         </div>
       </SidebarInset>
-      
-      {/* Modals */}
-      <AddCompanyModal 
-        open={showAddCompanyModal}
-        onOpenChange={setShowAddCompanyModal}
-        alwaysMounted={true}
-      />
-      <AddCompanyModal 
-        open={showAddLocationModal}
-        onOpenChange={setShowAddLocationModal}
-        alwaysMounted={true}
-        existingCompanyName={currentCompany?.name}
-        existingIndustry={currentCompany?.industry}
-        mode="add-location"
-      />
     </div>
   );
 };

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './AuthContext';
 import { toast } from 'sonner';
+import { countryToLocation, GLOBAL_LIKE } from '@/utils/locations';
 
 export interface Company {
   id: string;
@@ -39,6 +40,11 @@ interface CompanyContextType {
   refreshCompanies: () => Promise<void>;
   setAsDefaultCompany: (companyId: string) => Promise<void>;
   isOwnerOrAdmin: boolean;
+  // Distinct, non-global `location_context` values per company_id, for companies
+  // whose locations live in the prompts rather than in `country` (e.g. Netflix
+  // Animation Studios → Burbank/Sydney/Vancouver). Keyed by company id; only
+  // populated for null/GLOBAL-country companies (per-country ones use `country`).
+  companyLocationContexts: Record<string, string[]>;
 }
 
 export const CompanyContext = createContext<CompanyContextType | undefined>(undefined);
@@ -58,6 +64,7 @@ export const useCompany = () => {
       refreshCompanies: async () => {},
       setAsDefaultCompany: async () => {},
       isOwnerOrAdmin: false,
+      companyLocationContexts: {},
     };
   }
   return context;
@@ -77,6 +84,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [userCompanies, setUserCompanies] = useState<Company[]>([]);
   const [userMemberships, setUserMemberships] = useState<CompanyMembership[]>([]);
   const [loading, setLoading] = useState(true);
+  const [companyLocationContexts, setCompanyLocationContexts] = useState<Record<string, string[]>>({});
 
   // Fetch user's companies through organization membership
   const fetchUserCompanies = useCallback(async () => {
@@ -557,6 +565,73 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [userCompanies, fetchUserCompanies, user?.id]);
 
+  // Load the distinct `location_context` values for companies whose location
+  // lives in the prompts (null/GLOBAL country) rather than in `country`. Only
+  // these can have city-level locations (e.g. Netflix Animation Studios →
+  // Burbank/Sydney/Vancouver); per-country companies express location via
+  // `country` and are skipped. Runs after companies load and re-runs on change.
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+    const candidateIds = userCompanies
+      .filter(c => countryToLocation(c.country) === null)
+      .map(c => c.id);
+
+    if (candidateIds.length === 0) {
+      setCompanyLocationContexts({});
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const PAGE_SIZE = 1000;
+        const sets: Record<string, Set<string>> = {};
+        let page = 0;
+        let chunk: any[] | null;
+        do {
+          const from = page * PAGE_SIZE;
+          const to = from + PAGE_SIZE - 1;
+          const { data, error } = await supabase
+            .from('confirmed_prompts')
+            .select('company_id, location_context')
+            .in('company_id', candidateIds)
+            .eq('is_active', true)
+            .not('location_context', 'is', null)
+            // Stable sort key — unordered .range() pagination can drop rows.
+            .order('id', { ascending: true })
+            .range(from, to);
+          if (error) throw error;
+          chunk = data ?? [];
+          for (const row of chunk) {
+            const lc = (row.location_context ?? '').trim();
+            // Skip empties and the country-agnostic sentinels — those are just
+            // "Global", not a distinct location.
+            if (!lc || GLOBAL_LIKE.has(lc)) continue;
+            (sets[row.company_id] ??= new Set<string>()).add(lc);
+          }
+          page += 1;
+        } while (chunk && chunk.length === PAGE_SIZE);
+
+        if (cancelled) return;
+        const result: Record<string, string[]> = {};
+        for (const [companyId, set] of Object.entries(sets)) {
+          result[companyId] = Array.from(set).sort((a, b) => a.localeCompare(b));
+        }
+        setCompanyLocationContexts(result);
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed to load company location contexts:', error);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userCompanies, loading]);
+
   const refreshCompanies = useCallback(async () => {
     await fetchUserCompanies();
   }, [fetchUserCompanies]);
@@ -591,7 +666,8 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     switchCompany,
     refreshCompanies,
     setAsDefaultCompany,
-    isOwnerOrAdmin
+    isOwnerOrAdmin,
+    companyLocationContexts
   };
 
   return (

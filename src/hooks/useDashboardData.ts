@@ -39,9 +39,14 @@ export const isOverallCandidateExperience = (r: { confirmed_prompts?: any }): bo
   return attr === 'overall-candidate-experience' || theme === 'overall candidate experience';
 };
 
-export const useDashboardData = () => {
+export const useDashboardData = (locationContext: string | null = null) => {
   const { user: rawUser, clearSession } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
+
+  // Within-company location focus (a confirmed_prompts.location_context value,
+  // e.g. "Burbank"). When set, company-scoped fetches read the per-location MVs
+  // and filter raw rows to that location; null = all of the company's locations.
+  const activeLocationContext = locationContext ?? null;
 
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
@@ -121,6 +126,10 @@ export const useDashboardData = () => {
   // so a slow response for a previously-selected company can't overwrite the
   // active company's data when the user switches quickly.
   const currentCompanyIdRef = useRef<string | undefined>(currentCompany?.id);
+  // Like currentCompanyIdRef, but scoped to "companyId::locationContext" so a
+  // location switch (same company, different city) also invalidates in-flight
+  // fetches and cache reads. Location-sensitive fetches check this.
+  const currentScopeRef = useRef<string>(`${currentCompany?.id ?? ''}::${activeLocationContext ?? ''}`);
 
   // Network status monitoring - FIXED
   // Track if we're coming back online from being offline (vs just tab visibility change)
@@ -167,7 +176,9 @@ export const useDashboardData = () => {
     // must check this against currentCompanyIdRef so a slow fetch for the
     // previously-selected company can't overwrite the active company's data.
     const requestedCompanyId = currentCompany.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    const requestedLocationContext = activeLocationContext;
+    const requestedScope = `${requestedCompanyId}::${requestedLocationContext ?? ''}`;
+    const isStale = () => currentScopeRef.current !== requestedScope;
 
     try {
       setLoading(true);
@@ -175,12 +186,14 @@ export const useDashboardData = () => {
       setConnectionError(null);
 
       // Fetch prompts first
-      const promptsResult = await retrySupabaseQuery(() =>
-        supabase
+      const promptsResult = await retrySupabaseQuery(() => {
+        let q = supabase
           .from('confirmed_prompts')
           .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, is_pro_prompt, talentx_attribute_id')
-          .eq('company_id', requestedCompanyId)
-      ) as { data: any[] | null; error: any };
+          .eq('company_id', requestedCompanyId);
+        if (requestedLocationContext) q = q.eq('location_context', requestedLocationContext);
+        return q;
+      }) as { data: any[] | null; error: any };
 
       if (isStale()) return;
 
@@ -199,8 +212,8 @@ export const useDashboardData = () => {
       do {
         const from = page * PAGE_SIZE;
         const to = from + PAGE_SIZE - 1;
-        const result = await retrySupabaseQuery(() =>
-          supabase
+        const result = await retrySupabaseQuery(() => {
+          let q = supabase
             .from('prompt_responses')
             .select(`
               id,
@@ -228,11 +241,13 @@ export const useDashboardData = () => {
                 talentx_attribute_id
               )
             `)
-            .eq('company_id', requestedCompanyId)
+            .eq('company_id', requestedCompanyId);
+          if (requestedLocationContext) q = q.eq('confirmed_prompts.location_context', requestedLocationContext);
+          return q
             .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
-            .range(from, to)
-        ) as { data: any[] | null; error: any };
+            .range(from, to);
+        }) as { data: any[] | null; error: any };
         if (isStale()) return;
         if (result.error) throw result.error;
         chunk = result.data ?? [];
@@ -286,7 +301,7 @@ export const useDashboardData = () => {
           do {
             const from = talentXPage * talentXPageSize;
             const to = from + talentXPageSize - 1;
-            const talentXResult = await supabase
+            let talentXQuery = supabase
               .from('prompt_responses')
               .select(`
                 id,
@@ -315,7 +330,9 @@ export const useDashboardData = () => {
                 )
               `)
               .eq('confirmed_prompts.company_id', requestedCompanyId)
-              .like('confirmed_prompts.prompt_type', 'talentx_%')
+              .like('confirmed_prompts.prompt_type', 'talentx_%');
+            if (requestedLocationContext) talentXQuery = talentXQuery.eq('confirmed_prompts.location_context', requestedLocationContext);
+            const talentXResult = await talentXQuery
               .gte('tested_at', eagerCutoffIso)
               .order('tested_at', { ascending: false })
               .range(from, to);
@@ -395,15 +412,16 @@ export const useDashboardData = () => {
         setLastUpdated(undefined);
       }
 
-      // Cache by the captured id (not currentCompany?.id, which could be a
-      // different company by now if the user switched mid-fetch).
+      // Cache by the captured scope (company + location), not currentCompany?.id,
+      // which could be a different company/location by now if the user switched
+      // mid-fetch.
       if (allResponses.length > 0) {
-        companyDataCacheRef.current[requestedCompanyId] = {
+        companyDataCacheRef.current[requestedScope] = {
           responses: allResponses,
-          // Preserve any AI themes already cached for this company so a
+          // Preserve any AI themes already cached for this scope so a
           // background responses refetch doesn't wipe them (themes are the
           // slowest fetch — we don't want to drop a usable cached copy).
-          aiThemes: companyDataCacheRef.current[requestedCompanyId]?.aiThemes,
+          aiThemes: companyDataCacheRef.current[requestedScope]?.aiThemes,
           lastUpdated: lastUpdatedDate,
           timestamp: Date.now()
         };
@@ -456,7 +474,7 @@ export const useDashboardData = () => {
       setLoading(false);
       setCompetitorLoading(false);
     }
-  }, [user, currentCompany, isOnline]);
+  }, [user, currentCompany, isOnline, activeLocationContext]);
 
   const fetchResponseTexts = useCallback(async (ids: string[]) => {
     if (!ids.length) return {};
@@ -499,7 +517,10 @@ export const useDashboardData = () => {
     if (!user || !currentCompany?.id) return;
 
     const requestedCompanyId = currentCompany.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    const requestedLocationContext = activeLocationContext;
+    const requestedScope = `${requestedCompanyId}::${requestedLocationContext ?? ''}`;
+    const isStale = () => currentScopeRef.current !== requestedScope;
+    const byLoc = requestedLocationContext != null;
 
     try {
       setCompanyMetricsLoading(true);
@@ -516,19 +537,19 @@ export const useDashboardData = () => {
       // per-month maps with only the current month — and every prior-month
       // delta collapses to "no data". Fetch the company's full set instead.
       const MV_ROW_CAP = 10000;
+      // When a location is focused, read the per-location MVs filtered to it;
+      // otherwise the company-level MVs (unchanged behavior).
+      const buildMvQuery = (baseMv: string, byLocMv: string) => {
+        let q = supabase
+          .from(byLoc ? byLocMv : baseMv)
+          .select('*')
+          .eq('company_id', requestedCompanyId);
+        if (byLoc) q = q.eq('location_context', requestedLocationContext);
+        return q.order('response_month', { ascending: false }).limit(MV_ROW_CAP);
+      };
       const [sentimentResult, relevanceResult] = await Promise.all([
-        supabase
-          .from('company_sentiment_scores_mv')
-          .select('*')
-          .eq('company_id', requestedCompanyId)
-          .order('response_month', { ascending: false })
-          .limit(MV_ROW_CAP),
-        supabase
-          .from('company_relevance_scores_mv')
-          .select('*')
-          .eq('company_id', requestedCompanyId)
-          .order('response_month', { ascending: false })
-          .limit(MV_ROW_CAP)
+        buildMvQuery('company_sentiment_scores_mv', 'company_sentiment_scores_by_location_mv'),
+        buildMvQuery('company_relevance_scores_mv', 'company_relevance_scores_by_location_mv'),
       ]);
 
       // Drop the result if the user already moved on to a different company.
@@ -671,32 +692,32 @@ export const useDashboardData = () => {
         setCompanyMetricsLoading(false);
       }
     }
-  }, [user, currentCompany?.id]);
+  }, [user, currentCompany?.id, activeLocationContext]);
 
   const fetchMVData = useCallback(async () => {
     if (!user || !currentCompany?.id) return;
 
     const requestedCompanyId = currentCompany.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    const requestedLocationContext = activeLocationContext;
+    const requestedScope = `${requestedCompanyId}::${requestedLocationContext ?? ''}`;
+    const isStale = () => currentScopeRef.current !== requestedScope;
+    const byLoc = requestedLocationContext != null;
 
+    // When a location is focused, read the per-location pre-ranked MVs filtered
+    // to it; otherwise the company-level MVs (unchanged behavior).
     try {
+      const sourcesQ = supabase.from(byLoc ? 'company_top_sources_by_location_mv' : 'company_top_sources_mv')
+        .select('domain, citation_count').eq('company_id', requestedCompanyId);
+      const competitorsQ = supabase.from(byLoc ? 'company_competitors_by_location_mv' : 'company_competitors_mv')
+        .select('competitor_name, mention_count').eq('company_id', requestedCompanyId);
+      const llmQ = supabase.from(byLoc ? 'company_llm_rankings_by_location_mv' : 'company_llm_rankings_mv')
+        .select('ai_model, mentions').eq('company_id', requestedCompanyId);
       const [sourcesResult, competitorsResult, llmResult] = await Promise.all([
-        supabase
-          .from('company_top_sources_mv')
-          .select('domain, citation_count')
-          .eq('company_id', requestedCompanyId)
-          .order('citation_count', { ascending: false })
-          .limit(30),
-        supabase
-          .from('company_competitors_mv')
-          .select('competitor_name, mention_count')
-          .eq('company_id', requestedCompanyId)
-          .order('mention_count', { ascending: false })
-          .limit(30),
-        supabase
-          .from('company_llm_rankings_mv')
-          .select('ai_model, mentions')
-          .eq('company_id', requestedCompanyId)
+        (byLoc ? sourcesQ.eq('location_context', requestedLocationContext) : sourcesQ)
+          .order('citation_count', { ascending: false }).limit(30),
+        (byLoc ? competitorsQ.eq('location_context', requestedLocationContext) : competitorsQ)
+          .order('mention_count', { ascending: false }).limit(30),
+        (byLoc ? llmQ.eq('location_context', requestedLocationContext) : llmQ)
           .order('mentions', { ascending: false }),
       ]);
 
@@ -728,7 +749,7 @@ export const useDashboardData = () => {
       if (isStale()) return;
       console.warn('[fetchMVData] error — will fall back to frontend calculation:', err);
     }
-  }, [user, currentCompany?.id]);
+  }, [user, currentCompany?.id, activeLocationContext]);
 
   const fetchRecencyData = useCallback(async () => {
     if (!user) return;
@@ -946,7 +967,10 @@ export const useDashboardData = () => {
       return;
     }
     const requestedCompanyId = currentCompany.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    const requestedLocationContext = activeLocationContext;
+    const requestedScope = `${requestedCompanyId}::${requestedLocationContext ?? ''}`;
+    const isStale = () => currentScopeRef.current !== requestedScope;
+    const byLoc = requestedLocationContext != null;
     try {
       const PAGE_SIZE = 1000;
       let all: any[] = [];
@@ -954,13 +978,14 @@ export const useDashboardData = () => {
       let chunk: any[] | null;
       do {
         const from = page * PAGE_SIZE;
-        const result = await retrySupabaseQuery(() =>
-          supabase
-            .from('company_attribute_themes_mv')
+        const result = await retrySupabaseQuery(() => {
+          let q = supabase
+            .from(byLoc ? 'company_attribute_themes_by_location_mv' : 'company_attribute_themes_mv')
             .select('attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count')
-            .eq('company_id', requestedCompanyId)
-            .range(from, from + PAGE_SIZE - 1)
-        ) as { data: any[] | null; error: any };
+            .eq('company_id', requestedCompanyId);
+          if (byLoc) q = q.eq('location_context', requestedLocationContext);
+          return q.range(from, from + PAGE_SIZE - 1);
+        }) as { data: any[] | null; error: any };
         if (isStale()) return;
         if (result.error) {
           console.error('Error fetching attribute themes:', result.error);
@@ -975,7 +1000,7 @@ export const useDashboardData = () => {
     } catch (err: any) {
       if (!isStale()) console.error('Error in fetchAttributeThemes:', err?.message);
     }
-  }, [user, currentCompany?.id]);
+  }, [user, currentCompany?.id, activeLocationContext]);
 
   // Per-response sentiment ratios from company_response_sentiment_mv. Feeds the
   // sentiment cache (trend chart, trend arrows, per-prompt sentiment) without
@@ -1317,13 +1342,16 @@ export const useDashboardData = () => {
   const [shouldRefetch, setShouldRefetch] = useState(false);
   const [isSwitchingCompany, setIsSwitchingCompany] = useState(false);
 
-  // Update the ref when company changes
+  // Update the refs when the company OR the location focus changes. A location
+  // switch keeps the same company_id but must still clear + refetch, so we key
+  // off the "companyId::locationContext" scope.
   useEffect(() => {
-    if (currentCompany?.id !== currentCompanyIdRef.current && currentCompany?.id !== undefined) {
-      const previousCompanyId = currentCompanyIdRef.current;
-      // Save current company's data to cache before clearing (for instant restore when switching back)
-      if (previousCompanyId && responses.length > 0) {
-        companyDataCacheRef.current[previousCompanyId] = {
+    const requestedScope = `${currentCompany?.id ?? ''}::${activeLocationContext ?? ''}`;
+    if (requestedScope !== currentScopeRef.current && currentCompany?.id !== undefined) {
+      const previousScope = currentScopeRef.current;
+      // Save current scope's data to cache before clearing (for instant restore when switching back)
+      if (previousScope && responses.length > 0) {
+        companyDataCacheRef.current[previousScope] = {
           responses,
           aiThemes, // cache lazily-loaded raw themes (Thematic tab) if present
           attributeThemes, // pre-aggregated attribute scores (MV-backed)
@@ -1335,6 +1363,7 @@ export const useDashboardData = () => {
       // Set switching flag to prevent stale data from being used
       setIsSwitchingCompany(true);
       currentCompanyIdRef.current = currentCompany?.id;
+      currentScopeRef.current = requestedScope;
 
       // Clear all data immediately when switching companies
       setResponses([]);
@@ -1360,17 +1389,20 @@ export const useDashboardData = () => {
       // Reset the fetched key so new data will be loaded
       fetchedCompanyUserKeyRef.current = null;
     }
-  }, [currentCompany?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally omit responses/aiThemes/lastUpdated to avoid saving on every data change
+  }, [currentCompany?.id, activeLocationContext]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally omit responses/aiThemes/lastUpdated to avoid saving on every data change
   
   // Initial data fetch - only run when user or company ID actually changes, or when shouldRefetch is true
   // CRITICAL: Prevent refetch when returning to tab by tracking what we've already loaded
   useEffect(() => {
     if (user?.id && currentCompany?.id) {
-      const currentKey = `${user.id}-${currentCompany.id}`;
-      const companyId = currentCompany.id;
+      // Key + cache by the company AND the active location focus so switching
+      // location (same company) triggers a fresh fetch and its own cache slot.
+      const scopeKey = `${currentCompany.id}::${activeLocationContext ?? ''}`;
+      const currentKey = `${user.id}-${scopeKey}`;
+      const companyId = scopeKey;
 
       // Only fetch if:
-      // 1. This is a new company/user combination, OR
+      // 1. This is a new company/user/location combination, OR
       // 2. shouldRefetch is explicitly set to true (user clicked Refresh)
       const isExplicitRefresh = shouldRefetch;
       if (fetchedCompanyUserKeyRef.current !== currentKey || isExplicitRefresh) {
@@ -1384,7 +1416,7 @@ export const useDashboardData = () => {
           recencyDataCacheRef.current = null;
           previousResponseIdsRef.current = '';
         } else {
-          // Restore from cache if available (instant UI when switching back to recently viewed company)
+          // Restore from cache if available (instant UI when switching back to recently viewed scope)
           const cached = companyDataCacheRef.current[companyId];
           if (cached && (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL && cached.responses.length > 0) {
             setResponses(cached.responses);
@@ -1414,7 +1446,7 @@ export const useDashboardData = () => {
       fetchedCompanyUserKeyRef.current = null;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, currentCompany?.id, shouldRefetch]);
+  }, [user?.id, currentCompany?.id, activeLocationContext, shouldRefetch]);
 
   // Clear switching flag when data is actually loaded
   useEffect(() => {
@@ -1471,8 +1503,9 @@ export const useDashboardData = () => {
   // wired through ThematicAnalysisTab).
   useEffect(() => {
     if (user && currentCompany?.id) {
-      // Restore from the per-company cache on quick switch-back.
-      const cached = companyDataCacheRef.current[currentCompany.id];
+      // Restore from the per-scope cache on quick switch-back.
+      const scopeKey = `${currentCompany.id}::${activeLocationContext ?? ''}`;
+      const cached = companyDataCacheRef.current[scopeKey];
       if (
         cached &&
         (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL &&
@@ -1492,7 +1525,7 @@ export const useDashboardData = () => {
       setAiThemesLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, currentCompany?.id]);
+  }, [user?.id, currentCompany?.id, activeLocationContext]);
 
   // Track when metrics are ready
   // Backend metrics (from materialized views) are available immediately
