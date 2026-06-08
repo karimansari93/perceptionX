@@ -495,11 +495,14 @@ serve(async (req) => {
         }
 
         // 5. Advance directly to llm_collection — no search_insights re-run on expand,
-        //    and no re-link to org (already linked).
+        //    and no re-link to org (already linked). status MUST go back to
+        //    'pending' so the self-chain can immediately re-claim this row;
+        //    leaving it 'processing' strands it until the 5-min watchdog.
         await supabase
           .from("company_batch_queue")
           .update({
             phase: "llm_collection",
+            status: "pending",
             total_prompts: finalPrompts.length,
             updated_at: new Date().toISOString(),
           })
@@ -679,11 +682,16 @@ serve(async (req) => {
           // organization_members for this org.
         }
 
-        // 7. Advance phase — search_insights removed (AI prompts only)
+        // 7. Advance phase — search_insights removed (AI prompts only).
+        //    status MUST go back to 'pending' so the self-chain can immediately
+        //    re-claim this row for llm_collection; leaving it 'processing'
+        //    strands it (invisible to the pending-only claim) until the 5-min
+        //    watchdog resets it — which is the new-company "dead start" stall.
         await supabase
           .from("company_batch_queue")
           .update({
             phase: "llm_collection",
+            status: "pending",
             company_id: companyId,
             onboarding_id: onboarding.id,
             total_prompts: finalPrompts.length,
