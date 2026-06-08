@@ -102,11 +102,15 @@ export const EntityCanonicalizationTab = () => {
   const [selectedCanonicalIds, setSelectedCanonicalIds] = useState<Set<string>>(new Set());
   const [bulkCanonicalType, setBulkCanonicalType] = useState<string>("other");
 
-  // Scope for the LLM suggestion job. "all" runs across every company in the
-  // platform; selecting a specific org restricts the scan to companies in
-  // that org. Useful when prepping for a customer call.
+  // Scope for the LLM suggestion job. Two-level: pick an organization first;
+  // if a specific org is chosen, a second dropdown lets you narrow further to
+  // a single company in that org (e.g. "Netflix Japan" within Netflix).
   const [organizations, setOrganizations] = useState<Array<{ id: string; name: string }>>([]);
-  const [jobScope, setJobScope] = useState<string>("all"); // "all" | <organization_id>
+  const [companies, setCompanies] = useState<
+    Array<{ id: string; name: string; organization_id: string; country: string | null }>
+  >([]);
+  const [orgScope, setOrgScope] = useState<string>("all");      // "all" | <organization_id>
+  const [companyScope, setCompanyScope] = useState<string>("all"); // "all" | <company_id>
 
   const loadAll = async () => {
     setLoading(true);
@@ -154,16 +158,53 @@ export const EntityCanonicalizationTab = () => {
     loadAll();
   }, []);
 
-  // Fetch organizations for the job-scope dropdown.
+  // Fetch organizations + companies for the job-scope dropdowns.
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase
-        .from("organizations")
-        .select("id, name")
-        .order("name");
-      if (!error) setOrganizations(data ?? []);
+      const [orgRes, companyRes] = await Promise.all([
+        supabase.from("organizations").select("id, name").order("name"),
+        supabase
+          .from("organization_companies")
+          .select("organization_id, companies!inner(id, name, country)")
+          .limit(2000),
+      ]);
+      if (!orgRes.error) setOrganizations(orgRes.data ?? []);
+      if (!companyRes.error && companyRes.data) {
+        const flat: Array<{
+          id: string;
+          name: string;
+          organization_id: string;
+          country: string | null;
+        }> = [];
+        for (const row of companyRes.data as Array<{
+          organization_id: string;
+          companies:
+            | { id: string; name: string; country: string | null }
+            | { id: string; name: string; country: string | null }[];
+        }>) {
+          const c = Array.isArray(row.companies) ? row.companies[0] : row.companies;
+          if (!c) continue;
+          flat.push({
+            id: c.id,
+            name: c.name,
+            organization_id: row.organization_id,
+            country: c.country,
+          });
+        }
+        // Stable sort: by name then by country so duplicates group together
+        flat.sort((a, b) =>
+          a.name.localeCompare(b.name) || (a.country ?? "").localeCompare(b.country ?? "")
+        );
+        setCompanies(flat);
+      }
     })();
   }, []);
+
+  // Companies belonging to the currently selected org (for the secondary dropdown).
+  const orgCompanies = useMemo(() => {
+    if (orgScope === "all") return [];
+    return companies.filter((c) => c.organization_id === orgScope);
+  }, [companies, orgScope]);
 
   const canonicalByName = useMemo(() => {
     const map = new Map<string, Canonical>();
@@ -174,8 +215,17 @@ export const EntityCanonicalizationTab = () => {
   const runSuggestionJob = async () => {
     setRunningJob(true);
     try {
-      const body: { batchSize: number; organizationId?: string } = { batchSize: 50 };
-      if (jobScope !== "all") body.organizationId = jobScope;
+      // companyId wins over organizationId when both are set (and the edge
+      // function knows to prefer companyId). When companyScope is "all", we
+      // only pass organizationId so the scan covers every company in the org.
+      const body: { batchSize: number; organizationId?: string; companyId?: string } = {
+        batchSize: 50,
+      };
+      if (companyScope !== "all") {
+        body.companyId = companyScope;
+      } else if (orgScope !== "all") {
+        body.organizationId = orgScope;
+      }
       const { data, error } = await supabase.functions.invoke(
         "suggest-entity-canonicalization",
         { body }
@@ -683,13 +733,19 @@ export const EntityCanonicalizationTab = () => {
               Merge competitor and source variants (Glassdoor.com / Glassdoor.ie, Disney / Disney+ Hotstar) into single canonical entries.
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
-            <Select value={jobScope} onValueChange={setJobScope}>
-              <SelectTrigger className="w-56">
-                <SelectValue placeholder="Job scope" />
+          <div className="flex items-center gap-2 flex-wrap">
+            <Select
+              value={orgScope}
+              onValueChange={(v) => {
+                setOrgScope(v);
+                setCompanyScope("all"); // reset company when org changes
+              }}
+            >
+              <SelectTrigger className="w-52">
+                <SelectValue placeholder="Organization" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All companies</SelectItem>
+                <SelectItem value="all">All organizations</SelectItem>
                 {organizations.map((org) => (
                   <SelectItem key={org.id} value={org.id}>
                     {org.name}
@@ -697,15 +753,35 @@ export const EntityCanonicalizationTab = () => {
                 ))}
               </SelectContent>
             </Select>
+            {orgScope !== "all" && (
+              <Select value={companyScope} onValueChange={setCompanyScope}>
+                <SelectTrigger className="w-60">
+                  <SelectValue placeholder="Company" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    All companies in this org ({orgCompanies.length})
+                  </SelectItem>
+                  {orgCompanies.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                      {c.country ? ` · ${c.country}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Button
               variant="outline"
               size="sm"
               onClick={runSuggestionJob}
               disabled={runningJob}
               title={
-                jobScope === "all"
-                  ? "Scan unmapped variants across every company"
-                  : "Scan unmapped variants only within the selected organization"
+                companyScope !== "all"
+                  ? "Scan unmapped variants only for the selected company"
+                  : orgScope !== "all"
+                    ? "Scan unmapped variants across every company in the selected org"
+                    : "Scan unmapped variants across every company in every org"
               }
             >
               {runningJob ? (
