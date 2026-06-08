@@ -5,6 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
+// Canonicalization now happens at the data layer (prompt_responses_canonical
+// view). The card receives detected_competitors with variants already merged
+// into canonical entities, so no client-side alias hook is needed.
 
 interface CompetitorsSummaryCardProps {
   topCompetitors: { company: string; count: number }[];
@@ -25,11 +28,13 @@ export const CompetitorsSummaryCard = ({
 }: CompetitorsSummaryCardProps) => {
   const navigate = useNavigate();
 
-  // Helper to normalize competitor names
+  // Helper to normalize competitor names. Canonicalization happens server-side
+  // (prompt_responses_canonical view), so this function only handles noise
+  // filtering and display-name casing.
   const normalizeCompetitorName = (name: string): string => {
     const trimmedName = name.trim();
     const lowerName = trimmedName.toLowerCase();
-    
+
     // Check for excluded patterns first
     const excludedPatterns = [
       /^none$/i,

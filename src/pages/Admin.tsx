@@ -6,6 +6,7 @@ import { CompanyManagementTab } from '@/components/admin/CompanyManagementTab';
 import { VisibilityRankingsTab } from '@/components/admin/VisibilityRankingsTab';
 import { CompanyBatchTab } from '@/components/admin/CompanyBatchTab';
 import { RecencyCoverageTab } from '@/components/admin/RecencyCoverageTab';
+import { EntityCanonicalizationTab } from '@/components/admin/EntityCanonicalizationTab';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 
 export default function Admin() {
@@ -26,6 +27,8 @@ export default function Admin() {
         return <CompanyBatchTab />;
       case 'recency-coverage':
         return <RecencyCoverageTab />;
+      case 'entity-canonicalization':
+        return <EntityCanonicalizationTab />;
       default:
         return <OrganizationManagementTab />;
     }

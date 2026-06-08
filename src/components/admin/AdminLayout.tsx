@@ -8,7 +8,8 @@ import {
   LogOut,
   Trophy,
   Layers,
-  Clock
+  Clock,
+  Tags
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -33,7 +34,8 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
     { id: 'companies', label: 'Companies', icon: Building2 },
     { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy },
     { id: 'company-batch', label: 'Company Batch', icon: Layers },
-    { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock }
+    { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock },
+    { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags }
   ];
 
   return (
