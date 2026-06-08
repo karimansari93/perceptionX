@@ -15,6 +15,9 @@ import { getCompetitorFavicon } from "@/utils/citationUtils";
 import LLMLogo from "@/components/LLMLogo";
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { usePersistedState } from "@/hooks/usePersistedState";
+// Canonicalization now happens at the data layer (prompt_responses_canonical
+// view). The dashboard receives detected_competitors with variants already
+// merged into canonical entities, so no client-side alias hook is needed.
 
 interface TimeBasedData {
   name: string;
@@ -82,7 +85,7 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   const directCompetitorNames = useMemo(() => {
     const names = new Set<string>();
     responses.forEach(response => {
-      const isComp = response.confirmed_prompts?.prompt_type === 'competitive' || 
+      const isComp = response.confirmed_prompts?.prompt_type === 'competitive' ||
                      response.confirmed_prompts?.prompt_type === 'talentx_competitive';
       if (!isComp || !response.detected_competitors) return;
       response.detected_competitors.split(',').forEach((comp: string) => {
@@ -126,7 +129,12 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   const normalizeCompetitorName = (name: string): string => {
     const trimmedName = name.trim();
     const lowerName = trimmedName.toLowerCase();
-    
+
+    // Canonicalization happens server-side (prompt_responses_canonical view),
+    // so trimmedName is already the canonical name. This function now only
+    // handles noise filtering (none / n/a / numeric-only / etc.) and
+    // display-name casing.
+
     // Check for excluded patterns first
     const excludedPatterns = [
       /^none$/i,

@@ -73,6 +73,22 @@ export function isValidCompetitor(competitorName: string, companyName: string): 
  * @param companyName - The current company name to exclude
  * @returns Array of valid competitor names
  */
+/**
+ * Mirrors public.normalize_entity_name() in SQL so the admin canonicalization
+ * UI can preview how a raw alias will be keyed against entity_aliases.
+ * Lowercases, replaces & with " and ", strips edge punctuation/quotes,
+ * collapses internal whitespace.
+ */
+export function normalizeEntityName(input: string): string {
+  if (!input) return '';
+  return input
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/^[\s\p{P}"]+|[\s\p{P}"]+$/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function parseCompetitors(competitorsString: string, companyName: string): string[] {
   if (!competitorsString || !competitorsString.trim()) return [];
   

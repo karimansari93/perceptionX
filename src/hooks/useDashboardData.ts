@@ -201,7 +201,10 @@ export const useDashboardData = () => {
         const to = from + PAGE_SIZE - 1;
         const result = await retrySupabaseQuery(() =>
           supabase
-            .from('prompt_responses')
+            // Use the canonicalized view so detected_competitors arrives with
+            // alias mapping already applied — no client-side normalization
+            // needed (and no race condition between alias-map load and render).
+            .from('prompt_responses_canonical')
             .select(`
               id,
               confirmed_prompt_id,
@@ -287,7 +290,8 @@ export const useDashboardData = () => {
             const from = talentXPage * talentXPageSize;
             const to = from + talentXPageSize - 1;
             const talentXResult = await supabase
-              .from('prompt_responses')
+              // Canonicalized view — see comment on main fetch above.
+              .from('prompt_responses_canonical')
               .select(`
                 id,
                 confirmed_prompt_id,
@@ -2578,7 +2582,8 @@ export const useDashboardData = () => {
 
     try {
       const { data, error } = await supabase
-        .from('prompt_responses')
+        // Canonicalized view — historical fetch should also see merged names.
+        .from('prompt_responses_canonical')
         .select(`
           id,
           confirmed_prompt_id,
