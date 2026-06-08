@@ -71,9 +71,16 @@ serve(async (req) => {
       .map((c) => c.canonical_name);
 
     // 2. Find unmapped variants with their mention frequency.
+    //    Authoritative path: SQL aggregates across EVERY prompt_responses row
+    //    in scope and returns the true top N by mention count. The JS fallback
+    //    below only fires if the RPC is somehow missing on this deployment.
     const { data: candidates, error: candidatesErr } = await supabase.rpc(
       "find_unmapped_competitor_variants",
-      { p_limit: batchSize }
+      {
+        p_limit: batchSize,
+        p_organization_id: organizationId ?? null,
+        p_company_id: companyId ?? null,
+      }
     );
     if (candidatesErr) {
       // RPC may not exist yet; fall back to a SQL query.
