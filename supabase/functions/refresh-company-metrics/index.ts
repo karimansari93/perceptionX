@@ -2,98 +2,84 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../_shared/cors.ts'
 
+// Refreshes the company metric tables.
+//
+// Body (all optional):
+//   { "companyId": "<uuid>" }  -> incrementally refresh just that organization
+//                                 (fast, indexed, the normal path)
+//   { }                         -> full rebuild of every organization
+//
+// Per-org refresh is the hot path and is what collect-company-responses calls
+// directly. A full rebuild (no companyId) is heavy and is better run over a
+// direct connection; invoking it here is supported but may approach the
+// function's wall-clock limit on large datasets.
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { 
-      status: 200,
-      headers: corsHeaders
-    })
+    return new Response('ok', { status: 200, headers: corsHeaders })
   }
 
   try {
-    // Initialize Supabase with service role key (bypasses RLS)
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    
     if (!supabaseUrl || !supabaseKey) {
       throw new Error('Supabase configuration missing')
     }
-    
     const supabase = createClient(supabaseUrl, supabaseKey)
 
-    console.log('🔄 Starting refresh of company metrics materialized views...')
+    // companyId may arrive in the body; tolerate an empty/no body.
+    let companyId: string | null = null
+    try {
+      const body = await req.json()
+      companyId = body?.companyId ?? null
+    } catch (_) {
+      // no body -> full refresh
+    }
 
-    // Call the refresh function
-    const { data: refreshResults, error: refreshError } = await supabase
-      .rpc('refresh_company_metrics')
+    let refreshError
+    if (companyId) {
+      console.log(`🔄 Refreshing company metrics for organization ${companyId}...`)
+      ;({ error: refreshError } = await supabase.rpc('refresh_company_metrics', {
+        p_company_id: companyId,
+      }))
+    } else {
+      console.log('🔄 Full rebuild of company metrics (all organizations)...')
+      ;({ error: refreshError } = await supabase.rpc('refresh_all_company_metrics'))
+    }
 
     if (refreshError) {
       console.error('❌ Error refreshing company metrics:', refreshError)
-      throw refreshError
-    }
-
-    if (!refreshResults || refreshResults.length === 0) {
-      throw new Error('Refresh function returned no results')
-    }
-
-    // Check if all refreshes succeeded
-    const allSucceeded = refreshResults.every((result: any) => result.success === true)
-    const failedViews = refreshResults
-      .filter((result: any) => result.success === false)
-      .map((result: any) => `${result.view_name}: ${result.error_message}`)
-
-    if (!allSucceeded) {
-      console.error('⚠️ Some views failed to refresh:', failedViews)
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           success: false,
-          message: 'Some materialized views failed to refresh',
-          results: refreshResults,
-          errors: failedViews
+          scope: companyId ? 'company' : 'all',
+          companyId,
+          error: refreshError.message,
         }),
-        { 
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    console.log('✅ Successfully refreshed all company metrics views')
-
-    // Calculate summary statistics
-    const sentimentCount = await supabase
-      .from('company_sentiment_scores_mv')
-      .select('company_id', { count: 'exact', head: true })
-
-    const relevanceCount = await supabase
-      .from('company_relevance_scores_mv')
-      .select('company_id', { count: 'exact', head: true })
-
+    console.log('✅ Successfully refreshed company metrics')
     return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: 'Successfully refreshed company metrics materialized views',
-        results: refreshResults,
-        statistics: {
-          sentiment_records: sentimentCount.count || 0,
-          relevance_records: relevanceCount.count || 0
-        }
+      JSON.stringify({
+        success: true,
+        scope: companyId ? 'company' : 'all',
+        companyId,
+        message: companyId
+          ? `Refreshed company metrics for organization ${companyId}`
+          : 'Refreshed company metrics for all organizations',
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
-
   } catch (error: any) {
     console.error('❌ Error refreshing company metrics:', error)
     return new Response(
-      JSON.stringify({ 
-        success: false, 
+      JSON.stringify({
+        success: false,
         error: error.message || 'Failed to refresh company metrics',
-        details: error.toString()
+        details: error.toString(),
       }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
 })

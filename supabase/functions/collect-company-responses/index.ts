@@ -405,9 +405,14 @@ serve(async (req) => {
       .update({ last_updated: new Date().toISOString() })
       .eq("id", companyId);
 
-    // Refresh materialized views so dashboard metrics (sentiment, relevance) include new data
+    // Refresh this org's metric tables so dashboard metrics (sentiment,
+    // relevance, sources, competitors, rankings, attributes) include the new
+    // data. Scoped to this company_id, so it's an incremental, indexed,
+    // sub-second operation -- not the old full all-orgs rebuild that timed out.
     try {
-      const { error: refreshError } = await supabase.rpc("refresh_company_metrics");
+      const { error: refreshError } = await supabase.rpc("refresh_company_metrics", {
+        p_company_id: companyId,
+      });
       if (refreshError) {
         console.warn("refresh_company_metrics failed (non-fatal):", refreshError.message);
       }
