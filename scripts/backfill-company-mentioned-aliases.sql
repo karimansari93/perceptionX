@@ -11,6 +11,7 @@
 -- Apply the migration FIRST (the alias table must exist and be seeded).
 
 -- 1) Backfill existing rows using the same predicate as the trigger.
+--    match_type 'substring' = literal case-insensitive; 'regex' = case-insensitive POSIX.
 UPDATE public.prompt_responses pr
 SET company_mentioned = true
 FROM public.confirmed_prompts cp, public.companies c
@@ -21,9 +22,13 @@ WHERE pr.confirmed_prompt_id = cp.id
     SELECT 1 FROM public.company_mention_aliases a
     WHERE a.is_active
       AND lower(a.company_name) = lower(c.name)
-      AND position(lower(a.alias) in lower(pr.response_text)) > 0
+      AND (
+        (a.match_type = 'substring' AND position(lower(a.alias) in lower(pr.response_text)) > 0)
+        OR (a.match_type = 'regex' AND pr.response_text ~* a.alias)
+      )
   );
 -- Prod run 2026-06-08: 772 rows updated (Netflix 685, Spotify 87).
+-- Prod run 2026-06-10: 40 rows updated (Warner Bros Discovery, after adding regex aliases).
 
 -- 2) Refresh the materialized views that depend on company_mentioned so the
 --    dashboard reflects the change. MV refresh crons are currently disabled
