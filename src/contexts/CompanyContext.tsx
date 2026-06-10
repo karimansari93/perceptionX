@@ -232,8 +232,10 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return;
       }
 
-      // Non-admin users: use organization-based approach
-      // First, try the new organization-based approach
+      // Non-admin users: organization-based access. One nested query pulls
+      // memberships → orgs → org companies → company details + industries.
+      // This used to be 1 + 3×N sequential round-trips (per organization),
+      // which delayed dashboard mount by several seconds on login.
       const { data: orgMemberships, error: orgError } = await supabase
         .from('organization_members')
         .select(`
@@ -242,7 +244,13 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           is_default,
           organizations!inner(
             id,
-            name
+            name,
+            organization_companies(
+              companies(
+                id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by,
+                company_industries(industry)
+              )
+            )
           )
         `)
         .eq('user_id', user.id);
@@ -253,97 +261,59 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
 
       if (orgMemberships && orgMemberships.length > 0) {
-        // New organization-based approach - fetch companies separately
         const companies: Company[] = [];
         const memberships: CompanyMembership[] = [];
 
         for (const orgMembership of orgMemberships) {
-          const org = Array.isArray(orgMembership.organizations) 
-            ? orgMembership.organizations[0] 
+          const org = Array.isArray(orgMembership.organizations)
+            ? orgMembership.organizations[0]
             : orgMembership.organizations;
-          
-          // Fetch companies for this organization (step 1: get company IDs)
-          const { data: orgCompanies, error: companiesError } = await supabase
-            .from('organization_companies')
-            .select('company_id')
-            .eq('organization_id', orgMembership.organization_id);
+          if (!org) continue;
 
-          if (companiesError) {
-            console.error('🔍 Error fetching companies for org:', companiesError);
-            continue;
-          }
+          const orgCompanies = (org as { organization_companies?: { companies: unknown }[] }).organization_companies ?? [];
+          for (const orgCompany of orgCompanies) {
+            const companyRow = Array.isArray(orgCompany.companies)
+              ? orgCompany.companies[0]
+              : orgCompany.companies;
+            if (!companyRow) continue;
+            const { company_industries: industryRows, ...company } =
+              companyRow as Record<string, any> & { company_industries?: { industry: string }[] };
 
-          if (orgCompanies && orgCompanies.length > 0) {
-            // Step 2: Fetch company details separately
-            const companyIds = orgCompanies.map(oc => oc.company_id);
-            const { data: companiesData, error: companyDetailsError } = await supabase
-              .from('companies')
-              .select('id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by')
-              .in('id', companyIds);
+            // company_members retired — role/is_default come from organization_members.
+            const isDefault = false;
+            const memberRole = orgMembership.role;
+            const joinedAt = new Date().toISOString();
 
-            if (companyDetailsError) {
-              console.error('🔍 Error fetching company details:', companyDetailsError);
-              continue;
+            // Secondary industries from company_industries, plus the primary.
+            const industriesSet = new Set<string>(
+              (industryRows ?? []).map(row => row.industry)
+            );
+            if (company.industry) {
+              industriesSet.add(company.industry);
             }
 
-            // Fetch industries for these companies (including secondary industries)
-            let industriesMap = new Map<string, Set<string>>();
-            if (companyIds.length > 0) {
-              const { data: industriesData, error: industriesError } = await supabase
-                .from('company_industries')
-                .select('company_id, industry')
-                .in('company_id', companyIds);
+            const industries = Array.from(industriesSet);
 
-              if (industriesError) {
-                console.error('🔍 Error fetching company industries:', industriesError);
-              } else if (industriesData) {
-                industriesMap = industriesData.reduce((map, row) => {
-                  if (!map.has(row.company_id)) {
-                    map.set(row.company_id, new Set<string>());
-                  }
-                  map.get(row.company_id)!.add(row.industry);
-                  return map;
-                }, new Map<string, Set<string>>());
-              }
-            }
+            const companyWithIndustries = {
+              ...(company as Company),
+              organization_id: org.id,
+              is_default: isDefault,
+              industries,
+              country: company.country ?? null,
+            };
 
-            for (const company of companiesData || []) {
-              if (company) {
-                // Fetch the actual is_default from company_members table
-                // company_members retired — role/is_default come from organization_members.
-                const isDefault = false;
-                const memberRole = orgMembership.role;
-                const joinedAt = new Date().toISOString();
+            companies.push(companyWithIndustries);
 
-                const industriesSet = industriesMap.get(company.id) || new Set<string>();
-                if (company.industry) {
-                  industriesSet.add(company.industry);
-                }
-
-                const industries = Array.from(industriesSet);
-
-                const companyWithIndustries = {
-                  ...company,
-                  organization_id: org.id,
-                  is_default: isDefault,
-                  industries,
-                  country: company.country ?? null,
-                };
-
-                companies.push(companyWithIndustries);
-
-                memberships.push({
-                  id: `${orgMembership.organization_id}-${company.id}`,
-                  user_id: user.id,
-                  company_id: company.id,
-                  role: memberRole as 'owner' | 'admin' | 'member',
-                  is_default: isDefault,
-                  joined_at: joinedAt,
-                  invited_by: null,
-                  company: companyWithIndustries
-                });
-              }
-            }
+            memberships.push({
+              id: `${orgMembership.organization_id}-${company.id}`,
+              user_id: user.id,
+              company_id: company.id,
+              role: memberRole as 'owner' | 'admin' | 'member',
+              is_default: isDefault,
+              joined_at: joinedAt,
+              invited_by: null,
+              company: companyWithIndustries
+            });
           }
         }
 

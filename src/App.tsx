@@ -6,24 +6,31 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { CompanyProvider } from "@/contexts/CompanyContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
-import Dashboard from "./pages/Dashboard";
+// Auth is the entry point for every visit (route "/"), so it stays eager —
+// lazy-loading it would only add a Suspense flash before the login form.
 import Auth from "./pages/Auth";
-import NotFound from "./pages/NotFound";
-import AuthCallback from "./pages/AuthCallback";
-import VerifyEmail from "./pages/VerifyEmail";
-import ResetPassword from "./pages/ResetPassword";
-import Usage from "./pages/Usage";
-import Account from "./pages/Account";
+// Everything behind login is code-split so the initial login bundle stays
+// small (it previously eagerly pulled the dashboard, all charts, and the
+// admin panel). Each loads its own chunk on first navigation.
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { ErrorBoundary } from "react-error-boundary";
 import { usePageTracking } from "@/hooks/usePageTracking";
-import Admin from "./pages/Admin";
 import AdminRoute from "./components/AdminRoute";
-import GoogleOneTapCallback from "@/components/GoogleOneTapCallback";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 import { logger } from "@/lib/utils";
 import { AlertTriangle, RefreshCw, Home } from "lucide-react";
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import Hotjar from "@hotjar/browser";
+
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const AuthCallback = lazy(() => import("./pages/AuthCallback"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const Usage = lazy(() => import("./pages/Usage"));
+const Account = lazy(() => import("./pages/Account"));
+const Admin = lazy(() => import("./pages/Admin"));
+const GoogleOneTapCallback = lazy(() => import("@/components/GoogleOneTapCallback"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -157,6 +164,7 @@ const App = () => (
             <CompanyProvider>
               <Toaster />
               <Sonner />
+              <Suspense fallback={<LoadingScreen />}>
               <Routes>
               <Route path="/" element={<Auth />} />
               <Route path="/auth" element={<Auth />} />
@@ -261,6 +269,7 @@ const App = () => (
               } />
               <Route path="*" element={<NotFound />} />
             </Routes>
+            </Suspense>
             </CompanyProvider>
           </AuthProvider>
         </BrowserRouter>

@@ -113,9 +113,34 @@ export const useDashboardData = () => {
   const pollingRef = useRef<NodeJS.Timeout | null>(null);   // Track polling interval
   const recencyDataCacheRef = useRef<{ responseIdsHash: string; data: any[] } | null>(null); // Cache recency data
   const previousResponseIdsRef = useRef<string>(''); // Track previous response IDs to detect changes
-  // Cache company dashboard data for instant restore when switching back (stale-while-revalidate)
+  // Cache company dashboard data for instant restore when switching back.
+  // The MV/metrics/TalentX snapshots are written by their fetches on
+  // completion (never from mid-load state), so when an entry is fresh and
+  // complete a switch-back restores everything and skips the network.
   const COMPANY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-  const companyDataCacheRef = useRef<Record<string, { responses: PromptResponse[]; aiThemes?: any[]; attributeThemes?: any[]; responseSentimentRows?: any[]; lastUpdated?: Date; timestamp: number }>>({});
+  const companyDataCacheRef = useRef<Record<string, {
+    responses: PromptResponse[];
+    aiThemes?: any[];
+    attributeThemes?: any[];
+    responseSentimentRows?: any[];
+    activePrompts?: any[];
+    lastUpdated?: Date;
+    timestamp: number;
+    mvData?: {
+      topCitations: CitationCount[];
+      topCompetitors: { company: string; count: number }[];
+      llmRankings: LLMMentionRanking[];
+    };
+    companyMetrics?: {
+      sentiment: any | null;
+      relevance: any | null;
+      sentimentByMonth: Record<string, number>;
+      relevanceByMonth: Record<string, number>;
+      sentimentMvRows: any[];
+      relevanceMvRows: any[];
+    };
+    talentXProData?: any[];
+  }>>({});
   // Tracks which company the user is currently looking at. Each fetch captures
   // the id at call time and compares against this ref before committing state,
   // so a slow response for a previously-selected company can't overwrite the
@@ -174,36 +199,24 @@ export const useDashboardData = () => {
       setCompetitorLoading(true);
       setConnectionError(null);
 
-      // Fetch prompts first
-      const promptsResult = await retrySupabaseQuery(() =>
-        supabase
-          .from('confirmed_prompts')
-          .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, is_pro_prompt, talentx_attribute_id')
-          .eq('company_id', requestedCompanyId)
-      ) as { data: any[] | null; error: any };
-
-      if (isStale()) return;
-
-      const { data: userPrompts, error: promptsError } = promptsResult;
-
-      // Fetch recent prompt_responses for the company. Bounded by 180 days to
-      // keep the eager query under the 8s statement timeout for accounts with
-      // a lot of history. Older rows are fetched on demand by tabs that need
+      // Recent prompt_responses are bounded by 180 days to keep the eager
+      // query under the 8s statement timeout for accounts with a lot of
+      // history. Older rows are fetched on demand by tabs that need
       // historical drilldowns.
       const PAGE_SIZE = 1000;
       const EAGER_DAYS = 180;
       const eagerCutoffIso = new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000).toISOString();
-      let data: any[] = [];
-      let page = 0;
-      let chunk: any[] | null;
-      do {
-        const from = page * PAGE_SIZE;
-        const to = from + PAGE_SIZE - 1;
-        const result = await retrySupabaseQuery(() =>
+
+      // Use the canonicalized view so detected_competitors arrives with
+      // alias mapping already applied — no client-side normalization
+      // needed (and no race condition between alias-map load and render).
+      //
+      // No secondary ORDER BY tiebreaker: the (company_id, tested_at) index
+      // satisfies this ordering directly, and a tiebreaker would force a
+      // multi-MB sort node per page. Pages are deduped by id after fetch.
+      const fetchResponsePage = (from: number, to: number, withCount: boolean) =>
+        retrySupabaseQuery(() =>
           supabase
-            // Use the canonicalized view so detected_competitors arrives with
-            // alias mapping already applied — no client-side normalization
-            // needed (and no race condition between alias-map load and render).
             .from('prompt_responses_canonical')
             .select(`
               id,
@@ -230,23 +243,32 @@ export const useDashboardData = () => {
                 industry_context,
                 talentx_attribute_id
               )
-            `)
+            `, withCount ? { count: 'exact' } : undefined)
             .eq('company_id', requestedCompanyId)
             .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
             .range(from, to)
-        ) as { data: any[] | null; error: any };
-        if (isStale()) return;
-        if (result.error) throw result.error;
-        chunk = result.data ?? [];
-        data = data.concat(chunk);
-        page += 1;
-        if (chunk.length === PAGE_SIZE) {
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
-      } while (chunk.length === PAGE_SIZE);
+        ) as Promise<{ data: any[] | null; error: any; count: number | null }>;
 
-      const responsesError = null;
+      // Prompts and the newest page of responses load in parallel. The first
+      // page is enough to paint the dashboard; the remaining pages stream in
+      // behind it (they used to be a sequential do/while — 6-8 awaited
+      // round-trips for large companies, the main cause of slow first paint).
+      const [promptsResult, firstPageResult] = await Promise.all([
+        retrySupabaseQuery(() =>
+          supabase
+            .from('confirmed_prompts')
+            .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, is_pro_prompt, talentx_attribute_id')
+            .eq('company_id', requestedCompanyId)
+        ) as Promise<{ data: any[] | null; error: any }>,
+        fetchResponsePage(0, PAGE_SIZE - 1, true),
+      ]);
+
+      if (isStale()) return;
+
+      const { data: userPrompts, error: promptsError } = promptsResult;
+
+      const responsesError = firstPageResult.error;
 
       if (promptsError) {
         console.error('🔍 Error fetching prompts:', promptsError);
@@ -274,22 +296,45 @@ export const useDashboardData = () => {
       setHasDataIssues(false);
       setHasMoreResponses(false);
 
-      let allResponses = data || [];
-      
+      const firstPage = firstPageResult.data ?? [];
+      const totalCount = firstPageResult.count ?? firstPage.length;
+
+      // First paint: render the newest page immediately instead of holding
+      // the dashboard until every page (and TalentX) arrives. State is set
+      // again below with the full set once the background fetches land.
+      setResponses(firstPage);
+      if (firstPage.length > 0) {
+        setLastUpdated(new Date(firstPage[0].tested_at || firstPage[0].updated_at || firstPage[0].created_at));
+      }
+      setLoading(false);
+      setCompetitorLoading(false);
+
+      const fetchRemainingPages = async (): Promise<any[]> => {
+        const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+        if (totalPages <= 1) return firstPage;
+        const rest = await Promise.all(
+          Array.from({ length: totalPages - 1 }, (_, i) =>
+            fetchResponsePage((i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1, false)
+          )
+        );
+        let all = firstPage;
+        for (const result of rest) {
+          if (result.error) throw result.error;
+          all = all.concat(result.data ?? []);
+        }
+        // Offset pages can skid if rows land mid-fetch — dedupe by id.
+        const seen = new Set<string>();
+        return all.filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+      };
+
       // TalentX rows feed both the Thematic tab and Overview's attribute
-      // cards, so fetch them eagerly. The query is bounded to 180 days (see
-      // below) to stay under the Postgres statement timeout.
-      {
+      // cards, so fetch them eagerly: first page with a count, remaining
+      // pages in parallel, bounded to the same 180-day window. Errors are
+      // swallowed so the dashboard still renders with regular responses.
+      const fetchTalentXRaw = async (): Promise<any[]> => {
         try {
-          // Paginate TalentX responses to bypass 1000-row cap
-          const talentXPageSize = 1000;
-          let talentXRaw: any[] = [];
-          let talentXPage = 0;
-          let talentXChunk: any[];
-          do {
-            const from = talentXPage * talentXPageSize;
-            const to = from + talentXPageSize - 1;
-            const talentXResult = await supabase
+          const talentXPage = (from: number, to: number, withCount: boolean) =>
+            supabase
               // Canonicalized view — see comment on main fetch above.
               .from('prompt_responses_canonical')
               .select(`
@@ -317,19 +362,47 @@ export const useDashboardData = () => {
                   job_function_context,
                   location_context
                 )
-              `)
+              `, withCount ? { count: 'exact' } : undefined)
               .eq('confirmed_prompts.company_id', requestedCompanyId)
               .like('confirmed_prompts.prompt_type', 'talentx_%')
               .gte('tested_at', eagerCutoffIso)
               .order('tested_at', { ascending: false })
               .range(from, to);
-            if (isStale()) return;
-            if (talentXResult.error) throw talentXResult.error;
-            talentXChunk = talentXResult.data ?? [];
-            talentXRaw = talentXRaw.concat(talentXChunk);
-            talentXPage += 1;
-          } while (talentXChunk.length === talentXPageSize);
 
+          const first = await talentXPage(0, PAGE_SIZE - 1, true);
+          if (first.error) throw first.error;
+          let rows = first.data ?? [];
+          const total = first.count ?? rows.length;
+          const pages = Math.ceil(total / PAGE_SIZE);
+          if (pages > 1) {
+            const rest = await Promise.all(
+              Array.from({ length: pages - 1 }, (_, i) =>
+                talentXPage((i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1, false)
+              )
+            );
+            for (const r of rest) {
+              if (r.error) throw r.error;
+              rows = rows.concat(r.data ?? []);
+            }
+          }
+          return rows;
+        } catch (error) {
+          console.error('Error fetching TalentX responses:', error);
+          // Continue with regular responses even if TalentX fails
+          return [];
+        }
+      };
+
+      const [data, talentXRaw] = await Promise.all([
+        fetchRemainingPages(),
+        fetchTalentXRaw(),
+      ]);
+      if (isStale()) return;
+
+      let allResponses = data || [];
+
+      {
+        try {
             // Filter to get only latest TalentX responses per prompt+model
             const talentXLatestMap = new Map<string, any>();
             talentXRaw.forEach(response => {
@@ -377,7 +450,7 @@ export const useDashboardData = () => {
               allResponses = [...allResponses, ...talentXResponsesFormatted];
             }
         } catch (error) {
-          console.error('Error fetching TalentX responses:', error);
+          console.error('Error processing TalentX responses:', error);
           // Continue with regular responses even if TalentX fails
         }
       }
@@ -400,14 +473,14 @@ export const useDashboardData = () => {
       }
 
       // Cache by the captured id (not currentCompany?.id, which could be a
-      // different company by now if the user switched mid-fetch).
+      // different company by now if the user switched mid-fetch). Merge over
+      // the existing entry so snapshots written by the other fetches (MV
+      // data, metrics, themes) aren't wiped by a responses refetch.
       if (allResponses.length > 0) {
         companyDataCacheRef.current[requestedCompanyId] = {
+          ...companyDataCacheRef.current[requestedCompanyId],
           responses: allResponses,
-          // Preserve any AI themes already cached for this company so a
-          // background responses refetch doesn't wipe them (themes are the
-          // slowest fetch — we don't want to drop a usable cached copy).
-          aiThemes: companyDataCacheRef.current[requestedCompanyId]?.aiThemes,
+          activePrompts: userPrompts,
           lastUpdated: lastUpdatedDate,
           timestamp: Date.now()
         };
@@ -542,6 +615,13 @@ export const useDashboardData = () => {
       setSentimentMvRows(sentimentResult.data || []);
       setRelevanceMvRows(relevanceResult.data || []);
 
+      // Mirrors of what the setters below receive, captured so the completed
+      // fetch can be snapshotted into the per-company cache at the end.
+      let sentimentMetricsSnapshot: any | null = null;
+      const sentimentByMonthSnapshot: Record<string, number> = {};
+      let relevanceMetricsSnapshot: any | null = null;
+      const relevanceByMonthSnapshot: Record<string, number> = {};
+
       if (sentimentResult.error && sentimentResult.error.code !== 'PGRST116') {
         console.warn('Error fetching sentiment metrics from materialized view:', sentimentResult.error);
         // Don't throw - fallback to frontend calculation
@@ -574,18 +654,17 @@ export const useDashboardData = () => {
           : 0;
 
         if (aggregated.totalThemes > 0) {
-          setCompanySentimentMetrics({
+          sentimentMetricsSnapshot = {
             sentiment_ratio: sentimentRatio,
             avg_sentiment_score: avgSentimentScore,
             total_themes: aggregated.totalThemes,
             positive_themes: aggregated.positiveThemes,
             negative_themes: aggregated.negativeThemes,
             neutral_themes: aggregated.neutralThemes
-          });
-        } else {
-          // Data exists but has no themes - fallback to frontend
-          setCompanySentimentMetrics(null);
+          };
         }
+        // Data with no themes stays null - fallback to frontend
+        setCompanySentimentMetrics(sentimentMetricsSnapshot);
 
         // Build per-month sentiment map (positive_themes / total_themes per month)
         const sentByMonth: Record<string, { positive: number; total: number }> = {};
@@ -596,11 +675,10 @@ export const useDashboardData = () => {
           sentByMonth[monthKey].positive += row.positive_themes || 0;
           sentByMonth[monthKey].total += row.total_themes || 0;
         });
-        const sentimentByMonthResult: Record<string, number> = {};
         for (const [key, val] of Object.entries(sentByMonth)) {
-          sentimentByMonthResult[key] = val.total > 0 ? val.positive / val.total : 0;
+          sentimentByMonthSnapshot[key] = val.total > 0 ? val.positive / val.total : 0;
         }
-        setCompanySentimentByMonth(sentimentByMonthResult);
+        setCompanySentimentByMonth(sentimentByMonthSnapshot);
       } else {
         // No data in materialized view - will use frontend calculation
         setCompanySentimentMetrics(null);
@@ -631,15 +709,14 @@ export const useDashboardData = () => {
           : 0;
 
         if (aggregated.validCitations > 0) {
-          setCompanyRelevanceMetrics({
+          relevanceMetricsSnapshot = {
             relevance_score: avgRelevanceScore,
             total_citations: aggregated.totalCitations,
             valid_citations: aggregated.validCitations
-          });
-        } else {
-          // Data exists but has no valid citations - fallback to frontend
-          setCompanyRelevanceMetrics(null);
+          };
         }
+        // Data with no valid citations stays null - fallback to frontend
+        setCompanyRelevanceMetrics(relevanceMetricsSnapshot);
 
         // Build per-month relevance map (weighted avg relevance_score per month)
         const relByMonth: Record<string, { scoreSum: number; weight: number }> = {};
@@ -651,17 +728,33 @@ export const useDashboardData = () => {
           relByMonth[monthKey].scoreSum += (row.relevance_score || 0) * w;
           relByMonth[monthKey].weight += w;
         });
-        const relevanceByMonthResult: Record<string, number> = {};
         for (const [key, val] of Object.entries(relByMonth)) {
-          relevanceByMonthResult[key] = val.weight > 0 ? val.scoreSum / val.weight : 0;
+          relevanceByMonthSnapshot[key] = val.weight > 0 ? val.scoreSum / val.weight : 0;
         }
-        setCompanyRelevanceByMonth(relevanceByMonthResult);
+        setCompanyRelevanceByMonth(relevanceByMonthSnapshot);
       } else {
         // No data in materialized view - will use frontend calculation
         setCompanyRelevanceMetrics(null);
         setCompanyRelevanceByMonth({});
       }
-      
+
+      // Snapshot into the per-company cache so a fresh switch-back can skip
+      // this fetch. Written only when the fetch completed, so switching away
+      // mid-load can't poison the cache with empty data.
+      companyDataCacheRef.current[requestedCompanyId] = {
+        responses: [],
+        timestamp: Date.now(),
+        ...companyDataCacheRef.current[requestedCompanyId],
+        companyMetrics: {
+          sentiment: sentimentMetricsSnapshot,
+          relevance: relevanceMetricsSnapshot,
+          sentimentByMonth: sentimentByMonthSnapshot,
+          relevanceByMonth: relevanceByMonthSnapshot,
+          sentimentMvRows: sentimentResult.data || [],
+          relevanceMvRows: relevanceResult.data || [],
+        },
+      };
+
     } catch (error: any) {
       if (isStale()) return;
       console.warn('Error fetching company metrics from materialized views:', error);
@@ -706,28 +799,27 @@ export const useDashboardData = () => {
 
       if (isStale()) return;
 
-      if (sourcesResult.data) {
-        setMvTopCitations(
-          sourcesResult.data.map(row => ({ domain: row.domain, count: row.citation_count }))
-        );
-      }
+      const topCitations = (sourcesResult.data ?? []).map(row => ({ domain: row.domain, count: row.citation_count }));
+      const topCompetitors = (competitorsResult.data ?? []).map(row => ({ company: row.competitor_name, count: row.mention_count }));
+      const llmRankings = (llmResult.data ?? []).map(row => ({
+        model: row.ai_model,
+        displayName: getLLMDisplayName(row.ai_model),
+        mentions: row.mentions,
+        logoUrl: getLLMLogo(row.ai_model),
+      }));
 
-      if (competitorsResult.data) {
-        setMvTopCompetitors(
-          competitorsResult.data.map(row => ({ company: row.competitor_name, count: row.mention_count }))
-        );
-      }
+      if (sourcesResult.data) setMvTopCitations(topCitations);
+      if (competitorsResult.data) setMvTopCompetitors(topCompetitors);
+      if (llmResult.data) setMvLlmRankings(llmRankings);
 
-      if (llmResult.data) {
-        setMvLlmRankings(
-          llmResult.data.map(row => ({
-            model: row.ai_model,
-            displayName: getLLMDisplayName(row.ai_model),
-            mentions: row.mentions,
-            logoUrl: getLLMLogo(row.ai_model),
-          }))
-        );
-      }
+      // Snapshot into the per-company cache so a fresh switch-back can skip
+      // this fetch (see companyDataCacheRef).
+      companyDataCacheRef.current[requestedCompanyId] = {
+        responses: [],
+        timestamp: Date.now(),
+        ...companyDataCacheRef.current[requestedCompanyId],
+        mvData: { topCitations, topCompetitors, llmRankings },
+      };
     } catch (err) {
       if (isStale()) return;
       console.warn('[fetchMVData] error — will fall back to frontend calculation:', err);
@@ -1111,6 +1203,16 @@ export const useDashboardData = () => {
       const data = await TalentXProService.getAggregatedProAnalysis(user.id, requestedCompanyId);
       if (isStale()) return;
       setTalentXProData(data);
+      // Snapshot into the per-company cache so a fresh switch-back can skip
+      // this fetch (see companyDataCacheRef).
+      if (requestedCompanyId) {
+        companyDataCacheRef.current[requestedCompanyId] = {
+          responses: [],
+          timestamp: Date.now(),
+          ...companyDataCacheRef.current[requestedCompanyId],
+          talentXProData: data,
+        };
+      }
     } catch (error) {
       if (isStale()) return;
       console.error('Error fetching TalentX Pro data:', error);
@@ -1328,6 +1430,10 @@ export const useDashboardData = () => {
       // Save current company's data to cache before clearing (for instant restore when switching back)
       if (previousCompanyId && responses.length > 0) {
         companyDataCacheRef.current[previousCompanyId] = {
+          // Merge over the existing entry so the MV/metrics/TalentX snapshots
+          // written by the fetches survive — they're what lets a switch-back
+          // skip the network entirely.
+          ...companyDataCacheRef.current[previousCompanyId],
           responses,
           aiThemes, // cache lazily-loaded raw themes (Thematic tab) if present
           attributeThemes, // pre-aggregated attribute scores (MV-backed)
@@ -1390,16 +1496,36 @@ export const useDashboardData = () => {
         } else {
           // Restore from cache if available (instant UI when switching back to recently viewed company)
           const cached = companyDataCacheRef.current[companyId];
-          if (cached && (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL && cached.responses.length > 0) {
+          const cacheFresh = !!cached && (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL && cached.responses.length > 0;
+          if (cacheFresh) {
             setResponses(cached.responses);
             setLastUpdated(cached.lastUpdated);
             setLoading(false);
             setCompetitorLoading(false);
             setIsSwitchingCompany(false);
           }
+          // Fully-cached switch-back: restore the MV-backed data too and skip
+          // the refetch entirely. Dashboard data is collection-driven
+          // (monthly), so a sub-5-minute stale window is invisible — and the
+          // explicit Refresh button still bypasses the cache above.
+          if (cacheFresh && cached.mvData && cached.companyMetrics && cached.activePrompts && cached.talentXProData !== undefined) {
+            setActivePrompts(cached.activePrompts);
+            setMvTopCitations(cached.mvData.topCitations);
+            setMvTopCompetitors(cached.mvData.topCompetitors);
+            setMvLlmRankings(cached.mvData.llmRankings);
+            setCompanySentimentMetrics(cached.companyMetrics.sentiment);
+            setCompanyRelevanceMetrics(cached.companyMetrics.relevance);
+            setCompanySentimentByMonth(cached.companyMetrics.sentimentByMonth);
+            setCompanyRelevanceByMonth(cached.companyMetrics.relevanceByMonth);
+            setSentimentMvRows(cached.companyMetrics.sentimentMvRows);
+            setRelevanceMvRows(cached.companyMetrics.relevanceMvRows);
+            setTalentXProData(cached.talentXProData);
+            setCompanyName(currentCompany.name || '');
+            return;
+          }
         }
 
-        // Always fetch fresh data (in background if cache was used)
+        // Fetch fresh data (in background if partially restored from cache)
         setCompanyName(currentCompany.name || '');
         Promise.all([
           fetchMVData(),
