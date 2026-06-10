@@ -634,9 +634,16 @@ function extractCitationsFromText(text: string): Citation[] {
 // Sentiment analysis is now handled by AI themes - no need for basic keyword analysis
 
 function detectCompanyMention(text: string, companyName: string): { mentioned: boolean; ranking: number | null } {
-  // Basic company mention detection implementation
+  // Basic company mention detection implementation.
+  // NOTE: this only matches the literal English/Latin company name. For non-Latin
+  // responses (e.g. Korean prompts where models write "넷플릭스" instead of "Netflix"),
+  // this returns false. That gap is closed automatically at the DB level by the
+  // apply_company_mention_aliases() BEFORE INSERT/UPDATE trigger on prompt_responses,
+  // which upgrades company_mentioned false -> true when a known localized alias from
+  // public.company_mention_aliases appears in response_text. Add new aliases there
+  // (no code change / redeploy needed) rather than special-casing names here.
   const mentioned = text.toLowerCase().includes(companyName.toLowerCase())
   const ranking = null // We don't calculate ranking anymore
-  
+
   return { mentioned, ranking }
 }
