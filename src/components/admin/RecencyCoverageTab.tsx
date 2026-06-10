@@ -12,6 +12,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Loader2, RefreshCw, ArrowLeft, Play, ExternalLink, Save, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
@@ -19,6 +26,7 @@ import { Input } from '@/components/ui/input';
 interface RescoreJob {
   id: string;
   organization_id: string;
+  company_id: string | null;
   status: 'queued' | 'running' | 'cancelled' | 'done' | 'error';
   total: number;
   processed: number;
@@ -255,8 +263,20 @@ interface UrlRow {
   publication_date: string | null;
 }
 
+interface OrgCompany {
+  id: string;
+  name: string;
+  country: string | null;
+}
+
+// Orgs often hold many same-named market companies (e.g. 15 × "Netflix"),
+// so the country is part of the display label.
+const companyLabel = (c: OrgCompany) =>
+  c.country ? `${c.name} (${c.country})` : c.name;
+
 const TEST_BATCH_SIZE = 50;
 const JOB_POLL_INTERVAL_MS = 5000;
+const ALL_COMPANIES = 'all';
 
 const OrgDrillDown = ({
   org,
@@ -274,15 +294,42 @@ const OrgDrillDown = ({
   const [job, setJob] = useState<RescoreJob | null>(null);
   const [enqueueing, setEnqueueing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [companies, setCompanies] = useState<OrgCompany[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>(ALL_COMPANIES);
   const pollTimer = useRef<number | null>(null);
+  const companyScoped = selectedCompanyId !== ALL_COMPANIES;
 
   useEffect(() => {
-    loadUrls();
+    loadCompanies();
     loadActiveJob();
     return () => {
       if (pollTimer.current) window.clearInterval(pollTimer.current);
     };
   }, [org.organization_id]);
+
+  // Reload the URL lists whenever the scope changes (org switch or company pick).
+  useEffect(() => {
+    loadUrls();
+  }, [org.organization_id, selectedCompanyId]);
+
+  const loadCompanies = async () => {
+    const { data, error } = await supabase
+      .from('organization_companies')
+      .select('company_id, companies!inner(id, name, country)')
+      .eq('organization_id', org.organization_id);
+    if (error) {
+      toast.error(`Failed to load companies: ${error.message}`);
+      return;
+    }
+    const list = ((data as any[]) || [])
+      .map((r) => ({
+        id: r.companies.id as string,
+        name: r.companies.name as string,
+        country: (r.companies.country as string | null) ?? null,
+      }))
+      .sort((a, b) => companyLabel(a).localeCompare(companyLabel(b)));
+    setCompanies(list);
+  };
 
   // Poll the job row whenever one is active so the user sees live progress.
   useEffect(() => {
@@ -333,6 +380,7 @@ const OrgDrillDown = ({
     setEnqueueing(true);
     const { data, error } = await supabase.rpc('enqueue_recency_rescore' as any, {
       p_org: org.organization_id,
+      p_company: companyScoped ? selectedCompanyId : null,
     });
     setEnqueueing(false);
     if (error) {
@@ -345,7 +393,11 @@ const OrgDrillDown = ({
     supabase.functions
       .invoke('process-recency-rescore-tick', { body: {} })
       .catch((e) => console.error('Failed to bootstrap rescore worker:', e));
-    toast.success('Rescore queued — runs in the background.');
+    const scopeCompany = companies.find((c) => c.id === selectedCompanyId);
+    const scopeName = companyScoped
+      ? scopeCompany ? companyLabel(scopeCompany) : 'selected company'
+      : 'whole organization';
+    toast.success(`Rescore queued for ${scopeName} — runs in the background.`);
     // Pull the freshly-created (or already-active) row so we can start polling.
     await loadActiveJob();
   };
@@ -367,8 +419,10 @@ const OrgDrillDown = ({
 
   const loadUrls = async () => {
     setLoading(true);
-    // Server-side LEFT JOIN via v_organization_url_status — avoids URI-length
-    // issues from sending tens of thousands of URLs back through the API.
+    // Server-side LEFT JOIN via the status views — avoids URI-length issues
+    // from sending tens of thousands of URLs back through the API. When a
+    // company is selected we read the company-grained view instead.
+    const view = companyScoped ? 'v_company_url_status' : 'v_organization_url_status';
     const missingUrls: string[] = [];
     const nullRows: UrlRow[] = [];
 
@@ -376,12 +430,13 @@ const OrgDrillDown = ({
     let from = 0;
     while (true) {
       // Missing from cache: extraction_method IS NULL
-      const { data, error } = await supabase
-        .from('v_organization_url_status' as any)
+      let query = supabase
+        .from(view as any)
         .select('url, recency_score, extraction_method, publication_date')
         .eq('organization_id', org.organization_id)
-        .is('extraction_method', null)
-        .range(from, from + pageSize - 1);
+        .is('extraction_method', null);
+      if (companyScoped) query = query.eq('company_id', selectedCompanyId);
+      const { data, error } = await query.range(from, from + pageSize - 1);
       if (error) {
         toast.error(`Failed loading missing URLs: ${error.message}`);
         break;
@@ -395,13 +450,14 @@ const OrgDrillDown = ({
     from = 0;
     while (true) {
       // Null-scored: cached but recency_score IS NULL
-      const { data, error } = await supabase
-        .from('v_organization_url_status' as any)
+      let query = supabase
+        .from(view as any)
         .select('url, recency_score, extraction_method, publication_date')
         .eq('organization_id', org.organization_id)
         .not('extraction_method', 'is', null)
-        .is('recency_score', null)
-        .range(from, from + pageSize - 1);
+        .is('recency_score', null);
+      if (companyScoped) query = query.eq('company_id', selectedCompanyId);
+      const { data, error } = await query.range(from, from + pageSize - 1);
       if (error) {
         toast.error(`Failed loading null-scored URLs: ${error.message}`);
         break;
@@ -501,8 +557,33 @@ const OrgDrillDown = ({
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">
                   Not in cache ({missing.length})
+                  {companyScoped && (() => {
+                    const c = companies.find((x) => x.id === selectedCompanyId);
+                    return (
+                      <span className="ml-2 text-sm font-normal text-slate-500">
+                        · {c ? companyLabel(c) : 'Selected company'}
+                      </span>
+                    );
+                  })()}
                 </CardTitle>
                 <div className="flex items-center gap-2">
+                  <Select
+                    value={selectedCompanyId}
+                    onValueChange={setSelectedCompanyId}
+                    disabled={jobActive}
+                  >
+                    <SelectTrigger className="w-56 h-9">
+                      <SelectValue placeholder="All companies" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL_COMPANIES}>All companies</SelectItem>
+                      {companies.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {companyLabel(c)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Button
                     size="sm"
                     variant="outline"
@@ -566,6 +647,13 @@ const OrgDrillDown = ({
                       >
                         {job.status}
                       </Badge>
+                      <span className="ml-2 text-slate-500">
+                        {(() => {
+                          if (!job.company_id) return 'Whole organization';
+                          const c = companies.find((x) => x.id === job.company_id);
+                          return c ? companyLabel(c) : 'Single company';
+                        })()}
+                      </span>
                     </span>
                     <span className="font-mono">
                       {job.processed.toLocaleString()} / {job.total.toLocaleString()}
