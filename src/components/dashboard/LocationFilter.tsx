@@ -10,87 +10,33 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useCompany } from '@/contexts/CompanyContext';
 import { getCountryFlag } from '@/utils/countryFlags';
-import { Globe, ChevronDown, Check, Plus } from 'lucide-react';
+import { getCountryName, countryToLocation, GLOBAL_LIKE } from '@/utils/locations';
+import { Globe, ChevronDown, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-// Country code to display name mapping (from AddCompanyModal)
-const getCountryName = (code: string): string => {
-  const countryNames: Record<string, string> = {
-    'GLOBAL': 'Global',
-    'US': 'United States',
-    'GB': 'United Kingdom',
-    'CA': 'Canada',
-    'AU': 'Australia',
-    'DE': 'Germany',
-    'FR': 'France',
-    'IT': 'Italy',
-    'ES': 'Spain',
-    'NL': 'Netherlands',
-    'BE': 'Belgium',
-    'CH': 'Switzerland',
-    'AT': 'Austria',
-    'SE': 'Sweden',
-    'NO': 'Norway',
-    'DK': 'Denmark',
-    'FI': 'Finland',
-    'IE': 'Ireland',
-    'PT': 'Portugal',
-    'GR': 'Greece',
-    'PL': 'Poland',
-    'CZ': 'Czech Republic',
-    'HU': 'Hungary',
-    'RO': 'Romania',
-    'BG': 'Bulgaria',
-    'HR': 'Croatia',
-    'SK': 'Slovakia',
-    'SI': 'Slovenia',
-    'LT': 'Lithuania',
-    'LV': 'Latvia',
-    'EE': 'Estonia',
-    'JP': 'Japan',
-    'CN': 'China',
-    'KR': 'South Korea',
-    'IN': 'India',
-    'SG': 'Singapore',
-    'MY': 'Malaysia',
-    'TH': 'Thailand',
-    'PH': 'Philippines',
-    'ID': 'Indonesia',
-    'VN': 'Vietnam',
-    'MX': 'Mexico',
-    'BR': 'Brazil',
-    'AR': 'Argentina',
-    'VE': 'Venezuela',
-    'CL': 'Chile',
-    'CO': 'Colombia',
-    'PE': 'Peru',
-    'AE': 'United Arab Emirates',
-    'SA': 'Saudi Arabia',
-    'ZA': 'South Africa',
-    'NZ': 'New Zealand',
-    'TR': 'Turkey',
-    'RU': 'Russia',
-  };
-  return countryNames[code] || code;
-};
 
 interface LocationFilterProps {
   selectedLocation: string | null;
   onLocationChange: (location: string | null) => void;
-  onAddLocation?: () => void;
   className?: string;
 }
 
-export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocation, className }: LocationFilterProps) => {
+export const LocationFilter = ({ selectedLocation, onLocationChange, className }: LocationFilterProps) => {
   const { currentCompany, userCompanies, switchCompany, loading } = useCompany();
   const [isOpen, setIsOpen] = useState(false);
 
-  const GLOBAL_LIKE = new Set(['GLOBAL', 'Global', 'Global (All Countries)', 'Worldwide']);
+  // The location filter is scoped to the CURRENT company: it switches between
+  // the country-variants of the company you're already viewing (e.g. Netflix
+  // US ↔ Netflix Japan), never to a different company. To view another
+  // company's location, use the company switcher (which lists every company and
+  // lets you pick a location per company).
+  const sameNameCompanies = useMemo(() => {
+    if (loading || !currentCompany) return [];
+    const nameLower = currentCompany.name.toLowerCase();
+    return userCompanies.filter(c => c.name.toLowerCase() === nameLower);
+  }, [userCompanies, currentCompany, loading]);
 
-  // Get unique countries from user's companies
-  // CRITICAL: Only compute locations when not loading to prevent showing stale data
+  // Get unique countries for the current company.
   const availableLocations = useMemo(() => {
-    // Don't compute locations while loading - prevents showing stale data from previous session
     if (loading) {
       return [];
     }
@@ -100,7 +46,7 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
     // Treat any country-agnostic variants as the same as the top-level
     // "Global" sentinel — selecting that already shows all locations combined,
     // so we don't render a separate row for them.
-    userCompanies.forEach(company => {
+    sameNameCompanies.forEach(company => {
       const country = company.country || 'GLOBAL';
       if (!GLOBAL_LIKE.has(country)) {
         locations.add(country);
@@ -111,75 +57,64 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
     return Array.from(locations).sort((a, b) => {
       return getCountryName(a).localeCompare(getCountryName(b));
     });
-  }, [userCompanies, loading]);
+  }, [sameNameCompanies, loading]);
 
-  // Only show the "Global" entry if the org actually has a global company
+  // Only show the "Global" entry if the current company has a global variant
   // (i.e. one with country null/empty or one of the GLOBAL_LIKE variants).
   const hasGlobalCompany = useMemo(() => {
     if (loading) return false;
-    return userCompanies.some(company => {
+    return sameNameCompanies.some(company => {
       const country = company.country;
       return !country || GLOBAL_LIKE.has(country);
     });
-  }, [userCompanies, loading]);
+  }, [sameNameCompanies, loading]);
 
-  // Keep the LocationFilter label and the active company in sync on load.
+  // Keep `selectedLocation` aligned with the active company. The company is the
+  // source of truth (its `country` is what the dashboard data is keyed to); the
+  // location filter just reflects which country-variant of that company you're
+  // viewing, never a different company.
   //
-  // Two cases this handles:
-  //  1. No selectedLocation yet (fresh sign-in, no starred view) — default to
-  //     the current company's country if it's one of the available ones,
-  //     otherwise to the alphabetical first. Avoids auto-switching the active
-  //     company just because another country sorts earlier.
-  //  2. selectedLocation is set (e.g. restored from a starred view) but the
-  //     currently-loaded `currentCompany` belongs to a different country —
-  //     switch `currentCompany` to a record matching the selected location
-  //     so the dashboard data (which is filtered by company_id, not country)
-  //     lines up with the displayed flag.
+  //  - A starred location restored on load is honored only if the current
+  //    company has a variant there (switch to that variant); otherwise we fall
+  //    back to the company's own location so the flag and data never disagree.
+  //  - With no starred location (fresh sign-in), prefer the company's US variant
+  //    if it has one, else mirror the company's own location.
   useEffect(() => {
-    if (loading) return;
-    if (!currentCompany) return;
+    if (loading || !currentCompany) return;
 
-    // Resolve the target location for this render.
-    let targetLocation: string | null = selectedLocation;
-    if (!targetLocation) {
-      // When the user hasn't starred a location, prefer the United States as
-      // the default landing — it overrides both the Global default and the
-      // current company's own country.
-      if (availableLocations.includes('US')) {
-        targetLocation = 'US';
-      } else if (hasGlobalCompany) {
-        return; // user has chosen / defaulted to Global — leave alone
-      } else if (availableLocations.length === 0) {
-        return;
+    const companyLocation = countryToLocation(currentCompany.country);
+
+    if (selectedLocation) {
+      if (selectedLocation === companyLocation) return; // already aligned
+
+      const currentName = currentCompany.name.toLowerCase();
+      const variant = userCompanies.find(
+        c => c.name.toLowerCase() === currentName && countryToLocation(c.country) === selectedLocation
+      );
+
+      if (variant) {
+        // Current company has this location — focus its variant there.
+        if (variant.id !== currentCompany.id) {
+          switchCompany(variant.id).catch(err => console.error('Failed to sync company with location:', err));
+        }
       } else {
-        const currentCountry = currentCompany.country;
-        targetLocation =
-          currentCountry && availableLocations.includes(currentCountry)
-            ? currentCountry
-            : availableLocations[0];
+        // Not a location this company has — mirror the company instead.
+        onLocationChange(companyLocation);
       }
-      if (targetLocation !== selectedLocation) {
-        onLocationChange(targetLocation);
-      }
+      return;
     }
 
-    // If the active company already matches the target, nothing to do.
-    const companyCountry = currentCompany.country || 'GLOBAL';
-    if (companyCountry === targetLocation) return;
-
-    // Otherwise, find a sibling company in the target location (prefer same name).
-    const currentName = currentCompany.name.toLowerCase();
-    const target =
-      userCompanies.find(c => (c.country || 'GLOBAL') === targetLocation && c.name.toLowerCase() === currentName) ||
-      userCompanies.find(c => (c.country || 'GLOBAL') === targetLocation);
-    if (target && target.id !== currentCompany.id) {
-      switchCompany(target.id).catch(err => console.error('Failed to sync company with location:', err));
+    // No location selected yet — default to US for this company if available.
+    if (availableLocations.includes('US')) {
+      onLocationChange('US');
+    } else if (companyLocation !== null) {
+      onLocationChange(companyLocation);
     }
-  }, [loading, selectedLocation, hasGlobalCompany, availableLocations, onLocationChange, currentCompany, userCompanies, switchCompany]);
+  }, [loading, selectedLocation, availableLocations, onLocationChange, currentCompany, userCompanies, switchCompany]);
 
-  // Always show the filter if onAddLocation is provided (user can add locations)
-  // Only hide if there are no locations AND no way to add locations
-  if (availableLocations.length === 0 && !onAddLocation) {
+  // Only hide if this company has nothing to show: no country locations and no
+  // global variant to label.
+  if (availableLocations.length === 0 && !hasGlobalCompany) {
     return null;
   }
 
@@ -195,26 +130,22 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
     const targetLocation = location || 'GLOBAL';
     const currentCompanyName = currentCompany.name.toLowerCase();
 
-    // First, try to find a company with the same name in the target location
+    // Switch to the same company in the target location. The dropdown only
+    // offers locations this company actually has, so this resolves; we never
+    // fall back to a different company just because it operates there.
     let targetCompany = userCompanies.find(company => {
       const companyName = company.name.toLowerCase();
       const companyCountry = company.country || 'GLOBAL';
       return companyName === currentCompanyName && companyCountry === targetLocation;
     });
 
-    // If not found and location is not Global, try to find any company in that location
-    if (!targetCompany && location) {
-      targetCompany = userCompanies.find(company => {
-        const companyCountry = company.country || 'GLOBAL';
-        return companyCountry === targetLocation;
-      });
-    }
-
-    // If still not found and location is null (Global), try to find any company with same name
+    // Global may not have an exact GLOBAL-coded row; accept any country-agnostic
+    // variant of the same company.
     if (!targetCompany && !location) {
       targetCompany = userCompanies.find(company => {
         const companyName = company.name.toLowerCase();
-        return companyName === currentCompanyName;
+        const companyCountry = company.country || 'GLOBAL';
+        return companyName === currentCompanyName && GLOBAL_LIKE.has(companyCountry);
       });
     }
 
@@ -228,7 +159,8 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
     }
   };
 
-  const displayLocation = selectedLocation || 'GLOBAL';
+  // The trigger reflects the active focus: a chosen city, a country flag, or
+  // "All locations"/"Global".
   const displayName = selectedLocation ? getCountryName(selectedLocation) : 'Global';
   const displayIcon = selectedLocation ? (
     <span className="text-base leading-none">{getCountryFlag(selectedLocation)}</span>
@@ -259,7 +191,7 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
         <DropdownMenuLabel>
           {availableLocations.length > 0 ? 'Filter by Location' : 'Locations'}
         </DropdownMenuLabel>
-        {availableLocations.length > 0 && (
+        {(availableLocations.length > 0 || hasGlobalCompany) && (
           <>
             <DropdownMenuSeparator />
             {hasGlobalCompany && (
@@ -287,7 +219,7 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
               const isSelected = selectedLocation === location;
               const locationName = getCountryName(location);
               const locationFlag = location !== 'GLOBAL' ? getCountryFlag(location) : null;
-              
+
               return (
                 <DropdownMenuItem
                   key={location}
@@ -312,21 +244,6 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
                 </DropdownMenuItem>
               );
             })}
-          </>
-        )}
-        {onAddLocation && (
-          <>
-            {availableLocations.length > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuItem
-              onClick={() => {
-                onAddLocation();
-                setIsOpen(false);
-              }}
-              className="cursor-pointer font-medium"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              <span>Add Location</span>
-            </DropdownMenuItem>
           </>
         )}
       </DropdownMenuContent>

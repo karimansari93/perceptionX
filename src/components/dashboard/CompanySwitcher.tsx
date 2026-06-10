@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -7,26 +7,35 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useCompany } from '@/contexts/CompanyContext';
-import { Building2, Check, ChevronDown, Star, Lock } from 'lucide-react';
+import { useCompany, type Company } from '@/contexts/CompanyContext';
+import { Building2, Check, ChevronDown, Globe } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Favicon } from '@/components/ui/favicon';
 import { getCountryFlag } from '@/utils/countryFlags';
-import { DASHBOARD_ADD_LOCKED } from '@/config/featureFlags';
+import { getCountryName, countryToLocation } from '@/utils/locations';
 
 interface CompanySwitcherProps {
   className?: string;
   variant?: 'default' | 'outline' | 'ghost';
-  showAddCompanyModal?: boolean;
-  setShowAddCompanyModal?: (show: boolean) => void;
   alwaysMounted?: boolean;
-  locationFilter?: string | null;
+  // Switching to a company also focuses the dashboard on that company's
+  // location. The header wires this to the shared location state so the
+  // location filter, `market`-based hooks, and saved views stay in sync.
+  onLocationChange?: (location: string | null) => void;
 }
 
-export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyModal, setShowAddCompanyModal, alwaysMounted = false, locationFilter }: CompanySwitcherProps) => {
-  const { currentCompany, userCompanies, switchCompany, setAsDefaultCompany, loading } = useCompany();
+// A selectable location for a company name: a country variant (its own company
+// record). Companies sharing a name (e.g. "Netflix" in US and JP) are separate
+// records grouped under one submenu.
+type LocationOption = { kind: 'country'; company: Company; location: string | null };
+
+export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = false, onLocationChange }: CompanySwitcherProps) => {
+  const { currentCompany, userCompanies, switchCompany, loading } = useCompany();
   const [isOpen, setIsOpen] = useState(false);
 
 
@@ -48,111 +57,87 @@ export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyMo
     return companyName.toLowerCase().replace(/\s+/g, '') + '.com';
   };
 
-  const handleAddNewCompany = () => {
-    if (DASHBOARD_ADD_LOCKED) {
-      toast.error('Adding companies is temporarily unavailable.');
-      setIsOpen(false);
-      return;
-    }
+  const isCurrentOption = (opt: LocationOption) => opt.company.id === currentCompany?.id;
+
+  // Switch to the company record the option represents and align the location
+  // focus to that record's country.
+  const selectOption = async (opt: LocationOption) => {
     setIsOpen(false);
-    setShowAddCompanyModal?.(true);
-  };
-
-  const handleSwitchCompany = async (companyName: string, companyId?: string) => {
+    if (isCurrentOption(opt)) return;
     try {
-      // If companyId is provided, use it directly
-      if (companyId) {
-        await switchCompany(companyId);
-        toast.success('Company switched');
-        setIsOpen(false);
-        return;
-      }
-
-      // Otherwise, find the best company matching the name
-      // If location filter is set, prefer company matching that location
-      const nameLower = companyName.toLowerCase();
-      const matchingCompanies = userCompanies.filter(c => c.name.toLowerCase() === nameLower);
-      
-      if (matchingCompanies.length === 0) {
-        toast.error('Company not found');
-        return;
-      }
-
-      let targetCompany = matchingCompanies[0];
-      
-      if (locationFilter && matchingCompanies.length > 1) {
-        // Prefer company matching the location filter
-        const locationMatch = matchingCompanies.find(c => (c.country || 'GLOBAL') === locationFilter);
-        if (locationMatch) {
-          targetCompany = locationMatch;
-        }
-      }
-
-      await switchCompany(targetCompany.id);
+      await switchCompany(opt.company.id);
+      onLocationChange?.(opt.location);
       toast.success('Company switched');
-      setIsOpen(false);
     } catch (error) {
       toast.error('Failed to switch company');
     }
   };
 
-  const handleSetDefault = async (e: React.MouseEvent, companyId: string) => {
-    e.stopPropagation();
-    try {
-      await setAsDefaultCompany(companyId);
-    } catch (error) {
-      toast.error('Failed to set default company');
+  // Show ALL companies, grouped by name. Each company's selectable locations are
+  // either its country variants (separate records) or — for a null/GLOBAL-country
+  // record whose prompts span multiple location_context values — those contexts
+  // (e.g. Burbank / Sydney / Vancouver). >1 location → submenu; else direct item.
+  const groups = Object.values(
+    userCompanies.reduce((acc, company) => {
+      const key = company.name.toLowerCase();
+      if (!acc[key]) {
+        acc[key] = { name: company.name, companies: [] };
+      }
+      acc[key].companies.push(company);
+      return acc;
+    }, {} as Record<string, { name: string; companies: Company[] }>)
+  ).sort((a, b) => a.name.localeCompare(b.name));
+
+  const optionRank = (o: LocationOption) => (o.location === null ? 0 : 1);
+  const optionLabel = (o: LocationOption) =>
+    o.location ? getCountryName(o.location) : 'Global';
+
+  const optionsFor = (companies: Company[]): LocationOption[] => {
+    const byKey = new Map<string, LocationOption>();
+    for (const company of companies) {
+      const loc = countryToLocation(company.country);
+      // Dedupe by country (null/GLOBAL collapses to one "Global" entry);
+      // prefer the current company when two records share a country.
+      const key = loc !== null ? `c:${loc}` : 'c:__global__';
+      if (!byKey.has(key) || company.id === currentCompany?.id) {
+        byKey.set(key, { kind: 'country', company, location: loc });
+      }
     }
+    return Array.from(byKey.values()).sort((a, b) => {
+      const r = optionRank(a) - optionRank(b);
+      return r !== 0 ? r : optionLabel(a).localeCompare(optionLabel(b));
+    });
   };
 
-  // Filter companies by location if locationFilter is set
-  const filteredCompanies = locationFilter
-    ? userCompanies.filter(company => {
-        const companyCountry = company.country || 'GLOBAL';
-        return companyCountry === locationFilter;
-      })
-    : userCompanies;
+  const renderOptionIcon = (opt: LocationOption) => {
+    const flag = opt.location ? getCountryFlag(opt.location) : '';
+    return flag
+      ? <span className="text-base leading-none">{flag}</span>
+      : <Globe className="h-4 w-4" />;
+  };
 
-  // Group companies with same name and industry together
-  // For display, we only show one company per name (deduplicate by name)
-  // But we keep track of all companies with the same name to handle switching
-  const companiesByName = filteredCompanies.reduce((acc, company) => {
-    const key = company.name.toLowerCase();
-    if (!acc[key]) {
-      acc[key] = [];
-    }
-    acc[key].push(company);
-    return acc;
-  }, {} as Record<string, typeof filteredCompanies>);
-
-  // For each unique company name, pick the best company to display:
-  // 1. If location filter is set, prefer the one matching that location
-  // 2. Otherwise, prefer the current company if it matches the name
-  // 3. Otherwise, just pick the first one
-  const displayCompanies = Object.entries(companiesByName).map(([name, companies]) => {
-    if (companies.length === 1) {
-      return companies[0];
-    }
-    
-    // Multiple companies with same name - pick the best one
-    if (locationFilter) {
-      // Prefer company matching the location filter
-      const matchingLocation = companies.find(c => (c.country || 'GLOBAL') === locationFilter);
-      if (matchingLocation) return matchingLocation;
-    }
-    
-    // Prefer current company if it matches this name
-    const currentMatch = companies.find(c => c.id === currentCompany?.id);
-    if (currentMatch) return currentMatch;
-    
-    // Otherwise just return the first one
-    return companies[0];
-  });
+  const renderOptionItem = (opt: LocationOption) => {
+    const isCurrent = isCurrentOption(opt);
+    const key = `${opt.company.id}:country`;
+    return (
+      <DropdownMenuItem
+        key={key}
+        onClick={() => selectOption(opt)}
+        className="cursor-pointer flex items-center gap-2"
+      >
+        {isCurrent ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}
+        {renderOptionIcon(opt)}
+        <span className={cn('text-sm', isCurrent && 'font-semibold text-[#13274F]')}>
+          {optionLabel(opt)}
+        </span>
+      </DropdownMenuItem>
+    );
+  };
 
   return (
     <>
-    <DropdownMenu 
-      open={loading ? false : isOpen} 
+    <DropdownMenu
+      open={loading ? false : isOpen}
       onOpenChange={(open) => {
         if (!loading) {
           setIsOpen(open);
@@ -188,73 +173,50 @@ export const CompanySwitcher = ({ className, variant = 'ghost', showAddCompanyMo
             </div>
           </DropdownMenuItem>
         ) : (
-          displayCompanies.map((company) => {
-          const isDefault = company.is_default === true;
-          const isCurrent = company.id === currentCompany?.id;
-          
-          // Check if there are multiple companies with the same name
-          const nameLower = company.name.toLowerCase();
-          const sameNameCompanies = userCompanies.filter(c => c.name.toLowerCase() === nameLower);
-          const hasMultipleLocations = sameNameCompanies.length > 1;
-          
-          return (
-            <DropdownMenuItem
-              key={company.id}
-              onClick={() => handleSwitchCompany(company.name, company.id)}
-              className="cursor-pointer flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2">
-                {isCurrent && <Check className="h-4 w-4 text-[#13274F]" />}
-                {!isCurrent && <div className="h-4 w-4" />}
-                <Favicon domain={getCompanyDomain(company.name)} size="sm" />
-                <span className={cn(
-                  'text-sm',
-                  isCurrent && 'font-semibold text-[#13274F]'
-                )}>
-                  {company.name}
-                </span>
-              </div>
-              <div className="flex items-center justify-center w-6 h-6">
-                {!isDefault ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={(e) => handleSetDefault(e, company.id)}
-                    title="Set as default"
-                  >
-                    <Star className="h-4 w-4 text-gray-400 hover:text-yellow-500" />
-                  </Button>
-                ) : (
-                  <div title="Default company" className="flex items-center justify-center">
-                    <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+          groups.map((group) => {
+            const options = optionsFor(group.companies);
+
+            // Single location: switch directly on click.
+            if (options.length === 1) {
+              const opt = options[0];
+              const isCurrent = isCurrentOption(opt);
+              return (
+                <DropdownMenuItem
+                  key={group.name.toLowerCase()}
+                  onClick={() => selectOption(opt)}
+                  className="cursor-pointer flex items-center gap-2"
+                >
+                  {isCurrent ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}
+                  <Favicon domain={getCompanyDomain(group.name)} size="sm" />
+                  <span className={cn('flex-1 text-sm', isCurrent && 'font-semibold text-[#13274F]')}>
+                    {group.name}
+                  </span>
+                  {opt.kind === 'country' && opt.location && (
+                    <span className="text-base leading-none">{getCountryFlag(opt.location)}</span>
+                  )}
+                </DropdownMenuItem>
+              );
+            }
+
+            // Multiple locations: submenu, pick a location to focus on.
+            const isCurrentGroup = group.companies.some((c) => c.id === currentCompany?.id);
+            return (
+              <DropdownMenuSub key={group.name.toLowerCase()}>
+                <DropdownMenuSubTrigger className="cursor-pointer">
+                  <div className="flex items-center gap-2 flex-1">
+                    {isCurrentGroup ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}
+                    <Favicon domain={getCompanyDomain(group.name)} size="sm" />
+                    <span className={cn('text-sm', isCurrentGroup && 'font-semibold text-[#13274F]')}>
+                      {group.name}
+                    </span>
                   </div>
-                )}
-              </div>
-            </DropdownMenuItem>
-          );
-        })
-        )}
-        {!loading && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={DASHBOARD_ADD_LOCKED}
-              onClick={!DASHBOARD_ADD_LOCKED ? handleAddNewCompany : undefined}
-              className={cn(
-                "font-medium",
-                !DASHBOARD_ADD_LOCKED ? "cursor-pointer" : "cursor-not-allowed opacity-50"
-              )}
-              title={DASHBOARD_ADD_LOCKED ? "Temporarily unavailable" : undefined}
-            >
-              {DASHBOARD_ADD_LOCKED ? (
-                <Lock className="h-4 w-4 mr-2" />
-              ) : (
-                <Building2 className="h-4 w-4 mr-2" />
-              )}
-              <span>Add New Company</span>
-            </DropdownMenuItem>
-          </>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-[220px]">
+                  {options.map(renderOptionItem)}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            );
+          })
         )}
       </DropdownMenuContent>
     </DropdownMenu>
