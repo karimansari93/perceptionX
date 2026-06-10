@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './AuthContext';
+import { readStarredView } from '@/hooks/useStarredView';
 import { toast } from 'sonner';
 
 export interface Company {
@@ -69,6 +70,38 @@ const ADMIN_EMAILS = ['karim@perceptionx.ai'];
 const isAdminUser = (email: string | undefined): boolean => {
   if (!email) return false;
   return ADMIN_EMAILS.includes(email.toLowerCase());
+};
+
+// Pick the company the user will actually land on, BEFORE the first data
+// fetch. This mirrors LocationFilter's post-mount reconcile policy (starred
+// location first, else prefer the US record; same-name sibling preferred,
+// else any company in that location). LocationFilter only mounts after the
+// branded loading screen unmounts — so when the initial pick disagreed with
+// that policy (e.g. companies[0] was Netflix Indonesia but the landing view
+// is the US), the wrong company was fully loaded and painted, then
+// LocationFilter switched it: a visible content → skeleton → content flash
+// right after login, plus a wasted full dashboard load. Choosing the final
+// company here makes the reconcile a no-op.
+const pickInitialCompany = (
+  companies: Company[],
+  userId: string | null | undefined,
+): Company | null => {
+  const base = companies.find(c => c.is_default) || companies[0] || null;
+  if (!base) return null;
+
+  const baseName = base.name.toLowerCase();
+  const inLocation = (location: string) =>
+    companies.filter(c => (c.country || 'GLOBAL') === location);
+  const preferSameName = (candidates: Company[]) =>
+    candidates.find(c => c.name.toLowerCase() === baseName) || candidates[0];
+
+  // A starred view's location is a country code; null means Global, which
+  // LocationFilter treats the same as "no preference" (it defaults to US).
+  const starredLocation = readStarredView(userId)?.location ?? null;
+  const targetLocation = starredLocation ?? 'US';
+
+  const candidates = inLocation(targetLocation);
+  return candidates.length > 0 ? preferSameName(candidates) : base;
 };
 
 export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -207,18 +240,13 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           // Set current company if none is selected
           setCurrentCompany(prevCurrent => {
             if (!prevCurrent) {
-              const defaultCompany = companies.find(c => c.is_default) || companies[0];
-              if (defaultCompany) {
-                return defaultCompany;
-              }
-              return null;
+              return pickInitialCompany(companies, user.id);
             } else {
               const stillValid = companies.find(c => c.id === prevCurrent.id);
               if (stillValid) {
                 return prevCurrent;
               } else {
-                const defaultCompany = companies.find(c => c.is_default) || companies[0];
-                return defaultCompany || null;
+                return pickInitialCompany(companies, user.id);
               }
             }
           });
@@ -323,26 +351,17 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Only set current company if none is selected or current company is no longer valid
         setCurrentCompany(prevCurrent => {
           if (!prevCurrent) {
-            // No current company, set to default or first
-            const defaultCompany = companies.find(c => c.is_default) || companies[0];
-            if (defaultCompany) {
-              return defaultCompany;
-            } else {
-              return null;
-            }
+            // No current company — pick the starred/US landing company so the
+            // first dashboard load is for the right company (see pickInitialCompany).
+            return pickInitialCompany(companies, user.id);
           } else {
             // Check if current company is still valid
             const stillValid = companies.find(c => c.id === prevCurrent.id);
             if (stillValid) {
               return prevCurrent;
             } else {
-              // Current company no longer valid, set to default or first
-              const defaultCompany = companies.find(c => c.is_default) || companies[0];
-              if (defaultCompany) {
-                return defaultCompany;
-              } else {
-                return null;
-              }
+              // Current company no longer valid
+              return pickInitialCompany(companies, user.id);
             }
           }
         });
