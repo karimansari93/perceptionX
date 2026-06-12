@@ -999,6 +999,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
           searchResults={filteredSearchResults}
           companyId={currentCompanyId}
           selectedThemeFilter={selectedThemeFilter}
+          companyMentionedFilter={selectedCompanyMentionedFilter}
           responseTexts={responseTexts}
           fetchResponseTexts={fetchResponseTexts}
         />

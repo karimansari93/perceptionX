@@ -30,8 +30,14 @@ import {
   Briefcase,
   ArrowLeft,
   Sparkles,
-  CheckCircle2
+  CheckCircle2,
+  X
 } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { RateDonut } from '@/components/ui/rate-donut';
+
+// Same underline-tab treatment as the Source/Response detail modals.
+const themeTabTriggerCls = "relative rounded-none border-b-2 border-transparent bg-transparent px-0 py-3 text-sm font-medium text-gray-500 shadow-none transition-colors hover:text-[#13274F] data-[state=active]:border-[#13274F] data-[state=active]:text-[#13274F] data-[state=active]:bg-transparent data-[state=active]:shadow-none";
 import { PromptResponse } from '@/types/dashboard';
 import { supabase } from '@/integrations/supabase/client';
 import { TALENTX_ATTRIBUTES } from '@/config/talentXAttributes';
@@ -112,6 +118,24 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  // Raw ai_themes lazy-load when this tab mounts; the per-attribute drilldown
+  // must not declare "no responses" while they're still in flight (that was
+  // the false error that resolved itself a few seconds later). "Settled" =
+  // loading finished with data, or stayed empty past a short grace period
+  // (a genuinely theme-less company).
+  const [themesSettled, setThemesSettled] = useState(false);
+  useEffect(() => {
+    if (aiThemesLoading) {
+      setThemesSettled(false);
+      return;
+    }
+    if (aiThemes.length > 0) {
+      setThemesSettled(true);
+      return;
+    }
+    const timer = setTimeout(() => setThemesSettled(true), 4000);
+    return () => clearTimeout(timer);
+  }, [aiThemesLoading, aiThemes.length]);
   // Modal and filter states - persisted
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
   const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('thematicTab.isModalOpen', false);
@@ -137,6 +161,11 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   const [summarySources, setSummarySources] = useState<{ domain: string; url: string | null; displayName: string }[]>([]);
   const [showAllAttributeSources, setShowAllAttributeSources] = useState(false);
   const [modalView, setModalView] = usePersistedState<'summary' | 'detail'>('thematicTab.modalView', 'summary');
+  // Drilldown tab (Summary / Key Themes / In their words) — resets per attribute.
+  const [themeModalTab, setThemeModalTab] = useState<'summary' | 'themes' | 'words'>('summary');
+  useEffect(() => {
+    if (isModalOpen) setThemeModalTab('summary');
+  }, [isModalOpen, selectedAttribute]);
   // Track last attribute we auto-fetched so reopening for the same attribute doesn't refetch.
   const lastThemeFetchKeyRef = useRef<string>("");
   // Cascade reveal: cards below the AI summary appear after it finishes generating.
@@ -490,6 +519,17 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     const attributeResponses =
       totalResponseCount > MAX_RESPONSES ? allAttributeResponses.slice(0, MAX_RESPONSES) : allAttributeResponses;
 
+    // Response texts are lazy-loaded (the eager dashboard query omits them).
+    // Without this fetch the prompt's "Source responses" block was a list of
+    // EMPTY strings — the model wrote summaries from theme names alone. The
+    // fetch also persists texts into shared state, which feeds the verbatim
+    // "In their words" section.
+    let texts: Record<string, string> = responseTexts;
+    const missingTextIds = attributeResponses.filter(r => !(responseTexts[r.id] || r.response_text)).map(r => r.id);
+    if (missingTextIds.length > 0 && fetchResponseTexts) {
+      texts = (await fetchResponseTexts(missingTextIds)) || texts;
+    }
+
     const matchingTheme = filteredThemes.find(t => t.talentx_attribute_id === selectedAttribute);
     const attributeName = matchingTheme?.talentx_attribute_name || 'this attribute';
 
@@ -584,7 +624,7 @@ ${attributeResponses.map((r, i) => {
           if (indices.length > 0) responseSources = ` [Sources: ${indices.join(', ')}]`;
         }
       } catch { /* skip */ }
-      return `${(responseTexts[r.id] || r.response_text || '').slice(0, RESPONSE_EXCERPT_CHARS)}${responseSources}`;
+      return `${(texts[r.id] || responseTexts[r.id] || r.response_text || '').slice(0, RESPONSE_EXCERPT_CHARS)}${responseSources}`;
     }).join('\n---\n')}
 
 Write a short, actionable analysis with three sections. Each section uses a markdown bold header on its own line, followed by ONE or TWO short sentences. Keep it tight. Where the data points to a specific market or job function, name it explicitly.
@@ -653,6 +693,13 @@ CRITICAL: When you reference information from a source, add an inline citation l
   // switching attributes so the new one re-fetches.
   useEffect(() => {
     if (!isModalOpen || !selectedAttribute || modalView !== 'summary') return;
+    // Hold the loading card until raw themes have settled — firing before they
+    // arrive made the drilldown flash "No responses found" and then recover.
+    if (!themesSettled) {
+      setLoadingThemeSummary(true);
+      setThemeSummaryError(null);
+      return;
+    }
     if (selectedAttribute === lastThemeFetchKeyRef.current) return;
     setThemeSummary("");
     setThemeSummaryError(null);
@@ -661,7 +708,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
     fetchAttributeSummary();
     // fetchAttributeSummary intentionally omitted from deps — closes over current state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isModalOpen, selectedAttribute, modalView]);
+  }, [isModalOpen, selectedAttribute, modalView, themesSettled]);
 
   // Cascade-reveal cards below the AI summary once it finishes generating.
   useEffect(() => {
@@ -885,40 +932,65 @@ CRITICAL: When you reference information from a source, add an inline citation l
         }
       }}>
         <SheetContent side="right" className="w-full sm:max-w-2xl p-0 flex flex-col gap-0 [&>button]:hidden">
-          <div className="flex items-center justify-between px-6 py-4 border-b bg-white">
-            <SheetTitle className="flex items-center gap-2 text-base font-semibold">
-              {modalView === 'detail' && selectedTheme ? (
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setModalView('summary');
-                      setSelectedTheme(null);
-                    }}
-                    className="p-1 h-auto"
-                  >
-                    <ArrowLeft className="w-4 h-4" />
-                  </Button>
-                  <span>{selectedTheme.theme_name}</span>
-                </div>
-              ) : selectedAttribute && (() => {
-                const IconComponent = ATTRIBUTE_ICONS[selectedAttribute] || Activity;
-                const attributeData = bubbleChartData.find(d => d.attributeId === selectedAttribute);
-                return (
+          {/* Header */}
+          <div className="border-b border-gray-100 bg-white shrink-0">
+            <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4">
+              <SheetTitle className="flex items-center gap-2.5 min-w-0 text-left">
+                {modalView === 'detail' && selectedTheme ? (
                   <>
-                    <IconComponent className="w-5 h-5" />
-                    {attributeData?.attributeName || 'Attribute Details'}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setModalView('summary');
+                        setSelectedTheme(null);
+                      }}
+                      className="p-1 h-auto shrink-0"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                    </Button>
+                    <span className="font-headline text-base sm:text-lg font-semibold text-[#13274F] leading-snug">
+                      {selectedTheme.theme_name}
+                    </span>
                   </>
-                );
-              })()}
-            </SheetTitle>
+                ) : selectedAttribute && (() => {
+                  const IconComponent = ATTRIBUTE_ICONS[selectedAttribute] || Activity;
+                  const attributeData = bubbleChartData.find(d => d.attributeId === selectedAttribute);
+                  return (
+                    <>
+                      <div className="w-9 h-9 rounded-xl border border-gray-100 bg-white shadow-sm grid place-items-center shrink-0">
+                        <IconComponent className="w-5 h-5 text-[#13274F]" />
+                      </div>
+                      <span className="font-headline text-base sm:text-lg font-semibold text-[#13274F] leading-snug truncate">
+                        {attributeData?.attributeName || 'Attribute Details'}
+                      </span>
+                    </>
+                  );
+                })()}
+              </SheetTitle>
+              <button
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setModalView('summary');
+                  setSelectedTheme(null);
+                  setThemeSummary("");
+                  setThemeSummaryError(null);
+                  setThinkingStep(-1);
+                  setThinkingSteps([]);
+                  setSummarySources([]);
+                }}
+                className="p-1.5 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors shrink-0"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-          <div className="flex-1 overflow-y-auto px-6 py-4">
-          
+
           {modalView === 'detail' && selectedTheme ? (
             // Detail view for a specific theme
-            (() => {
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+            {(() => {
               const getBadgeColor = (sentiment: string) => {
                 switch (sentiment) {
                   case 'positive':
@@ -962,7 +1034,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                           </span>
                         </div>
                         <p className="text-sm text-gray-600">{selectedTheme.theme_description}</p>
-                        {selectedTheme.keywords.length > 0 && (
+                        {Array.isArray(selectedTheme.keywords) && selectedTheme.keywords.length > 0 && (
                           <div className="flex flex-wrap gap-1">
                             {selectedTheme.keywords.map((keyword, idx) => (
                               <span key={idx} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
@@ -971,7 +1043,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                             ))}
                           </div>
                         )}
-                        {selectedTheme.context_snippets.length > 0 && (
+                        {Array.isArray(selectedTheme.context_snippets) && selectedTheme.context_snippets.length > 0 && (
                           <div className="mt-3">
                             <h5 className="text-xs font-medium text-gray-700 mb-2">Context Snippets:</h5>
                             <div className="space-y-1">
@@ -1030,7 +1102,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
                   </Card>
                 </div>
               );
-            })()
+            })()}
+            </div>
           ) : selectedAttribute && (() => {
             // Get all themes for the selected attribute (filtered by experience type)
             const attributeThemes = filteredThemes.filter(theme => theme.talentx_attribute_id === selectedAttribute);
@@ -1058,8 +1131,135 @@ CRITICAL: When you reference information from a source, add an inline citation l
               }, {} as Record<string, number>)
             })).sort((a, b) => b.count - a.count);
 
+            // Attribute-level visibility for the header stat strip.
+            const attributeResponses = getResponsesForAttribute(selectedAttribute);
+            const visibilityPct = attributeResponses.length > 0
+              ? Math.round((attributeResponses.filter(r => r.company_mentioned === true).length / attributeResponses.length) * 100)
+              : 0;
+
+            // Verbatim quotes ("In their words" tab) — excerpts anchored on
+            // theme keywords so each quote is actually about this attribute.
+            const themesByResponse = new Map<string, AITheme[]>();
+            attributeThemes.forEach((t) => {
+              const list = themesByResponse.get(t.response_id) ?? [];
+              list.push(t);
+              themesByResponse.set(t.response_id, list);
+            });
+            const quotes: { id: string; model?: string; sentiment: string; text: string }[] = [];
+            for (const r of attributeResponses) {
+              // Strip markdown noise so quotes read as prose ("**", "###",
+              // and the known "• undefined:" data artifact).
+              const text = (responseTexts[r.id] || r.response_text || '')
+                .replace(/•\s*undefined:\s*/g, '• ')
+                .replace(/^#{1,6}\s+/gm, '')
+                .replace(/\s#{1,6}\s+/g, ' ')
+                .replace(/\*\*/g, '');
+              if (!text.trim()) continue;
+              const rThemes = themesByResponse.get(r.id) ?? [];
+              let idx = -1;
+              let matched: AITheme | null = null;
+              for (const t of rThemes) {
+                const needles = [...(Array.isArray(t.keywords) ? t.keywords : []), t.theme_name].filter(Boolean);
+                for (const n of needles) {
+                  const i = text.toLowerCase().indexOf(String(n).toLowerCase());
+                  if (i !== -1 && (idx === -1 || i < idx)) {
+                    idx = i;
+                    matched = t;
+                  }
+                }
+              }
+              const anchor = idx === -1 ? 0 : idx;
+              const start = Math.max(0, anchor - 80);
+              const end = Math.min(text.length, anchor + 240);
+              const excerpt = text.slice(start, end).trim();
+              if (!excerpt) continue;
+              quotes.push({
+                id: r.id,
+                model: r.ai_model,
+                sentiment: matched?.sentiment || rThemes[0]?.sentiment || 'neutral',
+                text: `${start > 0 ? '…' : ''}${excerpt}${end < text.length ? '…' : ''}`,
+              });
+              if (quotes.length >= 10) break;
+            }
+
+            // Previous-period deltas for the stat strip.
+            const prevIds = new Set(previousPeriodResponses.map(r => r.id));
+            const prevAttrThemes = prevIds.size > 0
+              ? aiThemes.filter(t => validAttributeIds.has(t.talentx_attribute_id) && t.talentx_attribute_id === selectedAttribute && prevIds.has(t.response_id))
+              : [];
+            const prevPositive = prevAttrThemes.filter(t => t.sentiment === 'positive').length;
+            const prevNegative = prevAttrThemes.filter(t => t.sentiment === 'negative').length;
+            const prevNeutral = prevAttrThemes.filter(t => t.sentiment === 'neutral').length;
+            const hasPrev = prevIds.size > 0;
+            const renderDelta = (current: number, previous: number) => {
+              if (!hasPrev || previous === 0) return null;
+              const pctChange = Math.round(((current - previous) / previous) * 100);
+              if (pctChange === 0) return null;
+              return (
+                <span className={`text-[10px] font-semibold inline-flex items-center gap-0.5 ${pctChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {pctChange > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                  {Math.abs(pctChange)}%
+                </span>
+              );
+            };
+
             return (
-              <div className="space-y-6">
+              <>
+                {/* Stat strip — fixed under the header like the other detail modals */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-gray-100 border-b border-gray-100 bg-white shrink-0">
+                  <div className="px-6 py-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Positive</p>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <span className="text-sm font-semibold text-green-600">{positiveThemes.length}</span>
+                      {renderDelta(positiveThemes.length, prevPositive)}
+                    </div>
+                  </div>
+                  <div className="px-6 py-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Negative</p>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <span className="text-sm font-semibold text-[#DB5E89]">{negativeThemes.length}</span>
+                      {renderDelta(negativeThemes.length, prevNegative)}
+                    </div>
+                  </div>
+                  <div className="px-6 py-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Neutral</p>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <span className="text-sm font-semibold text-[#13274F]">{neutralThemes.length}</span>
+                      {renderDelta(neutralThemes.length, prevNeutral)}
+                    </div>
+                  </div>
+                  <div className="px-6 py-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Visibility</p>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <RateDonut rate={visibilityPct / 100} size={18} />
+                      <span className="text-sm font-semibold text-[#13274F]">{visibilityPct}%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <Tabs value={themeModalTab} onValueChange={(v) => setThemeModalTab(v as 'summary' | 'themes' | 'words')} className="flex-1 flex flex-col min-h-0">
+                  <TabsList className="w-full justify-start gap-6 rounded-none border-b border-gray-200 bg-transparent p-0 px-6 h-auto shrink-0">
+                    <TabsTrigger value="summary" className={themeTabTriggerCls}>Summary</TabsTrigger>
+                    <TabsTrigger value="themes" className={themeTabTriggerCls}>
+                      Key Themes
+                      {uniqueThemeNames.length > 0 && (
+                        <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+                          {uniqueThemeNames.length}
+                        </span>
+                      )}
+                    </TabsTrigger>
+                    <TabsTrigger value="words" className={themeTabTriggerCls}>
+                      In their words
+                      {quotes.length > 0 && (
+                        <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+                          {quotes.length}
+                        </span>
+                      )}
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <div className="flex-1 overflow-y-auto">
+                    <TabsContent value="summary" className="px-6 py-4 mt-0 space-y-6 focus-visible:outline-none">
                 {/* AI Summary — auto-fires on open */}
                 {themeSummary ? (
                   <Card className="border-[#0DBCBA]/30 bg-[#0DBCBA]/5">
@@ -1194,63 +1394,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
                   </Card>
                 ) : null}
 
-                {/* Summary Stats — sentiment counts */}
-                <div className={themeRevealClass(1)}>
-                {(() => {
-                  // Compute per-attribute previous period theme counts
-                  const prevIds = new Set(previousPeriodResponses.map(r => r.id));
-                  const prevAttrThemes = prevIds.size > 0
-                    ? aiThemes.filter(t => validAttributeIds.has(t.talentx_attribute_id) && t.talentx_attribute_id === selectedAttribute && prevIds.has(t.response_id))
-                    : [];
-                  const prevPositive = prevAttrThemes.filter(t => t.sentiment === 'positive').length;
-                  const prevNegative = prevAttrThemes.filter(t => t.sentiment === 'negative').length;
-                  const prevNeutral = prevAttrThemes.filter(t => t.sentiment === 'neutral').length;
-                  const hasPrev = prevIds.size > 0;
-
-                  const renderDelta = (current: number, previous: number) => {
-                    if (!hasPrev || previous === 0) return null;
-                    const pctChange = Math.round(((current - previous) / previous) * 100);
-                    if (pctChange === 0) return null;
-                    return (
-                      <span className={`text-xs font-semibold inline-flex items-center gap-0.5 ${pctChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {pctChange > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                        {Math.abs(pctChange)}%
-                      </span>
-                    );
-                  };
-
-                  return (
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="text-center p-3 bg-green-50 rounded-lg">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <span className="text-2xl font-bold text-green-600">{positiveThemes.length}</span>
-                      {renderDelta(positiveThemes.length, prevPositive)}
-                    </div>
-                    <div className="text-sm text-green-700">Positive Themes</div>
-                  </div>
-                  <div className="text-center p-3 bg-red-50 rounded-lg">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <span className="text-2xl font-bold text-red-600">{negativeThemes.length}</span>
-                      {renderDelta(negativeThemes.length, prevNegative)}
-                    </div>
-                    <div className="text-sm text-red-700">Negative Themes</div>
-                  </div>
-                  <div className="text-center p-3 bg-gray-50 rounded-lg">
-                    <div className="flex items-center justify-center gap-1.5">
-                      <span className="text-2xl font-bold text-gray-600">{neutralThemes.length}</span>
-                      {renderDelta(neutralThemes.length, prevNeutral)}
-                    </div>
-                    <div className="text-sm text-gray-700">Neutral Themes</div>
-                  </div>
-                </div>
-                  );
-                })()}
-                </div>
-
                 {/* Visibility by model — % of attribute-relevant responses where the company was mentioned, per LLM */}
-                <div className={themeRevealClass(2)}>
                 {(() => {
-                  const attributeResponses = getResponsesForAttribute(selectedAttribute);
                   const byModel = new Map<string, { total: number; mentioned: number }>();
                   attributeResponses.forEach((r) => {
                     if (!r.ai_model) return;
@@ -1299,10 +1444,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     </Card>
                   );
                 })()}
-                </div>
 
                 {/* Keyword cloud */}
-                <div className={themeRevealClass(3)}>
                 {(() => {
                   const counts = new Map<string, number>();
                   attributeThemes.forEach((t) => {
@@ -1354,11 +1497,11 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     </Card>
                   );
                 })()}
-                </div>
+                    </TabsContent>
 
-                {/* Key Themes List - Clickable */}
-                <div className={`space-y-3 ${themeRevealClass(4)}`}>
-                  <h3 className="text-sm font-semibold text-gray-900">Key Themes</h3>
+                    {/* Key Themes List - Clickable */}
+                    <TabsContent value="themes" className="px-6 py-4 mt-0 focus-visible:outline-none">
+                      <div className="space-y-3">
                   {uniqueThemeNames.map((themeGroup, index) => {
                     const dominantSentiment = Object.entries(themeGroup.dominantSentiment)
                       .sort(([, a], [, b]) => b - a)[0]?.[0] || 'neutral';
@@ -1432,18 +1575,64 @@ CRITICAL: When you reference information from a source, add an inline citation l
                       </Card>
                     );
                   })}
-                </div>
+                      </div>
 
-                {attributeThemes.length === 0 && (
-                  <div className="text-center py-8 text-gray-500">
-                    No themes found for this attribute.
+                      {attributeThemes.length === 0 && (
+                        themesSettled ? (
+                          <div className="text-center py-8 text-gray-500">
+                            No themes found for this attribute.
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-2 py-8 text-gray-400">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span className="text-sm">Loading themes…</span>
+                          </div>
+                        )
+                      )}
+                    </TabsContent>
+
+                    {/* In their words — verbatim excerpts so users get a feel
+                        for the raw voice behind the themes. */}
+                    <TabsContent value="words" className="px-6 py-4 mt-0 focus-visible:outline-none">
+                      {quotes.length > 0 ? (
+                        <>
+                          <p className="text-xs text-gray-500 mb-3">
+                            Verbatim excerpts from the AI answers behind this attribute.
+                          </p>
+                          <div className="space-y-2">
+                            {quotes.map((q) => (
+                              <div key={q.id} className="rounded-xl border border-gray-100 p-3.5 flex gap-2.5 hover:border-gray-200 hover:shadow-sm transition-all">
+                                <span
+                                  className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${
+                                    q.sentiment === 'positive' ? 'bg-green-500' : q.sentiment === 'negative' ? 'bg-red-500' : 'bg-gray-400'
+                                  }`}
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm text-gray-800 leading-relaxed">“{q.text}”</p>
+                                  {q.model && (
+                                    <div className="mt-1.5 flex items-center gap-1.5">
+                                      <LLMLogo modelName={q.model} size="sm" />
+                                      <span className="text-[11px] text-gray-400">{getLLMDisplayName(q.model)}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-center py-10">
+                          <p className="text-sm text-gray-500">
+                            {themesSettled ? 'No verbatim mentions available yet for this attribute.' : 'Loading…'}
+                          </p>
+                        </div>
+                      )}
+                    </TabsContent>
                   </div>
-                )}
-              </div>
+                </Tabs>
+              </>
             );
           })()}
-
-          </div>
 
         </SheetContent>
       </Sheet>
