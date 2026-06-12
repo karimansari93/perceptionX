@@ -69,7 +69,6 @@ const Welcome = () => {
   }, [user]);
 
   const inviterName = (user?.user_metadata?.inviter_name as string) || null;
-  const orgName = (user?.user_metadata?.invited_org_name as string) || null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,21 +166,20 @@ const Welcome = () => {
             Welcome aboard
           </h1>
 
-          {inviterName ? (
+          {inviterName && (
             <div className="mt-4 inline-flex items-center gap-2.5 rounded-full bg-white border border-gray-100 pl-1.5 pr-4 py-1.5 shadow-sm">
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-pink text-white text-[11px] font-bold flex-shrink-0">
                 {initialsOf(inviterName)}
               </span>
               <span className="text-[13px] text-nightsky/80 leading-tight text-left" style={sans}>
-                <span className="font-semibold text-nightsky">{inviterName}</span> invited you
-                {orgName ? <> to join <span className="font-semibold text-nightsky">{orgName}</span></> : null}
+                <span className="font-semibold text-nightsky">{inviterName}</span> invited you to join them
               </span>
             </div>
-          ) : (
-            <p className="mt-3 text-[14px] text-nightsky/60" style={sans}>
-              Set up your account to get started.
-            </p>
           )}
+
+          <p className="mt-3 text-[14px] text-nightsky/60" style={sans}>
+            Add your details and get started instantly.
+          </p>
         </div>
 
         {/* Form */}
