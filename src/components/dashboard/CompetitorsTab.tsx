@@ -512,6 +512,13 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   // Helper to get all full responses mentioning a competitor
   const getFullResponsesForCompetitor = (competitor: string) => {
     return responses.filter(response => {
+      // Respect the active job-function filter. Without this, the AI summary
+      // and the modal's mentions/top-sources silently mixed every function's
+      // data while the rest of the tab was filtered.
+      if (selectedJobFunctionFilter !== 'all' &&
+          response.confirmed_prompts?.job_function_context?.trim() !== selectedJobFunctionFilter) {
+        return false;
+      }
       // Check if competitor is mentioned in detected_competitors field
       if (response.detected_competitors) {
         const mentions = response.detected_competitors
@@ -559,9 +566,10 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   const fetchCompetitorSummary = async () => {
     if (!selectedCompetitor) return;
     // Capture the key this fetch was kicked off for. If the user switches
-    // competitors before the response lands, we'll discard stale results
-    // rather than overwriting the new one.
-    const fetchKey = selectedCompetitor;
+    // competitors (or the job-function filter changes) before the response
+    // lands, we'll discard stale results rather than overwriting the new one.
+    // Must mirror the composite key set by the auto-fetch effect below.
+    const fetchKey = `${selectedCompetitor}::${selectedJobFunctionFilter}`;
     setCompetitorSummary("");
     setCompetitorSummaryError(null);
     setLoadingCompetitorSummary(true);
@@ -580,10 +588,51 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
     // (org limit: 30k input tokens/min). Popular competitors can have 200+
     // mentions; sending all of them blows the budget. Sample down hard.
     const MAX_RESPONSES = 25;
-    const RESPONSE_EXCERPT_CHARS = 300;
+    const RESPONSE_EXCERPT_CHARS = 380;
     const totalResponseCount = allResponses.length;
-    const relevantResponses =
-      totalResponseCount > MAX_RESPONSES ? allResponses.slice(0, MAX_RESPONSES) : allResponses;
+
+    // Head-to-head stats over ALL competitor answers, not just the sample.
+    // NULL company_mentioned counts as "without", matching the rest of the app.
+    const alongsideCount = allResponses.filter((r: any) => r.company_mentioned === true).length;
+    const withoutCompanyCount = totalResponseCount - alongsideCount;
+
+    // Sample for the prompt: lead with answers where the company is ABSENT
+    // (that's where the competitor is winning ground), then fill with the rest.
+    const withoutCompany = allResponses.filter((r: any) => r.company_mentioned !== true);
+    const withCompany = allResponses.filter((r: any) => r.company_mentioned === true);
+    const gapTarget = Math.min(withoutCompany.length, Math.ceil(MAX_RESPONSES / 2));
+    const relevantResponses = [
+      ...withoutCompany.slice(0, gapTarget),
+      ...withCompany.slice(0, MAX_RESPONSES - gapTarget),
+    ];
+    if (relevantResponses.length < MAX_RESPONSES) {
+      relevantResponses.push(
+        ...withoutCompany.slice(gapTarget, gapTarget + (MAX_RESPONSES - relevantResponses.length))
+      );
+    }
+
+    // Source frequency across ALL competitor answers — which sources carry
+    // this competitor's visibility.
+    const domainCounts = new Map<string, number>();
+    allResponses.forEach((r: any) => {
+      try {
+        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
+        if (Array.isArray(citations)) {
+          const seenInResponse = new Set<string>();
+          citations.forEach((c: any) => {
+            if (c.domain && !seenInResponse.has(c.domain)) {
+              seenInResponse.add(c.domain);
+              domainCounts.set(c.domain, (domainCounts.get(c.domain) ?? 0) + 1);
+            }
+          });
+        }
+      } catch { /* skip */ }
+    });
+    const topSourcesLine = [...domainCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([d, c]) => `${getSourceDisplayName(d)} (${c})`)
+      .join(', ');
 
     let texts = responseTexts;
     const missingTextIds = relevantResponses.filter(r => !r.response_text && !texts[r.id]).map(r => r.id);
@@ -631,11 +680,11 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
 
     const sourcesList = sourceMap.map((s, i) => `[${i + 1}] ${s.displayName} (${s.domain})`).join('\n');
 
-    // Aggregate location + job function from the responses so the AI can
-    // ground the summary in the specific markets and roles being asked about.
+    // Aggregate location + job function across ALL competitor answers so the
+    // AI can ground the summary in the specific markets and roles involved.
     const locationCounts = new Map<string, number>();
     const jobFunctionCounts = new Map<string, number>();
-    relevantResponses.forEach((r: any) => {
+    allResponses.forEach((r: any) => {
       const loc = r.confirmed_prompts?.location_context;
       const jf = r.confirmed_prompts?.job_function_context;
       if (loc) locationCounts.set(loc, (locationCounts.get(loc) ?? 0) + 1);
@@ -654,19 +703,33 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
 
     const sampleNote =
       totalResponseCount > MAX_RESPONSES
-        ? `\n(Below is a sample of ${relevantResponses.length} representative responses out of ${totalResponseCount} total. Don't claim to have read every response.)\n`
+        ? `\n(Below is a sample of ${relevantResponses.length} of ${totalResponseCount} answers, weighted toward ones where ${companyName} is absent. Don't claim to have read every answer.)\n`
         : "";
 
-    const prompt = `You are an employer brand analyst. Write a concise, insightful summary comparing how ${selectedCompetitor} is positioned relative to ${companyName} in the talent market.
+    // Excerpt AROUND the competitor mention. Slicing from the top of the
+    // answer routinely cut the mention out entirely — the model would then
+    // (correctly, given its inputs) conclude there was no competitor data.
+    const excerptAround = (text: string, needle: string): string => {
+      const idx = text.toLowerCase().indexOf(needle.toLowerCase());
+      if (idx === -1) return text.slice(0, RESPONSE_EXCERPT_CHARS);
+      const start = Math.max(0, idx - Math.floor(RESPONSE_EXCERPT_CHARS / 3));
+      const end = Math.min(text.length, start + RESPONSE_EXCERPT_CHARS);
+      return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`;
+    };
 
-Context:
-- Markets covered (count of responses): ${topLocations || 'unspecified'}
-- Job functions covered (count of responses): ${topJobFunctions || 'unspecified'}
+    const prompt = `You are an employer brand analyst. Analyze how ${selectedCompetitor} shows up in AI answers about the talent market, and what that means for ${companyName}.
+
+${selectedJobFunctionFilter !== 'all' ? `Scope: this analysis is filtered to ${selectedJobFunctionFilter} roles only — keep every claim within that function.\n\n` : ''}Hard numbers, computed over ALL ${totalResponseCount} AI answers that mention ${selectedCompetitor}${selectedJobFunctionFilter !== 'all' ? ` for ${selectedJobFunctionFilter}` : ''}:
+- ${withoutCompanyCount} of ${totalResponseCount} answers mention ${selectedCompetitor} WITHOUT mentioning ${companyName} — this is where ${selectedCompetitor} is winning visibility.
+- ${alongsideCount} answers mention both companies.
+- Top sources carrying ${selectedCompetitor}'s visibility (answer counts): ${topSourcesLine || 'n/a'}
+- Markets (answer counts): ${topLocations || 'unspecified'}
+- Job functions (answer counts): ${topJobFunctions || 'unspecified'}
 
 Available sources:
 ${sourcesList || 'No sources available'}
 ${sampleNote}
-Source responses:
+Excerpts from answers mentioning ${selectedCompetitor} — each tagged with whether ${companyName} also appeared in that answer:
 ${relevantResponses.map((r) => {
       let responseSources = '';
       try {
@@ -677,21 +740,24 @@ ${relevantResponses.map((r) => {
           if (indices.length > 0) responseSources = ` [Sources: ${indices.join(', ')}]`;
         }
       } catch { /* skip */ }
-      return `${(texts[r.id] || r.response_text || '').slice(0, RESPONSE_EXCERPT_CHARS)}${responseSources}`;
+      const tag = r.company_mentioned === true ? `[both mentioned]` : `[${companyName} ABSENT]`;
+      return `${tag} ${excerptAround(texts[r.id] || r.response_text || '', selectedCompetitor)}${responseSources}`;
     }).join('\n---\n')}
 
-Write a short, actionable analysis with three short sections. Each section uses a markdown bold header on its own line, followed by ONE or TWO short sentences. Total output is short — keep it tight. Where the data points to a specific market or job function, name it explicitly.
+Write a short, actionable analysis with three short sections. Each section uses a markdown bold header on its own line, followed by ONE or TWO short sentences. Total output is short — keep it tight. Ground every claim in the hard numbers or excerpts, naming specific markets, functions, or sources.
 
-**What sets them apart**
-What makes ${selectedCompetitor} distinctive as an employer — the one or two things that stand out, naming the relevant market(s) or roles where this is most evident.
+**Where ${selectedCompetitor} is visible**
+Which sources, markets, and roles ${selectedCompetitor} shows up in — lean on the hard numbers.
 
-**How ${companyName} compares**
-Where ${companyName}'s position differs — be specific about a strength and a weakness vs ${selectedCompetitor}, again grounded in a market or role if the data supports it.
+**Where they're winning vs ${companyName}**
+What ${selectedCompetitor} is recognized for in the answers where ${companyName} is absent — the themes or claims earning them that visibility.
 
 **Your move**
-One concrete, actionable recommendation for ${companyName}'s talent strategy in response to ${selectedCompetitor} — ideally targeted at a specific market or function.
+One concrete, actionable recommendation for ${companyName} in response — targeted at a specific market, function, or source.
 
 Be direct, specific, professional. No hedging, no preamble, no summary paragraph. Do not open with "${selectedCompetitor} is...". **Do NOT include a top-level title or heading** (no "# Title", no "## Heading"). Only the three bold section headers exactly as specified.
+
+CRITICAL: every excerpt above comes from an answer that mentions ${selectedCompetitor}. NEVER claim the dataset lacks ${selectedCompetitor} data or that comparison is impossible — if the excerpts are thin, lean on the hard numbers instead.
 
 CRITICAL: When you reference information from a source, add an inline citation like [1], [2], etc. matching the source numbers above. Place citations naturally at the end of the relevant sentence. Use citations frequently. Only cite sources from the numbered list above.`;
 
@@ -744,18 +810,20 @@ CRITICAL: When you reference information from a source, add an inline citation l
   };
 
   // Auto-generate the competitor summary whenever the sheet is opened for a
-  // new competitor. Reset stale state so switching competitors re-fetches.
+  // new competitor OR the job-function filter changes. The key includes the
+  // filter so a summary generated for one function is never shown for another.
   useEffect(() => {
     if (!isCompetitorModalOpen || !selectedCompetitor) return;
-    if (selectedCompetitor === lastCompetitorFetchKeyRef.current) return;
+    const fetchStateKey = `${selectedCompetitor}::${selectedJobFunctionFilter}`;
+    if (fetchStateKey === lastCompetitorFetchKeyRef.current) return;
     setCompetitorSummary("");
     setCompetitorSummaryError(null);
     setLoadingCompetitorSummary(false);
-    lastCompetitorFetchKeyRef.current = selectedCompetitor;
+    lastCompetitorFetchKeyRef.current = fetchStateKey;
     fetchCompetitorSummary();
     // fetchCompetitorSummary intentionally omitted — closes over current state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCompetitorModalOpen, selectedCompetitor]);
+  }, [isCompetitorModalOpen, selectedCompetitor, selectedJobFunctionFilter]);
 
   // Stagger-reveal the cards below the AI summary. They stay hidden while
   // the summary is generating, then cascade in once it's ready.

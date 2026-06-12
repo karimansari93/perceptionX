@@ -1,23 +1,23 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink, Lightbulb, Building2, MessageSquare, RefreshCw, Languages } from "lucide-react";
+import { ExternalLink, MessageSquare, RefreshCw, Languages, X, Sparkles, Loader2 } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { RateDonut } from "@/components/ui/rate-donut";
 import LLMLogo from "@/components/LLMLogo";
 import { PromptResponse, PromptData } from "@/types/dashboard";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { enhanceCitations, getFavicon } from "@/utils/citationUtils";
-import { Skeleton } from "@/components/ui/skeleton";
 import ReactMarkdown from 'react-markdown';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { supabase } from "@/integrations/supabase/client";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import type { RefreshProgress } from "@/hooks/useRefreshPrompts";
+
+// Same underline-tab treatment as SourceDetailsModal — keep the two modals in step.
+const tabTriggerCls = "relative rounded-none border-b-2 border-transparent bg-transparent px-0 py-3 text-sm font-medium text-gray-500 shadow-none transition-colors hover:text-[#13274F] data-[state=active]:border-[#13274F] data-[state=active]:text-[#13274F] data-[state=active]:bg-transparent data-[state=active]:shadow-none";
 
 interface ResponseDetailsModalProps {
   isOpen: boolean;
@@ -65,7 +65,6 @@ export const ResponseDetailsModal = ({
   const [isTranslating, setIsTranslating] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
   const [isNonEnglish, setIsNonEnglish] = useState(false);
-  const isMobile = useIsMobile();
   const { user } = useAuth();
   const abortControllerRef = useRef<AbortController | null>(null);
   const fetchingPromptRef = useRef<string | null>(null);
@@ -73,6 +72,40 @@ export const ResponseDetailsModal = ({
   const previousPromptTextRef = useRef<string>("");
 
   const getResponseText = (r: PromptResponse) => responseTexts[r.id] || r.response_text || '';
+
+  const [activeTab, setActiveTab] = useState<string>('summary');
+  const [summaryRetryNonce, setSummaryRetryNonce] = useState(0);
+  useEffect(() => {
+    if (isOpen) setActiveTab('summary');
+  }, [isOpen, promptText]);
+
+  // Watchdog: if the summary request (or the lazy text fetch feeding it)
+  // hangs, don't leave the user staring at a loading card forever.
+  useEffect(() => {
+    if (!loadingSummary) return;
+    const timer = setTimeout(() => {
+      fetchingPromptRef.current = null;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      setLoadingSummary(false);
+      setSummaryError("The summary is taking longer than expected.");
+    }, 25000);
+    return () => clearTimeout(timer);
+  }, [loadingSummary]);
+
+  const retrySummary = () => {
+    previousResponsesKeyRef.current = "";
+    fetchingPromptRef.current = null;
+    setSummaryError(null);
+    setSummaryCache(prev => {
+      const next = { ...prev };
+      delete next[promptText];
+      return next;
+    });
+    setSummaryRetryNonce(n => n + 1);
+  };
 
   // Lazy-load response texts when modal opens. Track completion via
   // `lazyLoadAttempted` so the summary effect can fall back to a friendly
@@ -368,7 +401,7 @@ export const ResponseDetailsModal = ({
         fetchingPromptRef.current = null;
       }
     };
-  }, [isOpen, promptText, responses, responseTexts, lazyLoadAttempted, summaryCache]); // responseTexts + lazyLoadAttempted required so the effect re-runs once lazy-loaded text arrives or the fetch resolves empty
+  }, [isOpen, promptText, responses, responseTexts, lazyLoadAttempted, summaryCache, summaryRetryNonce]); // responseTexts + lazyLoadAttempted required so the effect re-runs once lazy-loaded text arrives or the fetch resolves empty; summaryRetryNonce forces a manual retry
 
   const getSentimentColor = (score: number | null) => {
     if (!score) return "text-gray-500";
@@ -632,20 +665,91 @@ export const ResponseDetailsModal = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary, isOpen, user]);
 
+  const uniqueLLMs = getUniqueLLMs(responses);
+
+  const sentimentDisplay = (() => {
+    let label = 'Neutral';
+    if (sentimentLabel && sentimentLabel.toLowerCase() === 'positive') {
+      label = 'Positive';
+    } else if (sentimentLabel && sentimentLabel.toLowerCase() === 'negative') {
+      label = 'Negative';
+    } else if (!sentimentLabel && responses.length > 0) {
+      if (avgSentiment > 0.1) label = 'Positive';
+      else if (avgSentiment < -0.1) label = 'Negative';
+    }
+    const color = label === 'Positive' ? 'text-[#0DBCBA]' : label === 'Negative' ? 'text-[#DB5E89]' : 'text-[#13274F]';
+    return { label, color };
+  })();
+
   return (
     <Sheet open={isOpen} onOpenChange={onClose}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl p-0 gap-0 flex flex-col">
-        <SheetHeader className="pb-3 sm:pb-4 flex-shrink-0 px-6 pt-6 pr-12 space-y-0 text-left">
-          <div className="flex-1">
-            <SheetTitle className="text-base sm:text-lg font-semibold mb-2 text-[#13274F] leading-tight text-left">
-              {promptText}
-            </SheetTitle>
-            <SheetDescription className="text-xs sm:text-sm text-[#13274F] text-left">
-              Generated {responses.length > 0 ? new Date(responses[0].tested_at).toLocaleDateString() : 'recently'}
-            </SheetDescription>
+      <SheetContent side="right" className="w-full sm:max-w-2xl p-0 gap-0 flex flex-col [&>button]:hidden">
+        {/* Header */}
+        <div className="border-b border-gray-100 bg-white shrink-0">
+          <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4">
+            <div className="min-w-0 flex-1">
+              <SheetTitle className="font-headline text-base sm:text-lg font-semibold text-[#13274F] leading-snug text-left">
+                {promptText}
+              </SheetTitle>
+              <SheetDescription className="text-xs text-gray-500 mt-1 text-left">
+                Generated {responses.length > 0 ? new Date(responses[0].tested_at).toLocaleDateString() : 'recently'}
+              </SheetDescription>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors shrink-0"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
-        </SheetHeader>
-        
+          {/* Stat strip */}
+          {responses.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-gray-100 border-t border-gray-100">
+              <div className="px-6 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Models</p>
+                <div className="mt-1 flex items-center">
+                  {uniqueLLMs.length === 0 ? (
+                    <span className="text-xs text-gray-400">None</span>
+                  ) : (
+                    <>
+                      <div className="flex -space-x-1.5">
+                        {uniqueLLMs.slice(0, 5).map(model => (
+                          <div
+                            key={model}
+                            className="w-6 h-6 rounded-full bg-white border border-gray-100 shadow-sm grid place-items-center"
+                            title={getLLMDisplayName(model)}
+                          >
+                            <LLMLogo modelName={model} size="sm" />
+                          </div>
+                        ))}
+                      </div>
+                      {uniqueLLMs.length > 5 && (
+                        <span className="ml-1.5 text-[10px] font-semibold text-gray-400">+{uniqueLLMs.length - 5}</span>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="px-6 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Sentiment</p>
+                <p className={`mt-0.5 text-sm font-semibold ${sentimentDisplay.color}`}>{sentimentDisplay.label}</p>
+              </div>
+              <div className="px-6 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Visibility</p>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <RateDonut rate={brandMentionedPct / 100} size={18} />
+                  <span className="text-sm font-semibold text-[#13274F]">{brandMentionedPct}%</span>
+                </div>
+              </div>
+              <div className="px-6 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Competitors</p>
+                <p className="mt-0.5 text-sm font-semibold text-[#13274F]">{competitors.length}</p>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Progress Banner */}
         {isRefreshing && refreshProgress && companyName && (
           <div className="px-6 py-3 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-200/50 flex-shrink-0">
@@ -676,12 +780,8 @@ export const ResponseDetailsModal = ({
           </div>
         )}
 
-        <ScrollArea className="flex-1 px-6 pb-6">
-
-        {/* Show summary card for all responses (including single TalentX responses) */}
         {responses.length === 0 ? (
-          // No responses: show prompt info and message
-          <div className="mb-6">
+          <div className="flex-1 overflow-y-auto px-6 py-4">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base font-semibold text-[#13274F]">Prompt Details</CardTitle>
@@ -745,184 +845,169 @@ export const ResponseDetailsModal = ({
             </Card>
           </div>
         ) : (
-          <>
-                         {/* MODELS, SENTIMENT, VISIBILITY & COMPETITORS ROW - with labels above values */}
-             <div className="flex flex-row gap-3 sm:gap-8 mt-1 mb-3 sm:mb-1 w-full overflow-x-auto">
-               {/* Models */}
-               <div className="flex flex-col items-start min-w-[120px] flex-shrink-0">
-                 <span className="text-xs text-gray-400 font-medium mb-1">Models</span>
-                 <div className="flex flex-row flex-wrap items-center gap-2">
-                   {getUniqueLLMs(responses).length === 0 ? (
-                     <span className="text-xs text-gray-400">None</span>
-                   ) : (
-                     getUniqueLLMs(responses).map(model => (
-                       <span key={model} className="inline-flex items-center">
-                         <LLMLogo modelName={model} size="sm" className="mr-1" />
-                         {!isMobile && (
-                           <span className="text-xs text-gray-700 mr-2">{getLLMDisplayName(model)}</span>
-                         )}
-                       </span>
-                     ))
-                   )}
-                 </div>
-               </div>
-               {/* Sentiment */}
-               <div className="flex flex-col items-start min-w-[80px] flex-shrink-0">
-                 <span className="text-xs text-gray-400 font-medium mb-1">Sentiment</span>
-                 {(() => {
-                   let label = "Normal";
-                   if (sentimentLabel && sentimentLabel.toLowerCase() === "positive") {
-                     label = "Positive";
-                   } else if (sentimentLabel && sentimentLabel.toLowerCase() === "negative") {
-                     label = "Negative";
-                   } else if (!sentimentLabel && responses.length > 0) {
-                     // Use the already calculated AI-based avgSentiment
-                     if (avgSentiment > 0.1) {
-                       label = "Positive";
-                     } else if (avgSentiment < -0.1) {
-                       label = "Negative";
-                     }
-                   }
-                   return (
-                     <span className="text-xs text-gray-700 mr-2">{label}</span>
-                   );
-                 })()}
-               </div>
-               {/* Visibility */}
-               <div className="flex flex-col items-start min-w-[90px] flex-shrink-0">
-                 <span className="text-xs text-gray-400 font-medium mb-1">Visibility</span>
-                 <span className="flex items-center gap-1">
-                   <Badge className={brandMentionedPct > 0 ? 'bg-[#06b6d4] text-white' : 'bg-gray-100 text-gray-800'}>
-                     {brandMentionedPct > 0 ? 'Yes' : 'No'}
-                   </Badge>
-                 </span>
-               </div>
-             </div>
-             
-             {/* Competitors Row - Show all competitors */}
-             {competitors.length > 0 && (
-               <div className="mt-3 mb-3 border-t border-gray-200 pt-3">
-                 <div className="flex flex-col items-start">
-                   <span className="text-xs text-gray-400 font-medium mb-2">Competitors</span>
-                   <div className="flex flex-wrap gap-1 w-full">
-                     {competitors.map((name: string, idx: number) => (
-                       <Badge key={idx} variant="secondary" className="text-xs">{name}</Badge>
-                     ))}
-                   </div>
-                 </div>
-               </div>
-             )}
-             
-             {/* Company Mention Snippets */}
-             {brandMentionedPct > 0 && companyMentionSnippets.length > 0 && extractedCompanyName && (
-               <div className="mt-4 mb-4 border-t border-gray-200 pt-4">
-                 <div className="flex items-center gap-2 mb-3">
-                   <Building2 className="w-4 h-4 text-[#06b6d4]" />
-                   <span className="text-sm font-semibold text-gray-900">
-                     Where {extractedCompanyName} is mentioned:
-                   </span>
-                 </div>
-                 <div className="space-y-3">
-                   {companyMentionSnippets.slice(0, 3).map((item, idx) => (
-                     <div key={idx} className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                       <div className="flex items-center gap-2 mb-2">
-                         <LLMLogo modelName={item.model} size="sm" />
-                         <span className="text-xs font-medium text-gray-700">{getLLMDisplayName(item.model)}</span>
-                       </div>
-                       <p className="text-sm text-gray-800 leading-relaxed">
-                         {item.snippet.split(new RegExp(`(${extractedCompanyName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi')).map((part, i) => 
-                           part.toLowerCase() === extractedCompanyName.toLowerCase() ? (
-                             <span key={i} className="bg-yellow-200 font-semibold">{part}</span>
-                           ) : part
-                         )}
-                       </p>
-                     </div>
-                   ))}
-                   {companyMentionSnippets.length > 3 && (
-                     <div className="text-xs text-gray-500 text-center pt-2">
-                       +{companyMentionSnippets.length - 3} more mention{companyMentionSnippets.length - 3 !== 1 ? 's' : ''}
-                     </div>
-                   )}
-                 </div>
-               </div>
-             )}
-            <div className="flex-1 min-h-0">
-              <Card className="h-full flex flex-col">
-                <CardHeader className="pb-2 flex-shrink-0">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base font-semibold text-[#13274F]">Summary</CardTitle>
-                    {isNonEnglish && !isTranslating && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowTranslation(!showTranslation)}
-                        className="text-xs"
-                      >
-                        <Languages className="w-3 h-3 mr-1" />
-                        {showTranslation ? 'Show Original' : 'See Translation'}
-                      </Button>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent className="flex-1 p-4">
-                  <div className="w-full">
-                    {loadingSummary ? (
-                      <div className="w-full">
-                        <Skeleton className="h-6 w-3/4 mb-2" />
-                        <Skeleton className="h-6 w-5/6 mb-2" />
-                        <Skeleton className="h-6 w-2/3 mb-2" />
-                        <Skeleton className="h-6 w-1/2 mb-2" />
-                      </div>
-                    ) : summaryError ? (
-                      <div className="text-red-600 text-sm py-2">{summaryError}</div>
-                    ) : (
-                      <>
-                        {isTranslating && (
-                          <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                            <span>Detecting language...</span>
-                          </div>
-                        )}
-                        <div className="text-gray-800 text-sm sm:text-base mb-3 whitespace-pre-line leading-relaxed">
-                          <ReactMarkdown>{showTranslation && translatedSummary ? translatedSummary : summary}</ReactMarkdown>
-                        </div>
-                        {uniqueSources.length > 0 ? (
-                          <div className="flex flex-wrap items-center gap-2 mt-2">
-                            <span className="text-xs text-gray-500">Sources:</span>
-                            {uniqueSources.map((src, i) => (
-                              <a
-                                key={src.url}
-                                href={src.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200"
-                              >
-                                <img
-                                  src={getFavicon(src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0])}
-                                  alt=""
-                                  className="w-4 h-4 mr-1 rounded"
-                                  style={{ background: '#fff' }}
-                                  onError={e => { e.currentTarget.style.display = 'none'; }}
-                                />
-                                <span className="text-xs">
-                                  {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
-                                </span>
-                              </a>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="text-xs text-gray-400 mt-2">No sources available</div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </>
-        )}
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
+            <TabsList className="w-full justify-start gap-6 rounded-none border-b border-gray-200 bg-transparent p-0 px-6 h-auto shrink-0">
+              <TabsTrigger value="summary" className={tabTriggerCls}>Summary</TabsTrigger>
+              <TabsTrigger value="mentions" className={tabTriggerCls}>
+                Mentions
+                {companyMentionSnippets.length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+                    {companyMentionSnippets.length}
+                  </span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="competitors" className={tabTriggerCls}>
+                Competitors
+                {competitors.length > 0 && (
+                  <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">
+                    {competitors.length}
+                  </span>
+                )}
+              </TabsTrigger>
+            </TabsList>
 
-        {/* Removed unused grid section to prevent layout issues */}
+            <div className="flex-1 overflow-y-auto">
+              {/* AI summary — auto-generated on open */}
+              <TabsContent value="summary" className="px-6 py-4 mt-0 focus-visible:outline-none">
+                {loadingSummary ? (
+                  <Card className="border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/5 to-[#0DBCBA]/10">
+                    <CardContent className="py-5 px-5 flex items-center gap-2.5">
+                      <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
+                      <Loader2 className="w-4 h-4 animate-spin text-[#0DBCBA]" />
+                      <span className="text-sm font-medium text-[#0A8B89]">Summarizing the AI answers…</span>
+                    </CardContent>
+                  </Card>
+                ) : summaryError ? (
+                  <Card className="border-red-100 bg-red-50/30">
+                    <CardContent className="py-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-red-600 text-sm">{summaryError}</span>
+                        <Button variant="ghost" size="sm" onClick={retrySummary} className="text-xs shrink-0">
+                          Retry
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <Card className="border-[#0DBCBA]/30 bg-[#0DBCBA]/5">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base font-semibold flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
+                          AI Summary
+                        </CardTitle>
+                        {isNonEnglish && !isTranslating && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setShowTranslation(!showTranslation)}
+                            className="text-xs h-7 px-2.5"
+                          >
+                            <Languages className="w-3 h-3 mr-1" />
+                            {showTranslation ? 'Show Original' : 'See Translation'}
+                          </Button>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      {isTranslating && (
+                        <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          <span>Detecting language...</span>
+                        </div>
+                      )}
+                      <div className="text-gray-800 text-sm mb-3 whitespace-pre-line leading-relaxed">
+                        <ReactMarkdown>{showTranslation && translatedSummary ? translatedSummary : summary}</ReactMarkdown>
+                      </div>
+                      {uniqueSources.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
+                          <span className="text-xs text-gray-500">Sources:</span>
+                          {uniqueSources.map((src) => (
+                            <a
+                              key={src.url}
+                              href={src.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 bg-white hover:bg-gray-50 px-2 py-1 rounded-full text-xs font-medium text-gray-800 transition-colors border border-gray-200"
+                            >
+                              <img
+                                src={getFavicon(src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0])}
+                                alt=""
+                                className="w-4 h-4 mr-1 rounded"
+                                style={{ background: '#fff' }}
+                                onError={e => { e.currentTarget.style.display = 'none'; }}
+                              />
+                              <span className="text-xs">
+                                {src.domain || src.url.replace(/^https?:\/\//, '').split('/')[0]}
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-gray-400 mt-2">No sources available</div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+              </TabsContent>
+
+              {/* Where the company appears in each model's answer */}
+              <TabsContent value="mentions" className="px-6 py-4 mt-0 focus-visible:outline-none">
+                {extractedCompanyName && companyMentionSnippets.length > 0 ? (
+                  <>
+                    <p className="text-xs text-gray-500 mb-3">
+                      Where {extractedCompanyName} appears in each model's answer.
+                    </p>
+                    <div className="space-y-2.5">
+                      {companyMentionSnippets.map((item, idx) => (
+                        <div
+                          key={idx}
+                          className="rounded-xl border border-gray-100 p-3.5 hover:border-gray-200 hover:shadow-sm transition-all"
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            <LLMLogo modelName={item.model} size="sm" />
+                            <span className="text-xs font-medium text-gray-700">{getLLMDisplayName(item.model)}</span>
+                          </div>
+                          <p className="text-sm text-gray-800 leading-relaxed">
+                            {item.snippet.split(new RegExp(`(${extractedCompanyName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi')).map((part, i) =>
+                              part.toLowerCase() === extractedCompanyName.toLowerCase() ? (
+                                <span key={i} className="bg-yellow-200 font-semibold">{part}</span>
+                              ) : part
+                            )}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-10">
+                    <p className="text-sm text-gray-500">
+                      {extractedCompanyName || 'The company'} isn’t mentioned in these answers.
+                    </p>
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* Competitors detected in the answers */}
+              <TabsContent value="competitors" className="px-6 py-4 mt-0 focus-visible:outline-none">
+                {competitors.length > 0 ? (
+                  <>
+                    <p className="text-xs text-gray-500 mb-3">Competitors detected in the AI answers to this prompt.</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {competitors.map((name: string, idx: number) => (
+                        <Badge key={idx} variant="secondary" className="text-xs">{name}</Badge>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-10">
+                    <p className="text-sm text-gray-500">No competitors detected in these answers.</p>
+                  </div>
+                )}
+              </TabsContent>
+            </div>
+          </Tabs>
+        )}
 
         {showMarkdownCheatSheet && (
           <div className="mt-8 p-3 sm:p-4 border-t border-gray-200">
@@ -1005,7 +1090,6 @@ export const ResponseDetailsModal = ({
             </div>
           </div>
         )}
-        </ScrollArea>
       </SheetContent>
     </Sheet>
   );
