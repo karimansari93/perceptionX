@@ -286,6 +286,48 @@ export const OrganizationManagementTab = () => {
     }
   };
 
+  const handleRemoveMember = async (member: { id: string; email: string }) => {
+    if (!window.confirm(`Remove ${member.email} from ${selectedOrg?.name ?? 'this organization'}?`)) {
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('organization_members')
+        .delete()
+        .eq('id', member.id);
+
+      if (error) throw error;
+
+      toast.success(`${member.email} removed from organization`);
+      if (selectedOrg) {
+        loadOrgMembers(selectedOrg.id);
+      }
+      loadData();
+    } catch (error) {
+      console.error('Error removing member:', error);
+      toast.error('Failed to remove member');
+    }
+  };
+
+  const handleChangeMemberRole = async (memberId: string, newRole: 'admin' | 'member') => {
+    try {
+      const { error } = await supabase
+        .from('organization_members')
+        .update({ role: newRole })
+        .eq('id', memberId);
+
+      if (error) throw error;
+
+      toast.success(newRole === 'admin' ? 'Promoted to Super Admin' : 'Changed to Member');
+      if (selectedOrg) {
+        loadOrgMembers(selectedOrg.id);
+      }
+    } catch (error) {
+      console.error('Error changing member role:', error);
+      toast.error('Failed to change role');
+    }
+  };
+
   const loadOrgReports = async (orgId: string) => {
     setReportsLoading(true);
     try {
@@ -815,7 +857,7 @@ export const OrganizationManagementTab = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="member">Member</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="admin">Super Admin (can invite team)</SelectItem>
                   <SelectItem value="owner">Owner</SelectItem>
                 </SelectContent>
               </Select>
@@ -1134,6 +1176,7 @@ export const OrganizationManagementTab = () => {
                     <TableHead>Email</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Joined</TableHead>
+                    <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1147,14 +1190,37 @@ export const OrganizationManagementTab = () => {
                       </TableCell>
                       <TableCell>
                         <Badge variant={member.role === 'owner' ? 'default' : 'secondary'} className={
-                          member.role === 'owner' ? 'bg-pink' : 
+                          member.role === 'owner' ? 'bg-pink' :
                           member.role === 'admin' ? 'bg-teal' : 'bg-nightsky/20 text-nightsky'
                         }>
-                          {member.role}
+                          {member.role === 'admin' ? 'Super Admin' : member.role === 'owner' ? 'Owner' : 'Member'}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-nightsky/60">
                         {new Date(member.joined_at).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {member.role !== 'owner' && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-silver"
+                              onClick={() => handleChangeMemberRole(member.id, member.role === 'admin' ? 'member' : 'admin')}
+                            >
+                              {member.role === 'admin' ? 'Make Member' : 'Make Super Admin'}
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-nightsky/40 hover:text-red-600 hover:bg-red-50 px-2"
+                            onClick={() => handleRemoveMember(member)}
+                            title="Remove from organization"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

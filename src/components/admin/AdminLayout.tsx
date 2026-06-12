@@ -9,7 +9,8 @@ import {
   Trophy,
   Layers,
   Clock,
-  Tags
+  Tags,
+  LayoutDashboard
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -82,7 +83,16 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
         </nav>
 
         {/* Sign Out */}
-        <div className="p-3 border-t border-slate-200">
+        <div className="p-3 border-t border-slate-200 space-y-2">
+          <Button
+            onClick={() => navigate('/dashboard')}
+            variant="outline"
+            size="sm"
+            className="w-full border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-800"
+          >
+            <LayoutDashboard className="h-4 w-4 mr-2" />
+            View Dashboard
+          </Button>
           <Button
             onClick={handleSignOut}
             variant="outline"

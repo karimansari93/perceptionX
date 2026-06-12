@@ -27,6 +27,7 @@ const NotFound = lazy(() => import("./pages/NotFound"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
 const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const Welcome = lazy(() => import("./pages/Welcome"));
 const Usage = lazy(() => import("./pages/Usage"));
 const Account = lazy(() => import("./pages/Account"));
 const Admin = lazy(() => import("./pages/Admin"));
@@ -173,6 +174,7 @@ const App = () => (
               <Route path="/auth/google-onetap" element={<GoogleOneTapCallback />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/welcome" element={<Welcome />} />
               
               {/* Admin routes - no onboarding guard */}
               <Route path="/admin" element={

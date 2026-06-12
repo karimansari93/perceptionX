@@ -10,7 +10,9 @@ export default defineConfig(({ mode }) => ({
     // "::" only bound IPv6, which fails on IPv4-only hosts (Claude Code web
     // sandboxes, some CI runners) with EAFNOSUPPORT and blocks preview.
     host: true,
-    port: 8080,
+    // Honor an assigned port (preview harness/worktrees) but keep 8080 as
+    // the default for local dev.
+    port: process.env.PORT ? Number(process.env.PORT) : 8080,
   },
   plugins: [
     react(),

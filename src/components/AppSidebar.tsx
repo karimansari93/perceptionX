@@ -1,4 +1,4 @@
-import { BarChart3, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass } from "lucide-react";
+import { BarChart3, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass, UserPlus } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -16,6 +16,9 @@ import UserMenu from "@/components/UserMenu";
 import { Badge } from '@/components/ui/badge';
 import { useNavigate } from 'react-router-dom';
 import { useWalkthrough } from '@/contexts/WalkthroughContext';
+import { useSuperAdminOrgs } from '@/hooks/useIsSuperAdmin';
+import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
+import { useState } from 'react';
 
 interface NavigationItem {
   title: string;
@@ -76,6 +79,8 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
   const isCollapsed = state === "collapsed";
   const navigate = useNavigate();
   const { start: startWalkthrough } = useWalkthrough();
+  const { orgs: superAdminOrgs } = useSuperAdminOrgs();
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
 
   const handleSectionClick = (item: NavigationItem) => {
     // Coming-soon items are locked — keep the entry visible but disable navigation
@@ -190,9 +195,33 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
               </div>
             </div>
           </button>
+          {superAdminOrgs.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setInviteModalOpen(true)}
+              className="group w-full text-left rounded-xl border border-pink/30 bg-gradient-to-br from-pink/10 via-white to-[#13274F]/5 hover:from-pink/15 hover:to-[#13274F]/10 hover:border-pink/60 hover:shadow-md transition-all p-3 flex items-center gap-3"
+            >
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-pink text-white shadow-sm group-hover:scale-105 transition-transform">
+                <UserPlus className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-[#13274F] leading-tight">
+                  Invite teammates
+                </div>
+                <div className="text-[11px] text-gray-500 leading-tight mt-0.5">
+                  Bring your team onto the dashboard.
+                </div>
+              </div>
+            </button>
+          )}
           <UserMenu />
         </SidebarFooter>
       </Sidebar>
+      <InviteTeammatesModal
+        open={inviteModalOpen}
+        onOpenChange={setInviteModalOpen}
+        orgs={superAdminOrgs}
+      />
     </>
   );
 }
