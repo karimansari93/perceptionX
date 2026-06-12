@@ -6,7 +6,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingScreen } from '@/components/ui/loading-screen';
-import { Check, Loader2, ArrowRight } from 'lucide-react';
+import { Check, Loader2, ArrowRight, Eye, EyeOff } from 'lucide-react';
 
 const PASSWORD_MIN_LENGTH = 8;
 
@@ -49,7 +49,7 @@ const Welcome = () => {
   const [loading, setLoading] = useState(false);
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'valid' | 'expired'>('checking');
 
   useEffect(() => {
@@ -80,10 +80,6 @@ const Welcome = () => {
     const validationError = validatePassword(password);
     if (validationError) {
       toast.error(validationError);
-      return;
-    }
-    if (password !== confirmPassword) {
-      toast.error('Passwords do not match');
       return;
     }
 
@@ -150,8 +146,7 @@ const Welcome = () => {
     { ok: /[0-9]/.test(password), label: 'One number' },
   ];
   const passwordValid = !validatePassword(password);
-  const mismatch = confirmPassword.length > 0 && password !== confirmPassword;
-  const canSubmit = !!fullName.trim() && passwordValid && password === confirmPassword;
+  const canSubmit = !!fullName.trim() && passwordValid;
 
   const inputClass =
     'h-11 rounded-xl border-gray-200 bg-white placeholder:text-gray-300 placeholder:font-light focus-visible:ring-2 focus-visible:ring-pink/25 focus-visible:border-pink transition';
@@ -163,7 +158,7 @@ const Welcome = () => {
         <div className="bg-gradient-to-br from-pink/15 via-white to-[#13274F]/5 px-8 pt-9 pb-7 text-center border-b border-gray-100/80">
           <img src="/logos/PerceptionX-PrimaryLogo.png" alt="PerceptionX" className="h-5 mx-auto mb-6" />
           <h1 className="text-[24px] font-bold text-nightsky leading-tight" style={display}>
-            Welcome aboard
+            Welcome to the team
           </h1>
 
           {inviterName && (
@@ -204,16 +199,27 @@ const Welcome = () => {
             <label htmlFor="password" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
               Password
             </label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Create a password"
-              autoComplete="new-password"
-              className={inputClass}
-              required
-            />
+            <div className="relative">
+              <Input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Create a password"
+                autoComplete="new-password"
+                className={`${inputClass} pr-11`}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-nightsky transition"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
             {password.length > 0 && (
               <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-2">
                 {requirements.map((r) => (
@@ -231,25 +237,6 @@ const Welcome = () => {
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-
-          <div className="space-y-1.5">
-            <label htmlFor="confirmPassword" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-              Confirm password
-            </label>
-            <Input
-              id="confirmPassword"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Re-enter your password"
-              autoComplete="new-password"
-              className={`${inputClass} ${mismatch ? 'border-red-300 focus-visible:ring-red-100 focus-visible:border-red-400' : ''}`}
-              required
-            />
-            {mismatch && (
-              <p className="text-[11px] text-red-500 pt-0.5">Passwords don't match</p>
             )}
           </div>
 
