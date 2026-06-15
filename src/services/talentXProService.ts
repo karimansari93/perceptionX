@@ -377,17 +377,25 @@ export class TalentXProService {
       const PRO_ANALYSIS_DAYS = 180;
       const cutoffIso = new Date(Date.now() - PRO_ANALYSIS_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-      // Fetch TalentX responses from prompt_responses table joined with
-      // confirmed_prompts. Select only the columns the aggregation uses
-      // instead of `*` (avoids pulling every wide/JSONB column per row).
+      // Fetch TalentX responses from prompt_responses joined with confirmed_prompts.
+      //
+      // Identify TalentX prompts by `talentx_attribute_id IS NOT NULL` — that's
+      // how they're stored. The previous `prompt_category LIKE 'TalentX:%'`
+      // filter matched ZERO rows (TalentX prompts carry prompt_category
+      // 'Employee Experience' / 'Candidate Experience' and a talentx_attribute_id;
+      // none are prefixed 'TalentX:'), so this method silently returned [] for
+      // every account.
+      //
+      // Select only the scalar columns the aggregation actually reads. The wide
+      // response_text / citations / detected_competitors columns were never
+      // consumed downstream but added ~15 MB per heavy account to the payload —
+      // the real driver of the request timeout. Dropping them keeps the
+      // response small and the query well under the statement timeout.
       let query = supabase
         .from('prompt_responses')
         .select(`
           id,
           ai_model,
-          response_text,
-          citations,
-          detected_competitors,
           created_at,
           confirmed_prompts!inner(
             user_id,
@@ -399,7 +407,7 @@ export class TalentXProService {
           )
         `)
         .eq('confirmed_prompts.user_id', userId)
-        .like('confirmed_prompts.prompt_category', 'TalentX:%')
+        .not('confirmed_prompts.talentx_attribute_id', 'is', null)
         .gte('created_at', cutoffIso);
 
       // Only filter by company_id if it's provided
@@ -465,11 +473,8 @@ export class TalentXProService {
           id: response.id,
           perception_score: perceptionScore,
           sentiment_score: sentimentScore,
-          response_text: response.response_text,
           ai_model: response.ai_model,
           prompt_type: promptType,
-          citations: response.citations,
-          detected_competitors: response.detected_competitors,
           created_at: response.created_at
         };
         
