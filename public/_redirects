@@ -1,1 +1,10 @@
+# Hashed build assets are content-addressed. A request for one that doesn't
+# exist means the client is running a stale index.html from a previous deploy.
+# Return a real 404 instead of letting it fall through to the SPA rewrite below
+# (which would serve index.html with a JS/CSS MIME type and break module
+# loading). The app's lazyWithRetry detects the failed import and hard-reloads
+# to pick up the fresh manifest.
+/assets/*  /assets/:splat  404
+
+# SPA fallback for client-side routes.
 /*    /index.html   200

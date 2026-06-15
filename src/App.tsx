@@ -19,19 +19,20 @@ import AdminRoute from "./components/AdminRoute";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { logger } from "@/lib/utils";
 import { AlertTriangle, RefreshCw, Home } from "lucide-react";
-import { lazy, Suspense, useEffect } from "react";
+import { Suspense, useEffect } from "react";
+import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import Hotjar from "@hotjar/browser";
 
-const Dashboard = lazy(() => import("./pages/Dashboard"));
-const NotFound = lazy(() => import("./pages/NotFound"));
-const AuthCallback = lazy(() => import("./pages/AuthCallback"));
-const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
-const ResetPassword = lazy(() => import("./pages/ResetPassword"));
-const Welcome = lazy(() => import("./pages/Welcome"));
-const Usage = lazy(() => import("./pages/Usage"));
-const Account = lazy(() => import("./pages/Account"));
-const Admin = lazy(() => import("./pages/Admin"));
-const GoogleOneTapCallback = lazy(() => import("@/components/GoogleOneTapCallback"));
+const Dashboard = lazyWithRetry(() => import("./pages/Dashboard"));
+const NotFound = lazyWithRetry(() => import("./pages/NotFound"));
+const AuthCallback = lazyWithRetry(() => import("./pages/AuthCallback"));
+const VerifyEmail = lazyWithRetry(() => import("./pages/VerifyEmail"));
+const ResetPassword = lazyWithRetry(() => import("./pages/ResetPassword"));
+const Welcome = lazyWithRetry(() => import("./pages/Welcome"));
+const Usage = lazyWithRetry(() => import("./pages/Usage"));
+const Account = lazyWithRetry(() => import("./pages/Account"));
+const Admin = lazyWithRetry(() => import("./pages/Admin"));
+const GoogleOneTapCallback = lazyWithRetry(() => import("@/components/GoogleOneTapCallback"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
