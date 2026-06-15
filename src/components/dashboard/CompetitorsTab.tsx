@@ -85,8 +85,7 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   const directCompetitorNames = useMemo(() => {
     const names = new Set<string>();
     responses.forEach(response => {
-      const isComp = response.confirmed_prompts?.prompt_type === 'competitive' ||
-                     response.confirmed_prompts?.prompt_type === 'talentx_competitive';
+      const isComp = response.confirmed_prompts?.prompt_type === 'competitive';
       if (!isComp || !response.detected_competitors) return;
       response.detected_competitors.split(',').forEach((comp: string) => {
         const name = comp.trim();

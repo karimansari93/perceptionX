@@ -471,8 +471,6 @@ export const CompanyManagementTab = () => {
         throw profileError;
       }
 
-      // Subscription tiers were removed — every user has full model access.
-      const isProUser = true;
       const userEmail = profileData?.email || 'admin@perceptionx.ai';
 
       // Fetch prompts for this specific company
@@ -487,9 +485,9 @@ export const CompanyManagementTab = () => {
         throw promptsError;
       }
 
-      // Separate regular and TalentX prompts
-      const regularPrompts = allPrompts?.filter(p => !p.is_pro_prompt) || [];
-      const talentXPrompts = allPrompts?.filter(p => p.is_pro_prompt) || [];
+      // Separate regular and attribute prompts (attribute prompts have a non-null attribute_id)
+      const regularPrompts = allPrompts?.filter(p => !p.attribute_id) || [];
+      const attributePrompts = allPrompts?.filter(p => !!p.attribute_id) || [];
 
       const totalPrompts = (allPrompts?.length || 0);
       if (totalPrompts === 0) {
@@ -497,15 +495,8 @@ export const CompanyManagementTab = () => {
         return;
       }
 
-      // Define models based on subscription type
-      const freeModels = [
-        { name: 'openai', fn: 'test-prompt-openai' },
-        { name: 'perplexity', fn: 'test-prompt-perplexity' },
-        { name: 'google-ai-overviews', fn: 'test-prompt-google-ai-overviews' },
-        { name: 'google-ai-mode', fn: 'test-prompt-google-ai-mode' },
-      ];
-
-      const proModels = [
+      // Every user has full model access.
+      const models = [
         { name: 'openai', fn: 'test-prompt-openai' },
         { name: 'perplexity', fn: 'test-prompt-perplexity' },
         { name: 'gemini', fn: 'test-prompt-gemini' },
@@ -514,12 +505,10 @@ export const CompanyManagementTab = () => {
         { name: 'google-ai-mode', fn: 'test-prompt-google-ai-mode' },
       ];
 
-      const models = isProUser ? proModels : freeModels;
-
       // Get all unique prompt types
       const allPromptTypes = Array.from(new Set([
         ...regularPrompts.map(p => p.prompt_type),
-        ...talentXPrompts.map(p => p.prompt_type)
+        ...attributePrompts.map(p => p.prompt_type)
       ])).sort();
 
       // Get all unique prompt category/theme pairs (prompt_theme defaults to 'General' if null)
@@ -528,7 +517,7 @@ export const CompanyManagementTab = () => {
           category: p.prompt_category || 'General',
           theme: p.prompt_theme || 'General'
         })),
-        ...talentXPrompts.map((p: any) => ({
+        ...attributePrompts.map((p: any) => ({
           category: p.prompt_category || 'General',
           theme: p.prompt_theme || 'General'
         }))
@@ -548,9 +537,8 @@ export const CompanyManagementTab = () => {
         companyId,
         companyName: company.name,
         userEmail,
-        isProUser,
         regularPrompts,
-        talentXPrompts,
+        attributePrompts,
         models,
         selectedModels: models,
         allPromptTypes,
@@ -614,11 +602,11 @@ export const CompanyManagementTab = () => {
     const filteredRegularPrompts = newData.regularPrompts.filter((p: any) =>
       newData.selectedPromptTypes.includes(p.prompt_type) && matchesPrompt(p)
     );
-    const filteredTalentXPrompts = newData.talentXPrompts.filter((p: any) =>
+    const filteredAttributePrompts = newData.attributePrompts.filter((p: any) =>
       newData.selectedPromptTypes.includes(p.prompt_type) && matchesPrompt(p)
     );
-    
-    const totalFilteredPrompts = filteredRegularPrompts.length + filteredTalentXPrompts.length;
+
+    const totalFilteredPrompts = filteredRegularPrompts.length + filteredAttributePrompts.length;
     const newTotalOperations = totalFilteredPrompts * newData.selectedModels.length;
     
     setConfirmationData({
@@ -668,7 +656,7 @@ export const CompanyManagementTab = () => {
     setIsRefreshing(true);
     
     try {
-      const { regularPrompts, talentXPrompts, selectedModels, selectedPromptTypes, selectedPromptCategoryThemes, companyId, companyName } = confirmationData;
+      const { regularPrompts, attributePrompts, selectedModels, selectedPromptTypes, selectedPromptCategoryThemes, companyId, companyName } = confirmationData;
       const selectedSet = new Set(
         (selectedPromptCategoryThemes || []).map((p: { category: string; theme: string }) => `${p.category}|${p.theme}`)
       );
@@ -679,12 +667,12 @@ export const CompanyManagementTab = () => {
       const filteredRegularPrompts = regularPrompts.filter((p: any) =>
         selectedPromptTypes.includes(p.prompt_type) && matchesPrompt(p)
       );
-      const filteredTalentXPrompts = talentXPrompts.filter((p: any) =>
+      const filteredAttributePrompts = attributePrompts.filter((p: any) =>
         selectedPromptTypes.includes(p.prompt_type) && matchesPrompt(p)
       );
-      
+
       // Combine all filtered prompts
-      const allFilteredPrompts = [...filteredRegularPrompts, ...filteredTalentXPrompts];
+      const allFilteredPrompts = [...filteredRegularPrompts, ...filteredAttributePrompts];
       const promptIds = allFilteredPrompts.map((p: any) => p.id);
       const modelNames = selectedModels.map((m: any) => m.name);
 
@@ -1127,7 +1115,7 @@ export const CompanyManagementTab = () => {
                     <strong>Company:</strong> {confirmationData.companyName}
                   </div>
                   <div className="text-sm text-blue-700">
-                    <strong>Plan:</strong> {confirmationData.isProUser ? 'Pro' : 'Free'} ({confirmationData.models.length} models available)
+                    {confirmationData.models.length} models available
                   </div>
                 </div>
 
@@ -1206,7 +1194,7 @@ export const CompanyManagementTab = () => {
                     <div className="space-y-2">
                       {confirmationData.allPromptTypes.map((promptType: string) => {
                         const isSelected = confirmationData.selectedPromptTypes.includes(promptType);
-                        const displayName = promptType.replace('talentx_', '').replace(/_/g, ' ');
+                        const displayName = promptType.replace(/_/g, ' ');
                         return (
                           <div key={promptType} className="flex items-center space-x-2">
                             <input
@@ -1313,11 +1301,11 @@ export const CompanyManagementTab = () => {
                     <h4 className="font-medium">Prompts to Process</h4>
                     <div className="space-y-2 max-h-48 overflow-y-auto">
                       <div className="text-sm bg-gray-50 p-3 rounded">
-                        <strong>Total Prompts:</strong> {confirmationData.regularPrompts.length + confirmationData.talentXPrompts.length}
+                        <strong>Total Prompts:</strong> {confirmationData.regularPrompts.length + confirmationData.attributePrompts.length}
                         <div className="text-xs text-gray-600 mt-2">
                           <div>• Regular prompts: {confirmationData.regularPrompts.length}</div>
-                          {confirmationData.talentXPrompts.length > 0 && (
-                            <div>• TalentX prompts: {confirmationData.talentXPrompts.length}</div>
+                          {confirmationData.attributePrompts.length > 0 && (
+                            <div>• Attribute prompts: {confirmationData.attributePrompts.length}</div>
                           )}
                         </div>
                       </div>

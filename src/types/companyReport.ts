@@ -44,8 +44,8 @@ export interface ThemeData {
   theme_description: string;
   sentiment: 'positive' | 'negative' | 'neutral';
   sentiment_score: number;
-  talentx_attribute_id: string;
-  talentx_attribute_name: string;
+  attribute_id: string;
+  attribute_name: string;
   frequency: number;
   confidence_score: number;
 }

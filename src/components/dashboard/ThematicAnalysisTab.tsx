@@ -40,7 +40,7 @@ import { RateDonut } from '@/components/ui/rate-donut';
 const themeTabTriggerCls = "relative rounded-none border-b-2 border-transparent bg-transparent px-0 py-3 text-sm font-medium text-gray-500 shadow-none transition-colors hover:text-[#13274F] data-[state=active]:border-[#13274F] data-[state=active]:text-[#13274F] data-[state=active]:bg-transparent data-[state=active]:shadow-none";
 import { PromptResponse } from '@/types/dashboard';
 import { supabase } from '@/integrations/supabase/client';
-import { TALENTX_ATTRIBUTES } from '@/config/talentXAttributes';
+import { ATTRIBUTES } from '@/config/attributes';
 import LLMLogo from '@/components/LLMLogo';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { extractSourceUrl } from '@/utils/citationUtils';
@@ -76,15 +76,15 @@ interface AITheme {
   theme_description: string;
   sentiment: 'positive' | 'negative' | 'neutral';
   sentiment_score: number;
-  talentx_attribute_id: string;
-  talentx_attribute_name: string;
+  attribute_id: string;
+  attribute_name: string;
   confidence_score: number;
   keywords: string[];
   context_snippets: string[];
   created_at: string;
 }
 
-// Icon mapping for TalentX attributes
+// Icon mapping for attributes
 const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   // Employee Experience
   'mission-purpose': Target,
@@ -188,17 +188,15 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       const promptType = response.confirmed_prompts?.prompt_type;
 
       const isValidType = promptType === 'experience' ||
-                          promptType === 'competitive' ||
-                          promptType === 'talentx_experience' ||
-                          promptType === 'talentx_competitive';
+                          promptType === 'competitive';
 
       if (!isValidType) return false;
 
       if (selectedPromptType !== 'all') {
         if (selectedPromptType === 'experience') {
-          if (promptType !== 'experience' && promptType !== 'talentx_experience') return false;
+          if (promptType !== 'experience') return false;
         } else if (selectedPromptType === 'competitive') {
-          if (promptType !== 'competitive' && promptType !== 'talentx_competitive') return false;
+          if (promptType !== 'competitive') return false;
         }
       }
 
@@ -291,12 +289,12 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   };
 
   // Only include themes with a valid known attribute ID
-  const validAttributeIds = useMemo(() => new Set(TALENTX_ATTRIBUTES.map(a => a.id)), []);
+  const validAttributeIds = useMemo(() => new Set(ATTRIBUTES.map(a => a.id)), []);
 
   // Themes are tied to responses via response_id. Keep only themes whose
   // response belongs to the selected job function (when one is selected).
   const filteredThemes = useMemo(() => {
-    let themes = aiThemes.filter(theme => validAttributeIds.has(theme.talentx_attribute_id));
+    let themes = aiThemes.filter(theme => validAttributeIds.has(theme.attribute_id));
     if (selectedJobFunctionFilter !== 'all') {
       const fnResponseIds = new Set(
         responses
@@ -315,7 +313,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       ? previousPeriodResponses
       : previousPeriodResponses.filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter);
     const prevIds = new Set(prevByFunction.map(r => r.id));
-    const prevThemes = aiThemes.filter(t => validAttributeIds.has(t.talentx_attribute_id) && prevIds.has(t.response_id));
+    const prevThemes = aiThemes.filter(t => validAttributeIds.has(t.attribute_id) && prevIds.has(t.response_id));
     return {
       positive: prevThemes.filter(t => t.sentiment === 'positive').length,
       negative: prevThemes.filter(t => t.sentiment === 'negative').length,
@@ -383,7 +381,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     const sourceData: Record<string, { count: number; url: string | null }> = {};
     
     // Get all themes for this attribute
-    const attributeThemes = filteredThemes.filter(theme => theme.talentx_attribute_id === attributeId);
+    const attributeThemes = filteredThemes.filter(theme => theme.attribute_id === attributeId);
     
     // Aggregate sources from all themes
     attributeThemes.forEach(theme => {
@@ -409,7 +407,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
 
   // Helper to get all responses mentioning themes for an attribute
   const getResponsesForAttribute = (attributeId: string) => {
-    const attributeThemes = filteredThemes.filter(theme => theme.talentx_attribute_id === attributeId);
+    const attributeThemes = filteredThemes.filter(theme => theme.attribute_id === attributeId);
     const responseIds = new Set(attributeThemes.map(theme => theme.response_id));
     return responses.filter(response => responseIds.has(response.id));
   };
@@ -446,7 +444,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       a.responses += Number(row.response_count) || 0; // each response is in exactly one (month, fn) cell
     });
 
-    const attrName = (id: string) => TALENTX_ATTRIBUTES.find(x => x.id === id)?.name || id;
+    const attrName = (id: string) => ATTRIBUTES.find(x => x.id === id)?.name || id;
 
     return Object.entries(agg)
       .map(([id, a]) => {
@@ -530,10 +528,10 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       texts = (await fetchResponseTexts(missingTextIds)) || texts;
     }
 
-    const matchingTheme = filteredThemes.find(t => t.talentx_attribute_id === selectedAttribute);
-    const attributeName = matchingTheme?.talentx_attribute_name || 'this attribute';
+    const matchingTheme = filteredThemes.find(t => t.attribute_id === selectedAttribute);
+    const attributeName = matchingTheme?.attribute_name || 'this attribute';
 
-    const attributeThemes = filteredThemes.filter(t => t.talentx_attribute_id === selectedAttribute);
+    const attributeThemes = filteredThemes.filter(t => t.attribute_id === selectedAttribute);
     const positiveThemes = attributeThemes.filter(t => t.sentiment === 'positive').map(t => t.theme_name);
     const negativeThemes = attributeThemes.filter(t => t.sentiment === 'negative').map(t => t.theme_name);
     const total = attributeThemes.length;
@@ -1106,7 +1104,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
             </div>
           ) : selectedAttribute && (() => {
             // Get all themes for the selected attribute (filtered by experience type)
-            const attributeThemes = filteredThemes.filter(theme => theme.talentx_attribute_id === selectedAttribute);
+            const attributeThemes = filteredThemes.filter(theme => theme.attribute_id === selectedAttribute);
             
             // Group themes by sentiment
             const positiveThemes = attributeThemes.filter(theme => theme.sentiment === 'positive');
@@ -1185,7 +1183,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
             // Previous-period deltas for the stat strip.
             const prevIds = new Set(previousPeriodResponses.map(r => r.id));
             const prevAttrThemes = prevIds.size > 0
-              ? aiThemes.filter(t => validAttributeIds.has(t.talentx_attribute_id) && t.talentx_attribute_id === selectedAttribute && prevIds.has(t.response_id))
+              ? aiThemes.filter(t => validAttributeIds.has(t.attribute_id) && t.attribute_id === selectedAttribute && prevIds.has(t.response_id))
               : [];
             const prevPositive = prevAttrThemes.filter(t => t.sentiment === 'positive').length;
             const prevNegative = prevAttrThemes.filter(t => t.sentiment === 'negative').length;

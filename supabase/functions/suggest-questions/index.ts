@@ -24,7 +24,7 @@ interface Profile {
   top_themes: string[];
   top_competitors: string[];
   top_citation_domains: string[];
-  talentx_attributes: string[];
+  attributes: string[];
   has_data: boolean;
 }
 
@@ -124,7 +124,7 @@ async function buildProfile(supabaseAdmin: any, organizationId: string): Promise
       top_themes: [],
       top_competitors: [],
       top_citation_domains: [],
-      talentx_attributes: [],
+      attributes: [],
       has_data: false,
     };
   }
@@ -139,7 +139,7 @@ async function buildProfile(supabaseAdmin: any, organizationId: string): Promise
     supabaseAdmin.from('companies').select('id, name').in('id', companyIds),
     supabaseAdmin.from('user_onboarding').select('company_id, country').in('company_id', companyIds),
     supabaseAdmin.from('prompt_responses').select('detected_competitors, citations').in('company_id', companyIds).limit(500),
-    supabaseAdmin.from('ai_themes').select('theme_name, talentx_attribute_name').in('company_id', companyIds).limit(1000),
+    supabaseAdmin.from('ai_themes').select('theme_name, attribute_name').in('company_id', companyIds).limit(1000),
   ]);
 
   const companyNames: string[] = (companiesRes.data || []).map((c: any) => c.name).filter(Boolean).slice(0, 5);
@@ -186,12 +186,12 @@ async function buildProfile(supabaseAdmin: any, organizationId: string): Promise
     .slice(0, 5)
     .map(([d]) => d);
 
-  // Top themes + TalentX attributes
+  // Top themes + attributes
   const themeCounts = new Map<string, number>();
   const attrCounts = new Map<string, number>();
   for (const t of (themesRes.data || [])) {
     if (t.theme_name) themeCounts.set(t.theme_name, (themeCounts.get(t.theme_name) || 0) + 1);
-    if (t.talentx_attribute_name) attrCounts.set(t.talentx_attribute_name, (attrCounts.get(t.talentx_attribute_name) || 0) + 1);
+    if (t.attribute_name) attrCounts.set(t.attribute_name, (attrCounts.get(t.attribute_name) || 0) + 1);
   }
   const topThemes = Array.from(themeCounts.entries())
     .sort((a, b) => b[1] - a[1])
@@ -211,7 +211,7 @@ async function buildProfile(supabaseAdmin: any, organizationId: string): Promise
     top_themes: topThemes,
     top_competitors: topCompetitors,
     top_citation_domains: topDomains,
-    talentx_attributes: topAttributes,
+    attributes: topAttributes,
     has_data: totalResponses > 0 || topThemes.length > 0,
   };
 }
@@ -237,7 +237,7 @@ Companies tracked (${profile.company_count}): ${profile.company_names.join(', ')
 Countries covered: ${profile.countries.join(', ') || 'not specified'}
 Total AI responses collected: ${profile.total_responses}
 Top themes in responses: ${profile.top_themes.join(', ') || 'none extracted yet'}
-Top TalentX attributes: ${profile.talentx_attributes.join(', ') || 'none yet'}
+Top attributes: ${profile.attributes.join(', ') || 'none yet'}
 Top competitors mentioned: ${profile.top_competitors.join(', ') || 'none detected'}
 Top citation sources: ${profile.top_citation_domains.join(', ') || 'none'}
 

@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { getLLMDisplayName } from '@/config/llmLogos';
-import { TALENTX_ATTRIBUTES, getProOnlyAttributes, getFreeAttributes, generateTalentXPrompts } from '@/config/talentXAttributes';
+import { generateAttributePrompts } from '@/config/attributes';
 import { logger, sanitizeInput, safeStorePromptResponse, checkExistingPromptResponse } from '@/lib/utils';
 import { extractSourceUrl, extractDomain } from '@/utils/citationUtils';
 
@@ -21,7 +21,7 @@ interface GeneratedPrompt {
   id: string;
   text: string;
   category: string;
-  type: 'informational' | 'experience' | 'competitive' | 'discovery' | 'talentx';
+  type: 'informational' | 'experience' | 'competitive' | 'discovery';
   industryContext?: string;
   jobFunctionContext?: string;
   locationContext?: string;
@@ -134,8 +134,6 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
     
     setIsConfirming(true);
     try {
-      const isProUser = true;
-
       // Use the new generateAndInsertPrompts function
       const onboardingData = {
         companyName: onboardingRecord.companyName,
@@ -143,11 +141,10 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
       };
 
       const confirmedPrompts = await generateAndInsertPrompts(
-        user, 
-        onboardingRecord, 
-        onboardingData, 
-        setProgress,
-        isProUser
+        user,
+        onboardingRecord,
+        onboardingData,
+        setProgress
       );
 
       // Clear any existing responses for these prompts
@@ -382,7 +379,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
 };
 
 // New utility function to generate and insert prompts
-export const generateAndInsertPrompts = async (user: any, onboardingRecord: any, onboardingData: OnboardingData, setProgress: (progress: ProgressInfo) => void, isProUser: boolean = true) => {
+export const generateAndInsertPrompts = async (user: any, onboardingRecord: any, onboardingData: OnboardingData, setProgress: (progress: ProgressInfo) => void) => {
   if (!user || !onboardingRecord) {
     throw new Error('Missing user or onboarding data');
   }
@@ -402,7 +399,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
   }
 
   // Generate prompts based on onboarding data and subscription status
-  let generatedPrompts = generatePromptsFromData(onboardingData, isProUser);
+  let generatedPrompts = generatePromptsFromData(onboardingData);
   
   // Translate prompts if country is not GLOBAL and language is not English
   // CRITICAL: Translation is REQUIRED for non-English countries - cannot proceed without it
@@ -460,15 +457,15 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
   }
   
   const promptsToInsert = generatedPrompts.map(prompt => {
-    // Extract talentx_attribute_id if this is a TalentX prompt
-    // Format: talentx-{attributeId}-{type}
-    let talentxAttributeId = null;
-    if (prompt.id.startsWith('talentx-')) {
-      // Remove 'talentx-' prefix and get the attributeId (everything before the last '-')
-      const parts = prompt.id.replace('talentx-', '').split('-');
+    // Extract attribute_id if this is an attribute prompt
+    // Format: attribute-{attributeId}-{type}
+    let attributeId = null;
+    if (prompt.id.startsWith('attribute-')) {
+      // Remove 'attribute-' prefix and get the attributeId (everything before the last '-')
+      const parts = prompt.id.replace('attribute-', '').split('-');
       // Remove the last part (which is the type: informational/experience/competitive/discovery)
       parts.pop();
-      talentxAttributeId = parts.join('-');
+      attributeId = parts.join('-');
     }
 
     return {
@@ -477,8 +474,8 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
       prompt_text: prompt.text,
       prompt_category: prompt.promptCategory,
       prompt_theme: prompt.promptTheme,
-      prompt_type: talentxAttributeId ? `talentx_${prompt.type}` : prompt.type,
-      talentx_attribute_id: talentxAttributeId,
+      prompt_type: prompt.type,
+      attribute_id: attributeId,
       industry_context: prompt.industryContext || onboardingData.industry,
       job_function_context: prompt.jobFunctionContext || null,
       location_context: prompt.locationContext || null,
@@ -698,7 +695,7 @@ export const formatCountryForPrompt = (countryCode: string): string => {
   return needsThe ? `the ${countryName}` : countryName;
 };
 
-const appendPromptContext = (text: string, jobFunction?: string, location?: string, promptType?: 'informational' | 'experience' | 'competitive' | 'discovery' | 'talentx') => {
+const appendPromptContext = (text: string, jobFunction?: string, location?: string, promptType?: 'informational' | 'experience' | 'competitive' | 'discovery') => {
   const trimmedText = text.trim();
   const lowerText = trimmedText.toLowerCase();
   
@@ -830,7 +827,7 @@ const appendPromptContext = (text: string, jobFunction?: string, location?: stri
 };
 
 // Helper function to generate prompts from onboarding data
-export const generatePromptsFromData = (onboardingData: OnboardingData, isProUser: boolean = true): GeneratedPrompt[] => {
+export const generatePromptsFromData = (onboardingData: OnboardingData): GeneratedPrompt[] => {
   const { companyName, industry, country } = onboardingData;
   const jobFunction = onboardingData.jobFunction || onboardingData.job_function || undefined;
   const customLocation = onboardingData.customLocation;
@@ -891,12 +888,12 @@ export const generatePromptsFromData = (onboardingData: OnboardingData, isProUse
     text: appendPromptContext(prompt.text, jobFunction, locationForBasePrompts, prompt.type),
   }));
 
-  // Only add TalentX prompts for Pro users
-  if (isProUser) {
-    const talentXPrompts: GeneratedPrompt[] = [];
-    
-    // Use the TALENTX_PROMPT_TEMPLATES system to generate all 64 prompts (4 per attribute)
-    const templates = generateTalentXPrompts(companyName, industry);
+  // Add the attribute prompts (64 prompts: 4 per attribute) for every user.
+  {
+    const attributePrompts: GeneratedPrompt[] = [];
+
+    // Use the ATTRIBUTE_PROMPT_TEMPLATES system to generate all 64 prompts (4 per attribute)
+    const templates = generateAttributePrompts(companyName, industry);
     templates.forEach(template => {
       const attribute = template.attribute;
       const isCandidateExperience = attribute?.category === 'Candidate Experience';
@@ -926,8 +923,8 @@ export const generatePromptsFromData = (onboardingData: OnboardingData, isProUse
         template.type as 'informational' | 'experience' | 'competitive' | 'discovery'
       );
 
-      talentXPrompts.push({
-        id: `talentx-${template.attributeId}-${template.type}`,
+      attributePrompts.push({
+        id: `attribute-${template.attributeId}-${template.type}`,
         text: textWithContext,
         category: theme,
         type: template.type as 'informational' | 'experience' | 'competitive' | 'discovery',
@@ -939,9 +936,6 @@ export const generatePromptsFromData = (onboardingData: OnboardingData, isProUse
       });
     });
 
-    return [...basePrompts, ...talentXPrompts];
+    return [...basePrompts, ...attributePrompts];
   }
-
-  // For free users, only return the base prompts
-  return basePrompts;
 };

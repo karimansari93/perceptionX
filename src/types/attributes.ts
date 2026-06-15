@@ -1,14 +1,13 @@
-export interface TalentXAttribute {
+export interface Attribute {
   id: string;
   name: string;
   description: string;
   keywords: string[];
   promptTemplate: string;
   category: string;
-  isProOnly: boolean;
 }
 
-export interface TalentXAnalysis {
+export interface AttributeAnalysis {
   attributeId: string;
   attributeName: string;
   perceptionScore: number; // 0-100, overall perception score for this attribute
@@ -22,9 +21,9 @@ export interface TalentXAnalysis {
   context?: string[]; // response snippets mentioning this attribute
 }
 
-export interface TalentXResponseAnalysis {
+export interface AttributeResponseAnalysis {
   responseId: string;
-  attributeAnalyses: TalentXAnalysis[];
-  overallTalentXScore: number; // average of all relevant attributes
+  attributeAnalyses: AttributeAnalysis[];
+  overallScore: number; // average of all relevant attributes
   topAttributes: string[]; // top 3 most relevant attributes
-} 
+}

@@ -131,8 +131,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     topCompetitors,
     lastUpdated,
     llmMentionRankings,
-    talentXProData,
-    talentXProLoading,
     fixExistingPrompts,
     hasDataIssues,
     aiThemes,
@@ -495,8 +493,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             competitorLoading={competitorLoading}
             companyName={companyName}
             llmMentionRankings={llmMentionRankings}
-            talentXProData={talentXProData}
-            isPro={true}
             searchResults={searchResults}
             aiThemes={aiThemes}
             attributeThemes={attributeThemes}
@@ -562,8 +558,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             competitorLoading={competitorLoading}
             companyName={companyName}
             llmMentionRankings={llmMentionRankings}
-            talentXProData={talentXProData}
-            isPro={true}
             searchResults={searchResults}
             aiThemes={aiThemes}
             attributeThemes={attributeThemes}

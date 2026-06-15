@@ -100,7 +100,7 @@ const tools = [
   },
   {
     name: "get_themes",
-    description: "Get recurring themes extracted from AI responses for a company. Each theme has a sentiment score and mention count. Themes represent what AI models consistently talk about (e.g. 'work-life balance', 'innovation', 'compensation'). Also returns TalentX attribute coverage.",
+    description: "Get recurring themes extracted from AI responses for a company. Each theme has a sentiment score and mention count. Themes represent what AI models consistently talk about (e.g. 'work-life balance', 'innovation', 'compensation'). Also returns employer brand attribute coverage.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -110,8 +110,8 @@ const tools = [
     },
   },
   {
-    name: "get_talentx_breakdown",
-    description: "Get detailed TalentX attribute scores for a company. TalentX attributes are the employer brand pillars (Culture, Leadership, Compensation, Career Growth, etc.) and shows how AI models perceive each one. Use this for deep-dive employer brand analysis.",
+    name: "get_attribute_breakdown",
+    description: "Get detailed employer brand attribute scores for a company. Attributes are the employer brand pillars (Culture, Leadership, Compensation, Career Growth, etc.) and shows how AI models perceive each one. Use this for deep-dive employer brand analysis.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -232,7 +232,7 @@ async function executeTool(
     // generating a bogus tool result that pollutes its context.
     const singleIdTools = new Set([
       'get_company_overview', 'get_company_metrics', 'get_responses',
-      'get_themes', 'get_talentx_breakdown', 'get_competitors',
+      'get_themes', 'get_attribute_breakdown', 'get_competitors',
       'get_citations', 'get_model_breakdown', 'search_responses',
     ]);
     if (singleIdTools.has(toolName) && !isUuid(toolInput?.company_id)) {
@@ -283,8 +283,8 @@ async function executeTool(
       case "get_themes":
         result = await getThemes(supabaseAdmin, toolInput.company_id);
         break;
-      case "get_talentx_breakdown":
-        result = await getTalentXBreakdown(supabaseAdmin, toolInput.company_id);
+      case "get_attribute_breakdown":
+        result = await getAttributeBreakdown(supabaseAdmin, toolInput.company_id);
         break;
       case "get_competitors":
         result = await getCompetitors(supabaseAdmin, toolInput.company_id);
@@ -594,7 +594,7 @@ async function getResponses(
 async function getThemes(supabaseAdmin: any, companyId: string): Promise<string> {
   const { data, error } = await supabaseAdmin
     .from('ai_themes')
-    .select('theme_name, theme_description, sentiment, sentiment_score, talentx_attribute_name, confidence_score, keywords')
+    .select('theme_name, theme_description, sentiment, sentiment_score, attribute_name, confidence_score, keywords')
     .eq('company_id', companyId);
 
   if (error) return JSON.stringify({ error: error.message });
@@ -607,7 +607,7 @@ async function getThemes(supabaseAdmin: any, companyId: string): Promise<string>
     totalScore: number;
     occurrences: number;
     sentiment_counts: { positive: number; negative: number; neutral: number };
-    talentx_attributes: Set<string>;
+    attributes: Set<string>;
     descriptions: string[];
     keywords: Set<string>;
   }>();
@@ -615,13 +615,13 @@ async function getThemes(supabaseAdmin: any, companyId: string): Promise<string>
   for (const t of data) {
     const key = t.theme_name;
     if (!themeMap.has(key)) {
-      themeMap.set(key, { totalScore: 0, occurrences: 0, sentiment_counts: { positive: 0, negative: 0, neutral: 0 }, talentx_attributes: new Set(), descriptions: [], keywords: new Set() });
+      themeMap.set(key, { totalScore: 0, occurrences: 0, sentiment_counts: { positive: 0, negative: 0, neutral: 0 }, attributes: new Set(), descriptions: [], keywords: new Set() });
     }
     const entry = themeMap.get(key)!;
     entry.totalScore += (t.sentiment_score || 0);
     entry.occurrences++;
     if (t.sentiment) entry.sentiment_counts[t.sentiment as 'positive' | 'negative' | 'neutral']++;
-    if (t.talentx_attribute_name) entry.talentx_attributes.add(t.talentx_attribute_name);
+    if (t.attribute_name) entry.attributes.add(t.attribute_name);
     if (t.theme_description && entry.descriptions.length < 2) entry.descriptions.push(t.theme_description);
     if (t.keywords?.length) t.keywords.slice(0, 3).forEach((k: string) => entry.keywords.add(k));
   }
@@ -636,7 +636,7 @@ async function getThemes(supabaseAdmin: any, companyId: string): Promise<string>
         sentiment_label: stats.sentiment_counts.positive > stats.sentiment_counts.negative ? 'Positive' :
           stats.sentiment_counts.negative > stats.sentiment_counts.positive ? 'Negative' : 'Mixed/Neutral',
         sentiment_breakdown: stats.sentiment_counts,
-        talentx_attributes: Array.from(stats.talentx_attributes),
+        attributes: Array.from(stats.attributes),
         description: stats.descriptions[0] || null,
         sample_keywords: Array.from(stats.keywords).slice(0, 5),
       };
@@ -645,14 +645,14 @@ async function getThemes(supabaseAdmin: any, companyId: string): Promise<string>
 
   const attrMap = new Map<string, { positive: number; negative: number; neutral: number; count: number }>();
   for (const t of data) {
-    if (!t.talentx_attribute_name) continue;
-    if (!attrMap.has(t.talentx_attribute_name)) attrMap.set(t.talentx_attribute_name, { positive: 0, negative: 0, neutral: 0, count: 0 });
-    const entry = attrMap.get(t.talentx_attribute_name)!;
+    if (!t.attribute_name) continue;
+    if (!attrMap.has(t.attribute_name)) attrMap.set(t.attribute_name, { positive: 0, negative: 0, neutral: 0, count: 0 });
+    const entry = attrMap.get(t.attribute_name)!;
     entry.count++;
     if (t.sentiment) entry[t.sentiment as 'positive' | 'negative' | 'neutral']++;
   }
 
-  const talentx_summary = Array.from(attrMap.entries())
+  const attribute_summary = Array.from(attrMap.entries())
     .map(([attr, counts]) => ({
       attribute: attr,
       total_themes: counts.count,
@@ -665,12 +665,12 @@ async function getThemes(supabaseAdmin: any, companyId: string): Promise<string>
 
   return JSON.stringify({
     themes,
-    talentx_summary,
-    _coverage: coverageFound({ theme_count: themes.length, talentx_attribute_count: talentx_summary.length }),
+    attribute_summary,
+    _coverage: coverageFound({ theme_count: themes.length, attribute_count: attribute_summary.length }),
   });
 }
 
-async function getTalentXBreakdown(supabaseAdmin: any, companyId: string): Promise<string> {
+async function getAttributeBreakdown(supabaseAdmin: any, companyId: string): Promise<string> {
   const [responsesResult, themesResult] = await Promise.all([
     supabaseAdmin
       .from('prompt_responses')
@@ -678,9 +678,9 @@ async function getTalentXBreakdown(supabaseAdmin: any, companyId: string): Promi
       .eq('company_id', companyId),
     supabaseAdmin
       .from('ai_themes')
-      .select('response_id, talentx_attribute_id, talentx_attribute_name, sentiment, sentiment_score, theme_name, confidence_score, keywords, context_snippets')
+      .select('response_id, attribute_id, attribute_name, sentiment, sentiment_score, theme_name, confidence_score, keywords, context_snippets')
       .eq('company_id', companyId)
-      .not('talentx_attribute_name', 'is', null),
+      .not('attribute_name', 'is', null),
   ]);
 
   const responseIds = responsesResult.data || [];
@@ -691,7 +691,7 @@ async function getTalentXBreakdown(supabaseAdmin: any, companyId: string): Promi
   const data = themesResult.data || [];
   if (themesResult.error) return JSON.stringify({ error: themesResult.error.message });
   if (!data.length) return JSON.stringify({
-    _coverage: coverageNoData("No TalentX attributes have been extracted for this company yet."),
+    _coverage: coverageNoData("No attributes have been extracted for this company yet."),
   });
 
   const responseModelMap = new Map(responseIds.map((r: any) => [r.id, r.ai_model]));
@@ -706,10 +706,10 @@ async function getTalentXBreakdown(supabaseAdmin: any, companyId: string): Promi
   }>();
 
   for (const t of data) {
-    const attr = t.talentx_attribute_name;
+    const attr = t.attribute_name;
     if (!attr) continue;
     if (!attrMap.has(attr)) {
-      attrMap.set(attr, { id: t.talentx_attribute_id, scores: [], sentiments: [], themes: [], snippets: [], models: new Set() });
+      attrMap.set(attr, { id: t.attribute_id, scores: [], sentiments: [], themes: [], snippets: [], models: new Set() });
     }
     const entry = attrMap.get(attr)!;
     if (typeof t.sentiment_score === 'number') entry.scores.push(t.sentiment_score);
@@ -741,7 +741,7 @@ async function getTalentXBreakdown(supabaseAdmin: any, companyId: string): Promi
   }).sort((a, b) => b.score_out_of_100 - a.score_out_of_100);
 
   return JSON.stringify({
-    talentx_attributes: attributes,
+    attributes: attributes,
     total_attributes: attributes.length,
     _coverage: coverageFound({ attribute_count: attributes.length }),
   });
@@ -1029,11 +1029,11 @@ Your job is to give insightful, data-grounded answers that feel like they're com
 3. "What do AI models say about X" → \`get_responses\` with a relevant \`prompt_type\`, or \`search_responses\` for a specific topic
 4. Citation/source questions → \`get_citations\` only. Use \`include_snippets: true\` and \`domain_filter\` when drilling into a specific source. Do NOT also call \`get_responses\`.
 5. Competitor questions → \`get_competitors\`
-6. Employer brand depth → \`get_talentx_breakdown\`
+6. Employer brand depth → \`get_attribute_breakdown\`
 7. Comparing locations/subsidiaries → \`compare_companies\`
 
 **Schema reference:**
-- \`ai_themes\`: \`company_id\`, \`response_id\`, \`theme_name\`, \`theme_description\`, \`sentiment\` (positive/negative/neutral), \`sentiment_score\` (-1 to 1), \`talentx_attribute_name\`, \`confidence_score\`, \`keywords\`, \`context_snippets\`
+- \`ai_themes\`: \`company_id\`, \`response_id\`, \`theme_name\`, \`theme_description\`, \`sentiment\` (positive/negative/neutral), \`sentiment_score\` (-1 to 1), \`attribute_name\`, \`confidence_score\`, \`keywords\`, \`context_snippets\`
 - \`prompt_responses\`: \`id\`, \`company_id\`, \`confirmed_prompt_id\`, \`ai_model\`, \`response_text\`, \`company_mentioned\`, \`detected_competitors\`, \`citations\` (JSONB), \`tested_at\`
 - Per-response sentiment is derived by aggregating theme sentiments for that response.
 - EPS = 50% sentiment + 30% visibility + 20% relevance
@@ -1067,7 +1067,7 @@ const toolLabels: Record<string, string> = {
   get_company_metrics: 'Fetching metrics',
   get_responses: 'Reading AI responses',
   get_themes: 'Analyzing themes',
-  get_talentx_breakdown: 'Analyzing TalentX attributes',
+  get_attribute_breakdown: 'Analyzing attributes',
   get_competitors: 'Checking competitors',
   get_citations: 'Reviewing citations',
   compare_companies: 'Comparing companies',

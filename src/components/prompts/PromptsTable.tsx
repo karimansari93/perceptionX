@@ -50,8 +50,7 @@ export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
     const colors: Record<string, string> = {
       'sentiment': 'bg-blue-100 text-blue-800',
       'visibility': 'bg-green-100 text-green-800',
-      'competitive': 'bg-purple-100 text-purple-800',
-      'talentx': 'bg-orange-100 text-orange-800'
+      'competitive': 'bg-purple-100 text-purple-800'
     };
     return colors[type] || 'bg-gray-100 text-gray-800';
   };
@@ -60,8 +59,7 @@ export const PromptsTable = ({ prompts, companyName }: PromptsTableProps) => {
     const labels: Record<string, string> = {
       'sentiment': 'Sentiment',
       'visibility': 'Visibility',
-      'competitive': 'Competitive',
-      'talentx': 'TalentX'
+      'competitive': 'Competitive'
     };
     return labels[type] || type;
   };

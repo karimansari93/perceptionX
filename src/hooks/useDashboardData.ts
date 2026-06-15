@@ -5,7 +5,6 @@ import { useCompany } from "@/contexts/CompanyContext";
 import { PromptResponse, DashboardMetrics, SentimentTrendData, CitationCount, PromptData, Citation, CompetitorMention, LLMMentionRanking } from "@/types/dashboard";
 import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
-import { TalentXProService } from "@/services/talentXProService";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
 import { parseCompetitors } from "@/utils/competitorUtils";
 
@@ -34,7 +33,7 @@ export const responseMonthKey = (r: { response_month?: string | null; tested_at?
 // prompts/responses from every dashboard view by filtering them out centrally.
 export const isOverallCandidateExperience = (r: { confirmed_prompts?: any }): boolean => {
   const cp = r?.confirmed_prompts || {};
-  const attr = String(cp.talentx_attribute_id || '').toLowerCase().trim();
+  const attr = String(cp.attribute_id || '').toLowerCase().trim();
   const theme = String(cp.prompt_theme || '').toLowerCase().trim();
   return attr === 'overall-candidate-experience' || theme === 'overall candidate experience';
 };
@@ -56,9 +55,6 @@ export const useDashboardData = () => {
   const [companyName, setCompanyName] = useState('');
   const [hasDataIssues, setHasDataIssues] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
-  const [talentXProData, setTalentXProData] = useState<any[]>([]);
-  const [talentXProLoading, setTalentXProLoading] = useState(false);
-  const [talentXProPrompts, setTalentXProPrompts] = useState<any[]>([]);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchResultsLoading, setSearchResultsLoading] = useState(false);
   const [searchTermsData, setSearchTermsData] = useState<any[]>([]);
@@ -114,7 +110,7 @@ export const useDashboardData = () => {
   const recencyDataCacheRef = useRef<{ responseIdsHash: string; data: any[] } | null>(null); // Cache recency data
   const previousResponseIdsRef = useRef<string>(''); // Track previous response IDs to detect changes
   // Cache company dashboard data for instant restore when switching back.
-  // The MV/metrics/TalentX snapshots are written by their fetches on
+  // The MV/metrics snapshots are written by their fetches on
   // completion (never from mid-load state), so when an entry is fresh and
   // complete a switch-back restores everything and skips the network.
   const COMPANY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -139,7 +135,6 @@ export const useDashboardData = () => {
       sentimentMvRows: any[];
       relevanceMvRows: any[];
     };
-    talentXProData?: any[];
   }>>({});
   // Tracks which company the user is currently looking at. Each fetch captures
   // the id at call time and compares against this ref before committing state,
@@ -241,7 +236,7 @@ export const useDashboardData = () => {
                 job_function_context,
                 location_context,
                 industry_context,
-                talentx_attribute_id
+                attribute_id
               )
             `, withCount ? { count: 'exact' } : undefined)
             .eq('company_id', requestedCompanyId)
@@ -258,7 +253,7 @@ export const useDashboardData = () => {
         retrySupabaseQuery(() =>
           supabase
             .from('confirmed_prompts')
-            .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, is_pro_prompt, talentx_attribute_id')
+            .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, attribute_id')
             .eq('company_id', requestedCompanyId)
         ) as Promise<{ data: any[] | null; error: any }>,
         fetchResponsePage(0, PAGE_SIZE - 1, true),
@@ -300,7 +295,7 @@ export const useDashboardData = () => {
       const totalCount = firstPageResult.count ?? firstPage.length;
 
       // First paint: render the newest page immediately instead of holding
-      // the dashboard until every page (and TalentX) arrives. State is set
+      // the dashboard until every page (and attributes) arrives. State is set
       // again below with the full set once the background fetches land.
       setResponses(firstPage);
       if (firstPage.length > 0) {
@@ -327,13 +322,13 @@ export const useDashboardData = () => {
         return all.filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
       };
 
-      // TalentX rows feed both the Thematic tab and Overview's attribute
+      // Attribute rows feed both the Thematic tab and Overview's attribute
       // cards, so fetch them eagerly: first page with a count, remaining
       // pages in parallel, bounded to the same 180-day window. Errors are
       // swallowed so the dashboard still renders with regular responses.
-      const fetchTalentXRaw = async (): Promise<any[]> => {
+      const fetchAttributeRaw = async (): Promise<any[]> => {
         try {
-          const talentXPage = (from: number, to: number, withCount: boolean) =>
+          const attributePage = (from: number, to: number, withCount: boolean) =>
             supabase
               // Canonicalized view — see comment on main fetch above.
               .from('prompt_responses_canonical')
@@ -356,7 +351,7 @@ export const useDashboardData = () => {
                   user_id,
                   prompt_type,
                   prompt_text,
-                  talentx_attribute_id,
+                  attribute_id,
                   company_id,
                   industry_context,
                   job_function_context,
@@ -364,12 +359,12 @@ export const useDashboardData = () => {
                 )
               `, withCount ? { count: 'exact' } : undefined)
               .eq('confirmed_prompts.company_id', requestedCompanyId)
-              .like('confirmed_prompts.prompt_type', 'talentx_%')
+              .not('confirmed_prompts.attribute_id', 'is', null)
               .gte('tested_at', eagerCutoffIso)
               .order('tested_at', { ascending: false })
               .range(from, to);
 
-          const first = await talentXPage(0, PAGE_SIZE - 1, true);
+          const first = await attributePage(0, PAGE_SIZE - 1, true);
           if (first.error) throw first.error;
           let rows = first.data ?? [];
           const total = first.count ?? rows.length;
@@ -377,7 +372,7 @@ export const useDashboardData = () => {
           if (pages > 1) {
             const rest = await Promise.all(
               Array.from({ length: pages - 1 }, (_, i) =>
-                talentXPage((i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1, false)
+                attributePage((i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1, false)
               )
             );
             for (const r of rest) {
@@ -387,15 +382,15 @@ export const useDashboardData = () => {
           }
           return rows;
         } catch (error) {
-          console.error('Error fetching TalentX responses:', error);
-          // Continue with regular responses even if TalentX fails
+          console.error('Error fetching attribute responses:', error);
+          // Continue with regular responses even if the attribute fetch fails
           return [];
         }
       };
 
-      const [data, talentXRaw] = await Promise.all([
+      const [data, attributeRaw] = await Promise.all([
         fetchRemainingPages(),
-        fetchTalentXRaw(),
+        fetchAttributeRaw(),
       ]);
       if (isStale()) return;
 
@@ -403,26 +398,25 @@ export const useDashboardData = () => {
 
       {
         try {
-            // Filter to get only latest TalentX responses per prompt+model
-            const talentXLatestMap = new Map<string, any>();
-            talentXRaw.forEach(response => {
+            // Filter to get only latest attribute responses per prompt+model
+            const attributeLatestMap = new Map<string, any>();
+            attributeRaw.forEach(response => {
               const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
-              if (!talentXLatestMap.has(key)) {
-                talentXLatestMap.set(key, response);
+              if (!attributeLatestMap.has(key)) {
+                attributeLatestMap.set(key, response);
               }
             });
-            const talentXResponses = Array.from(talentXLatestMap.values());
+            const attributeResponses = Array.from(attributeLatestMap.values());
 
-            if (talentXResponses && talentXResponses.length > 0) {
-              // Convert TalentX responses to PromptResponse format
-              const talentXResponsesFormatted: PromptResponse[] = talentXResponses.map(response => {
+            if (attributeResponses && attributeResponses.length > 0) {
+              // Convert attribute responses to PromptResponse format
+              const attributeResponsesFormatted: PromptResponse[] = attributeResponses.map(response => {
                 const promptType = response.confirmed_prompts.prompt_type;
-                const attributeId = response.confirmed_prompts.talentx_attribute_id || 
-                                   promptType.replace('talentx_', '');
-                
+                const attributeId = response.confirmed_prompts.attribute_id || promptType;
+
                 // Get prompt text from the confirmed_prompts join
-                const promptText = response.confirmed_prompts?.prompt_text || `TalentX ${promptType.replace('talentx_', '')} analysis for ${attributeId}`;
-                
+                const promptText = response.confirmed_prompts?.prompt_text || `${promptType} analysis for ${attributeId}`;
+
                 return {
                   id: response.id,
                   confirmed_prompt_id: response.confirmed_prompt_id,
@@ -437,21 +431,21 @@ export const useDashboardData = () => {
 
                   confirmed_prompts: {
                     prompt_text: promptText,
-                    prompt_category: `TalentX: ${attributeId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}`,
-                    prompt_type: promptType.replace('talentx_', ''),
+                    prompt_category: attributeId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                    prompt_type: promptType,
                     industry_context: response.confirmed_prompts.industry_context,
                     job_function_context: response.confirmed_prompts.job_function_context,
                     location_context: response.confirmed_prompts.location_context
                   }
                 };
               });
-              
-              // Combine regular responses with TalentX responses
-              allResponses = [...allResponses, ...talentXResponsesFormatted];
+
+              // Combine regular responses with attribute responses
+              allResponses = [...allResponses, ...attributeResponsesFormatted];
             }
         } catch (error) {
-          console.error('Error processing TalentX responses:', error);
-          // Continue with regular responses even if TalentX fails
+          console.error('Error processing attribute responses:', error);
+          // Continue with regular responses even if the attribute processing fails
         }
       }
       
@@ -970,7 +964,7 @@ export const useDashboardData = () => {
       // skips heavy theme_description / context_snippets[] / keywords[]
       // (cuts row width ~609B -> ~100B).
       const COLS =
-        'id, response_id, theme_name, sentiment, sentiment_score, talentx_attribute_id, talentx_attribute_name, created_at';
+        'id, response_id, theme_name, sentiment, sentiment_score, attribute_id, attribute_name, created_at';
       const PAGE_SIZE = 1000;
 
       // Keyset pagination on (created_at DESC, id DESC) instead of OFFSET.
@@ -1188,42 +1182,6 @@ export const useDashboardData = () => {
     setCompanyName(currentCompany.name);
   }, [currentCompany]);
 
-  const fetchTalentXProData = useCallback(async () => {
-    if (!user) {
-      setTalentXProData([]);
-      setTalentXProLoading(false);
-      return;
-    }
-
-    const requestedCompanyId = currentCompany?.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
-
-    try {
-      setTalentXProLoading(true);
-      const data = await TalentXProService.getAggregatedProAnalysis(user.id, requestedCompanyId);
-      if (isStale()) return;
-      setTalentXProData(data);
-      // Snapshot into the per-company cache so a fresh switch-back can skip
-      // this fetch (see companyDataCacheRef).
-      if (requestedCompanyId) {
-        companyDataCacheRef.current[requestedCompanyId] = {
-          responses: [],
-          timestamp: Date.now(),
-          ...companyDataCacheRef.current[requestedCompanyId],
-          talentXProData: data,
-        };
-      }
-    } catch (error) {
-      if (isStale()) return;
-      console.error('Error fetching TalentX Pro data:', error);
-      setTalentXProData([]);
-    } finally {
-      if (!isStale()) {
-        setTalentXProLoading(false);
-      }
-    }
-  }, [user, currentCompany]);
-
   // Cache for search results to prevent duplicate requests
   const searchResultsCache = useRef<{
     companyId: string | null;
@@ -1430,7 +1388,7 @@ export const useDashboardData = () => {
       // Save current company's data to cache before clearing (for instant restore when switching back)
       if (previousCompanyId && responses.length > 0) {
         companyDataCacheRef.current[previousCompanyId] = {
-          // Merge over the existing entry so the MV/metrics/TalentX snapshots
+          // Merge over the existing entry so the MV/metrics snapshots
           // written by the fetches survive — they're what lets a switch-back
           // skip the network entirely.
           ...companyDataCacheRef.current[previousCompanyId],
@@ -1454,8 +1412,6 @@ export const useDashboardData = () => {
       setResponseSentimentRows([]);
       setSearchResults([]);
       setSearchTermsData([]);
-      setTalentXProData([]);
-      setTalentXProPrompts([]);
       setRecencyData([]);
       setLastUpdated(undefined);
       setMvTopCitations([]);
@@ -1508,7 +1464,7 @@ export const useDashboardData = () => {
           // the refetch entirely. Dashboard data is collection-driven
           // (monthly), so a sub-5-minute stale window is invisible — and the
           // explicit Refresh button still bypasses the cache above.
-          if (cacheFresh && cached.mvData && cached.companyMetrics && cached.activePrompts && cached.talentXProData !== undefined) {
+          if (cacheFresh && cached.mvData && cached.companyMetrics && cached.activePrompts) {
             setActivePrompts(cached.activePrompts);
             setMvTopCitations(cached.mvData.topCitations);
             setMvTopCompetitors(cached.mvData.topCompetitors);
@@ -1519,7 +1475,6 @@ export const useDashboardData = () => {
             setCompanyRelevanceByMonth(cached.companyMetrics.relevanceByMonth);
             setSentimentMvRows(cached.companyMetrics.sentimentMvRows);
             setRelevanceMvRows(cached.companyMetrics.relevanceMvRows);
-            setTalentXProData(cached.talentXProData);
             setCompanyName(currentCompany.name || '');
             return;
           }
@@ -1534,7 +1489,6 @@ export const useDashboardData = () => {
           // On explicit refresh, also refetch AI themes and clear search cache
           ...(isExplicitRefresh ? [fetchAIThemes()] : []),
         ]);
-        fetchTalentXProData();
         if (isExplicitRefresh) {
           searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
         }
@@ -1693,89 +1647,6 @@ export const useDashboardData = () => {
     return parsedCitationsMap.get(responseId) || [];
   }, [parsedCitationsMap]);
 
-  // Fetch TalentX prompts
-  useEffect(() => {
-    const fetchTalentXProPrompts = async () => {
-      if (!user) {
-        setTalentXProPrompts([]);
-        return;
-      }
-
-      try {
-        const { data: talentXPrompts, error } = await supabase
-          .from('confirmed_prompts')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('is_pro_prompt', true);
-
-        if (error) {
-          console.error('Error fetching TalentX Pro prompts:', error);
-          setTalentXProPrompts([]);
-          return;
-        }
-
-        if (talentXPrompts && talentXPrompts.length > 0) {
-          const talentXPromptData = talentXPrompts.map(prompt => {
-            // Find matching TalentX responses to get visibility scores
-            const matchingResponses = responses.filter(r => 
-              r.confirmed_prompts?.prompt_type === prompt.prompt_type &&
-              (r.confirmed_prompts as any)?.talentx_attribute_id === prompt.talentx_attribute_id
-            );
-            
-            // Calculate visibility from company_mentioned boolean
-            const visibilityPercentage = matchingResponses.length > 0 
-              ? (matchingResponses.filter(r => r.company_mentioned === true).length / matchingResponses.length) * 100
-              : 0;
-            
-            // Calculate average sentiment from AI themes (if available)
-            const avgSentiment = matchingResponses.length > 0 
-              ? matchingResponses.reduce((sum, r) => {
-                  const aiSentiment = calculateAIBasedSentiment(r.id);
-                  return sum + aiSentiment.sentiment_score;
-                }, 0) / matchingResponses.length
-              : 0;
-            
-            // Determine sentiment label
-            let sentimentLabel = 'neutral';
-            if (avgSentiment > 0.1) sentimentLabel = 'positive';
-            else if (avgSentiment < -0.1) sentimentLabel = 'negative';
-            
-            return {
-              prompt: prompt.prompt_text,
-              category: prompt.prompt_theme || 'General',
-              type: prompt.prompt_type as any,
-              industryContext: prompt.industry_context || undefined,
-              jobFunctionContext: prompt.job_function_context || undefined,
-              locationContext: prompt.location_context || undefined,
-              promptCategory: prompt.prompt_category || undefined,
-              promptTheme: prompt.prompt_theme || 'General',
-              responses: matchingResponses.length > 0 ? 1 : 0, // Mark as having responses if any exist
-              avgSentiment: avgSentiment,
-              sentimentLabel: sentimentLabel,
-              mentionRanking: undefined,
-              competitivePosition: undefined,
-              competitorMentions: undefined,
-              averageVisibility: visibilityPercentage,
-              visibilityScores: [visibilityPercentage],
-              isTalentXPrompt: true,
-              talentXAttributeId: prompt.talentx_attribute_id,
-              talentXPromptType: prompt.prompt_type.replace('talentx_', '') // Remove prefix for display
-            };
-          });
-
-          setTalentXProPrompts(talentXPromptData);
-        } else {
-          setTalentXProPrompts([]);
-        }
-      } catch (error) {
-        console.error('Error in fetchTalentXProPrompts:', error);
-        setTalentXProPrompts([]);
-      }
-    };
-
-    fetchTalentXProPrompts();
-  }, [user]);
-
   // --- Period detection: group responses by their snapshot month
   // (response_month), so a run tagged for a given collection cycle shows under
   // that month regardless of when it was physically written. ---
@@ -1919,7 +1790,7 @@ export const useDashboardData = () => {
     const byPrompt = new Map<string, PromptData>();
     for (const response of periodFilteredResponses) {
       const promptKey = response.confirmed_prompts?.prompt_text;
-      const isTalentXResponse = response.confirmed_prompts?.prompt_type?.startsWith('talentx_');
+      const isAttributeResponse = !!(response.confirmed_prompts as any)?.attribute_id;
 
       const existing = promptKey ? byPrompt.get(promptKey) : undefined;
       
@@ -1952,10 +1823,10 @@ export const useDashboardData = () => {
             existing.category = theme;
           }
         }
-        // Update talentXAttributeId from confirmed_prompts if not already set
-        const talentXAttrId = (response.confirmed_prompts as any)?.talentx_attribute_id;
-        if (!existing.talentXAttributeId && talentXAttrId) {
-          existing.talentXAttributeId = talentXAttrId;
+        // Update attributeId from confirmed_prompts if not already set
+        const attrId = (response.confirmed_prompts as any)?.attribute_id;
+        if (!existing.attributeId && attrId) {
+          existing.attributeId = attrId;
         }
         // Add visibility score to array
         if (visibilityScore !== undefined) {
@@ -1963,7 +1834,7 @@ export const useDashboardData = () => {
           existing.visibilityScores.push(visibilityScore);
         }
         // Update visibility metrics
-        if (response.confirmed_prompts?.prompt_type === 'discovery' || response.confirmed_prompts?.prompt_type === 'talentx_discovery') {
+        if (response.confirmed_prompts?.prompt_type === 'discovery') {
           if (typeof existing.averageVisibility === 'number') {
             existing.averageVisibility = (existing.averageVisibility * (existing.responses - 1) + (response.company_mentioned ? 100 : 0)) / existing.responses;
           } else {
@@ -1971,7 +1842,7 @@ export const useDashboardData = () => {
           }
         }
         // Update competitive metrics
-        if (response.confirmed_prompts?.prompt_type === 'competitive' || response.confirmed_prompts?.prompt_type === 'talentx_competitive') {
+        if (response.confirmed_prompts?.prompt_type === 'competitive') {
           if (response.detected_competitors) {
             const mentions = response.detected_competitors.split(',').map(m => m.trim()).filter(m => m.length > 0);
             existing.detectedCompetitors = mentions.join(',');
@@ -1996,35 +1867,24 @@ export const useDashboardData = () => {
           mentionRanking: undefined,
           competitivePosition: undefined,
           detectedCompetitors: response.detected_competitors || undefined,
-          averageVisibility: (response.confirmed_prompts?.prompt_type === 'discovery' || response.confirmed_prompts?.prompt_type === 'talentx_discovery') ? (response.company_mentioned ? 100 : 0) : undefined,
+          averageVisibility: (response.confirmed_prompts?.prompt_type === 'discovery') ? (response.company_mentioned ? 100 : 0) : undefined,
           visibilityScores: visibilityScore !== undefined ? [visibilityScore] : [],
-          isTalentXPrompt: isTalentXResponse,
-          talentXAttributeId: (response.confirmed_prompts as any)?.talentx_attribute_id,
-          talentXPromptType: response.confirmed_prompts?.prompt_type?.replace('talentx_', '')
+          isAttributePrompt: isAttributeResponse,
+          attributeId: (response.confirmed_prompts as any)?.attribute_id,
+          attributePromptType: response.confirmed_prompts?.prompt_type
         });
       }
     }
     const responseBasedPrompts: PromptData[] = Array.from(byPrompt.values());
 
-    // Combine with TalentX Pro prompts (including those without responses yet).
     // Deduplicate by prompt text using a Map — previously this was a reduce
     // with nested .find() + .findIndex() (O(N²)).
     const uniqueByText = new Map<string, PromptData>();
     for (const p of responseBasedPrompts) uniqueByText.set(p.prompt, p);
-    for (const p of talentXProPrompts) {
-      const existing = uniqueByText.get(p.prompt);
-      if (!existing) {
-        uniqueByText.set(p.prompt, p);
-      } else if (p.responses > 0 && existing.responses === 0) {
-        // Prefer the variant that actually has response data
-        uniqueByText.set(p.prompt, p);
-      }
-    }
 
     // Merge in currently-active prompts that aren't represented yet. Using the
     // same Map keeps this O(N) instead of O(N × M).
     activePrompts.forEach(prompt => {
-      if (prompt.is_pro_prompt) return;
       if (uniqueByText.has(prompt.prompt_text)) return;
       uniqueByText.set(prompt.prompt_text, {
         prompt: prompt.prompt_text,
@@ -2049,7 +1909,7 @@ export const useDashboardData = () => {
     });
 
     return Array.from(uniqueByText.values());
-  }, [periodFilteredResponses, talentXProPrompts, calculateAIBasedSentiment, activePrompts]);
+  }, [periodFilteredResponses, calculateAIBasedSentiment, activePrompts]);
 
   // Track when metrics calculation is complete (all data loaded)
   // Don't show anything until sentiment loads - this ensures all metrics appear together
@@ -2570,49 +2430,6 @@ export const useDashboardData = () => {
     });
   };
 
-  const prepareTalentXPromptData = (responses: any[]): PromptData[] => {
-    const talentXGroups: Record<string, any[]> = {};
-    
-    responses.forEach(response => {
-      if (response.confirmed_prompts?.prompt_type?.startsWith('talentx_')) {
-        const key = `${response.confirmed_prompts.prompt_text}`;
-        if (!talentXGroups[key]) {
-          talentXGroups[key] = [];
-        }
-        talentXGroups[key].push(response);
-      }
-    });
-
-    return Object.entries(talentXGroups).map(([promptText, promptResponses]) => {
-      const totalResponses = promptResponses.length;
-
-      const sentiments = promptResponses.map(r => calculateAIBasedSentiment(r.id));
-      const avgSentiment = totalResponses > 0
-        ? sentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / totalResponses
-        : 0;
-      const sentimentLabel = avgSentiment > 0.1 ? 'positive' : avgSentiment < -0.1 ? 'negative' : 'neutral';
-
-      const firstResponse = promptResponses[0];
-      const mentionedCount = promptResponses.filter(r => r.company_mentioned === true).length;
-      const averageVisibility = totalResponses > 0 ? (mentionedCount / totalResponses) * 100 : undefined;
-      
-      return {
-        prompt: promptText,
-        category: firstResponse.confirmed_prompts.prompt_category,
-        type: firstResponse.confirmed_prompts.prompt_type,
-        responses: totalResponses,
-        avgSentiment,
-        sentimentLabel,
-        mentionRanking: undefined,
-        competitivePosition: undefined,
-        detectedCompetitors: firstResponse.detected_competitors,
-        averageVisibility,
-        isTalentXPrompt: true,
-        talentXAttributeId: firstResponse.confirmed_prompts?.talentx_attribute_id,
-        talentXPromptType: firstResponse.confirmed_prompts.prompt_type.replace('talentx_', '')
-      };
-    });
-  };
 
   const topCompetitors = useMemo(() => {
     if (!companyName || isSwitchingCompany) return [];
@@ -2805,9 +2622,6 @@ export const useDashboardData = () => {
     topCompetitors,
     lastUpdated,
     llmMentionRankings,
-    talentXProData,
-    talentXProLoading,
-    fetchTalentXProData,
     fixExistingPrompts,
     hasDataIssues,
     searchResults,

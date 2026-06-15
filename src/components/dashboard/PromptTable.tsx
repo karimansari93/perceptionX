@@ -42,11 +42,8 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
   const uniqueTypes = useMemo(() => {
     const types = new Set<string>();
     prompts.forEach(prompt => {
-      let typeLabel = prompt.type;
-      if (prompt.type.startsWith('talentx_')) {
-        typeLabel = prompt.type.replace('talentx_', '');
-      }
-      
+      const typeLabel = prompt.type;
+
       // Map to user-friendly labels
       let displayLabel = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
       if (typeLabel.toLowerCase() === 'sentiment') {
@@ -56,7 +53,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
       } else if (typeLabel.toLowerCase() === 'competitive') {
         displayLabel = 'Comparison';
       }
-      
+
       types.add(displayLabel);
     });
     return Array.from(types).sort();
@@ -85,11 +82,8 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
       }
 
       // Type filter
-      let typeLabel = prompt.type;
-      if (prompt.type.startsWith('talentx_')) {
-        typeLabel = prompt.type.replace('talentx_', '');
-      }
-      
+      const typeLabel = prompt.type;
+
       // Map to user-friendly labels for filtering
       let displayType = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
       if (typeLabel.toLowerCase() === 'sentiment') {
@@ -177,16 +171,6 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
             </span>
           </div>
         );
-      case 'talentx_sentiment':
-      case 'talentx_visibility':
-      case 'talentx_competitive':
-        return (
-          <div className="flex items-center justify-center space-x-2">
-            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-              Pro
-            </Badge>
-          </div>
-        );
       default:
         return null;
     }
@@ -210,12 +194,8 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
   };
 
   const getTypeBadge = (prompt: PromptData) => {
-    // Extract the base type from TalentX prompts (e.g., 'talentx_sentiment' -> 'sentiment')
-    let typeLabel = prompt.type;
-    if (prompt.type.startsWith('talentx_')) {
-      typeLabel = prompt.type.replace('talentx_', '');
-    }
-    
+    const typeLabel = prompt.type;
+
     // Map to user-friendly labels
     let displayLabel = typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1);
     if (typeLabel.toLowerCase() === 'sentiment') {

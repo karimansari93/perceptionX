@@ -34,11 +34,11 @@ const decodeUnicodeEscapes = (s: string): string => {
   return s.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
 };
 
-// Prompt types are stored namespaced (e.g. `talentx_discovery`, `informational`).
-// The "talentx" prefix is an internal grouping users don't need — show just the
-// readable type ("Discovery", "Informational"). Capitalization is handled in CSS.
+// Prompt types are stored as readable base types (e.g. `discovery`,
+// `informational`). Show them as-is, just spaced out. Capitalization is
+// handled in CSS.
 const formatPromptType = (t?: string): string =>
-  (t || '').replace(/^talentx[_\s-]*/i, '').replace(/_/g, ' ').trim();
+  (t || '').replace(/_/g, ' ').trim();
 
 // Significance gate for the Opportunities tab. A page that shows up in a
 // single absent answer is noise; it only ranks as an opportunity once it

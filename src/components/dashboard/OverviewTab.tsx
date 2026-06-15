@@ -38,8 +38,8 @@ interface AITheme {
   theme_description: string;
   sentiment: 'positive' | 'negative' | 'neutral';
   sentiment_score: number;
-  talentx_attribute_id: string;
-  talentx_attribute_name: string;
+  attribute_id: string;
+  attribute_name: string;
   confidence_score: number;
   keywords: string[];
   context_snippets: string[];
@@ -54,8 +54,6 @@ interface OverviewTabProps {
   competitorLoading?: boolean; // Add competitor loading prop
   companyName: string; // <-- Add this
   llmMentionRankings: LLMMentionRanking[]; // Add this
-  talentXProData?: any[]; // Add TalentX Pro data
-  isPro?: boolean; // Add Pro subscription status
   searchResults?: any[]; // Add search results
   aiThemes?: AITheme[]; // Add AI themes as prop
   attributeThemes?: any[]; // Pre-aggregated attribute scores (company_attribute_themes_mv)
@@ -125,8 +123,6 @@ export const OverviewTab = memo(({
   competitorLoading = false,
   companyName,
   llmMentionRankings,
-  talentXProData = [],
-  isPro = false,
   searchResults = [],
   aiThemes = [],
   attributeThemes = [],
@@ -877,14 +873,14 @@ CRITICAL: When you reference information from a source, add an inline citation l
   const attributeInsights = useMemo(() => {
     if (aiThemes.length === 0) return { positive: [], negative: [] };
 
-    // Group themes by TalentX attribute
+    // Group themes by attribute
     const attributeGroups: { [key: string]: { positive: AITheme[], negative: AITheme[], neutral: AITheme[] } } = {};
-    
+
     aiThemes.forEach(theme => {
-      if (!attributeGroups[theme.talentx_attribute_id]) {
-        attributeGroups[theme.talentx_attribute_id] = { positive: [], negative: [], neutral: [] };
+      if (!attributeGroups[theme.attribute_id]) {
+        attributeGroups[theme.attribute_id] = { positive: [], negative: [], neutral: [] };
       }
-      attributeGroups[theme.talentx_attribute_id][theme.sentiment].push(theme);
+      attributeGroups[theme.attribute_id][theme.sentiment].push(theme);
     });
 
     const positiveAttributes: { attribute: string; name: string; themes: AITheme[]; avgScore: number }[] = [];
@@ -903,20 +899,20 @@ CRITICAL: When you reference information from a source, add an inline citation l
         const positiveRatio = themes.positive.length / totalThemes;
         const negativeRatio = themes.negative.length / totalThemes;
         const avgSentimentScore = aiThemes
-          .filter(t => t.talentx_attribute_id === attributeId)
+          .filter(t => t.attribute_id === attributeId)
           .reduce((sum, t) => sum + t.sentiment_score, 0) / totalThemes;
 
         if (positiveRatio >= 0.7 && avgSentimentScore > 0.5) {
           positiveAttributes.push({
             attribute: attributeId,
-            name: themes.positive[0]?.talentx_attribute_name || attributeId,
+            name: themes.positive[0]?.attribute_name || attributeId,
             themes: themes.positive,
             avgScore: avgSentimentScore
           });
         } else if (negativeRatio >= 0.7 && avgSentimentScore < -0.5) {
           negativeAttributes.push({
             attribute: attributeId,
-            name: themes.negative[0]?.talentx_attribute_name || attributeId,
+            name: themes.negative[0]?.attribute_name || attributeId,
             themes: themes.negative,
             avgScore: avgSentimentScore
           });
@@ -1149,9 +1145,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
       const relevantResponses = periodResponses.filter(r => {
         const promptType = r.confirmed_prompts?.prompt_type;
         return promptType === 'experience' ||
-               promptType === 'competitive' ||
-               promptType === 'talentx_experience' ||
-               promptType === 'talentx_competitive';
+               promptType === 'competitive';
       });
       
       // Sentiment: positive themes / total themes for this period, summed from
@@ -1558,7 +1552,6 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
           <div className="lg:col-span-2 xl:col-span-1">
             <AttributesSummaryCard
-              talentXProData={talentXProData}
               aiThemes={fnThemes}
               attributeThemes={attributeThemes}
               companyName={companyName}
