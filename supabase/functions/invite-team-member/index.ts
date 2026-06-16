@@ -128,8 +128,47 @@ serve(async (req) => {
       Deno.env.get("PUBLIC_SITE_URL") || req.headers.get("origin") || supabaseUrl;
     const redirectTo = `${siteUrl.replace(/\/$/, "")}/welcome`;
     const resendKey = Deno.env.get("RESEND_API_KEY");
+    // Reuse the batch-alert Slack webhook unless a dedicated invite one is set.
+    const slackWebhook =
+      Deno.env.get("INVITE_ALERTS_SLACK_WEBHOOK") ||
+      Deno.env.get("BATCH_ALERTS_SLACK_WEBHOOK");
 
     // --- Shared helpers --------------------------------------------------
+
+    // Posts "X invited Y to <org>" to Slack. Best-effort: never throws, so a
+    // Slack outage can't fail an invite.
+    const postSlackInvite = async (invited: string[], added: string[]) => {
+      if (!slackWebhook || (!invited.length && !added.length)) return;
+      const lines: string[] = [];
+      if (invited.length) lines.push(`✉️ *Invited:* ${invited.join(", ")}`);
+      if (added.length) lines.push(`➕ *Added existing user:* ${added.join(", ")}`);
+      const count = invited.length + added.length;
+      try {
+        await fetch(slackWebhook, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: `${inviterName} invited ${count} teammate(s) to ${org.name}`,
+            blocks: [
+              {
+                type: "header",
+                text: { type: "plain_text", text: "🎉 New PerceptionX invite", emoji: true },
+              },
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `*${inviterName}* (${caller.email}) invited teammate(s) to *${org.name}*:`,
+                },
+              },
+              { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
+            ],
+          }),
+        });
+      } catch (e) {
+        console.error("Slack invite alert failed:", e);
+      }
+    };
 
     const sendInviteEmail = async (toEmail: string, actionLink: string) => {
       const fromAddress =
@@ -370,6 +409,11 @@ serve(async (req) => {
           });
         }
       }
+
+      await postSlackInvite(
+        results.filter((r) => r.status === "invited").map((r) => r.email),
+        results.filter((r) => r.status === "added_existing").map((r) => r.email),
+      );
 
       return json({ results });
     }
