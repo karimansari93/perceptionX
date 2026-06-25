@@ -22,6 +22,7 @@ interface DashboardHeaderProps {
   alwaysMounted?: boolean;
   selectedLocation?: string | null;
   onLocationChange?: (location: string | null) => void;
+  onPendingLocationChange?: (location: string | null) => void;
   locationOptions?: LocationEntry[];
   availablePeriods?: PeriodInfo[];
   selectedPeriod?: string | null;
@@ -40,6 +41,7 @@ export const DashboardHeader = React.memo(({
   alwaysMounted,
   selectedLocation,
   onLocationChange,
+  onPendingLocationChange,
   locationOptions,
   availablePeriods,
   selectedPeriod,
@@ -88,6 +90,7 @@ export const DashboardHeader = React.memo(({
               <LocationFilter
                 selectedLocation={selectedLocation || null}
                 onLocationChange={onLocationChange}
+                onPendingLocationChange={onPendingLocationChange}
                 options={locationOptions}
                 className={isMobile ? "min-w-[120px]" : ""}
               />
@@ -107,6 +110,7 @@ export const DashboardHeader = React.memo(({
               variant="outline"
               alwaysMounted={alwaysMounted}
               onLocationChange={onLocationChange}
+              onPendingLocationChange={onPendingLocationChange}
               className={isMobile ? "min-w-[120px] text-xs" : ""}
             />
           </div>

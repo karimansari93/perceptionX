@@ -1809,11 +1809,23 @@ export const useDashboardData = () => {
     setSelectedPeriod(null);
   }, [currentCompany?.id]);
 
-  // Clear the location filter when the company changes, so a city/country
-  // selected for one company never leaks onto the next. Uses the raw state
-  // setter (clearing needs no loading skeleton).
+  // When the user picks a location that lives in a SIBLING company row (a
+  // country-variant brand like Netflix), the dropdown switches company and wants
+  // that location selected afterwards. Stashing it here and applying it in the
+  // company-change effect below sets it ATOMICALLY with the switch — a
+  // post-switch setState would instead race the reconcile effect (which would
+  // see the value as invalid for the old company and wipe it).
+  const pendingLocationRef = useRef<string | null>(null);
+  const setPendingLocation = useCallback((key: string | null) => {
+    pendingLocationRef.current = key;
+  }, []);
+
+  // On company change, apply any pending location (set just before the switch),
+  // otherwise clear to "All locations" so one company's location never leaks
+  // onto the next.
   useEffect(() => {
-    setSelectedLocationState(null);
+    setSelectedLocationState(pendingLocationRef.current);
+    pendingLocationRef.current = null;
   }, [currentCompany?.id]);
 
   // Same-name sibling companies (legacy country-variant rows, e.g. Netflix-JP ↔
@@ -2009,11 +2021,13 @@ export const useDashboardData = () => {
   // company's responses to load before judging validity, so a starred location
   // restored on mount isn't wiped before its options exist.
   useEffect(() => {
-    if (!selectedLocation || loading || responses.length === 0) return;
+    // Don't judge validity mid-switch: responses/options still reflect the old
+    // company, which would wrongly wipe a location applied for the new one.
+    if (!selectedLocation || loading || isSwitchingCompany || responses.length === 0) return;
     if ((locationRawValues[selectedLocation]?.length ?? 0) === 0) {
       setSelectedLocationState(null);
     }
-  }, [selectedLocation, loading, responses.length, locationRawValues]);
+  }, [selectedLocation, loading, isSwitchingCompany, responses.length, locationRawValues]);
 
   // Determine effective period (latest if none selected)
   const effectivePeriod = useMemo(() => {
@@ -3029,6 +3043,7 @@ export const useDashboardData = () => {
     // Location filter
     selectedLocation,
     setSelectedLocation,
+    setPendingLocation, // Stash a location to apply right after a company switch (sibling-row brands)
     locationOptions, // Merged dropdown options (in-company location_context + sibling-company switches)
     locationMetricsLoading,
   };

@@ -18,6 +18,9 @@ interface LocationFilterProps {
   // Canonical key of the active location, or null for "All locations".
   selectedLocation: string | null;
   onLocationChange: (location: string | null) => void;
+  // Stash a location to apply right after a company switch (sibling-row brands),
+  // so the trigger reflects the picked country once the switch lands.
+  onPendingLocationChange?: (location: string | null) => void;
   // Merged dropdown options (in-company location_context filters + legacy
   // sibling-company switches), built in useDashboardData.
   options?: LocationEntry[];
@@ -34,7 +37,7 @@ const EntryIcon = ({ icon, flagCode }: { icon: LocationEntry['icon']; flagCode: 
   return <Globe className="h-4 w-4" />;
 };
 
-export const LocationFilter = ({ selectedLocation, onLocationChange, options = [], className }: LocationFilterProps) => {
+export const LocationFilter = ({ selectedLocation, onLocationChange, onPendingLocationChange, options = [], className }: LocationFilterProps) => {
   const { switchCompany } = useCompany();
   const [isOpen, setIsOpen] = useState(false);
 
@@ -50,12 +53,14 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, options = [
   const handleSelect = async (entry: LocationEntry) => {
     setIsOpen(false);
     if (entry.action.type === 'switchCompany') {
-      // Legacy cross-country variant: switch to the sibling company. Switching
-      // company clears any active location filter (handled in useDashboardData).
-      onLocationChange(null);
+      // Legacy cross-country variant: switch to the sibling company, and select
+      // this location once the switch lands so the trigger shows it (the target
+      // company's data carries the same canonical location).
+      onPendingLocationChange?.(entry.canonicalKey);
       try {
         await switchCompany(entry.action.companyId);
       } catch (error) {
+        onPendingLocationChange?.(null);
         console.error('Failed to switch company:', error);
       }
       return;
