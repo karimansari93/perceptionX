@@ -40,6 +40,7 @@ import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen
 import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { readStarredView } from "@/hooks/useStarredView";
+import { canonicalizeLocationContext, GENERAL_KEY } from "@/utils/locationContext";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
@@ -75,7 +76,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = usePersistedState<boolean>('dashboard.hasInitiallyLoaded', false);
   const [activeTab, setActiveTab] = useState<'terms' | 'results'>('results');
   const [chartView, setChartView] = useState<'bubble' | 'bar'>('bubble');
-  const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   // Track which lazy tabs have been visited so they stay mounted after first visit
   const [hasVisited, setHasVisited] = useState({
@@ -157,6 +157,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     epsChange,
     epsTrendByJobFunction,
     epsChangeByJobFunction,
+    selectedLocation,
+    setSelectedLocation,
+    locationOptions,
+    locationMetricsLoading,
   } = useDashboardData();
 
   // -----------------------------------------------------------------------
@@ -182,6 +186,14 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     return fns;
   }, [responses]);
 
+  // Proper-case market name for the selected location (e.g. "United States",
+  // "Burbank"), used for benchmark lookups. The benchmark MV keys on country
+  // names; cities simply return no benchmark rows (handled gracefully).
+  const selectedMarketName = useMemo(() => {
+    if (!selectedLocation || selectedLocation === GENERAL_KEY) return null;
+    return locationOptions?.find(o => o.canonicalKey === selectedLocation)?.label ?? null;
+  }, [selectedLocation, locationOptions]);
+
   // GUARANTEE: never strand the dashboard in a no-data state. If the persisted
   // selection points at a function that isn't in the current dataset (e.g.
   // after switching company/period, or stale sessionStorage), every tab would
@@ -205,11 +217,13 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (!uid || starredAppliedForUserRef.current === uid) return;
     const view = readStarredView(uid);
     if (view) {
-      setSelectedLocation(view.location ?? null);
+      // Normalize the stored location so legacy ISO codes ("US") and canonical
+      // keys ("united states", "burbank") both resolve against the new dropdown.
+      setSelectedLocation(canonicalizeLocationContext(view.location));
       setSelectedPeriod(view.period ?? null);
     }
     starredAppliedForUserRef.current = uid;
-  }, [user?.id, setSelectedPeriod]);
+  }, [user?.id, setSelectedPeriod, setSelectedLocation]);
 
   // Search insights feature retired — empty array preserved for components
   // that still accept a `searchResults` prop until those are stripped.
@@ -501,7 +515,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
-            market={selectedLocation}
+            market={selectedMarketName}
             selectedJobFunction={selectedJobFunction}
             onJobFunctionChange={setSelectedJobFunction}
           />
@@ -511,7 +525,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   };
 
   const renderDashboardContent = () => {
-    if (!isFullyLoaded) {
+    // Show the full section skeleton while a location swap is fetching its
+    // metrics, so the page reads as "loading" instead of painting half-swapped
+    // content (stale scorecards next to skeleton cards).
+    if (!isFullyLoaded || locationMetricsLoading) {
       switch (activeSection) {
         case "overview": return <OverviewSkeleton />;
         case "prompts": return <PromptsSkeleton />;
@@ -576,7 +593,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             epsChange={epsChange}
             epsTrendByJobFunction={epsTrendByJobFunction}
             epsChangeByJobFunction={epsChangeByJobFunction}
-            market={selectedLocation}
+            market={selectedMarketName}
             selectedJobFunction={selectedJobFunction}
             onJobFunctionChange={setSelectedJobFunction}
           />
@@ -701,6 +718,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           alwaysMounted={true}
           selectedLocation={activeSection === 'reports' ? undefined : selectedLocation}
           onLocationChange={activeSection === 'reports' ? undefined : setSelectedLocation}
+          locationOptions={activeSection === 'reports' ? undefined : locationOptions}
           availablePeriods={activeSection === 'reports' ? undefined : availablePeriods}
           selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}
           onPeriodChange={activeSection === 'reports' ? undefined : setSelectedPeriod}
