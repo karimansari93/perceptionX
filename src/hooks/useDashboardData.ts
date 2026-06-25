@@ -1982,7 +1982,16 @@ export const useDashboardData = () => {
   // Effective MV state: location-scoped when a location is active, else the
   // company-wide values. Used by every metrics memo below so the headline,
   // trends and per-job-function breakdowns all honor the location filter.
-  const locActive = selectedLocation != null;
+  //
+  // A location is only "active" if it actually exists in THIS company's data —
+  // i.e. it resolves to ≥1 stored spelling. A selectedLocation that doesn't
+  // (e.g. a stale value left over after switching companies, or a country code
+  // the company switcher passed) must fall back to the company-wide ("All
+  // locations") view rather than the empty location-scoped state — otherwise
+  // sentiment/relevance show 0% while visibility still renders. The trigger
+  // already shows "All locations" for such values, so this keeps data and label
+  // consistent.
+  const locActive = selectedLocation != null && (locationRawValues[selectedLocation]?.length ?? 0) > 0;
   const effSentimentMetrics = locActive ? locSentimentMetrics : companySentimentMetrics;
   const effRelevanceMetrics = locActive ? locRelevanceMetrics : companyRelevanceMetrics;
   const effSentimentByMonth = locActive ? locSentimentByMonth : companySentimentByMonth;
@@ -1993,6 +2002,18 @@ export const useDashboardData = () => {
   const effMvTopCompetitors = locActive ? locMvTopCompetitors : mvTopCompetitors;
   const effMvLlmRankings = locActive ? locMvLlmRankings : mvLlmRankings;
   const effAttributeThemes = locActive ? locAttributeThemes : attributeThemes;
+
+  // Reconcile a selection that isn't valid for the current company back to null
+  // ("All locations"), so the internal state matches what the trigger shows and
+  // a stale value isn't persisted by the saved-view star. Waits for the
+  // company's responses to load before judging validity, so a starred location
+  // restored on mount isn't wiped before its options exist.
+  useEffect(() => {
+    if (!selectedLocation || loading || responses.length === 0) return;
+    if ((locationRawValues[selectedLocation]?.length ?? 0) === 0) {
+      setSelectedLocationState(null);
+    }
+  }, [selectedLocation, loading, responses.length, locationRawValues]);
 
   // Determine effective period (latest if none selected)
   const effectivePeriod = useMemo(() => {

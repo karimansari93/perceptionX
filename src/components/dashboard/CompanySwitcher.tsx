@@ -59,14 +59,17 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
 
   const isCurrentOption = (opt: LocationOption) => opt.company.id === currentCompany?.id;
 
-  // Switch to the company record the option represents and align the location
-  // focus to that record's country.
+  // Switch to the company record the option represents and land on its "All
+  // locations" view (null). Passing the record's country code as a location
+  // filter is wrong under the location_context model — the code rarely matches a
+  // stored context spelling, which left the dashboard in a broken 0%-metrics
+  // state. The location dropdown then filters within the newly-selected company.
   const selectOption = async (opt: LocationOption) => {
     setIsOpen(false);
     if (isCurrentOption(opt)) return;
     try {
       await switchCompany(opt.company.id);
-      onLocationChange?.(opt.location);
+      onLocationChange?.(null);
       toast.success('Company switched');
     } catch (error) {
       toast.error('Failed to switch company');
