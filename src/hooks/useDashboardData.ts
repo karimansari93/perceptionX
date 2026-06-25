@@ -7,6 +7,110 @@ import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
 import { parseCompetitors } from "@/utils/competitorUtils";
+import { buildLocationOptions, canonicalizeLocationContext, GENERAL_KEY } from "@/utils/locationContext";
+
+// Pure aggregation of `company_*_by_location_mv` rows into the same shape the
+// company-wide MV fetch produces (snapshot + per-month map). Shared by the
+// location-scoped metrics fetch so a sub-country filter (e.g. a city) re-scopes
+// sentiment/relevance exactly like the company-wide path.
+const aggregateSentimentRows = (rows: any[]): { metrics: any | null; byMonth: Record<string, number> } => {
+  const agg = rows.reduce((acc, row) => {
+    acc.totalThemes += row.total_themes || 0;
+    acc.positiveThemes += row.positive_themes || 0;
+    acc.negativeThemes += row.negative_themes || 0;
+    acc.neutralThemes += row.neutral_themes || 0;
+    acc.totalSentimentScore += (row.avg_sentiment_score || 0) * (row.total_themes || 0);
+    acc.totalWeight += row.total_themes || 0;
+    return acc;
+  }, { totalThemes: 0, positiveThemes: 0, negativeThemes: 0, neutralThemes: 0, totalSentimentScore: 0, totalWeight: 0 });
+
+  const metrics = agg.totalThemes > 0 ? {
+    sentiment_ratio: agg.positiveThemes / agg.totalThemes,
+    avg_sentiment_score: agg.totalWeight > 0 ? agg.totalSentimentScore / agg.totalWeight : 0,
+    total_themes: agg.totalThemes,
+    positive_themes: agg.positiveThemes,
+    negative_themes: agg.negativeThemes,
+    neutral_themes: agg.neutralThemes,
+  } : null;
+
+  const byMonthAcc: Record<string, { positive: number; total: number }> = {};
+  rows.forEach(row => {
+    if (!row.response_month) return;
+    const key = String(row.response_month).slice(0, 7);
+    if (!byMonthAcc[key]) byMonthAcc[key] = { positive: 0, total: 0 };
+    byMonthAcc[key].positive += row.positive_themes || 0;
+    byMonthAcc[key].total += row.total_themes || 0;
+  });
+  const byMonth: Record<string, number> = {};
+  for (const [key, val] of Object.entries(byMonthAcc)) {
+    byMonth[key] = val.total > 0 ? val.positive / val.total : 0;
+  }
+  return { metrics, byMonth };
+};
+
+const aggregateRelevanceRows = (rows: any[]): { metrics: any | null; byMonth: Record<string, number> } => {
+  const agg = rows.reduce((acc, row) => {
+    acc.totalCitations += row.total_citations || 0;
+    acc.validCitations += row.valid_citations || 0;
+    acc.totalRelevanceScore += (row.relevance_score || 0) * (row.valid_citations || 0);
+    acc.totalWeight += row.valid_citations || 0;
+    return acc;
+  }, { totalCitations: 0, validCitations: 0, totalRelevanceScore: 0, totalWeight: 0 });
+
+  const metrics = agg.validCitations > 0 ? {
+    relevance_score: agg.totalWeight > 0 ? agg.totalRelevanceScore / agg.totalWeight : 0,
+    total_citations: agg.totalCitations,
+    valid_citations: agg.validCitations,
+  } : null;
+
+  const byMonthAcc: Record<string, { scoreSum: number; weight: number }> = {};
+  rows.forEach(row => {
+    if (!row.response_month) return;
+    const key = String(row.response_month).slice(0, 7);
+    if (!byMonthAcc[key]) byMonthAcc[key] = { scoreSum: 0, weight: 0 };
+    const w = row.valid_citations || 0;
+    byMonthAcc[key].scoreSum += (row.relevance_score || 0) * w;
+    byMonthAcc[key].weight += w;
+  });
+  const byMonth: Record<string, number> = {};
+  for (const [key, val] of Object.entries(byMonthAcc)) {
+    byMonth[key] = val.weight > 0 ? val.scoreSum / val.weight : 0;
+  }
+  return { metrics, byMonth };
+};
+
+// Collapse `company_attribute_themes_by_location_mv` rows (one per location
+// bucket) into the same per (attribute, month, job_function) shape that
+// `company_attribute_themes_mv` produces, so the Themes tab and Overview
+// attribute cards consume location-scoped rows without any shape change.
+const aggregateAttributeThemeRows = (rows: any[]): any[] => {
+  const acc = new Map<string, any>();
+  for (const r of rows) {
+    const key = `${r.attribute_id}|${r.response_month ?? ''}|${r.job_function_context ?? ''}`;
+    let e = acc.get(key);
+    if (!e) {
+      e = {
+        attribute_id: r.attribute_id,
+        response_month: r.response_month,
+        job_function_context: r.job_function_context,
+        total_themes: 0, positive_themes: 0, negative_themes: 0, neutral_themes: 0,
+        response_count: 0, _sentSum: 0, _sentW: 0,
+      };
+      acc.set(key, e);
+    }
+    e.total_themes += r.total_themes || 0;
+    e.positive_themes += r.positive_themes || 0;
+    e.negative_themes += r.negative_themes || 0;
+    e.neutral_themes += r.neutral_themes || 0;
+    e.response_count += r.response_count || 0;
+    e._sentSum += (r.avg_sentiment_score || 0) * (r.total_themes || 0);
+    e._sentW += r.total_themes || 0;
+  }
+  return Array.from(acc.values()).map(({ _sentSum, _sentW, ...rest }) => ({
+    ...rest,
+    avg_sentiment_score: _sentW > 0 ? _sentSum / _sentW : 0,
+  }));
+};
 
 export interface PeriodInfo {
   key: string;       // e.g. "2026-03"
@@ -40,7 +144,7 @@ export const isOverallCandidateExperience = (r: { confirmed_prompts?: any }): bo
 
 export const useDashboardData = () => {
   const { user: rawUser, clearSession } = useAuth();
-  const { currentCompany, loading: companyLoading } = useCompany();
+  const { currentCompany, userCompanies, loading: companyLoading } = useCompany();
 
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
@@ -86,6 +190,37 @@ export const useDashboardData = () => {
   // Raw MV rows kept so the Overview tab can re-aggregate per job function.
   const [sentimentMvRows, setSentimentMvRows] = useState<any[]>([]);
   const [relevanceMvRows, setRelevanceMvRows] = useState<any[]>([]);
+  // Location filter (canonical key from confirmed_prompts.location_context, or
+  // null for "all locations"). When set, sentiment/relevance are re-scoped from
+  // the `_by_location_mv` views below and responses are filtered in-memory.
+  const [selectedLocation, setSelectedLocationState] = useState<string | null>(null);
+  const [locationMetricsLoading, setLocationMetricsLoading] = useState(false);
+  const [locSentimentMetrics, setLocSentimentMetrics] = useState<any | null>(null);
+  const [locRelevanceMetrics, setLocRelevanceMetrics] = useState<any | null>(null);
+  const [locSentimentByMonth, setLocSentimentByMonth] = useState<Record<string, number>>({});
+  const [locRelevanceByMonth, setLocRelevanceByMonth] = useState<Record<string, number>>({});
+  const [locSentimentMvRows, setLocSentimentMvRows] = useState<any[]>([]);
+  const [locRelevanceMvRows, setLocRelevanceMvRows] = useState<any[]>([]);
+  // Location-scoped sources / competitors / LLM rankings (from the
+  // `_by_location_mv` views), used in place of the company-wide MV state when a
+  // location is active so Sources, Competitors and the LLM list re-scope too.
+  const [locMvTopCitations, setLocMvTopCitations] = useState<CitationCount[]>([]);
+  const [locMvTopCompetitors, setLocMvTopCompetitors] = useState<{company: string; count: number}[]>([]);
+  const [locMvLlmRankings, setLocMvLlmRankings] = useState<LLMMentionRanking[]>([]);
+  const [locAttributeThemes, setLocAttributeThemes] = useState<any[]>([]);
+
+  // Public location setter. Flips the location-loading flag on the SAME tick as
+  // the selection change (not later, when the fetch effect runs) so the UI goes
+  // straight to a skeleton instead of briefly painting half-swapped content.
+  // Skipped when re-selecting the current location (the fetch effect wouldn't
+  // run, so the flag would never clear) or when clearing to "all locations"
+  // (company-wide data is already loaded — no fetch, no skeleton needed).
+  const selectedLocationRef = useRef(selectedLocation);
+  selectedLocationRef.current = selectedLocation;
+  const setSelectedLocation = useCallback((loc: string | null) => {
+    if (loc && loc !== selectedLocationRef.current) setLocationMetricsLoading(true);
+    setSelectedLocationState(loc);
+  }, []);
   // Track if metrics are still being calculated (for UX - show all metrics together)
   // Start as true, will be set to false when all metrics are ready
   const [metricsCalculating, setMetricsCalculating] = useState(true);
@@ -1674,6 +1809,191 @@ export const useDashboardData = () => {
     setSelectedPeriod(null);
   }, [currentCompany?.id]);
 
+  // Clear the location filter when the company changes, so a city/country
+  // selected for one company never leaks onto the next. Uses the raw state
+  // setter (clearing needs no loading skeleton).
+  useEffect(() => {
+    setSelectedLocationState(null);
+  }, [currentCompany?.id]);
+
+  // Same-name sibling companies (legacy country-variant rows, e.g. Netflix-JP ↔
+  // Netflix-BR) feed the cross-country "switch company" entries in the dropdown.
+  const sameNameCompanies = useMemo(() => {
+    if (!currentCompany) return [];
+    const nameLower = currentCompany.name.toLowerCase();
+    return userCompanies.filter(c => c.id !== currentCompany.id && c.name.toLowerCase() === nameLower);
+  }, [userCompanies, currentCompany]);
+
+  // Merged dropdown options (in-company location_context filters + sibling
+  // company switches) and the canonical-key → raw-values map used to filter
+  // responses against every stored spelling of a location.
+  const { options: locationOptions, rawValuesByKey: locationRawValues } = useMemo(
+    () => buildLocationOptions(responses, sameNameCompanies),
+    [responses, sameNameCompanies]
+  );
+
+  // Predicate that keeps a response when no location is selected, or when its
+  // location_context matches one of the selected location's raw spellings.
+  const matchesLocation = useMemo(() => {
+    if (!selectedLocation) return () => true;
+    // "General" = every no-location prompt (null/empty/GLOBAL_LIKE). Match by
+    // "canonicalizes to general" rather than raw spelling, since the response's
+    // raw value (null, 'GLOBAL', …) differs from the MV bucket key.
+    if (selectedLocation === GENERAL_KEY) {
+      return (r: PromptResponse) => canonicalizeLocationContext(r.confirmed_prompts?.location_context) === null;
+    }
+    const allowed = new Set((locationRawValues[selectedLocation] || []).map(v => v.trim()));
+    if (allowed.size === 0) return () => true; // selection not in this company — don't strand the UI
+    return (r: PromptResponse) => {
+      const raw = r.confirmed_prompts?.location_context;
+      return !!raw && allowed.has(raw.trim());
+    };
+  }, [selectedLocation, locationRawValues]);
+
+  // Re-scope sentiment & relevance to the selected location using the
+  // pre-aggregated `_by_location_mv` views (same columns as the company-wide
+  // MVs plus a location_context dimension). Leaves the company-wide MV state and
+  // its per-company cache untouched; the `effective*` selectors below pick the
+  // location-scoped values whenever a location is active.
+  const selectedRawValues = selectedLocation ? (locationRawValues[selectedLocation] || []) : [];
+  const selectedRawKey = selectedRawValues.join('|');
+  useEffect(() => {
+    const companyId = currentCompany?.id;
+    if (!user || !companyId || !selectedLocation || selectedRawValues.length === 0) {
+      setLocationMetricsLoading(false);
+      setLocSentimentMetrics(null);
+      setLocRelevanceMetrics(null);
+      setLocSentimentByMonth({});
+      setLocRelevanceByMonth({});
+      setLocSentimentMvRows([]);
+      setLocRelevanceMvRows([]);
+      setLocMvTopCitations([]);
+      setLocMvTopCompetitors([]);
+      setLocMvLlmRankings([]);
+      setLocAttributeThemes([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLocationMetricsLoading(true);
+    (async () => {
+      try {
+        const MV_ROW_CAP = 10000;
+        const [sentimentResult, relevanceResult, sourcesResult, competitorsResult, llmResult, attributeThemesResult] = await Promise.all([
+          supabase
+            .from('company_sentiment_scores_by_location_mv')
+            .select('*')
+            .eq('company_id', companyId)
+            .in('location_context', selectedRawValues)
+            .order('response_month', { ascending: false })
+            .limit(MV_ROW_CAP),
+          supabase
+            .from('company_relevance_scores_by_location_mv')
+            .select('*')
+            .eq('company_id', companyId)
+            .in('location_context', selectedRawValues)
+            .order('response_month', { ascending: false })
+            .limit(MV_ROW_CAP),
+          supabase
+            .from('company_top_sources_by_location_mv')
+            .select('domain, citation_count')
+            .eq('company_id', companyId)
+            .in('location_context', selectedRawValues),
+          supabase
+            .from('company_competitors_by_location_mv')
+            .select('competitor_name, mention_count')
+            .eq('company_id', companyId)
+            .in('location_context', selectedRawValues),
+          supabase
+            .from('company_llm_rankings_by_location_mv')
+            .select('ai_model, mentions')
+            .eq('company_id', companyId)
+            .in('location_context', selectedRawValues),
+          supabase
+            .from('company_attribute_themes_by_location_mv')
+            .select('attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count')
+            .eq('company_id', companyId)
+            .in('location_context', selectedRawValues)
+            .limit(MV_ROW_CAP),
+        ]);
+        if (cancelled) return;
+
+        const sentimentRows = sentimentResult.data || [];
+        const relevanceRows = relevanceResult.data || [];
+        const sentiment = aggregateSentimentRows(sentimentRows);
+        const relevance = aggregateRelevanceRows(relevanceRows);
+
+        setLocSentimentMvRows(sentimentRows);
+        setLocRelevanceMvRows(relevanceRows);
+        setLocSentimentMetrics(sentiment.metrics);
+        setLocSentimentByMonth(sentiment.byMonth);
+        setLocRelevanceMetrics(relevance.metrics);
+        setLocRelevanceByMonth(relevance.byMonth);
+
+        // A location can span several raw spellings (e.g. "United States" +
+        // "the United States"), so sum each domain/competitor/model across the
+        // returned buckets, then sort — mirroring the company-wide shaping.
+        const sumBy = <T extends string>(rows: any[], keyField: string, valField: string) => {
+          const acc: Record<string, number> = {};
+          (rows || []).forEach(r => {
+            const k = r[keyField];
+            if (!k) return;
+            acc[k] = (acc[k] || 0) + (r[valField] || 0);
+          });
+          return acc;
+        };
+
+        const srcAcc = sumBy(sourcesResult.data || [], 'domain', 'citation_count');
+        setLocMvTopCitations(
+          Object.entries(srcAcc).map(([domain, count]) => ({ domain, count }))
+            .sort((a, b) => b.count - a.count).slice(0, 30)
+        );
+
+        const compAcc = sumBy(competitorsResult.data || [], 'competitor_name', 'mention_count');
+        setLocMvTopCompetitors(
+          Object.entries(compAcc).map(([company, count]) => ({ company, count }))
+            .sort((a, b) => b.count - a.count).slice(0, 30)
+        );
+
+        const llmAcc = sumBy(llmResult.data || [], 'ai_model', 'mentions');
+        setLocMvLlmRankings(
+          Object.entries(llmAcc).map(([model, mentions]) => ({
+            model,
+            displayName: getLLMDisplayName(model),
+            mentions,
+            logoUrl: getLLMLogo(model),
+          })).sort((a, b) => b.mentions - a.mentions)
+        );
+
+        setLocAttributeThemes(aggregateAttributeThemeRows(attributeThemesResult.data || []));
+      } catch (error) {
+        if (!cancelled) console.warn('Error fetching location-scoped metrics:', error);
+      } finally {
+        if (!cancelled) setLocationMetricsLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // selectedRawKey captures the selected location's raw spellings; refetch
+    // when the company, selection, or that set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, currentCompany?.id, selectedLocation, selectedRawKey]);
+
+  // Effective MV state: location-scoped when a location is active, else the
+  // company-wide values. Used by every metrics memo below so the headline,
+  // trends and per-job-function breakdowns all honor the location filter.
+  const locActive = selectedLocation != null;
+  const effSentimentMetrics = locActive ? locSentimentMetrics : companySentimentMetrics;
+  const effRelevanceMetrics = locActive ? locRelevanceMetrics : companyRelevanceMetrics;
+  const effSentimentByMonth = locActive ? locSentimentByMonth : companySentimentByMonth;
+  const effRelevanceByMonth = locActive ? locRelevanceByMonth : companyRelevanceByMonth;
+  const effSentimentMvRows = locActive ? locSentimentMvRows : sentimentMvRows;
+  const effRelevanceMvRows = locActive ? locRelevanceMvRows : relevanceMvRows;
+  const effMvTopCitations = locActive ? locMvTopCitations : mvTopCitations;
+  const effMvTopCompetitors = locActive ? locMvTopCompetitors : mvTopCompetitors;
+  const effMvLlmRankings = locActive ? locMvLlmRankings : mvLlmRankings;
+  const effAttributeThemes = locActive ? locAttributeThemes : attributeThemes;
+
   // Determine effective period (latest if none selected)
   const effectivePeriod = useMemo(() => {
     if (availablePeriods.length === 0) return null;
@@ -1695,15 +2015,31 @@ export const useDashboardData = () => {
   // (Overall Candidate Experience is being removed soon). Everything the UI
   // consumes flows through here, so hiding once covers prompts, themes,
   // competitors, sources, and the EPS/discovery stats.
+  // Hide deprecated prompt sets AND apply the active location filter here, so
+  // both periodFilteredResponses and previousPeriodResponses (and therefore
+  // every tab, metric, citation and competitor downstream) re-scope to the
+  // selected location automatically.
   const visibleResponses = useMemo(
-    () => responses.filter(r => !isOverallCandidateExperience(r)),
-    [responses]
+    () => responses.filter(r => !isOverallCandidateExperience(r) && matchesLocation(r)),
+    [responses, matchesLocation]
   );
 
   const periodFilteredResponses = useMemo(() => {
     if (!effectivePeriod || availablePeriods.length <= 1) return visibleResponses;
     return visibleResponses.filter(r => responseMonthKey(r) === effectivePeriod.key);
   }, [visibleResponses, effectivePeriod, availablePeriods]);
+
+  // Per-response AI themes are tied to responses via response_id. When a
+  // location is active, intersect them with the in-location responses so the
+  // Themes tab (and Overview theme cards) only show themes from that location.
+  // (The tabs only narrow themes by response membership when a job function is
+  // picked, so without this an "All functions" view would leak every location's
+  // themes.) Scoped by location only — not period — to preserve all-time themes.
+  const effAiThemes = useMemo(() => {
+    if (!locActive) return aiThemes;
+    const ids = new Set(visibleResponses.map(r => r.id));
+    return aiThemes.filter(t => ids.has(t.response_id));
+  }, [locActive, aiThemes, visibleResponses]);
 
   // Previous period responses for per-tab delta computation (by snapshot month).
   const previousPeriodResponses = useMemo(() => {
@@ -1746,13 +2082,13 @@ export const useDashboardData = () => {
     };
 
     // Sentiment — most recent prior month in the sentiment MV.
-    const prevSentimentRatio = findMostRecentPrior(companySentimentByMonth);
+    const prevSentimentRatio = findMostRecentPrior(effSentimentByMonth);
     const sentimentScore = typeof prevSentimentRatio === 'number'
       ? Math.round(Math.max(0, Math.min(100, prevSentimentRatio * 100)))
       : undefined;
 
     // Relevance — most recent prior month in the relevance MV.
-    const prevRelevance = findMostRecentPrior(companyRelevanceByMonth);
+    const prevRelevance = findMostRecentPrior(effRelevanceByMonth);
     const relevanceScore = typeof prevRelevance === 'number'
       ? Math.round(prevRelevance)
       : undefined;
@@ -1764,7 +2100,7 @@ export const useDashboardData = () => {
     if (priorAvailable.length > 0) {
       // availablePeriods is already sorted newest-first.
       const chosen = priorAvailable[0];
-      const chosenResponses = responses.filter((r) => {
+      const chosenResponses = visibleResponses.filter((r) => {
         const d = new Date(r.tested_at);
         return d >= chosen.startDate && d <= chosen.endDate;
       });
@@ -1780,7 +2116,7 @@ export const useDashboardData = () => {
       return null;
     }
     return { sentimentScore, visibilityScore, relevanceScore };
-  }, [effectivePeriod, availablePeriods, responses, companySentimentByMonth, companyRelevanceByMonth]);
+  }, [effectivePeriod, availablePeriods, visibleResponses, effSentimentByMonth, effRelevanceByMonth]);
 
   const promptsData: PromptData[] = useMemo(() => {
     // Group responses by prompt text using a Map for O(1) lookup. The prior
@@ -1931,11 +2267,13 @@ export const useDashboardData = () => {
     const relevanceReady = hasBackendRelevance || recencyFetchCompleted;
     
     // CRITICAL: Don't show anything until sentiment is ready
-    // All metrics ready when responses are loaded, backend query complete, AND sentiment/relevance are ready
-    const allReady = responsesReady && backendMetricsReady && sentimentReady && relevanceReady;
+    // All metrics ready when responses are loaded, backend query complete, AND sentiment/relevance are ready.
+    // When a location filter is active, also wait for the location-scoped MV
+    // fetch so the scorecards don't flash company-wide numbers first.
+    const allReady = responsesReady && backendMetricsReady && sentimentReady && relevanceReady && !locationMetricsLoading;
     setMetricsCalculating(!allReady);
-    
-  }, [loading, responses.length, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length]);
+
+  }, [loading, responses.length, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length, locationMetricsLoading]);
 
   const metrics: DashboardMetrics = useMemo(() => {
     // Use period-filtered responses when a period is selected (multi-month companies)
@@ -1947,7 +2285,7 @@ export const useDashboardData = () => {
 
     // Don't calculate if still loading AND we don't have backend metrics
     // If backend metrics exist, we can use them even if responses aren't fully loaded yet
-    if ((loading || responses.length === 0) && !companySentimentMetrics && !companyRelevanceMetrics) {
+    if ((loading || responses.length === 0) && !effSentimentMetrics && !effRelevanceMetrics) {
       return {
         averageSentiment: 0,
         sentimentLabel: 'Neutral',
@@ -1979,18 +2317,18 @@ export const useDashboardData = () => {
 
     // Use materialized view sentiment only — no frontend fallback
     const effectivePeriodKey = effectivePeriod?.key;
-    if (effectivePeriodKey && companySentimentByMonth[effectivePeriodKey] !== undefined) {
+    if (effectivePeriodKey && effSentimentByMonth[effectivePeriodKey] !== undefined) {
       // Period selected — use per-month MV value
-      averageSentiment = companySentimentByMonth[effectivePeriodKey];
-    } else if (companySentimentMetrics) {
+      averageSentiment = effSentimentByMonth[effectivePeriodKey];
+    } else if (effSentimentMetrics) {
       // No specific period — use all-months aggregate from MV
-      averageSentiment = companySentimentMetrics.sentiment_ratio || 0;
+      averageSentiment = effSentimentMetrics.sentiment_ratio || 0;
     }
     // Estimate counts based on ratios (for display purposes)
     const totalResponses = responses.length;
-    if (companySentimentMetrics && companySentimentMetrics.total_themes > 0) {
-      const positiveRatio = companySentimentMetrics.positive_themes / companySentimentMetrics.total_themes;
-      const negativeRatio = companySentimentMetrics.negative_themes / companySentimentMetrics.total_themes;
+    if (effSentimentMetrics && effSentimentMetrics.total_themes > 0) {
+      const positiveRatio = effSentimentMetrics.positive_themes / effSentimentMetrics.total_themes;
+      const negativeRatio = effSentimentMetrics.negative_themes / effSentimentMetrics.total_themes;
       positiveCount = Math.round(totalResponses * positiveRatio);
       negativeCount = Math.round(totalResponses * negativeRatio);
       neutralCount = totalResponses - positiveCount - negativeCount;
@@ -2080,9 +2418,9 @@ export const useDashboardData = () => {
       : 0;
 
     // Use period-specific relevance from MV when a period is active, otherwise fall back to all-months aggregate
-    const averageRelevance = (effectivePeriodKey && companyRelevanceByMonth[effectivePeriodKey] !== undefined)
-      ? companyRelevanceByMonth[effectivePeriodKey]
-      : companyRelevanceMetrics?.relevance_score ?? 0;
+    const averageRelevance = (effectivePeriodKey && effRelevanceByMonth[effectivePeriodKey] !== undefined)
+      ? effRelevanceByMonth[effectivePeriodKey]
+      : effRelevanceMetrics?.relevance_score ?? 0;
 
     // Calculate overall perception score
     const calculatePerceptionScore = () => {
@@ -2132,7 +2470,7 @@ export const useDashboardData = () => {
     };
     
     return metricsResult;
-  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, companySentimentMetrics, companySentimentByMonth, companyRelevanceMetrics, companyRelevanceByMonth, effectivePeriod, getCitations]);
+  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations]);
 
   // Per-month EPS trend powering the Overview headline sparkline. One point per
   // available month (oldest → selected period), each computed with the SAME
@@ -2145,11 +2483,11 @@ export const useDashboardData = () => {
     const periodsAsc = [...availablePeriods].sort(
       (a, b) => a.startDate.getTime() - b.startDate.getTime()
     );
-    const sentimentAgg = companySentimentMetrics?.sentiment_ratio;
-    const relevanceAgg = companyRelevanceMetrics?.relevance_score;
+    const sentimentAgg = effSentimentMetrics?.sentiment_ratio;
+    const relevanceAgg = effRelevanceMetrics?.relevance_score;
 
     const full = periodsAsc.map((p) => {
-      const monthResponses = responses.filter((r) => {
+      const monthResponses = visibleResponses.filter((r) => {
         const d = new Date(r.tested_at);
         return d >= p.startDate && d <= p.endDate;
       });
@@ -2158,10 +2496,10 @@ export const useDashboardData = () => {
         ? Math.round((mentioned / monthResponses.length) * 100)
         : 0;
 
-      const sRatio = companySentimentByMonth[p.key] ?? sentimentAgg ?? 0;
+      const sRatio = effSentimentByMonth[p.key] ?? sentimentAgg ?? 0;
       const sentiment = Math.round(Math.max(0, Math.min(100, sRatio * 100)));
 
-      const rVal = companyRelevanceByMonth[p.key] ?? relevanceAgg ?? 0;
+      const rVal = effRelevanceByMonth[p.key] ?? relevanceAgg ?? 0;
       const relevance = Math.round(rVal);
 
       const score = Math.round(sentiment * 0.5 + visibility * 0.3 + relevance * 0.2);
@@ -2180,7 +2518,7 @@ export const useDashboardData = () => {
     // card headline is showing (default selection is the latest month).
     const selIdx = effectivePeriod ? full.findIndex((d) => d.key === effectivePeriod.key) : full.length - 1;
     return selIdx >= 0 ? full.slice(0, selIdx + 1) : full;
-  }, [availablePeriods, responses, companySentimentByMonth, companyRelevanceByMonth, companySentimentMetrics, companyRelevanceMetrics, effectivePeriod]);
+  }, [availablePeriods, visibleResponses, effSentimentByMonth, effRelevanceByMonth, effSentimentMetrics, effRelevanceMetrics, effectivePeriod]);
 
   // Period-over-period EPS delta — last two points of the trimmed trend.
   const epsChange = useMemo<number | null>(() => {
@@ -2200,8 +2538,8 @@ export const useDashboardData = () => {
     }> = {};
 
     const fns = new Set<string>();
-    sentimentMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
-    relevanceMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    effSentimentMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    effRelevanceMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
     periodFilteredResponses.forEach(r => {
       const f = r.confirmed_prompts?.job_function_context?.trim();
       if (f) fns.add(f);
@@ -2210,7 +2548,7 @@ export const useDashboardData = () => {
     fns.forEach(fn => {
       // Sentiment — positive themes / total themes across this function's rows
       let totalThemes = 0, positiveThemes = 0;
-      sentimentMvRows.forEach(r => {
+      effSentimentMvRows.forEach(r => {
         if (r.job_function_context !== fn) return;
         totalThemes += r.total_themes || 0;
         positiveThemes += r.positive_themes || 0;
@@ -2221,7 +2559,7 @@ export const useDashboardData = () => {
 
       // Relevance — citation-weighted average recency score
       let relWeighted = 0, relWeight = 0;
-      relevanceMvRows.forEach(r => {
+      effRelevanceMvRows.forEach(r => {
         if (r.job_function_context !== fn) return;
         relWeighted += (r.relevance_score || 0) * (r.valid_citations || 0);
         relWeight += r.valid_citations || 0;
@@ -2250,7 +2588,7 @@ export const useDashboardData = () => {
     });
 
     return result;
-  }, [sentimentMvRows, relevanceMvRows, periodFilteredResponses]);
+  }, [effSentimentMvRows, effRelevanceMvRows, periodFilteredResponses]);
 
   // Per-job-function monthly EPS trend — same 50/30/20 formula as
   // metricsByJobFunction, resolved one month at a time, so the headline
@@ -2265,13 +2603,13 @@ export const useDashboardData = () => {
     const periodsAsc = [...availablePeriods].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
 
     const fns = new Set<string>();
-    sentimentMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
-    relevanceMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
-    responses.forEach(r => { const f = r.confirmed_prompts?.job_function_context?.trim(); if (f) fns.add(f); });
+    effSentimentMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    effRelevanceMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    visibleResponses.forEach(r => { const f = r.confirmed_prompts?.job_function_context?.trim(); if (f) fns.add(f); });
 
     // Pre-bucket MV rows by "fn YYYY-MM" so each (fn, month) lookup is O(1).
     const sentBucket = new Map<string, { pos: number; tot: number }>();
-    sentimentMvRows.forEach(r => {
+    effSentimentMvRows.forEach(r => {
       if (!r.job_function_context || !r.response_month) return;
       const k = `${r.job_function_context} ${r.response_month.slice(0, 7)}`;
       const b = sentBucket.get(k) || { pos: 0, tot: 0 };
@@ -2279,7 +2617,7 @@ export const useDashboardData = () => {
       sentBucket.set(k, b);
     });
     const relBucket = new Map<string, { w: number; wt: number }>();
-    relevanceMvRows.forEach(r => {
+    effRelevanceMvRows.forEach(r => {
       if (!r.job_function_context || !r.response_month) return;
       const k = `${r.job_function_context} ${r.response_month.slice(0, 7)}`;
       const b = relBucket.get(k) || { w: 0, wt: 0 };
@@ -2292,7 +2630,7 @@ export const useDashboardData = () => {
       const agg = metricsByJobFunction[fn]; // all-months aggregate (fallback + endpoint match)
       const series: any[] = [];
       periodsAsc.forEach(p => {
-        const monthResponses = responses.filter(r => {
+        const monthResponses = visibleResponses.filter(r => {
           if (r.confirmed_prompts?.job_function_context?.trim() !== fn) return false;
           const d = new Date(r.tested_at);
           return d >= p.startDate && d <= p.endDate;
@@ -2329,7 +2667,7 @@ export const useDashboardData = () => {
       result[fn] = trimmed;
     });
     return result;
-  }, [availablePeriods, sentimentMvRows, relevanceMvRows, responses, effectivePeriod, metricsByJobFunction]);
+  }, [availablePeriods, effSentimentMvRows, effRelevanceMvRows, visibleResponses, effectivePeriod, metricsByJobFunction]);
 
   // Per-function period-over-period EPS delta (last two trend points).
   const epsChangeByJobFunction = useMemo<Record<string, number | null>>(() => {
@@ -2364,9 +2702,10 @@ export const useDashboardData = () => {
   const topCitations: CitationCount[] = useMemo(() => {
     if (!currentCompany?.id || isSwitchingCompany) return [];
 
-    // Start with MV data (AI citations, pre-aggregated on the backend)
+    // Start with MV data (AI citations, pre-aggregated on the backend) —
+    // location-scoped when a location filter is active, else company-wide.
     const combined: Record<string, number> = {};
-    mvTopCitations.forEach(c => {
+    effMvTopCitations.forEach(c => {
       combined[c.domain] = (combined[c.domain] || 0) + c.count;
     });
 
@@ -2379,9 +2718,12 @@ export const useDashboardData = () => {
       }
     });
 
-    // Fallback: if MV hasn't populated yet, compute from responses (same logic as before)
-    if (mvTopCitations.length === 0 && responses.length > 0) {
-      const currentCompanyResponses = responses.filter(r => r.company_id === currentCompany.id);
+    // Fallback: if the MV hasn't populated yet, compute from responses. Use the
+    // location+period-scoped responses when a location is active so the fallback
+    // stays scoped too.
+    const fallbackResponses = locActive ? periodFilteredResponses : responses;
+    if (effMvTopCitations.length === 0 && fallbackResponses.length > 0) {
+      const currentCompanyResponses = fallbackResponses.filter(r => r.company_id === currentCompany.id);
       const allCitations = currentCompanyResponses.flatMap(r => enhanceCitations(getCitations(r.id)));
       const websiteCitations = allCitations.filter(citation => citation.type === 'website' && citation.url);
       websiteCitations.forEach((citation: EnhancedCitation) => {
@@ -2396,7 +2738,7 @@ export const useDashboardData = () => {
       .map(([domain, count]) => ({ domain, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 30);
-  }, [mvTopCitations, searchResults, responses, currentCompany?.id, isSwitchingCompany, getCitations]);
+  }, [effMvTopCitations, locActive, periodFilteredResponses, searchResults, responses, currentCompany?.id, isSwitchingCompany, getCitations]);
 
   const preparePromptData = (prompts: any[], responses: any[]): PromptData[] => {
     return prompts.map(prompt => {
@@ -2434,9 +2776,10 @@ export const useDashboardData = () => {
   const topCompetitors = useMemo(() => {
     if (!companyName || isSwitchingCompany) return [];
 
-    // Start with MV data (AI responses, pre-aggregated on the backend)
+    // Start with MV data (AI responses, pre-aggregated on the backend) —
+    // location-scoped when a location filter is active, else company-wide.
     const combined: Record<string, number> = {};
-    mvTopCompetitors.forEach(c => {
+    effMvTopCompetitors.forEach(c => {
       combined[c.company] = (combined[c.company] || 0) + c.count;
     });
 
@@ -2451,9 +2794,11 @@ export const useDashboardData = () => {
       }
     });
 
-    // Fallback: if MV hasn't populated yet, compute from responses
-    if (mvTopCompetitors.length === 0 && responses.length > 0 && !loading) {
-      responses.forEach(response => {
+    // Fallback: if the MV hasn't populated yet, compute from responses
+    // (location+period-scoped when a location is active).
+    const fallbackResponses = locActive ? periodFilteredResponses : responses;
+    if (effMvTopCompetitors.length === 0 && fallbackResponses.length > 0 && !loading) {
+      fallbackResponses.forEach(response => {
         if (response.detected_competitors) {
           const validCompetitors = parseCompetitors(response.detected_competitors, companyName);
           validCompetitors.forEach(competitor => {
@@ -2467,15 +2812,17 @@ export const useDashboardData = () => {
       .map(([company, count]) => ({ company, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 20);
-  }, [mvTopCompetitors, searchResults, responses, companyName, loading, isSwitchingCompany]);
+  }, [effMvTopCompetitors, locActive, periodFilteredResponses, searchResults, responses, companyName, loading, isSwitchingCompany]);
 
   const llmMentionRankings = useMemo(() => {
-    // Use MV data if available; fall back to responses when MV hasn't refreshed yet
-    if (mvLlmRankings.length > 0) return mvLlmRankings;
+    // Use MV data if available (location-scoped when a location is active);
+    // fall back to responses when the MV hasn't refreshed yet.
+    if (effMvLlmRankings.length > 0) return effMvLlmRankings;
 
-    if (!responses.length) return [];
+    const fallbackResponses = locActive ? periodFilteredResponses : responses;
+    if (!fallbackResponses.length) return [];
     const modelMentions: Record<string, number> = {};
-    responses.forEach(response => {
+    fallbackResponses.forEach(response => {
       if (response.company_mentioned) {
         modelMentions[response.ai_model] = (modelMentions[response.ai_model] || 0) + 1;
       }
@@ -2488,7 +2835,7 @@ export const useDashboardData = () => {
         logoUrl: getLLMLogo(model),
       }))
       .sort((a, b) => b.mentions - a.mentions);
-  }, [mvLlmRankings, responses]);
+  }, [effMvLlmRankings, locActive, periodFilteredResponses, responses]);
 
   const fixExistingPrompts = useCallback(async () => {
     // Legacy migration helper — used to backfill confirmed_prompts.user_id
@@ -2628,9 +2975,9 @@ export const useDashboardData = () => {
     searchResultsLoading,
     searchTermsData,
     fetchSearchResults,
-    aiThemes, // Raw AI themes — now fetched lazily (Thematic tab only)
+    aiThemes: effAiThemes, // Raw AI themes (lazy, Thematic tab) — location-scoped when a location is active
     fetchAIThemes, // Lazy raw-themes fetch (called when Thematic tab mounts)
-    attributeThemes, // Pre-aggregated attribute scores (company_attribute_themes_mv)
+    attributeThemes: effAttributeThemes, // Pre-aggregated attribute scores — location-scoped when a location is active
     responseSentimentRows, // Per-response sentiment ratios (company_response_sentiment_mv)
     fetchHistoricalResponses, // Fetch responses for a specific time range
     fetchCollectionDates, // Get all collection dates for timeline/comparison
@@ -2658,5 +3005,10 @@ export const useDashboardData = () => {
     previousPeriodMetrics,
     companyRelevanceByMonth,
     previousPeriodResponses,
+    // Location filter
+    selectedLocation,
+    setSelectedLocation,
+    locationOptions, // Merged dropdown options (in-company location_context + sibling-company switches)
+    locationMetricsLoading,
   };
 };

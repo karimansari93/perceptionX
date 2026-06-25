@@ -9,6 +9,7 @@ import { LocationFilter } from "./LocationFilter";
 import { PeriodSelector } from "./PeriodSelector";
 import { PeriodInfo } from "@/hooks/useDashboardData";
 import { StarSavedView } from "./StarSavedView";
+import { LocationEntry } from "@/utils/locationContext";
 
 interface DashboardHeaderProps {
   companyName: string;
@@ -21,6 +22,7 @@ interface DashboardHeaderProps {
   alwaysMounted?: boolean;
   selectedLocation?: string | null;
   onLocationChange?: (location: string | null) => void;
+  locationOptions?: LocationEntry[];
   availablePeriods?: PeriodInfo[];
   selectedPeriod?: string | null;
   onPeriodChange?: (period: string | null) => void;
@@ -38,6 +40,7 @@ export const DashboardHeader = React.memo(({
   alwaysMounted,
   selectedLocation,
   onLocationChange,
+  locationOptions,
   availablePeriods,
   selectedPeriod,
   onPeriodChange,
@@ -85,6 +88,7 @@ export const DashboardHeader = React.memo(({
               <LocationFilter
                 selectedLocation={selectedLocation || null}
                 onLocationChange={onLocationChange}
+                options={locationOptions}
                 className={isMobile ? "min-w-[120px]" : ""}
               />
             </div>
