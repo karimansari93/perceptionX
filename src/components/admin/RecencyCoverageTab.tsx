@@ -277,6 +277,11 @@ const companyLabel = (c: OrgCompany) =>
 const TEST_BATCH_SIZE = 50;
 const JOB_POLL_INTERVAL_MS = 5000;
 const ALL_COMPANIES = 'all';
+// How long after a job finishes we keep showing its result panel. A terminal
+// job older than this is treated as "not current" so a long-finished run (esp.
+// one a user cancelled weeks ago) doesn't perpetually present its final status
+// — let alone a stale error — as though it were live.
+const TERMINAL_JOB_DISPLAY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
 
 const OrgDrillDown = ({
   org,
@@ -499,6 +504,19 @@ const OrgDrillDown = ({
   };
 
   const jobActive = job?.status === 'queued' || job?.status === 'running';
+  // Only treat a job as "current" if it's active or finished recently. Old
+  // terminal jobs (e.g. a rescore someone cancelled weeks ago) shouldn't keep
+  // surfacing their final status — or a frozen transient error — as if live.
+  const jobIsCurrent =
+    !!job &&
+    (jobActive ||
+      (!!job.finished_at &&
+        Date.now() - new Date(job.finished_at).getTime() < TERMINAL_JOB_DISPLAY_WINDOW_MS));
+  // processed accumulates from per-batch cache counts while total is a frozen
+  // enqueue-time snapshot, so processed can drift past total. Clamp the display
+  // so it never reads as more-than-everything (which looked broken next to an error).
+  const displayedProcessed =
+    job && job.total > 0 ? Math.min(job.processed, job.total) : job?.processed ?? 0;
   const progressPct = job && job.total > 0
     ? Math.min(100, (job.processed / job.total) * 100)
     : 0;
@@ -627,7 +645,7 @@ const OrgDrillDown = ({
                   )}
                 </div>
               </div>
-              {job && (
+              {jobIsCurrent && job && (
                 <div className="mt-3 space-y-2">
                   <div className="flex items-center justify-between text-xs text-slate-600">
                     <span>
@@ -656,12 +674,12 @@ const OrgDrillDown = ({
                       </span>
                     </span>
                     <span className="font-mono">
-                      {job.processed.toLocaleString()} / {job.total.toLocaleString()}
+                      {displayedProcessed.toLocaleString()} / {job.total.toLocaleString()}
                       {job.total > 0 && ` (${progressPct.toFixed(1)}%)`}
                     </span>
                   </div>
                   <Progress value={progressPct} className="h-2" />
-                  {job.last_error && (
+                  {job.status === 'error' && job.last_error && (
                     <p className="text-xs text-red-600">
                       Last error: {job.last_error}
                     </p>

@@ -21,6 +21,11 @@ export const getCountryName = (code: string): string => {
   const countryNames: Record<string, string> = {
     'GLOBAL': 'Global',
     'US': 'United States',
+    // Sub-national locations (ISO 3166-2). Used for companies whose
+    // "locations" are states/regions within one country rather than separate
+    // countries (e.g. Ford Energy: Michigan + Kentucky in the US).
+    'US-MI': 'Michigan',
+    'US-KY': 'Kentucky',
     'GB': 'United Kingdom',
     'CA': 'Canada',
     'AU': 'Australia',
