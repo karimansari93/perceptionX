@@ -1809,11 +1809,23 @@ export const useDashboardData = () => {
     setSelectedPeriod(null);
   }, [currentCompany?.id]);
 
-  // Clear the location filter when the company changes, so a city/country
-  // selected for one company never leaks onto the next. Uses the raw state
-  // setter (clearing needs no loading skeleton).
+  // When the user picks a location that lives in a SIBLING company row (a
+  // country-variant brand like Netflix), the dropdown switches company and wants
+  // that location selected afterwards. Stashing it here and applying it in the
+  // company-change effect below sets it ATOMICALLY with the switch — a
+  // post-switch setState would instead race the reconcile effect (which would
+  // see the value as invalid for the old company and wipe it).
+  const pendingLocationRef = useRef<string | null>(null);
+  const setPendingLocation = useCallback((key: string | null) => {
+    pendingLocationRef.current = key;
+  }, []);
+
+  // On company change, apply any pending location (set just before the switch),
+  // otherwise clear to "All locations" so one company's location never leaks
+  // onto the next.
   useEffect(() => {
-    setSelectedLocationState(null);
+    setSelectedLocationState(pendingLocationRef.current);
+    pendingLocationRef.current = null;
   }, [currentCompany?.id]);
 
   // Same-name sibling companies (legacy country-variant rows, e.g. Netflix-JP ↔
@@ -1982,7 +1994,16 @@ export const useDashboardData = () => {
   // Effective MV state: location-scoped when a location is active, else the
   // company-wide values. Used by every metrics memo below so the headline,
   // trends and per-job-function breakdowns all honor the location filter.
-  const locActive = selectedLocation != null;
+  //
+  // A location is only "active" if it actually exists in THIS company's data —
+  // i.e. it resolves to ≥1 stored spelling. A selectedLocation that doesn't
+  // (e.g. a stale value left over after switching companies, or a country code
+  // the company switcher passed) must fall back to the company-wide ("All
+  // locations") view rather than the empty location-scoped state — otherwise
+  // sentiment/relevance show 0% while visibility still renders. The trigger
+  // already shows "All locations" for such values, so this keeps data and label
+  // consistent.
+  const locActive = selectedLocation != null && (locationRawValues[selectedLocation]?.length ?? 0) > 0;
   const effSentimentMetrics = locActive ? locSentimentMetrics : companySentimentMetrics;
   const effRelevanceMetrics = locActive ? locRelevanceMetrics : companyRelevanceMetrics;
   const effSentimentByMonth = locActive ? locSentimentByMonth : companySentimentByMonth;
@@ -1993,6 +2014,20 @@ export const useDashboardData = () => {
   const effMvTopCompetitors = locActive ? locMvTopCompetitors : mvTopCompetitors;
   const effMvLlmRankings = locActive ? locMvLlmRankings : mvLlmRankings;
   const effAttributeThemes = locActive ? locAttributeThemes : attributeThemes;
+
+  // Reconcile a selection that isn't valid for the current company back to null
+  // ("All locations"), so the internal state matches what the trigger shows and
+  // a stale value isn't persisted by the saved-view star. Waits for the
+  // company's responses to load before judging validity, so a starred location
+  // restored on mount isn't wiped before its options exist.
+  useEffect(() => {
+    // Don't judge validity mid-switch: responses/options still reflect the old
+    // company, which would wrongly wipe a location applied for the new one.
+    if (!selectedLocation || loading || isSwitchingCompany || responses.length === 0) return;
+    if ((locationRawValues[selectedLocation]?.length ?? 0) === 0) {
+      setSelectedLocationState(null);
+    }
+  }, [selectedLocation, loading, isSwitchingCompany, responses.length, locationRawValues]);
 
   // Determine effective period (latest if none selected)
   const effectivePeriod = useMemo(() => {
@@ -3008,6 +3043,7 @@ export const useDashboardData = () => {
     // Location filter
     selectedLocation,
     setSelectedLocation,
+    setPendingLocation, // Stash a location to apply right after a company switch (sibling-row brands)
     locationOptions, // Merged dropdown options (in-company location_context + sibling-company switches)
     locationMetricsLoading,
   };

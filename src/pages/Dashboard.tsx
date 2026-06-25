@@ -159,6 +159,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     epsChangeByJobFunction,
     selectedLocation,
     setSelectedLocation,
+    setPendingLocation,
     locationOptions,
     locationMetricsLoading,
   } = useDashboardData();
@@ -718,6 +719,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           alwaysMounted={true}
           selectedLocation={activeSection === 'reports' ? undefined : selectedLocation}
           onLocationChange={activeSection === 'reports' ? undefined : setSelectedLocation}
+          onPendingLocationChange={activeSection === 'reports' ? undefined : setPendingLocation}
           locationOptions={activeSection === 'reports' ? undefined : locationOptions}
           availablePeriods={activeSection === 'reports' ? undefined : availablePeriods}
           selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}

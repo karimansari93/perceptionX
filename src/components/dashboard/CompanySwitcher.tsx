@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { Favicon } from '@/components/ui/favicon';
 import { getCountryFlag } from '@/utils/countryFlags';
 import { getCountryName, countryToLocation } from '@/utils/locations';
+import { canonicalizeLocationContext } from '@/utils/locationContext';
 
 interface CompanySwitcherProps {
   className?: string;
@@ -27,6 +28,9 @@ interface CompanySwitcherProps {
   // location. The header wires this to the shared location state so the
   // location filter, `market`-based hooks, and saved views stay in sync.
   onLocationChange?: (location: string | null) => void;
+  // Stash a location to apply right after the company switch lands, so the
+  // location trigger reflects the picked country (see useDashboardData).
+  onPendingLocationChange?: (location: string | null) => void;
 }
 
 // A selectable location for a company name: a country variant (its own company
@@ -34,7 +38,7 @@ interface CompanySwitcherProps {
 // records grouped under one submenu.
 type LocationOption = { kind: 'country'; company: Company; location: string | null };
 
-export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = false, onLocationChange }: CompanySwitcherProps) => {
+export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = false, onLocationChange, onPendingLocationChange }: CompanySwitcherProps) => {
   const { currentCompany, userCompanies, switchCompany, loading } = useCompany();
   const [isOpen, setIsOpen] = useState(false);
 
@@ -59,16 +63,23 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
 
   const isCurrentOption = (opt: LocationOption) => opt.company.id === currentCompany?.id;
 
-  // Switch to the company record the option represents and align the location
-  // focus to that record's country.
+  // Switch to the company record the option represents and land on its "All
+  // locations" view (null). Passing the record's country code as a location
+  // filter is wrong under the location_context model — the code rarely matches a
+  // stored context spelling, which left the dashboard in a broken 0%-metrics
+  // state. The location dropdown then filters within the newly-selected company.
   const selectOption = async (opt: LocationOption) => {
     setIsOpen(false);
     if (isCurrentOption(opt)) return;
+    // Apply the picked location once the switch lands so the location trigger
+    // shows the country (canonicalize the record's country to match the target
+    // company's location_context spelling); null → "All locations".
+    onPendingLocationChange?.(canonicalizeLocationContext(opt.location));
     try {
       await switchCompany(opt.company.id);
-      onLocationChange?.(opt.location);
       toast.success('Company switched');
     } catch (error) {
+      onPendingLocationChange?.(null);
       toast.error('Failed to switch company');
     }
   };
