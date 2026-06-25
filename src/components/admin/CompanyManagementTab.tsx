@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Building2, Plus, RefreshCw, Pencil, Briefcase, Calendar, ArrowRight, Play, Loader2, XCircle } from 'lucide-react';
+import { Building2, Plus, RefreshCw, Pencil, Briefcase, Calendar, ArrowRight, Play, Loader2, XCircle, Gauge } from 'lucide-react';
 import { CompanyDetailView } from './CompanyDetailView';
 import { CompanyGroupDetailView } from './CompanyGroupDetailView';
 import { useAdminCompanyCollection } from '@/hooks/useAdminCompanyCollection';
@@ -82,9 +82,33 @@ export const CompanyManagementTab = () => {
   // Refresh modal state
   const [confirmationData, setConfirmationData] = useState<any>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // On-demand refresh of the dashboard rollup MVs (sentiment/relevance/sources/
+  // competitors/rankings). The hourly cron is disabled for memory reasons, so
+  // this is how those metrics get refreshed after new data lands.
+  const [refreshingMetrics, setRefreshingMetrics] = useState(false);
 
   const { runContinueCollection, isRunning: isCollectionRunning } = useAdminCompanyCollection();
   const [continueCollectionCompanyId, setContinueCollectionCompanyId] = useState<string | null>(null);
+
+  // Kick a background refresh of the company-metrics rollup MVs. Returns
+  // immediately — the actual refresh runs server-side via a one-off cron job,
+  // because a full refresh exceeds the request timeout.
+  const handleRefreshMetrics = async () => {
+    setRefreshingMetrics(true);
+    const { data, error } = await supabase.rpc('request_company_metrics_refresh' as any);
+    setRefreshingMetrics(false);
+    if (error) {
+      toast.error(`Couldn't start metrics refresh: ${error.message}`);
+      return;
+    }
+    if ((data as any)?.status === 'already_running') {
+      toast.info('A metrics refresh is already running — give it a few minutes.');
+    } else {
+      toast.success(
+        'Metrics refresh started — runs in the background (~a few minutes). Reload the dashboard once it finishes.'
+      );
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -801,6 +825,21 @@ export const CompanyManagementTab = () => {
           <p className="text-sm text-slate-500 mt-0.5">Manage companies and their data</p>
         </div>
         <div className="flex gap-2">
+          <Button
+            onClick={handleRefreshMetrics}
+            variant="outline"
+            size="sm"
+            disabled={refreshingMetrics}
+            title="Refresh the dashboard rollups (sentiment, relevance, sources, competitors, rankings). Runs in the background."
+            className="border-slate-200 text-slate-600"
+          >
+            {refreshingMetrics ? (
+              <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+            ) : (
+              <Gauge className="h-4 w-4 mr-1.5" />
+            )}
+            Refresh metrics
+          </Button>
           <Button onClick={loadData} variant="outline" size="sm" className="border-slate-200 text-slate-600">
             <RefreshCw className="h-4 w-4 mr-1.5" />
             Refresh
