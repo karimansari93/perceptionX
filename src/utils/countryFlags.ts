@@ -112,6 +112,9 @@ export function getCountryFlag(countryCode: string | null | undefined): string {
     'AE': '🇦🇪',
     'GB': '🇬🇧',
     'US': '🇺🇸',
+    // US sub-national locations (ISO 3166-2) share the US flag.
+    'US-MI': '🇺🇸',
+    'US-KY': '🇺🇸',
     'VA': '🇻🇦',
     'VE': '🇻🇪',
     'VN': '🇻🇳',
