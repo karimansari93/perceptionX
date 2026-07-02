@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 // Inlined (not imported from ../_shared/cors.ts) so the function can be
 // deployed as a single file.
@@ -13,13 +14,21 @@ const corsHeaders = {
 /**
  * send-intake-invite
  * ------------------
- * Emails a client their tokenized intake link ("complete your project brief").
- * Admin-only (profiles.is_admin). The link is rebuilt server-side from the
- * invite's own token, so the caller can never route a token to a different
+ * Emails a client their tokenized onboarding link ("complete your project
+ * brief"). Admin-only (profiles.is_admin). The link is rebuilt server-side from
+ * the invite's own token, so the caller can never route a token to a different
  * address than the one locked into the invite.
  *
+ * Delivery goes through the project's own SMTP (the same SMTP the Supabase
+ * project is configured with) — no third-party email provider, and no auth
+ * user is created for the external contact. Required secrets:
+ *   SMTP_HOST, SMTP_USER, SMTP_PASS   (SMTP_PORT optional, default 465)
+ *   INTAKE_FROM_EMAIL                 (optional "Name <addr>", default below)
+ *   PUBLIC_SITE_URL                   (optional link base, else request origin)
+ * With SMTP unset the function returns { sent:false, reason:"no_smtp" } so the
+ * admin UI falls back to the copyable link.
+ *
  * Body: { "inviteId": "<uuid>" }
- * Returns: { sent: true } | { sent: false, reason: "no_api_key" }
  */
 
 const json = (body: unknown, status = 200) =>
@@ -110,6 +119,21 @@ function inviteEmailHtml(company: string, link: string, expiresAt: string): stri
 </html>`;
 }
 
+function inviteEmailText(company: string, link: string): string {
+  return [
+    `You're invited to set up ${company}'s PerceptionX project.`,
+    ``,
+    `PerceptionX measures how AI assistants (ChatGPT, Claude, Gemini, Perplexity)`,
+    `describe ${company} to job seekers. Before we start tracking, we need about`,
+    `5 minutes from you — a short, guided set of questions that becomes your`,
+    `project brief.`,
+    ``,
+    `Complete your project brief: ${link}`,
+    ``,
+    `Your progress saves as you go, so you can leave and pick up where you stopped.`,
+  ].join("\n");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -144,31 +168,47 @@ serve(async (req) => {
       .maybeSingle();
     if (!invite) return json({ error: "Invite not found" }, 404);
 
-    const resendKey = Deno.env.get("RESEND_API_KEY");
-    if (!resendKey) return json({ sent: false, reason: "no_api_key" });
+    // --- Deliver via the project's SMTP (no third-party provider) --------
+    const smtpHost = Deno.env.get("SMTP_HOST");
+    const smtpUser = Deno.env.get("SMTP_USER");
+    const smtpPass = Deno.env.get("SMTP_PASS");
+    if (!smtpHost || !smtpUser || !smtpPass) {
+      return json({ sent: false, reason: "no_smtp" });
+    }
+    const smtpPort = Number(Deno.env.get("SMTP_PORT") ?? "465");
+    const fromAddress =
+      Deno.env.get("INTAKE_FROM_EMAIL") || "PerceptionX <team@perceptionx.ai>";
 
     const siteUrl =
       Deno.env.get("PUBLIC_SITE_URL") || req.headers.get("origin") || supabaseUrl;
     const link = `${siteUrl.replace(/\/$/, "")}/onboarding/${invite.token}`;
 
-    const fromAddress =
-      Deno.env.get("INVITE_FROM_EMAIL") || "PerceptionX <team@perceptionx.ai>";
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendKey}`,
-        "Content-Type": "application/json",
+    const client = new SMTPClient({
+      connection: {
+        hostname: smtpHost,
+        port: smtpPort,
+        // Port 465 speaks TLS immediately; 587/25 upgrade via STARTTLS.
+        tls: smtpPort === 465,
+        auth: { username: smtpUser, password: smtpPass },
       },
-      body: JSON.stringify({
-        from: fromAddress,
-        to: [invite.contact_email],
-        subject: `You're invited to set up ${invite.company_name}'s PerceptionX project`,
-        html: inviteEmailHtml(invite.company_name, link, invite.expires_at),
-      }),
     });
-    if (!res.ok) {
-      const detail = await res.text();
-      console.error(`Resend API error (${res.status}): ${detail}`);
+
+    try {
+      await client.send({
+        from: fromAddress,
+        to: invite.contact_email,
+        subject: `You're invited to set up ${invite.company_name}'s PerceptionX project`,
+        content: inviteEmailText(invite.company_name, link),
+        html: inviteEmailHtml(invite.company_name, link, invite.expires_at),
+      });
+      await client.close();
+    } catch (e) {
+      console.error("SMTP send failed:", e);
+      try {
+        await client.close();
+      } catch (_) {
+        // ignore close error
+      }
       return json({ sent: false, reason: "send_failed" }, 502);
     }
 
