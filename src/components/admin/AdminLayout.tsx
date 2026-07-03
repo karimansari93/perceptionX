@@ -10,7 +10,8 @@ import {
   Layers,
   Clock,
   Tags,
-  LayoutDashboard
+  LayoutDashboard,
+  HeartPulse
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -31,6 +32,7 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
 
   const navItems = [
     { id: 'organizations', label: 'Organizations', icon: Briefcase },
+    { id: 'data-health', label: 'Data Health', icon: HeartPulse },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'companies', label: 'Companies', icon: Building2 },
     { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy },
