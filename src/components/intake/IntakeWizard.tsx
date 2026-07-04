@@ -306,10 +306,16 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
     };
   });
   const screens = useMemo(() => buildScreenIds(payload), [payload]);
-  const [currentId, setCurrentId] = useState<string>(() => {
+  // Every visit lands on the welcome screen — a returning client gets a
+  // "welcome back" variant with a one-tap jump to where they left off, instead
+  // of being dropped mid-flow with no orientation.
+  const [resumeTarget] = useState<string | null>(() => {
     const saved = initialDraft?.meta?.step;
-    return typeof saved === 'string' ? saved : 'welcome';
+    return typeof saved === 'string' && saved !== 'welcome' ? saved : null;
   });
+  const [currentId, setCurrentId] = useState<string>('welcome');
+  // Old drafts may point at screens that no longer exist (removed steps).
+  const resumeValid = resumeTarget && screens.includes(resumeTarget) ? resumeTarget : null;
   const [typed, setTyped] = useState(false);
   const [visitedReview, setVisitedReview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -355,6 +361,10 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
   const savedRef = useRef<string>(''); // JSON of the last snapshot we sent
   const payloadRef = useRef(payload);
   payloadRef.current = payload;
+  // While a returning client is still parked on the welcome screen, keep the
+  // stored pointer on their real position — saving 'welcome' here would wipe
+  // the resume target the welcome screen exists to offer.
+  const stepToSave = currentId === 'welcome' && resumeValid ? resumeValid : currentId;
   const flushSave = useCallback(() => {
     const snap = latestSnapshot.current;
     if (!snap) return;
@@ -367,19 +377,19 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
   // Debounced save for within-screen edits (typing, chip toggles).
   useEffect(() => {
     if (submitted) return;
-    latestSnapshot.current = { ...payload, meta: { step: currentId } };
+    latestSnapshot.current = { ...payload, meta: { step: stepToSave } };
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(flushSave, 700);
     return () => clearTimeout(saveTimer.current);
-  }, [payload, currentId, submitted, flushSave]);
+  }, [payload, stepToSave, submitted, flushSave]);
 
   // Crossing to a new screen is a durable checkpoint: flush immediately so the
   // resume pointer is always current even if the tab closes mid-flow.
   useEffect(() => {
     if (submitted) return;
-    latestSnapshot.current = { ...payloadRef.current, meta: { step: currentId } };
+    latestSnapshot.current = { ...payloadRef.current, meta: { step: stepToSave } };
     flushSave();
-  }, [currentId, submitted, flushSave]);
+  }, [stepToSave, submitted, flushSave]);
 
   // Belt-and-braces: also flush the moment the tab is hidden or the page is
   // being unloaded (mobile app-switch, closing the tab), not only on the timer.
@@ -442,7 +452,13 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
     }
   }, [payload, problems, token]);
 
-  const question = questionOf(currentId, companyName, payload);
+  const question =
+    currentId === 'welcome' && resumeValid
+      ? {
+          text: `Welcome back — let's finish setting up ${companyName}.`,
+          hint: `Everything you've entered so far is saved. Pick up where you left off, or step back through your answers from the start.`,
+        }
+      : questionOf(currentId, companyName, payload);
   const proceedOk = canProceed(currentId, payload);
   const showBackToReview =
     visitedReview && currentId !== 'review' && proceedOk && !submitted;
@@ -463,8 +479,11 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
 
   // Rail navigation: every section the client has reached stays clickable in
   // both directions — going back never locks the sections they already
-  // completed. Answers persist, so revisiting is always safe.
-  const [maxSectionReached, setMaxSectionReached] = useState(0);
+  // completed. Answers persist, so revisiting is always safe. Seeded from the
+  // saved draft so a returning client's progress shows from the welcome screen.
+  const [maxSectionReached, setMaxSectionReached] = useState(() =>
+    resumeTarget ? Object.keys(SECTION_META).indexOf(sectionOf(resumeTarget)) : 0,
+  );
   const currentSectionIndex = sections.indexOf(currentSection);
   useEffect(() => {
     if (currentSectionIndex > maxSectionReached) setMaxSectionReached(currentSectionIndex);
@@ -569,6 +588,7 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
             submitting={submitting}
             onSubmit={handleSubmit}
             onJump={go}
+            resumeTarget={resumeValid}
           />
         </div>
       </div>
@@ -776,6 +796,8 @@ interface ScreenControlProps {
   submitting: boolean;
   onSubmit: () => void;
   onJump: (id: string) => void;
+  /** Saved screen for a returning client — welcome offers a one-tap resume. */
+  resumeTarget?: string | null;
 }
 
 function ScreenControl({
@@ -788,6 +810,7 @@ function ScreenControl({
   submitting,
   onSubmit,
   onJump,
+  resumeTarget,
 }: ScreenControlProps) {
   const next = (label = 'Continue', disabled = false) => (
     <div className="flex justify-end pt-4">
@@ -962,6 +985,17 @@ function ScreenControl({
 
   switch (id) {
     case 'welcome':
+      if (resumeTarget) {
+        return (
+          <div className="flex flex-col items-center gap-2 pt-2">
+            <ContinueButton
+              label="Pick up where I left off"
+              onClick={() => onJump(resumeTarget)}
+            />
+            <SkipButton label="Start from the first question" onClick={goNext} />
+          </div>
+        );
+      }
       return (
         <div className="flex justify-center pt-2">
           <ContinueButton label="Ready — let’s go" onClick={goNext} />
