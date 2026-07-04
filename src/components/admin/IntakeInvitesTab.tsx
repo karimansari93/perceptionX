@@ -395,7 +395,14 @@ function ReviewBriefDialog({
         setSubmission(sub);
         // Backfill fields older briefs predate.
         setPayload(
-          sub ? { function_scope: 'uniform', market_functions: [], ...sub.payload } : null,
+          sub
+            ? {
+                function_scope: 'uniform',
+                market_functions: [],
+                function_industries: [],
+                ...sub.payload,
+              }
+            : null,
         );
         if (invite.status === 'submitted') {
           await markIntakeReviewed(invite.id);
@@ -447,10 +454,11 @@ function ReviewBriefDialog({
         extractOwnedDomainSeeds(payload),
       );
       toast.success(
-        `Approved — ${result.prompts_inserted} prompts created` +
+        `Approved — organization ready, ${result.prompts_inserted} prompts created` +
           (result.prompts_skipped_existing > 0
             ? `, ${result.prompts_skipped_existing} already existed`
-            : ''),
+            : '') +
+          '. Queue it in Company Batch to start collection.',
       );
       onChanged();
       onClose();
@@ -603,10 +611,61 @@ function ReviewBriefDialog({
             <Field label="Industries">
               <ChipAdder
                 values={payload.industries}
-                onChange={(v) => patch({ industries: v })}
+                onChange={(v) =>
+                  patch({
+                    industries: v,
+                    function_industries: (payload.function_industries ?? []).filter((m) =>
+                      v.some((i) => i.toLowerCase() === m.industry.toLowerCase()),
+                    ),
+                  })
+                }
                 placeholder="Add an industry"
               />
             </Field>
+
+            {payload.industries.length > 1 && (
+              <Field label="Industry by function (benchmark each function in its own industry)">
+                <div className="space-y-2">
+                  {payload.job_functions.map((fn) => {
+                    const current =
+                      (payload.function_industries ?? []).find(
+                        (m) => m.function.toLowerCase() === fn.toLowerCase(),
+                      )?.industry ?? payload.industries[0];
+                    return (
+                      <div key={fn} className="rounded-md border border-slate-200 p-2.5">
+                        <p className="text-xs font-medium text-slate-600 mb-1.5">{fn}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {payload.industries.map((ind) => (
+                            <Button
+                              key={ind}
+                              variant={
+                                current?.toLowerCase() === ind.toLowerCase()
+                                  ? 'default'
+                                  : 'outline'
+                              }
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() =>
+                                patch({
+                                  function_industries: [
+                                    ...(payload.function_industries ?? []).filter(
+                                      (m) => m.function.toLowerCase() !== fn.toLowerCase(),
+                                    ),
+                                    { function: fn, industry: ind },
+                                  ],
+                                })
+                              }
+                            >
+                              {ind}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Field>
+            )}
 
             <Field label="Career site URL">
               <Input

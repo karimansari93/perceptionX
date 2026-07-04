@@ -152,6 +152,8 @@ export async function updateIntakeSubmissionPayload(
 
 export interface ApproveResult {
   ok: boolean;
+  /** The organization the brief was approved into (created if none existed). */
+  org_id: string;
   companies: Record<string, string>;
   prompts_inserted: number;
   prompts_skipped_existing: number;

@@ -55,6 +55,17 @@ export interface MarketFunctions {
   functions: string[];
 }
 
+/**
+ * Which industry a function is benchmarked against when the company competes
+ * in more than one — e.g. Ford's tech roles against Technology, frontline
+ * roles against Automotive. Functions without an entry fall back to the first
+ * industry.
+ */
+export interface FunctionIndustry {
+  function: string;
+  industry: string;
+}
+
 export interface TrackingConfigInput {
   /** From the invite — read-only to the client. */
   company_name: string;
@@ -73,6 +84,8 @@ export interface TrackingConfigInput {
    */
   talent_competitors: string[];
   industries: string[];
+  /** Only meaningful when industries has more than one entry. */
+  function_industries: FunctionIndustry[];
   career_site_url: string;
   owned_properties: OwnedProperty[];
   managed_platforms: string[];
@@ -138,6 +151,19 @@ export const MANAGED_PLATFORM_OPTIONS = [
   'kununu',
 ] as const;
 
+/** US states — searchable as markets for US-only companies. */
+export const US_STATES = [
+  'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado',
+  'Connecticut', 'Delaware', 'Florida', 'Georgia', 'Hawaii', 'Idaho',
+  'Illinois', 'Indiana', 'Iowa', 'Kansas', 'Kentucky', 'Louisiana', 'Maine',
+  'Maryland', 'Massachusetts', 'Michigan', 'Minnesota', 'Mississippi',
+  'Missouri', 'Montana', 'Nebraska', 'Nevada', 'New Hampshire', 'New Jersey',
+  'New Mexico', 'New York', 'North Carolina', 'North Dakota', 'Ohio',
+  'Oklahoma', 'Oregon', 'Pennsylvania', 'Rhode Island', 'South Carolina',
+  'South Dakota', 'Tennessee', 'Texas', 'Utah', 'Vermont', 'Virginia',
+  'Washington', 'Washington, D.C.', 'West Virginia', 'Wisconsin', 'Wyoming',
+] as const;
+
 export const OWNED_PROPERTY_TYPES: { value: OwnedPropertyType; label: string }[] = [
   { value: 'linkedin', label: 'LinkedIn' },
   { value: 'instagram', label: 'Instagram' },
@@ -183,6 +209,7 @@ export function emptyIntakePayload(companyName: string, contactEmail: string): I
     market_functions: [],
     talent_competitors: [],
     industries: [],
+    function_industries: [],
     career_site_url: '',
     owned_properties: [],
     managed_platforms: [],

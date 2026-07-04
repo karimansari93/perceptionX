@@ -9,12 +9,24 @@
 // market so shared setups take one tap.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Pencil } from 'lucide-react';
+import {
+  ArrowLeft,
+  BarChart3,
+  Check,
+  ClipboardCheck,
+  Factory,
+  Flag,
+  Globe2,
+  Pencil,
+  Target,
+  Users,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   CANONICAL_JOB_FUNCTIONS,
   IntakePayload,
   MANAGED_PLATFORM_OPTIONS,
+  US_STATES,
   isValidUrl,
   normalizeJobFunction,
   normalizeUrl,
@@ -23,6 +35,9 @@ import {
 import { marketFunctionPairs } from '@/lib/intake/generateConfirmedPrompts';
 import { saveIntakeDraft, submitIntake } from '@/lib/intake/api';
 import { COUNTRY_NAMES } from '@/lib/marketName';
+
+// Countries + US states: US-only companies track state-level markets.
+const MARKET_OPTIONS = [...Object.values(COUNTRY_NAMES), ...US_STATES].sort();
 import { DemoDataCard } from './DemoDataCard';
 import {
   Chip,
@@ -31,7 +46,6 @@ import {
   CountryPicker,
   EntityEditor,
   MultiChipSelect,
-  PriorityEditor,
   PropertyEditor,
   RecipientEditor,
   SkipButton,
@@ -59,14 +73,14 @@ function buildScreenIds(p: IntakePayload): string[] {
   }
   // Each tracked sub-brand gets its own scope screen (inherit or its own).
   ids.push(...trackedSubBrands(p).map((e) => ESC_PREFIX + e.name.trim()));
+  ids.push('demo', 'industries');
+  // With several industries, map each function to the one it competes in
+  // (e.g. tech roles → Technology, frontline → Automotive).
+  if (p.industries.length > 1 && p.job_functions.length > 0) ids.push('fn_industries');
   ids.push(
-    'demo',
-    'competitors',
-    'industries',
     'career_site',
     'owned_properties',
     'platforms',
-    'priorities',
     'leadership',
     'focus',
     'known_context',
@@ -86,9 +100,9 @@ function sectionOf(id: string): string {
   )
     return 'What we track';
   if (id === 'demo') return 'Your data preview';
-  if (['competitors', 'industries'].includes(id)) return 'Talent market';
+  if (['industries', 'fn_industries'].includes(id)) return 'Talent market';
   if (['career_site', 'owned_properties', 'platforms'].includes(id)) return 'Your channels';
-  if (['priorities', 'leadership', 'focus'].includes(id)) return 'Priorities';
+  if (['leadership', 'focus'].includes(id)) return 'Priorities';
   if (['known_context', 'recipients', 'notes'].includes(id)) return 'People & context';
   return 'Review & submit';
 }
@@ -108,47 +122,50 @@ function questionOf(id: string, company: string, p: IntakePayload): { text: stri
   if (id.startsWith(ESC_PREFIX)) {
     const name = id.slice(ESC_PREFIX.length);
     return {
-      text: `Does ${name} hire for the same roles and markets as ${company}?`,
-      hint: `If ${name} has its own hiring footprint — different functions or countries — set it here so we track it accurately.`,
+      text: `Does ${name} hire the same way?`,
+      hint: `If ${name} has its own hiring footprint — different functions or markets than ${company} — set it here so we track it accurately.`,
     };
   }
   switch (id) {
     case 'welcome':
       return {
-        text: `Hi — I'm going to set up your PerceptionX project for ${company}. This takes about 5 minutes. I'll ask what to track and show you the kind of data you'll get back. Ready?`,
+        text: `Let's set up your PerceptionX project for ${company}.`,
+        hint: `This takes about 5 minutes. We'll ask what to track and show you the kind of data you'll get back. Ready?`,
       };
     case 'entities':
       return {
-        text: `Which distinct employer entities should we track and report on separately? Some companies have divisions or sub-brands with their own hiring identity — like a credit arm or a studio.`,
+        text: `Who else should we track?`,
+        hint: `Other than ${company} — divisions, subsidiaries or brands with their own hiring identity, the way PepsiCo spans Frito-Lay, Gatorade and Quaker. Each one gets its own results.`,
       };
     case 'functions':
       return {
-        text: `Which job functions matter most for this project?`,
+        text: `Which job functions matter most?`,
         hint: 'Pick as many as you like — these become the lens we measure through.',
       };
     case 'markets':
       return {
-        text: `And which markets should we cover?`,
-        hint: 'Search the list or add your own — we handle prompt language and market tiering on our side.',
+        text: `Which markets should we cover?`,
+        hint: `We recommend focusing on the markets where you plan to hire or want to raise the quality of talent. You can add every location you operate in, but spreading too wide can blur the data into something less actionable.`,
       };
     case 'scope':
       return {
-        text: `Do all ${p.markets.length} markets share the same functions, or does each market have its own priorities?`,
-        hint: `If they differ, we'll go through each market one by one.`,
+        text: `Same functions in every market?`,
+        hint: `If each of your ${p.markets.length} markets has its own priorities, we'll go through them one by one.`,
       };
     case 'demo':
       return {
-        text: `Here's the shape of what you'll get. Every function and market you've picked is scored on three dimensions — Visibility, Sentiment and Relevance:`,
-      };
-    case 'competitors':
-      return {
-        text: `Who do you think you compete with for this talent?`,
-        hint: `This helps us tune how we prompt the AI models — we don't track named competitors as a feature, it's context for your report.`,
+        text: `Here's an example of how your data will look.`,
+        hint: `Every function and market you've picked is scored on three dimensions — Visibility, Sentiment and Relevance.`,
       };
     case 'industries':
       return {
         text: `What industries do you compete in for talent?`,
         hint: `You can leave this blank. If you add one, we benchmark you inside it — say Biotechnology, and we'll ask the AI models questions like "What's the best Biotechnology company to work for?"`,
+      };
+    case 'fn_industries':
+      return {
+        text: `Which industry does each function compete in?`,
+        hint: `We benchmark every function inside the industry it actually competes in — tech roles against tech companies, frontline roles against your core industry.`,
       };
     case 'career_site':
       return {
@@ -157,31 +174,43 @@ function questionOf(id: string, company: string, p: IntakePayload): { text: stri
       };
     case 'owned_properties':
       return {
-        text: `Any other owned pages we should know about — LinkedIn, Instagram, grad-program microsites?`,
+        text: `Any other owned pages?`,
+        hint: `LinkedIn, Instagram, grad-program microsites — pages you run yourselves that candidates might land on.`,
       };
     case 'platforms':
       return {
-        text: `Which employer review platforms do you officially manage or respond on?`,
-        hint: `Keeps your owned-source share accurate — and stops us recommending a lever you already control.`,
+        text: `Which review platforms do you officially manage?`,
+        hint: `Where you respond to reviews or own the employer profile. Keeps your owned-source share accurate — and stops us recommending a lever you already control.`,
       };
-    case 'priorities':
-      return { text: `Your top 3–5 talent priorities for the next 12 months?` };
     case 'leadership':
-      return { text: `What's the main thing leadership wants to learn from this?` };
+      return {
+        text: `What does leadership want to learn?`,
+        hint: `The one question your exec team most wants this project to answer.`,
+      };
     case 'focus':
-      return { text: `Any specific questions or areas you want the report to dig into?` };
+      return {
+        text: `Anything the report should dig into?`,
+        hint: `Specific questions or areas you want us to go deep on.`,
+      };
     case 'known_context':
       return {
-        text: `Anything happening we should be aware of — restructuring, an RTO mandate, a news cycle, a Glassdoor spike?`,
-        hint: 'It helps us read the sentiment data in context.',
+        text: `Anything happening we should know about?`,
+        hint: `Restructuring, an RTO mandate, a news cycle, a Glassdoor spike — it helps us read the sentiment data in context.`,
       };
     case 'recipients':
-      return { text: `Who should get the first draft of the report?` };
+      return {
+        text: `Who should get the first draft?`,
+        hint: `Add everyone who should see the report, and mark one person as the primary contact.`,
+      };
     case 'notes':
-      return { text: `Anything else we should know?` };
+      return {
+        text: `Anything else we should know?`,
+        hint: `Anything at all — context, constraints, questions.`,
+      };
     default:
       return {
-        text: `Here's your project brief. Check it over — you can edit anything — then submit and we'll take it from there.`,
+        text: `Here's your project brief.`,
+        hint: `Check it over — you can edit anything — then submit and we'll take it from there.`,
       };
   }
 }
@@ -268,8 +297,13 @@ interface IntakeWizardProps {
 export function IntakeWizard({ token, companyName, initialDraft, initialPayload }: IntakeWizardProps) {
   const [payload, setPayload] = useState<IntakePayload>(() => {
     const base = initialDraft ?? initialPayload;
-    // Older drafts predate function_scope — backfill defaults.
-    return { function_scope: 'uniform', market_functions: [], ...base };
+    // Older drafts predate these fields — backfill defaults.
+    return {
+      function_scope: 'uniform',
+      market_functions: [],
+      function_industries: [],
+      ...base,
+    };
   });
   const screens = useMemo(() => buildScreenIds(payload), [payload]);
   const [currentId, setCurrentId] = useState<string>(() => {
@@ -457,36 +491,32 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
       sectionIndex={sections.indexOf(currentSection)}
       within={within}
     >
-      <div className="max-w-xl mx-auto w-full flex flex-col min-h-full">
+      <div className="max-w-xl w-full flex flex-col min-h-full mx-auto lg:mx-0">
         {/* Question */}
-        <div className="pt-10 sm:pt-16 pb-6">
-          {idx > 0 && (
-            <button
-              type="button"
-              onClick={goBack}
-              className={`mb-5 inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-nightsky rounded ${focusRing}`}
-            >
-              <ArrowLeft className="h-4 w-4" aria-hidden />
-              Back
-            </button>
+        <div className="pt-10 sm:pt-14 pb-6">
+          {sections.indexOf(currentSection) >= 0 && (
+            <p className="text-xs text-slate-400 mb-2">
+              Step {sections.indexOf(currentSection) + 1}/{sections.length}
+            </p>
           )}
-          <h2 className="font-headline font-semibold text-nightsky text-lg sm:text-2xl leading-snug min-h-[2.5em]">
+          <h2 className="font-headline font-semibold text-nightsky text-xl sm:text-3xl leading-snug min-h-[2.5em]">
             <TypeText key={currentId} text={question.text} onDone={() => setTyped(true)} />
           </h2>
           {question.hint && (
             <p
-              className={`mt-2 text-sm text-slate-500 transition-opacity duration-300 ${
+              className={`mt-2 text-sm sm:text-[15px] leading-relaxed text-slate-500 transition-opacity duration-300 ${
                 typed ? 'opacity-100' : 'opacity-0'
               }`}
             >
               {question.hint}
             </p>
           )}
+          <div className="mt-6 h-px bg-nightsky/[0.07]" aria-hidden />
         </div>
 
         {/* Answer area — fades in once the question has finished typing */}
         <div
-          className={`pb-12 transition-opacity duration-300 ${typed ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+          className={`pb-6 transition-opacity duration-300 ${typed ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         >
           <ScreenControl
             id={currentId}
@@ -505,10 +535,35 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
             </div>
           )}
         </div>
+
+        {/* Bottom nav: square back button, like the reference design */}
+        {idx > 0 && !submitted && (
+          <div className="pb-12">
+            <button
+              type="button"
+              onClick={goBack}
+              aria-label="Back"
+              className={`w-10 h-10 rounded-lg border border-nightsky/10 bg-white/70 text-nightsky flex items-center justify-center hover:border-nightsky/30 transition-colors ${focusRing}`}
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+        )}
       </div>
     </Frame>
   );
 }
+
+/** Sidebar metadata per section: icon + one-line description. */
+const SECTION_META: Record<string, { icon: typeof Target; blurb: string }> = {
+  'What we track': { icon: Target, blurb: 'Entities, functions & markets' },
+  'Your data preview': { icon: BarChart3, blurb: 'A sample of your report' },
+  'Talent market': { icon: Factory, blurb: 'Industries you compete in' },
+  'Your channels': { icon: Globe2, blurb: 'Career site & owned pages' },
+  Priorities: { icon: Flag, blurb: 'What matters most' },
+  'People & context': { icon: Users, blurb: 'Context & recipients' },
+  'Review & submit': { icon: ClipboardCheck, blurb: 'Check and confirm' },
+};
 
 function Frame({
   companyName,
@@ -527,40 +582,126 @@ function Frame({
   within: number;
   children: React.ReactNode;
 }) {
+  // h-[100dvh] (not min-h) so <main> is the real scroll container — the
+  // review screen's sticky submit bar pins to its bottom edge.
   return (
-    <div className="flex flex-col min-h-[100dvh] bg-gradient-to-b from-white to-[#FFE4EC]">
-      <header className="shrink-0 sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-nightsky/[0.06]">
-        <div className="max-w-xl mx-auto px-4">
-          <div className="flex items-center justify-between gap-4 pt-4 pb-3">
-            <img src="/logos/PerceptionX-PrimaryLogo.png" alt="PerceptionX" className="h-6 w-auto" />
-            <p className="text-xs text-slate-400 truncate">
-              Setting up <span className="font-semibold text-nightsky">{companyName}</span>
-            </p>
-          </div>
-          <div className="flex items-center gap-3 pb-3.5">
-            <span
-              className="text-[11px] font-semibold uppercase tracking-[0.14em] text-teal whitespace-nowrap"
-              aria-live="polite"
-            >
-              {section}
-            </span>
-            <div className="flex-1 flex items-center gap-1.5" aria-hidden>
-              {sections.map((s, i) => (
-                <div key={s} className="flex-1 h-1 rounded-full bg-nightsky/[0.08] overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-teal transition-[width] duration-500 motion-reduce:transition-none"
-                    style={{
-                      width:
-                        i < sectionIndex ? '100%' : i === sectionIndex ? `${Math.round(within * 100)}%` : '0%',
-                    }}
-                  />
-                </div>
-              ))}
+    <div className="flex h-[100dvh]">
+      {/* Navy step rail — desktop */}
+      <aside className="hidden lg:flex flex-col w-80 shrink-0 bg-nightsky text-white relative overflow-hidden">
+        {/* Decorative geometry, echoing the brand */}
+        <svg
+          className="absolute bottom-0 left-0 w-full opacity-[0.07]"
+          viewBox="0 0 320 260"
+          fill="none"
+          aria-hidden
+        >
+          <circle cx="60" cy="200" r="80" stroke="white" strokeWidth="1" />
+          <circle cx="60" cy="200" r="52" stroke="white" strokeWidth="1" />
+          <path d="M180 260 a80 80 0 0 1 80 -80 v80 z" stroke="white" strokeWidth="1" />
+          <rect x="230" y="120" width="70" height="70" stroke="white" strokeWidth="1" />
+          <circle cx="300" cy="60" r="46" stroke="white" strokeWidth="1" />
+        </svg>
+
+        <div className="relative p-7 pb-4">
+          <img
+            src="/logos/PerceptionX-PrimaryLogo-ForOnDark-large.png"
+            alt="PerceptionX"
+            className="h-7 w-auto"
+          />
+          <p className="mt-3 text-xs text-white/50">
+            Setting up <span className="text-white/90 font-medium">{companyName}</span>
+          </p>
+        </div>
+
+        <nav className="relative flex-1 px-7 py-4" aria-label="Onboarding steps">
+          <ol className="space-y-0">
+            {sections.map((s, i) => {
+              const meta = SECTION_META[s] ?? { icon: Target, blurb: '' };
+              const Icon = meta.icon;
+              const state = i < sectionIndex ? 'done' : i === sectionIndex ? 'active' : 'todo';
+              return (
+                <li key={s} className="relative flex gap-3.5 pb-7 last:pb-0">
+                  {/* connector */}
+                  {i < sections.length - 1 && (
+                    <span
+                      aria-hidden
+                      className={`absolute left-[17px] top-9 bottom-0 w-px ${
+                        state === 'done' ? 'bg-teal/60' : 'bg-white/15'
+                      }`}
+                    />
+                  )}
+                  <span
+                    className={`relative z-10 w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${
+                      state === 'active'
+                        ? 'bg-white text-nightsky'
+                        : state === 'done'
+                          ? 'bg-teal/20 text-teal'
+                          : 'bg-white/10 text-white/50'
+                    }`}
+                  >
+                    {state === 'done' ? (
+                      <Check className="h-4 w-4" aria-hidden />
+                    ) : (
+                      <Icon className="h-4 w-4" aria-hidden />
+                    )}
+                  </span>
+                  <span className="min-w-0 pt-0.5">
+                    <span
+                      className={`block text-sm font-medium leading-tight ${
+                        state === 'active' ? 'text-white' : state === 'done' ? 'text-white/80' : 'text-white/50'
+                      }`}
+                    >
+                      {s}
+                    </span>
+                    <span className="block text-xs text-white/40 mt-0.5">{meta.blurb}</span>
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
+
+        <p className="relative p-7 pt-4 text-[11px] text-white/35">
+          All rights reserved @PerceptionX
+        </p>
+      </aside>
+
+      {/* Content */}
+      <div className="flex-1 flex flex-col min-w-0 bg-gradient-to-b from-white to-[#FFE4EC]">
+        {/* Slim header — mobile only (the rail covers desktop) */}
+        <header className="lg:hidden shrink-0 z-10 bg-white/80 backdrop-blur-md border-b border-nightsky/[0.06]">
+          <div className="max-w-xl mx-auto px-4">
+            <div className="flex items-center justify-between gap-4 pt-4 pb-3">
+              <img src="/logos/PerceptionX-PrimaryLogo.png" alt="PerceptionX" className="h-6 w-auto" />
+              <p className="text-xs text-slate-400 truncate">
+                Setting up <span className="font-semibold text-nightsky">{companyName}</span>
+              </p>
+            </div>
+            <div className="flex items-center gap-3 pb-3.5">
+              <span
+                className="text-[11px] font-semibold uppercase tracking-[0.14em] text-teal whitespace-nowrap"
+                aria-live="polite"
+              >
+                {section}
+              </span>
+              <div className="flex-1 flex items-center gap-1.5" aria-hidden>
+                {sections.map((s, i) => (
+                  <div key={s} className="flex-1 h-1 rounded-full bg-nightsky/[0.08] overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-teal transition-[width] duration-500 motion-reduce:transition-none"
+                      style={{
+                        width:
+                          i < sectionIndex ? '100%' : i === sectionIndex ? `${Math.round(within * 100)}%` : '0%',
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      </header>
-      <main className="flex-1 overflow-y-auto px-4">{children}</main>
+        </header>
+        <main className="flex-1 overflow-y-auto px-4 lg:px-14">{children}</main>
+      </div>
     </div>
   );
 }
@@ -686,8 +827,12 @@ function ScreenControl({
         ),
       }));
 
-    const chooseInherit = () =>
+    // "Same as parent" is a complete answer — advance straight away. Custom
+    // opens the editors, and Continue appears only for that path.
+    const chooseInherit = () => {
       updateEntity(() => ({ scope_mode: 'inherit' }));
+      goNext();
+    };
     const chooseCustom = () =>
       updateEntity((e) => ({
         scope_mode: 'custom',
@@ -745,7 +890,7 @@ function ScreenControl({
                 Markets for {name}
               </p>
               <CountryPicker
-                countries={Object.values(COUNTRY_NAMES).sort()}
+                countries={MARKET_OPTIONS}
                 selected={markets}
                 onChange={(m) => updateEntity(() => ({ markets: m }))}
               />
@@ -753,10 +898,8 @@ function ScreenControl({
           </div>
         )}
 
-        {next(
-          'Continue',
-          mode === 'custom' && (funcs.length === 0 || markets.length === 0),
-        )}
+        {mode === 'custom' &&
+          next('Continue', funcs.length === 0 || markets.length === 0)}
       </div>
     );
   }
@@ -776,6 +919,7 @@ function ScreenControl({
             companyName={companyName}
             entities={payload.employer_entities}
             onChange={(v) => patch({ employer_entities: v })}
+            showHelp={false}
           />
           {payload.employer_entities.length === 0
             ? next(`Just ${companyName}`)
@@ -799,6 +943,11 @@ function ScreenControl({
                   functions: m.functions.filter((x) => x.toLowerCase() !== canon.toLowerCase()),
                 }))
               : prev.market_functions,
+            function_industries: has
+              ? (prev.function_industries ?? []).filter(
+                  (m) => m.function.toLowerCase() !== canon.toLowerCase(),
+                )
+              : prev.function_industries,
           };
         });
       };
@@ -817,7 +966,7 @@ function ScreenControl({
     }
 
     case 'markets': {
-      const countries = Object.values(COUNTRY_NAMES).sort();
+      const countries = MARKET_OPTIONS;
       return (
         <div className="space-y-3">
           <CountryPicker
@@ -880,30 +1029,20 @@ function ScreenControl({
         </div>
       );
 
-    case 'competitors':
-      return (
-        <div className="space-y-3">
-          <ChipAdder
-            values={payload.talent_competitors}
-            onChange={(v) => patch({ talent_competitors: v })}
-            placeholder="A company you compete with for talent"
-          />
-          <div className="flex justify-end gap-2 pt-4">
-            {payload.talent_competitors.length === 0 ? (
-              <SkipButton label="No names for now" onClick={goNext} />
-            ) : (
-              <ContinueButton label="Continue" onClick={goNext} />
-            )}
-          </div>
-        </div>
-      );
-
     case 'industries':
       return (
         <div className="space-y-3">
           <ChipAdder
             values={payload.industries}
-            onChange={(v) => patch({ industries: v })}
+            onChange={(v) =>
+              patch((prev) => ({
+                industries: v,
+                // Drop mappings pointing at removed industries.
+                function_industries: (prev.function_industries ?? []).filter((m) =>
+                  v.some((i) => i.toLowerCase() === m.industry.toLowerCase()),
+                ),
+              }))
+            }
             placeholder="An industry — e.g. Automotive, Fintech"
           />
           <div className="flex justify-end gap-2 pt-4">
@@ -913,6 +1052,48 @@ function ScreenControl({
               <ContinueButton label="Continue" onClick={goNext} />
             )}
           </div>
+        </div>
+      );
+
+    case 'fn_industries':
+      return (
+        <div className="space-y-3">
+          <div className="space-y-2">
+            {payload.job_functions.map((fn) => {
+              const current =
+                (payload.function_industries ?? []).find(
+                  (m) => m.function.toLowerCase() === fn.toLowerCase(),
+                )?.industry ?? payload.industries[0];
+              return (
+                <div
+                  key={fn}
+                  className="rounded-2xl border border-silver bg-white/60 px-3.5 py-3 flex flex-col sm:flex-row sm:items-center gap-2"
+                >
+                  <p className="text-sm font-medium text-nightsky sm:w-40 shrink-0">{fn}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {payload.industries.map((ind) => (
+                      <Chip
+                        key={ind}
+                        label={ind}
+                        selected={current?.toLowerCase() === ind.toLowerCase()}
+                        onClick={() =>
+                          patch((prev) => ({
+                            function_industries: [
+                              ...(prev.function_industries ?? []).filter(
+                                (m) => m.function.toLowerCase() !== fn.toLowerCase(),
+                              ),
+                              { function: fn, industry: ind },
+                            ],
+                          }))
+                        }
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {next('Continue')}
         </div>
       );
 
@@ -991,23 +1172,6 @@ function ScreenControl({
       );
     }
 
-    case 'priorities':
-      return (
-        <div className="space-y-3">
-          <PriorityEditor
-            values={payload.ta_priorities}
-            onChange={(v) => patch({ ta_priorities: v })}
-          />
-          <div className="flex justify-end gap-2 pt-4">
-            {payload.ta_priorities.length === 0 ? (
-              <SkipButton label="Skip for now" onClick={goNext} />
-            ) : (
-              <ContinueButton label="Continue" onClick={goNext} />
-            )}
-          </div>
-        </div>
-      );
-
     case 'leadership':
       return (
         <TextScreen
@@ -1069,21 +1233,25 @@ function ScreenControl({
 
     case 'review':
       return (
-        <div className="space-y-4">
+        <div>
           <ReviewSummary companyName={companyName} payload={payload} onEdit={onJump} />
-          {problems.length > 0 && (
-            <ul className="text-xs text-pink space-y-1" role="alert">
-              {problems.map((p) => (
-                <li key={p}>{p}</li>
-              ))}
-            </ul>
-          )}
-          <div className="flex justify-center pb-4">
-            <ContinueButton
-              label={submitting ? 'Submitting…' : 'Submit project brief'}
-              onClick={onSubmit}
-              disabled={submitting || problems.length > 0}
-            />
+          {/* Submit stays pinned to the bottom of the viewport so nobody has to
+              discover it by scrolling. */}
+          <div className="sticky bottom-0 -mx-4 mt-4 bg-gradient-to-t from-white via-white/95 to-transparent pt-6 pb-4 px-4">
+            {problems.length > 0 && (
+              <ul className="text-xs text-pink space-y-1 mb-2 text-center" role="alert">
+                {problems.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-center">
+              <ContinueButton
+                label={submitting ? 'Submitting…' : 'Submit project brief'}
+                onClick={onSubmit}
+                disabled={submitting || problems.length > 0}
+              />
+            </div>
           </div>
         </div>
       );
@@ -1147,107 +1315,341 @@ function ReviewSummary({
   payload: IntakePayload;
   onEdit: (screenId: string) => void;
 }) {
-  const rows: { label: string; value: string; screen: string }[] = [
-    {
-      label: 'Employer entities',
-      value:
-        payload.employer_entities.length === 0
-          ? `Just ${companyName}`
-          : `${companyName} + ${payload.employer_entities
-              .map((e) => `${e.name}${e.track_separately ? ' (tracked separately)' : ''}`)
-              .join(', ')}`,
-      screen: 'entities',
-    },
-    { label: 'Job functions', value: payload.job_functions.join(', ') || '—', screen: 'functions' },
-    { label: 'Markets', value: payload.markets.join(', ') || '—', screen: 'markets' },
-  ];
-
-  if (payload.markets.length > 1) {
-    rows.push(
-      payload.function_scope === 'per_market'
-        ? {
-            label: 'Functions by market',
-            value: payload.markets
-              .map((m) => {
-                const fns = payload.market_functions.find((x) => x.market === m)?.functions ?? [];
-                return `${m} — ${fns.join(', ') || '—'}`;
-              })
-              .join(' · '),
-            screen: 'scope',
-          }
-        : { label: 'Functions by market', value: 'Same functions in every market', screen: 'scope' },
-    );
-  }
-
-  // One row per tracked sub-brand with its own scope.
-  for (const e of payload.employer_entities) {
-    if (!e.track_separately || !e.name.trim()) continue;
-    const custom = e.scope_mode === 'custom';
-    rows.push({
-      label: `${e.name} scope`,
-      value: custom
-        ? `${(e.job_functions ?? []).join(', ') || '—'} · in ${(e.markets ?? []).join(', ') || '—'}`
-        : `Same as ${companyName}`,
-      screen: ESC_PREFIX + e.name.trim(),
-    });
-  }
-
-  rows.push(
-    {
-      label: 'Talent competitors (context only)',
-      value: payload.talent_competitors.join(', ') || '—',
-      screen: 'competitors',
-    },
-    { label: 'Industries', value: payload.industries.join(', ') || '—', screen: 'industries' },
-    { label: 'Career site', value: payload.career_site_url || '—', screen: 'career_site' },
-    {
-      label: 'Owned properties',
-      value: payload.owned_properties.map((o) => o.url).join(', ') || '—',
-      screen: 'owned_properties',
-    },
-    {
-      label: 'Managed platforms',
-      value: payload.managed_platforms.join(', ') || '—',
-      screen: 'platforms',
-    },
-    { label: 'Talent priorities', value: payload.ta_priorities.join(' · ') || '—', screen: 'priorities' },
-    { label: 'Leadership objective', value: payload.leadership_objective || '—', screen: 'leadership' },
-    { label: 'Focus questions', value: payload.focus_questions || '—', screen: 'focus' },
-    { label: 'Known context', value: payload.known_context || '—', screen: 'known_context' },
-    {
-      label: 'Report recipients',
-      value:
-        payload.report_recipients
-          .map((r) => `${r.name}${r.is_primary ? ' (primary)' : ''} <${r.email}>`)
-          .join(', ') || '—',
-      screen: 'recipients',
-    },
-    { label: 'Anything else', value: payload.additional_notes || '—', screen: 'notes' },
-  );
+  const industryOf = (fn: string) =>
+    (payload.function_industries ?? []).find((m) => m.function.toLowerCase() === fn.toLowerCase())
+      ?.industry ?? payload.industries[0];
+  const fnsInMarket = (market: string) =>
+    payload.function_scope === 'per_market'
+      ? (payload.market_functions.find((x) => x.market === market)?.functions ?? [])
+      : payload.job_functions;
+  const perMarket = payload.markets.length > 1 && payload.function_scope === 'per_market';
+  const multiIndustry = payload.industries.length > 1;
+  const subBrands = payload.employer_entities.filter((e) => e.track_separately && e.name.trim());
 
   return (
-    <details open className="rounded-2xl border border-silver bg-white shadow-sm overflow-hidden">
-      <summary
-        className={`cursor-pointer select-none px-4 py-3 font-headline font-semibold text-sm text-nightsky ${focusRing}`}
-      >
-        Your project brief — {companyName}
-      </summary>
-      <dl className="divide-y divide-slate-100">
-        {rows.map((row) => (
-          <div key={row.label} className="px-4 py-2.5 flex items-start gap-3">
-            <dt className="text-xs text-slate-500 w-36 sm:w-40 shrink-0 pt-0.5">{row.label}</dt>
-            <dd className="text-sm text-nightsky flex-1 break-words">{row.value}</dd>
-            <button
-              type="button"
-              onClick={() => onEdit(row.screen)}
-              aria-label={`Edit ${row.label}`}
-              className={`text-slate-400 hover:text-nightsky rounded p-1 shrink-0 ${focusRing}`}
-            >
-              <Pencil className="h-3.5 w-3.5" aria-hidden />
-            </button>
+    <div className="space-y-4">
+      {/* Entities */}
+      <ReviewCard title="Who we track" screen="entities" onEdit={onEdit}>
+        <div className="flex flex-wrap gap-1.5">
+          <DisplayPill tone="solid">{companyName}</DisplayPill>
+          {subBrands.map((e) => (
+            <DisplayPill key={e.name}>{e.name}</DisplayPill>
+          ))}
+        </div>
+        {subBrands.length > 0 && (
+          <ul className="mt-3 space-y-1.5">
+            {subBrands.map((e) => (
+              <li key={e.name} className="flex items-start gap-2 text-xs text-slate-500">
+                <span className="font-medium text-nightsky shrink-0">{e.name}</span>
+                <span className="flex-1 min-w-0">
+                  {e.scope_mode === 'custom'
+                    ? `${(e.job_functions ?? []).join(', ') || '—'} · in ${
+                        (e.markets ?? []).join(', ') || '—'
+                      }`
+                    : `same coverage as ${companyName}`}
+                </span>
+                <EditPencil
+                  label={`Edit ${e.name} scope`}
+                  onClick={() => onEdit(ESC_PREFIX + e.name.trim())}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+      </ReviewCard>
+
+      {/* Coverage: functions × markets (× industries) */}
+      <ReviewCard title="Coverage" screen="functions" onEdit={onEdit}>
+        {perMarket ? (
+          <div className="overflow-x-auto -mx-1 px-1">
+            <table className="w-full text-left border-separate border-spacing-0">
+              <thead>
+                <tr>
+                  <th className="text-[11px] font-medium uppercase tracking-wide text-slate-400 pb-2 pr-3 min-w-[104px]">
+                    Function
+                  </th>
+                  {payload.markets.map((m) => (
+                    <th
+                      key={m}
+                      className="text-[11px] font-medium uppercase tracking-wide text-slate-400 pb-2 px-2 text-center whitespace-nowrap"
+                    >
+                      {m}
+                    </th>
+                  ))}
+                  {multiIndustry && (
+                    <th className="text-[11px] font-medium uppercase tracking-wide text-slate-400 pb-2 pl-3 whitespace-nowrap">
+                      Benchmarked in
+                    </th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {payload.job_functions.map((fn) => (
+                  <tr key={fn} className="border-t border-slate-100">
+                    <td className="text-sm font-medium text-nightsky py-2 pr-3 border-t border-slate-100">
+                      {fn}
+                    </td>
+                    {payload.markets.map((m) => {
+                      const on = fnsInMarket(m).some(
+                        (x) => x.toLowerCase() === fn.toLowerCase(),
+                      );
+                      return (
+                        <td key={m} className="py-2 px-2 text-center border-t border-slate-100">
+                          <span
+                            role="img"
+                            aria-label={on ? `${fn} tracked in ${m}` : `${fn} not tracked in ${m}`}
+                            className={`inline-block w-2.5 h-2.5 rounded-full ${
+                              on ? 'bg-teal' : 'border border-slate-200'
+                            }`}
+                          />
+                        </td>
+                      );
+                    })}
+                    {multiIndustry && (
+                      <td className="py-2 pl-3 border-t border-slate-100">
+                        <DisplayPill tone="tint">{industryOf(fn)}</DisplayPill>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-2 flex justify-end">
+              <EditPencil label="Edit functions by market" onClick={() => onEdit('scope')} text="Adjust by market" />
+            </div>
           </div>
-        ))}
-      </dl>
-    </details>
+        ) : (
+          <div className="space-y-3">
+            <LabelledChips label="Functions">
+              {payload.job_functions.map((fn) => (
+                <span key={fn} className="inline-flex items-center gap-1">
+                  <DisplayPill>{fn}</DisplayPill>
+                  {multiIndustry && <DisplayPill tone="tint">{industryOf(fn)}</DisplayPill>}
+                </span>
+              ))}
+            </LabelledChips>
+            <LabelledChips label="Markets">
+              {payload.markets.map((m) => (
+                <DisplayPill key={m}>{m}</DisplayPill>
+              ))}
+            </LabelledChips>
+          </div>
+        )}
+        {payload.industries.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-slate-100">
+            <LabelledChips label={multiIndustry ? 'Industries' : 'Benchmarked in'}>
+              {payload.industries.map((i) => (
+                <DisplayPill key={i} tone="tint">
+                  {i}
+                </DisplayPill>
+              ))}
+            </LabelledChips>
+            {multiIndustry && (
+              <div className="mt-2 flex justify-end">
+                <EditPencil
+                  label="Edit industry by function"
+                  onClick={() => onEdit('fn_industries')}
+                  text="Adjust by function"
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </ReviewCard>
+
+      {/* Channels */}
+      <ReviewCard title="Your channels" screen="career_site" onEdit={onEdit}>
+        <dl className="space-y-2.5">
+          <ChannelRow label="Career site">
+            <span className="text-teal underline underline-offset-2 break-all">
+              {payload.career_site_url || '—'}
+            </span>
+          </ChannelRow>
+          <ChannelRow
+            label="Owned pages"
+            onEdit={() => onEdit('owned_properties')}
+            editLabel="Edit owned pages"
+          >
+            {payload.owned_properties.length ? (
+              <span className="space-y-1 block">
+                {payload.owned_properties.map((o) => (
+                  <span key={o.url} className="block break-all">
+                    <span className="text-[10px] uppercase tracking-wide text-slate-400 mr-1.5">
+                      {o.type.replace('_', ' ')}
+                    </span>
+                    {o.url}
+                  </span>
+                ))}
+              </span>
+            ) : (
+              <span className="text-slate-400">None</span>
+            )}
+          </ChannelRow>
+          <ChannelRow
+            label="Managed platforms"
+            onEdit={() => onEdit('platforms')}
+            editLabel="Edit managed platforms"
+          >
+            {payload.managed_platforms.length ? (
+              <span className="flex flex-wrap gap-1.5">
+                {payload.managed_platforms.map((p) => (
+                  <DisplayPill key={p}>{p}</DisplayPill>
+                ))}
+              </span>
+            ) : (
+              <span className="text-slate-400">None officially managed</span>
+            )}
+          </ChannelRow>
+        </dl>
+      </ReviewCard>
+
+      {/* Context */}
+      <ReviewCard title="Context for the report" screen="leadership" onEdit={onEdit}>
+        <dl className="space-y-2.5">
+          <ChannelRow label="Leadership wants to learn" onEdit={() => onEdit('leadership')} editLabel="Edit leadership objective">
+            {payload.leadership_objective || <span className="text-slate-400">Skipped</span>}
+          </ChannelRow>
+          <ChannelRow label="Dig into" onEdit={() => onEdit('focus')} editLabel="Edit focus questions">
+            {payload.focus_questions || <span className="text-slate-400">Skipped</span>}
+          </ChannelRow>
+          <ChannelRow label="Good to know" onEdit={() => onEdit('known_context')} editLabel="Edit known context">
+            {payload.known_context || <span className="text-slate-400">Nothing flagged</span>}
+          </ChannelRow>
+          <ChannelRow label="Anything else" onEdit={() => onEdit('notes')} editLabel="Edit notes">
+            {payload.additional_notes || <span className="text-slate-400">Nothing else</span>}
+          </ChannelRow>
+        </dl>
+      </ReviewCard>
+
+      {/* Recipients */}
+      <ReviewCard title="Report goes to" screen="recipients" onEdit={onEdit}>
+        <ul className="space-y-2">
+          {payload.report_recipients.map((r) => (
+            <li key={r.email} className="flex items-center gap-2.5 min-w-0">
+              <span className="w-7 h-7 rounded-full bg-nightsky/5 text-nightsky text-[11px] font-semibold flex items-center justify-center shrink-0">
+                {r.name
+                  .split(/\s+/)
+                  .map((p) => p[0])
+                  .slice(0, 2)
+                  .join('')
+                  .toUpperCase()}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm text-nightsky truncate">
+                  {r.name}
+                  {r.role ? <span className="text-slate-400"> · {r.role}</span> : null}
+                </span>
+                <span className="block text-xs text-slate-400 truncate">{r.email}</span>
+              </span>
+              {r.is_primary && <DisplayPill tone="rose">Primary</DisplayPill>}
+            </li>
+          ))}
+          {payload.report_recipients.length === 0 && (
+            <li className="text-sm text-slate-400">No recipients yet</li>
+          )}
+        </ul>
+      </ReviewCard>
+    </div>
+  );
+}
+
+// --- review building blocks -------------------------------------------------
+
+function ReviewCard({
+  title,
+  screen,
+  onEdit,
+  children,
+}: {
+  title: string;
+  screen: string;
+  onEdit: (screen: string) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-silver bg-white shadow-sm p-4 sm:p-5">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-teal">
+          {title}
+        </h3>
+        <EditPencil label={`Edit ${title.toLowerCase()}`} onClick={() => onEdit(screen)} />
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function EditPencil({
+  label,
+  onClick,
+  text,
+}: {
+  label: string;
+  onClick: () => void;
+  text?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      className={`inline-flex items-center gap-1 text-slate-400 hover:text-nightsky rounded p-1 shrink-0 text-xs ${focusRing}`}
+    >
+      {text}
+      <Pencil className="h-3.5 w-3.5" aria-hidden />
+    </button>
+  );
+}
+
+function DisplayPill({
+  children,
+  tone = 'soft',
+}: {
+  children: React.ReactNode;
+  tone?: 'soft' | 'solid' | 'tint' | 'rose';
+}) {
+  const styles = {
+    soft: 'bg-slate-100 text-nightsky',
+    solid: 'bg-nightsky text-white',
+    tint: 'bg-teal/10 text-teal',
+    rose: 'bg-pink/10 text-pink',
+  } as const;
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${styles[tone]}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function LabelledChips({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400 mb-1.5">
+        {label}
+      </p>
+      <div className="flex flex-wrap gap-1.5">{children}</div>
+    </div>
+  );
+}
+
+function ChannelRow({
+  label,
+  children,
+  onEdit,
+  editLabel,
+}: {
+  label: string;
+  children: React.ReactNode;
+  onEdit?: () => void;
+  editLabel?: string;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <dt className="text-xs text-slate-500 w-32 sm:w-40 shrink-0 pt-0.5">{label}</dt>
+      <dd className="text-sm text-nightsky flex-1 min-w-0 break-words">{children}</dd>
+      {onEdit && editLabel && <EditPencil label={editLabel} onClick={onEdit} />}
+    </div>
   );
 }

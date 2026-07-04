@@ -137,15 +137,16 @@ export function MultiChipSelect({
 
   return (
     <div className="space-y-3">
+      {/* Selected chips carry an × and remove like market chips do; unselected
+          options are tap-to-add. */}
       <div className="flex flex-wrap gap-2">
-        {options.map((o) => (
-          <Chip
-            key={o}
-            label={o}
-            selected={selected.some((s) => s.toLowerCase() === o.toLowerCase())}
-            onClick={() => onToggle(o)}
-          />
-        ))}
+        {options.map((o) =>
+          selected.some((s) => s.toLowerCase() === o.toLowerCase()) ? (
+            <RemovableChip key={o} label={o} onRemove={() => onToggle(o)} />
+          ) : (
+            <Chip key={o} label={o} onClick={() => onToggle(o)} />
+          ),
+        )}
         {customChips.map((c) => (
           <RemovableChip key={c} label={c} onRemove={() => onToggle(c)} />
         ))}
@@ -296,9 +297,9 @@ export function CountryPicker({
               else if (canAddCustom) add(query.trim());
             }
           }}
-          placeholder="Search countries — e.g. Brazil"
+          placeholder="Search countries or US states — e.g. Brazil, Texas"
           className={`${inputClass} ${query.trim() ? 'sm:pr-32' : ''}`}
-          aria-label="Search countries"
+          aria-label="Search countries or US states"
         />
         {(matches.length > 0 || canAddCustom) && (
           <span
@@ -334,10 +335,13 @@ export function EntityEditor({
   companyName,
   entities,
   onChange,
+  showHelp = true,
 }: {
   companyName: string;
   entities: EmployerEntity[];
   onChange: (entities: EmployerEntity[]) => void;
+  /** The wizard's question hint already explains this; admin has no hint. */
+  showHelp?: boolean;
 }) {
   const [name, setName] = useState('');
   const add = () => {
@@ -398,7 +402,7 @@ export function EntityEditor({
                 add();
               }
             }}
-            placeholder="Entity name — e.g. Ford Credit"
+            placeholder="Entity or brand name — e.g. Frito-Lay"
             className={`${inputClass} ${name.trim() ? 'sm:pr-32' : ''}`}
             aria-label="Entity name"
           />
@@ -414,9 +418,12 @@ export function EntityEditor({
           <Plus className="h-4 w-4" aria-hidden />
         </button>
       </div>
-      <p className="text-xs text-slate-500">
-        This is for divisions we report on separately — not marketing sub-brands.
-      </p>
+      {showHelp && (
+        <p className="text-xs text-slate-500">
+          Divisions, subsidiaries or brands people apply to in their own right — each one tracked
+          separately gets its own results.
+        </p>
+      )}
     </div>
   );
 }

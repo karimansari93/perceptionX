@@ -146,14 +146,29 @@ export function marketFunctionPairs(
  * talent_competitors and industries sharpen context (industry_context column,
  * company.competitors) — they are NOT competitor tracking.
  */
+/**
+ * The industry a function is benchmarked against: its per-function mapping
+ * when the brief competes in several industries (Ford: tech roles →
+ * Technology, frontline → Automotive), else the first industry.
+ */
+export function industryForFunction(input: TrackingConfigInput, fn: string): string | null {
+  if (input.industries.length > 1) {
+    const mapped = (input.function_industries ?? []).find(
+      (x) => x.function.toLowerCase() === fn.toLowerCase(),
+    );
+    if (mapped?.industry?.trim()) return mapped.industry.trim();
+  }
+  return input.industries[0]?.trim() || null;
+}
+
 export function generateConfirmedPrompts(input: TrackingConfigInput): ConfirmedPromptRow[] {
-  const industry = input.industries[0]?.trim() || null;
   const stages: Stage[] =
     input.career_stage_split === 'split' ? ['early', 'experienced'] : ['combined'];
 
   const rows: ConfirmedPromptRow[] = [];
   for (const unit of trackedUnits(input)) {
     for (const { market, fn } of unitPairs(unit)) {
+      const industry = industryForFunction(input, fn);
       for (const stage of stages) {
         const fnPhrase = stageFunctionPhrase(fn, stage);
         for (const type of PROMPT_TYPE_ORDER) {
