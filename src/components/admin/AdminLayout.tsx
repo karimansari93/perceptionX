@@ -38,7 +38,7 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
     { id: 'company-batch', label: 'Company Batch', icon: Layers },
     { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock },
     { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags },
-    { id: 'intake-invites', label: 'Intake Invites', icon: Send }
+    { id: 'onboarding-forms', label: 'Onboarding Forms', icon: Send }
   ];
 
   return (

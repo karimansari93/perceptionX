@@ -33,7 +33,7 @@ const Usage = lazyWithRetry(() => import("./pages/Usage"));
 const Account = lazyWithRetry(() => import("./pages/Account"));
 const Admin = lazyWithRetry(() => import("./pages/Admin"));
 const GoogleOneTapCallback = lazyWithRetry(() => import("@/components/GoogleOneTapCallback"));
-const Intake = lazyWithRetry(() => import("./pages/Intake"));
+const Onboarding = lazyWithRetry(() => import("./pages/Onboarding"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -179,7 +179,7 @@ const App = () => (
               <Route path="/welcome" element={<Welcome />} />
               {/* Client onboarding — public, authenticated by invite token only.
                   Ranks below the static /onboarding redirects below in React Router. */}
-              <Route path="/onboarding/:token" element={<Intake />} />
+              <Route path="/onboarding/:token" element={<Onboarding />} />
 
               {/* Admin routes - no onboarding guard */}
               <Route path="/admin" element={

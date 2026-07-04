@@ -1,4 +1,4 @@
-// Input widgets for the conversational intake. All controls are native
+// Input widgets for the client onboarding. All controls are native
 // buttons/inputs (keyboard reachable), with visible focus rings.
 
 import { useMemo, useState } from 'react';
@@ -9,7 +9,7 @@ import {
   OwnedProperty,
   OwnedPropertyType,
   ReportRecipient,
-} from '@/lib/intake/types';
+} from '@/lib/onboarding/types';
 
 export const focusRing =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal focus-visible:ring-offset-2';

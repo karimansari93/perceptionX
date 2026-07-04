@@ -1,4 +1,4 @@
-// Approval → confirmed_prompts (§7 of the intake spec).
+// Approval → confirmed_prompts (§7 of the onboarding spec).
 //
 // Deterministic: the same brief always produces the same rows, in the same
 // order, with the same text. Idempotency is completed by admin_approve_intake,
@@ -234,9 +234,9 @@ export function extractOwnedDomainSeeds(input: TrackingConfigInput): OwnedDomain
     }
   };
 
-  push(input.career_site_url, 'careers', 'From intake brief: main careers page');
+  push(input.career_site_url, 'careers', 'From onboarding brief: main careers page');
   for (const p of input.owned_properties) {
-    push(p.url, p.type, 'From intake brief: owned property');
+    push(p.url, p.type, 'From onboarding brief: owned property');
   }
   return seeds;
 }

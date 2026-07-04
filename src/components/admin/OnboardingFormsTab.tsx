@@ -1,4 +1,4 @@
-// Admin surface for the conversational intake (§6):
+// Admin surface for the client onboarding (§6):
 //  - create a tokenized invite (company + contact email locked at invite time)
 //  - invite list with status badges
 //  - review a submitted brief (every field editable) and approve it, which
@@ -23,27 +23,27 @@ import {
 } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import {
-  approveIntake,
-  createIntakeInvite,
-  getIntakeSubmission,
-  IntakeInvite,
-  intakeLinkFor,
-  IntakeSubmission,
-  listIntakeInvites,
-  markIntakeReviewed,
-  updateIntakeSubmissionPayload,
-} from '@/lib/intake/api';
+  approveOnboarding,
+  createOnboardingInvite,
+  getOnboardingSubmission,
+  OnboardingInvite,
+  onboardingLinkFor,
+  OnboardingSubmission,
+  listOnboardingInvites,
+  markOnboardingReviewed,
+  updateOnboardingSubmissionPayload,
+} from '@/lib/onboarding/api';
 import {
   CANONICAL_JOB_FUNCTIONS,
-  IntakePayload,
+  OnboardingPayload,
   MANAGED_PLATFORM_OPTIONS,
   validateForSubmit,
-} from '@/lib/intake/types';
+} from '@/lib/onboarding/types';
 import {
   extractOwnedDomainSeeds,
   generateConfirmedPrompts,
   trackedEntities,
-} from '@/lib/intake/generateConfirmedPrompts';
+} from '@/lib/onboarding/generateConfirmedPrompts';
 import {
   ChipAdder,
   EntityEditor,
@@ -51,10 +51,10 @@ import {
   PriorityEditor,
   PropertyEditor,
   RecipientEditor,
-} from '@/components/intake/inputs';
+} from '@/components/onboarding/inputs';
 import { COUNTRY_NAMES } from '@/lib/marketName';
 
-const STATUS_STYLES: Record<IntakeInvite['status'], string> = {
+const STATUS_STYLES: Record<OnboardingInvite['status'], string> = {
   sent: 'bg-slate-100 text-slate-600',
   in_progress: 'bg-teal/10 text-teal',
   submitted: 'bg-pink/10 text-pink',
@@ -62,7 +62,7 @@ const STATUS_STYLES: Record<IntakeInvite['status'], string> = {
   approved: 'bg-emerald-100 text-emerald-700',
 };
 
-const STATUS_LABELS: Record<IntakeInvite['status'], string> = {
+const STATUS_LABELS: Record<OnboardingInvite['status'], string> = {
   sent: 'Sent',
   in_progress: 'In progress',
   submitted: 'Submitted',
@@ -75,18 +75,18 @@ interface OrgOption {
   name: string;
 }
 
-export const IntakeInvitesTab = () => {
-  const [invites, setInvites] = useState<IntakeInvite[]>([]);
+export const OnboardingFormsTab = () => {
+  const [invites, setInvites] = useState<OnboardingInvite[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
-  const [reviewInvite, setReviewInvite] = useState<IntakeInvite | null>(null);
+  const [reviewInvite, setReviewInvite] = useState<OnboardingInvite | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setInvites(await listIntakeInvites());
+      setInvites(await listOnboardingInvites());
     } catch (e) {
-      toast.error('Could not load intake invites');
+      toast.error('Could not load onboarding forms');
     } finally {
       setLoading(false);
     }
@@ -96,16 +96,16 @@ export const IntakeInvitesTab = () => {
     refresh();
   }, [refresh]);
 
-  const copyLink = async (invite: IntakeInvite) => {
-    await navigator.clipboard.writeText(intakeLinkFor(invite.token));
-    toast.success('Intake link copied');
+  const copyLink = async (invite: OnboardingInvite) => {
+    await navigator.clipboard.writeText(onboardingLinkFor(invite.token));
+    toast.success('Onboarding link copied');
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-lg font-headline font-semibold text-slate-800">Intake invites</h2>
+          <h2 className="text-lg font-headline font-semibold text-slate-800">Onboarding invites</h2>
           <p className="text-sm text-slate-500">
             Conversational onboarding briefs — invite, review, approve into tracking prompts.
           </p>
@@ -117,7 +117,7 @@ export const IntakeInvitesTab = () => {
           </Button>
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <Send className="h-4 w-4 mr-1.5" />
-            Send intake invite
+            Send onboarding form
           </Button>
         </div>
       </div>
@@ -163,7 +163,7 @@ export const IntakeInvitesTab = () => {
                       variant="ghost"
                       size="sm"
                       onClick={() => copyLink(invite)}
-                      title="Copy intake link"
+                      title="Copy onboarding link"
                     >
                       <Copy className="h-3.5 w-3.5" />
                     </Button>
@@ -238,8 +238,8 @@ function CreateInviteDialog({
   const create = async () => {
     setBusy(true);
     try {
-      const invite = await createIntakeInvite(companyName, contactEmail, orgId || null);
-      setCreatedLink(intakeLinkFor(invite.token));
+      const invite = await createOnboardingInvite(companyName, contactEmail, orgId || null);
+      setCreatedLink(onboardingLinkFor(invite.token));
       onCreated();
       // Email the invite. Best-effort — the copyable link below always works.
       try {
@@ -271,7 +271,7 @@ function CreateInviteDialog({
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Send intake invite</DialogTitle>
+          <DialogTitle>Send onboarding form</DialogTitle>
           <DialogDescription>
             Company and contact email are locked into the invite — the client can't change them.
           </DialogDescription>
@@ -378,12 +378,12 @@ function ReviewBriefDialog({
   onClose,
   onChanged,
 }: {
-  invite: IntakeInvite;
+  invite: OnboardingInvite;
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const [submission, setSubmission] = useState<IntakeSubmission | null>(null);
-  const [payload, setPayload] = useState<IntakePayload | null>(null);
+  const [submission, setSubmission] = useState<OnboardingSubmission | null>(null);
+  const [payload, setPayload] = useState<OnboardingPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -391,7 +391,7 @@ function ReviewBriefDialog({
   useEffect(() => {
     (async () => {
       try {
-        const sub = await getIntakeSubmission(invite.id);
+        const sub = await getOnboardingSubmission(invite.id);
         setSubmission(sub);
         // Backfill fields older briefs predate.
         setPayload(
@@ -405,7 +405,7 @@ function ReviewBriefDialog({
             : null,
         );
         if (invite.status === 'submitted') {
-          await markIntakeReviewed(invite.id);
+          await markOnboardingReviewed(invite.id);
           onChanged();
         }
       } catch {
@@ -417,7 +417,7 @@ function ReviewBriefDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invite.id]);
 
-  const patch = (p: Partial<IntakePayload>) =>
+  const patch = (p: Partial<OnboardingPayload>) =>
     setPayload((prev) => (prev ? { ...prev, ...p } : prev));
 
   const promptPreview = useMemo(() => {
@@ -432,7 +432,7 @@ function ReviewBriefDialog({
     if (!submission || !payload) return;
     setSaving(true);
     try {
-      await updateIntakeSubmissionPayload(submission.id, payload);
+      await updateOnboardingSubmissionPayload(submission.id, payload);
       toast.success('Brief updated');
     } catch {
       toast.error('Could not save the edits');
@@ -446,8 +446,8 @@ function ReviewBriefDialog({
     setApproving(true);
     try {
       // Persist any admin edits first — the approved brief is the source of truth.
-      await updateIntakeSubmissionPayload(submission.id, payload);
-      const result = await approveIntake(
+      await updateOnboardingSubmissionPayload(submission.id, payload);
+      const result = await approveOnboarding(
         invite.id,
         promptPreview.rows,
         payload,
@@ -791,7 +791,7 @@ function ReviewBriefDialog({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => window.open(intakeLinkFor(invite.token), '_blank')}
+                onClick={() => window.open(onboardingLinkFor(invite.token), '_blank')}
               >
                 <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
                 View client link

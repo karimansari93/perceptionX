@@ -1,4 +1,4 @@
-// The conversational intake as a screen-per-question wizard: one question at a
+// The client onboarding as a screen-per-question wizard: one question at a
 // time, the question text typed out ChatGPT-style, and free back/forward
 // navigation like a classic onboarding. Answers commit straight into the
 // payload, so moving back and forth never loses anything.
@@ -24,16 +24,16 @@ import {
 import { toast } from 'sonner';
 import {
   CANONICAL_JOB_FUNCTIONS,
-  IntakePayload,
+  OnboardingPayload,
   MANAGED_PLATFORM_OPTIONS,
   US_STATES,
   isValidUrl,
   normalizeJobFunction,
   normalizeUrl,
   validateForSubmit,
-} from '@/lib/intake/types';
-import { marketFunctionPairs } from '@/lib/intake/generateConfirmedPrompts';
-import { saveIntakeDraft, submitIntake } from '@/lib/intake/api';
+} from '@/lib/onboarding/types';
+import { marketFunctionPairs } from '@/lib/onboarding/generateConfirmedPrompts';
+import { saveOnboardingDraft, submitOnboarding } from '@/lib/onboarding/api';
 import { COUNTRY_NAMES } from '@/lib/marketName';
 
 // Countries + US states: US-only companies track state-level markets.
@@ -61,11 +61,11 @@ const MF_PREFIX = 'mf:';
 const ESC_PREFIX = 'esc:'; // per-sub-brand scope screen
 
 /** Tracked-separately sub-brands, in entry order. */
-function trackedSubBrands(p: IntakePayload) {
+function trackedSubBrands(p: OnboardingPayload) {
   return p.employer_entities.filter((e) => e.track_separately && e.name.trim());
 }
 
-function buildScreenIds(p: IntakePayload): string[] {
+function buildScreenIds(p: OnboardingPayload): string[] {
   const ids = ['welcome', 'entities', 'functions', 'markets'];
   if (p.markets.length > 1) ids.push('scope');
   if (p.markets.length > 1 && p.function_scope === 'per_market') {
@@ -107,7 +107,7 @@ function sectionOf(id: string): string {
   return 'Review & submit';
 }
 
-function questionOf(id: string, company: string, p: IntakePayload): { text: string; hint?: string } {
+function questionOf(id: string, company: string, p: OnboardingPayload): { text: string; hint?: string } {
   if (id.startsWith(MF_PREFIX)) {
     const market = id.slice(MF_PREFIX.length);
     const idx = p.markets.indexOf(market);
@@ -215,7 +215,7 @@ function questionOf(id: string, company: string, p: IntakePayload): { text: stri
   }
 }
 
-function canProceed(id: string, p: IntakePayload): boolean {
+function canProceed(id: string, p: OnboardingPayload): boolean {
   if (id === 'functions') return p.job_functions.length > 0;
   if (id === 'markets') return p.markets.length > 0;
   if (id.startsWith(MF_PREFIX)) {
@@ -287,15 +287,15 @@ function TypeText({ text, onDone }: { text: string; onDone: () => void }) {
   );
 }
 
-interface IntakeWizardProps {
+interface OnboardingWizardProps {
   token: string;
   companyName: string;
-  initialDraft: IntakePayload | null;
-  initialPayload: IntakePayload;
+  initialDraft: OnboardingPayload | null;
+  initialPayload: OnboardingPayload;
 }
 
-export function IntakeWizard({ token, companyName, initialDraft, initialPayload }: IntakeWizardProps) {
-  const [payload, setPayload] = useState<IntakePayload>(() => {
+export function OnboardingWizard({ token, companyName, initialDraft, initialPayload }: OnboardingWizardProps) {
+  const [payload, setPayload] = useState<OnboardingPayload>(() => {
     const base = initialDraft ?? initialPayload;
     // Older drafts predate these fields — backfill defaults.
     return {
@@ -357,7 +357,7 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
   // stale snapshot as the stored draft.
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const saveChain = useRef<Promise<unknown>>(Promise.resolve());
-  const latestSnapshot = useRef<IntakePayload | null>(null);
+  const latestSnapshot = useRef<OnboardingPayload | null>(null);
   const savedRef = useRef<string>(''); // JSON of the last snapshot we sent
   const payloadRef = useRef(payload);
   payloadRef.current = payload;
@@ -371,7 +371,7 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
     const key = JSON.stringify(snap);
     if (key === savedRef.current) return; // nothing new since last save
     savedRef.current = key;
-    saveChain.current = saveChain.current.then(() => saveIntakeDraft(token, snap)).catch(() => {});
+    saveChain.current = saveChain.current.then(() => saveOnboardingDraft(token, snap)).catch(() => {});
   }, [token]);
 
   // Debounced save for within-screen edits (typing, chip toggles).
@@ -409,7 +409,7 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
   // Accepts a partial or an updater so rapid same-tick updates (fast clicks)
   // never work from a stale payload.
   const patch = useCallback(
-    (p: Partial<IntakePayload> | ((prev: IntakePayload) => Partial<IntakePayload>)) => {
+    (p: Partial<OnboardingPayload> | ((prev: OnboardingPayload) => Partial<OnboardingPayload>)) => {
       setPayload((prev) => ({ ...prev, ...(typeof p === 'function' ? p(prev) : p) }));
     },
     [],
@@ -439,11 +439,11 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
       return;
     }
     setSubmitting(true);
-    const clean: IntakePayload = {
+    const clean: OnboardingPayload = {
       ...payload,
       career_site_url: normalizeUrl(payload.career_site_url),
     };
-    const res = await submitIntake(token, clean);
+    const res = await submitOnboarding(token, clean);
     setSubmitting(false);
     if (res.ok || res.error === 'already_submitted') {
       setSubmitted(true);
@@ -789,8 +789,8 @@ function Frame({
 interface ScreenControlProps {
   id: string;
   companyName: string;
-  payload: IntakePayload;
-  patch: (p: Partial<IntakePayload> | ((prev: IntakePayload) => Partial<IntakePayload>)) => void;
+  payload: OnboardingPayload;
+  patch: (p: Partial<OnboardingPayload> | ((prev: OnboardingPayload) => Partial<OnboardingPayload>)) => void;
   goNext: () => void;
   problems: string[];
   submitting: boolean;
@@ -1400,7 +1400,7 @@ function ReviewSummary({
   onEdit,
 }: {
   companyName: string;
-  payload: IntakePayload;
+  payload: OnboardingPayload;
   onEdit: (screenId: string) => void;
 }) {
   const industryOf = (fn: string) =>

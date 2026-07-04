@@ -1,7 +1,7 @@
-// Data access for the conversational intake.
+// Data access for the client onboarding.
 //
 // Client side (tokenized, unauthenticated): everything goes through
-// SECURITY DEFINER RPCs — the anon role has no direct access to the intake
+// SECURITY DEFINER RPCs — the anon role has no direct access to the onboarding
 // tables, so a token is the only key that opens exactly one invite.
 //
 // Admin side: direct table reads/writes under the is_admin() RLS policies.
@@ -10,44 +10,44 @@
 // the localized casts in here — keep them in this file only.
 
 import { supabase } from '@/integrations/supabase/client';
-import type { ConfirmedPromptRow, IntakePayload, OwnedDomainSeed } from './types';
+import type { ConfirmedPromptRow, OnboardingPayload, OwnedDomainSeed } from './types';
 
-export type IntakeInviteStatus = 'sent' | 'in_progress' | 'submitted' | 'reviewed' | 'approved';
+export type OnboardingInviteStatus = 'sent' | 'in_progress' | 'submitted' | 'reviewed' | 'approved';
 
-export interface IntakeInvite {
+export interface OnboardingInvite {
   id: string;
   org_id: string | null;
   company_name: string;
   contact_email: string;
   token: string;
-  status: IntakeInviteStatus;
+  status: OnboardingInviteStatus;
   expires_at: string;
   created_by: string | null;
   created_at: string;
 }
 
-export interface IntakeSubmission {
+export interface OnboardingSubmission {
   id: string;
   invite_id: string;
-  payload: IntakePayload;
+  payload: OnboardingPayload;
   draft: boolean;
   completed_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export type IntakeTokenError =
+export type OnboardingTokenError =
   | 'not_found'
   | 'expired'
   | 'already_submitted'
   | 'payload_too_large'
   | string;
 
-export interface IntakeTokenState {
+export interface OnboardingTokenState {
   company_name: string;
-  status: IntakeInviteStatus;
+  status: OnboardingInviteStatus;
   expires_at: string;
-  draft: IntakePayload | null;
+  draft: OnboardingPayload | null;
   submitted: boolean;
 }
 
@@ -58,7 +58,7 @@ const rpc = (name: string, args: Record<string, unknown>) =>
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const table = (name: string) => supabase.from(name as any) as any;
 
-export function intakeLinkFor(token: string): string {
+export function onboardingLinkFor(token: string): string {
   return `${window.location.origin}/onboarding/${token}`;
 }
 
@@ -66,32 +66,32 @@ export function intakeLinkFor(token: string): string {
 // Client (token) side
 // ---------------------------------------------------------------------------
 
-export async function getIntakeByToken(
+export async function getOnboardingByToken(
   token: string,
-): Promise<{ state?: IntakeTokenState; error?: IntakeTokenError }> {
+): Promise<{ state?: OnboardingTokenState; error?: OnboardingTokenError }> {
   const { data, error } = await rpc('intake_get_by_token', { p_token: token });
   if (error) return { error: error.message };
-  if (data?.error) return { error: data.error as IntakeTokenError };
-  return { state: data as IntakeTokenState };
+  if (data?.error) return { error: data.error as OnboardingTokenError };
+  return { state: data as OnboardingTokenState };
 }
 
-export async function saveIntakeDraft(
+export async function saveOnboardingDraft(
   token: string,
-  payload: IntakePayload,
-): Promise<{ ok: boolean; error?: IntakeTokenError }> {
+  payload: OnboardingPayload,
+): Promise<{ ok: boolean; error?: OnboardingTokenError }> {
   const { data, error } = await rpc('intake_save_draft', { p_token: token, p_payload: payload });
   if (error) return { ok: false, error: error.message };
-  if (data?.error) return { ok: false, error: data.error as IntakeTokenError };
+  if (data?.error) return { ok: false, error: data.error as OnboardingTokenError };
   return { ok: true };
 }
 
-export async function submitIntake(
+export async function submitOnboarding(
   token: string,
-  payload: IntakePayload,
-): Promise<{ ok: boolean; error?: IntakeTokenError }> {
+  payload: OnboardingPayload,
+): Promise<{ ok: boolean; error?: OnboardingTokenError }> {
   const { data, error } = await rpc('intake_submit', { p_token: token, p_payload: payload });
   if (error) return { ok: false, error: error.message };
-  if (data?.error) return { ok: false, error: data.error as IntakeTokenError };
+  if (data?.error) return { ok: false, error: data.error as OnboardingTokenError };
   return { ok: true };
 }
 
@@ -99,39 +99,39 @@ export async function submitIntake(
 // Admin side
 // ---------------------------------------------------------------------------
 
-export async function createIntakeInvite(
+export async function createOnboardingInvite(
   companyName: string,
   contactEmail: string,
   orgId?: string | null,
-): Promise<IntakeInvite> {
+): Promise<OnboardingInvite> {
   const { data, error } = await rpc('create_intake_invite', {
     p_company_name: companyName,
     p_contact_email: contactEmail,
     p_org_id: orgId ?? null,
   });
   if (error) throw error;
-  return data as IntakeInvite;
+  return data as OnboardingInvite;
 }
 
-export async function listIntakeInvites(): Promise<IntakeInvite[]> {
+export async function listOnboardingInvites(): Promise<OnboardingInvite[]> {
   const { data, error } = await table('intake_invites')
     .select('*')
     .order('created_at', { ascending: false });
   if (error) throw error;
-  return (data ?? []) as IntakeInvite[];
+  return (data ?? []) as OnboardingInvite[];
 }
 
-export async function getIntakeSubmission(inviteId: string): Promise<IntakeSubmission | null> {
+export async function getOnboardingSubmission(inviteId: string): Promise<OnboardingSubmission | null> {
   const { data, error } = await table('intake_submissions')
     .select('*')
     .eq('invite_id', inviteId)
     .maybeSingle();
   if (error) throw error;
-  return (data as IntakeSubmission) ?? null;
+  return (data as OnboardingSubmission) ?? null;
 }
 
 /** Admin opened the brief: submitted → reviewed (one-way, before approval). */
-export async function markIntakeReviewed(inviteId: string): Promise<void> {
+export async function markOnboardingReviewed(inviteId: string): Promise<void> {
   const { error } = await table('intake_invites')
     .update({ status: 'reviewed' })
     .eq('id', inviteId)
@@ -140,9 +140,9 @@ export async function markIntakeReviewed(inviteId: string): Promise<void> {
 }
 
 /** Persist admin edits to a submitted brief before approval. */
-export async function updateIntakeSubmissionPayload(
+export async function updateOnboardingSubmissionPayload(
   submissionId: string,
-  payload: IntakePayload,
+  payload: OnboardingPayload,
 ): Promise<void> {
   const { error } = await table('intake_submissions')
     .update({ payload })
@@ -159,10 +159,10 @@ export interface ApproveResult {
   prompts_skipped_existing: number;
 }
 
-export async function approveIntake(
+export async function approveOnboarding(
   inviteId: string,
   rows: ConfirmedPromptRow[],
-  brief: IntakePayload,
+  brief: OnboardingPayload,
   ownedDomains: OwnedDomainSeed[],
 ): Promise<ApproveResult> {
   const { data, error } = await rpc('admin_approve_intake', {

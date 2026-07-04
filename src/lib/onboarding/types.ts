@@ -1,6 +1,6 @@
-// Conversational intake: the structured project brief.
+// Client onboarding: the structured project brief.
 //
-// TrackingConfigInput is the stable contract between the intake flow, the admin
+// TrackingConfigInput is the stable contract between the onboarding flow, the admin
 // review screen, and the confirmed_prompts generator. Every field is captured
 // typed and normalized (canonical countries + function labels) so prompt
 // generation is a direct mapping, never a re-parse of free text.
@@ -104,8 +104,8 @@ export interface TrackingConfigInput {
   };
 }
 
-/** Alias: the intake payload IS the tracking config input. */
-export type IntakePayload = TrackingConfigInput;
+/** Alias: the onboarding payload IS the tracking config input. */
+export type OnboardingPayload = TrackingConfigInput;
 
 /** Shape consumed by admin_approve_intake — maps onto confirmed_prompts. */
 export interface ConfirmedPromptRow {
@@ -198,7 +198,7 @@ export function normalizeJobFunction(raw: string): string {
   return canon ?? t;
 }
 
-export function emptyIntakePayload(companyName: string, contactEmail: string): IntakePayload {
+export function emptyOnboardingPayload(companyName: string, contactEmail: string): OnboardingPayload {
   return {
     company_name: companyName,
     contact_email: contactEmail,
@@ -224,7 +224,7 @@ export function emptyIntakePayload(companyName: string, contactEmail: string): I
 }
 
 /** Required-to-submit gating (§4). Returns human-readable problems. */
-export function validateForSubmit(p: IntakePayload): string[] {
+export function validateForSubmit(p: OnboardingPayload): string[] {
   const problems: string[] = [];
   if (p.job_functions.length < 1) problems.push('Pick at least one job function.');
   if (p.markets.length < 1) problems.push('Pick at least one market.');

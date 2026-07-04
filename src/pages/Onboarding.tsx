@@ -4,18 +4,18 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { IntakeWizard } from '@/components/intake/IntakeWizard';
-import { getIntakeByToken, IntakeTokenState } from '@/lib/intake/api';
-import { emptyIntakePayload, IntakePayload } from '@/lib/intake/types';
+import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard';
+import { getOnboardingByToken, OnboardingTokenState } from '@/lib/onboarding/api';
+import { emptyOnboardingPayload, OnboardingPayload } from '@/lib/onboarding/types';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 
 type LoadState =
   | { kind: 'loading' }
   | { kind: 'invalid'; reason: 'not_found' | 'expired' | 'error' }
   | { kind: 'submitted'; companyName: string }
-  | { kind: 'ready'; state: IntakeTokenState };
+  | { kind: 'ready'; state: OnboardingTokenState };
 
-export default function Intake() {
+export default function Onboarding() {
   const { token } = useParams<{ token: string }>();
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
   useDocumentTitle('Project setup');
@@ -27,7 +27,7 @@ export default function Intake() {
         setLoad({ kind: 'invalid', reason: 'not_found' });
         return;
       }
-      const res = await getIntakeByToken(token);
+      const res = await getOnboardingByToken(token);
       if (cancelled) return;
       if (res.error === 'not_found') setLoad({ kind: 'invalid', reason: 'not_found' });
       else if (res.error === 'expired') setLoad({ kind: 'invalid', reason: 'expired' });
@@ -60,7 +60,7 @@ export default function Intake() {
           </h1>
           <p className="text-sm text-slate-600">
             {load.reason === 'expired'
-              ? 'Intake links are live for 14 days. Ask your PerceptionX contact to send a fresh one — it takes them a minute.'
+              ? 'Onboarding links are live for 14 days. Ask your PerceptionX contact to send a fresh one — it takes them a minute.'
               : 'Check the link matches the one in your invite email. If it does, ask your PerceptionX contact for a fresh one.'}
           </p>
         </div>
@@ -85,10 +85,10 @@ export default function Intake() {
   }
 
   const companyName = load.state.company_name;
-  const initial: IntakePayload = emptyIntakePayload(companyName, '');
+  const initial: OnboardingPayload = emptyOnboardingPayload(companyName, '');
 
   return (
-    <IntakeWizard
+    <OnboardingWizard
       token={token!}
       companyName={companyName}
       initialDraft={load.state.draft}
