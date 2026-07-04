@@ -99,7 +99,7 @@ export default function Intake() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-[100dvh] bg-gradient-to-b from-white to-[#FFE4EC] flex items-center justify-center p-6">
+    <div className="min-h-[100dvh] bg-gradient-to-b from-white to-[#F6F7FB] flex items-center justify-center p-6">
       {children}
     </div>
   );

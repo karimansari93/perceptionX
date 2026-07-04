@@ -493,12 +493,24 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
     >
       <div className="max-w-xl w-full flex flex-col min-h-full mx-auto lg:mx-0">
         {/* Question */}
-        <div className="pt-10 sm:pt-14 pb-6">
-          {sections.indexOf(currentSection) >= 0 && (
-            <p className="text-xs text-slate-400 mb-2">
-              Step {sections.indexOf(currentSection) + 1}/{sections.length}
-            </p>
-          )}
+        <div className="pt-8 sm:pt-12 pb-6">
+          <div className="flex items-center gap-3 mb-3 min-h-[1.5rem]">
+            {idx > 0 && (
+              <button
+                type="button"
+                onClick={goBack}
+                className={`inline-flex items-center gap-1 text-xs text-slate-400 hover:text-nightsky rounded transition-colors ${focusRing}`}
+              >
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+                Back
+              </button>
+            )}
+            {sections.indexOf(currentSection) >= 0 && (
+              <p className="text-xs text-slate-400">
+                Step {sections.indexOf(currentSection) + 1}/{sections.length}
+              </p>
+            )}
+          </div>
           <h2 className="font-headline font-semibold text-nightsky text-xl sm:text-3xl leading-snug min-h-[2.5em]">
             <TypeText key={currentId} text={question.text} onDone={() => setTyped(true)} />
           </h2>
@@ -536,19 +548,6 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
           )}
         </div>
 
-        {/* Bottom nav: square back button, like the reference design */}
-        {idx > 0 && !submitted && (
-          <div className="pb-12">
-            <button
-              type="button"
-              onClick={goBack}
-              aria-label="Back"
-              className={`w-10 h-10 rounded-lg border border-nightsky/10 bg-white/70 text-nightsky flex items-center justify-center hover:border-nightsky/30 transition-colors ${focusRing}`}
-            >
-              <ArrowLeft className="h-4 w-4" aria-hidden />
-            </button>
-          </div>
-        )}
       </div>
     </Frame>
   );
@@ -666,8 +665,9 @@ function Frame({
         </p>
       </aside>
 
-      {/* Content */}
-      <div className="flex-1 flex flex-col min-w-0 bg-gradient-to-b from-white to-[#FFE4EC]">
+      {/* Content — calm near-white so the navy rail reads as intentional
+          contrast; rose stays in the accents */}
+      <div className="flex-1 flex flex-col min-w-0 bg-gradient-to-b from-white to-[#F6F7FB]">
         {/* Slim header — mobile only (the rail covers desktop) */}
         <header className="lg:hidden shrink-0 z-10 bg-white/80 backdrop-blur-md border-b border-nightsky/[0.06]">
           <div className="max-w-xl mx-auto px-4">
