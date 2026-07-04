@@ -461,6 +461,16 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
   const sectionScreens = screens.filter((id) => sectionOf(id) === currentSection);
   const within = (sectionScreens.indexOf(currentId) + 1) / Math.max(sectionScreens.length, 1);
 
+  // Rail navigation: completed sections are clickable and jump back to their
+  // first screen. Answers persist, so revisiting is always safe.
+  const jumpToSection = useCallback(
+    (s: string) => {
+      const target = screens.find((id) => sectionOf(id) === s);
+      if (target) go(target);
+    },
+    [screens, go],
+  );
+
   if (submitted) {
     return (
       <Frame
@@ -490,6 +500,7 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
       sections={sections}
       sectionIndex={sections.indexOf(currentSection)}
       within={within}
+      onSectionClick={jumpToSection}
     >
       <div className="max-w-xl w-full flex flex-col min-h-full mx-auto lg:mx-0">
         {/* Question */}
@@ -509,6 +520,15 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
               <p className="text-xs text-slate-400">
                 Step {sections.indexOf(currentSection) + 1}/{sections.length}
               </p>
+            )}
+            {showBackToReview && (
+              <button
+                type="button"
+                onClick={() => go('review')}
+                className={`ml-auto text-xs font-medium text-teal hover:text-nightsky rounded transition-colors ${focusRing}`}
+              >
+                Return to review →
+              </button>
             )}
           </div>
           <h2 className="font-headline font-semibold text-nightsky text-xl sm:text-3xl leading-snug min-h-[2.5em]">
@@ -541,13 +561,7 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
             onSubmit={handleSubmit}
             onJump={go}
           />
-          {showBackToReview && (
-            <div className="mt-4 flex justify-center">
-              <SkipButton label="Back to review" onClick={() => go('review')} />
-            </div>
-          )}
         </div>
-
       </div>
     </Frame>
   );
@@ -570,6 +584,7 @@ function Frame({
   sections,
   sectionIndex,
   within,
+  onSectionClick,
   children,
 }: {
   companyName: string;
@@ -579,6 +594,8 @@ function Frame({
   sectionIndex: number;
   /** 0..1 completion inside the active section. */
   within: number;
+  /** When set, completed sections in the rail navigate back to that section. */
+  onSectionClick?: (section: string) => void;
   children: React.ReactNode;
 }) {
   // h-[100dvh] (not min-h) so <main> is the real scroll container — the
@@ -618,23 +635,15 @@ function Frame({
               const meta = SECTION_META[s] ?? { icon: Target, blurb: '' };
               const Icon = meta.icon;
               const state = i < sectionIndex ? 'done' : i === sectionIndex ? 'active' : 'todo';
-              return (
-                <li key={s} className="relative flex gap-3.5 pb-7 last:pb-0">
-                  {/* connector */}
-                  {i < sections.length - 1 && (
-                    <span
-                      aria-hidden
-                      className={`absolute left-[17px] top-9 bottom-0 w-px ${
-                        state === 'done' ? 'bg-teal/60' : 'bg-white/15'
-                      }`}
-                    />
-                  )}
+              const clickable = state === 'done' && !!onSectionClick;
+              const row = (
+                <>
                   <span
                     className={`relative z-10 w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${
                       state === 'active'
                         ? 'bg-white text-nightsky'
                         : state === 'done'
-                          ? 'bg-teal/20 text-teal'
+                          ? 'bg-teal/20 text-teal group-hover:bg-teal group-hover:text-nightsky'
                           : 'bg-white/10 text-white/50'
                     }`}
                   >
@@ -644,16 +653,50 @@ function Frame({
                       <Icon className="h-4 w-4" aria-hidden />
                     )}
                   </span>
-                  <span className="min-w-0 pt-0.5">
+                  <span className="min-w-0 pt-0.5 text-left">
                     <span
                       className={`block text-sm font-medium leading-tight ${
-                        state === 'active' ? 'text-white' : state === 'done' ? 'text-white/80' : 'text-white/50'
+                        state === 'active'
+                          ? 'text-white'
+                          : state === 'done'
+                            ? 'text-white/80 group-hover:text-white'
+                            : 'text-white/50'
                       }`}
                     >
                       {s}
                     </span>
                     <span className="block text-xs text-white/40 mt-0.5">{meta.blurb}</span>
                   </span>
+                </>
+              );
+              return (
+                <li key={s} className="relative flex pb-7 last:pb-0">
+                  {/* connector */}
+                  {i < sections.length - 1 && (
+                    <span
+                      aria-hidden
+                      className={`absolute left-[17px] top-9 bottom-0 w-px ${
+                        state === 'done' ? 'bg-teal/60' : 'bg-white/15'
+                      }`}
+                    />
+                  )}
+                  {clickable ? (
+                    <button
+                      type="button"
+                      onClick={() => onSectionClick(s)}
+                      aria-label={`Go back to ${s}`}
+                      className={`group flex gap-3.5 w-full rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal focus-visible:ring-offset-2 focus-visible:ring-offset-nightsky`}
+                    >
+                      {row}
+                    </button>
+                  ) : (
+                    <span
+                      className="flex gap-3.5 w-full"
+                      aria-current={state === 'active' ? 'step' : undefined}
+                    >
+                      {row}
+                    </span>
+                  )}
                 </li>
               );
             })}
