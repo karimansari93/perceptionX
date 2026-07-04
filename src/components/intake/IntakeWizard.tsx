@@ -461,8 +461,15 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
   const sectionScreens = screens.filter((id) => sectionOf(id) === currentSection);
   const within = (sectionScreens.indexOf(currentId) + 1) / Math.max(sectionScreens.length, 1);
 
-  // Rail navigation: completed sections are clickable and jump back to their
-  // first screen. Answers persist, so revisiting is always safe.
+  // Rail navigation: every section the client has reached stays clickable in
+  // both directions — going back never locks the sections they already
+  // completed. Answers persist, so revisiting is always safe.
+  const [maxSectionReached, setMaxSectionReached] = useState(0);
+  const currentSectionIndex = sections.indexOf(currentSection);
+  useEffect(() => {
+    if (currentSectionIndex > maxSectionReached) setMaxSectionReached(currentSectionIndex);
+  }, [currentSectionIndex, maxSectionReached]);
+
   const jumpToSection = useCallback(
     (s: string) => {
       const target = screens.find((id) => sectionOf(id) === s);
@@ -478,6 +485,7 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
         section="All done"
         sections={sections}
         sectionIndex={sections.length}
+        maxSectionIndex={sections.length}
         within={1}
       >
         <div className="max-w-xl mx-auto text-center space-y-3 py-16">
@@ -498,7 +506,8 @@ export function IntakeWizard({ token, companyName, initialDraft, initialPayload 
       companyName={companyName}
       section={currentSection}
       sections={sections}
-      sectionIndex={sections.indexOf(currentSection)}
+      sectionIndex={currentSectionIndex}
+      maxSectionIndex={maxSectionReached}
       within={within}
       onSectionClick={jumpToSection}
     >
@@ -583,6 +592,7 @@ function Frame({
   section,
   sections,
   sectionIndex,
+  maxSectionIndex,
   within,
   onSectionClick,
   children,
@@ -592,9 +602,11 @@ function Frame({
   sections: string[];
   /** Index of the active section in `sections`; -1 on Welcome, length when done. */
   sectionIndex: number;
+  /** Furthest section the client has reached — everything up to here is clickable. */
+  maxSectionIndex: number;
   /** 0..1 completion inside the active section. */
   within: number;
-  /** When set, completed sections in the rail navigate back to that section. */
+  /** When set, visited sections in the rail navigate to that section (back or forward). */
   onSectionClick?: (section: string) => void;
   children: React.ReactNode;
 }) {
@@ -634,7 +646,8 @@ function Frame({
             {sections.map((s, i) => {
               const meta = SECTION_META[s] ?? { icon: Target, blurb: '' };
               const Icon = meta.icon;
-              const state = i < sectionIndex ? 'done' : i === sectionIndex ? 'active' : 'todo';
+              const state =
+                i === sectionIndex ? 'active' : i <= maxSectionIndex ? 'done' : 'todo';
               const clickable = state === 'done' && !!onSectionClick;
               const row = (
                 <>
@@ -676,7 +689,7 @@ function Frame({
                     <span
                       aria-hidden
                       className={`absolute left-[17px] top-9 bottom-0 w-px ${
-                        state === 'done' ? 'bg-teal/60' : 'bg-white/15'
+                        i < maxSectionIndex ? 'bg-teal/60' : 'bg-white/15'
                       }`}
                     />
                   )}
@@ -684,7 +697,7 @@ function Frame({
                     <button
                       type="button"
                       onClick={() => onSectionClick(s)}
-                      aria-label={`Go back to ${s}`}
+                      aria-label={`Go to ${s}`}
                       className={`group flex gap-3.5 w-full rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal focus-visible:ring-offset-2 focus-visible:ring-offset-nightsky`}
                     >
                       {row}
