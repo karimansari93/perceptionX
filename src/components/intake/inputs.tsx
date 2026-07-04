@@ -358,6 +358,15 @@ export function EntityEditor({
 
   return (
     <div className="space-y-3">
+      <ul className="space-y-2">
+        {/* The invited company is always tracked — shown first, locked. */}
+        <li className="flex items-center gap-3 rounded-xl border border-nightsky/15 bg-nightsky/[0.03] px-3 py-2">
+          <span className="text-sm font-medium text-nightsky flex-1 truncate">{companyName}</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-teal bg-teal/10 rounded-full px-2 py-0.5">
+            Always tracked
+          </span>
+        </li>
+      </ul>
       {entities.length > 0 && (
         <ul className="space-y-2">
           {entities.map((e, i) => (

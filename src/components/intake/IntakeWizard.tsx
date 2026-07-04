@@ -134,8 +134,8 @@ function questionOf(id: string, company: string, p: IntakePayload): { text: stri
       };
     case 'entities':
       return {
-        text: `Who else should we track?`,
-        hint: `Other than ${company} — divisions, subsidiaries or brands with their own hiring identity, the way PepsiCo spans Frito-Lay, Gatorade and Quaker. Each one gets its own results.`,
+        text: `Confirm the employer entities we should track.`,
+        hint: `${company} is always included. Add any divisions, subsidiaries or brands with their own hiring identity — the way PepsiCo spans Frito-Lay, Gatorade and Quaker — and each gets its own results.`,
       };
     case 'functions':
       return {
@@ -1011,9 +1011,7 @@ function ScreenControl({
             onChange={(v) => patch({ employer_entities: v })}
             showHelp={false}
           />
-          {payload.employer_entities.length === 0
-            ? next(`Just ${companyName}`)
-            : next('Continue')}
+          {next('Confirm entities')}
         </div>
       );
 
