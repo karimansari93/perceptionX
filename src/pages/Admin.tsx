@@ -8,6 +8,7 @@ import { CompanyBatchTab } from '@/components/admin/CompanyBatchTab';
 import { RecencyCoverageTab } from '@/components/admin/RecencyCoverageTab';
 import { DataHealthTab } from '@/components/admin/DataHealthTab';
 import { EntityCanonicalizationTab } from '@/components/admin/EntityCanonicalizationTab';
+import { OnboardingFormsTab } from '@/components/admin/OnboardingFormsTab';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 
 export default function Admin() {
@@ -32,6 +33,8 @@ export default function Admin() {
         return <RecencyCoverageTab />;
       case 'entity-canonicalization':
         return <EntityCanonicalizationTab />;
+      case 'onboarding-forms':
+        return <OnboardingFormsTab />;
       default:
         return <OrganizationManagementTab />;
     }

@@ -11,6 +11,7 @@ import {
   Clock,
   Tags,
   LayoutDashboard,
+  Send,
   HeartPulse
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -38,7 +39,8 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
     { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy },
     { id: 'company-batch', label: 'Company Batch', icon: Layers },
     { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock },
-    { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags }
+    { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags },
+    { id: 'onboarding-forms', label: 'Onboarding Forms', icon: Send }
   ];
 
   return (
