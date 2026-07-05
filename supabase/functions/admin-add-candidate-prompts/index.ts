@@ -1,92 +1,79 @@
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Inline attribute prompt templates (64 prompts: 16 attributes x 4 types - informational, experience, competitive, discovery)
+// Inline attribute prompt templates — methodology v2 (52 prompts: 13 attributes
+// x 4 types). Kept byte-consistent with src/config/attributes.ts. This function
+// inserts only the Candidate Experience subset (filtered below).
 const ATTRIBUTE_PROMPT_TEMPLATES = [
-  { attributeId: 'mission-purpose', type: 'informational', prompt: 'What does {companyName} communicate about its mission and purpose?' },
-  { attributeId: 'mission-purpose', type: 'experience', prompt: 'How well does {companyName} communicate its mission and purpose to employees, and how does this resonate with their personal values?' },
-  { attributeId: 'mission-purpose', type: 'competitive', prompt: 'How do {companyName}\'s mission and purpose compare to other companies in {industry}?' },
-  { attributeId: 'mission-purpose', type: 'discovery', prompt: 'What companies in {industry} are known for having a strong, purpose-driven employer brand?' },
-  { attributeId: 'rewards-recognition', type: 'informational', prompt: 'What are the compensation, benefits, and recognition details at {companyName}?' },
-  { attributeId: 'rewards-recognition', type: 'experience', prompt: 'How satisfied are employees at {companyName} with the rewards and recognition programs, and what specific aspects drive positive or negative sentiment?' },
-  { attributeId: 'rewards-recognition', type: 'competitive', prompt: 'How do rewards and recognition programs at {companyName} compare to other companies in {industry}?' },
-  { attributeId: 'rewards-recognition', type: 'discovery', prompt: 'What companies in {industry} are known for having exceptional rewards and recognition for employees?' },
-  { attributeId: 'company-culture', type: 'informational', prompt: 'What does {companyName} communicate about its culture and values?' },
-  { attributeId: 'company-culture', type: 'experience', prompt: 'How do employees at {companyName} describe the actual company culture versus the promoted culture?' },
-  { attributeId: 'company-culture', type: 'competitive', prompt: 'How does {companyName}\'s company culture compare to other companies in {industry}?' },
-  { attributeId: 'company-culture', type: 'discovery', prompt: 'What companies in {industry} are known for outstanding workplace culture?' },
-  { attributeId: 'social-impact', type: 'informational', prompt: 'What social impact programs and commitments does {companyName} offer?' },
-  { attributeId: 'social-impact', type: 'experience', prompt: 'How do employees at {companyName} perceive the company\'s commitment to social impact and community responsibility?' },
-  { attributeId: 'social-impact', type: 'competitive', prompt: 'How does {companyName}\'s social impact compare to other companies in {industry}?' },
-  { attributeId: 'social-impact', type: 'discovery', prompt: 'What companies in {industry} are recognized for meaningful social impact and community engagement?' },
-  { attributeId: 'inclusion', type: 'informational', prompt: 'What diversity, equity, and inclusion programs does {companyName} offer?' },
-  { attributeId: 'inclusion', type: 'experience', prompt: 'How do employees from diverse backgrounds at {companyName} rate the inclusivity of the workplace culture and practices?' },
-  { attributeId: 'inclusion', type: 'competitive', prompt: 'How do {companyName}\'s inclusion and diversity efforts compare to other companies in {industry}?' },
-  { attributeId: 'inclusion', type: 'discovery', prompt: 'What companies in {industry} are most recognized for diversity, equity, and inclusion?' },
-  { attributeId: 'innovation', type: 'informational', prompt: 'What does {companyName} offer in terms of innovation and technology?' },
-  { attributeId: 'innovation', type: 'experience', prompt: 'How do employees at {companyName} perceive the company\'s commitment to innovation and opportunities for creative work?' },
-  { attributeId: 'innovation', type: 'competitive', prompt: 'How does {companyName}\'s innovation culture compare to other companies in {industry}?' },
-  { attributeId: 'innovation', type: 'discovery', prompt: 'What companies in {industry} are known for fostering innovation and creative thinking?' },
-  { attributeId: 'wellbeing-balance', type: 'informational', prompt: 'What are the work-life balance, flexibility, and wellbeing offerings at {companyName}?' },
-  { attributeId: 'wellbeing-balance', type: 'experience', prompt: 'How do employees at {companyName} rate work-life balance and the overall wellbeing support provided by the company?' },
-  { attributeId: 'wellbeing-balance', type: 'competitive', prompt: 'How do {companyName}\'s wellbeing and work-life balance offerings compare to other companies in {industry}?' },
-  { attributeId: 'wellbeing-balance', type: 'discovery', prompt: 'What companies in {industry} are recognized for exceptional employee wellbeing and work-life balance?' },
-  { attributeId: 'leadership', type: 'informational', prompt: 'What does {companyName} communicate about its leadership and structure?' },
-  { attributeId: 'leadership', type: 'experience', prompt: 'How do employees at {companyName} rate the quality and effectiveness of leadership within the organization?' },
-  { attributeId: 'leadership', type: 'competitive', prompt: 'How does {companyName}\'s leadership quality compare to other companies in {industry}?' },
-  { attributeId: 'leadership', type: 'discovery', prompt: 'What companies in {industry} are respected for outstanding leadership and management?' },
-  { attributeId: 'security-perks', type: 'informational', prompt: 'What are the job security, benefits, and perks at {companyName}?' },
-  { attributeId: 'security-perks', type: 'experience', prompt: 'How do employees at {companyName} perceive job security, benefits, and additional perks provided by the company?' },
-  { attributeId: 'security-perks', type: 'competitive', prompt: 'How do {companyName}\'s security, benefits, and perks compare to other companies in {industry}?' },
-  { attributeId: 'security-perks', type: 'discovery', prompt: 'What companies in {industry} are known for providing comprehensive benefits and job security?' },
-  { attributeId: 'career-opportunities', type: 'informational', prompt: 'What career development and growth opportunities does {companyName} offer?' },
-  { attributeId: 'career-opportunities', type: 'experience', prompt: 'How do employees at {companyName} rate career development opportunities and long-term growth potential?' },
-  { attributeId: 'career-opportunities', type: 'competitive', prompt: 'How do career progression opportunities at {companyName} compare to other companies in {industry}?' },
-  { attributeId: 'career-opportunities', type: 'discovery', prompt: 'What companies in {industry} are most recognized for exceptional career development and progression opportunities?' },
-  { attributeId: 'application-process', type: 'informational', prompt: 'What is the application process at {companyName}?' },
-  { attributeId: 'application-process', type: 'experience', prompt: 'How is the application process at {companyName}?' },
-  { attributeId: 'application-process', type: 'competitive', prompt: 'How does the application process at {companyName} compare to other employers in {industry}?' },
-  { attributeId: 'application-process', type: 'discovery', prompt: 'What companies in {industry} have the best application process?' },
-  { attributeId: 'candidate-communication', type: 'informational', prompt: 'What can candidates expect in terms of communication from {companyName}?' },
-  { attributeId: 'candidate-communication', type: 'experience', prompt: 'How do candidates feel about receiving updates from {companyName}?' },
-  { attributeId: 'candidate-communication', type: 'competitive', prompt: 'How does recruiter communication at {companyName} compare to other companies in {industry}?' },
-  { attributeId: 'candidate-communication', type: 'discovery', prompt: 'What companies in {industry} are recognized for strong candidate communication?' },
-  { attributeId: 'interview-experience', type: 'informational', prompt: 'What is the interview process at {companyName}?' },
-  { attributeId: 'interview-experience', type: 'experience', prompt: 'How do candidates describe their interview experience at {companyName}?' },
+  { attributeId: 'mission-purpose-impact', type: 'informational', prompt: 'What should I know about {companyName}\'s mission, purpose, and social impact before applying?' },
+  { attributeId: 'mission-purpose-impact', type: 'experience', prompt: 'What do employees say about the sense of purpose and impact of working at {companyName}?' },
+  { attributeId: 'mission-purpose-impact', type: 'competitive', prompt: 'How does {companyName}\'s mission and impact compare to other companies in {industry}?' },
+  { attributeId: 'mission-purpose-impact', type: 'discovery', prompt: 'Which companies in {industry} are known for a strong sense of purpose and positive impact?' },
+  { attributeId: 'compensation', type: 'informational', prompt: 'How good is the pay at {companyName}, and how should I negotiate salary and benefits there?' },
+  { attributeId: 'compensation', type: 'experience', prompt: 'What do employees say about pay, benefits, and perks at {companyName}?' },
+  { attributeId: 'compensation', type: 'competitive', prompt: 'Does {companyName} pay better than other companies in {industry}?' },
+  { attributeId: 'compensation', type: 'discovery', prompt: 'Which companies in {industry} pay the best and offer the best benefits and perks?' },
+  { attributeId: 'company-culture', type: 'informational', prompt: 'What is the company culture really like at {companyName}?' },
+  { attributeId: 'company-culture', type: 'experience', prompt: 'How do employees describe the culture at {companyName} — and do they feel valued and recognized?' },
+  { attributeId: 'company-culture', type: 'competitive', prompt: 'How does the culture at {companyName} compare to other companies in {industry}?' },
+  { attributeId: 'company-culture', type: 'discovery', prompt: 'Which companies in {industry} have the best workplace culture?' },
+  { attributeId: 'leadership', type: 'informational', prompt: 'What should I know about the leadership and management at {companyName} before joining?' },
+  { attributeId: 'leadership', type: 'experience', prompt: 'What do employees say about managers and senior leadership at {companyName}?' },
+  { attributeId: 'leadership', type: 'competitive', prompt: 'How does the quality of leadership at {companyName} compare to other companies in {industry}?' },
+  { attributeId: 'leadership', type: 'discovery', prompt: 'Which companies in {industry} are known for great leadership and management?' },
+  { attributeId: 'job-security', type: 'informational', prompt: 'How stable and secure is a job at {companyName}?' },
+  { attributeId: 'job-security', type: 'experience', prompt: 'How do employees feel about job security and stability at {companyName}?' },
+  { attributeId: 'job-security', type: 'competitive', prompt: 'Is a job at {companyName} more secure than at other companies in {industry}?' },
+  { attributeId: 'job-security', type: 'discovery', prompt: 'Which companies in {industry} offer the most stable and secure jobs?' },
+  { attributeId: 'career-opportunities', type: 'informational', prompt: 'What career growth and progression can I expect at {companyName}?' },
+  { attributeId: 'career-opportunities', type: 'experience', prompt: 'What do employees say about career development, learning, and promotions at {companyName}?' },
+  { attributeId: 'career-opportunities', type: 'competitive', prompt: 'Will my career grow faster at {companyName} or at other companies in {industry}?' },
+  { attributeId: 'career-opportunities', type: 'discovery', prompt: 'Which companies in {industry} are best for career growth and learning?' },
+  { attributeId: 'wellbeing-balance', type: 'informational', prompt: 'What are the work-life balance, flexibility, and remote work options really like at {companyName}?' },
+  { attributeId: 'wellbeing-balance', type: 'experience', prompt: 'How do employees rate work-life balance, flexibility, and wellbeing support at {companyName}?' },
+  { attributeId: 'wellbeing-balance', type: 'competitive', prompt: 'Is work-life balance at {companyName} better than at other companies in {industry}?' },
+  { attributeId: 'wellbeing-balance', type: 'discovery', prompt: 'Which companies in {industry} are best for work-life balance and flexible or remote work?' },
+  { attributeId: 'inclusion', type: 'informational', prompt: 'How inclusive and diverse is the workplace at {companyName}?' },
+  { attributeId: 'inclusion', type: 'experience', prompt: 'What do employees from diverse backgrounds say about working at {companyName}?' },
+  { attributeId: 'inclusion', type: 'competitive', prompt: 'How does {companyName} compare to other companies in {industry} on diversity and inclusion?' },
+  { attributeId: 'inclusion', type: 'discovery', prompt: 'Which companies in {industry} are most recognized for diversity, equity, and inclusion?' },
+  { attributeId: 'innovation', type: 'informational', prompt: 'How innovative is {companyName}, and what would I get to work on there?' },
+  { attributeId: 'innovation', type: 'experience', prompt: 'What do employees say about innovation and access to new technology at {companyName}?' },
+  { attributeId: 'innovation', type: 'competitive', prompt: 'Is {companyName} a more innovative place to work than other companies in {industry}?' },
+  { attributeId: 'innovation', type: 'discovery', prompt: 'Which companies in {industry} are the most innovative to work for?' },
+  { attributeId: 'application-communication', type: 'informational', prompt: 'What should I expect from the application process and recruiter communication at {companyName}?' },
+  { attributeId: 'application-communication', type: 'experience', prompt: 'How do candidates describe applying to {companyName} — the process, updates, and communication?' },
+  { attributeId: 'application-communication', type: 'competitive', prompt: 'Is applying to {companyName} a better experience than applying to other employers in {industry}?' },
+  { attributeId: 'application-communication', type: 'discovery', prompt: 'Which companies in {industry} have the best application process and candidate communication?' },
+  { attributeId: 'candidate-feedback', type: 'informational', prompt: 'Will I get useful feedback after applying or interviewing at {companyName}?' },
+  { attributeId: 'candidate-feedback', type: 'experience', prompt: 'What do candidates say about the feedback they get from {companyName} after interviews and applications?' },
+  { attributeId: 'candidate-feedback', type: 'competitive', prompt: 'How does {companyName} compare to other employers in {industry} at giving candidates feedback?' },
+  { attributeId: 'candidate-feedback', type: 'discovery', prompt: 'Which companies in {industry} are known for giving candidates valuable feedback?' },
+  { attributeId: 'interview-experience', type: 'informational', prompt: 'How should I prepare for a job interview at {companyName}?' },
+  { attributeId: 'interview-experience', type: 'experience', prompt: 'How do candidates describe the interview experience at {companyName}?' },
   { attributeId: 'interview-experience', type: 'competitive', prompt: 'How does the interview process at {companyName} compare to other companies in {industry}?' },
-  { attributeId: 'interview-experience', type: 'discovery', prompt: 'What companies in {industry} have the best interview experience?' },
-  { attributeId: 'candidate-feedback', type: 'informational', prompt: 'What feedback do candidates receive from {companyName}?' },
-  { attributeId: 'candidate-feedback', type: 'experience', prompt: 'How do candidates rate the feedback from {companyName} after interviews or applications?' },
-  { attributeId: 'candidate-feedback', type: 'competitive', prompt: 'How does candidate feedback at {companyName} compare to other employers in {industry}?' },
-  { attributeId: 'candidate-feedback', type: 'discovery', prompt: 'What companies in {industry} are known for providing valuable candidate feedback?' },
-  { attributeId: 'onboarding-experience', type: 'informational', prompt: 'What does onboarding look like at {companyName}?' },
-  { attributeId: 'onboarding-experience', type: 'experience', prompt: 'How do new hires feel about onboarding at {companyName}?' },
-  { attributeId: 'onboarding-experience', type: 'competitive', prompt: 'How does onboarding at {companyName} compare to other organizations in {industry}?' },
-  { attributeId: 'onboarding-experience', type: 'discovery', prompt: 'What companies in {industry} have the best onboarding experience?' },
-  { attributeId: 'overall-candidate-experience', type: 'informational', prompt: 'What can candidates expect from the hiring experience at {companyName}?' },
-  { attributeId: 'overall-candidate-experience', type: 'experience', prompt: 'How do candidates perceive the overall journey at {companyName}?' },
-  { attributeId: 'overall-candidate-experience', type: 'competitive', prompt: 'Does {companyName} stand out for candidate experience in {industry}?' },
-  { attributeId: 'overall-candidate-experience', type: 'discovery', prompt: 'What companies in {industry} have the best overall candidate reputation?' }
+  { attributeId: 'interview-experience', type: 'discovery', prompt: 'Which companies in {industry} have the best interview experience?' },
+  { attributeId: 'onboarding-experience', type: 'informational', prompt: 'What should I expect when I first start working at {companyName}?' },
+  { attributeId: 'onboarding-experience', type: 'experience', prompt: 'How do new hires describe their onboarding and first months at {companyName}?' },
+  { attributeId: 'onboarding-experience', type: 'competitive', prompt: 'How does onboarding at {companyName} compare to other companies in {industry}?' },
+  { attributeId: 'onboarding-experience', type: 'discovery', prompt: 'Which companies in {industry} have the best onboarding for new hires?' }
 ];
 
-// Map attribute IDs to their categories
+// Map attribute IDs to their categories (v2)
 const ATTRIBUTE_CATEGORIES: Record<string, string> = {
-  'mission-purpose': 'Employee Experience',
-  'rewards-recognition': 'Employee Experience',
+  'mission-purpose-impact': 'Employee Experience',
+  'compensation': 'Employee Experience',
   'company-culture': 'Employee Experience',
-  'social-impact': 'Employee Experience',
+  'leadership': 'Employee Experience',
+  'job-security': 'Employee Experience',
+  'career-opportunities': 'Employee Experience',
+  'wellbeing-balance': 'Employee Experience',
   'inclusion': 'Employee Experience',
   'innovation': 'Employee Experience',
-  'wellbeing-balance': 'Employee Experience',
-  'leadership': 'Employee Experience',
-  'security-perks': 'Employee Experience',
-  'career-opportunities': 'Employee Experience',
-  'application-process': 'Candidate Experience',
-  'candidate-communication': 'Candidate Experience',
-  'interview-experience': 'Candidate Experience',
+  'application-communication': 'Candidate Experience',
   'candidate-feedback': 'Candidate Experience',
-  'onboarding-experience': 'Candidate Experience',
-  'overall-candidate-experience': 'Candidate Experience'
+  'interview-experience': 'Candidate Experience',
+  'onboarding-experience': 'Candidate Experience'
 };
 
 // Generate attribute prompts for a company
@@ -237,14 +224,12 @@ serve(async (req) => {
       throw new Error('No candidate experience prompts found to add');
     }
 
-    // 6. Map prompts to database structure
+    // 6. Map prompts to database structure (v2 candidate-experience display names)
     const candidateThemeOverrides: Record<string, string> = {
-      'candidate-communication': 'Candidate Communication',
-      'interview-experience': 'Interview Experience',
-      'application-process': 'Application Process',
-      'onboarding-experience': 'Onboarding Experience',
+      'application-communication': 'Application & Communication',
       'candidate-feedback': 'Candidate Feedback',
-      'overall-candidate-experience': 'Overall Candidate Experience',
+      'interview-experience': 'Interview Experience',
+      'onboarding-experience': 'Onboarding',
     };
 
     const promptsToInsert = candidateExperiencePrompts
@@ -268,7 +253,8 @@ serve(async (req) => {
           industry_context: company.industry,
           job_function_context: onboardingData?.job_function || null,
           location_context: onboardingData?.country || null,
-          is_active: true
+          is_active: true,
+          prompt_version: 2
         };
       });
 

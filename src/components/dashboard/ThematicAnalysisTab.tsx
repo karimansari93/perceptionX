@@ -84,25 +84,31 @@ interface AITheme {
   created_at: string;
 }
 
-// Icon mapping for attributes
+// Icon mapping for attributes (methodology v2 — 13 attributes). Legacy v1 keys
+// are kept so existing-client dashboards still show icons on historical data.
 const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  // Employee Experience
-  'mission-purpose': Target,
-  'rewards-recognition': Award,
+  // v2 — Employee Experience
+  'mission-purpose-impact': Heart,
+  'compensation': Award,
   'company-culture': Users,
-  'social-impact': Heart,
+  'leadership': Crown,
+  'job-security': Lock,
+  'career-opportunities': TrendingUp,
+  'wellbeing-balance': Coffee,
   'inclusion': Shield,
   'innovation': Lightbulb,
-  'wellbeing-balance': Coffee,
-  'leadership': Crown,
+  // v2 — Candidate Experience
+  'application-communication': MessageSquare,
+  'candidate-feedback': MessageCircle,
+  'interview-experience': ClipboardList,
+  'onboarding-experience': UserCheck,
+  // v1 legacy (existing clients still on the old set)
+  'mission-purpose': Target,
+  'rewards-recognition': Award,
+  'social-impact': Heart,
   'security-perks': Lock,
-  'career-opportunities': TrendingUp,
-  // Candidate Experience
   'application-process': FileText,
   'candidate-communication': MessageSquare,
-  'interview-experience': ClipboardList,
-  'candidate-feedback': MessageCircle,
-  'onboarding-experience': UserCheck,
   'overall-candidate-experience': Briefcase
 };
 

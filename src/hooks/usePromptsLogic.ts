@@ -479,7 +479,8 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
       industry_context: prompt.industryContext || onboardingData.industry,
       job_function_context: prompt.jobFunctionContext || null,
       location_context: prompt.locationContext || null,
-      is_active: true
+      is_active: true,
+      prompt_version: 2 // methodology v2 (13-attribute candidate-voice set)
     };
   });
 
@@ -835,107 +836,45 @@ export const generatePromptsFromData = (onboardingData: OnboardingData): Generat
   const hasCountryLocation = country && country !== 'GLOBAL';
   const formattedCountry = hasCountryLocation ? formatCountryForPrompt(country) : '';
 
-  const locationForBasePrompts = customLocation || (hasCountryLocation ? formattedCountry : undefined);
+  const locationForAttributePrompts = customLocation || (hasCountryLocation ? formattedCountry : undefined);
   const locationContextValue = customLocation || undefined;
 
-  const basePrompts: GeneratedPrompt[] = [
-    {
-      id: 'experience-1',
-      text: `How is ${companyName} as an employer?`,
-      category: 'General',
-      type: 'experience' as const,
+  // Methodology v2 (July 2026): attribute prompts only (13 × 4 = 52). The base
+  // "General" prompts were retired — everything is company × attribute ×
+  // location × function now. Theme = the attribute's v2 display name.
+  // See docs/methodology-v2-prompt-taxonomy.md.
+  const attributePrompts: GeneratedPrompt[] = [];
+
+  const templates = generateAttributePrompts(companyName, industry);
+  templates.forEach(template => {
+    const attribute = template.attribute;
+    const isCandidateExperience = attribute?.category === 'Candidate Experience';
+
+    // prompt_theme is the client-facing display name.
+    const theme = attribute?.name || 'General';
+
+    const promptCategoryValue: 'Employee Experience' | 'Candidate Experience' =
+      isCandidateExperience ? 'Candidate Experience' : 'Employee Experience';
+
+    const textWithContext = appendPromptContext(
+      template.prompt,
+      jobFunction,
+      locationForAttributePrompts,
+      template.type as 'informational' | 'experience' | 'competitive' | 'discovery'
+    );
+
+    attributePrompts.push({
+      id: `attribute-${template.attributeId}-${template.type}`,
+      text: textWithContext,
+      category: theme,
+      type: template.type as 'informational' | 'experience' | 'competitive' | 'discovery',
       industryContext: industry,
       jobFunctionContext: jobFunction,
       locationContext: locationContextValue,
-      promptCategory: 'General' as const,
-      promptTheme: 'General'
-    },
-    {
-      id: 'discovery-1',
-      text: `What is the best company to work for in the ${industry} industry?`,
-      category: 'General',
-      type: 'discovery' as const,
-      industryContext: industry,
-      jobFunctionContext: jobFunction,
-      locationContext: locationContextValue,
-      promptCategory: 'General' as const,
-      promptTheme: 'General'
-    },
-    {
-      id: 'competitive-1',
-      text: `How does working at ${companyName} compare to other companies?`,
-      category: 'General',
-      type: 'competitive' as const,
-      industryContext: industry,
-      jobFunctionContext: jobFunction,
-      locationContext: locationContextValue,
-      promptCategory: 'General' as const,
-      promptTheme: 'General'
-    },
-    {
-      id: 'informational-1',
-      text: `What are the job and employment details at ${companyName}?`,
-      category: 'General',
-      type: 'informational' as const,
-      industryContext: industry,
-      jobFunctionContext: jobFunction,
-      locationContext: locationContextValue,
-      promptCategory: 'General' as const,
-      promptTheme: 'General'
-    }
-  ].map(prompt => ({
-    ...prompt,
-    text: appendPromptContext(prompt.text, jobFunction, locationForBasePrompts, prompt.type),
-  }));
-
-  // Add the attribute prompts (64 prompts: 4 per attribute) for every user.
-  {
-    const attributePrompts: GeneratedPrompt[] = [];
-
-    // Use the ATTRIBUTE_PROMPT_TEMPLATES system to generate all 64 prompts (4 per attribute)
-    const templates = generateAttributePrompts(companyName, industry);
-    templates.forEach(template => {
-      const attribute = template.attribute;
-      const isCandidateExperience = attribute?.category === 'Candidate Experience';
-
-      const candidateThemeOverrides: Record<string, string> = {
-        'candidate-communication': 'Candidate Communication',
-        'interview-experience': 'Interview Experience',
-        'application-process': 'Application Process',
-        'onboarding-experience': 'Onboarding Experience',
-        'candidate-feedback': 'Candidate Feedback',
-        'overall-candidate-experience': 'Overall Candidate Experience',
-      };
-
-      const theme = attribute
-        ? isCandidateExperience
-          ? candidateThemeOverrides[attribute.id] || attribute.name || 'Candidate Experience'
-          : attribute.category || attribute.name || 'Employee Experience'
-        : 'General';
-
-      const promptCategoryValue: 'Employee Experience' | 'Candidate Experience' =
-        isCandidateExperience ? 'Candidate Experience' : 'Employee Experience';
-
-      const textWithContext = appendPromptContext(
-        template.prompt,
-        jobFunction,
-        locationForBasePrompts, // Use locationForBasePrompts which includes formatted country
-        template.type as 'informational' | 'experience' | 'competitive' | 'discovery'
-      );
-
-      attributePrompts.push({
-        id: `attribute-${template.attributeId}-${template.type}`,
-        text: textWithContext,
-        category: theme,
-        type: template.type as 'informational' | 'experience' | 'competitive' | 'discovery',
-        industryContext: industry,
-        jobFunctionContext: jobFunction,
-        locationContext: locationContextValue,
-        promptCategory: promptCategoryValue,
-        promptTheme: theme
-      });
+      promptCategory: promptCategoryValue,
+      promptTheme: theme
     });
+  });
 
-    return [...basePrompts, ...attributePrompts];
-  }
+  return attributePrompts;
 };

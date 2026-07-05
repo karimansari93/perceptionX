@@ -83,23 +83,31 @@ For each theme you identify, output an object with:
 - theme_description: brief description of the theme
 - sentiment: "positive", "negative", or "neutral"
 - sentiment_score: number from -1 (very negative) to 1 (very positive)
-- attribute_id: one of (use the exact string):
-  mission-purpose, rewards-recognition, company-culture, social-impact,
-  inclusion, innovation, wellbeing-balance, leadership, security-perks,
-  career-opportunities, application-process, candidate-communication,
-  interview-experience, candidate-feedback, onboarding-experience,
-  overall-candidate-experience
-- attribute_name: human-readable form (e.g. "Mission & Purpose", "Company Culture")
+- attribute_id: exactly one of these strings (definition in parentheses):
+  mission-purpose-impact (mission, values, purpose, and social/ESG/community impact),
+  compensation (pay, salary, bonuses, benefits, and perks),
+  company-culture (workplace atmosphere, team dynamics, work environment, and whether employees feel valued/recognized),
+  leadership (managers and senior leadership quality and management style),
+  job-security (employment stability, tenure, layoff risk — stability ONLY, not pay/perks),
+  career-opportunities (career growth, development, learning, and promotions),
+  wellbeing-balance (work-life balance, flexibility, remote/hybrid work, and wellbeing),
+  inclusion (diversity, equity, and inclusion),
+  innovation (innovation culture and access to new technology),
+  application-communication (the application process AND recruiter/candidate communication),
+  candidate-feedback (feedback given to candidates after applying or interviewing),
+  interview-experience (the interview process and preparation),
+  onboarding-experience (new-hire onboarding and first months)
+- attribute_name: human-readable form (e.g. "Mission, Purpose & Impact", "Company Culture", "Job Security")
 - confidence_score: number from 0 to 1
 - keywords: array of relevant keywords drawn from the response
 - context_snippets: array of 1-2 verbatim snippets from the response that support the theme
 
 Classification rules — be strict:
-- company-culture is ONLY for workplace atmosphere, team dynamics, cultural practices, and work environment
-- Values, mission, and purpose belong to mission-purpose, NOT company-culture
-- Benefits and compensation belong to rewards-recognition, NOT company-culture
-- Work-life balance, mental health, flexibility belong to wellbeing-balance, NOT company-culture
-- Candidate-journey topics (applying, interviews, recruiter communication, onboarding) belong to the dedicated candidate-experience attributes, NOT to general employee categories
+- company-culture is ONLY for workplace atmosphere, team dynamics, cultural practices, work environment, and feeling valued/recognized
+- Mission, values, purpose, and social/community impact belong to mission-purpose-impact, NOT company-culture
+- Pay, benefits, and perks belong to compensation, NOT company-culture; job stability/layoffs belong to job-security, NOT compensation
+- Work-life balance, mental health, flexibility, and remote work belong to wellbeing-balance, NOT company-culture
+- Candidate-journey topics belong to the dedicated candidate-experience attributes: the application process and recruiter communication → application-communication; interviews → interview-experience; post-interview/application feedback → candidate-feedback; onboarding → onboarding-experience
 
 Coverage:
 - Look for both positive and negative themes

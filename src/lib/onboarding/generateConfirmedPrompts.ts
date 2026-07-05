@@ -16,15 +16,12 @@ import {
   TrackingConfigInput,
   normalizeUrl,
 } from './types';
+// Methodology v2 (July 2026): onboarding generates the 13-attribute
+// candidate-voice matrix, not the retired "General" prompts. Single source of
+// truth for the templates. See docs/methodology-v2-prompt-taxonomy.md.
+import { ATTRIBUTE_PROMPT_TEMPLATES, getAttributeById } from '../../config/attributes';
 
 type Stage = 'combined' | 'early' | 'experienced';
-
-const PROMPT_TYPE_ORDER: ConfirmedPromptRow['prompt_type'][] = [
-  'discovery',
-  'experience',
-  'competitive',
-  'informational',
-];
 
 /**
  * A unit that gets its own prompt set: the company itself, plus every entity
@@ -93,25 +90,23 @@ function stageFunctionContext(fn: string, stage: Stage): string {
   return fn;
 }
 
-function promptText(
-  type: ConfirmedPromptRow['prompt_type'],
-  entity: string,
-  fnPhrase: string,
-  market: string,
-  industry: string | null,
-): string {
-  switch (type) {
-    case 'discovery':
-      return industry
-        ? `What is the best company to work for in the ${industry} industry for ${fnPhrase} in ${market}?`
-        : `What is the best company to work for in ${market} for ${fnPhrase}?`;
-    case 'experience':
-      return `How is ${entity} as an employer for ${fnPhrase} in ${market}?`;
-    case 'competitive':
-      return `How does working at ${entity} compare to other companies for ${fnPhrase} in ${market}?`;
-    case 'informational':
-      return `What are the job and employment details at ${entity} for ${fnPhrase} in ${market}?`;
-  }
+/**
+ * Bake the (function, market) context into a v2 attribute prompt, in the
+ * onboarding house style: append "for {fnPhrase} in {market}" before the
+ * trailing "?", skipping either part already present in the text. Deterministic
+ * (mirrors the default branch of the app's appendPromptContext).
+ */
+function appendContext(text: string, fnPhrase: string, market: string): string {
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+  const parts: string[] = [];
+  if (fnPhrase && !lower.includes(fnPhrase.toLowerCase())) parts.push(`for ${fnPhrase}`);
+  if (market && !lower.includes(market.toLowerCase())) parts.push(`in ${market}`);
+  if (parts.length === 0) return trimmed;
+  const suffix = ` ${parts.join(' ')}`;
+  return trimmed.endsWith('?')
+    ? trimmed.replace(/\?$/, `${suffix}?`)
+    : `${trimmed}${suffix}`;
 }
 
 /**
@@ -169,15 +164,24 @@ export function generateConfirmedPrompts(input: TrackingConfigInput): ConfirmedP
   for (const unit of trackedUnits(input)) {
     for (const { market, fn } of unitPairs(unit)) {
       const industry = industryForFunction(input, fn);
+      // v2 competitive/discovery templates reference {industry}; fall back to a
+      // grammatical phrase when the brief has no industry for this function.
+      const industryPhrase = industry || 'their industry';
       for (const stage of stages) {
         const fnPhrase = stageFunctionPhrase(fn, stage);
-        for (const type of PROMPT_TYPE_ORDER) {
+        // 13 attributes × 4 types = 52 prompts per (unit × market-function × stage).
+        for (const tmpl of ATTRIBUTE_PROMPT_TEMPLATES) {
+          const attribute = getAttributeById(tmpl.attributeId);
+          const base = tmpl.prompt
+            .replace(/{companyName}/g, unit.name)
+            .replace(/{industry}/g, industryPhrase);
           rows.push({
             entity_name: unit.name,
-            prompt_text: promptText(type, unit.name, fnPhrase, market, industry),
-            prompt_type: type,
-            prompt_category: 'General',
-            prompt_theme: 'General',
+            prompt_text: appendContext(base, fnPhrase, market),
+            prompt_type: tmpl.type as ConfirmedPromptRow['prompt_type'],
+            prompt_category: attribute?.category || 'Employee Experience',
+            prompt_theme: attribute?.name || tmpl.attributeId,
+            attribute_id: tmpl.attributeId,
             job_function_context: stageFunctionContext(fn, stage),
             location_context: market,
             industry_context: industry,
