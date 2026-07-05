@@ -41,6 +41,38 @@ export interface AITheme {
 // JSON schema enforced by Anthropic structured outputs. `additionalProperties: false`
 // is required on every object node; numerical/string constraints like minimum/maxLength
 // aren't supported (the SDK strips them anyway).
+// Methodology v2 taxonomy (mirror of src/config/attributes.ts — Deno edge
+// functions can't import the Vite app module). id → display name.
+const V2_ATTRIBUTES: Record<string, string> = {
+  "mission-purpose-impact": "Mission, Purpose & Impact",
+  "compensation": "Compensation",
+  "company-culture": "Company Culture",
+  "leadership": "Leadership",
+  "job-security": "Job Security",
+  "career-opportunities": "Career Opportunities",
+  "wellbeing-balance": "Wellbeing & Balance",
+  "inclusion": "Inclusion",
+  "innovation": "Innovation",
+  "application-communication": "Application & Communication",
+  "candidate-feedback": "Candidate Feedback",
+  "interview-experience": "Interview Experience",
+  "onboarding-experience": "Onboarding",
+};
+const V2_ATTRIBUTE_IDS = Object.keys(V2_ATTRIBUTES);
+
+// Fold any retired v1 id the model may still emit (LLMs regress to their prior
+// despite the prompt) into its v2 successor, so stray ids can't reach ai_themes
+// and split one attribute across two ids. null = retired with no successor.
+const LEGACY_ATTRIBUTE_MAP: Record<string, string | null> = {
+  "mission-purpose": "mission-purpose-impact",
+  "social-impact": "mission-purpose-impact",
+  "rewards-recognition": "compensation",
+  "security-perks": "job-security",
+  "application-process": "application-communication",
+  "candidate-communication": "application-communication",
+  "overall-candidate-experience": null,
+};
+
 const THEME_SCHEMA = {
   type: "array",
   items: {
@@ -50,7 +82,9 @@ const THEME_SCHEMA = {
       theme_description: { type: "string" },
       sentiment: { type: "string", enum: ["positive", "negative", "neutral"] },
       sentiment_score: { type: "number" },
-      attribute_id: { type: "string" },
+      // Constrain to the 13 v2 ids server-side so invalid emissions are
+      // impossible (structured-output enforcement), not merely discouraged.
+      attribute_id: { type: "string", enum: V2_ATTRIBUTE_IDS },
       attribute_name: { type: "string" },
       confidence_score: { type: "number" },
       keywords: { type: "array", items: { type: "string" } },
@@ -114,14 +148,26 @@ Coverage:
 - If the response contains ANY information about the named company — even if it also discusses competitors or comparisons — extract themes from that information
 - Only return an empty array if the response truly contains no information about the company at all`;
 
+// Resolve any emitted id to a live v2 id: pass v2 ids through, fold legacy v1
+// ids to their successor, and reject everything else (incl. retired ids that
+// map to null) as "unknown" so it never counts under a real attribute.
+function normalizeAttributeId(raw: any): string {
+  const id = typeof raw === "string" ? raw.trim() : "";
+  if (id in V2_ATTRIBUTES) return id;
+  if (id in LEGACY_ATTRIBUTE_MAP) return LEGACY_ATTRIBUTE_MAP[id] ?? "unknown";
+  return "unknown";
+}
+
 function validateAndCleanTheme(t: any): AITheme {
+  const attributeId = normalizeAttributeId(t?.attribute_id);
   return {
     theme_name: t?.theme_name || "Unnamed Theme",
     theme_description: t?.theme_description || "",
     sentiment: ["positive", "negative", "neutral"].includes(t?.sentiment) ? t.sentiment : "neutral",
     sentiment_score: Math.max(-1, Math.min(1, parseFloat(t?.sentiment_score) || 0)),
-    attribute_id: t?.attribute_id || "unknown",
-    attribute_name: t?.attribute_name || "Unknown Attribute",
+    attribute_id: attributeId,
+    // Keep the display name consistent with the (normalized) id when known.
+    attribute_name: V2_ATTRIBUTES[attributeId] || t?.attribute_name || "Unknown Attribute",
     confidence_score: Math.max(0, Math.min(1, parseFloat(t?.confidence_score) || 0)),
     keywords: Array.isArray(t?.keywords) ? t.keywords : [],
     context_snippets: Array.isArray(t?.context_snippets) ? t.context_snippets : [],

@@ -263,3 +263,9 @@ create unique index company_attribute_themes_by_location_mv_uniq
   on public.company_attribute_themes_by_location_mv (company_id, location_context, response_month, job_function_context, attribute_id);
 create index company_attribute_themes_by_location_mv_lookup
   on public.company_attribute_themes_by_location_mv (company_id, location_context);
+
+-- DROP discards the MVs' ACLs; re-grant to match the original definitions
+-- (20260603000000 / 20260628000000) so the browser client can read them in
+-- any environment that relies on explicit grants rather than default privileges.
+grant select on public.company_attribute_themes_mv to anon, authenticated, service_role;
+grant select on public.company_attribute_themes_by_location_mv to anon, authenticated, service_role;

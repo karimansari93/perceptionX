@@ -93,15 +93,19 @@ function stageFunctionContext(fn: string, stage: Stage): string {
 /**
  * Bake the (function, market) context into a v2 attribute prompt, in the
  * onboarding house style: append "for {fnPhrase} in {market}" before the
- * trailing "?", skipping either part already present in the text. Deterministic
- * (mirrors the default branch of the app's appendPromptContext).
+ * trailing "?". Appended UNCONDITIONALLY — the attribute templates only ever
+ * contain {companyName}/{industry}, never the function or market, so a
+ * substring "already present" guard only mis-fires (e.g. company "Bank of
+ * Ireland" contains market "Ireland"; short market "US" is a substring of
+ * "industry"), which silently drops the market qualifier and can collapse two
+ * markets' prompt_text to identical strings that the approval dedupe then loses.
+ * Deterministic. The market suffix is what makes each market's rows distinct.
  */
 function appendContext(text: string, fnPhrase: string, market: string): string {
   const trimmed = text.trim();
-  const lower = trimmed.toLowerCase();
   const parts: string[] = [];
-  if (fnPhrase && !lower.includes(fnPhrase.toLowerCase())) parts.push(`for ${fnPhrase}`);
-  if (market && !lower.includes(market.toLowerCase())) parts.push(`in ${market}`);
+  if (fnPhrase) parts.push(`for ${fnPhrase}`);
+  if (market) parts.push(`in ${market}`);
   if (parts.length === 0) return trimmed;
   const suffix = ` ${parts.join(' ')}`;
   return trimmed.endsWith('?')

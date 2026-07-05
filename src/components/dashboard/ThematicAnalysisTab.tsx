@@ -40,7 +40,7 @@ import { RateDonut } from '@/components/ui/rate-donut';
 const themeTabTriggerCls = "relative rounded-none border-b-2 border-transparent bg-transparent px-0 py-3 text-sm font-medium text-gray-500 shadow-none transition-colors hover:text-[#13274F] data-[state=active]:border-[#13274F] data-[state=active]:text-[#13274F] data-[state=active]:bg-transparent data-[state=active]:shadow-none";
 import { PromptResponse } from '@/types/dashboard';
 import { supabase } from '@/integrations/supabase/client';
-import { ATTRIBUTES } from '@/config/attributes';
+import { ATTRIBUTES, normalizeAttributeId } from '@/config/attributes';
 import LLMLogo from '@/components/LLMLogo';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { extractSourceUrl } from '@/utils/citationUtils';
@@ -294,13 +294,24 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     }
   };
 
-  // Only include themes with a valid known attribute ID
-  const validAttributeIds = useMemo(() => new Set(ATTRIBUTES.map(a => a.id)), []);
+  // Normalize every theme's attribute id to the live v2 taxonomy at ingestion:
+  // legacy v1 ids (existing clients' historical + still-collecting data) fold
+  // into their v2 successor via LEGACY_ATTRIBUTE_MAP; retired/unknown ids drop.
+  // Doing this once here keeps every downstream filter, drilldown, and delta
+  // consistent with the MV-driven ranking (which also carries legacy rows).
+  const normalizedThemes = useMemo(
+    () =>
+      aiThemes.flatMap(theme => {
+        const id = normalizeAttributeId(theme.attribute_id);
+        return id ? [theme.attribute_id === id ? theme : { ...theme, attribute_id: id }] : [];
+      }),
+    [aiThemes]
+  );
 
   // Themes are tied to responses via response_id. Keep only themes whose
   // response belongs to the selected job function (when one is selected).
   const filteredThemes = useMemo(() => {
-    let themes = aiThemes.filter(theme => validAttributeIds.has(theme.attribute_id));
+    let themes = normalizedThemes;
     if (selectedJobFunctionFilter !== 'all') {
       const fnResponseIds = new Set(
         responses
@@ -310,7 +321,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       themes = themes.filter(t => fnResponseIds.has(t.response_id));
     }
     return themes;
-  }, [aiThemes, validAttributeIds, selectedJobFunctionFilter, responses]);
+  }, [normalizedThemes, selectedJobFunctionFilter, responses]);
 
   // Previous period theme counts for delta display
   const prevThemeCounts = useMemo(() => {
@@ -319,14 +330,14 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       ? previousPeriodResponses
       : previousPeriodResponses.filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter);
     const prevIds = new Set(prevByFunction.map(r => r.id));
-    const prevThemes = aiThemes.filter(t => validAttributeIds.has(t.attribute_id) && prevIds.has(t.response_id));
+    const prevThemes = normalizedThemes.filter(t => prevIds.has(t.response_id));
     return {
       positive: prevThemes.filter(t => t.sentiment === 'positive').length,
       negative: prevThemes.filter(t => t.sentiment === 'negative').length,
       neutral: prevThemes.filter(t => t.sentiment === 'neutral').length,
       total: prevThemes.length
     };
-  }, [previousPeriodResponses, aiThemes, validAttributeIds, selectedJobFunctionFilter]);
+  }, [previousPeriodResponses, normalizedThemes, selectedJobFunctionFilter]);
 
   // Helper to get favicon for a domain
   const getFavicon = (domain: string): string => {
@@ -442,8 +453,13 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     const agg: Record<string, { positive: number; negative: number; neutral: number; responses: number }> = {};
     attributeThemes.forEach(row => {
       if (scope && !keys.has(rowKey(row))) return;
-      if (!agg[row.attribute_id]) agg[row.attribute_id] = { positive: 0, negative: 0, neutral: 0, responses: 0 };
-      const a = agg[row.attribute_id];
+      // The MV deliberately carries legacy v1 attribute rows for existing
+      // clients; fold them into their v2 successor so one attribute never
+      // appears as two rows (and retired ids don't render as raw slugs).
+      const attrId = normalizeAttributeId(row.attribute_id);
+      if (!attrId) return;
+      if (!agg[attrId]) agg[attrId] = { positive: 0, negative: 0, neutral: 0, responses: 0 };
+      const a = agg[attrId];
       a.positive += Number(row.positive_themes) || 0;
       a.negative += Number(row.negative_themes) || 0;
       a.neutral += Number(row.neutral_themes) || 0;
@@ -1189,7 +1205,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
             // Previous-period deltas for the stat strip.
             const prevIds = new Set(previousPeriodResponses.map(r => r.id));
             const prevAttrThemes = prevIds.size > 0
-              ? aiThemes.filter(t => validAttributeIds.has(t.attribute_id) && t.attribute_id === selectedAttribute && prevIds.has(t.response_id))
+              ? normalizedThemes.filter(t => t.attribute_id === selectedAttribute && prevIds.has(t.response_id))
               : [];
             const prevPositive = prevAttrThemes.filter(t => t.sentiment === 'positive').length;
             const prevNegative = prevAttrThemes.filter(t => t.sentiment === 'negative').length;

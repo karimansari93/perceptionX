@@ -220,6 +220,20 @@ export const getAttributeById = (id: string): Attribute | undefined => {
   return ATTRIBUTES.find(attr => attr.id === id);
 };
 
+/**
+ * Resolve any attribute id (v2 or legacy v1) to its live v2 id.
+ * Returns null for retired ids with no successor (overall-candidate-experience)
+ * and for unknown ids. This is the single read-time mechanism that keeps
+ * existing clients' v1-tagged themes rendering under the v2 taxonomy —
+ * display continuity without touching stored data.
+ */
+export const normalizeAttributeId = (id: string | null | undefined): string | null => {
+  if (!id) return null;
+  if (ATTRIBUTES.some(attr => attr.id === id)) return id;
+  if (id in LEGACY_ATTRIBUTE_MAP) return LEGACY_ATTRIBUTE_MAP[id];
+  return null;
+};
+
 export const getAllAttributes = (): Attribute[] => {
   return ATTRIBUTES;
 };

@@ -209,8 +209,26 @@ serve(async (req) => {
       throw new Error(`Failed to check existing prompts: ${checkError.message}`);
     }
 
+    // Fold legacy v1 candidate-experience ids into their v2 successor before
+    // building the dedupe set, so re-running this on a not-yet-migrated (v1)
+    // company recognizes its existing 'application-process' / 'candidate-
+    // communication' rows as the v2 'application-communication' attribute and
+    // does NOT stack a duplicate v2 set on top (existing clients stay on v1).
+    const LEGACY_ATTRIBUTE_MAP: Record<string, string | null> = {
+      'application-process': 'application-communication',
+      'candidate-communication': 'application-communication',
+      'overall-candidate-experience': null, // retired
+    };
+    const normId = (id: string) =>
+      id in LEGACY_ATTRIBUTE_MAP ? LEGACY_ATTRIBUTE_MAP[id] : id;
+
     const existingSet = new Set(
-      (existingCandidatePrompts || []).map(p => `${p.attribute_id}-${p.prompt_type}`)
+      (existingCandidatePrompts || [])
+        .map(p => {
+          const id = normId(p.attribute_id);
+          return id ? `${id}-${p.prompt_type}` : null;
+        })
+        .filter((k): k is string => k !== null)
     );
 
     // 5. Generate all attribute prompts and filter to candidate experience only
