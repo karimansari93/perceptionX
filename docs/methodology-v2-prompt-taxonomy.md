@@ -1,5 +1,19 @@
 # Methodology v2 — Prompt Taxonomy Overhaul (16 → 13 attributes, candidate-voice prompts)
 
+## ✅ Phase 1 EXECUTED (Opus, July 5 2026)
+All Phase-1 code, DB, and edge-function changes are live on prod `ofyjvfmcgtntwamkubui`:
+- **Code** committed to branch `claude/sweet-johnson-YJZCp` (attributes registry, both edge-fn template copies, onboarding-forms generator, usePromptsLogic, theme-analysis classifier, dashboard icons). Typecheck + `npm run build` pass. All three template copies verified byte-identical (52 prompts / 13 attrs / 4 types).
+- **DB migration applied**: `confirmed_prompts.prompt_version` (existing 29,007 rows = v1, untouched); `admin_approve_intake` now persists `attribute_id` + `prompt_version=2`; both `company_attribute_themes*_mv` rebuilt with the v1∪v2 id union (repopulated, historical themes intact).
+- **Edge functions deployed**: `process-company-batch-queue` v42 (jwt=false), `ai-thematic-analysis` v41, `ai-thematic-analysis-bulk` v33, `admin-add-candidate-prompts` v20.
+- **Smoke test passed**: ran the deployed batch-queue `setup` on a throwaway config → exactly **52 prompts, all `prompt_version=2`, 0 base, 13 v2 attributes, 0 legacy ids**, correct v2 themes. Test data fully deleted (0 responses collected).
+
+### ⚠️ Remaining to be live for tomorrow (owner: Karim / release process)
+1. **Deploy the frontend** (this branch → `main` → CI). The DB + edge functions are live, but the **Onboarding Forms UI** and the **dashboard's 13 tiles** only become v2 once the frontend build ships. Until then, onboarding via the Admin → Company Batch path already produces v2 (edge fn is live); the Onboarding Forms path needs the frontend deploy.
+2. **Confirm tomorrow's onboarding path.** Admin batch = ready now. Onboarding Forms = ready after the frontend deploys.
+3. Housekeeping (non-blocking): delete the leftover temp function `test-prompt-openai-abtest` from an earlier session.
+
+---
+
 **Status:** LOCKED — approved by Karim (July 2026). Ready to execute.
 **Executor:** Opus session. Everything here is decided; do not re-litigate the taxonomy. The one open dependency is flagged in §6 (Phase 1, step 6).
 **Deadline pressure:** a NEW CLIENT COMPANY onboards **tomorrow** and must be set up on v2. Phase 1 ships before that onboarding. Phase 2 (existing orgs) follows.
