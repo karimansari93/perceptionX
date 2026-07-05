@@ -156,7 +156,7 @@ The templates are **physically duplicated in 3 files** and the 16-ID list is **h
 
 ### B. Base-prompt copies to remove
 4. **`src/hooks/usePromptsLogic.ts`** — `basePrompts` (~841–889): delete; `candidateThemeOverrides` (~901–908): update to v2 ids/names.
-5. **`src/lib/onboarding/generateConfirmedPrompts.ts`** (~96–115, 164–190) — ⚠️ the NEW onboarding-forms path generates ONLY "General" prompts today. See §6 Phase 1 step 6 — this path must generate the v2 attribute matrix instead (import `generateAttributePrompts` from `@/config/attributes`), otherwise a company onboarded through it gets zero prompts once General is cut.
+5. **`src/lib/onboarding/generateConfirmedPrompts.ts`** (~96–115, 164–190) — ⚠️ REQUIRED, highest priority: the NEW onboarding-forms path generates ONLY "General" prompts today, and this is the path tomorrow's client onboards through. See §6 Phase 1 step 3 — it must generate the v2 attribute matrix (import `generateAttributePrompts` from `@/config/attributes`), otherwise the company gets zero prompts once General is cut.
 
 ### C. Hardcoded attribute-ID lists (silent-breakage sites)
 6. **`supabase/functions/_shared/theme-analysis.ts`** (~86–92) — the LLM classification prompt enumerates the allowed `attribute_id` values. Replace with the 13 v2 ids **with one-line definitions** matching §2.1 semantics (e.g. compensation = pay/benefits/perks; job-security = stability only; mission-purpose-impact includes social/ESG impact; application-communication includes recruiter communication; company-culture includes recognition/feeling valued). `validateAndCleanTheme` (~109–119) stays.
@@ -170,17 +170,36 @@ ALTER TABLE public.confirmed_prompts
 ```
 All v2 generator inserts set `prompt_version: 2` (batch-queue setup/expand inserts at ~lines 457 & 637, admin-add-candidate-prompts ~267, usePromptsLogic insert path, generateConfirmedPrompts). This is the versioning hook that doesn't exist today — it's what makes the cutover auditable and reversible.
 
-### E. Auto-following consumers — verify only, no edits expected
+### E. Admin panel — Company Batch section (verified July 5: all creation paths funnel through the batch-queue generator)
+
+Karim's explicit requirement: every feature in Admin → Company Batch that creates prompts must produce v2. Traced each panel in `src/components/admin/batch/`:
+
+| Admin feature | Panel | How prompts get created | v2 coverage |
+|---|---|---|---|
+| Add new company | `NewCompanyPanel.tsx` (~225–228) | queue rows `phase: "setup"` → `generatePrompts()` in batch-queue fn (insert at ~line 457+) | §A-2 template swap covers it |
+| Expand coverage (new function/market on existing company) | `ExpandCoveragePanel.tsx` (~278) | queue rows `phase: "expand_setup"` → same generator (insert at ~line 637+) | §A-2 covers it |
+| Bulk expand (org-wide) | `BulkExpandPanel.tsx` (~263) | queue rows `phase: "expand_setup"` → same generator | §A-2 covers it |
+| Add candidate prompts | invokes `admin-add-candidate-prompts` | its own inline template copy | §A-3 covers it |
+| Collect / Recollect / Analyze themes | `CollectModelPanel`, `RecollectPanel`, `AnalyzeThemesPanel` | NO prompt creation — they only read existing `confirmed_prompts` (verified: all `.select()`, zero inserts) | no change; recollect on old clients correctly reuses their v1 prompts |
+| Batch tab discovery view | `CompanyBatchTab.tsx` (~67) filters `prompt_type = "discovery"` | read-only; prompt types unchanged in v2 | no change |
+
+**Expected mixed-version behavior (do not "fix"):** using Expand Coverage to add a NEW function/market to an EXISTING (old) client creates that new combo on v2 while the client's existing combos stay v1. Each combo is internally consistent over time, which is what matters for measurement. `prompt_version` makes the split queryable.
+
+**expand_setup dedupe check:** the expand path dedupes new prompts against existing rows by `(prompt_text, prompt_type, industry_context)`. v2 texts differ from v1, so no false-dedupe is expected — but verify during smoke test that expanding a v1 company inserts the full 52 v2 prompts for the new combo.
+
+### F. Auto-following consumers — verify only, no edits expected
 `AttributesSummaryCard.tsx`, `OverviewTab.tsx`, `useDashboardData.ts`, `ai-thematic-analysis(-bulk)`, `company-report(-text)`, `chat-with-data`, `collect-company-responses` (`isAttributePrompt` ~312), `_shared/attributePromptService.ts` — all read `attribute_id` generically and resolve names via the `ATTRIBUTES` registry. After the registry changes they follow automatically. **Check `validAttributeIds` filtering in ThematicAnalysisTab (~292):** once retired ids leave the registry, historical themes with old ids disappear from that view — acceptable for launch; Phase 3 adds the legacy remap for trend continuity.
 
 ---
 
 ## 4. Data handling & versioning rules
 
-- **Never delete v1 rows.** Historical `confirmed_prompts` (v1) and their `prompt_responses`/`ai_themes` stay untouched for comparability.
-- **Cutover per company = deactivate + insert:** set `is_active=false` on v1 attribute/base prompts; insert the v2 set (translated) with `prompt_version=2`. Collection scopes on `is_active=true`, so the next refresh collects v2 only.
-- ⚠️ **Legacy NULL-id prompts:** thousands of older active prompts have `attribute_id IS NULL` and are identifiable only by `prompt_theme` (e.g. 'Rewards & Recognition', 'Social Impact') / `prompt_category='General'`. The Phase-2 deactivation must match on `attribute_id IN (v1 ids) OR (attribute_id IS NULL AND prompt_theme IN (v1 theme names)) OR (attribute_id IS NULL AND prompt_category='General' AND prompt_theme='General')` — scoped per company. Do NOT deactivate NULL-id rows by that rule alone without the per-company scope.
-- **Translations:** the setup/expand paths already call `translate-prompts` — v2 texts flow through automatically for non-English markets. The Phase-2 migration must reuse that path (generate → translate → dedupe-insert), not raw-insert English.
+**Scope decision (Karim, July 5): existing clients are NOT migrated.** Old clients keep their current v1 prompts, active and collecting, for measurement consistency. Only NEW clients (from tomorrow) get v2. The old-data question — remap historical data into the v2 structure vs. fresh-start old clients on v2 — is explicitly deferred; `LEGACY_ATTRIBUTE_MAP` exists to make either choice possible later.
+
+- **Do not touch v1 rows.** No deactivation, no deletion, no backfill. Historical and currently-active v1 `confirmed_prompts` (including the thousands of legacy rows with `attribute_id IS NULL`, tagged only by `prompt_theme`) keep collecting exactly as they do today.
+- **v2 applies only to newly created prompts:** every generator emits the v2 matrix with `prompt_version=2`. `prompt_version` is what separates the two populations cleanly for the future merge decision.
+- **Translations:** the generation paths already call `translate-prompts` — v2 texts flow through automatically for non-English markets. The onboarding-forms path must do the same (see Phase 1 step 3).
+- ⚠️ **Documented side effect — theme classification for old clients:** `_shared/theme-analysis.ts` moves to the 13 v2 ids, and it classifies ALL new responses — including responses to old clients' v1 prompts. So old clients' *new* themes will bucket under the v2 attributes (e.g. a response to their v1 'security-perks' prompt gets themes tagged `job-security` or `compensation`). This is coherent (v1 ids map cleanly into v2) and acceptable; their *historical* themes keep v1 ids and will be hidden from attribute views until the deferred remap/fresh-start decision. This is expected behavior — do not "fix" it.
 
 ---
 
@@ -195,24 +214,22 @@ Per combo: 68 → 52 prompts (−23%). Netflix org (~91 combos): ~6.1k → ~4.7k
 ### Phase 1 — TONIGHT (must land before tomorrow's onboarding)
 1. Branch off latest `main`. Apply §3-A/B/C/D code + migration changes. The three template copies must be identical in content.
 2. `prompt_version=2` on every insert path touched.
-3. Deploy edge functions: `process-company-batch-queue`, `admin-add-candidate-prompts`, and every function importing `_shared/theme-analysis.ts` (at minimum `ai-thematic-analysis`, `ai-thematic-analysis-bulk`). NOTE: MCP deploys of some functions have been blocked by a safety classifier before — fall back to `supabase functions deploy <fn> --project-ref ofyjvfmcgtntwamkubui` via CLI if that happens.
-4. Apply the DB migration (prompt_version + MV rebuild) via `apply_migration`.
-5. Frontend: build passes; dashboards render 13 attributes.
-6. ⚠️ **OPEN DEPENDENCY — resolve with Karim before onboarding:** which path onboards tomorrow's company?
-   - *Admin Company Setup / batch queue* → covered by steps 1–4.
-   - *New Onboarding Forms flow* (`generateConfirmedPrompts.ts`) → that path currently emits ONLY General prompts, which v2 cuts. It must be extended to emit the 13×4 matrix (per-market translation included) before the company runs, or the company must be onboarded via the admin path instead. Ask Karim which; default to onboarding via the admin path if uncertain.
-7. Smoke test: create a throwaway test company (1 location × 1 function) → expect exactly 52 active prompts, all `prompt_version=2`, correct ids/themes; run one collection chunk; confirm `ai_themes.attribute_id` comes back with v2 ids only; delete test company via `admin_delete_company`.
+3. **REQUIRED (decided by Karim): extend the Onboarding Forms path.** `src/lib/onboarding/generateConfirmedPrompts.ts` currently emits ONLY the "General" prompts — which v2 cuts — so untouched it would create ZERO prompts for tomorrow's company. It must generate the full 13×4 v2 matrix per market × function: import `generateAttributePrompts` from `@/config/attributes`, apply the existing market/function phrasing (`appendPromptContext`-equivalent), set `attribute_id`, `prompt_category`, `prompt_theme`, `prompt_version=2`, and route non-English markets through `translate-prompts` exactly like the batch-queue setup phase does. This path is how tomorrow's client onboards — it is the single most important step in Phase 1. Remove its General-prompt generation.
+4. Deploy edge functions: `process-company-batch-queue`, `admin-add-candidate-prompts`, and every function importing `_shared/theme-analysis.ts` (at minimum `ai-thematic-analysis`, `ai-thematic-analysis-bulk`). NOTE: MCP deploys of some functions have been blocked by a safety classifier before — fall back to `supabase functions deploy <fn> --project-ref ofyjvfmcgtntwamkubui` via CLI if that happens.
+5. Apply the DB migration (prompt_version + MV rebuild) via `apply_migration`.
+6. Frontend: build passes; dashboards render 13 attributes.
+7. Smoke test ALL THREE generation paths (per §3-E, all admin batch features route through path b):
+   - a) Onboarding Forms path: run a test onboarding (1 market × 1 function) → expect exactly 52 active prompts, `prompt_version=2`, correct ids/themes, translation applied for a non-English market.
+   - b) Admin batch "New Company" (`phase: setup`): throwaway test company → same 52-prompt expectation; run one collection chunk; confirm `ai_themes.attribute_id` comes back with v2 ids only; delete test company via `admin_delete_company`.
+   - c) Admin batch "Expand Coverage" (`phase: expand_setup`): add one new function to the test company before deleting it → the new combo gets 52 v2 prompts, no dedupe collisions, no base prompts.
 
-### Phase 2 — Existing orgs (this week, BEFORE the next org refresh)
-1. Build `migrate-prompts-v2` admin edge function (service-role): per organization → per company × location × function combo: generate v2 set → translate → dedupe-insert (`prompt_version=2`) → deactivate v1 per §4 matching rules. **Dry-run mode first** (returns counts per org, writes nothing).
-2. Order: dry-run all orgs → migrate one small org → verify dashboards → migrate Netflix → rest.
-3. NOTE: the `monthly_auto_refresh` cron no longer exists in `cron.job` (verified July 5). Find out how refreshes are currently triggered (manual admin runs?) and ensure no refresh fires for an org mid-migration.
+### Phase 2 — DEFERRED: existing clients (decision postponed by Karim)
+**Do not build or run any migration now.** Old clients stay on their current v1 prompts for measurement consistency. When the time comes, the decision is: (a) remap historical data into v2 via `LEGACY_ATTRIBUTE_MAP` (data manipulation), or (b) fresh-start old clients on v2 and keep v1 history read-only. `prompt_version` + the map make both options available. Related note kept for that future work: the `monthly_auto_refresh` cron no longer exists in `cron.job` (verified July 5) — refresh triggering has changed and must be re-scoped then.
 
 ### Phase 3 — Follow-ups (not blocking)
 1. Display-time "Overall Candidate Experience" rollup (avg of the 4 candidate attributes) if product wants the tile back — zero prompts.
-2. Legacy trend continuity: apply `LEGACY_ATTRIBUTE_MAP` when reading historical `ai_themes` so old data appears under v2 tiles.
-3. Marketing collateral: the client-facing tile graphic (sold deck) must be redone for 13 attributes — Karim owns this; not in repo.
-4. Attribute score-weighting (importance weights per research %) — designed later; explicitly deferred by Karim.
+2. Marketing collateral: the client-facing tile graphic (sold deck) must be redone for 13 attributes — Karim owns this; not in repo.
+3. Attribute score-weighting (importance weights per research %) — designed later; explicitly deferred by Karim.
 
 ---
 
