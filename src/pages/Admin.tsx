@@ -6,6 +6,7 @@ import { CompanyManagementTab } from '@/components/admin/CompanyManagementTab';
 import { VisibilityRankingsTab } from '@/components/admin/VisibilityRankingsTab';
 import { CompanyBatchTab } from '@/components/admin/CompanyBatchTab';
 import { RecencyCoverageTab } from '@/components/admin/RecencyCoverageTab';
+import { DataHealthTab } from '@/components/admin/DataHealthTab';
 import { EntityCanonicalizationTab } from '@/components/admin/EntityCanonicalizationTab';
 import { OnboardingFormsTab } from '@/components/admin/OnboardingFormsTab';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
@@ -18,6 +19,8 @@ export default function Admin() {
     switch (activeTab) {
       case 'organizations':
         return <OrganizationManagementTab />;
+      case 'data-health':
+        return <DataHealthTab />;
       case 'users':
         return <UsersTab />;
       case 'companies':
