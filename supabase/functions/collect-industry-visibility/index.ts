@@ -4,6 +4,13 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts";
 import { COUNTRY_CODE_TO_NAME } from "../_shared/countries.ts";
 
+// Model used for the free, public Visibility Rankings. Deliberately kept on a
+// cheaper tier than the client-facing company batch collection, which uses the
+// flagship model via test-prompt-openai. Override with the VISIBILITY_OPENAI_MODEL
+// env var (Supabase function secret) to retune without redeploying.
+const VISIBILITY_OPENAI_MODEL =
+  Deno.env.get("VISIBILITY_OPENAI_MODEL") || "gpt-4.1-mini";
+
 /**
  * Apply `unwrapTranslateUrl` to every citation in a list so the stored
  * prompt_responses.citations never contains translate.google.com redirects.
@@ -626,7 +633,7 @@ serve(async (req) => {
             .from("prompt_responses")
             .select("id, ai_model, tested_at")
             .eq("confirmed_prompt_id", promptId)
-            .eq("ai_model", "gpt-5.2-chat-latest")
+            .eq("ai_model", VISIBILITY_OPENAI_MODEL)
             .maybeSingle();
 
         const {
@@ -649,11 +656,12 @@ serve(async (req) => {
           .eq("ai_model", "google-ai-overviews")
           .maybeSingle();
 
-        // Collect responses for each model that doesn't exist yet
-        // TODO [12.6]: Confirm whether gpt-5.2-chat-latest should be updated to a newer model.
+        // Collect responses for each model that doesn't exist yet.
+        // Visibility Rankings intentionally use a cheaper OpenAI model
+        // (VISIBILITY_OPENAI_MODEL) than the client-facing company batch flow.
         const modelsToCollect = [
           {
-            name: "gpt-5.2-chat-latest",
+            name: VISIBILITY_OPENAI_MODEL,
             exists: !!existingResponseGPT,
             type: "openai",
           },
@@ -697,9 +705,10 @@ serve(async (req) => {
                         content: promptData.text,
                       },
                     ],
-                    // max_tokens: 1000, // Not supported by gpt-5.2-chat-latest (o1/o3 style models)
+                    // Use max_completion_tokens (accepted by gpt-4.1-mini / gpt-4o-mini
+                    // and required by reasoning-style models); avoid the legacy max_tokens.
                     max_completion_tokens: 1000,
-                    // temperature: 0.7 // Not supported by some newer reasoning models, safer to omit if using reasoning models or set to 1
+                    // temperature omitted: some newer models reject non-default values.
                   }),
                 },
               );

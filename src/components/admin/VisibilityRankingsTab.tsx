@@ -107,7 +107,7 @@ export const VisibilityRankingsTab = () => {
 
   // Start Collection confirmation / customization (mirrors NewCompanyPanel)
   const ALL_INDUSTRY_MODELS = [
-    { id: "openai", label: "OpenAI (gpt-5.2-chat-latest)" },
+    { id: "openai", label: "OpenAI (gpt-4.1-mini)" },
     { id: "perplexity", label: "Perplexity" },
     { id: "google-ai-overviews", label: "Google AI Overviews" },
   ];
