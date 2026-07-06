@@ -12,7 +12,7 @@ import { Monitor } from 'lucide-react';
 import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard';
 import { getOnboardingByToken, OnboardingTokenState } from '@/lib/onboarding/api';
 import { emptyOnboardingPayload, OnboardingPayload } from '@/lib/onboarding/types';
-import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { useMetaTags } from '@/hooks/useMetaTags';
 
 function useIsDesktop(): boolean {
   const [isDesktop, setIsDesktop] = useState(
@@ -37,7 +37,16 @@ export default function Onboarding() {
   const { token } = useParams<{ token: string }>();
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
   const isDesktop = useIsDesktop();
-  useDocumentTitle('Project setup');
+
+  const companyNameForMeta =
+    load.kind === 'ready' || load.kind === 'submitted' ? (load.kind === 'ready' ? load.state.company_name : load.companyName) : undefined;
+
+  useMetaTags({
+    title: companyNameForMeta ? `${companyNameForMeta}'s Project Setup — PerceptionX` : 'Project Setup — PerceptionX',
+    description: companyNameForMeta
+      ? `You've been invited to set up ${companyNameForMeta}'s PerceptionX project. Complete your brief to see how AI describes your employer brand.`
+      : "You've been invited to set up your company's PerceptionX project. Complete your brief to see how AI describes your employer brand.",
+  });
 
   useEffect(() => {
     let cancelled = false;
