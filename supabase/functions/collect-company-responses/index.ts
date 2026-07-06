@@ -364,14 +364,24 @@ serve(async (req) => {
       .update({ last_updated: new Date().toISOString() })
       .eq("id", companyId);
 
-    // Dashboard rollup MVs are refreshed by the staleness-driven pg_cron tick
-    // (refresh_metrics_tick), not here. The old synchronous refresh_company_metrics()
-    // call refreshed all 13 MVs in one statement and reliably hit the edge/cron
-    // statement timeout BEFORE reaching the 6 by-location MVs, which is what left
-    // newly-collected companies/locations showing null when filtered by location.
-    // Landing the responses above bumps mv_refresh_watermark via a trigger, so the
-    // tick picks the affected MVs up within minutes. See migration
-    // 20260628000001_metrics_refresh_tick.sql.
+    // Refresh THIS company's 7 rollup tables synchronously so its dashboard is
+    // fresh the moment collection finishes. This is the per-company incremental
+    // path (DELETE+INSERT scoped by company_id — sub-second), NOT the old
+    // all-companies monolith that reliably hit the edge/cron statement timeout
+    // and was removed here. The 6 by-location rollups are still materialized
+    // views and can't be refreshed per-company; landing the responses above
+    // bumped mv_refresh_watermark via trigger, so the staleness tick
+    // (refresh_metrics_tick, 20260628000001) picks those up within minutes.
+    try {
+      const { error: refreshError } = await supabase.rpc("refresh_company_metrics", {
+        p_company_id: companyId,
+      });
+      if (refreshError) {
+        console.warn("refresh_company_metrics failed (non-fatal):", refreshError.message);
+      }
+    } catch (refreshErr: any) {
+      console.warn("refresh_company_metrics error (non-fatal):", refreshErr?.message);
+    }
 
     console.log("Collection complete:", results);
 
