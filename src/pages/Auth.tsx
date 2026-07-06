@@ -12,7 +12,7 @@ import { LoadingModal } from '@/components/prompts/LoadingModal';
 import { generateAndInsertPrompts, ProgressInfo } from '@/hooks/usePromptsLogic';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { validateEmail, sanitizeInput, logger } from '@/lib/utils';
-import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { useMetaTags } from '@/hooks/useMetaTags';
 
 // Google Material Button component
 const GoogleMaterialButton = ({ onClick, loading, mode }) => (
@@ -60,7 +60,11 @@ const GoogleMaterialButton = ({ onClick, loading, mode }) => (
 );
 
 const Auth = () => {
-  useDocumentTitle('Sign in');
+  useMetaTags({
+    title: 'PerceptionX Dashboard — Enterprise AI Employer Reputation Management',
+    description:
+      'The PerceptionX dashboard for enterprise talent teams. Sign in to see how AI is answering questions about your employer brand.',
+  });
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
