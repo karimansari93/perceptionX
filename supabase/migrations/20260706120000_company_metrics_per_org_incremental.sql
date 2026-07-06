@@ -4,56 +4,65 @@
 --
 -- Problem
 -- -------
--- refresh_company_metrics() rebuilt SEVEN materialized views for EVERY company
--- in a single transaction (REFRESH MATERIALIZED VIEW CONCURRENTLY x7), scanning
--- the full ~490 MB / 146k-row prompt_responses table each run. Measured cost:
--- mean ~43s, now hitting 120s+. Every execution path has a ceiling it now
--- exceeds: the SQL editor / REST gateway (~60s) and the pg_cron / server-side
--- path (a hard ~120s). Worse, because all seven refreshes share one transaction,
--- hitting the cap on the last view ROLLS BACK ALL SEVEN -- so a slow run updated
--- nothing. As data grew this went from "occasionally slow" to "always fails".
+-- The 7 company-level rollups (sentiment, relevance, top sources, competitors,
+-- llm rankings, attribute themes, response sentiment) are materialized views.
+-- A materialized view can only be refreshed IN FULL -- every refresh rebuilds
+-- all ~200 orgs (~20-40s and a full scan of prompt_responses/ai_themes each,
+-- per mv_refresh_state timings) even when a single org's data changed.
 --
--- The operation we actually want is "recompute one organization", but a
--- materialized view can only be refreshed in full -- there is no per-company
--- REFRESH. So this migration converts the seven MVs into regular TABLES and
--- replaces the monolithic refresh with an incremental, per-organization one:
+-- The staleness tick (20260628000001) made those full refreshes reliable
+-- (one MV per minute-tick, no statement timeout), but it cannot make them
+-- cheap or immediate: after a collection run, an org's dashboard lags until
+-- the tick drains the affected MVs (up to ~13 min queue + 15-min per-MV
+-- cooldown during bursts), and each drain is a full all-orgs rebuild.
 --
---     refresh_company_metrics(p_company_id uuid)
+-- Fix: convert the 7 company-level rollups into regular TABLES maintained by
+-- per-organization incremental refresh:
 --
--- which, for each table, does DELETE WHERE company_id = X; INSERT ... WHERE
--- company_id = X. prompt_responses / ai_themes are already indexed on
--- company_id, so one org touches only its own rows -> sub-second to a few
--- seconds, no timeout, and a fraction of the Disk IO that forced the hourly
--- refresh crons to be disabled (see 20260602000001).
+--     SELECT refresh_company_metrics('<company-uuid>');
 --
--- What stays the same
--- -------------------
---   * Object names are unchanged (company_*_mv), so the frontend -- which reads
---     these objects directly and filters by company_id -- keeps working as-is.
---   * Column shapes, indexes, and the (read-only) access for anon/authenticated
---     are preserved. Write privileges that were inert on a matview are revoked,
---     since on a TABLE they would let clients mutate the metrics.
+-- For each table this does DELETE WHERE company_id = X; INSERT ... WHERE
+-- company_id = X. prompt_responses / ai_themes are indexed on company_id, so
+-- one org touches only its own rows -> sub-second-to-seconds, no timeout, and
+-- a tiny fraction of the Disk IO of a full rebuild. collect-company-responses
+-- calls this right after landing an org's responses, so that org's dashboard
+-- is fresh immediately.
 --
--- What changes
--- ------------
---   * company_*_mv are now tables, populated by the functions below instead of
---     REFRESH MATERIALIZED VIEW.
---   * refresh_company_metrics() is overloaded: (uuid) = one org (the hot path,
---     called by collect-company-responses); () = full rebuild (kept for
---     backwards compatibility, delegates to refresh_all_company_metrics()).
---   * refresh_all_company_metrics() rebuilds every org, table by table. It is
---     heavy (~the old full cost) and is intended for backfills / rare full
---     rebuilds run over a DIRECT connection (psql / supabase db push), where no
---     statement-timeout cap applies.
+-- Integration with the staleness tick (20260628000001)
+-- ----------------------------------------------------
+-- The tick, mv_refresh_state bookkeeping, watermark triggers, and the admin
+-- Data Health tab all stay. Changes:
+--   * refresh_metrics_tick() now DISPATCHES per object: the 6 by-location
+--     rollups are still matviews and get REFRESH MATERIALIZED VIEW
+--     CONCURRENTLY as before; the 7 converted tables get a full incremental
+--     rebuild via their helper (all-orgs DELETE+INSERT -- same cost class as
+--     the old REFRESH). The tick remains the safety net for cross-org writers
+--     the per-org path can't see coming (recency rescore, theme backfill,
+--     entity canonicalization) and the only refresher of the by-location MVs.
+--   * mv_refresh_state keeps one row per rollup (same 13 names), so the
+--     Data Health staleness banner and force-flag flow work unchanged.
+--   * The no-arg refresh_company_metrics() keeps its RETURNS TABLE(...)
+--     status contract (callers: refresh-company-metrics edge fn, manual use)
+--     but is now table-aware. It is still the heavy all-orgs path; prefer the
+--     tick (steady state) or the per-org call (after a collection).
 --
--- Nothing else depends on these MVs (verified via pg_depend: only the two
--- functions refresh_company_metrics and refresh_company_competitors_mv
--- referenced them, and both are redefined here). The parallel company_*_by_
--- location_mv / company_overview_* MVs are independent and out of scope.
+-- What stays the same for readers
+-- -------------------------------
+-- Object names, columns, and indexes are unchanged (company_*_mv), so the
+-- frontend -- which reads these objects directly and filters by company_id --
+-- keeps working as-is. anon/authenticated keep read access; the write
+-- privileges that were inert on a matview are revoked, since on a TABLE they
+-- would let clients mutate metrics.
 --
--- Deploy note: apply over a direct connection (supabase db push / psql). The
--- whole migration is one transaction -- readers keep seeing the old MVs until
--- COMMIT, then atomically see the new, fully-populated tables.
+-- The defining queries below are byte-for-byte the live matview definitions
+-- (pg_get_viewdef as of 2026-07-06, i.e. AFTER the talentx cleanup in
+-- 20260615120100 renamed ai_themes.talentx_attribute_id -> attribute_id and
+-- trimmed the sentiment prompt_type list) plus a company_id predicate.
+--
+-- Deploy note: apply over a direct connection (supabase db push / psql). One
+-- transaction: readers see the old MVs until COMMIT, then the populated
+-- tables. The backfill also stamps mv_refresh_state so the tick doesn't
+-- redundantly rebuild all 7 right after deploy.
 -- =============================================================================
 
 BEGIN;
@@ -61,15 +70,14 @@ BEGIN;
 -- -----------------------------------------------------------------------------
 -- 1. Convert each materialized view into a table.
 --    Clone the exact column shape from the existing MV (SELECT * ... WITH NO
---    DATA -- no need to restate column types), drop the MV, rename into place.
---    All within this transaction, so the swap is atomic for readers.
+--    DATA), drop the MV, rename into place. Atomic for readers.
 -- -----------------------------------------------------------------------------
-CREATE TABLE public._mig_company_sentiment_scores  AS SELECT * FROM public.company_sentiment_scores_mv  WITH NO DATA;
-CREATE TABLE public._mig_company_relevance_scores  AS SELECT * FROM public.company_relevance_scores_mv  WITH NO DATA;
-CREATE TABLE public._mig_company_top_sources       AS SELECT * FROM public.company_top_sources_mv       WITH NO DATA;
-CREATE TABLE public._mig_company_competitors       AS SELECT * FROM public.company_competitors_mv       WITH NO DATA;
-CREATE TABLE public._mig_company_llm_rankings      AS SELECT * FROM public.company_llm_rankings_mv      WITH NO DATA;
-CREATE TABLE public._mig_company_attribute_themes  AS SELECT * FROM public.company_attribute_themes_mv  WITH NO DATA;
+CREATE TABLE public._mig_company_sentiment_scores   AS SELECT * FROM public.company_sentiment_scores_mv   WITH NO DATA;
+CREATE TABLE public._mig_company_relevance_scores   AS SELECT * FROM public.company_relevance_scores_mv   WITH NO DATA;
+CREATE TABLE public._mig_company_top_sources        AS SELECT * FROM public.company_top_sources_mv        WITH NO DATA;
+CREATE TABLE public._mig_company_competitors        AS SELECT * FROM public.company_competitors_mv        WITH NO DATA;
+CREATE TABLE public._mig_company_llm_rankings       AS SELECT * FROM public.company_llm_rankings_mv       WITH NO DATA;
+CREATE TABLE public._mig_company_attribute_themes   AS SELECT * FROM public.company_attribute_themes_mv   WITH NO DATA;
 CREATE TABLE public._mig_company_response_sentiment AS SELECT * FROM public.company_response_sentiment_mv WITH NO DATA;
 
 DROP MATERIALIZED VIEW public.company_sentiment_scores_mv;
@@ -90,8 +98,8 @@ ALTER TABLE public._mig_company_response_sentiment RENAME TO company_response_se
 
 -- -----------------------------------------------------------------------------
 -- 2. Recreate the indexes (identical names/definitions to the former MVs).
---    The UNIQUE indexes match each query's GROUP BY key, so they also guard
---    against accidental duplicate inserts.
+--    The UNIQUE indexes match each query's GROUP BY key, guarding against
+--    accidental duplicate inserts.
 -- -----------------------------------------------------------------------------
 -- sentiment
 CREATE UNIQUE INDEX idx_company_sentiment_scores_mv_unique ON public.company_sentiment_scores_mv (company_id, response_month, prompt_type, prompt_category, prompt_theme, industry_context, job_function_context);
@@ -114,16 +122,15 @@ CREATE INDEX company_competitors_mv_count_idx         ON public.company_competit
 -- llm rankings
 CREATE UNIQUE INDEX company_llm_rankings_mv_unique_idx ON public.company_llm_rankings_mv (company_id, ai_model);
 -- attribute themes
-CREATE UNIQUE INDEX company_attribute_themes_mv_uniq      ON public.company_attribute_themes_mv (company_id, response_month, job_function_context, attribute_id);
-CREATE INDEX company_attribute_themes_mv_company_idx      ON public.company_attribute_themes_mv (company_id);
+CREATE UNIQUE INDEX company_attribute_themes_mv_uniq ON public.company_attribute_themes_mv (company_id, response_month, job_function_context, attribute_id);
+CREATE INDEX company_attribute_themes_mv_company_idx ON public.company_attribute_themes_mv (company_id);
 -- response sentiment
-CREATE UNIQUE INDEX company_response_sentiment_mv_uniq    ON public.company_response_sentiment_mv (company_id, response_id);
-CREATE INDEX company_response_sentiment_mv_company_idx    ON public.company_response_sentiment_mv (company_id);
+CREATE UNIQUE INDEX company_response_sentiment_mv_uniq ON public.company_response_sentiment_mv (company_id, response_id);
+CREATE INDEX company_response_sentiment_mv_company_idx ON public.company_response_sentiment_mv (company_id);
 
 -- -----------------------------------------------------------------------------
--- 3. Access: preserve read-only access for anon/authenticated; never let them
---    write (these were matviews -- the inherited INSERT/UPDATE/DELETE grants
---    were inert, but on a table they are not). service_role keeps full access.
+-- 3. Access: read-only for anon/authenticated (write grants that were inert on
+--    a matview must not carry to a table). service_role keeps full access.
 -- -----------------------------------------------------------------------------
 DO $grants$
 DECLARE t text;
@@ -141,12 +148,11 @@ END $grants$;
 
 -- -----------------------------------------------------------------------------
 -- 4. Per-table refresh helpers. Each takes an optional company id:
---      NULL      -> rebuild the whole table (all orgs)
---      <uuid>    -> rebuild just that org's rows (DELETE + re-INSERT)
---    The defining query is identical to the former MV, plus the company
---    predicate. SECURITY DEFINER so a future authenticated "recalculate"
---    action can run them; EXECUTE is revoked from PUBLIC (orchestrators call
---    them as the definer).
+--      NULL   -> rebuild the whole table (all orgs)
+--      <uuid> -> rebuild just that org's rows (DELETE + re-INSERT)
+--    Defining queries are the live matview definitions plus the company
+--    predicate. SECURITY DEFINER; EXECUTE revoked from PUBLIC (only the
+--    entry-point functions below call them).
 -- -----------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public._refresh_cm_sentiment_scores(p_company_id uuid)
@@ -163,7 +169,7 @@ BEGIN
     FROM prompt_responses pr
       JOIN confirmed_prompts cp ON pr.confirmed_prompt_id = cp.id
       JOIN companies c ON pr.company_id = c.id
-    WHERE (cp.prompt_type = ANY (ARRAY['sentiment','competitive','talentx_sentiment','talentx_competitive']))
+    WHERE (cp.prompt_type = ANY (ARRAY['sentiment','competitive']))
       AND pr.company_id IS NOT NULL
       AND (p_company_id IS NULL OR pr.company_id = p_company_id)
   ), ai_themes_aggregated AS (
@@ -300,7 +306,7 @@ BEGIN
   SELECT t.company_id,
          date_trunc('month'::text, pr.tested_at)::date AS response_month,
          COALESCE(NULLIF(btrim(cp.job_function_context), ''::text), ''::text) AS job_function_context,
-         btrim(t.talentx_attribute_id) AS attribute_id,
+         btrim(t.attribute_id) AS attribute_id,
          count(*) AS total_themes,
          count(*) FILTER (WHERE t.sentiment = 'positive') AS positive_themes,
          count(*) FILTER (WHERE t.sentiment = 'negative') AS negative_themes,
@@ -312,11 +318,11 @@ BEGIN
     JOIN prompt_responses pr ON pr.id = t.response_id
     JOIN confirmed_prompts cp ON cp.id = pr.confirmed_prompt_id
   WHERE pr.tested_at IS NOT NULL
-    AND (btrim(t.talentx_attribute_id) = ANY (ARRAY['mission-purpose','rewards-recognition','company-culture','social-impact','inclusion','innovation','wellbeing-balance','leadership','security-perks','career-opportunities','application-process','candidate-communication','interview-experience','candidate-feedback','onboarding-experience','overall-candidate-experience']))
+    AND (btrim(t.attribute_id) = ANY (ARRAY['mission-purpose-impact','compensation','company-culture','leadership','job-security','career-opportunities','wellbeing-balance','inclusion','innovation','application-communication','candidate-feedback','interview-experience','onboarding-experience','mission-purpose','rewards-recognition','social-impact','security-perks','application-process','candidate-communication','overall-candidate-experience']))
     AND (p_company_id IS NULL OR t.company_id = p_company_id)
   GROUP BY t.company_id, (date_trunc('month'::text, pr.tested_at)),
            (COALESCE(NULLIF(btrim(cp.job_function_context), ''::text), ''::text)),
-           (btrim(t.talentx_attribute_id));
+           (btrim(t.attribute_id));
 END $fn$;
 
 CREATE OR REPLACE FUNCTION public._refresh_cm_response_sentiment(p_company_id uuid)
@@ -341,14 +347,40 @@ REVOKE ALL ON FUNCTION
 FROM PUBLIC;
 
 -- -----------------------------------------------------------------------------
--- 5. Public entry points.
+-- 5. Entry points.
 -- -----------------------------------------------------------------------------
 
--- Per-organization incremental refresh. The hot path: fast, indexed, no
--- timeout. Call this after an org's data lands (collect-company-responses).
+-- Shared dispatch: the 7 converted tables rebuild via their helper (all orgs);
+-- anything else (the 6 by-location matviews) via REFRESH ... CONCURRENTLY.
+CREATE OR REPLACE FUNCTION public._refresh_cm_dispatch(p_mv_name text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+BEGIN
+  CASE p_mv_name
+    WHEN 'company_sentiment_scores_mv'   THEN PERFORM public._refresh_cm_sentiment_scores(NULL);
+    WHEN 'company_relevance_scores_mv'   THEN PERFORM public._refresh_cm_relevance_scores(NULL);
+    WHEN 'company_top_sources_mv'        THEN PERFORM public._refresh_cm_top_sources(NULL);
+    WHEN 'company_competitors_mv'        THEN PERFORM public._refresh_cm_competitors(NULL);
+    WHEN 'company_llm_rankings_mv'       THEN PERFORM public._refresh_cm_llm_rankings(NULL);
+    WHEN 'company_attribute_themes_mv'   THEN PERFORM public._refresh_cm_attribute_themes(NULL);
+    WHEN 'company_response_sentiment_mv' THEN PERFORM public._refresh_cm_response_sentiment(NULL);
+    ELSE EXECUTE format('REFRESH MATERIALIZED VIEW CONCURRENTLY %I', p_mv_name);
+  END CASE;
+END $fn$;
+
+REVOKE ALL ON FUNCTION public._refresh_cm_dispatch(text) FROM PUBLIC;
+
+-- Per-organization incremental refresh: the hot path. Rebuilds ONE org's rows
+-- in all 7 tables. Advisory-locked per org so two concurrent refreshes of the
+-- same org (e.g. overlapping collection runs) serialize instead of racing the
+-- unique indexes. By-location rollups stay matviews and are NOT covered here;
+-- the watermark trigger + staleness tick handle those within minutes.
 CREATE OR REPLACE FUNCTION public.refresh_company_metrics(p_company_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
 BEGIN
+  IF p_company_id IS NULL THEN
+    RAISE EXCEPTION 'p_company_id is required; use refresh_company_metrics() for a full rebuild';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('refresh_company_metrics:' || p_company_id::text, 0));
   PERFORM public._refresh_cm_sentiment_scores(p_company_id);
   PERFORM public._refresh_cm_relevance_scores(p_company_id);
   PERFORM public._refresh_cm_top_sources(p_company_id);
@@ -358,52 +390,146 @@ BEGIN
   PERFORM public._refresh_cm_response_sentiment(p_company_id);
 END $fn$;
 
--- Full rebuild (all orgs), table by table. Heavy -- intended for backfills and
--- rare full rebuilds run over a DIRECT connection (psql / supabase db push),
--- where the ~120s server-side statement-timeout does not apply.
-CREATE OR REPLACE FUNCTION public.refresh_all_company_metrics()
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
-BEGIN
-  PERFORM public.refresh_company_metrics(NULL::uuid);
-END $fn$;
-
--- The previous monolithic refresh_company_metrics() returned a status table;
--- replace it with a void no-arg shim that delegates to the full rebuild so
--- existing callers (and the disabled hourly cron) keep resolving.
-DROP FUNCTION IF EXISTS public.refresh_company_metrics();
+-- Full rebuild, all orgs, all 13 rollups -- keeps the exact status-table
+-- contract of the previous monolith (codified in 20260628000000) so existing
+-- callers keep working, but is now table-aware via the dispatch. Still the
+-- heavy path: run over a direct connection for backfills; steady-state
+-- freshness belongs to the tick + the per-org overload above.
 CREATE OR REPLACE FUNCTION public.refresh_company_metrics()
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+RETURNS TABLE(view_name text, refresh_started timestamptz, refresh_completed timestamptz, success boolean, error_message text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+DECLARE
+  v_mv    text;
+  v_start timestamptz;
 BEGIN
-  PERFORM public.refresh_all_company_metrics();
+  FOREACH v_mv IN ARRAY ARRAY[
+    'company_sentiment_scores_mv','company_relevance_scores_mv','company_top_sources_mv',
+    'company_competitors_mv','company_llm_rankings_mv','company_attribute_themes_mv',
+    'company_response_sentiment_mv',
+    'company_sentiment_scores_by_location_mv','company_relevance_scores_by_location_mv',
+    'company_attribute_themes_by_location_mv','company_top_sources_by_location_mv',
+    'company_competitors_by_location_mv','company_llm_rankings_by_location_mv'
+  ] LOOP
+    v_start := now();
+    BEGIN
+      PERFORM public._refresh_cm_dispatch(v_mv);
+      RETURN QUERY SELECT v_mv, v_start, now(), TRUE, NULL::text;
+    EXCEPTION WHEN OTHERS THEN
+      RETURN QUERY SELECT v_mv, v_start, now(), FALSE, SQLERRM;
+    END;
+  END LOOP;
 END $fn$;
 
--- Admin "refresh competitors" RPC (called from EntityCanonicalizationTab after
--- approving/merging canonical entities). Now repopulates the competitors table
--- for all orgs instead of REFRESH MATERIALIZED VIEW.
+-- Admin "refresh competitors" RPC (EntityCanonicalizationTab, after approving
+-- or merging canonical entities). Rebuilds the competitors table for all orgs
+-- synchronously, and force-flags the by-location variant (canonical merges
+-- affect it too) so the tick refreshes it promptly.
 CREATE OR REPLACE FUNCTION public.refresh_company_competitors_mv()
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
 BEGIN
-  PERFORM public._refresh_cm_competitors(NULL::uuid);
+  PERFORM public._refresh_cm_competitors(NULL);
+  UPDATE public.mv_refresh_state SET force_refresh = true
+   WHERE mv_name = 'company_competitors_by_location_mv';
 END $fn$;
 
-REVOKE ALL ON FUNCTION public.refresh_company_metrics(uuid)   FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.refresh_company_metrics()       FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.refresh_all_company_metrics()   FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.refresh_company_metrics(uuid)    FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.refresh_company_metrics()        FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.refresh_company_competitors_mv() FROM PUBLIC;
 
--- Per-org refresh is cheap and safe to expose to the app (admin "recalculate"
--- buttons) as well as service_role. Full rebuilds stay service_role-only so a
--- logged-in user can't trigger the heavy all-orgs path.
+-- Per-org refresh is cheap and safe for the app (admin recalc) and services.
+-- The full rebuild stays service_role-only so a logged-in user can't trigger
+-- the heavy all-orgs path.
 GRANT EXECUTE ON FUNCTION public.refresh_company_metrics(uuid)    TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.refresh_company_metrics()        TO service_role;
-GRANT EXECUTE ON FUNCTION public.refresh_all_company_metrics()    TO service_role;
 GRANT EXECUTE ON FUNCTION public.refresh_company_competitors_mv() TO authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
--- 6. Initial backfill (all orgs) + planner stats. One transaction with the
---    swap above, so the new tables are fully populated the moment this commits.
+-- 6. Make the staleness tick (20260628000001) table-aware. Identical logic
+--    and bookkeeping; only the refresh step changes to the shared dispatch,
+--    so the 7 tables full-rebuild via helpers and the 6 by-location matviews
+--    keep REFRESH ... CONCURRENTLY. mv_refresh_state rows are unchanged.
 -- -----------------------------------------------------------------------------
-SELECT public.refresh_all_company_metrics();
+CREATE OR REPLACE FUNCTION public.refresh_metrics_tick()
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  v_mv         text;
+  v_watermark  timestamptz;
+  v_start      timestamptz;
+  v_rows       bigint;
+  v_cooldown   interval := interval '15 minutes';
+BEGIN
+  SET LOCAL statement_timeout = 0;
+  SET LOCAL lock_timeout = '30s';
+
+  IF NOT pg_try_advisory_xact_lock(913372) THEN
+    RETURN 'busy';
+  END IF;
+
+  SELECT data_changed_at INTO v_watermark FROM public.mv_refresh_watermark WHERE id;
+
+  SELECT mv_name INTO v_mv
+  FROM public.mv_refresh_state
+  WHERE force_refresh
+     OR last_refresh_finished IS NULL
+     OR ( (v_watermark IS NOT NULL AND last_refresh_finished < v_watermark)
+          AND last_refresh_finished < now() - v_cooldown )
+  ORDER BY force_refresh DESC, last_refresh_finished ASC NULLS FIRST
+  LIMIT 1;
+
+  IF v_mv IS NULL THEN
+    RETURN 'idle';
+  END IF;
+
+  v_start := clock_timestamp();
+  UPDATE public.mv_refresh_state
+     SET last_refresh_started = v_start, last_status = 'running'
+   WHERE mv_name = v_mv;
+
+  BEGIN
+    -- Tables (the 7 company-level rollups) rebuild via their incremental
+    -- helper; matviews (the 6 by-location rollups) via REFRESH CONCURRENTLY.
+    PERFORM public._refresh_cm_dispatch(v_mv);
+    EXECUTE format('SELECT count(*) FROM %I', v_mv) INTO v_rows;
+    UPDATE public.mv_refresh_state
+       SET last_refresh_finished = clock_timestamp(),
+           last_status = 'success',
+           last_error = NULL,
+           last_duration_ms = round(extract(epoch FROM (clock_timestamp() - v_start)) * 1000)::int,
+           row_count = v_rows,
+           force_refresh = false
+     WHERE mv_name = v_mv;
+    RETURN 'refreshed:' || v_mv;
+  EXCEPTION WHEN OTHERS THEN
+    UPDATE public.mv_refresh_state
+       SET last_refresh_finished = clock_timestamp(),
+           last_status = 'error',
+           last_error = SQLERRM,
+           last_duration_ms = round(extract(epoch FROM (clock_timestamp() - v_start)) * 1000)::int,
+           force_refresh = false
+     WHERE mv_name = v_mv;
+    RETURN 'error:' || v_mv || ':' || SQLERRM;
+  END;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.refresh_metrics_tick() TO postgres, service_role;
+
+-- -----------------------------------------------------------------------------
+-- 7. Initial backfill (all orgs, 7 tables) + planner stats, and stamp
+--    mv_refresh_state so the tick doesn't redundantly rebuild all 7 right
+--    after deploy. One transaction with the swap above.
+-- -----------------------------------------------------------------------------
+SELECT public._refresh_cm_sentiment_scores(NULL);
+SELECT public._refresh_cm_relevance_scores(NULL);
+SELECT public._refresh_cm_top_sources(NULL);
+SELECT public._refresh_cm_competitors(NULL);
+SELECT public._refresh_cm_llm_rankings(NULL);
+SELECT public._refresh_cm_attribute_themes(NULL);
+SELECT public._refresh_cm_response_sentiment(NULL);
 
 ANALYZE public.company_sentiment_scores_mv;
 ANALYZE public.company_relevance_scores_mv;
@@ -413,19 +539,38 @@ ANALYZE public.company_llm_rankings_mv;
 ANALYZE public.company_attribute_themes_mv;
 ANALYZE public.company_response_sentiment_mv;
 
--- -----------------------------------------------------------------------------
--- 7. Comments
--- -----------------------------------------------------------------------------
-COMMENT ON TABLE public.company_sentiment_scores_mv   IS 'Per (company, month, prompt dims) sentiment aggregates. Incrementally maintained per-org by refresh_company_metrics(company_id). (Was a materialized view; converted 2026-06-09.)';
-COMMENT ON TABLE public.company_relevance_scores_mv   IS 'Per (company, month, prompt dims) citation-recency relevance. Maintained by refresh_company_metrics(company_id).';
-COMMENT ON TABLE public.company_top_sources_mv        IS 'Per (company, normalized domain) citation counts. Maintained by refresh_company_metrics(company_id).';
-COMMENT ON TABLE public.company_competitors_mv        IS 'Per (company, canonical competitor) mention counts. Maintained by refresh_company_metrics(company_id) and refresh_company_competitors_mv().';
-COMMENT ON TABLE public.company_llm_rankings_mv       IS 'Per (company, ai_model) mention rates. Maintained by refresh_company_metrics(company_id).';
-COMMENT ON TABLE public.company_attribute_themes_mv   IS 'Per (company, month, job_function, attribute) theme aggregates. Maintained by refresh_company_metrics(company_id).';
-COMMENT ON TABLE public.company_response_sentiment_mv IS 'Per (company, response) positive/total theme ratio. Maintained by refresh_company_metrics(company_id).';
+WITH counts AS (
+  SELECT 'company_sentiment_scores_mv'::text AS mv_name, count(*) AS n FROM public.company_sentiment_scores_mv
+  UNION ALL SELECT 'company_relevance_scores_mv', count(*) FROM public.company_relevance_scores_mv
+  UNION ALL SELECT 'company_top_sources_mv', count(*) FROM public.company_top_sources_mv
+  UNION ALL SELECT 'company_competitors_mv', count(*) FROM public.company_competitors_mv
+  UNION ALL SELECT 'company_llm_rankings_mv', count(*) FROM public.company_llm_rankings_mv
+  UNION ALL SELECT 'company_attribute_themes_mv', count(*) FROM public.company_attribute_themes_mv
+  UNION ALL SELECT 'company_response_sentiment_mv', count(*) FROM public.company_response_sentiment_mv
+)
+UPDATE public.mv_refresh_state s
+   SET last_refresh_started  = now(),
+       last_refresh_finished = now(),
+       last_status = 'success',
+       last_error = NULL,
+       row_count = c.n,
+       force_refresh = false
+  FROM counts c
+ WHERE s.mv_name = c.mv_name;
 
-COMMENT ON FUNCTION public.refresh_company_metrics(uuid) IS 'Incrementally rebuilds all company metric tables for ONE organization (DELETE+INSERT scoped by company_id). Fast, indexed, timeout-proof. Call after an org''s data lands.';
-COMMENT ON FUNCTION public.refresh_all_company_metrics() IS 'Full rebuild of every company metric table for ALL orgs. Heavy; run over a direct connection (psql / supabase db push) to avoid the ~120s server-side statement timeout.';
-COMMENT ON FUNCTION public.refresh_company_metrics()     IS 'Backwards-compatible no-arg shim; delegates to refresh_all_company_metrics().';
+-- -----------------------------------------------------------------------------
+-- 8. Comments
+-- -----------------------------------------------------------------------------
+COMMENT ON TABLE public.company_sentiment_scores_mv   IS 'Per (company, month, prompt dims) sentiment aggregates. Incrementally maintained per-org by refresh_company_metrics(company_id); full rebuilds via the staleness tick. (Was a materialized view; converted 2026-07-06.)';
+COMMENT ON TABLE public.company_relevance_scores_mv   IS 'Per (company, month, prompt dims) citation-recency relevance. Maintained by refresh_company_metrics(company_id) + staleness tick.';
+COMMENT ON TABLE public.company_top_sources_mv        IS 'Per (company, normalized domain) citation counts. Maintained by refresh_company_metrics(company_id) + staleness tick.';
+COMMENT ON TABLE public.company_competitors_mv        IS 'Per (company, canonical competitor) mention counts. Maintained by refresh_company_metrics(company_id), refresh_company_competitors_mv(), and the staleness tick.';
+COMMENT ON TABLE public.company_llm_rankings_mv       IS 'Per (company, ai_model) mention rates. Maintained by refresh_company_metrics(company_id) + staleness tick.';
+COMMENT ON TABLE public.company_attribute_themes_mv   IS 'Per (company, month, job_function, attribute) theme aggregates. Maintained by refresh_company_metrics(company_id) + staleness tick.';
+COMMENT ON TABLE public.company_response_sentiment_mv IS 'Per (company, response) positive/total theme ratio. Maintained by refresh_company_metrics(company_id) + staleness tick.';
+
+COMMENT ON FUNCTION public.refresh_company_metrics(uuid) IS 'Incrementally rebuilds the 7 company-level rollup tables for ONE organization (DELETE+INSERT scoped by company_id). Fast, indexed, timeout-proof. Called by collect-company-responses after data lands. By-location rollups are matviews handled by refresh_metrics_tick.';
+COMMENT ON FUNCTION public.refresh_company_metrics()     IS 'Full rebuild of all 13 rollups (7 tables via helpers, 6 by-location matviews via REFRESH CONCURRENTLY), returning a per-rollup status row. Heavy: run over a direct connection for backfills; steady-state freshness belongs to refresh_metrics_tick + the per-org overload.';
+COMMENT ON FUNCTION public._refresh_cm_dispatch(text)    IS 'Refreshes one rollup by name: the 7 converted tables rebuild via their incremental helper (all orgs); anything else is REFRESH MATERIALIZED VIEW CONCURRENTLY. Shared by refresh_metrics_tick and refresh_company_metrics().';
 
 COMMIT;
