@@ -6,24 +6,34 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { CompanyProvider } from "@/contexts/CompanyContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
-import Dashboard from "./pages/Dashboard";
+// Auth is the entry point for every visit (route "/"), so it stays eager —
+// lazy-loading it would only add a Suspense flash before the login form.
 import Auth from "./pages/Auth";
-import NotFound from "./pages/NotFound";
-import AuthCallback from "./pages/AuthCallback";
-import VerifyEmail from "./pages/VerifyEmail";
-import ResetPassword from "./pages/ResetPassword";
-import Usage from "./pages/Usage";
-import Account from "./pages/Account";
+// Everything behind login is code-split so the initial login bundle stays
+// small (it previously eagerly pulled the dashboard, all charts, and the
+// admin panel). Each loads its own chunk on first navigation.
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { ErrorBoundary } from "react-error-boundary";
 import { usePageTracking } from "@/hooks/usePageTracking";
-import Admin from "./pages/Admin";
 import AdminRoute from "./components/AdminRoute";
-import GoogleOneTapCallback from "@/components/GoogleOneTapCallback";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 import { logger } from "@/lib/utils";
 import { AlertTriangle, RefreshCw, Home } from "lucide-react";
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
+import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import Hotjar from "@hotjar/browser";
+
+const Dashboard = lazyWithRetry(() => import("./pages/Dashboard"));
+const NotFound = lazyWithRetry(() => import("./pages/NotFound"));
+const AuthCallback = lazyWithRetry(() => import("./pages/AuthCallback"));
+const VerifyEmail = lazyWithRetry(() => import("./pages/VerifyEmail"));
+const ResetPassword = lazyWithRetry(() => import("./pages/ResetPassword"));
+const Welcome = lazyWithRetry(() => import("./pages/Welcome"));
+const Usage = lazyWithRetry(() => import("./pages/Usage"));
+const Account = lazyWithRetry(() => import("./pages/Account"));
+const Admin = lazyWithRetry(() => import("./pages/Admin"));
+const GoogleOneTapCallback = lazyWithRetry(() => import("@/components/GoogleOneTapCallback"));
+const Onboarding = lazyWithRetry(() => import("./pages/Onboarding"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -157,6 +167,7 @@ const App = () => (
             <CompanyProvider>
               <Toaster />
               <Sonner />
+              <Suspense fallback={<LoadingScreen />}>
               <Routes>
               <Route path="/" element={<Auth />} />
               <Route path="/auth" element={<Auth />} />
@@ -165,7 +176,11 @@ const App = () => (
               <Route path="/auth/google-onetap" element={<GoogleOneTapCallback />} />
               <Route path="/verify-email" element={<VerifyEmail />} />
               <Route path="/reset-password" element={<ResetPassword />} />
-              
+              <Route path="/welcome" element={<Welcome />} />
+              {/* Client onboarding — public, authenticated by invite token only.
+                  Ranks below the static /onboarding redirects below in React Router. */}
+              <Route path="/onboarding/:token" element={<Onboarding />} />
+
               {/* Admin routes - no onboarding guard */}
               <Route path="/admin" element={
                 <ProtectedRoute>
@@ -261,6 +276,7 @@ const App = () => (
               } />
               <Route path="*" element={<NotFound />} />
             </Routes>
+            </Suspense>
             </CompanyProvider>
           </AuthProvider>
         </BrowserRouter>

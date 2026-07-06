@@ -231,15 +231,15 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
     // Process themes
     const themeMap = new Map();
     themes?.forEach(theme => {
-      const key = theme.talentx_attribute_id;
+      const key = theme.attribute_id;
       if (!themeMap.has(key)) {
         themeMap.set(key, {
           theme_name: theme.theme_name,
           theme_description: theme.theme_description,
           sentiment: theme.sentiment,
           sentiment_score: theme.sentiment_score,
-          talentx_attribute_id: theme.talentx_attribute_id,
-          talentx_attribute_name: theme.talentx_attribute_name,
+          attribute_id: theme.attribute_id,
+          attribute_name: theme.attribute_name,
           frequency: 0,
           confidence_score: theme.confidence_score
         });
@@ -367,7 +367,7 @@ async function generateComparisonReport(companyReports: CompanyReportData[]): Pr
   const allThemes = companyReports.flatMap(report => report.topThemes);
   const themeFrequency = new Map();
   allThemes.forEach(theme => {
-    const key = theme.talentx_attribute_name;
+    const key = theme.attribute_name;
     themeFrequency.set(key, (themeFrequency.get(key) || 0) + theme.frequency);
   });
   const strongestThemes = Array.from(themeFrequency.entries())
@@ -601,8 +601,8 @@ function generateThemeSummary(topThemes: any[]): any {
     .slice(0, 3)
     .map(theme => ({
       theme: theme.theme_name,
-      attribute: theme.talentx_attribute_name,
-      strength: `${theme.theme_name} is a key strength in ${theme.talentx_attribute_name}`
+      attribute: theme.attribute_name,
+      strength: `${theme.theme_name} is a key strength in ${theme.attribute_name}`
     }));
 
   const negativeThemes = topThemes
@@ -610,8 +610,8 @@ function generateThemeSummary(topThemes: any[]): any {
     .slice(0, 3)
     .map(theme => ({
       theme: theme.theme_name,
-      attribute: theme.talentx_attribute_name,
-      concern: `${theme.theme_name} is a concern in ${theme.talentx_attribute_name}`
+      attribute: theme.attribute_name,
+      concern: `${theme.theme_name} is a concern in ${theme.attribute_name}`
     }));
 
   const avgThemeSentiment = topThemes.length > 0 
@@ -691,7 +691,7 @@ COMPANY DATA:
 - Total Themes Identified: ${topThemes.length}
 
 TOP THEMES:
-${topThemes.map(theme => `- ${theme.talentx_attribute_name}: ${theme.theme_name} (${theme.sentiment}, frequency: ${theme.frequency})`).join('\n')}
+${topThemes.map(theme => `- ${theme.attribute_name}: ${theme.theme_name} (${theme.sentiment}, frequency: ${theme.frequency})`).join('\n')}
 
 COMPETITOR MENTIONS:
 ${competitorMentions.map(comp => `- ${comp.competitor}: ${comp.frequency} mentions, sentiment: ${comp.sentiment.toFixed(2)}`).join('\n')}
@@ -772,7 +772,7 @@ async function generateComparisonInsights(companyReports: CompanyReportData[]): 
     industry: report.industry,
     sentiment: report.averageSentiment,
     visibility: report.visibilityScore,
-    themes: report.topThemes.slice(0, 3).map(t => t.talentx_attribute_name),
+    themes: report.topThemes.slice(0, 3).map(t => t.attribute_name),
     competitors: report.competitorMentions.slice(0, 3).map(c => c.competitor)
   }));
 

@@ -31,8 +31,8 @@ export interface AITheme {
   theme_description: string;
   sentiment: "positive" | "negative" | "neutral";
   sentiment_score: number;
-  talentx_attribute_id: string;
-  talentx_attribute_name: string;
+  attribute_id: string;
+  attribute_name: string;
   confidence_score: number;
   keywords: string[];
   context_snippets: string[];
@@ -50,8 +50,8 @@ const THEME_SCHEMA = {
       theme_description: { type: "string" },
       sentiment: { type: "string", enum: ["positive", "negative", "neutral"] },
       sentiment_score: { type: "number" },
-      talentx_attribute_id: { type: "string" },
-      talentx_attribute_name: { type: "string" },
+      attribute_id: { type: "string" },
+      attribute_name: { type: "string" },
       confidence_score: { type: "number" },
       keywords: { type: "array", items: { type: "string" } },
       context_snippets: { type: "array", items: { type: "string" } },
@@ -61,8 +61,8 @@ const THEME_SCHEMA = {
       "theme_description",
       "sentiment",
       "sentiment_score",
-      "talentx_attribute_id",
-      "talentx_attribute_name",
+      "attribute_id",
+      "attribute_name",
       "confidence_score",
       "keywords",
       "context_snippets",
@@ -83,13 +83,13 @@ For each theme you identify, output an object with:
 - theme_description: brief description of the theme
 - sentiment: "positive", "negative", or "neutral"
 - sentiment_score: number from -1 (very negative) to 1 (very positive)
-- talentx_attribute_id: one of (use the exact string):
+- attribute_id: one of (use the exact string):
   mission-purpose, rewards-recognition, company-culture, social-impact,
   inclusion, innovation, wellbeing-balance, leadership, security-perks,
   career-opportunities, application-process, candidate-communication,
   interview-experience, candidate-feedback, onboarding-experience,
   overall-candidate-experience
-- talentx_attribute_name: human-readable form (e.g. "Mission & Purpose", "Company Culture")
+- attribute_name: human-readable form (e.g. "Mission & Purpose", "Company Culture")
 - confidence_score: number from 0 to 1
 - keywords: array of relevant keywords drawn from the response
 - context_snippets: array of 1-2 verbatim snippets from the response that support the theme
@@ -112,8 +112,8 @@ function validateAndCleanTheme(t: any): AITheme {
     theme_description: t?.theme_description || "",
     sentiment: ["positive", "negative", "neutral"].includes(t?.sentiment) ? t.sentiment : "neutral",
     sentiment_score: Math.max(-1, Math.min(1, parseFloat(t?.sentiment_score) || 0)),
-    talentx_attribute_id: t?.talentx_attribute_id || "unknown",
-    talentx_attribute_name: t?.talentx_attribute_name || "Unknown Attribute",
+    attribute_id: t?.attribute_id || "unknown",
+    attribute_name: t?.attribute_name || "Unknown Attribute",
     confidence_score: Math.max(0, Math.min(1, parseFloat(t?.confidence_score) || 0)),
     keywords: Array.isArray(t?.keywords) ? t.keywords : [],
     context_snippets: Array.isArray(t?.context_snippets) ? t.context_snippets : [],

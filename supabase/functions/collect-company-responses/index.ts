@@ -93,47 +93,6 @@ serve(async (req) => {
     console.log(`Processing company: ${company.name} (${companyId})`);
 
     // Resolve organization_id from organization_companies (company can belong to one or more orgs)
-    const { data: orgLink } = await supabase
-      .from("organization_companies")
-      .select("organization_id")
-      .eq("company_id", companyId)
-      .limit(1)
-      .single();
-
-    const organizationId = orgLink?.organization_id ?? null;
-
-    // Get organization owner to determine subscription type (only if company is linked to an org)
-    let orgMember: { user_id: string; role: string } | null = null;
-    let orgMemberError: Error | null = null;
-    if (organizationId) {
-      const res = await supabase
-        .from("organization_members")
-        .select("user_id, role")
-        .eq("organization_id", organizationId)
-        .eq("role", "owner")
-        .limit(1)
-        .single();
-      orgMember = res.data;
-      orgMemberError = res.error;
-    }
-
-    if (orgMemberError) {
-      console.warn("Could not determine subscription, defaulting to free models");
-    }
-
-    let isProUser = false;
-    if (!orgMemberError && orgMember) {
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("subscription_type")
-        .eq("id", orgMember.user_id)
-        .single();
-
-      isProUser = profileData?.subscription_type === "pro";
-    }
-
-    console.log(`Subscription type: ${isProUser ? "Pro" : "Free"}`);
-
     // Fetch prompts for this company
     let promptsQuery = supabase
       .from("confirmed_prompts")
@@ -350,7 +309,7 @@ serve(async (req) => {
                     confirmed_prompt_id: prompt.id,
                     ai_model: modelName,
                     company_id: companyId,
-                    isTalentXPrompt: prompt.is_pro_prompt || false,
+                    isAttributePrompt: prompt.attribute_id != null,
                   }),
                 },
               );
@@ -405,15 +364,14 @@ serve(async (req) => {
       .update({ last_updated: new Date().toISOString() })
       .eq("id", companyId);
 
-    // Refresh materialized views so dashboard metrics (sentiment, relevance) include new data
-    try {
-      const { error: refreshError } = await supabase.rpc("refresh_company_metrics");
-      if (refreshError) {
-        console.warn("refresh_company_metrics failed (non-fatal):", refreshError.message);
-      }
-    } catch (refreshErr: any) {
-      console.warn("refresh_company_metrics error (non-fatal):", refreshErr?.message);
-    }
+    // Dashboard rollup MVs are refreshed by the staleness-driven pg_cron tick
+    // (refresh_metrics_tick), not here. The old synchronous refresh_company_metrics()
+    // call refreshed all 13 MVs in one statement and reliably hit the edge/cron
+    // statement timeout BEFORE reaching the 6 by-location MVs, which is what left
+    // newly-collected companies/locations showing null when filtered by location.
+    // Landing the responses above bumps mv_refresh_watermark via a trigger, so the
+    // tick picks the affected MVs up within minutes. See migration
+    // 20260628000001_metrics_refresh_tick.sql.
 
     console.log("Collection complete:", results);
 

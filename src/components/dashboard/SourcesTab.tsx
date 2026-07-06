@@ -209,10 +209,8 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     filteredResponses.forEach(r => {
       const promptType = r.confirmed_prompts?.prompt_type;
       if (promptType) {
-        // Normalize to base types (remove talentx_ prefix)
-        const baseType = promptType.replace('talentx_', '');
-        if (['experience', 'competitive', 'discovery', 'informational'].includes(baseType)) {
-          promptTypes.add(baseType);
+        if (['experience', 'competitive', 'discovery', 'informational'].includes(promptType)) {
+          promptTypes.add(promptType);
         }
       }
     });
@@ -247,15 +245,14 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     if (selectedPromptTypeFilter !== 'all') {
       filtered = filtered.filter(response => {
         const promptType = response.confirmed_prompts?.prompt_type;
-        // Handle both regular and talentx_ variants
         if (selectedPromptTypeFilter === 'experience') {
-          return promptType === 'experience' || promptType === 'talentx_experience';
+          return promptType === 'experience';
         } else if (selectedPromptTypeFilter === 'competitive') {
-          return promptType === 'competitive' || promptType === 'talentx_competitive';
+          return promptType === 'competitive';
         } else if (selectedPromptTypeFilter === 'discovery') {
-          return promptType === 'discovery' || promptType === 'talentx_discovery';
+          return promptType === 'discovery';
         } else if (selectedPromptTypeFilter === 'informational') {
-          return promptType === 'informational' || promptType === 'talentx_informational';
+          return promptType === 'informational';
         }
         return false;
       });
@@ -1059,6 +1056,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
           searchResults={filteredSearchResults}
           companyId={currentCompanyId}
           selectedThemeFilter={selectedThemeFilter}
+          companyMentionedFilter={selectedCompanyMentionedFilter}
           responseTexts={responseTexts}
           fetchResponseTexts={fetchResponseTexts}
         />
