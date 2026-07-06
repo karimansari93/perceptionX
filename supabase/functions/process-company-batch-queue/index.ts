@@ -506,14 +506,16 @@ serve(async (req) => {
 
         if (onbError) throw new Error(`Onboarding insert failed: ${onbError.message}`);
 
-        // 2. Resolve the company. Hierarchy is Org → Company (one per name +
-        //    industry) → Locations → Functions, so every (location, function)
-        //    setup job for the same company must converge on ONE companies row.
-        //    The auto_create_company trigger that used to dedupe was dropped in
-        //    migration 20260504063318, so we dedupe here: reuse the existing
-        //    company linked to this org for (name, industry); only create it if
-        //    none exists yet. This prevents the duplicate-company fan-out where
-        //    each job spawned its own "Netflix Animation Studios".
+        // 2. Resolve the company. A company's identity is (name + org) ONLY.
+        //    Industry, market, and function are peer *data dimensions* that make
+        //    each prompt unique (industry_context / location_context /
+        //    job_function_context) — they must NOT fork the company row, or the
+        //    dashboard can't pivot one employer across those dimensions. Every
+        //    (industry, location, function) setup job for the same employer must
+        //    converge on ONE companies row. (The auto_create_company trigger that
+        //    used to dedupe was dropped in migration 20260504063318, so we dedupe
+        //    here.) This prevents the duplicate-company fan-out where each job
+        //    spawned its own "Netflix Animation Studios".
         const setupOrgId =
           config.org_mode === "new_org" ? config.created_org_id : config.organization_id;
 
@@ -524,8 +526,8 @@ serve(async (req) => {
             .from("companies")
             .select("id, organization_companies!inner(organization_id)")
             .eq("name", job.company_name)
-            .eq("industry", job.industry)
             .eq("organization_companies.organization_id", setupOrgId)
+            .order("created_at", { ascending: true })
             .limit(1)
             .maybeSingle();
           if (existingCompany) companyId = existingCompany.id;
