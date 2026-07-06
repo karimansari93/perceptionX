@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useDeferredValue } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -39,6 +39,7 @@ import LLMLogo from '@/components/LLMLogo';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { extractSourceUrl } from '@/utils/citationUtils';
 import { ScrollablePills } from './ScrollablePills';
+import { SearchInput } from './SearchInput';
 
 interface ThematicAnalysisTabProps {
   responses: PromptResponse[];
@@ -121,6 +122,15 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   const selectedJobFunctionFilter = selectedJobFunction;
   const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
   const [rankingSort, setRankingSort] = usePersistedState<'sentiment' | 'volume' | 'az'>('thematicTab.rankingSort', 'sentiment');
+  // Free-text search over attribute names (main ranking) and over theme names
+  // inside the attribute detail modal. Both ephemeral, like the Prompts tab.
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const [modalThemeSearch, setModalThemeSearch] = useState<string>("");
+  // Clear the modal's theme search whenever a different attribute is opened.
+  useEffect(() => {
+    setModalThemeSearch("");
+  }, [selectedAttribute]);
   const [analysisProgress, setAnalysisProgress] = useState({
     current: 0,
     total: 0,
@@ -443,6 +453,13 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       .filter(a => (a.positiveCount + a.negativeCount + a.neutralCount) > 0)
       .sort((a, b) => b.count - a.count);
   }, [attributeThemes, responses, selectedJobFunctionFilter]);
+
+  // Apply the free-text search on top of the attribute ranking, before sorting.
+  const searchedThemeData = useMemo(() => {
+    const q = deferredSearchQuery.trim().toLowerCase();
+    if (!q) return themeData;
+    return themeData.filter(a => a.name.toLowerCase().includes(q));
+  }, [themeData, deferredSearchQuery]);
 
   // Process data for bubble chart (attributes as data points, sentiment ratio vs volume)
   const bubbleChartData = useMemo(() => {
@@ -777,6 +794,14 @@ CRITICAL: When you reference information from a source, add an inline citation l
       <>
           <div className="mt-4" data-tour="themes-chart">
             <div className="space-y-1">
+              <div className="px-2 pb-2">
+                <SearchInput
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  placeholder="Search attributes..."
+                  className="max-w-xs"
+                />
+              </div>
               {/* Column Headers — clickable to sort */}
               <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-100 select-none">
                 <span className="w-5" />
@@ -792,7 +817,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                   Sentiment {rankingSort === 'sentiment' && '↓'}
                 </button>
               </div>
-              {[...themeData]
+              {[...searchedThemeData]
                 .sort((a, b) => {
                   if (rankingSort === 'az') return a.name.localeCompare(b.name);
                   if (rankingSort === 'volume') return b.count - a.count;
@@ -833,6 +858,11 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     </div>
                   );
                 })}
+              {searchedThemeData.length === 0 && (
+                <div className="text-center py-8 text-gray-500 text-sm">
+                  No attributes match "{deferredSearchQuery.trim()}".
+                </div>
+              )}
             </div>
           </div>
       </>
@@ -1057,6 +1087,12 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 return acc;
               }, {} as Record<string, number>)
             })).sort((a, b) => b.count - a.count);
+
+            // Free-text filter over theme names within this attribute's modal.
+            const themeSearchQ = modalThemeSearch.trim().toLowerCase();
+            const filteredThemeNames = themeSearchQ
+              ? uniqueThemeNames.filter(g => g.name.toLowerCase().includes(themeSearchQ))
+              : uniqueThemeNames;
 
             return (
               <div className="space-y-6">
@@ -1358,8 +1394,23 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
                 {/* Key Themes List - Clickable */}
                 <div className={`space-y-3 ${themeRevealClass(4)}`}>
-                  <h3 className="text-sm font-semibold text-gray-900">Key Themes</h3>
-                  {uniqueThemeNames.map((themeGroup, index) => {
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold text-gray-900">Key Themes</h3>
+                    {uniqueThemeNames.length > 0 && (
+                      <SearchInput
+                        value={modalThemeSearch}
+                        onChange={setModalThemeSearch}
+                        placeholder="Search themes..."
+                        className="max-w-[220px]"
+                      />
+                    )}
+                  </div>
+                  {filteredThemeNames.length === 0 && uniqueThemeNames.length > 0 && (
+                    <div className="text-center py-6 text-gray-500 text-sm">
+                      No themes match "{modalThemeSearch.trim()}".
+                    </div>
+                  )}
+                  {filteredThemeNames.map((themeGroup, index) => {
                     const dominantSentiment = Object.entries(themeGroup.dominantSentiment)
                       .sort(([, a], [, b]) => b - a)[0]?.[0] || 'neutral';
                     

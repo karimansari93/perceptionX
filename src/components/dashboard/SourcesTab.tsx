@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, memo } from "react";
+import { useState, useMemo, useEffect, useCallback, useDeferredValue, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { CitationCount } from "@/types/dashboard";
 import { FileText, TrendingUp, TrendingDown, Check, X, Info } from 'lucide-react';
@@ -12,6 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { extractSourceUrl, extractDomain, enhanceCitations } from "@/utils/citationUtils";
 import { ScrollablePills } from "./ScrollablePills";
+import { SearchInput } from "./SearchInput";
 
 interface TimeBasedData {
   name: string;
@@ -77,6 +78,10 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     jobFunction: string | null;
     // Normalized, deduplicated website domains cited by this response.
     domains: string[];
+    // Per-domain lowercased "title url" text, used only to power free-text
+    // search over the page behind each source. Captured in the same single
+    // pass (the parse already runs here), then merged lazily on first search.
+    domainText: Record<string, string>;
   };
 
   const normalizeResponsesOnce = (input: any[]): NormalizedResponse[] => {
@@ -88,12 +93,18 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       const arr = Array.isArray(parsed) ? enhanceCitations(parsed) : [];
       const seen = new Set<string>();
       const domains: string[] = [];
+      const domainText: Record<string, string> = {};
       for (const c of arr) {
         if (c.type === 'website' && c.domain) {
           const d = normalizeDomain(c.domain);
-          if (d && !seen.has(d)) {
+          if (!d) continue;
+          if (!seen.has(d)) {
             seen.add(d);
             domains.push(d);
+          }
+          const extra = `${c.title || ''} ${c.url || ''}`.trim().toLowerCase();
+          if (extra) {
+            domainText[d] = domainText[d] ? `${domainText[d]} ${extra}` : extra;
           }
         }
       }
@@ -105,6 +116,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
         theme: r.confirmed_prompts?.prompt_theme,
         jobFunction: r.confirmed_prompts?.job_function_context?.trim() || null,
         domains,
+        domainText,
       };
     });
   };
@@ -160,6 +172,13 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   // feels frozen. Show top N by default, let the user opt in to the full list.
   const INITIAL_RENDER_LIMIT = 100;
   const [showAllSources, setShowAllSources] = useState(false);
+  // Free-text search over source domains + the page title/URL behind each
+  // citation (ephemeral, like the Prompts tab). The title/URL index is built
+  // lazily — only once the user actually types — so the no-search path stays
+  // exactly as fast as before.
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const searchActive = deferredSearchQuery.trim().length > 0;
   // Mentioned/Not Mentioned toggle - persisted
   const [selectedCompanyMentionedFilter, setSelectedCompanyMentionedFilter] = usePersistedState<'mentioned' | 'not-mentioned'>('sourcesTab.selectedCompanyMentionedFilter', 'mentioned');
   // Other filters hardcoded to defaults (dropdowns removed).
@@ -630,10 +649,6 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return sources;
   }, [allTimeCitations, selectedMediaTypeFilter, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedJobFunctionFilter, normalizedResponses, companyName, customMediaTypes, responsesByDomain, responseMatchesFilters]);
 
-  // Pre-cap count so the "Show all N sources" button can surface the full total
-  // even when only INITIAL_RENDER_LIMIT rows are actually rendered.
-  const totalSourceCount = displayedSources.length;
-
   // Merge change data into all-time citations
   const allTimeCitationsWithChanges = useMemo(() => {
     const changeMap = new Map<string, { change: number; previous: number }>();
@@ -651,6 +666,34 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       };
     });
   }, [displayedSources, timeBasedCitations]);
+
+  // Lazy reverse index: normalized domain → all page titles/URLs cited on it.
+  // Built once on first search (and only then), so users who never search pay
+  // nothing. Powers matching a source by the content of the page, not just the
+  // domain name.
+  const domainSearchText = useMemo(() => {
+    if (!searchActive) return null;
+    const map = new Map<string, string>();
+    for (const nr of normalizedResponses) {
+      const dt = nr.domainText;
+      for (const d in dt) {
+        const existing = map.get(d);
+        map.set(d, existing ? `${existing} ${dt[d]}` : dt[d]);
+      }
+    }
+    return map;
+  }, [normalizedResponses, searchActive]);
+
+  // Apply the free-text search on top of all other filters, before pagination.
+  const searchedSources = useMemo(() => {
+    const q = deferredSearchQuery.trim().toLowerCase();
+    if (!q) return allTimeCitationsWithChanges;
+    return allTimeCitationsWithChanges.filter(citation => {
+      if (citation.name.toLowerCase().includes(q)) return true;
+      const text = domainSearchText?.get(normalizeDomain(citation.name));
+      return text ? text.includes(q) : false;
+    });
+  }, [allTimeCitationsWithChanges, deferredSearchQuery, domainSearchText]);
 
   const renderAllTimeBar = (data: { name: string; count: number; change?: number; previousCount?: number; hasPreviousData?: boolean }, maxCount: number, totalResponses: number, totalPreviousResponses: number) => {
     // Calculate the actual percentage width
@@ -908,15 +951,22 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
             <div className="space-y-2 h-full overflow-y-auto relative">
               {allTimeCitationsWithChanges.length > 0 ? (
                 (() => {
-                  const maxCount = Math.max(...allTimeCitationsWithChanges.map(c => c.count), 1);
+                  const maxCount = Math.max(...searchedSources.map(c => c.count), 1);
                   // Only render the first INITIAL_RENDER_LIMIT rows unless the
                   // user clicks "Show all". Keeps mount fast on Netflix-scale orgs.
                   const toRender = showAllSources
-                    ? allTimeCitationsWithChanges
-                    : allTimeCitationsWithChanges.slice(0, INITIAL_RENDER_LIMIT);
+                    ? searchedSources
+                    : searchedSources.slice(0, INITIAL_RENDER_LIMIT);
                   return (
                     <>
                       <div className="sticky top-0 z-10 bg-white flex items-center justify-between gap-3 px-2 sm:px-3 pb-2">
+                        <SearchInput
+                          value={searchQuery}
+                          onChange={setSearchQuery}
+                          placeholder="Search sources..."
+                          className="max-w-xs"
+                        />
+                        <div className="flex items-center gap-3">
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -956,22 +1006,32 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                             Not Mentioned
                           </button>
                         </div>
-                      </div>
-                      {toRender.map((citation, idx) => (
-                        <div
-                          key={idx}
-                          onClick={() => handleSourceClick({ domain: citation.name, count: citation.count })}
-                          className="cursor-pointer"
-                          {...(idx === 0 ? { 'data-tour': 'sources-first-row' } : {})}
-                        >
-                          {renderAllTimeBar(citation, maxCount, totalResponsesAnalyzed, totalPrevResponsesAnalyzed)}
                         </div>
-                      ))}
-                      {!showAllSources && totalSourceCount > INITIAL_RENDER_LIMIT && (
-                        <div className="pt-3 pb-2 text-center">
-                          <Button variant="outline" size="sm" onClick={() => setShowAllSources(true)}>
-                            Show all {totalSourceCount} sources
-                          </Button>
+                      </div>
+                      {searchedSources.length > 0 ? (
+                        <>
+                          {toRender.map((citation, idx) => (
+                            <div
+                              key={idx}
+                              onClick={() => handleSourceClick({ domain: citation.name, count: citation.count })}
+                              className="cursor-pointer"
+                              {...(idx === 0 ? { 'data-tour': 'sources-first-row' } : {})}
+                            >
+                              {renderAllTimeBar(citation, maxCount, totalResponsesAnalyzed, totalPrevResponsesAnalyzed)}
+                            </div>
+                          ))}
+                          {!showAllSources && searchedSources.length > INITIAL_RENDER_LIMIT && (
+                            <div className="pt-3 pb-2 text-center">
+                              <Button variant="outline" size="sm" onClick={() => setShowAllSources(true)}>
+                                Show all {searchedSources.length} sources
+                              </Button>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-center py-12 text-gray-500">
+                          <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                          <p className="text-sm">No sources match "{deferredSearchQuery.trim()}".</p>
                         </div>
                       )}
                     </>

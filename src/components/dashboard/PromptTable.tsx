@@ -2,10 +2,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PromptData } from "@/types/dashboard";
-import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter, HelpCircle, Lightbulb, Search } from "lucide-react";
+import { SearchInput } from "./SearchInput";
+import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter, HelpCircle, Lightbulb } from "lucide-react";
 import { useState, useMemo, useTransition, useDeferredValue, memo } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
@@ -326,15 +326,11 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
     <>
       {/* Search (full-width) + Type & Theme filters on the right */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search prompts..."
-            className="h-8 w-full pl-8 rounded-lg border-gray-200 bg-white text-xs shadow-sm"
-          />
-        </div>
+        <SearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search prompts..."
+        />
         <Select value={typeFilter} onValueChange={(v) => startTransition(() => setTypeFilter(v))}>
           <SelectTrigger className="h-8 w-auto min-w-[120px] gap-1.5 rounded-lg border-gray-200 bg-white text-xs font-medium text-gray-600 shadow-sm">
             <Filter className="w-3.5 h-3.5 shrink-0 text-gray-400" />
