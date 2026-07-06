@@ -2,14 +2,16 @@ import { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
-  Building2,
   Users,
   Briefcase,
   LogOut,
   Trophy,
   Layers,
   Clock,
-  Tags
+  Tags,
+  LayoutDashboard,
+  Send,
+  HeartPulse
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -30,12 +32,13 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
 
   const navItems = [
     { id: 'organizations', label: 'Organizations', icon: Briefcase },
+    { id: 'data-health', label: 'Data Health', icon: HeartPulse },
     { id: 'users', label: 'Users', icon: Users },
-    { id: 'companies', label: 'Companies', icon: Building2 },
     { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy },
     { id: 'company-batch', label: 'Company Batch', icon: Layers },
     { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock },
-    { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags }
+    { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags },
+    { id: 'onboarding-forms', label: 'Onboarding Forms', icon: Send }
   ];
 
   return (
@@ -82,7 +85,16 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
         </nav>
 
         {/* Sign Out */}
-        <div className="p-3 border-t border-slate-200">
+        <div className="p-3 border-t border-slate-200 space-y-2">
+          <Button
+            onClick={() => navigate('/dashboard')}
+            variant="outline"
+            size="sm"
+            className="w-full border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-800"
+          >
+            <LayoutDashboard className="h-4 w-4 mr-2" />
+            View Dashboard
+          </Button>
           <Button
             onClick={handleSignOut}
             variant="outline"

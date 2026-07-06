@@ -93,47 +93,6 @@ serve(async (req) => {
     console.log(`Processing company: ${company.name} (${companyId})`);
 
     // Resolve organization_id from organization_companies (company can belong to one or more orgs)
-    const { data: orgLink } = await supabase
-      .from("organization_companies")
-      .select("organization_id")
-      .eq("company_id", companyId)
-      .limit(1)
-      .single();
-
-    const organizationId = orgLink?.organization_id ?? null;
-
-    // Get organization owner to determine subscription type (only if company is linked to an org)
-    let orgMember: { user_id: string; role: string } | null = null;
-    let orgMemberError: Error | null = null;
-    if (organizationId) {
-      const res = await supabase
-        .from("organization_members")
-        .select("user_id, role")
-        .eq("organization_id", organizationId)
-        .eq("role", "owner")
-        .limit(1)
-        .single();
-      orgMember = res.data;
-      orgMemberError = res.error;
-    }
-
-    if (orgMemberError) {
-      console.warn("Could not determine subscription, defaulting to free models");
-    }
-
-    let isProUser = false;
-    if (!orgMemberError && orgMember) {
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("subscription_type")
-        .eq("id", orgMember.user_id)
-        .single();
-
-      isProUser = profileData?.subscription_type === "pro";
-    }
-
-    console.log(`Subscription type: ${isProUser ? "Pro" : "Free"}`);
-
     // Fetch prompts for this company
     let promptsQuery = supabase
       .from("confirmed_prompts")
@@ -350,7 +309,7 @@ serve(async (req) => {
                     confirmed_prompt_id: prompt.id,
                     ai_model: modelName,
                     company_id: companyId,
-                    isTalentXPrompt: prompt.is_pro_prompt || false,
+                    isAttributePrompt: prompt.attribute_id != null,
                   }),
                 },
               );
@@ -405,10 +364,14 @@ serve(async (req) => {
       .update({ last_updated: new Date().toISOString() })
       .eq("id", companyId);
 
-    // Refresh this org's metric tables so dashboard metrics (sentiment,
-    // relevance, sources, competitors, rankings, attributes) include the new
-    // data. Scoped to this company_id, so it's an incremental, indexed,
-    // sub-second operation -- not the old full all-orgs rebuild that timed out.
+    // Refresh THIS org's 7 rollup tables synchronously so its dashboard is
+    // fresh the moment collection finishes. This is the per-org incremental
+    // path (DELETE+INSERT scoped by company_id — sub-second), NOT the old
+    // all-orgs monolith that reliably hit the edge/cron statement timeout and
+    // was removed here. The 6 by-location rollups are still materialized views
+    // and can't be refreshed per-org; landing the responses above bumped
+    // mv_refresh_watermark via trigger, so the staleness tick
+    // (refresh_metrics_tick, 20260628000001) picks those up within minutes.
     try {
       const { error: refreshError } = await supabase.rpc("refresh_company_metrics", {
         p_company_id: companyId,

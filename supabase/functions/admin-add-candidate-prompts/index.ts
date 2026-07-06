@@ -1,8 +1,8 @@
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Inline TalentX prompt templates (64 prompts: 16 attributes x 4 types - informational, experience, competitive, discovery)
-const TALENTX_PROMPT_TEMPLATES = [
+// Inline attribute prompt templates (64 prompts: 16 attributes x 4 types - informational, experience, competitive, discovery)
+const ATTRIBUTE_PROMPT_TEMPLATES = [
   { attributeId: 'mission-purpose', type: 'informational', prompt: 'What does {companyName} communicate about its mission and purpose?' },
   { attributeId: 'mission-purpose', type: 'experience', prompt: 'How well does {companyName} communicate its mission and purpose to employees, and how does this resonate with their personal values?' },
   { attributeId: 'mission-purpose', type: 'competitive', prompt: 'How do {companyName}\'s mission and purpose compare to other companies in {industry}?' },
@@ -89,9 +89,9 @@ const ATTRIBUTE_CATEGORIES: Record<string, string> = {
   'overall-candidate-experience': 'Candidate Experience'
 };
 
-// Generate TalentX prompts for a company
-const generateTalentXPrompts = (companyName: string, industry: string) => {
-  return TALENTX_PROMPT_TEMPLATES.map(template => ({
+// Generate attribute prompts for a company
+const generateAttributePrompts = (companyName: string, industry: string) => {
+  return ATTRIBUTE_PROMPT_TEMPLATES.map(template => ({
     ...template,
     prompt: template.prompt
       .replace(/{companyName}/g, companyName)
@@ -213,7 +213,7 @@ serve(async (req) => {
     // 4. Check if candidate experience prompts already exist
     const { data: existingCandidatePrompts, error: checkError } = await supabase
       .from('confirmed_prompts')
-      .select('talentx_attribute_id, prompt_type')
+      .select('attribute_id, prompt_type')
       .eq('company_id', companyId)
       .eq('prompt_category', 'Candidate Experience')
       .eq('is_active', true);
@@ -223,11 +223,11 @@ serve(async (req) => {
     }
 
     const existingSet = new Set(
-      (existingCandidatePrompts || []).map(p => `${p.talentx_attribute_id}-${p.prompt_type}`)
+      (existingCandidatePrompts || []).map(p => `${p.attribute_id}-${p.prompt_type}`)
     );
 
-    // 5. Generate all TalentX prompts and filter to candidate experience only
-    const allPrompts = generateTalentXPrompts(company.name, company.industry);
+    // 5. Generate all attribute prompts and filter to candidate experience only
+    const allPrompts = generateAttributePrompts(company.name, company.industry);
     
     const candidateExperiencePrompts = allPrompts.filter(
       template => template.attribute?.category === 'Candidate Experience'
@@ -261,14 +261,13 @@ serve(async (req) => {
           onboarding_id: onboardingId,
           company_id: companyId,
           prompt_text: template.prompt,
-          prompt_type: `talentx_${template.type}` as 'talentx_informational' | 'talentx_experience' | 'talentx_competitive' | 'talentx_discovery',
+          prompt_type: template.type as 'informational' | 'experience' | 'competitive' | 'discovery',
           prompt_category: 'Candidate Experience' as const,
           prompt_theme: theme,
-          talentx_attribute_id: template.attributeId,
+          attribute_id: template.attributeId,
           industry_context: company.industry,
           job_function_context: onboardingData?.job_function || null,
           location_context: onboardingData?.country || null,
-          is_pro_prompt: true,
           is_active: true
         };
       });

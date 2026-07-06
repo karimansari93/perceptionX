@@ -113,7 +113,7 @@ export default function Account() {
       // Get all confirmed prompts for this user
       const { data: prompts, error: promptsError } = await supabase
         .from('confirmed_prompts')
-        .select('id, prompt_text, prompt_type, talentx_attribute_id')
+        .select('id, prompt_text, prompt_type')
         .eq('user_id', user.id);
 
       if (promptsError) {
@@ -149,48 +149,6 @@ export default function Account() {
       });
 
       await Promise.all(updatePromises);
-
-      // Also update TalentX prompts
-      {
-        const { data: talentxPrompts, error: talentxError } = await supabase
-          .from('confirmed_prompts')
-          .select('id, prompt_text, prompt_category')
-          .eq('user_id', user.id)
-          .eq('is_pro_prompt', true);
-
-        if (talentxError) {
-          console.error('Error fetching TalentX prompts:', talentxError);
-        } else if (talentxPrompts && talentxPrompts.length > 0) {
-          const talentxUpdatePromises = talentxPrompts.map(async (prompt) => {
-            const newPromptText = updatePromptText(
-              prompt.prompt_text,
-              oldCompany,
-              newCompany,
-              oldIndustry,
-              newIndustry
-            );
-
-            // Prepare update object - for confirmed_prompts we only update prompt_text
-            const updateData: any = {};
-
-            // Only update prompt_text if it actually changed
-            if (isValidPromptUpdate(prompt.prompt_text, newPromptText)) {
-              updateData.prompt_text = newPromptText;
-
-              const { error: updateError } = await supabase
-                .from('confirmed_prompts')
-                .update(updateData)
-                .eq('id', prompt.id);
-
-              if (updateError) {
-                console.error(`Error updating TalentX prompt ${prompt.id}:`, updateError);
-              }
-            }
-          });
-
-          await Promise.all(talentxUpdatePromises);
-        }
-      }
     } catch (error) {
       console.error('Error updating prompt texts:', error);
     }

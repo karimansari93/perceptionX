@@ -22,12 +22,6 @@ export interface PromptResponse {
   first_mention_position?: number;
   total_words?: number;
 
-  talentx_scores?: {
-    overall_score: number;
-    top_attributes: string[];
-    attribute_scores: Record<string, number>;
-  };
-
   // Fields that exist on the underlying DB row but weren't declared here
   // historically. Report services + admin paths read them off the raw row,
   // and because the main hook selects `*` from prompt_responses they're
@@ -90,10 +84,10 @@ export interface PromptData {
   totalWords?: number;
   firstMentionPosition?: number;
   visibilityScores?: number[];
-  // Experience prompt fields
-  isTalentXPrompt?: boolean;
-  talentXAttributeId?: string;
-  talentXPromptType?: string;
+  // Attribute prompt fields
+  isAttributePrompt?: boolean;
+  attributeId?: string;
+  attributePromptType?: string;
 }
 
 export interface DashboardMetrics {

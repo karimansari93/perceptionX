@@ -1,17 +1,16 @@
 // Use a relative path here (not the Vite '@/...' alias) so this file
 // can also be imported by Supabase edge functions, which run on Deno
 // and don't resolve the alias.
-import { TalentXAttribute } from '../types/talentX.ts';
+import { Attribute } from '../types/attributes.ts';
 
-export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
+export const ATTRIBUTES: Attribute[] = [
   {
     id: 'mission-purpose',
     name: 'Mission & Purpose',
     description: 'Company mission, values, and sense of purpose',
     keywords: ['mission', 'purpose', 'values', 'vision', 'meaningful', 'impact', 'change the world', 'make a difference'],
     promptTemplate: 'What is {companyName}\'s mission and purpose? How meaningful is their work?',
-    category: 'Purpose',
-    isProOnly: true
+    category: 'Purpose'
   },
   {
     id: 'rewards-recognition',
@@ -19,8 +18,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Compensation, benefits, and employee recognition',
     keywords: ['salary', 'compensation', 'benefits', 'bonus', 'recognition', 'rewards', 'incentives', 'perks'],
     promptTemplate: 'How does {companyName} handle rewards and recognition for employees?',
-    category: 'Compensation',
-    isProOnly: true
+    category: 'Compensation'
   },
   {
     id: 'company-culture',
@@ -28,8 +26,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Workplace culture, values, and environment',
     keywords: ['culture', 'workplace', 'environment', 'atmosphere', 'values', 'team', 'collaboration', 'fun'],
     promptTemplate: 'What is the company culture like at {companyName}?',
-    category: 'Culture',
-    isProOnly: true
+    category: 'Culture'
   },
   {
     id: 'social-impact',
@@ -37,8 +34,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Social responsibility and community impact',
     keywords: ['social impact', 'community', 'charity', 'volunteering', 'sustainability', 'environmental', 'giving back'],
     promptTemplate: 'What social impact initiatives does {companyName} have?',
-    category: 'Impact',
-    isProOnly: true
+    category: 'Impact'
   },
   {
     id: 'inclusion',
@@ -46,8 +42,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Diversity, equity, and inclusion practices',
     keywords: ['diversity', 'inclusion', 'equity', 'DEI', 'minority', 'women', 'LGBTQ', 'accessible'],
     promptTemplate: 'How does {companyName} promote diversity and inclusion?',
-    category: 'Inclusion',
-    isProOnly: true
+    category: 'Inclusion'
   },
   {
     id: 'innovation',
@@ -55,8 +50,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Innovation culture and cutting-edge technology',
     keywords: ['innovation', 'innovative', 'technology', 'cutting-edge', 'research', 'development', 'breakthrough'],
     promptTemplate: 'How innovative is {companyName} in their industry?',
-    category: 'Innovation',
-    isProOnly: true
+    category: 'Innovation'
   },
   {
     id: 'wellbeing-balance',
@@ -64,8 +58,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Work-life balance and employee wellbeing',
     keywords: ['work-life balance', 'wellbeing', 'wellness', 'flexible', 'remote', 'mental health', 'stress'],
     promptTemplate: 'How does {companyName} support employee wellbeing and work-life balance?',
-    category: 'Wellbeing',
-    isProOnly: true
+    category: 'Wellbeing'
   },
   {
     id: 'leadership',
@@ -73,8 +66,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Leadership quality and management style',
     keywords: ['leadership', 'management', 'executives', 'CEO', 'directors', 'managers', 'decision-making'],
     promptTemplate: 'What is the leadership like at {companyName}?',
-    category: 'Leadership',
-    isProOnly: true
+    category: 'Leadership'
   },
   {
     id: 'security-perks',
@@ -82,8 +74,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Job security and additional perks',
     keywords: ['job security', 'stability', 'perks', 'amenities', 'office', 'food', 'gym', 'transportation'],
     promptTemplate: 'What job security and perks does {companyName} offer?',
-    category: 'Security',
-    isProOnly: true
+    category: 'Security'
   },
   {
     id: 'career-opportunities',
@@ -91,8 +82,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Career growth and development opportunities',
     keywords: ['career', 'growth', 'development', 'advancement', 'promotion', 'learning', 'training', 'mentorship'],
     promptTemplate: 'What career opportunities does {companyName} offer?',
-    category: 'Career',
-    isProOnly: false // This is available in free plan
+    category: 'Career'
   },
   {
     id: 'application-process',
@@ -100,8 +90,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Candidate experience during the application process',
     keywords: ['application', 'apply', 'job application', 'application process', 'hiring process', 'recruitment', 'applying'],
     promptTemplate: 'How is the application process at {companyName}?',
-    category: 'Candidate Experience',
-    isProOnly: true
+    category: 'Candidate Experience'
   },
   {
     id: 'candidate-communication',
@@ -109,8 +98,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Recruiter and candidate communication quality',
     keywords: ['communication', 'recruiter', 'updates', 'candidate communication', 'recruiter communication', 'feedback', 'response'],
     promptTemplate: 'How do candidates feel about receiving updates from {companyName}?',
-    category: 'Candidate Experience',
-    isProOnly: true
+    category: 'Candidate Experience'
   },
   {
     id: 'interview-experience',
@@ -118,8 +106,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Candidate interview experience and process',
     keywords: ['interview', 'interviewing', 'interview process', 'interview experience', 'interviewer', 'interview questions'],
     promptTemplate: 'How do candidates describe their interview experience at {companyName}?',
-    category: 'Candidate Experience',
-    isProOnly: true
+    category: 'Candidate Experience'
   },
   {
     id: 'candidate-feedback',
@@ -127,8 +114,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Feedback provided to candidates after interviews or applications',
     keywords: ['feedback', 'candidate feedback', 'interview feedback', 'application feedback', 'response', 'notification'],
     promptTemplate: 'How do candidates rate the feedback from {companyName} after interviews or applications?',
-    category: 'Candidate Experience',
-    isProOnly: true
+    category: 'Candidate Experience'
   },
   {
     id: 'onboarding-experience',
@@ -136,8 +122,7 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'New hire onboarding experience',
     keywords: ['onboarding', 'new hire', 'orientation', 'onboarding process', 'first day', 'new employee', 'training'],
     promptTemplate: 'How do new hires feel about onboarding at {companyName}?',
-    category: 'Candidate Experience',
-    isProOnly: true
+    category: 'Candidate Experience'
   },
   {
     id: 'overall-candidate-experience',
@@ -145,14 +130,13 @@ export const TALENTX_ATTRIBUTES: TalentXAttribute[] = [
     description: 'Overall candidate journey and reputation',
     keywords: ['candidate experience', 'candidate journey', 'recruitment experience', 'hiring experience', 'overall experience', 'candidate reputation'],
     promptTemplate: 'How do candidates perceive the overall journey at {companyName}?',
-    category: 'Candidate Experience',
-    isProOnly: true
+    category: 'Candidate Experience'
   }
 ];
 
-// TalentX Prompt Templates for Pro Users (64 prompts: 16 attributes x 4 types)
+// Attribute prompt templates (64 prompts: 16 attributes x 4 types)
 // Types: informational, experience, competitive, discovery
-export const TALENTX_PROMPT_TEMPLATES = [
+export const ATTRIBUTE_PROMPT_TEMPLATES = [
   // Mission & Purpose (4 prompts)
   { attributeId: 'mission-purpose', type: 'informational', prompt: 'What does {companyName} communicate about its mission and purpose?' },
   { attributeId: 'mission-purpose', type: 'experience', prompt: 'How well does {companyName} communicate its mission and purpose to employees, and how does this resonate with their personal values?' },
@@ -250,211 +234,35 @@ export const TALENTX_PROMPT_TEMPLATES = [
   { attributeId: 'overall-candidate-experience', type: 'discovery', prompt: 'What companies in {industry} have the best overall candidate reputation?' }
 ];
 
-export const getTalentXAttributeById = (id: string): TalentXAttribute | undefined => {
-  return TALENTX_ATTRIBUTES.find(attr => attr.id === id);
+export const getAttributeById = (id: string): Attribute | undefined => {
+  return ATTRIBUTES.find(attr => attr.id === id);
 };
 
-export const getProOnlyAttributes = (): TalentXAttribute[] => {
-  return TALENTX_ATTRIBUTES.filter(attr => attr.isProOnly);
+export const getAllAttributes = (): Attribute[] => {
+  return ATTRIBUTES;
 };
 
-export const getFreeAttributes = (): TalentXAttribute[] => {
-  return TALENTX_ATTRIBUTES.filter(attr => !attr.isProOnly);
-};
-
-export const getAllAttributes = (): TalentXAttribute[] => {
-  return TALENTX_ATTRIBUTES;
-};
-
-// Generate TalentX prompts for a company
-export const generateTalentXPrompts = (companyName: string, industry: string) => {
-  return TALENTX_PROMPT_TEMPLATES.map(template => ({
+// Generate attribute prompts for a company
+export const generateAttributePrompts = (companyName: string, industry: string) => {
+  return ATTRIBUTE_PROMPT_TEMPLATES.map(template => ({
     ...template,
     prompt: template.prompt
       .replace(/{companyName}/g, companyName)
       .replace(/{industry}/g, industry),
-    attribute: getTalentXAttributeById(template.attributeId)
+    attribute: getAttributeById(template.attributeId)
   }));
 };
 
 // Get prompts by attribute
 export const getPromptsByAttribute = (companyName: string, industry: string, attributeId?: string) => {
-  const allPrompts = generateTalentXPrompts(companyName, industry);
+  const allPrompts = generateAttributePrompts(companyName, industry);
   if (!attributeId) return allPrompts;
   return allPrompts.filter(prompt => prompt.attributeId === attributeId);
 };
 
 // Get prompts by type (four intents: informational, experience, competitive, discovery)
 export const getPromptsByType = (companyName: string, industry: string, type?: 'informational' | 'experience' | 'competitive' | 'discovery') => {
-  const allPrompts = generateTalentXPrompts(companyName, industry);
+  const allPrompts = generateAttributePrompts(companyName, industry);
   if (!type) return allPrompts;
   return allPrompts.filter(prompt => prompt.type === type);
 };
-
-// Placeholder data generation for demonstration
-export const generatePlaceholderTalentXData = (companyName: string = 'TechCorp') => {
-  const sampleData = [
-    {
-      attributeId: 'company-culture',
-      attributeName: 'Company Culture',
-      perceptionScore: 87,
-      avgPerceptionScore: 87,
-      avgSentimentScore: 0.7,
-      totalResponses: 23,
-      sentimentAnalyses: [],
-      competitiveAnalyses: [{ competitive_score: 85, perception_score: 85 }],
-      visibilityAnalyses: [{ visibility_score: 78, perception_score: 78 }],
-      totalMentions: 23,
-      context: [
-        `${companyName} has an excellent company culture that promotes collaboration and innovation. Employees frequently mention the positive work environment and supportive team atmosphere.`,
-        `The workplace culture at ${companyName} is known for being inclusive and fostering creativity. Many employees appreciate the flexible work arrangements and emphasis on work-life balance.`
-      ]
-    },
-    {
-      attributeId: 'career-opportunities',
-      attributeName: 'Career Opportunities',
-      perceptionScore: 82,
-      avgPerceptionScore: 82,
-      avgSentimentScore: 0.6,
-      totalResponses: 19,
-      sentimentAnalyses: [],
-      competitiveAnalyses: [],
-      visibilityAnalyses: [],
-      totalMentions: 19,
-      context: [
-        `${companyName} offers excellent career growth opportunities with clear advancement paths and comprehensive training programs.`,
-        `Employees at ${companyName} have access to mentorship programs and continuous learning opportunities that help them advance in their careers.`
-      ]
-    },
-    {
-      attributeId: 'innovation',
-      attributeName: 'Innovation',
-      perceptionScore: 89,
-      avgPerceptionScore: 89,
-      avgSentimentScore: 0.8,
-      totalResponses: 15,
-      sentimentAnalyses: [],
-      competitiveAnalyses: [],
-      visibilityAnalyses: [],
-      totalMentions: 15,
-      context: [
-        `${companyName} is recognized as a leader in innovation, constantly pushing boundaries with cutting-edge technology and creative solutions.`,
-        `The company's innovative approach to problem-solving and commitment to research and development makes it an exciting place to work.`
-      ]
-    },
-    {
-      attributeId: 'rewards-recognition',
-      attributeName: 'Rewards & Recognition',
-      perceptionScore: 71,
-      avgPerceptionScore: 71,
-      avgSentimentScore: 0.4,
-      totalResponses: 12,
-      sentimentAnalyses: [],
-      competitiveAnalyses: [],
-      visibilityAnalyses: [],
-      totalMentions: 12,
-      context: [
-        `${companyName} provides competitive compensation packages with good benefits, though some employees mention room for improvement in recognition programs.`,
-        `The company offers solid salary packages and benefits, including health insurance and retirement plans.`
-      ]
-    },
-    {
-      attributeId: 'wellbeing-balance',
-      attributeName: 'Wellbeing & Balance',
-      perceptionScore: 73,
-      avgPerceptionScore: 73,
-      avgSentimentScore: 0.5,
-      totalResponses: 11,
-      sentimentAnalyses: [],
-      competitiveAnalyses: [],
-      visibilityAnalyses: [],
-      totalMentions: 11,
-      context: [
-        `${companyName} supports employee wellbeing through flexible work arrangements and wellness programs.`,
-        `The company promotes work-life balance with remote work options and mental health support initiatives.`
-      ]
-    },
-    {
-      attributeId: 'mission-purpose',
-      attributeName: 'Mission & Purpose',
-      perceptionScore: 64,
-      avgPerceptionScore: 64,
-      avgSentimentScore: 0.3,
-      totalResponses: 8,
-      sentimentAnalyses: [],
-      competitiveAnalyses: [],
-      visibilityAnalyses: [],
-      totalMentions: 8,
-      context: [
-        `${companyName}'s mission focuses on making a positive impact through technology, though some employees would like clearer communication about company values.`,
-        `The company's purpose-driven approach resonates with many employees who want to work on meaningful projects.`
-      ]
-    },
-    {
-      attributeId: 'leadership',
-      attributeName: 'Leadership',
-      perceptionScore: 58,
-      avgPerceptionScore: 58,
-      avgSentimentScore: 0.2,
-      totalResponses: 7,
-      sentimentAnalyses: [],
-      competitiveAnalyses: [],
-      visibilityAnalyses: [],
-      totalMentions: 7,
-      context: [
-        `Leadership at ${companyName} is generally supportive, though some employees mention areas for improvement in communication and decision-making transparency.`,
-        `The management team is approachable and open to feedback from employees.`
-      ]
-    },
-    {
-      attributeId: 'inclusion',
-      attributeName: 'Inclusion',
-      perceptionScore: 51,
-      avgPerceptionScore: 51,
-      avgSentimentScore: 0.1,
-      totalResponses: 6,
-      sentimentAnalyses: [],
-      competitiveAnalyses: [],
-      visibilityAnalyses: [],
-      totalMentions: 6,
-      context: [
-        `${companyName} has made efforts to promote diversity and inclusion, though there's still work to be done in creating a more representative workforce.`,
-        `The company has implemented DEI initiatives and training programs to foster an inclusive environment.`
-      ]
-    },
-    {
-      attributeId: 'social-impact',
-      attributeName: 'Social Impact',
-      perceptionScore: 42,
-      avgPerceptionScore: 42,
-      avgSentimentScore: -0.1,
-      totalResponses: 4,
-      sentimentAnalyses: [],
-      competitiveAnalyses: [],
-      visibilityAnalyses: [],
-      totalMentions: 4,
-      context: [
-        `${companyName} participates in some community initiatives, but employees would like to see more robust social impact programs.`,
-        `The company has opportunities to expand its social responsibility efforts and community engagement.`
-      ]
-    },
-    {
-      attributeId: 'security-perks',
-      attributeName: 'Security & Perks',
-      perceptionScore: 48,
-      avgPerceptionScore: 48,
-      avgSentimentScore: 0.0,
-      totalResponses: 5,
-      sentimentAnalyses: [],
-      competitiveAnalyses: [],
-      visibilityAnalyses: [],
-      totalMentions: 5,
-      context: [
-        `${companyName} offers standard job security and workplace perks, though some employees mention wanting more unique benefits.`,
-        `The company provides basic amenities and job stability, with room for enhancement in the perks department.`
-      ]
-    }
-  ];
-
-  return sampleData.sort((a, b) => (b.perceptionScore || 0) - (a.perceptionScore || 0));
-}; 

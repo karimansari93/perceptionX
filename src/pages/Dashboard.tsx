@@ -3,12 +3,12 @@ import { SidebarProvider, SidebarInset, SidebarTrigger, useSidebar } from "@/com
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
+import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import { CustomReports } from "@/components/dashboard/CustomReports";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { DASHBOARD_ADD_LOCKED } from "@/config/featureFlags";
 import { useCompany } from "@/contexts/CompanyContext";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertTriangle, ChevronRight, LayoutDashboard, Lock, Globe, Users, TrendingUp, BarChart3, Activity, RefreshCw } from "lucide-react";
@@ -29,18 +29,18 @@ import {
 import { OverviewTab } from "@/components/dashboard/OverviewTab";
 
 // All other tabs are lazy-loaded — mounted on first visit, then kept alive
-const SourcesTab = lazy(() => import("@/components/dashboard/SourcesTab").then(module => ({ default: module.SourcesTab })));
-const CompetitorsTab = lazy(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
-const ThematicAnalysisTab = lazy(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
-const PromptsTab = lazy(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
-const AnswerGapsTab = lazy(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
+const SourcesTab = lazyWithRetry(() => import("@/components/dashboard/SourcesTab").then(module => ({ default: module.SourcesTab })));
+const CompetitorsTab = lazyWithRetry(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
+const ThematicAnalysisTab = lazyWithRetry(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
+const PromptsTab = lazyWithRetry(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
+const AnswerGapsTab = lazyWithRetry(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
 import LLMLogo from "@/components/LLMLogo";
-import { AddCompanyModal } from "@/components/dashboard/AddCompanyModal";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen";
 import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { readStarredView } from "@/hooks/useStarredView";
+import { canonicalizeLocationContext, GENERAL_KEY } from "@/utils/locationContext";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
@@ -74,19 +74,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const { currentCompany, loading: companyLoading } = useCompany();
   // Persist initial load state so we don't show loading screen on every navigation
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = usePersistedState<boolean>('dashboard.hasInitiallyLoaded', false);
-  // Use sessionStorage to persist modal state across tab switches
-  const [showAddCompanyModal, setShowAddCompanyModal] = useState(() => {
-    try {
-      const saved = sessionStorage.getItem('showAddCompanyModal');
-      return saved === 'true';
-    } catch {
-      return false;
-    }
-  });
   const [activeTab, setActiveTab] = useState<'terms' | 'results'>('results');
   const [chartView, setChartView] = useState<'bubble' | 'bar'>('bubble');
-  const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
-  const [showAddLocationModal, setShowAddLocationModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   // Track which lazy tabs have been visited so they stay mounted after first visit
   const [hasVisited, setHasVisited] = useState({
@@ -126,30 +115,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
 
-  // Sync modal state with sessionStorage
-  useEffect(() => {
-    try {
-      if (showAddCompanyModal) {
-        sessionStorage.setItem('showAddCompanyModal', 'true');
-      } else {
-        sessionStorage.removeItem('showAddCompanyModal');
-      }
-    } catch (error) {
-      console.warn('Failed to sync modal state with sessionStorage:', error);
-    }
-  }, [showAddCompanyModal]);
-
-  // Cleanup sessionStorage on unmount
-  useEffect(() => {
-    return () => {
-      try {
-        sessionStorage.removeItem('showAddCompanyModal');
-      } catch (error) {
-        console.warn('Failed to cleanup modal state from sessionStorage:', error);
-      }
-    };
-  }, []);
-  
   const {
     responses,
     loading,
@@ -167,8 +132,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     topCompetitors,
     lastUpdated,
     llmMentionRankings,
-    talentXProData,
-    talentXProLoading,
     fixExistingPrompts,
     hasDataIssues,
     aiThemes,
@@ -194,6 +157,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     epsChange,
     epsTrendByJobFunction,
     epsChangeByJobFunction,
+    selectedLocation,
+    setSelectedLocation,
+    setPendingLocation,
+    locationOptions,
+    locationMetricsLoading,
   } = useDashboardData();
 
   // -----------------------------------------------------------------------
@@ -219,6 +187,14 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     return fns;
   }, [responses]);
 
+  // Proper-case market name for the selected location (e.g. "United States",
+  // "Burbank"), used for benchmark lookups. The benchmark MV keys on country
+  // names; cities simply return no benchmark rows (handled gracefully).
+  const selectedMarketName = useMemo(() => {
+    if (!selectedLocation || selectedLocation === GENERAL_KEY) return null;
+    return locationOptions?.find(o => o.canonicalKey === selectedLocation)?.label ?? null;
+  }, [selectedLocation, locationOptions]);
+
   // GUARANTEE: never strand the dashboard in a no-data state. If the persisted
   // selection points at a function that isn't in the current dataset (e.g.
   // after switching company/period, or stale sessionStorage), every tab would
@@ -242,11 +218,13 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (!uid || starredAppliedForUserRef.current === uid) return;
     const view = readStarredView(uid);
     if (view) {
-      setSelectedLocation(view.location ?? null);
+      // Normalize the stored location so legacy ISO codes ("US") and canonical
+      // keys ("united states", "burbank") both resolve against the new dropdown.
+      setSelectedLocation(canonicalizeLocationContext(view.location));
       setSelectedPeriod(view.period ?? null);
     }
     starredAppliedForUserRef.current = uid;
-  }, [user?.id, setSelectedPeriod]);
+  }, [user?.id, setSelectedPeriod, setSelectedLocation]);
 
   // Search insights feature retired — empty array preserved for components
   // that still accept a `searchResults` prop until those are stripped.
@@ -531,8 +509,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             competitorLoading={competitorLoading}
             companyName={companyName}
             llmMentionRankings={llmMentionRankings}
-            talentXProData={talentXProData}
-            isPro={true}
             searchResults={searchResults}
             aiThemes={aiThemes}
             attributeThemes={attributeThemes}
@@ -540,7 +516,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
-            market={selectedLocation}
+            market={selectedMarketName}
             selectedJobFunction={selectedJobFunction}
             onJobFunctionChange={setSelectedJobFunction}
           />
@@ -550,7 +526,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   };
 
   const renderDashboardContent = () => {
-    if (!isFullyLoaded) {
+    // Show the full section skeleton while a location swap is fetching its
+    // metrics, so the page reads as "loading" instead of painting half-swapped
+    // content (stale scorecards next to skeleton cards).
+    if (!isFullyLoaded || locationMetricsLoading) {
       switch (activeSection) {
         case "overview": return <OverviewSkeleton />;
         case "prompts": return <PromptsSkeleton />;
@@ -598,8 +577,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             competitorLoading={competitorLoading}
             companyName={companyName}
             llmMentionRankings={llmMentionRankings}
-            talentXProData={talentXProData}
-            isPro={true}
             searchResults={searchResults}
             aiThemes={aiThemes}
             attributeThemes={attributeThemes}
@@ -617,7 +594,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             epsChange={epsChange}
             epsTrendByJobFunction={epsTrendByJobFunction}
             epsChangeByJobFunction={epsChangeByJobFunction}
-            market={selectedLocation}
+            market={selectedMarketName}
             selectedJobFunction={selectedJobFunction}
             onJobFunctionChange={setSelectedJobFunction}
           />
@@ -739,12 +716,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           lastUpdated={lastUpdated}
           onFixData={fixExistingPrompts}
           hasDataIssues={hasDataIssues}
-          showAddCompanyModal={showAddCompanyModal}
-          setShowAddCompanyModal={setShowAddCompanyModal}
           alwaysMounted={true}
           selectedLocation={activeSection === 'reports' ? undefined : selectedLocation}
           onLocationChange={activeSection === 'reports' ? undefined : setSelectedLocation}
-          onAddLocation={activeSection === 'reports' ? undefined : (DASHBOARD_ADD_LOCKED ? undefined : () => setShowAddLocationModal(true))}
+          onPendingLocationChange={activeSection === 'reports' ? undefined : setPendingLocation}
+          locationOptions={activeSection === 'reports' ? undefined : locationOptions}
           availablePeriods={activeSection === 'reports' ? undefined : availablePeriods}
           selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}
           onPeriodChange={activeSection === 'reports' ? undefined : setSelectedPeriod}
@@ -796,21 +772,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           )}
         </div>
       </SidebarInset>
-      
-      {/* Modals */}
-      <AddCompanyModal 
-        open={showAddCompanyModal}
-        onOpenChange={setShowAddCompanyModal}
-        alwaysMounted={true}
-      />
-      <AddCompanyModal 
-        open={showAddLocationModal}
-        onOpenChange={setShowAddLocationModal}
-        alwaysMounted={true}
-        existingCompanyName={currentCompany?.name}
-        existingIndustry={currentCompany?.industry}
-        mode="add-location"
-      />
     </div>
   );
 };

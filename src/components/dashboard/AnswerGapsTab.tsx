@@ -301,7 +301,7 @@ export const AnswerGapsTab = () => {
                        <Badge variant="outline">{groupedGap.promptType}</Badge>
                      </td>
                      <td className="py-4 px-4">
-                       <Badge variant="secondary">{groupedGap.promptCategory.replace('TalentX:', '')}</Badge>
+                       <Badge variant="secondary">{groupedGap.promptCategory}</Badge>
                      </td>
                      <td className="py-4 px-4">
                        <div className="space-y-1">

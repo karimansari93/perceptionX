@@ -20,9 +20,8 @@ export type Database = {
           prompt_text: string
           prompt_category: string
           prompt_type: Database["public"]["Enums"]["prompt_type"] | null
-          talentx_attribute_id: string | null
+          attribute_id: string | null
           is_active: boolean
-          is_pro_prompt: boolean | null
           industry_context: string | null
           job_function_context: string | null
           location_context: string | null
@@ -38,9 +37,8 @@ export type Database = {
           prompt_text: string
           prompt_category: string
           prompt_type?: Database["public"]["Enums"]["prompt_type"] | null
-          talentx_attribute_id?: string | null
+          attribute_id?: string | null
           is_active?: boolean
-          is_pro_prompt?: boolean | null
           industry_context?: string | null
           job_function_context?: string | null
           location_context?: string | null
@@ -56,9 +54,8 @@ export type Database = {
           prompt_text?: string
           prompt_category?: string
           prompt_type?: Database["public"]["Enums"]["prompt_type"] | null
-          talentx_attribute_id?: string | null
+          attribute_id?: string | null
           is_active?: boolean
-          is_pro_prompt?: boolean | null
           industry_context?: string | null
           job_function_context?: string | null
           location_context?: string | null
@@ -177,9 +174,6 @@ export type Database = {
           email: string
           id: string
           updated_at: string
-          subscription_type: Database["public"]["Enums"]["subscription_type"]
-          subscription_start_date: string | null
-          prompts_used: number
         }
         Insert: {
           company_name?: string | null
@@ -187,9 +181,6 @@ export type Database = {
           email: string
           id: string
           updated_at?: string
-          subscription_type?: Database["public"]["Enums"]["subscription_type"]
-          subscription_start_date?: string | null
-          prompts_used?: number
         }
         Update: {
           company_name?: string | null
@@ -197,9 +188,6 @@ export type Database = {
           email?: string
           id?: string
           updated_at?: string
-          subscription_type?: Database["public"]["Enums"]["subscription_type"]
-          subscription_start_date?: string | null
-          prompts_used?: number
         }
         Relationships: []
       }
@@ -308,9 +296,6 @@ export type Database = {
           session_id: string
           created_at: string
           competitors: string[]
-          subscription_type: Database["public"]["Enums"]["subscription_type"]
-          subscription_start_date: string | null
-          prompts_used: number
           last_report_date: string | null
           next_call_date: string | null
         }
@@ -324,9 +309,6 @@ export type Database = {
           session_id: string
           created_at?: string
           competitors?: string[]
-          subscription_type?: Database["public"]["Enums"]["subscription_type"]
-          subscription_start_date?: string | null
-          prompts_used?: number
           last_report_date?: string | null
           next_call_date?: string | null
         }
@@ -340,9 +322,6 @@ export type Database = {
           session_id?: string
           created_at?: string
           competitors?: string[]
-          subscription_type?: Database["public"]["Enums"]["subscription_type"]
-          subscription_start_date?: string | null
-          prompts_used?: number
           last_report_date?: string | null
           next_call_date?: string | null
         }
@@ -401,8 +380,7 @@ export type Database = {
       }
     }
     Enums: {
-      prompt_type: "informational" | "experience" | "competitive" | "discovery" | "talentx_informational" | "talentx_experience" | "talentx_competitive" | "talentx_discovery"
-      subscription_type: "free" | "pro"
+      prompt_type: "informational" | "experience" | "competitive" | "discovery"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -518,7 +496,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      prompt_type: ["informational", "experience", "competitive", "discovery", "talentx_informational", "talentx_experience", "talentx_competitive", "talentx_discovery"],
+      prompt_type: ["informational", "experience", "competitive", "discovery"],
     },
   },
 } as const

@@ -14,7 +14,7 @@
 
 import { isValidCompetitor } from "@/utils/competitorUtils";
 
-const DISCOVERY_PROMPT_TYPES = new Set(["discovery", "talentx_discovery"]);
+const DISCOVERY_PROMPT_TYPES = new Set(["discovery"]);
 
 export interface SurfacedEntity {
   name: string;

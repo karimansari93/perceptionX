@@ -164,11 +164,11 @@ async function generateCompanyTextReport(companyId: string): Promise<string> {
     // Process themes
     const themeMap = new Map();
     themes?.forEach(theme => {
-      const key = theme.talentx_attribute_id;
+      const key = theme.attribute_id;
       if (!themeMap.has(key)) {
         themeMap.set(key, {
           theme_name: theme.theme_name,
-          talentx_attribute_name: theme.talentx_attribute_name,
+          attribute_name: theme.attribute_name,
           sentiment_score: theme.sentiment_score,
           frequency: 0,
           confidence_score: theme.confidence_score
@@ -369,7 +369,7 @@ COMPANY DATA:
 - Total Themes Identified: ${topThemes.length}
 
 TOP THEMES:
-${topThemes.map(theme => `- ${theme.talentx_attribute_name}: ${theme.theme_name} (${theme.sentiment_score > 0 ? 'Positive' : theme.sentiment_score < 0 ? 'Negative' : 'Neutral'}, frequency: ${theme.frequency})`).join('\n')}
+${topThemes.map(theme => `- ${theme.attribute_name}: ${theme.theme_name} (${theme.sentiment_score > 0 ? 'Positive' : theme.sentiment_score < 0 ? 'Negative' : 'Neutral'}, frequency: ${theme.frequency})`).join('\n')}
 
 COMPETITOR MENTIONS:
 ${competitorMentions.map(comp => `- ${comp.competitor}: ${comp.frequency} mentions, sentiment: ${comp.sentiment.toFixed(2)}`).join('\n')}
@@ -500,12 +500,12 @@ function generateTextReport(
 
 ### Positive Themes
 ${positiveThemes.length > 0 ? positiveThemes.map(theme => 
-  `• **${theme.talentx_attribute_name}:** ${theme.theme_name} (${theme.frequency} mentions)`
+  `• **${theme.attribute_name}:** ${theme.theme_name} (${theme.frequency} mentions)`
 ).join('\n') : '• No significant positive themes identified'}
 
 ### Areas of Concern
 ${negativeThemes.length > 0 ? negativeThemes.map(theme => 
-  `• **${theme.talentx_attribute_name}:** ${theme.theme_name} (${theme.frequency} mentions)`
+  `• **${theme.attribute_name}:** ${theme.theme_name} (${theme.frequency} mentions)`
 ).join('\n') : '• No significant negative themes identified'}
 
 ---

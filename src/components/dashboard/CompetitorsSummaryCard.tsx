@@ -100,11 +100,11 @@ export const CompetitorsSummaryCard = ({
   // percentage is "share of these responses that mention it", matching the
   // Competitors tab.
   const competitiveResponses = useMemo(
-    () => responses.filter(r => r.confirmed_prompts?.prompt_type === 'competitive' || r.confirmed_prompts?.prompt_type === 'talentx_competitive'),
+    () => responses.filter(r => r.confirmed_prompts?.prompt_type === 'competitive'),
     [responses]
   );
   const prevCompetitiveResponses = useMemo(
-    () => previousPeriodResponses.filter(r => r.confirmed_prompts?.prompt_type === 'competitive' || r.confirmed_prompts?.prompt_type === 'talentx_competitive'),
+    () => previousPeriodResponses.filter(r => r.confirmed_prompts?.prompt_type === 'competitive'),
     [previousPeriodResponses]
   );
 

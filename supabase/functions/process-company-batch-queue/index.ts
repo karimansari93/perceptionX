@@ -43,11 +43,11 @@ interface GeneratedPrompt {
   locationContext?: string;
   promptCategory: "General" | "Employee Experience" | "Candidate Experience";
   promptTheme: string;
-  talentxAttributeId?: string;
+  attributeId?: string;
 }
 
-// Matches TALENTX_PROMPT_TEMPLATES from src/config/talentXAttributes.ts
-const TALENTX_PROMPT_TEMPLATES: {
+// Matches ATTRIBUTE_PROMPT_TEMPLATES from src/config/attributes.ts
+const ATTRIBUTE_PROMPT_TEMPLATES: {
   attributeId: string;
   type: string;
   prompt: string;
@@ -193,14 +193,14 @@ function generatePrompts(
     locationContext: locationDisplay,
   }));
 
-  // 64 TalentX prompts (always Pro in admin context)
-  const talentxPrompts: GeneratedPrompt[] = TALENTX_PROMPT_TEMPLATES.map((t) => {
+  // 64 attribute prompts
+  const attributePrompts: GeneratedPrompt[] = ATTRIBUTE_PROMPT_TEMPLATES.map((t) => {
     const raw = t.prompt
       .replace(/{companyName}/g, companyName)
       .replace(/{industry}/g, industry);
 
     return {
-      id: `talentx-${t.attributeId}-${t.type}`,
+      id: `attribute-${t.attributeId}-${t.type}`,
       text: appendPromptContext(raw, jobFunction, locationDisplay),
       type: t.type as GeneratedPrompt["type"],
       industryContext: industry,
@@ -208,11 +208,11 @@ function generatePrompts(
       locationContext: locationDisplay,
       promptCategory: t.category,
       promptTheme: t.theme,
-      talentxAttributeId: t.attributeId,
+      attributeId: t.attributeId,
     };
   });
 
-  return [...basePrompts, ...talentxPrompts];
+  return [...basePrompts, ...attributePrompts];
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +246,7 @@ serve(async (req) => {
     const effectiveModels = Array.isArray(models) && models.length > 0 ? models : DEFAULT_MODELS;
     const promptTypeFilter: string[] | null =
       Array.isArray(promptTypes) && promptTypes.length > 0
-        ? promptTypes.flatMap((t) => [t, `talentx_${t}`])
+        ? promptTypes
         : null;
 
     // If configId supplied, ensure org is created for new_org mode before processing
@@ -434,7 +434,7 @@ serve(async (req) => {
         //    Dedupe in two passes before the INSERT (can't use ON CONFLICT —
         //    the unique index is partial, PostgREST doesn't support that):
         //    a) In-memory on (prompt_text, prompt_type) — translation can
-        //       occasionally produce identical output for two different TalentX
+        //       occasionally produce identical output for two different attribute
         //       templates within the same batch.
         //    b) Against existing DB rows for this (company, location) — a
         //       previous run may have already inserted the same text, and the
@@ -442,7 +442,7 @@ serve(async (req) => {
         const inMemorySeen = new Set<string>();
         const candidates: any[] = [];
         for (const p of finalPrompts) {
-          const promptType = p.talentxAttributeId ? `talentx_${p.type}` : p.type;
+          const promptType = p.type;
           const key = `${p.text}||${promptType}`;
           if (inMemorySeen.has(key)) continue;
           inMemorySeen.add(key);
@@ -454,7 +454,7 @@ serve(async (req) => {
             prompt_category: p.promptCategory,
             prompt_theme: p.promptTheme,
             prompt_type: promptType,
-            talentx_attribute_id: p.talentxAttributeId || null,
+            attribute_id: p.attributeId || null,
             industry_context: p.industryContext,
             job_function_context: p.jobFunctionContext || null,
             location_context: p.locationContext || null,
@@ -633,8 +633,8 @@ serve(async (req) => {
           prompt_text: p.text,
           prompt_category: p.promptCategory,
           prompt_theme: p.promptTheme,
-          prompt_type: p.talentxAttributeId ? `talentx_${p.type}` : p.type,
-          talentx_attribute_id: p.talentxAttributeId || null,
+          prompt_type: p.type,
+          attribute_id: p.attributeId || null,
           industry_context: p.industryContext,
           job_function_context: p.jobFunctionContext || null,
           location_context: p.locationContext || null,

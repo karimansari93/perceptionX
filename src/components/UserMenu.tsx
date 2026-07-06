@@ -8,11 +8,14 @@ import {
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { LogOut, User, BarChart3, X } from 'lucide-react';
+import { LogOut, User, BarChart3, X, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/components/ui/sidebar';
 import { useNavigate, Link } from 'react-router-dom';
 import { getEmailDomainFavicon } from '@/utils/citationUtils';
+
+// Keep in sync with AdminRoute.tsx / CompanyContext.tsx
+const ADMIN_EMAILS = ['karim@perceptionx.ai'];
 
 export default function UserMenu() {
   const { user, signOut } = useAuth();
@@ -52,6 +55,17 @@ export default function UserMenu() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-56" align="end" forceMount>
+        {ADMIN_EMAILS.includes(user.email?.toLowerCase() || '') && (
+          <>
+            <DropdownMenuItem asChild>
+              <Link to="/admin">
+                <ShieldCheck className="mr-2 h-4 w-4" />
+                <span>Admin Panel</span>
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
         <DropdownMenuLabel className="font-normal">
           <div className="flex items-center gap-2 min-w-0">
             <User className="w-4 h-4 text-gray-500 flex-shrink-0" />

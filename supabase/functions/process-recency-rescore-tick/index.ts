@@ -16,6 +16,7 @@ const MAX_STALL_TICKS = 5;
 interface JobRow {
   id: string;
   organization_id: string;
+  company_id: string | null;
   status: string;
   total: number;
   processed: number;
@@ -38,7 +39,7 @@ serve(async (req) => {
     // -----------------------------------------------------------------------
     const { data: candidate, error: pickErr } = await supabase
       .from("recency_rescore_jobs")
-      .select("id, organization_id, status, total, processed, is_cancelled, stall_ticks")
+      .select("id, organization_id, company_id, status, total, processed, is_cancelled, stall_ticks")
       .in("status", ["queued", "running"])
       .eq("is_cancelled", false)
       .order("created_at", { ascending: true })
@@ -67,7 +68,8 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[RecencyRescore] Working job ${job.id} for org ${job.organization_id}, processed=${job.processed}/${job.total}`);
+    const scope = job.company_id ? `company ${job.company_id}` : "whole org";
+    console.log(`[RecencyRescore] Working job ${job.id} for org ${job.organization_id} (${scope}), processed=${job.processed}/${job.total}`);
 
     // -----------------------------------------------------------------------
     // Process up to MAX_BATCHES_PER_TICK batches.
@@ -89,13 +91,17 @@ serve(async (req) => {
         return jsonResponse({ cancelled: true, processedThisTick: cachedThisTick }, 200);
       }
 
-      // Pull the next batch of URLs that have never been scored.
-      const { data: urls, error: urlsErr } = await supabase
-        .from("v_organization_url_status")
+      // Pull the next batch of URLs that have never been scored. Company-
+      // scoped jobs read the company-grained view; org jobs keep the old path.
+      let urlQuery = supabase
+        .from(job.company_id ? "v_company_url_status" : "v_organization_url_status")
         .select("url")
         .eq("organization_id", job.organization_id)
-        .is("extraction_method", null)
-        .limit(BATCH_SIZE);
+        .is("extraction_method", null);
+      if (job.company_id) {
+        urlQuery = urlQuery.eq("company_id", job.company_id);
+      }
+      const { data: urls, error: urlsErr } = await urlQuery.limit(BATCH_SIZE);
 
       if (urlsErr) {
         console.error(`[RecencyRescore] Failed to fetch URLs for job ${job.id}:`, urlsErr);

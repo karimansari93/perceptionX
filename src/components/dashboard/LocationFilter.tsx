@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -10,228 +10,70 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useCompany } from '@/contexts/CompanyContext';
 import { getCountryFlag } from '@/utils/countryFlags';
-import { Globe, ChevronDown, Check, Plus } from 'lucide-react';
+import { LocationEntry } from '@/utils/locationContext';
+import { Globe, MapPin, ChevronDown, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-// Country code to display name mapping (from AddCompanyModal)
-const getCountryName = (code: string): string => {
-  const countryNames: Record<string, string> = {
-    'GLOBAL': 'Global',
-    'US': 'United States',
-    'GB': 'United Kingdom',
-    'CA': 'Canada',
-    'AU': 'Australia',
-    'DE': 'Germany',
-    'FR': 'France',
-    'IT': 'Italy',
-    'ES': 'Spain',
-    'NL': 'Netherlands',
-    'BE': 'Belgium',
-    'CH': 'Switzerland',
-    'AT': 'Austria',
-    'SE': 'Sweden',
-    'NO': 'Norway',
-    'DK': 'Denmark',
-    'FI': 'Finland',
-    'IE': 'Ireland',
-    'PT': 'Portugal',
-    'GR': 'Greece',
-    'PL': 'Poland',
-    'CZ': 'Czech Republic',
-    'HU': 'Hungary',
-    'RO': 'Romania',
-    'BG': 'Bulgaria',
-    'HR': 'Croatia',
-    'SK': 'Slovakia',
-    'SI': 'Slovenia',
-    'LT': 'Lithuania',
-    'LV': 'Latvia',
-    'EE': 'Estonia',
-    'JP': 'Japan',
-    'CN': 'China',
-    'KR': 'South Korea',
-    'IN': 'India',
-    'SG': 'Singapore',
-    'MY': 'Malaysia',
-    'TH': 'Thailand',
-    'PH': 'Philippines',
-    'ID': 'Indonesia',
-    'VN': 'Vietnam',
-    'MX': 'Mexico',
-    'BR': 'Brazil',
-    'AR': 'Argentina',
-    'VE': 'Venezuela',
-    'CL': 'Chile',
-    'CO': 'Colombia',
-    'PE': 'Peru',
-    'AE': 'United Arab Emirates',
-    'SA': 'Saudi Arabia',
-    'ZA': 'South Africa',
-    'NZ': 'New Zealand',
-    'TR': 'Turkey',
-    'RU': 'Russia',
-  };
-  return countryNames[code] || code;
-};
-
 interface LocationFilterProps {
+  // Canonical key of the active location, or null for "All locations".
   selectedLocation: string | null;
   onLocationChange: (location: string | null) => void;
-  onAddLocation?: () => void;
+  // Stash a location to apply right after a company switch (sibling-row brands),
+  // so the trigger reflects the picked country once the switch lands.
+  onPendingLocationChange?: (location: string | null) => void;
+  // Merged dropdown options (in-company location_context filters + legacy
+  // sibling-company switches), built in useDashboardData.
+  options?: LocationEntry[];
   className?: string;
 }
 
-export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocation, className }: LocationFilterProps) => {
-  const { currentCompany, userCompanies, switchCompany, loading } = useCompany();
+// Render the leading icon for an entry: flag emoji for countries, a map pin for
+// cities/states, a globe for global/unknown.
+const EntryIcon = ({ icon, flagCode }: { icon: LocationEntry['icon']; flagCode: string | null }) => {
+  if (icon === 'flag' && flagCode) {
+    return <span className="text-base leading-none">{getCountryFlag(flagCode)}</span>;
+  }
+  if (icon === 'pin') return <MapPin className="h-4 w-4" />;
+  return <Globe className="h-4 w-4" />;
+};
+
+export const LocationFilter = ({ selectedLocation, onLocationChange, onPendingLocationChange, options = [], className }: LocationFilterProps) => {
+  const { switchCompany } = useCompany();
   const [isOpen, setIsOpen] = useState(false);
 
-  const GLOBAL_LIKE = new Set(['GLOBAL', 'Global', 'Global (All Countries)', 'Worldwide']);
-
-  // Get unique countries from user's companies
-  // CRITICAL: Only compute locations when not loading to prevent showing stale data
-  const availableLocations = useMemo(() => {
-    // Don't compute locations while loading - prevents showing stale data from previous session
-    if (loading) {
-      return [];
-    }
-
-    const locations = new Set<string>();
-
-    // Treat any country-agnostic variants as the same as the top-level
-    // "Global" sentinel — selecting that already shows all locations combined,
-    // so we don't render a separate row for them.
-    userCompanies.forEach(company => {
-      const country = company.country || 'GLOBAL';
-      if (!GLOBAL_LIKE.has(country)) {
-        locations.add(country);
-      }
-    });
-
-    // Sort locations alphabetically
-    return Array.from(locations).sort((a, b) => {
-      return getCountryName(a).localeCompare(getCountryName(b));
-    });
-  }, [userCompanies, loading]);
-
-  // Only show the "Global" entry if the org actually has a global company
-  // (i.e. one with country null/empty or one of the GLOBAL_LIKE variants).
-  const hasGlobalCompany = useMemo(() => {
-    if (loading) return false;
-    return userCompanies.some(company => {
-      const country = company.country;
-      return !country || GLOBAL_LIKE.has(country);
-    });
-  }, [userCompanies, loading]);
-
-  // Keep the LocationFilter label and the active company in sync on load.
-  //
-  // Two cases this handles:
-  //  1. No selectedLocation yet (fresh sign-in, no starred view) — default to
-  //     the current company's country if it's one of the available ones,
-  //     otherwise to the alphabetical first. Avoids auto-switching the active
-  //     company just because another country sorts earlier.
-  //  2. selectedLocation is set (e.g. restored from a starred view) but the
-  //     currently-loaded `currentCompany` belongs to a different country —
-  //     switch `currentCompany` to a record matching the selected location
-  //     so the dashboard data (which is filtered by company_id, not country)
-  //     lines up with the displayed flag.
-  useEffect(() => {
-    if (loading) return;
-    if (!currentCompany) return;
-
-    // Resolve the target location for this render.
-    let targetLocation: string | null = selectedLocation;
-    if (!targetLocation) {
-      // When the user hasn't starred a location, prefer the United States as
-      // the default landing — it overrides both the Global default and the
-      // current company's own country.
-      if (availableLocations.includes('US')) {
-        targetLocation = 'US';
-      } else if (hasGlobalCompany) {
-        return; // user has chosen / defaulted to Global — leave alone
-      } else if (availableLocations.length === 0) {
-        return;
-      } else {
-        const currentCountry = currentCompany.country;
-        targetLocation =
-          currentCountry && availableLocations.includes(currentCountry)
-            ? currentCountry
-            : availableLocations[0];
-      }
-      if (targetLocation !== selectedLocation) {
-        onLocationChange(targetLocation);
-      }
-    }
-
-    // If the active company already matches the target, nothing to do.
-    const companyCountry = currentCompany.country || 'GLOBAL';
-    if (companyCountry === targetLocation) return;
-
-    // Otherwise, find a sibling company in the target location (prefer same name).
-    const currentName = currentCompany.name.toLowerCase();
-    const target =
-      userCompanies.find(c => (c.country || 'GLOBAL') === targetLocation && c.name.toLowerCase() === currentName) ||
-      userCompanies.find(c => (c.country || 'GLOBAL') === targetLocation);
-    if (target && target.id !== currentCompany.id) {
-      switchCompany(target.id).catch(err => console.error('Failed to sync company with location:', err));
-    }
-  }, [loading, selectedLocation, hasGlobalCompany, availableLocations, onLocationChange, currentCompany, userCompanies, switchCompany]);
-
-  // Always show the filter if onAddLocation is provided (user can add locations)
-  // Only hide if there are no locations AND no way to add locations
-  if (availableLocations.length === 0 && !onAddLocation) {
+  // Nothing to filter or switch to — hide the control entirely.
+  if (options.length === 0) {
     return null;
   }
 
-  const handleLocationSelect = async (location: string | null) => {
-    // Update the location filter state
-    onLocationChange(location);
+  const selectedEntry = selectedLocation
+    ? options.find(o => o.canonicalKey === selectedLocation)
+    : undefined;
+
+  const handleSelect = async (entry: LocationEntry) => {
     setIsOpen(false);
-
-    // If no location selected (Global), try to find a company with the same name as current
-    // Otherwise, switch to a company matching the current name in the selected location
-    if (!currentCompany) return;
-
-    const targetLocation = location || 'GLOBAL';
-    const currentCompanyName = currentCompany.name.toLowerCase();
-
-    // First, try to find a company with the same name in the target location
-    let targetCompany = userCompanies.find(company => {
-      const companyName = company.name.toLowerCase();
-      const companyCountry = company.country || 'GLOBAL';
-      return companyName === currentCompanyName && companyCountry === targetLocation;
-    });
-
-    // If not found and location is not Global, try to find any company in that location
-    if (!targetCompany && location) {
-      targetCompany = userCompanies.find(company => {
-        const companyCountry = company.country || 'GLOBAL';
-        return companyCountry === targetLocation;
-      });
-    }
-
-    // If still not found and location is null (Global), try to find any company with same name
-    if (!targetCompany && !location) {
-      targetCompany = userCompanies.find(company => {
-        const companyName = company.name.toLowerCase();
-        return companyName === currentCompanyName;
-      });
-    }
-
-    // Switch to the target company if found and different from current
-    if (targetCompany && targetCompany.id !== currentCompany.id) {
+    if (entry.action.type === 'switchCompany') {
+      // Legacy cross-country variant: switch to the sibling company, and select
+      // this location once the switch lands so the trigger shows it (the target
+      // company's data carries the same canonical location).
+      onPendingLocationChange?.(entry.canonicalKey);
       try {
-        await switchCompany(targetCompany.id);
+        await switchCompany(entry.action.companyId);
       } catch (error) {
+        onPendingLocationChange?.(null);
         console.error('Failed to switch company:', error);
       }
+      return;
     }
+    // In-company location_context filter.
+    onLocationChange(entry.canonicalKey);
   };
 
-  const displayLocation = selectedLocation || 'GLOBAL';
-  const displayName = selectedLocation ? getCountryName(selectedLocation) : 'Global';
-  const displayIcon = selectedLocation ? (
-    <span className="text-base leading-none">{getCountryFlag(selectedLocation)}</span>
+  // The trigger reflects the active focus: a chosen city/country, or "All
+  // locations" when nothing is filtered.
+  const displayName = selectedEntry ? selectedEntry.label : 'All locations';
+  const displayIcon = selectedEntry ? (
+    <EntryIcon icon={selectedEntry.icon} flagCode={selectedEntry.flagCode} />
   ) : (
     <Globe className="h-4 w-4" />
   );
@@ -255,80 +97,48 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onAddLocati
           <ChevronDown className="h-4 w-4 opacity-50" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-[200px]">
-        <DropdownMenuLabel>
-          {availableLocations.length > 0 ? 'Filter by Location' : 'Locations'}
-        </DropdownMenuLabel>
-        {availableLocations.length > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            {hasGlobalCompany && (
-              <DropdownMenuItem
-                onClick={() => handleLocationSelect(null)}
-                className="cursor-pointer flex items-center justify-between"
-              >
-                <div className="flex items-center gap-2">
-                  {!selectedLocation ? (
-                    <Check className="h-4 w-4 text-[#13274F]" />
-                  ) : (
-                    <div className="h-4 w-4" />
-                  )}
-                  <Globe className="h-4 w-4" />
-                  <span className={cn(
-                    'text-sm',
-                    !selectedLocation && 'font-semibold text-[#13274F]'
-                  )}>
-                    Global
-                  </span>
-                </div>
-              </DropdownMenuItem>
+      <DropdownMenuContent align="start" className="w-[220px]">
+        <DropdownMenuLabel>Filter by Location</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {/* "All locations" clears the filter. */}
+        <DropdownMenuItem
+          onClick={() => { setIsOpen(false); onLocationChange(null); }}
+          className="cursor-pointer flex items-center justify-between"
+        >
+          <div className="flex items-center gap-2">
+            {!selectedLocation ? (
+              <Check className="h-4 w-4 text-[#13274F]" />
+            ) : (
+              <div className="h-4 w-4" />
             )}
-            {availableLocations.map(location => {
-              const isSelected = selectedLocation === location;
-              const locationName = getCountryName(location);
-              const locationFlag = location !== 'GLOBAL' ? getCountryFlag(location) : null;
-              
-              return (
-                <DropdownMenuItem
-                  key={location}
-                  onClick={() => handleLocationSelect(location)}
-                  className="cursor-pointer flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-2">
-                    {isSelected && <Check className="h-4 w-4 text-[#13274F]" />}
-                    {!isSelected && <div className="h-4 w-4" />}
-                    {locationFlag ? (
-                      <span className="text-base leading-none">{locationFlag}</span>
-                    ) : (
-                      <Globe className="h-4 w-4" />
-                    )}
-                    <span className={cn(
-                      'text-sm',
-                      isSelected && 'font-semibold text-[#13274F]'
-                    )}>
-                      {locationName}
-                    </span>
-                  </div>
-                </DropdownMenuItem>
-              );
-            })}
-          </>
-        )}
-        {onAddLocation && (
-          <>
-            {availableLocations.length > 0 && <DropdownMenuSeparator />}
+            <Globe className="h-4 w-4" />
+            <span className={cn('text-sm', !selectedLocation && 'font-semibold text-[#13274F]')}>
+              All locations
+            </span>
+          </div>
+        </DropdownMenuItem>
+        {options.map(entry => {
+          const isSelected = selectedLocation === entry.canonicalKey;
+          return (
             <DropdownMenuItem
-              onClick={() => {
-                onAddLocation();
-                setIsOpen(false);
-              }}
-              className="cursor-pointer font-medium"
+              key={entry.canonicalKey}
+              onClick={() => handleSelect(entry)}
+              className="cursor-pointer flex items-center justify-between"
             >
-              <Plus className="h-4 w-4 mr-2" />
-              <span>Add Location</span>
+              <div className="flex items-center gap-2">
+                {isSelected ? (
+                  <Check className="h-4 w-4 text-[#13274F]" />
+                ) : (
+                  <div className="h-4 w-4" />
+                )}
+                <EntryIcon icon={entry.icon} flagCode={entry.flagCode} />
+                <span className={cn('text-sm', isSelected && 'font-semibold text-[#13274F]')}>
+                  {entry.label}
+                </span>
+              </div>
             </DropdownMenuItem>
-          </>
-        )}
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -250,7 +250,7 @@ export const CompanyEditTab = ({ company, onUpdate, onRefresh, onDelete }: Compa
           )
         `)
         .eq('confirmed_prompts.company_id', company.id)
-        .in('confirmed_prompts.prompt_type', ['experience', 'competitive', 'talentx_experience', 'talentx_competitive']);
+        .in('confirmed_prompts.prompt_type', ['experience', 'competitive']);
 
       if (responsesError) {
         throw responsesError;
@@ -336,7 +336,7 @@ export const CompanyEditTab = ({ company, onUpdate, onRefresh, onDelete }: Compa
       
       const { data: createdThemes, error: verifyError } = await supabase
         .from('ai_themes')
-        .select('id, sentiment, talentx_attribute_name')
+        .select('id, sentiment, attribute_name')
         .in('response_id', responseIds);
 
       let verifiedCount = 0;

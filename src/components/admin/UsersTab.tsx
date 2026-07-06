@@ -37,7 +37,7 @@ export const UsersTab = () => {
   const loadUsers = async () => {
     setLoading(true);
     try {
-      // Get all users with subscription status
+      // Get all users
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
         .select('id, email, created_at')

@@ -48,7 +48,7 @@ serve(async (req) => {
           industry
         )
       `)
-      .in('confirmed_prompts.prompt_type', ['visibility', 'talentx_visibility'])
+      .eq('confirmed_prompts.prompt_type', 'visibility')
       .in('confirmed_prompts.prompt_category', ['Employee Experience', 'Candidate Experience'])
       .ilike('ai_model', '%gpt-4o-mini%')
       .gte('tested_at', periodStart.toISOString())

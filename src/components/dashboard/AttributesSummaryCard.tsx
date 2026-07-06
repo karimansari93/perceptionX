@@ -4,10 +4,9 @@ import { TrendingUp, TrendingDown, ExternalLink, Target, Award, Users, Heart, Sh
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
-import { TALENTX_ATTRIBUTES } from "@/config/talentXAttributes";
+import { ATTRIBUTES } from "@/config/attributes";
 
 interface AttributesSummaryCardProps {
-  talentXProData?: any[];
   aiThemes?: any[];
   // Pre-aggregated attribute scores from company_attribute_themes_mv. When
   // present, the card renders from these instead of scanning raw aiThemes.
@@ -34,7 +33,6 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
 };
 
 export const AttributesSummaryCard = ({
-  talentXProData = [],
   aiThemes = [],
   attributeThemes = [],
   companyName,
@@ -89,7 +87,7 @@ export const AttributesSummaryCard = ({
       }
     });
 
-    const attrName = (id: string) => TALENTX_ATTRIBUTES.find(a => a.id === id)?.name || id;
+    const attrName = (id: string) => ATTRIBUTES.find(a => a.id === id)?.name || id;
 
     return Object.entries(agg)
       .map(([id, a]) => {
@@ -124,7 +122,7 @@ export const AttributesSummaryCard = ({
     // Count mentions per attribute
     const countByAttr = (themes: any[]) => {
       const c: Record<string, number> = {};
-      themes.forEach(t => { c[t.talentx_attribute_id] = (c[t.talentx_attribute_id] || 0) + 1; });
+      themes.forEach(t => { c[t.attribute_id] = (c[t.attribute_id] || 0) + 1; });
       return c;
     };
 
@@ -158,8 +156,8 @@ export const AttributesSummaryCard = ({
     }> = {};
 
     aiThemes.forEach(theme => {
-      const attributeId = theme.talentx_attribute_id;
-      const attributeName = theme.talentx_attribute_name;
+      const attributeId = theme.attribute_id;
+      const attributeName = theme.attribute_name;
       
       if (!attributeCounts[attributeId]) {
         attributeCounts[attributeId] = {
@@ -178,7 +176,7 @@ export const AttributesSummaryCard = ({
 
     // Calculate average sentiment scores and determine SWOT category
     Object.keys(attributeCounts).forEach(attributeId => {
-      const themesForAttribute = aiThemes.filter(theme => theme.talentx_attribute_id === attributeId);
+      const themesForAttribute = aiThemes.filter(theme => theme.attribute_id === attributeId);
       const avgSentimentScore = themesForAttribute.reduce((sum, theme) => sum + theme.sentiment_score, 0) / themesForAttribute.length;
       attributeCounts[attributeId].avgSentimentScore = avgSentimentScore;
     });
