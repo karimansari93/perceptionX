@@ -67,26 +67,36 @@
 -- 20260615120100 renamed ai_themes.talentx_attribute_id -> attribute_id and
 -- trimmed the sentiment prompt_type list) plus a company_id predicate.
 --
--- Deploy note: apply over a direct connection (supabase db push / psql). One
--- transaction: readers see the old MVs until COMMIT, then the populated
--- tables. The backfill also stamps mv_refresh_state so the tick doesn't
--- redundantly rebuild all 7 right after deploy.
+-- Deploy note: the swap COPIES each matview's current contents into its
+-- replacement table (CREATE TABLE ... AS SELECT * FROM mv), so there is no
+-- recompute/backfill inside the migration -- it runs in seconds and can be
+-- applied via supabase db push OR the SQL editor / management API. One
+-- transaction: readers see the old MVs until COMMIT, then tables with
+-- identical contents. mv_refresh_state is left untouched: its timestamps
+-- still truthfully describe the data (it IS that refresh's output), and the
+-- tick + per-company calls take over maintenance from there.
 -- =============================================================================
 
 BEGIN;
 
+-- Hold the staleness tick's advisory lock for the whole swap: if a tick is
+-- mid-refresh we wait for it, and any tick firing while we run returns 'busy'
+-- instead of colliding with the DROPs. Released automatically at COMMIT.
+SELECT pg_advisory_xact_lock(913372);
+
 -- -----------------------------------------------------------------------------
 -- 1. Convert each materialized view into a table.
---    Clone the exact column shape from the existing MV (SELECT * ... WITH NO
---    DATA), drop the MV, rename into place. Atomic for readers.
+--    Snapshot-copy the MV (exact column shape AND current contents), drop the
+--    MV, rename into place. Atomic for readers, and no recompute needed: the
+--    tables start as byte-identical copies of what the dashboards read today.
 -- -----------------------------------------------------------------------------
-CREATE TABLE public._mig_company_sentiment_scores   AS SELECT * FROM public.company_sentiment_scores_mv   WITH NO DATA;
-CREATE TABLE public._mig_company_relevance_scores   AS SELECT * FROM public.company_relevance_scores_mv   WITH NO DATA;
-CREATE TABLE public._mig_company_top_sources        AS SELECT * FROM public.company_top_sources_mv        WITH NO DATA;
-CREATE TABLE public._mig_company_competitors        AS SELECT * FROM public.company_competitors_mv        WITH NO DATA;
-CREATE TABLE public._mig_company_llm_rankings       AS SELECT * FROM public.company_llm_rankings_mv       WITH NO DATA;
-CREATE TABLE public._mig_company_attribute_themes   AS SELECT * FROM public.company_attribute_themes_mv   WITH NO DATA;
-CREATE TABLE public._mig_company_response_sentiment AS SELECT * FROM public.company_response_sentiment_mv WITH NO DATA;
+CREATE TABLE public._mig_company_sentiment_scores   AS SELECT * FROM public.company_sentiment_scores_mv;
+CREATE TABLE public._mig_company_relevance_scores   AS SELECT * FROM public.company_relevance_scores_mv;
+CREATE TABLE public._mig_company_top_sources        AS SELECT * FROM public.company_top_sources_mv;
+CREATE TABLE public._mig_company_competitors        AS SELECT * FROM public.company_competitors_mv;
+CREATE TABLE public._mig_company_llm_rankings       AS SELECT * FROM public.company_llm_rankings_mv;
+CREATE TABLE public._mig_company_attribute_themes   AS SELECT * FROM public.company_attribute_themes_mv;
+CREATE TABLE public._mig_company_response_sentiment AS SELECT * FROM public.company_response_sentiment_mv;
 
 DROP MATERIALIZED VIEW public.company_sentiment_scores_mv;
 DROP MATERIALIZED VIEW public.company_relevance_scores_mv;
@@ -557,18 +567,11 @@ $$;
 GRANT EXECUTE ON FUNCTION public.refresh_metrics_tick() TO postgres, service_role;
 
 -- -----------------------------------------------------------------------------
--- 7. Initial backfill (all companies, 7 tables) + planner stats, and stamp
---    mv_refresh_state so the tick doesn't redundantly rebuild all 7 right
---    after deploy. One transaction with the swap above.
+-- 7. Planner stats. The tables were created as snapshot copies of the MV
+--    contents (step 1), so no backfill is needed and mv_refresh_state is left
+--    untouched -- its timestamps still truthfully describe this data. The
+--    tick and per-company refreshes take over maintenance from here.
 -- -----------------------------------------------------------------------------
-SELECT public._refresh_cm_sentiment_scores(NULL);
-SELECT public._refresh_cm_relevance_scores(NULL);
-SELECT public._refresh_cm_top_sources(NULL);
-SELECT public._refresh_cm_competitors(NULL);
-SELECT public._refresh_cm_llm_rankings(NULL);
-SELECT public._refresh_cm_attribute_themes(NULL);
-SELECT public._refresh_cm_response_sentiment(NULL);
-
 ANALYZE public.company_sentiment_scores_mv;
 ANALYZE public.company_relevance_scores_mv;
 ANALYZE public.company_top_sources_mv;
@@ -576,25 +579,6 @@ ANALYZE public.company_competitors_mv;
 ANALYZE public.company_llm_rankings_mv;
 ANALYZE public.company_attribute_themes_mv;
 ANALYZE public.company_response_sentiment_mv;
-
-WITH counts AS (
-  SELECT 'company_sentiment_scores_mv'::text AS mv_name, count(*) AS n FROM public.company_sentiment_scores_mv
-  UNION ALL SELECT 'company_relevance_scores_mv', count(*) FROM public.company_relevance_scores_mv
-  UNION ALL SELECT 'company_top_sources_mv', count(*) FROM public.company_top_sources_mv
-  UNION ALL SELECT 'company_competitors_mv', count(*) FROM public.company_competitors_mv
-  UNION ALL SELECT 'company_llm_rankings_mv', count(*) FROM public.company_llm_rankings_mv
-  UNION ALL SELECT 'company_attribute_themes_mv', count(*) FROM public.company_attribute_themes_mv
-  UNION ALL SELECT 'company_response_sentiment_mv', count(*) FROM public.company_response_sentiment_mv
-)
-UPDATE public.mv_refresh_state s
-   SET last_refresh_started  = now(),
-       last_refresh_finished = now(),
-       last_status = 'success',
-       last_error = NULL,
-       row_count = c.n,
-       force_refresh = false
-  FROM counts c
- WHERE s.mv_name = c.mv_name;
 
 -- -----------------------------------------------------------------------------
 -- 8. Comments
