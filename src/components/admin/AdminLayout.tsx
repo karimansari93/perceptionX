@@ -2,7 +2,6 @@ import { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
-  Building2,
   Users,
   Briefcase,
   LogOut,
@@ -35,7 +34,6 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
     { id: 'organizations', label: 'Organizations', icon: Briefcase },
     { id: 'data-health', label: 'Data Health', icon: HeartPulse },
     { id: 'users', label: 'Users', icon: Users },
-    { id: 'companies', label: 'Companies', icon: Building2 },
     { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy },
     { id: 'company-batch', label: 'Company Batch', icon: Layers },
     { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock },
