@@ -84,7 +84,7 @@ RETURNS TABLE(
   latest_collected         timestamptz
 )
 LANGUAGE plpgsql
-STABLE
+VOLATILE -- must not be STABLE: the body runs SET LOCAL statement_timeout
 SECURITY DEFINER
 SET search_path TO 'public'
 AS $$
@@ -193,7 +193,7 @@ RETURNS TABLE(
   issues               text[]
 )
 LANGUAGE plpgsql
-STABLE
+VOLATILE -- must not be STABLE: the body runs SET LOCAL statement_timeout
 SECURITY DEFINER
 SET search_path TO 'public'
 AS $$
