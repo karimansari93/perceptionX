@@ -79,6 +79,11 @@
 
 BEGIN;
 
+-- Hold the staleness tick's advisory lock for the whole swap: if a tick is
+-- mid-refresh we wait for it, and any tick firing while we run returns 'busy'
+-- instead of colliding with the DROPs. Released automatically at COMMIT.
+SELECT pg_advisory_xact_lock(913372);
+
 -- -----------------------------------------------------------------------------
 -- 1. Convert each materialized view into a table.
 --    Snapshot-copy the MV (exact column shape AND current contents), drop the
