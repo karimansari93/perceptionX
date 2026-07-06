@@ -7,6 +7,7 @@ import { Sparkles, Loader2, CheckCircle2, TrendingUp, TrendingDown, Info } from 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollablePills } from "./ScrollablePills";
 import { SearchInput } from "./SearchInput";
+import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
 import { Button } from "@/components/ui/button";
 import { extractSourceUrl } from "@/utils/citationUtils";
 import { Badge } from "@/components/ui/badge";
@@ -74,6 +75,8 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   // Free-text search over competitor names (ephemeral, like the Prompts tab).
   const [searchQuery, setSearchQuery] = useState<string>("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
+  // Let the global command palette pre-fill this tab's search.
+  useTabSearchSeed('competitors', setSearchQuery);
   const [, startTransition] = useTransition();
 
   // Distinct job functions present on the prompts behind these responses.

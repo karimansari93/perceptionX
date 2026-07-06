@@ -7,6 +7,8 @@ import { Suspense } from "react";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import { CustomReports } from "@/components/dashboard/CustomReports";
 import { AppSidebar } from "@/components/AppSidebar";
+import { CommandPalette } from "@/components/dashboard/CommandPalette";
+import { TabSearchSeedProvider } from "@/contexts/TabSearchSeedContext";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
@@ -251,6 +253,34 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const { state, isMobile } = useSidebar();
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Global command palette (⌘K / Ctrl+K) — a search launcher in the sidebar.
+  const [commandOpen, setCommandOpen] = useState(false);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setCommandOpen(open => !open);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // Direct section → route navigation for the palette. Unlike handleSectionChange
+  // (which is scoped to the current group), this can jump across groups.
+  const navigateToSection = useCallback((section: string) => {
+    const routes: Record<string, string> = {
+      overview: '/dashboard',
+      sources: '/dashboard/sources',
+      competitors: '/dashboard/competitors',
+      thematic: '/dashboard/themes',
+      prompts: '/monitor',
+      reports: '/analyze/reports',
+    };
+    const route = routes[section];
+    if (route) navigate(route);
+  }, [navigate]);
 
 
   const [onboardingData, setOnboardingData] = useState<PromptsModalOnboardingData | null>(null);
@@ -703,7 +733,19 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   // Always render the sidebar and main layout, only show loading in content area
   return (
     <div className="flex h-screen bg-gray-50 w-full">
-      <AppSidebar activeSection={activeSection} onSectionChange={setActiveSection} />
+      <CommandPalette
+        open={commandOpen}
+        onOpenChange={setCommandOpen}
+        onNavigate={navigateToSection}
+        promptsData={promptsData}
+        topCompetitors={topCompetitors}
+        topCitations={topCitations}
+      />
+      <AppSidebar
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+        onOpenSearch={() => setCommandOpen(true)}
+      />
       <SidebarInset className="flex-1 flex flex-col">
         <DashboardHeader 
           companyName={companyName || ''}
@@ -784,7 +826,9 @@ interface DashboardProps {
 const Dashboard = ({ defaultGroup, defaultSection }: DashboardProps = {}) => (
   <SidebarProvider>
     <WalkthroughProvider>
-      <DashboardContent defaultGroup={defaultGroup} defaultSection={defaultSection} />
+      <TabSearchSeedProvider>
+        <DashboardContent defaultGroup={defaultGroup} defaultSection={defaultSection} />
+      </TabSearchSeedProvider>
     </WalkthroughProvider>
   </SidebarProvider>
 );

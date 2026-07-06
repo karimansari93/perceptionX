@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PromptData } from "@/types/dashboard";
 import { SearchInput } from "./SearchInput";
+import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
 import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter, HelpCircle, Lightbulb } from "lucide-react";
 import { useState, useMemo, useTransition, useDeferredValue, memo } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -22,6 +23,8 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
   const [showAll, setShowAll] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  // Let the global command palette pre-fill this table's search.
+  useTabSearchSeed('prompts', setSearchQuery);
   const [, startTransition] = useTransition();
   const deferredTypeFilter = useDeferredValue(typeFilter);
   const deferredCategoryFilter = useDeferredValue(categoryFilter);

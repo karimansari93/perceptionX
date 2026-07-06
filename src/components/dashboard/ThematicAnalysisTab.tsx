@@ -46,6 +46,7 @@ import { getLLMDisplayName } from '@/config/llmLogos';
 import { extractSourceUrl } from '@/utils/citationUtils';
 import { ScrollablePills } from './ScrollablePills';
 import { SearchInput } from './SearchInput';
+import { useTabSearchSeed } from '@/contexts/TabSearchSeedContext';
 
 interface ThematicAnalysisTabProps {
   responses: PromptResponse[];
@@ -150,6 +151,8 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   // inside the attribute detail modal. Both ephemeral, like the Prompts tab.
   const [searchQuery, setSearchQuery] = useState<string>("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
+  // Let the global command palette pre-fill the attribute search.
+  useTabSearchSeed('thematic', setSearchQuery);
   const [modalThemeSearch, setModalThemeSearch] = useState<string>("");
   // Clear the modal's theme search whenever a different attribute is opened.
   useEffect(() => {

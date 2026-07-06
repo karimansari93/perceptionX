@@ -13,6 +13,7 @@ import { usePersistedState } from "@/hooks/usePersistedState";
 import { extractSourceUrl, extractDomain, enhanceCitations } from "@/utils/citationUtils";
 import { ScrollablePills } from "./ScrollablePills";
 import { SearchInput } from "./SearchInput";
+import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
 
 interface TimeBasedData {
   name: string;
@@ -179,6 +180,8 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   const [searchQuery, setSearchQuery] = useState<string>("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const searchActive = deferredSearchQuery.trim().length > 0;
+  // Let the global command palette pre-fill this tab's search.
+  useTabSearchSeed('sources', setSearchQuery);
   // Mentioned/Not Mentioned toggle - persisted
   const [selectedCompanyMentionedFilter, setSelectedCompanyMentionedFilter] = usePersistedState<'mentioned' | 'not-mentioned'>('sourcesTab.selectedCompanyMentionedFilter', 'mentioned');
   // Other filters hardcoded to defaults (dropdowns removed).
