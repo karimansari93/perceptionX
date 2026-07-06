@@ -364,13 +364,13 @@ serve(async (req) => {
       .update({ last_updated: new Date().toISOString() })
       .eq("id", companyId);
 
-    // Refresh THIS org's 7 rollup tables synchronously so its dashboard is
-    // fresh the moment collection finishes. This is the per-org incremental
+    // Refresh THIS company's 7 rollup tables synchronously so its dashboard is
+    // fresh the moment collection finishes. This is the per-company incremental
     // path (DELETE+INSERT scoped by company_id — sub-second), NOT the old
-    // all-orgs monolith that reliably hit the edge/cron statement timeout and
-    // was removed here. The 6 by-location rollups are still materialized views
-    // and can't be refreshed per-org; landing the responses above bumped
-    // mv_refresh_watermark via trigger, so the staleness tick
+    // all-companies monolith that reliably hit the edge/cron statement timeout
+    // and was removed here. The 6 by-location rollups are still materialized
+    // views and can't be refreshed per-company; landing the responses above
+    // bumped mv_refresh_watermark via trigger, so the staleness tick
     // (refresh_metrics_tick, 20260628000001) picks those up within minutes.
     try {
       const { error: refreshError } = await supabase.rpc("refresh_company_metrics", {

@@ -1,32 +1,39 @@
 -- =============================================================================
--- Company metrics: per-organization incremental refresh
+-- Company metrics: per-company incremental refresh
 -- =============================================================================
+--
+-- Terminology: "organizations" (organizations table) are customer accounts;
+-- each tracks one or more companies via organization_companies. Every metric
+-- rollup keys on company_id, so the unit of refresh here is a COMPANY. A
+-- convenience wrapper refreshes all companies an organization tracks.
 --
 -- Problem
 -- -------
 -- The 7 company-level rollups (sentiment, relevance, top sources, competitors,
 -- llm rankings, attribute themes, response sentiment) are materialized views.
 -- A materialized view can only be refreshed IN FULL -- every refresh rebuilds
--- all ~200 orgs (~20-40s and a full scan of prompt_responses/ai_themes each,
--- per mv_refresh_state timings) even when a single org's data changed.
+-- all ~219 companies (~20-40s and a full scan of prompt_responses/ai_themes
+-- each, per mv_refresh_state timings) even when a single company's data
+-- changed.
 --
 -- The staleness tick (20260628000001) made those full refreshes reliable
 -- (one MV per minute-tick, no statement timeout), but it cannot make them
--- cheap or immediate: after a collection run, an org's dashboard lags until
+-- cheap or immediate: after a collection run, a company's dashboard lags until
 -- the tick drains the affected MVs (up to ~13 min queue + 15-min per-MV
--- cooldown during bursts), and each drain is a full all-orgs rebuild.
+-- cooldown during bursts), and each drain is a full all-companies rebuild.
 --
 -- Fix: convert the 7 company-level rollups into regular TABLES maintained by
--- per-organization incremental refresh:
+-- per-company incremental refresh:
 --
---     SELECT refresh_company_metrics('<company-uuid>');
+--     SELECT refresh_company_metrics('<company-uuid>');          -- one company
+--     SELECT * FROM refresh_organization_metrics('<org-uuid>');  -- every company an organization tracks
 --
 -- For each table this does DELETE WHERE company_id = X; INSERT ... WHERE
 -- company_id = X. prompt_responses / ai_themes are indexed on company_id, so
--- one org touches only its own rows -> sub-second-to-seconds, no timeout, and
--- a tiny fraction of the Disk IO of a full rebuild. collect-company-responses
--- calls this right after landing an org's responses, so that org's dashboard
--- is fresh immediately.
+-- one company touches only its own rows -> sub-second-to-seconds, no timeout,
+-- and a tiny fraction of the Disk IO of a full rebuild.
+-- collect-company-responses calls this right after landing a company's
+-- responses, so that company's dashboard is fresh immediately.
 --
 -- Integration with the staleness tick (20260628000001)
 -- ----------------------------------------------------
@@ -35,16 +42,17 @@
 --   * refresh_metrics_tick() now DISPATCHES per object: the 6 by-location
 --     rollups are still matviews and get REFRESH MATERIALIZED VIEW
 --     CONCURRENTLY as before; the 7 converted tables get a full incremental
---     rebuild via their helper (all-orgs DELETE+INSERT -- same cost class as
---     the old REFRESH). The tick remains the safety net for cross-org writers
---     the per-org path can't see coming (recency rescore, theme backfill,
---     entity canonicalization) and the only refresher of the by-location MVs.
+--     rebuild via their helper (all-companies DELETE+INSERT -- same cost class
+--     as the old REFRESH). The tick remains the safety net for cross-company
+--     writers the per-company path can't see coming (recency rescore, theme
+--     backfill, entity canonicalization) and the only refresher of the
+--     by-location MVs.
 --   * mv_refresh_state keeps one row per rollup (same 13 names), so the
 --     Data Health staleness banner and force-flag flow work unchanged.
 --   * The no-arg refresh_company_metrics() keeps its RETURNS TABLE(...)
 --     status contract (callers: refresh-company-metrics edge fn, manual use)
---     but is now table-aware. It is still the heavy all-orgs path; prefer the
---     tick (steady state) or the per-org call (after a collection).
+--     but is now table-aware. It is still the heavy all-companies path; prefer
+--     the tick (steady state) or the per-company call (after a collection).
 --
 -- What stays the same for readers
 -- -------------------------------
@@ -148,8 +156,8 @@ END $grants$;
 
 -- -----------------------------------------------------------------------------
 -- 4. Per-table refresh helpers. Each takes an optional company id:
---      NULL   -> rebuild the whole table (all orgs)
---      <uuid> -> rebuild just that org's rows (DELETE + re-INSERT)
+--      NULL   -> rebuild the whole table (all companies)
+--      <uuid> -> rebuild just that company's rows (DELETE + re-INSERT)
 --    Defining queries are the live matview definitions plus the company
 --    predicate. SECURITY DEFINER; EXECUTE revoked from PUBLIC (only the
 --    entry-point functions below call them).
@@ -350,8 +358,9 @@ FROM PUBLIC;
 -- 5. Entry points.
 -- -----------------------------------------------------------------------------
 
--- Shared dispatch: the 7 converted tables rebuild via their helper (all orgs);
--- anything else (the 6 by-location matviews) via REFRESH ... CONCURRENTLY.
+-- Shared dispatch: the 7 converted tables rebuild via their helper (all
+-- companies); anything else (the 6 by-location matviews) via REFRESH ...
+-- CONCURRENTLY.
 CREATE OR REPLACE FUNCTION public._refresh_cm_dispatch(p_mv_name text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
 BEGIN
@@ -369,11 +378,12 @@ END $fn$;
 
 REVOKE ALL ON FUNCTION public._refresh_cm_dispatch(text) FROM PUBLIC;
 
--- Per-organization incremental refresh: the hot path. Rebuilds ONE org's rows
--- in all 7 tables. Advisory-locked per org so two concurrent refreshes of the
--- same org (e.g. overlapping collection runs) serialize instead of racing the
--- unique indexes. By-location rollups stay matviews and are NOT covered here;
--- the watermark trigger + staleness tick handle those within minutes.
+-- Per-company incremental refresh: the hot path. Rebuilds ONE company's rows
+-- in all 7 tables. Advisory-locked per company so two concurrent refreshes of
+-- the same company (e.g. overlapping collection runs) serialize instead of
+-- racing the unique indexes. By-location rollups stay matviews and are NOT
+-- covered here; the watermark trigger + staleness tick handle those within
+-- minutes.
 CREATE OR REPLACE FUNCTION public.refresh_company_metrics(p_company_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
 BEGIN
@@ -390,11 +400,37 @@ BEGIN
   PERFORM public._refresh_cm_response_sentiment(p_company_id);
 END $fn$;
 
--- Full rebuild, all orgs, all 13 rollups -- keeps the exact status-table
+-- Convenience wrapper at the ORGANIZATION (customer account) level: refreshes
+-- every company the organization tracks (via organization_companies), one
+-- per-company refresh at a time, and returns the list of companies rebuilt.
+CREATE OR REPLACE FUNCTION public.refresh_organization_metrics(p_organization_id uuid)
+RETURNS TABLE(company_id uuid, company_name text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+DECLARE
+  r record;
+BEGIN
+  IF p_organization_id IS NULL THEN
+    RAISE EXCEPTION 'p_organization_id is required';
+  END IF;
+  FOR r IN
+    SELECT c.id, c.name
+    FROM public.organization_companies oc
+    JOIN public.companies c ON c.id = oc.company_id
+    WHERE oc.organization_id = p_organization_id
+    ORDER BY c.name
+  LOOP
+    PERFORM public.refresh_company_metrics(r.id);
+    company_id := r.id;
+    company_name := r.name;
+    RETURN NEXT;
+  END LOOP;
+END $fn$;
+
+-- Full rebuild, all companies, all 13 rollups -- keeps the exact status-table
 -- contract of the previous monolith (codified in 20260628000000) so existing
 -- callers keep working, but is now table-aware via the dispatch. Still the
 -- heavy path: run over a direct connection for backfills; steady-state
--- freshness belongs to the tick + the per-org overload above.
+-- freshness belongs to the tick + the per-company overload above.
 CREATE OR REPLACE FUNCTION public.refresh_company_metrics()
 RETURNS TABLE(view_name text, refresh_started timestamptz, refresh_completed timestamptz, success boolean, error_message text)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
@@ -421,9 +457,9 @@ BEGIN
 END $fn$;
 
 -- Admin "refresh competitors" RPC (EntityCanonicalizationTab, after approving
--- or merging canonical entities). Rebuilds the competitors table for all orgs
--- synchronously, and force-flags the by-location variant (canonical merges
--- affect it too) so the tick refreshes it promptly.
+-- or merging canonical entities). Rebuilds the competitors table for all
+-- companies synchronously, and force-flags the by-location variant (canonical
+-- merges affect it too) so the tick refreshes it promptly.
 CREATE OR REPLACE FUNCTION public.refresh_company_competitors_mv()
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
 BEGIN
@@ -432,16 +468,18 @@ BEGIN
    WHERE mv_name = 'company_competitors_by_location_mv';
 END $fn$;
 
-REVOKE ALL ON FUNCTION public.refresh_company_metrics(uuid)    FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.refresh_company_metrics()        FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.refresh_company_competitors_mv() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.refresh_company_metrics(uuid)         FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.refresh_organization_metrics(uuid)    FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.refresh_company_metrics()             FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.refresh_company_competitors_mv()      FROM PUBLIC;
 
--- Per-org refresh is cheap and safe for the app (admin recalc) and services.
--- The full rebuild stays service_role-only so a logged-in user can't trigger
--- the heavy all-orgs path.
-GRANT EXECUTE ON FUNCTION public.refresh_company_metrics(uuid)    TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.refresh_company_metrics()        TO service_role;
-GRANT EXECUTE ON FUNCTION public.refresh_company_competitors_mv() TO authenticated, service_role;
+-- Per-company (and per-organization) refresh is cheap and safe for the app
+-- (admin recalc) and services. The full rebuild stays service_role-only so a
+-- logged-in user can't trigger the heavy all-companies path.
+GRANT EXECUTE ON FUNCTION public.refresh_company_metrics(uuid)      TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.refresh_organization_metrics(uuid) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.refresh_company_metrics()          TO service_role;
+GRANT EXECUTE ON FUNCTION public.refresh_company_competitors_mv()   TO authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
 -- 6. Make the staleness tick (20260628000001) table-aware. Identical logic
@@ -519,7 +557,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.refresh_metrics_tick() TO postgres, service_role;
 
 -- -----------------------------------------------------------------------------
--- 7. Initial backfill (all orgs, 7 tables) + planner stats, and stamp
+-- 7. Initial backfill (all companies, 7 tables) + planner stats, and stamp
 --    mv_refresh_state so the tick doesn't redundantly rebuild all 7 right
 --    after deploy. One transaction with the swap above.
 -- -----------------------------------------------------------------------------
@@ -561,7 +599,7 @@ UPDATE public.mv_refresh_state s
 -- -----------------------------------------------------------------------------
 -- 8. Comments
 -- -----------------------------------------------------------------------------
-COMMENT ON TABLE public.company_sentiment_scores_mv   IS 'Per (company, month, prompt dims) sentiment aggregates. Incrementally maintained per-org by refresh_company_metrics(company_id); full rebuilds via the staleness tick. (Was a materialized view; converted 2026-07-06.)';
+COMMENT ON TABLE public.company_sentiment_scores_mv   IS 'Per (company, month, prompt dims) sentiment aggregates. Incrementally maintained per-company by refresh_company_metrics(company_id); full rebuilds via the staleness tick. (Was a materialized view; converted 2026-07-06.)';
 COMMENT ON TABLE public.company_relevance_scores_mv   IS 'Per (company, month, prompt dims) citation-recency relevance. Maintained by refresh_company_metrics(company_id) + staleness tick.';
 COMMENT ON TABLE public.company_top_sources_mv        IS 'Per (company, normalized domain) citation counts. Maintained by refresh_company_metrics(company_id) + staleness tick.';
 COMMENT ON TABLE public.company_competitors_mv        IS 'Per (company, canonical competitor) mention counts. Maintained by refresh_company_metrics(company_id), refresh_company_competitors_mv(), and the staleness tick.';
@@ -569,8 +607,9 @@ COMMENT ON TABLE public.company_llm_rankings_mv       IS 'Per (company, ai_model
 COMMENT ON TABLE public.company_attribute_themes_mv   IS 'Per (company, month, job_function, attribute) theme aggregates. Maintained by refresh_company_metrics(company_id) + staleness tick.';
 COMMENT ON TABLE public.company_response_sentiment_mv IS 'Per (company, response) positive/total theme ratio. Maintained by refresh_company_metrics(company_id) + staleness tick.';
 
-COMMENT ON FUNCTION public.refresh_company_metrics(uuid) IS 'Incrementally rebuilds the 7 company-level rollup tables for ONE organization (DELETE+INSERT scoped by company_id). Fast, indexed, timeout-proof. Called by collect-company-responses after data lands. By-location rollups are matviews handled by refresh_metrics_tick.';
-COMMENT ON FUNCTION public.refresh_company_metrics()     IS 'Full rebuild of all 13 rollups (7 tables via helpers, 6 by-location matviews via REFRESH CONCURRENTLY), returning a per-rollup status row. Heavy: run over a direct connection for backfills; steady-state freshness belongs to refresh_metrics_tick + the per-org overload.';
-COMMENT ON FUNCTION public._refresh_cm_dispatch(text)    IS 'Refreshes one rollup by name: the 7 converted tables rebuild via their incremental helper (all orgs); anything else is REFRESH MATERIALIZED VIEW CONCURRENTLY. Shared by refresh_metrics_tick and refresh_company_metrics().';
+COMMENT ON FUNCTION public.refresh_company_metrics(uuid)      IS 'Incrementally rebuilds the 7 company-level rollup tables for ONE company (DELETE+INSERT scoped by company_id). Fast, indexed, timeout-proof. Called by collect-company-responses after data lands. By-location rollups are matviews handled by refresh_metrics_tick.';
+COMMENT ON FUNCTION public.refresh_organization_metrics(uuid) IS 'Refreshes the 7 rollup tables for EVERY company an organization (customer account) tracks via organization_companies; returns the companies rebuilt. Convenience wrapper over refresh_company_metrics(company_id).';
+COMMENT ON FUNCTION public.refresh_company_metrics()          IS 'Full rebuild of all 13 rollups (7 tables via helpers, 6 by-location matviews via REFRESH CONCURRENTLY), returning a per-rollup status row. Heavy: run over a direct connection for backfills; steady-state freshness belongs to refresh_metrics_tick + the per-company overload.';
+COMMENT ON FUNCTION public._refresh_cm_dispatch(text)         IS 'Refreshes one rollup by name: the 7 converted tables rebuild via their incremental helper (all companies); anything else is REFRESH MATERIALIZED VIEW CONCURRENTLY. Shared by refresh_metrics_tick and refresh_company_metrics().';
 
 COMMIT;

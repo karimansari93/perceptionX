@@ -5,18 +5,19 @@ import { corsHeaders } from '../_shared/cors.ts'
 // Refreshes the company metric rollups.
 //
 // Body (optional):
-//   { "companyId": "<uuid>" }  -> synchronously rebuild that ONE org's rows in
-//                                 the 7 company-level rollup tables (per-org
-//                                 incremental refresh — fast, indexed). The 6
-//                                 by-location rollups are matviews and are
-//                                 picked up by the staleness tick within
-//                                 minutes (the watermark is bumped below).
+//   { "companyId": "<uuid>" }  -> synchronously rebuild that ONE company's rows
+//                                 in the 7 company-level rollup tables
+//                                 (per-company incremental refresh — fast,
+//                                 indexed). The 6 by-location rollups are
+//                                 matviews and are picked up by the staleness
+//                                 tick within minutes.
 //   { }                         -> full refresh of all 13 rollups: force-flags
 //                                 every entry in mv_refresh_state and lets the
 //                                 pg_cron staleness tick drain them one per
-//                                 minute. Never runs the heavy all-orgs rebuild
-//                                 synchronously here — that path is what used
-//                                 to hit the edge/cron statement timeout.
+//                                 minute. Never runs the heavy all-companies
+//                                 rebuild synchronously here — that path is
+//                                 what used to hit the edge/cron statement
+//                                 timeout.
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { status: 200, headers: corsHeaders })
@@ -40,18 +41,18 @@ serve(async (req) => {
     }
 
     if (companyId) {
-      console.log(`🔄 Per-org refresh of company metrics for ${companyId}...`)
+      console.log(`🔄 Per-company refresh of company metrics for ${companyId}...`)
       const { error } = await supabase.rpc('refresh_company_metrics', {
         p_company_id: companyId,
       })
       if (error) {
-        console.error('❌ Per-org refresh failed:', error)
+        console.error('❌ Per-company refresh failed:', error)
         return new Response(
           JSON.stringify({ success: false, scope: 'company', companyId, error: error.message }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }
-      console.log('✅ Per-org refresh complete')
+      console.log('✅ Per-company refresh complete')
       return new Response(
         JSON.stringify({
           success: true,
