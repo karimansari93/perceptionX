@@ -6,5 +6,10 @@
 # to pick up the fresh manifest.
 /assets/*  /assets/:splat  404
 
+# Onboarding invites get onboarding.html — same app bundle, but with
+# project-setup meta tags so link previews don't show the sign-in copy even
+# when the crawler never executes JS. Generated at build time in vite.config.ts.
+/onboarding/*  /onboarding.html  200
+
 # SPA fallback for client-side routes.
 /*    /index.html   200
