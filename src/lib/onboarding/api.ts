@@ -139,6 +139,12 @@ export async function markOnboardingReviewed(inviteId: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Delete an invite (and its submission, via ON DELETE CASCADE). Admin only. */
+export async function deleteOnboardingInvite(inviteId: string): Promise<void> {
+  const { error } = await table('intake_invites').delete().eq('id', inviteId);
+  if (error) throw error;
+}
+
 /** Persist admin edits to a submitted brief before approval. */
 export async function updateOnboardingSubmissionPayload(
   submissionId: string,

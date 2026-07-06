@@ -8,7 +8,7 @@
 // back the /onboarding/:token URL to paste into an email.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Copy, ExternalLink, RefreshCw, Send } from 'lucide-react';
+import { Check, Copy, ExternalLink, RefreshCw, Send, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,10 +21,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import {
   approveOnboarding,
   createOnboardingInvite,
+  deleteOnboardingInvite,
   getOnboardingSubmission,
   OnboardingInvite,
   onboardingLinkFor,
@@ -80,6 +91,8 @@ export const OnboardingFormsTab = () => {
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [reviewInvite, setReviewInvite] = useState<OnboardingInvite | null>(null);
+  const [deleteInvite, setDeleteInvite] = useState<OnboardingInvite | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -99,6 +112,21 @@ export const OnboardingFormsTab = () => {
   const copyLink = async (invite: OnboardingInvite) => {
     await navigator.clipboard.writeText(onboardingLinkFor(invite.token));
     toast.success('Onboarding link copied');
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteInvite) return;
+    setDeleting(true);
+    try {
+      await deleteOnboardingInvite(deleteInvite.id);
+      toast.success('Onboarding invite removed');
+      setDeleteInvite(null);
+      refresh();
+    } catch {
+      toast.error('Could not remove the invite');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -172,6 +200,15 @@ export const OnboardingFormsTab = () => {
                         Review brief
                       </Button>
                     )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDeleteInvite(invite)}
+                      title="Remove onboarding invite"
+                      className="text-slate-400 hover:text-red-600"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 </td>
               </tr>
@@ -192,6 +229,41 @@ export const OnboardingFormsTab = () => {
           onChanged={refresh}
         />
       )}
+
+      <AlertDialog
+        open={!!deleteInvite}
+        onOpenChange={(o) => !o && !deleting && setDeleteInvite(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove onboarding invite?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the invite for{' '}
+              <strong>{deleteInvite?.company_name}</strong> ({deleteInvite?.contact_email}) and its
+              submitted brief. The onboarding link will stop working. This can't be undone.
+              {deleteInvite?.status === 'approved' && (
+                <>
+                  {' '}
+                  Prompts already generated from this brief are not affected.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                confirmDelete();
+              }}
+              disabled={deleting}
+              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+            >
+              {deleting ? 'Removing…' : 'Remove invite'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
