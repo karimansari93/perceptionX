@@ -1,0 +1,204 @@
+-- Lock down SECURITY DEFINER function execution and materialized-view API
+-- exposure, and pin search_path on mutable functions. Addresses the WARN-level
+-- Supabase security advisor findings.
+--
+-- Postgres grants EXECUTE to PUBLIC by default, so every SECURITY DEFINER
+-- function was callable by the anon/authenticated PostgREST roles over the
+-- public API. We revoke that blanket access and re-grant only where a caller
+-- genuinely needs it. Functions used inside RLS policies (is_admin,
+-- is_org_super_admin, user_can_access_company, user_can_admin_company) are
+-- intentionally left executable by anon/authenticated: policy evaluation runs
+-- as the querying role, so revoking them would break RLS across the app.
+
+-- === Internal / cron / edge-function / trigger / read-helper functions:
+--     restrict to service_role only ===
+REVOKE EXECUTE ON FUNCTION public._refresh_cm_attribute_themes(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._refresh_cm_attribute_themes(uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public._refresh_cm_competitors(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._refresh_cm_competitors(uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public._refresh_cm_dispatch(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._refresh_cm_dispatch(text) TO service_role;
+REVOKE EXECUTE ON FUNCTION public._refresh_cm_llm_rankings(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._refresh_cm_llm_rankings(uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public._refresh_cm_relevance_scores(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._refresh_cm_relevance_scores(uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public._refresh_cm_response_sentiment(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._refresh_cm_response_sentiment(uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public._refresh_cm_sentiment_scores(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._refresh_cm_sentiment_scores(uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public._refresh_cm_top_sources(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public._refresh_cm_top_sources(uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.admin_update_company_domain(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_update_company_domain(text,text) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.apply_company_mention_aliases() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.apply_company_mention_aliases() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.batch_queue_completion_tick() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.batch_queue_completion_tick() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.batch_queue_watchdog_tick() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.batch_queue_watchdog_tick() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.canonical_entities_recanonicalize() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.canonical_entities_recanonicalize() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.canonical_sources_recanonicalize() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.canonical_sources_recanonicalize() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.ensure_canonical_entity_self_alias() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ensure_canonical_entity_self_alias() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.ensure_canonical_source_self_alias() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ensure_canonical_source_self_alias() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.entity_aliases_recanonicalize() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.entity_aliases_recanonicalize() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.find_responses_missing_themes(integer,integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.find_responses_missing_themes(integer,integer) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.get_active_industries() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_active_industries() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.get_available_periods(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_available_periods(text) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.get_company_industry_mappings() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_company_industry_mappings() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.get_company_subsidiaries(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_company_subsidiaries(text) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.get_company_trend(text,text,text,text,integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_company_trend(text,text,text,text,integer) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.get_rankings_with_change(text,text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.get_rankings_with_change(text,text,text) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.handle_new_user() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.intake_preview_by_token(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.intake_preview_by_token(text) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.is_ranked_entity(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.is_ranked_entity(text) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.is_source_entity(text,text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.is_source_entity(text,text) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.mark_metrics_data_changed() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.mark_metrics_data_changed() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.monthly_auto_refresh() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.monthly_auto_refresh() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.rebuild_slug_aliases() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.rebuild_slug_aliases() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.recanonicalize_citations_for_domains(text[]) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.recanonicalize_citations_for_domains(text[]) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.recanonicalize_competitors_for_terms(text[]) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.recanonicalize_competitors_for_terms(text[]) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.recency_rescore_tick() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.recency_rescore_tick() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.recommend_sources(text,text,integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.recommend_sources(text,text,integer) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.reconcile_stale_exclusions() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reconcile_stale_exclusions() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.refresh_company_metrics() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_company_metrics() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.refresh_company_metrics(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_company_metrics(uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.refresh_metrics_tick() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_metrics_tick() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.refresh_organization_metrics(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_organization_metrics(uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.refresh_rankings_overview() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_rankings_overview() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.refresh_rankings_pipeline() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_rankings_pipeline() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.refresh_source_citation_stats() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_source_citation_stats() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.resolve_orphan_canonicalization_suggestions() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.resolve_orphan_canonicalization_suggestions() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.run_rankings_maintenance() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.run_rankings_maintenance() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.search_companies(text,integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.search_companies(text,integer) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.send_batch_alert(jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.send_batch_alert(jsonb) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.source_aliases_recanonicalize() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.source_aliases_recanonicalize() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.suggest_entity_canonicalization_tick() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.suggest_entity_canonicalization_tick() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.theme_backfill_tick() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.theme_backfill_tick() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.trigger_snapshot_regen() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.trigger_snapshot_regen() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.update_chat_conversation_timestamp() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.update_chat_conversation_timestamp() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.visibility_queue_completion_tick() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.visibility_queue_completion_tick() TO service_role;
+REVOKE EXECUTE ON FUNCTION public.visibility_queue_watchdog_tick() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.visibility_queue_watchdog_tick() TO service_role;
+
+-- === Admin/authenticated RPCs called by the app (each self-guards with an
+--     is_admin()/authorization check): authenticated + service_role ===
+REVOKE EXECUTE ON FUNCTION public.admin_approve_intake(uuid,jsonb,jsonb,jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_approve_intake(uuid,jsonb,jsonb,jsonb) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.admin_data_health_org(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_data_health_org(uuid) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.admin_data_health_overview() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_data_health_overview() TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.admin_delete_company(uuid,uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_delete_company(uuid,uuid) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.admin_mv_refresh_status() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_mv_refresh_status() TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.admin_set_organization_regions(uuid,text[]) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_set_organization_regions(uuid,text[]) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.create_intake_invite(text,text,uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.create_intake_invite(text,text,uuid) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.request_company_metrics_refresh() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.request_company_metrics_refresh() TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.refresh_company_competitors_mv() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.refresh_company_competitors_mv() TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.enqueue_recency_rescore(uuid,uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.enqueue_recency_rescore(uuid,uuid) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.cancel_recency_rescore(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.cancel_recency_rescore(uuid) TO authenticated, service_role;
+
+-- === Tokenized onboarding intake (called by logged-out prospects via an
+--     invite token, which is the sole access key): anon + authenticated ===
+GRANT EXECUTE ON FUNCTION public.intake_get_by_token(text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.intake_save_draft(text,jsonb) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.intake_submit(text,jsonb) TO anon, authenticated, service_role;
+
+-- === Pin search_path on mutable functions (prevents search-path hijacking) ===
+ALTER FUNCTION public.batch_queue_completion_tick() SET search_path = public, extensions;
+ALTER FUNCTION public.batch_queue_watchdog_tick() SET search_path = public, extensions;
+ALTER FUNCTION public.cancel_recency_rescore(uuid) SET search_path = public, extensions;
+ALTER FUNCTION public.canonical_entities_touch_updated_at() SET search_path = public, extensions;
+ALTER FUNCTION public.canonical_sources_touch_updated_at() SET search_path = public, extensions;
+ALTER FUNCTION public.enqueue_recency_rescore(uuid,uuid) SET search_path = public, extensions;
+ALTER FUNCTION public.escape_like(text) SET search_path = public, extensions;
+ALTER FUNCTION public.get_available_periods(text) SET search_path = public, extensions;
+ALTER FUNCTION public.get_canonical_name_from_slug(text) SET search_path = public, extensions;
+ALTER FUNCTION public.get_company_domain(text) SET search_path = public, extensions;
+ALTER FUNCTION public.get_company_industry_mappings() SET search_path = public, extensions;
+ALTER FUNCTION public.get_unclassified_companies(integer) SET search_path = public, extensions;
+ALTER FUNCTION public.intake_touch_updated_at() SET search_path = public, extensions;
+ALTER FUNCTION public.monthly_auto_refresh() SET search_path = public, extensions;
+ALTER FUNCTION public.normalize_canonical_name_quotes() SET search_path = public, extensions;
+ALTER FUNCTION public.normalize_entity_name(text) SET search_path = public, extensions;
+ALTER FUNCTION public.normalize_quotes(text) SET search_path = public, extensions;
+ALTER FUNCTION public.normalize_source_domain(text) SET search_path = public, extensions;
+ALTER FUNCTION public.recency_rescore_tick() SET search_path = public, extensions;
+ALTER FUNCTION public.refresh_organization_recency_coverage() SET search_path = public, extensions;
+ALTER FUNCTION public.search_companies(text,integer) SET search_path = public, extensions;
+ALTER FUNCTION public.slugify_name(text) SET search_path = public, extensions;
+ALTER FUNCTION public.suggest_entity_canonicalization_tick() SET search_path = public, extensions;
+ALTER FUNCTION public.theme_backfill_tick() SET search_path = public, extensions;
+ALTER FUNCTION public.trg_source_intel_set_updated_at() SET search_path = public, extensions;
+ALTER FUNCTION public.update_updated_at_column() SET search_path = public, extensions;
+ALTER FUNCTION public.visibility_queue_completion_tick() SET search_path = public, extensions;
+ALTER FUNCTION public.visibility_queue_watchdog_tick() SET search_path = public, extensions;
+
+-- === Materialized views exposed over the API cannot carry RLS. Remove anon
+--     access from all of them; remove authenticated access from those the
+--     app never reads. The eight still read by authenticated dashboard code
+--     keep authenticated SELECT (tracked for wrapping in org-scoped views). ===
+REVOKE SELECT ON public.company_overview_stats_mv FROM anon, authenticated;
+REVOKE SELECT ON public.company_overview_domains_mv FROM anon, authenticated;
+REVOKE SELECT ON public.organization_company_source_urls_mv FROM anon, authenticated;
+REVOKE SELECT ON public.organization_source_urls_mv FROM anon, authenticated;
+REVOKE SELECT ON public.rankings_overview FROM anon, authenticated;
+REVOKE SELECT ON public.rankings_historical FROM anon, authenticated;
+REVOKE SELECT ON public.company_search_index FROM anon, authenticated;
+REVOKE SELECT ON public.company_relevance_scores_by_location_mv FROM anon;
+REVOKE SELECT ON public.company_top_sources_by_location_mv FROM anon;
+REVOKE SELECT ON public.company_competitors_by_location_mv FROM anon;
+REVOKE SELECT ON public.company_attribute_themes_by_location_mv FROM anon;
+REVOKE SELECT ON public.company_llm_rankings_by_location_mv FROM anon;
+REVOKE SELECT ON public.company_sentiment_scores_by_location_mv FROM anon;
+REVOKE SELECT ON public.organization_recency_coverage_mv FROM anon;
+REVOKE SELECT ON public.competitor_benchmarks_mv FROM anon;
+
