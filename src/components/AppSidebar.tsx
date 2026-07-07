@@ -150,7 +150,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
   return (
     <>
       <Sidebar className="border-r bg-white/90 backdrop-blur-sm transition-all duration-200">
-        <SidebarHeader className="border-b border-gray-200/50 flex flex-row items-center p-6">
+        <SidebarHeader className="border-b border-gray-200/50 flex flex-row items-center justify-between p-6">
           <div className="flex items-center gap-2">
             <img
               alt="Perception Logo"
@@ -158,6 +158,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
               src="/logos/PerceptionX-PrimaryLogo.png"
             />
           </div>
+          <SidebarTrigger className="h-7 w-7 text-[#13274F]" />
         </SidebarHeader>
         <SidebarContent className="flex-1">
           {onOpenSearch && (
