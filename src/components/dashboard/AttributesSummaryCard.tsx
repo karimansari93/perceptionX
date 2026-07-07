@@ -1,10 +1,10 @@
 import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, ExternalLink, Target, Award, Users, Heart, Shield, Lightbulb, Coffee, Crown, Lock } from 'lucide-react';
+import { TrendingUp, TrendingDown, ExternalLink, Target, Award, Users, Heart, Shield, Lightbulb, Coffee, Crown, Lock, MessageSquare, MessageCircle, ClipboardList, UserCheck } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
-import { ATTRIBUTES } from "@/config/attributes";
+import { ATTRIBUTES, normalizeAttributeId } from "@/config/attributes";
 
 interface AttributesSummaryCardProps {
   aiThemes?: any[];
@@ -18,18 +18,22 @@ interface AttributesSummaryCardProps {
   aiThemesLoading?: boolean;
 }
 
-// Attribute icon mapping
+// Attribute icon mapping (methodology v2 ids — legacy v1 ids are folded into
+// their v2 successor via normalizeAttributeId before reaching this map).
 const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  'mission-purpose': Target,
-  'rewards-recognition': Award,
+  'mission-purpose-impact': Heart,
+  'compensation': Award,
   'company-culture': Users,
-  'social-impact': Heart,
+  'leadership': Crown,
+  'job-security': Lock,
+  'career-opportunities': TrendingUp,
+  'wellbeing-balance': Coffee,
   'inclusion': Shield,
   'innovation': Lightbulb,
-  'wellbeing-balance': Coffee,
-  'leadership': Crown,
-  'security-perks': Lock,
-  'career-opportunities': TrendingUp
+  'application-communication': MessageSquare,
+  'candidate-feedback': MessageCircle,
+  'interview-experience': ClipboardList,
+  'onboarding-experience': UserCheck
 };
 
 export const AttributesSummaryCard = ({
@@ -69,11 +73,15 @@ export const AttributesSummaryCard = ({
     let prevTotal = 0;
 
     attributeThemes.forEach(row => {
+      // Fold legacy v1 attribute rows (still present in the MV for existing
+      // clients) into their v2 successor; drop retired ids.
+      const attrId = normalizeAttributeId(row.attribute_id);
+      if (!attrId) return;
       const k = rowKey(row);
       const total = Number(row.total_themes) || 0;
       if (!scopeCurrent || currentKeys.has(k)) {
-        if (!agg[row.attribute_id]) agg[row.attribute_id] = { count: 0, positive: 0, negative: 0, neutral: 0, scoreSum: 0 };
-        const a = agg[row.attribute_id];
+        if (!agg[attrId]) agg[attrId] = { count: 0, positive: 0, negative: 0, neutral: 0, scoreSum: 0 };
+        const a = agg[attrId];
         a.count += total;
         a.positive += Number(row.positive_themes) || 0;
         a.negative += Number(row.negative_themes) || 0;
@@ -82,7 +90,7 @@ export const AttributesSummaryCard = ({
         currTotal += total;
       }
       if (prevKeys.has(k)) {
-        prevCounts[row.attribute_id] = (prevCounts[row.attribute_id] || 0) + total;
+        prevCounts[attrId] = (prevCounts[attrId] || 0) + total;
         prevTotal += total;
       }
     });
@@ -119,10 +127,13 @@ export const AttributesSummaryCard = ({
     const currentThemes = aiThemes.filter(t => currentResponseIds.has(t.response_id));
     const prevThemes = aiThemes.filter(t => prevResponseIds.has(t.response_id));
 
-    // Count mentions per attribute
+    // Count mentions per attribute (legacy ids folded into their v2 successor).
     const countByAttr = (themes: any[]) => {
       const c: Record<string, number> = {};
-      themes.forEach(t => { c[t.attribute_id] = (c[t.attribute_id] || 0) + 1; });
+      themes.forEach(t => {
+        const id = normalizeAttributeId(t.attribute_id);
+        if (id) c[id] = (c[id] || 0) + 1;
+      });
       return c;
     };
 
@@ -155,10 +166,17 @@ export const AttributesSummaryCard = ({
       avgSentimentScore: number;
     }> = {};
 
-    aiThemes.forEach(theme => {
+    // Fold legacy v1 ids into their v2 successor once, up front.
+    const normThemes = aiThemes.flatMap(theme => {
+      const id = normalizeAttributeId(theme.attribute_id);
+      return id ? [{ ...theme, attribute_id: id }] : [];
+    });
+
+    normThemes.forEach(theme => {
       const attributeId = theme.attribute_id;
-      const attributeName = theme.attribute_name;
-      
+      // Prefer the canonical v2 display name; fall back to the LLM's label.
+      const attributeName = ATTRIBUTES.find(a => a.id === attributeId)?.name || theme.attribute_name;
+
       if (!attributeCounts[attributeId]) {
         attributeCounts[attributeId] = {
           count: 0,
@@ -169,14 +187,14 @@ export const AttributesSummaryCard = ({
           avgSentimentScore: 0
         };
       }
-      
+
       attributeCounts[attributeId].count++;
       attributeCounts[attributeId][`${theme.sentiment}Count`]++;
     });
 
     // Calculate average sentiment scores and determine SWOT category
     Object.keys(attributeCounts).forEach(attributeId => {
-      const themesForAttribute = aiThemes.filter(theme => theme.attribute_id === attributeId);
+      const themesForAttribute = normThemes.filter(theme => theme.attribute_id === attributeId);
       const avgSentimentScore = themesForAttribute.reduce((sum, theme) => sum + theme.sentiment_score, 0) / themesForAttribute.length;
       attributeCounts[attributeId].avgSentimentScore = avgSentimentScore;
     });
