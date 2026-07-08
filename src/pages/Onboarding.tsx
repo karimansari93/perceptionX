@@ -1,31 +1,13 @@
 // Public client onboarding at /onboarding/:token — authenticated by the invite
 // token alone (no login). The project is already named for the client; there is
 // no company or email field anywhere in this flow.
-//
-// Desktop only: the form itself is gated to ≥1024px viewports — smaller
-// screens get a "switch to a desktop" message. The informational states
-// (expired, already submitted) stay readable on any device.
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Monitor } from 'lucide-react';
 import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard';
 import { getOnboardingByToken, OnboardingTokenState } from '@/lib/onboarding/api';
 import { emptyOnboardingPayload, OnboardingPayload } from '@/lib/onboarding/types';
 import { useMetaTags } from '@/hooks/useMetaTags';
-
-function useIsDesktop(): boolean {
-  const [isDesktop, setIsDesktop] = useState(
-    () => window.matchMedia('(min-width: 1024px)').matches,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia('(min-width: 1024px)');
-    const cb = () => setIsDesktop(mq.matches);
-    mq.addEventListener('change', cb);
-    return () => mq.removeEventListener('change', cb);
-  }, []);
-  return isDesktop;
-}
 
 type LoadState =
   | { kind: 'loading' }
@@ -36,7 +18,6 @@ type LoadState =
 export default function Onboarding() {
   const { token } = useParams<{ token: string }>();
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
-  const isDesktop = useIsDesktop();
 
   const companyNameForMeta =
     load.kind === 'ready' || load.kind === 'submitted' ? (load.kind === 'ready' ? load.state.company_name : load.companyName) : undefined;
@@ -113,28 +94,6 @@ export default function Onboarding() {
   }
 
   const companyName = load.state.company_name;
-
-  if (!isDesktop) {
-    return (
-      <Shell>
-        <div className="max-w-md text-center space-y-3">
-          <span className="mx-auto w-12 h-12 rounded-2xl bg-nightsky/5 text-nightsky flex items-center justify-center">
-            <Monitor className="h-6 w-6" aria-hidden />
-          </span>
-          <h1 className="font-headline font-semibold text-nightsky text-lg">
-            Please use a desktop to complete this onboarding
-          </h1>
-          <p className="text-sm text-slate-600 leading-relaxed">
-            Setting up {companyName}'s project involves picking functions, markets and a few
-            details that are much easier on a bigger screen. Open your invite link on a laptop
-            or desktop — your progress saves automatically, so you'll pick up right where you
-            left off.
-          </p>
-        </div>
-      </Shell>
-    );
-  }
-
   const initial: OnboardingPayload = emptyOnboardingPayload(companyName, '');
 
   return (
