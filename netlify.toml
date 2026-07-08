@@ -21,3 +21,11 @@
   for = "/index.html"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
+
+# onboarding.html is index.html with onboarding meta tags (built in
+# vite.config.ts) — it references the same hashed chunks, so the same
+# no-cache rule applies.
+[[headers]]
+  for = "/onboarding.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"

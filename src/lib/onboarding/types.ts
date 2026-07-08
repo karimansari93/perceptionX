@@ -114,6 +114,8 @@ export interface ConfirmedPromptRow {
   prompt_type: 'discovery' | 'experience' | 'competitive' | 'informational';
   prompt_category: string;
   prompt_theme: string;
+  // Methodology v2: every onboarding prompt is an attribute prompt now.
+  attribute_id: string | null;
   job_function_context: string;
   location_context: string;
   industry_context: string | null;

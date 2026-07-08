@@ -479,7 +479,8 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
       industry_context: prompt.industryContext || onboardingData.industry,
       job_function_context: prompt.jobFunctionContext || null,
       location_context: prompt.locationContext || null,
-      is_active: true
+      is_active: true,
+      prompt_version: 2 // methodology v2 (13-attribute candidate-voice set)
     };
   });
 
@@ -695,134 +696,30 @@ export const formatCountryForPrompt = (countryCode: string): string => {
   return needsThe ? `the ${countryName}` : countryName;
 };
 
-const appendPromptContext = (text: string, jobFunction?: string, location?: string, promptType?: 'informational' | 'experience' | 'competitive' | 'discovery') => {
+// Methodology v2: append "for {jobFunction} in {location}" before the trailing
+// punctuation. The former competitive/discovery branches rewrote "in {industry}"
+// into "hiring {jobFunction}", but that regex ( / in [^?]+\?/ ) greedily deleted
+// everything after the FIRST " in " — which corrupts the v2 competitive templates
+// that place {industry} mid-sentence (e.g. "...in {industry} on diversity and
+// inclusion?"). Plain append keeps every template's meaning intact and matches
+// the server-side generator in process-company-batch-queue exactly.
+const appendPromptContext = (text: string, jobFunction?: string, location?: string, _promptType?: 'informational' | 'experience' | 'competitive' | 'discovery') => {
   const trimmedText = text.trim();
   const lowerText = trimmedText.toLowerCase();
-  
-  // Special handling for competitive prompts with job functions
-  if (promptType === 'competitive' && jobFunction) {
-    // Remove industry context and replace with "hiring {jobFunction}"
-    // Pattern: "in {industry}" -> "hiring {jobFunction}"
-    // Pattern: "in the {industry} industry" -> "hiring {jobFunction}"
-    
-    // Handle "Does {companyName} stand out for X in {industry}?" -> "among companies hiring {jobFunction}"
-    if (lowerText.includes('stand out') && lowerText.includes(' in ')) {
-      const industryMatch = trimmedText.match(/ in ([^?]+)\?/i);
-      if (industryMatch) {
-        return trimmedText.replace(/ in [^?]+\?/i, ` among companies hiring ${jobFunction}?`);
-      }
-    }
-    
-    // Handle "How does X compare to other companies/employers/organizations in {industry}?"
-    // Replace "in {industry}" or "in the {industry} industry" with "hiring {jobFunction}"
-    const industryPatterns = [
-      / in the [^?]+\?/gi,  // "in the {industry} industry?"
-      / in [^?]+\?/gi,       // "in {industry}?"
-    ];
-    
-    let result = trimmedText;
-    for (const pattern of industryPatterns) {
-      if (pattern.test(result)) {
-        // Replace the industry part with "hiring {jobFunction}"
-        result = result.replace(pattern, ` hiring ${jobFunction}?`);
-        break;
-      }
-    }
-    
-    // If location is also provided, add it after the job function
-    if (location) {
-      const locationLower = location.toLowerCase();
-      if (!result.toLowerCase().includes(locationLower)) {
-        result = result.replace(/\?$/, ` in ${location}?`);
-      }
-    }
-    
-    return result;
-  }
-  
-  // Special handling for discovery prompts with job functions
-  if (promptType === 'discovery' && jobFunction) {
-    // Remove industry context from discovery prompts when job function is present
-    // Pattern: "What companies in {industry} are known for X?" -> "What companies are known for X for {jobFunction}?"
-    // Pattern: "What companies in the {industry} industry are known for X?" -> "What companies are known for X for {jobFunction}?"
-    
-    let result = trimmedText;
-    
-    // Pattern 1: Remove "in the {industry} industry" (more specific, handle first)
-    // Match: "in the Technology industry" -> remove it
-    result = result.replace(/\s+in\s+the\s+[a-zA-Z\s]+\s+industry/gi, '');
-    
-    // Pattern 2: Remove "in {industry}" - be very specific to only match industry names
-    // Look for "companies in {word(s)}" followed by "are" or "have"
-    // Use a more precise pattern that captures the structure: "companies in X are/have"
-    const companiesInPattern = /(companies)\s+in\s+([a-zA-Z\s]+?)\s+(are|have|is|were|was|do|does|can|could|will|would)\s+/i;
-    const match = result.match(companiesInPattern);
-    if (match) {
-      // Reconstruct: "companies" + "are/have" + rest
-      result = result.replace(companiesInPattern, `$1 $3 `);
-    } else {
-      // Fallback: try simpler pattern if the above didn't match
-      // Match "in {word}" that appears before common verbs (limit to 1-3 words for industry name)
-      result = result.replace(/\s+in\s+([a-zA-Z]+(?:\s+[a-zA-Z]+){0,2})\s+(are|have|is|were|was|do|does|can|could|will|would)\s+/gi, ' $2 ');
-    }
-    
-    // Clean up any double spaces
-    result = result.replace(/\s+/g, ' ').trim();
-    
-    // Ensure we still have a question mark at the end
-    if (!result.endsWith('?')) {
-      result = result + '?';
-    }
-    
-    // Add "for {jobFunction}" if not already present
-    const jobLower = jobFunction.toLowerCase();
-    if (!result.toLowerCase().includes(jobLower)) {
-      // Insert "for {jobFunction}" before the final question mark
-      result = result.replace(/\?$/, ` for ${jobFunction}?`);
-    }
-    
-    // If location is also provided, add it after the job function
-    if (location) {
-      const locationLower = location.toLowerCase();
-      if (!result.toLowerCase().includes(locationLower)) {
-        result = result.replace(/\?$/, ` in ${location}?`);
-      }
-    }
-    
-    return result.trim();
-  }
-  
-  // Default behavior for non-competitive/discovery prompts or prompts without job functions
   const contextParts: string[] = [];
 
-  if (jobFunction) {
-    const jobLower = jobFunction.toLowerCase();
-    if (!lowerText.includes(jobLower)) {
-      contextParts.push(`for ${jobFunction}`);
-    }
+  if (jobFunction && !lowerText.includes(jobFunction.toLowerCase())) {
+    contextParts.push(`for ${jobFunction}`);
+  }
+  if (location && !lowerText.includes(location.toLowerCase())) {
+    contextParts.push(`in ${location}`);
   }
 
-  if (location) {
-    const locationLower = location.toLowerCase();
-    if (!lowerText.includes(locationLower)) {
-      contextParts.push(`in ${location}`);
-    }
-  }
-
-  if (contextParts.length === 0) {
-    return text;
-  }
+  if (contextParts.length === 0) return text;
 
   const contextSuffix = ` ${contextParts.join(' ')}`;
-
-  if (trimmedText.endsWith('?')) {
-    return trimmedText.replace(/\?$/, `${contextSuffix}?`);
-  }
-
-  if (trimmedText.endsWith('.')) {
-    return trimmedText.replace(/\.$/, `${contextSuffix}.`);
-  }
-
+  if (trimmedText.endsWith('?')) return trimmedText.replace(/\?$/, `${contextSuffix}?`);
+  if (trimmedText.endsWith('.')) return trimmedText.replace(/\.$/, `${contextSuffix}.`);
   return `${trimmedText}${contextSuffix}`;
 };
 
@@ -835,107 +732,45 @@ export const generatePromptsFromData = (onboardingData: OnboardingData): Generat
   const hasCountryLocation = country && country !== 'GLOBAL';
   const formattedCountry = hasCountryLocation ? formatCountryForPrompt(country) : '';
 
-  const locationForBasePrompts = customLocation || (hasCountryLocation ? formattedCountry : undefined);
+  const locationForAttributePrompts = customLocation || (hasCountryLocation ? formattedCountry : undefined);
   const locationContextValue = customLocation || undefined;
 
-  const basePrompts: GeneratedPrompt[] = [
-    {
-      id: 'experience-1',
-      text: `How is ${companyName} as an employer?`,
-      category: 'General',
-      type: 'experience' as const,
+  // Methodology v2 (July 2026): attribute prompts only (13 × 4 = 52). The base
+  // "General" prompts were retired — everything is company × attribute ×
+  // location × function now. Theme = the attribute's v2 display name.
+  // See docs/methodology-v2-prompt-taxonomy.md.
+  const attributePrompts: GeneratedPrompt[] = [];
+
+  const templates = generateAttributePrompts(companyName, industry);
+  templates.forEach(template => {
+    const attribute = template.attribute;
+    const isCandidateExperience = attribute?.category === 'Candidate Experience';
+
+    // prompt_theme is the client-facing display name.
+    const theme = attribute?.name || 'General';
+
+    const promptCategoryValue: 'Employee Experience' | 'Candidate Experience' =
+      isCandidateExperience ? 'Candidate Experience' : 'Employee Experience';
+
+    const textWithContext = appendPromptContext(
+      template.prompt,
+      jobFunction,
+      locationForAttributePrompts,
+      template.type as 'informational' | 'experience' | 'competitive' | 'discovery'
+    );
+
+    attributePrompts.push({
+      id: `attribute-${template.attributeId}-${template.type}`,
+      text: textWithContext,
+      category: theme,
+      type: template.type as 'informational' | 'experience' | 'competitive' | 'discovery',
       industryContext: industry,
       jobFunctionContext: jobFunction,
       locationContext: locationContextValue,
-      promptCategory: 'General' as const,
-      promptTheme: 'General'
-    },
-    {
-      id: 'discovery-1',
-      text: `What is the best company to work for in the ${industry} industry?`,
-      category: 'General',
-      type: 'discovery' as const,
-      industryContext: industry,
-      jobFunctionContext: jobFunction,
-      locationContext: locationContextValue,
-      promptCategory: 'General' as const,
-      promptTheme: 'General'
-    },
-    {
-      id: 'competitive-1',
-      text: `How does working at ${companyName} compare to other companies?`,
-      category: 'General',
-      type: 'competitive' as const,
-      industryContext: industry,
-      jobFunctionContext: jobFunction,
-      locationContext: locationContextValue,
-      promptCategory: 'General' as const,
-      promptTheme: 'General'
-    },
-    {
-      id: 'informational-1',
-      text: `What are the job and employment details at ${companyName}?`,
-      category: 'General',
-      type: 'informational' as const,
-      industryContext: industry,
-      jobFunctionContext: jobFunction,
-      locationContext: locationContextValue,
-      promptCategory: 'General' as const,
-      promptTheme: 'General'
-    }
-  ].map(prompt => ({
-    ...prompt,
-    text: appendPromptContext(prompt.text, jobFunction, locationForBasePrompts, prompt.type),
-  }));
-
-  // Add the attribute prompts (64 prompts: 4 per attribute) for every user.
-  {
-    const attributePrompts: GeneratedPrompt[] = [];
-
-    // Use the ATTRIBUTE_PROMPT_TEMPLATES system to generate all 64 prompts (4 per attribute)
-    const templates = generateAttributePrompts(companyName, industry);
-    templates.forEach(template => {
-      const attribute = template.attribute;
-      const isCandidateExperience = attribute?.category === 'Candidate Experience';
-
-      const candidateThemeOverrides: Record<string, string> = {
-        'candidate-communication': 'Candidate Communication',
-        'interview-experience': 'Interview Experience',
-        'application-process': 'Application Process',
-        'onboarding-experience': 'Onboarding Experience',
-        'candidate-feedback': 'Candidate Feedback',
-        'overall-candidate-experience': 'Overall Candidate Experience',
-      };
-
-      const theme = attribute
-        ? isCandidateExperience
-          ? candidateThemeOverrides[attribute.id] || attribute.name || 'Candidate Experience'
-          : attribute.category || attribute.name || 'Employee Experience'
-        : 'General';
-
-      const promptCategoryValue: 'Employee Experience' | 'Candidate Experience' =
-        isCandidateExperience ? 'Candidate Experience' : 'Employee Experience';
-
-      const textWithContext = appendPromptContext(
-        template.prompt,
-        jobFunction,
-        locationForBasePrompts, // Use locationForBasePrompts which includes formatted country
-        template.type as 'informational' | 'experience' | 'competitive' | 'discovery'
-      );
-
-      attributePrompts.push({
-        id: `attribute-${template.attributeId}-${template.type}`,
-        text: textWithContext,
-        category: theme,
-        type: template.type as 'informational' | 'experience' | 'competitive' | 'discovery',
-        industryContext: industry,
-        jobFunctionContext: jobFunction,
-        locationContext: locationContextValue,
-        promptCategory: promptCategoryValue,
-        promptTheme: theme
-      });
+      promptCategory: promptCategoryValue,
+      promptTheme: theme
     });
+  });
 
-    return [...basePrompts, ...attributePrompts];
-  }
+  return attributePrompts;
 };
