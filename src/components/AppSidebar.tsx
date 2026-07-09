@@ -1,4 +1,4 @@
-import { BarChart3, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass, UserPlus } from "lucide-react";
+import { BarChart3, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass, UserPlus, Search } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -72,9 +72,15 @@ const allNavigationItems = navigationGroups.flatMap(group => group.items);
 interface AppSidebarProps {
   activeSection: string;
   onSectionChange: (section: string) => void;
+  /** Opens the global command palette (⌘K / Ctrl+K search). */
+  onOpenSearch?: () => void;
 }
 
-export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) {
+// Platform-appropriate keyboard hint for the search launcher.
+const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "");
+const SEARCH_SHORTCUT = isMac ? "⌘K" : "Ctrl K";
+
+export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: AppSidebarProps) {
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
   const navigate = useNavigate();
@@ -110,6 +116,15 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
             <SidebarTrigger className="h-8 w-8" />
           </div>
           <nav className="flex flex-col items-center gap-2 flex-1 w-full mt-2">
+            {onOpenSearch && (
+              <SidebarMenuButton
+                onClick={onOpenSearch}
+                className="w-10 h-10 flex items-center justify-center rounded-lg p-0"
+                title={`Search (${SEARCH_SHORTCUT})`}
+              >
+                <Search className="h-5 w-5" />
+              </SidebarMenuButton>
+            )}
             {allNavigationItems.map((item) => (
               <SidebarMenuButton
                 key={item.section}
@@ -135,7 +150,7 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
   return (
     <>
       <Sidebar className="border-r bg-white/90 backdrop-blur-sm transition-all duration-200">
-        <SidebarHeader className="border-b border-gray-200/50 flex flex-row items-center p-6">
+        <SidebarHeader className="border-b border-gray-200/50 flex flex-row items-center justify-between p-6">
           <div className="flex items-center gap-2">
             <img
               alt="Perception Logo"
@@ -143,8 +158,24 @@ export function AppSidebar({ activeSection, onSectionChange }: AppSidebarProps) 
               src="/logos/PerceptionX-PrimaryLogo.png"
             />
           </div>
+          <SidebarTrigger className="h-7 w-7 text-[#13274F]" />
         </SidebarHeader>
         <SidebarContent className="flex-1">
+          {onOpenSearch && (
+            <div className="px-3 pt-3">
+              <button
+                type="button"
+                onClick={onOpenSearch}
+                className="w-full flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 hover:border-gray-300 transition-colors"
+              >
+                <Search className="h-4 w-4 text-gray-400" />
+                <span className="flex-1 text-left">Search…</span>
+                <kbd className="pointer-events-none inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                  {SEARCH_SHORTCUT}
+                </kbd>
+              </button>
+            </div>
+          )}
           {navigationGroups.map((group, groupIndex) => (
             <SidebarGroup key={group.title} className={group.title === "Monitoring" ? "hidden sm:block" : ""}>
               <SidebarGroupContent>

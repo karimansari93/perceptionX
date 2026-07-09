@@ -6,6 +6,8 @@ import ReactMarkdown from 'react-markdown';
 import { Sparkles, Loader2, CheckCircle2, TrendingUp, TrendingDown, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollablePills } from "./ScrollablePills";
+import { SearchInput } from "./SearchInput";
+import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
 import { Button } from "@/components/ui/button";
 import { extractSourceUrl } from "@/utils/citationUtils";
 import { Badge } from "@/components/ui/badge";
@@ -70,6 +72,11 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
   const selectedJobFunctionFilter = selectedJobFunction;
   const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
   const deferredJobFunctionFilter = useDeferredValue(selectedJobFunctionFilter);
+  // Free-text search over competitor names (ephemeral, like the Prompts tab).
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  // Let the global command palette pre-fill this tab's search.
+  useTabSearchSeed('competitors', setSearchQuery);
   const [, startTransition] = useTransition();
 
   // Distinct job functions present on the prompts behind these responses.
@@ -451,6 +458,13 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
       };
     });
   }, [allTimeCompetitors, timeBasedCompetitors]);
+
+  // Apply the free-text search on top of all other filters, before rendering.
+  const searchedCompetitors = useMemo(() => {
+    const q = deferredSearchQuery.trim().toLowerCase();
+    if (!q) return allTimeCompetitorsWithChanges;
+    return allTimeCompetitorsWithChanges.filter(c => c.name.toLowerCase().includes(q));
+  }, [allTimeCompetitorsWithChanges, deferredSearchQuery]);
 
   // Helper to extract snippets for a competitor from all responses
   const getSnippetsForCompetitor = (competitor: string) => {
@@ -996,6 +1010,13 @@ CRITICAL: When you reference information from a source, add an inline citation l
           <CardContent className="flex-1 min-h-0 overflow-hidden p-6">
             <div className="space-y-2 h-full overflow-y-auto relative">
               <div className="sticky top-0 z-10 bg-white flex items-center justify-between gap-3 px-3 pb-2">
+                <SearchInput
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  placeholder="Search competitors..."
+                  className="max-w-xs"
+                />
+                <div className="flex items-center gap-3">
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1035,12 +1056,13 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     All Competitors
                   </button>
                 </div>
+                </div>
               </div>
-              {allTimeCompetitorsWithChanges.length > 0 ? (
+              {searchedCompetitors.length > 0 ? (
                 (() => {
-                  const maxCount = Math.max(...allTimeCompetitorsWithChanges.map(c => c.count), 1);
+                  const maxCount = Math.max(...searchedCompetitors.map(c => c.count), 1);
 
-                  return allTimeCompetitorsWithChanges.map((competitor, idx) => (
+                  return searchedCompetitors.map((competitor, idx) => (
                     <div
                       key={`${competitor.name}-${deferredCompetitorTypeFilter}-${idx}`}
                       className="cursor-pointer"
@@ -1050,6 +1072,13 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     </div>
                   ));
                 })()
+              ) : deferredSearchQuery.trim() ? (
+                <div className="text-center py-12 text-gray-500">
+                  <div className="w-12 h-12 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+                    <span className="text-xl font-bold text-gray-400">🔍</span>
+                  </div>
+                  <p className="text-sm">No competitors match "{deferredSearchQuery.trim()}".</p>
+                </div>
               ) : (
                 <div className="text-center py-12 text-gray-500">
                   <div className="w-12 h-12 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">

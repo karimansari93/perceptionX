@@ -53,8 +53,9 @@ export const DashboardHeader = React.memo(({
   return (
     <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/50">
       <div className="flex items-center h-16 px-4 sm:px-8">
-        {/* SidebarTrigger first, then breadcrumbs */}
-        <SidebarTrigger className="h-7 w-7 mr-4 text-[#13274F]" />
+        {/* SidebarTrigger lives in the sidebar header on desktop; keep it here
+            for mobile, where the sidebar is a closed drawer with no other trigger. */}
+        <SidebarTrigger className="h-7 w-7 mr-4 text-[#13274F] md:hidden" />
         {breadcrumbs && breadcrumbs.length > 0 && (
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
