@@ -43,97 +43,82 @@ interface GeneratedPrompt {
   locationContext?: string;
   promptCategory: "General" | "Employee Experience" | "Candidate Experience";
   promptTheme: string;
-  talentxAttributeId?: string;
+  attributeId?: string;
 }
 
-// Matches TALENTX_PROMPT_TEMPLATES from src/config/talentXAttributes.ts
-const TALENTX_PROMPT_TEMPLATES: {
+// Matches ATTRIBUTE_PROMPT_TEMPLATES from src/config/attributes.ts
+const ATTRIBUTE_PROMPT_TEMPLATES: {
   attributeId: string;
   type: string;
   prompt: string;
   category: "Employee Experience" | "Candidate Experience";
   theme: string;
 }[] = [
-  // Mission & Purpose
-  { attributeId: "mission-purpose", type: "informational", prompt: "What does {companyName} communicate about its mission and purpose?", category: "Employee Experience", theme: "Mission & Purpose" },
-  { attributeId: "mission-purpose", type: "experience", prompt: "How well does {companyName} communicate its mission and purpose to employees, and how does this resonate with their personal values?", category: "Employee Experience", theme: "Mission & Purpose" },
-  { attributeId: "mission-purpose", type: "competitive", prompt: "How do {companyName}'s mission and purpose compare to other companies in {industry}?", category: "Employee Experience", theme: "Mission & Purpose" },
-  { attributeId: "mission-purpose", type: "discovery", prompt: "What companies in {industry} are known for having a strong, purpose-driven employer brand?", category: "Employee Experience", theme: "Mission & Purpose" },
-  // Rewards & Recognition
-  { attributeId: "rewards-recognition", type: "informational", prompt: "What are the compensation, benefits, and recognition details at {companyName}?", category: "Employee Experience", theme: "Rewards & Recognition" },
-  { attributeId: "rewards-recognition", type: "experience", prompt: "How satisfied are employees at {companyName} with the rewards and recognition programs, and what specific aspects drive positive or negative sentiment?", category: "Employee Experience", theme: "Rewards & Recognition" },
-  { attributeId: "rewards-recognition", type: "competitive", prompt: "How do rewards and recognition programs at {companyName} compare to other companies in {industry}?", category: "Employee Experience", theme: "Rewards & Recognition" },
-  { attributeId: "rewards-recognition", type: "discovery", prompt: "What companies in {industry} are known for having exceptional rewards and recognition for employees?", category: "Employee Experience", theme: "Rewards & Recognition" },
+  // Mission, Purpose & Impact
+  { attributeId: "mission-purpose-impact", type: "informational", prompt: "What should I know about {companyName}'s mission, purpose, and social impact before applying?", category: "Employee Experience", theme: "Mission, Purpose & Impact" },
+  { attributeId: "mission-purpose-impact", type: "experience", prompt: "What do employees say about the sense of purpose and impact of working at {companyName}?", category: "Employee Experience", theme: "Mission, Purpose & Impact" },
+  { attributeId: "mission-purpose-impact", type: "competitive", prompt: "How does {companyName}'s mission and impact compare to other companies in {industry}?", category: "Employee Experience", theme: "Mission, Purpose & Impact" },
+  { attributeId: "mission-purpose-impact", type: "discovery", prompt: "Which companies in {industry} are known for a strong sense of purpose and positive impact?", category: "Employee Experience", theme: "Mission, Purpose & Impact" },
+  // Compensation (tactical informational)
+  { attributeId: "compensation", type: "informational", prompt: "How good is the pay at {companyName}, and how should I negotiate salary and benefits there?", category: "Employee Experience", theme: "Compensation" },
+  { attributeId: "compensation", type: "experience", prompt: "What do employees say about pay, benefits, and perks at {companyName}?", category: "Employee Experience", theme: "Compensation" },
+  { attributeId: "compensation", type: "competitive", prompt: "Does {companyName} pay better than other companies in {industry}?", category: "Employee Experience", theme: "Compensation" },
+  { attributeId: "compensation", type: "discovery", prompt: "Which companies in {industry} pay the best and offer the best benefits and perks?", category: "Employee Experience", theme: "Compensation" },
   // Company Culture
-  { attributeId: "company-culture", type: "informational", prompt: "What does {companyName} communicate about its culture and values?", category: "Employee Experience", theme: "Company Culture" },
-  { attributeId: "company-culture", type: "experience", prompt: "How do employees at {companyName} describe the actual company culture versus the promoted culture?", category: "Employee Experience", theme: "Company Culture" },
-  { attributeId: "company-culture", type: "competitive", prompt: "How does {companyName}'s company culture compare to other companies in {industry}?", category: "Employee Experience", theme: "Company Culture" },
-  { attributeId: "company-culture", type: "discovery", prompt: "What companies in {industry} are known for outstanding workplace culture?", category: "Employee Experience", theme: "Company Culture" },
-  // Social Impact
-  { attributeId: "social-impact", type: "informational", prompt: "What social impact programs and commitments does {companyName} offer?", category: "Employee Experience", theme: "Social Impact" },
-  { attributeId: "social-impact", type: "experience", prompt: "How do employees at {companyName} perceive the company's commitment to social impact and community responsibility?", category: "Employee Experience", theme: "Social Impact" },
-  { attributeId: "social-impact", type: "competitive", prompt: "How does {companyName}'s social impact compare to other companies in {industry}?", category: "Employee Experience", theme: "Social Impact" },
-  { attributeId: "social-impact", type: "discovery", prompt: "What companies in {industry} are recognized for meaningful social impact and community engagement?", category: "Employee Experience", theme: "Social Impact" },
-  // Inclusion
-  { attributeId: "inclusion", type: "informational", prompt: "What diversity, equity, and inclusion programs does {companyName} offer?", category: "Employee Experience", theme: "Inclusion" },
-  { attributeId: "inclusion", type: "experience", prompt: "How do employees from diverse backgrounds at {companyName} rate the inclusivity of the workplace culture and practices?", category: "Employee Experience", theme: "Inclusion" },
-  { attributeId: "inclusion", type: "competitive", prompt: "How do {companyName}'s inclusion and diversity efforts compare to other companies in {industry}?", category: "Employee Experience", theme: "Inclusion" },
-  { attributeId: "inclusion", type: "discovery", prompt: "What companies in {industry} are most recognized for diversity, equity, and inclusion?", category: "Employee Experience", theme: "Inclusion" },
-  // Innovation
-  { attributeId: "innovation", type: "informational", prompt: "What does {companyName} offer in terms of innovation and technology?", category: "Employee Experience", theme: "Innovation" },
-  { attributeId: "innovation", type: "experience", prompt: "How do employees at {companyName} perceive the company's commitment to innovation and opportunities for creative work?", category: "Employee Experience", theme: "Innovation" },
-  { attributeId: "innovation", type: "competitive", prompt: "How does {companyName}'s innovation culture compare to other companies in {industry}?", category: "Employee Experience", theme: "Innovation" },
-  { attributeId: "innovation", type: "discovery", prompt: "What companies in {industry} are known for fostering innovation and creative thinking?", category: "Employee Experience", theme: "Innovation" },
-  // Wellbeing & Balance
-  { attributeId: "wellbeing-balance", type: "informational", prompt: "What are the work-life balance, flexibility, and wellbeing offerings at {companyName}?", category: "Employee Experience", theme: "Wellbeing & Balance" },
-  { attributeId: "wellbeing-balance", type: "experience", prompt: "How do employees at {companyName} rate work-life balance and the overall wellbeing support provided by the company?", category: "Employee Experience", theme: "Wellbeing & Balance" },
-  { attributeId: "wellbeing-balance", type: "competitive", prompt: "How do {companyName}'s wellbeing and work-life balance offerings compare to other companies in {industry}?", category: "Employee Experience", theme: "Wellbeing & Balance" },
-  { attributeId: "wellbeing-balance", type: "discovery", prompt: "What companies in {industry} are recognized for exceptional employee wellbeing and work-life balance?", category: "Employee Experience", theme: "Wellbeing & Balance" },
+  { attributeId: "company-culture", type: "informational", prompt: "What is the company culture really like at {companyName}?", category: "Employee Experience", theme: "Company Culture" },
+  { attributeId: "company-culture", type: "experience", prompt: "How do employees describe the culture at {companyName} — and do they feel valued and recognized?", category: "Employee Experience", theme: "Company Culture" },
+  { attributeId: "company-culture", type: "competitive", prompt: "How does the culture at {companyName} compare to other companies in {industry}?", category: "Employee Experience", theme: "Company Culture" },
+  { attributeId: "company-culture", type: "discovery", prompt: "Which companies in {industry} have the best workplace culture?", category: "Employee Experience", theme: "Company Culture" },
   // Leadership
-  { attributeId: "leadership", type: "informational", prompt: "What does {companyName} communicate about its leadership and structure?", category: "Employee Experience", theme: "Leadership" },
-  { attributeId: "leadership", type: "experience", prompt: "How do employees at {companyName} rate the quality and effectiveness of leadership within the organization?", category: "Employee Experience", theme: "Leadership" },
-  { attributeId: "leadership", type: "competitive", prompt: "How does {companyName}'s leadership quality compare to other companies in {industry}?", category: "Employee Experience", theme: "Leadership" },
-  { attributeId: "leadership", type: "discovery", prompt: "What companies in {industry} are respected for outstanding leadership and management?", category: "Employee Experience", theme: "Leadership" },
-  // Security & Perks
-  { attributeId: "security-perks", type: "informational", prompt: "What are the job security, benefits, and perks at {companyName}?", category: "Employee Experience", theme: "Security & Perks" },
-  { attributeId: "security-perks", type: "experience", prompt: "How do employees at {companyName} perceive job security, benefits, and additional perks provided by the company?", category: "Employee Experience", theme: "Security & Perks" },
-  { attributeId: "security-perks", type: "competitive", prompt: "How do {companyName}'s security, benefits, and perks compare to other companies in {industry}?", category: "Employee Experience", theme: "Security & Perks" },
-  { attributeId: "security-perks", type: "discovery", prompt: "What companies in {industry} are known for providing comprehensive benefits and job security?", category: "Employee Experience", theme: "Security & Perks" },
+  { attributeId: "leadership", type: "informational", prompt: "What should I know about the leadership and management at {companyName} before joining?", category: "Employee Experience", theme: "Leadership" },
+  { attributeId: "leadership", type: "experience", prompt: "What do employees say about managers and senior leadership at {companyName}?", category: "Employee Experience", theme: "Leadership" },
+  { attributeId: "leadership", type: "competitive", prompt: "How does the quality of leadership at {companyName} compare to other companies in {industry}?", category: "Employee Experience", theme: "Leadership" },
+  { attributeId: "leadership", type: "discovery", prompt: "Which companies in {industry} are known for great leadership and management?", category: "Employee Experience", theme: "Leadership" },
+  // Job Security (neutral informational)
+  { attributeId: "job-security", type: "informational", prompt: "How stable and secure is a job at {companyName}?", category: "Employee Experience", theme: "Job Security" },
+  { attributeId: "job-security", type: "experience", prompt: "How do employees feel about job security and stability at {companyName}?", category: "Employee Experience", theme: "Job Security" },
+  { attributeId: "job-security", type: "competitive", prompt: "Is a job at {companyName} more secure than at other companies in {industry}?", category: "Employee Experience", theme: "Job Security" },
+  { attributeId: "job-security", type: "discovery", prompt: "Which companies in {industry} offer the most stable and secure jobs?", category: "Employee Experience", theme: "Job Security" },
   // Career Opportunities
-  { attributeId: "career-opportunities", type: "informational", prompt: "What career development and growth opportunities does {companyName} offer?", category: "Employee Experience", theme: "Career Opportunities" },
-  { attributeId: "career-opportunities", type: "experience", prompt: "How do employees at {companyName} rate career development opportunities and long-term growth potential?", category: "Employee Experience", theme: "Career Opportunities" },
-  { attributeId: "career-opportunities", type: "competitive", prompt: "How do career progression opportunities at {companyName} compare to other companies in {industry}?", category: "Employee Experience", theme: "Career Opportunities" },
-  { attributeId: "career-opportunities", type: "discovery", prompt: "What companies in {industry} are most recognized for exceptional career development and progression opportunities?", category: "Employee Experience", theme: "Career Opportunities" },
-  // Application Process
-  { attributeId: "application-process", type: "informational", prompt: "What is the application process at {companyName}?", category: "Candidate Experience", theme: "Application Process" },
-  { attributeId: "application-process", type: "experience", prompt: "How is the application process at {companyName}?", category: "Candidate Experience", theme: "Application Process" },
-  { attributeId: "application-process", type: "competitive", prompt: "How does the application process at {companyName} compare to other employers in {industry}?", category: "Candidate Experience", theme: "Application Process" },
-  { attributeId: "application-process", type: "discovery", prompt: "What companies in {industry} have the best application process?", category: "Candidate Experience", theme: "Application Process" },
-  // Communication
-  { attributeId: "candidate-communication", type: "informational", prompt: "What can candidates expect in terms of communication from {companyName}?", category: "Candidate Experience", theme: "Candidate Communication" },
-  { attributeId: "candidate-communication", type: "experience", prompt: "How do candidates feel about receiving updates from {companyName}?", category: "Candidate Experience", theme: "Candidate Communication" },
-  { attributeId: "candidate-communication", type: "competitive", prompt: "How does recruiter communication at {companyName} compare to other companies in {industry}?", category: "Candidate Experience", theme: "Candidate Communication" },
-  { attributeId: "candidate-communication", type: "discovery", prompt: "What companies in {industry} are recognized for strong candidate communication?", category: "Candidate Experience", theme: "Candidate Communication" },
-  // Interview
-  { attributeId: "interview-experience", type: "informational", prompt: "What is the interview process at {companyName}?", category: "Candidate Experience", theme: "Interview Experience" },
-  { attributeId: "interview-experience", type: "experience", prompt: "How do candidates describe their interview experience at {companyName}?", category: "Candidate Experience", theme: "Interview Experience" },
+  { attributeId: "career-opportunities", type: "informational", prompt: "What career growth and progression can I expect at {companyName}?", category: "Employee Experience", theme: "Career Opportunities" },
+  { attributeId: "career-opportunities", type: "experience", prompt: "What do employees say about career development, learning, and promotions at {companyName}?", category: "Employee Experience", theme: "Career Opportunities" },
+  { attributeId: "career-opportunities", type: "competitive", prompt: "Will my career grow faster at {companyName} or at other companies in {industry}?", category: "Employee Experience", theme: "Career Opportunities" },
+  { attributeId: "career-opportunities", type: "discovery", prompt: "Which companies in {industry} are best for career growth and learning?", category: "Employee Experience", theme: "Career Opportunities" },
+  // Wellbeing & Balance
+  { attributeId: "wellbeing-balance", type: "informational", prompt: "What are the work-life balance, flexibility, and remote work options really like at {companyName}?", category: "Employee Experience", theme: "Wellbeing & Balance" },
+  { attributeId: "wellbeing-balance", type: "experience", prompt: "How do employees rate work-life balance, flexibility, and wellbeing support at {companyName}?", category: "Employee Experience", theme: "Wellbeing & Balance" },
+  { attributeId: "wellbeing-balance", type: "competitive", prompt: "Is work-life balance at {companyName} better than at other companies in {industry}?", category: "Employee Experience", theme: "Wellbeing & Balance" },
+  { attributeId: "wellbeing-balance", type: "discovery", prompt: "Which companies in {industry} are best for work-life balance and flexible or remote work?", category: "Employee Experience", theme: "Wellbeing & Balance" },
+  // Inclusion
+  { attributeId: "inclusion", type: "informational", prompt: "How inclusive and diverse is the workplace at {companyName}?", category: "Employee Experience", theme: "Inclusion" },
+  { attributeId: "inclusion", type: "experience", prompt: "What do employees from diverse backgrounds say about working at {companyName}?", category: "Employee Experience", theme: "Inclusion" },
+  { attributeId: "inclusion", type: "competitive", prompt: "How does {companyName} compare to other companies in {industry} on diversity and inclusion?", category: "Employee Experience", theme: "Inclusion" },
+  { attributeId: "inclusion", type: "discovery", prompt: "Which companies in {industry} are most recognized for diversity, equity, and inclusion?", category: "Employee Experience", theme: "Inclusion" },
+  // Innovation
+  { attributeId: "innovation", type: "informational", prompt: "How innovative is {companyName}, and what would I get to work on there?", category: "Employee Experience", theme: "Innovation" },
+  { attributeId: "innovation", type: "experience", prompt: "What do employees say about innovation and access to new technology at {companyName}?", category: "Employee Experience", theme: "Innovation" },
+  { attributeId: "innovation", type: "competitive", prompt: "Is {companyName} a more innovative place to work than other companies in {industry}?", category: "Employee Experience", theme: "Innovation" },
+  { attributeId: "innovation", type: "discovery", prompt: "Which companies in {industry} are the most innovative to work for?", category: "Employee Experience", theme: "Innovation" },
+  // Application & Communication
+  { attributeId: "application-communication", type: "informational", prompt: "What should I expect from the application process and recruiter communication at {companyName}?", category: "Candidate Experience", theme: "Application & Communication" },
+  { attributeId: "application-communication", type: "experience", prompt: "How do candidates describe applying to {companyName} — the process, updates, and communication?", category: "Candidate Experience", theme: "Application & Communication" },
+  { attributeId: "application-communication", type: "competitive", prompt: "Is applying to {companyName} a better experience than applying to other employers in {industry}?", category: "Candidate Experience", theme: "Application & Communication" },
+  { attributeId: "application-communication", type: "discovery", prompt: "Which companies in {industry} have the best application process and candidate communication?", category: "Candidate Experience", theme: "Application & Communication" },
+  // Candidate Feedback
+  { attributeId: "candidate-feedback", type: "informational", prompt: "Will I get useful feedback after applying or interviewing at {companyName}?", category: "Candidate Experience", theme: "Candidate Feedback" },
+  { attributeId: "candidate-feedback", type: "experience", prompt: "What do candidates say about the feedback they get from {companyName} after interviews and applications?", category: "Candidate Experience", theme: "Candidate Feedback" },
+  { attributeId: "candidate-feedback", type: "competitive", prompt: "How does {companyName} compare to other employers in {industry} at giving candidates feedback?", category: "Candidate Experience", theme: "Candidate Feedback" },
+  { attributeId: "candidate-feedback", type: "discovery", prompt: "Which companies in {industry} are known for giving candidates valuable feedback?", category: "Candidate Experience", theme: "Candidate Feedback" },
+  // Interview Experience (the 70% flagship)
+  { attributeId: "interview-experience", type: "informational", prompt: "How should I prepare for a job interview at {companyName}?", category: "Candidate Experience", theme: "Interview Experience" },
+  { attributeId: "interview-experience", type: "experience", prompt: "How do candidates describe the interview experience at {companyName}?", category: "Candidate Experience", theme: "Interview Experience" },
   { attributeId: "interview-experience", type: "competitive", prompt: "How does the interview process at {companyName} compare to other companies in {industry}?", category: "Candidate Experience", theme: "Interview Experience" },
-  { attributeId: "interview-experience", type: "discovery", prompt: "What companies in {industry} have the best interview experience?", category: "Candidate Experience", theme: "Interview Experience" },
-  // Feedback
-  { attributeId: "candidate-feedback", type: "informational", prompt: "What feedback do candidates receive from {companyName}?", category: "Candidate Experience", theme: "Candidate Feedback" },
-  { attributeId: "candidate-feedback", type: "experience", prompt: "How do candidates rate the feedback from {companyName} after interviews or applications?", category: "Candidate Experience", theme: "Candidate Feedback" },
-  { attributeId: "candidate-feedback", type: "competitive", prompt: "How does candidate feedback at {companyName} compare to other employers in {industry}?", category: "Candidate Experience", theme: "Candidate Feedback" },
-  { attributeId: "candidate-feedback", type: "discovery", prompt: "What companies in {industry} are known for providing valuable candidate feedback?", category: "Candidate Experience", theme: "Candidate Feedback" },
+  { attributeId: "interview-experience", type: "discovery", prompt: "Which companies in {industry} have the best interview experience?", category: "Candidate Experience", theme: "Interview Experience" },
   // Onboarding
-  { attributeId: "onboarding-experience", type: "informational", prompt: "What does onboarding look like at {companyName}?", category: "Candidate Experience", theme: "Onboarding Experience" },
-  { attributeId: "onboarding-experience", type: "experience", prompt: "How do new hires feel about onboarding at {companyName}?", category: "Candidate Experience", theme: "Onboarding Experience" },
-  { attributeId: "onboarding-experience", type: "competitive", prompt: "How does onboarding at {companyName} compare to other organizations in {industry}?", category: "Candidate Experience", theme: "Onboarding Experience" },
-  { attributeId: "onboarding-experience", type: "discovery", prompt: "What companies in {industry} have the best onboarding experience?", category: "Candidate Experience", theme: "Onboarding Experience" },
-  // Overall Candidate Experience
-  { attributeId: "overall-candidate-experience", type: "informational", prompt: "What can candidates expect from the hiring experience at {companyName}?", category: "Candidate Experience", theme: "Overall Candidate Experience" },
-  { attributeId: "overall-candidate-experience", type: "experience", prompt: "How do candidates perceive the overall journey at {companyName}?", category: "Candidate Experience", theme: "Overall Candidate Experience" },
-  { attributeId: "overall-candidate-experience", type: "competitive", prompt: "Does {companyName} stand out for candidate experience in {industry}?", category: "Candidate Experience", theme: "Overall Candidate Experience" },
-  { attributeId: "overall-candidate-experience", type: "discovery", prompt: "What companies in {industry} have the best overall candidate reputation?", category: "Candidate Experience", theme: "Overall Candidate Experience" },
+  { attributeId: "onboarding-experience", type: "informational", prompt: "What should I expect when I first start working at {companyName}?", category: "Candidate Experience", theme: "Onboarding" },
+  { attributeId: "onboarding-experience", type: "experience", prompt: "How do new hires describe their onboarding and first months at {companyName}?", category: "Candidate Experience", theme: "Onboarding" },
+  { attributeId: "onboarding-experience", type: "competitive", prompt: "How does onboarding at {companyName} compare to other companies in {industry}?", category: "Candidate Experience", theme: "Onboarding" },
+  { attributeId: "onboarding-experience", type: "discovery", prompt: "Which companies in {industry} have the best onboarding for new hires?", category: "Candidate Experience", theme: "Onboarding" },
 ];
 
 const ENGLISH_SPEAKING_COUNTRIES = [
@@ -179,28 +164,15 @@ function generatePrompts(
 ): GeneratedPrompt[] {
   const locationDisplay = location && location !== "GLOBAL" ? resolveCountryName(location) : undefined;
 
-  // 4 base prompts (General category)
-  const basePrompts: GeneratedPrompt[] = [
-    { id: "experience-1", text: `How is ${companyName} as an employer?`, type: "experience", promptCategory: "General", promptTheme: "General" },
-    { id: "discovery-1", text: `What is the best company to work for in the ${industry} industry?`, type: "discovery", promptCategory: "General", promptTheme: "General" },
-    { id: "competitive-1", text: `How does working at ${companyName} compare to other companies?`, type: "competitive", promptCategory: "General", promptTheme: "General" },
-    { id: "informational-1", text: `What are the job and employment details at ${companyName}?`, type: "informational", promptCategory: "General", promptTheme: "General" },
-  ].map((p) => ({
-    ...p,
-    text: appendPromptContext(p.text, jobFunction, locationDisplay),
-    industryContext: industry,
-    jobFunctionContext: jobFunction,
-    locationContext: locationDisplay,
-  }));
-
-  // 64 TalentX prompts (always Pro in admin context)
-  const talentxPrompts: GeneratedPrompt[] = TALENTX_PROMPT_TEMPLATES.map((t) => {
+  // Methodology v2 (July 2026): 52 attribute prompts (13 × 4). Base "General"
+  // prompts were retired. See docs/methodology-v2-prompt-taxonomy.md.
+  const attributePrompts: GeneratedPrompt[] = ATTRIBUTE_PROMPT_TEMPLATES.map((t) => {
     const raw = t.prompt
       .replace(/{companyName}/g, companyName)
       .replace(/{industry}/g, industry);
 
     return {
-      id: `talentx-${t.attributeId}-${t.type}`,
+      id: `attribute-${t.attributeId}-${t.type}`,
       text: appendPromptContext(raw, jobFunction, locationDisplay),
       type: t.type as GeneratedPrompt["type"],
       industryContext: industry,
@@ -208,11 +180,11 @@ function generatePrompts(
       locationContext: locationDisplay,
       promptCategory: t.category,
       promptTheme: t.theme,
-      talentxAttributeId: t.attributeId,
+      attributeId: t.attributeId,
     };
   });
 
-  return [...basePrompts, ...talentxPrompts];
+  return attributePrompts;
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +218,7 @@ serve(async (req) => {
     const effectiveModels = Array.isArray(models) && models.length > 0 ? models : DEFAULT_MODELS;
     const promptTypeFilter: string[] | null =
       Array.isArray(promptTypes) && promptTypes.length > 0
-        ? promptTypes.flatMap((t) => [t, `talentx_${t}`])
+        ? promptTypes
         : null;
 
     // If configId supplied, ensure org is created for new_org mode before processing
@@ -434,7 +406,7 @@ serve(async (req) => {
         //    Dedupe in two passes before the INSERT (can't use ON CONFLICT —
         //    the unique index is partial, PostgREST doesn't support that):
         //    a) In-memory on (prompt_text, prompt_type) — translation can
-        //       occasionally produce identical output for two different TalentX
+        //       occasionally produce identical output for two different attribute
         //       templates within the same batch.
         //    b) Against existing DB rows for this (company, location) — a
         //       previous run may have already inserted the same text, and the
@@ -442,7 +414,7 @@ serve(async (req) => {
         const inMemorySeen = new Set<string>();
         const candidates: any[] = [];
         for (const p of finalPrompts) {
-          const promptType = p.talentxAttributeId ? `talentx_${p.type}` : p.type;
+          const promptType = p.type;
           const key = `${p.text}||${promptType}`;
           if (inMemorySeen.has(key)) continue;
           inMemorySeen.add(key);
@@ -454,11 +426,12 @@ serve(async (req) => {
             prompt_category: p.promptCategory,
             prompt_theme: p.promptTheme,
             prompt_type: promptType,
-            talentx_attribute_id: p.talentxAttributeId || null,
+            attribute_id: p.attributeId || null,
             industry_context: p.industryContext,
             job_function_context: p.jobFunctionContext || null,
             location_context: p.locationContext || null,
             is_active: true,
+            prompt_version: 2,
           });
         }
 
@@ -533,28 +506,54 @@ serve(async (req) => {
 
         if (onbError) throw new Error(`Onboarding insert failed: ${onbError.message}`);
 
-        // 2. Wait for DB trigger to create companies row (poll up to 10× with backoff)
+        // 2. Resolve the company. A company's identity is (name + org) ONLY.
+        //    Industry, market, and function are peer *data dimensions* that make
+        //    each prompt unique (industry_context / location_context /
+        //    job_function_context) — they must NOT fork the company row, or the
+        //    dashboard can't pivot one employer across those dimensions. Every
+        //    (industry, location, function) setup job for the same employer must
+        //    converge on ONE companies row. (The auto_create_company trigger that
+        //    used to dedupe was dropped in migration 20260504063318, so we dedupe
+        //    here.) This prevents the duplicate-company fan-out where each job
+        //    spawned its own "Netflix Animation Studios".
+        const setupOrgId =
+          config.org_mode === "new_org" ? config.created_org_id : config.organization_id;
+
         let companyId: string | null = null;
-        for (let attempt = 0; attempt < 10; attempt++) {
-          const delay = Math.min(500 * Math.pow(2, attempt), 10000);
-          await new Promise((r) => setTimeout(r, delay));
 
-          const { data: onbRow } = await supabase
-            .from("user_onboarding")
-            .select("company_id")
-            .eq("id", onboarding.id)
-            .single();
-
-          if (onbRow?.company_id) {
-            companyId = onbRow.company_id;
-            break;
-          }
-          console.log(`[BatchQueue] Waiting for company... attempt ${attempt + 1}`);
+        if (setupOrgId) {
+          const { data: existingCompany } = await supabase
+            .from("companies")
+            .select("id, organization_companies!inner(organization_id)")
+            .eq("name", job.company_name)
+            .eq("organization_companies.organization_id", setupOrgId)
+            .order("created_at", { ascending: true })
+            .limit(1)
+            .maybeSingle();
+          if (existingCompany) companyId = existingCompany.id;
         }
 
         if (!companyId) {
-          throw new Error("Company was not created by DB trigger after 10 attempts");
+          const { data: companyData, error: companyError } = await supabase
+            .from("companies")
+            .insert({
+              name: job.company_name,
+              industry: job.industry,
+              created_by: config.user_id,
+              onboarding_id: onboarding.id,
+            })
+            .select("id")
+            .single();
+
+          if (companyError) throw new Error(`Company insert failed: ${companyError.message}`);
+          companyId = companyData.id;
         }
+
+        // Keep user_onboarding.company_id in sync for any legacy reads.
+        await supabase
+          .from("user_onboarding")
+          .update({ company_id: companyId })
+          .eq("id", onboarding.id);
 
         // 3. Generate prompts
         const prompts = generatePrompts(
@@ -597,34 +596,59 @@ serve(async (req) => {
           }
         }
 
-        // 5. Insert confirmed_prompts
-        const promptRows = finalPrompts.map((p) => ({
+        // 5. Insert confirmed_prompts. Dedupe against any rows already present
+        //    for this (company, location) — because the company may now be
+        //    shared across sibling setup jobs (and across retries), a plain
+        //    insert could otherwise collide on the partial unique index and
+        //    abort the whole batch.
+        const setupCandidates = finalPrompts.map((p) => ({
           onboarding_id: onboarding.id,
           user_id: config.user_id,
           company_id: companyId,
           prompt_text: p.text,
           prompt_category: p.promptCategory,
           prompt_theme: p.promptTheme,
-          prompt_type: p.talentxAttributeId ? `talentx_${p.type}` : p.type,
-          talentx_attribute_id: p.talentxAttributeId || null,
+          prompt_type: p.type,
+          attribute_id: p.attributeId || null,
           industry_context: p.industryContext,
           job_function_context: p.jobFunctionContext || null,
           location_context: p.locationContext || null,
           is_active: true,
+          prompt_version: 2,
         }));
 
-        const { error: insertError } = await supabase
+        const { data: setupExisting, error: setupExistingErr } = await supabase
           .from("confirmed_prompts")
-          .insert(promptRows);
+          .select("prompt_text, prompt_type, industry_context")
+          .eq("company_id", companyId)
+          .eq("location_context", finalPrompts[0]?.locationContext ?? null);
+        if (setupExistingErr) throw new Error(`Existing prompt check failed: ${setupExistingErr.message}`);
 
-        if (insertError) throw new Error(`Prompt insert failed: ${insertError.message}`);
+        const setupExistingSig = new Set(
+          (setupExisting || []).map(
+            (r: any) => `${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`,
+          ),
+        );
 
-        // 6. Link company to organization
-        const orgId = config.org_mode === "new_org" ? config.created_org_id : config.organization_id;
-        if (orgId) {
+        const promptRows = setupCandidates.filter((r) => {
+          const sig = `${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`;
+          return !setupExistingSig.has(sig);
+        });
+
+        if (promptRows.length > 0) {
+          const { error: insertError } = await supabase
+            .from("confirmed_prompts")
+            .insert(promptRows);
+
+          if (insertError) throw new Error(`Prompt insert failed: ${insertError.message}`);
+        }
+
+        // 6. Link company to organization (idempotent — may already be linked
+        //    from a sibling setup job that created/reused the same company).
+        if (setupOrgId) {
           await supabase
             .from("organization_companies")
-            .insert({ organization_id: orgId, company_id: companyId, added_by: config.user_id })
+            .insert({ organization_id: setupOrgId, company_id: companyId, added_by: config.user_id })
             .select()
             .maybeSingle(); // ignore duplicate
           // company_members retired — membership inherits from
@@ -654,6 +678,14 @@ serve(async (req) => {
       // job_function) has been collected.
       // =======================================================================
       else if (job.phase === "llm_collection") {
+        // NOTE: widening this in-invocation (CHUNK_SIZE 8 + batchSize=CHUNK_SIZE)
+        // did NOT speed collection up — measured ~122 prompts/hr either way — and
+        // pushed a single collect-company-responses call to ~147s, right at the
+        // 150s edge-function timeout. One edge invocation can't truly parallelize
+        // ~40 concurrent sub-calls (CPU/runtime serialization), so a bigger batch
+        // just runs proportionally longer at the same rate, with timeout risk.
+        // Reverted to the proven-stable 2. Real throughput fix = fan out across
+        // multiple concurrent invocations, not a bigger single batch.
         const CHUNK_SIZE = 2;
         console.log(`[BatchQueue] Phase: llm_collection (batch_index=${job.batch_index})`);
 
@@ -752,8 +784,15 @@ serve(async (req) => {
             await supabase
               .from("company_batch_queue")
               .update({
+                // Not done yet → leave as 'pending' (not 'processing') so the
+                // self-chained invocation can immediately re-claim this row and
+                // collect the next chunk. Marking it 'processing' here strands
+                // it until the 5-minute watchdog flips it back, which throttles
+                // collection to one chunk per job every ~5 min and floods Slack
+                // with reset alerts. The atomic CAS claim still prevents two
+                // workers grabbing the same row, so 'pending' is safe.
                 phase: isDone ? "done" : "llm_collection",
-                status: isDone ? "completed" : "processing",
+                status: isDone ? "completed" : "pending",
                 batch_index: newOffset,
                 total_prompts: totalPrompts,
                 updated_at: new Date().toISOString(),
