@@ -51,6 +51,7 @@ const llmModels = [
   { name: "Google AI Overviews", model: "google-ai-overviews" },
   { name: "Google AI Mode", model: "google-ai-mode" },
   { name: "DeepSeek", model: "deepseek" },
+  { name: "Claude", model: "claude" },
 ];
 
 export const LoadingModal = ({ 

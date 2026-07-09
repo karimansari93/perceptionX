@@ -16,7 +16,7 @@ interface RefreshOptions {
   companyId?: string;
 }
 
-const PRO_MODELS = ['openai', 'perplexity', 'google-ai-overviews', 'google-ai-mode', 'gemini', 'deepseek'];
+const PRO_MODELS = ['openai', 'perplexity', 'google-ai-overviews', 'google-ai-mode', 'gemini', 'deepseek', 'claude'];
 
 export const useRefreshPrompts = () => {
   const { user } = useAuth();

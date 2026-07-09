@@ -42,6 +42,7 @@ const ALL_MODELS = [
   { id: "google-ai-mode", label: "Google AI Mode" },
   { id: "deepseek", label: "DeepSeek" },
   { id: "gemini", label: "Gemini" },
+  { id: "claude", label: "Claude" },
 ] as const;
 
 const COUNTRY_SUGGESTIONS = [

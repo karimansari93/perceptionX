@@ -2,11 +2,11 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
-const PRO_MODELS = ['openai', 'perplexity', 'gemini', 'deepseek', 'google-ai-overviews', 'google-ai-mode'];
+const PRO_MODELS = ['openai', 'perplexity', 'gemini', 'deepseek', 'google-ai-overviews', 'google-ai-mode', 'claude'];
 
 // How many prompts to send per edge function invocation.
-// With 6 models (Pro) and batchSize 1 inside the edge function,
-// each chunk processes CHUNK_SIZE prompts sequentially (1 prompt × 6 models each).
+// With 7 models (Pro) and batchSize 1 inside the edge function,
+// each chunk processes CHUNK_SIZE prompts sequentially (1 prompt × 7 models each).
 // ~20-25s per prompt → 8 prompts ≈ 160-200s. Keep under 150s edge function limit.
 const PROMPT_CHUNK_SIZE = 5;
 

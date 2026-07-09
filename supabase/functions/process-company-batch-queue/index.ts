@@ -242,7 +242,7 @@ serve(async (req) => {
       models?: string[];
     } = await req.json().catch(() => ({}));
 
-    const DEFAULT_MODELS = ["openai", "perplexity", "google-ai-overviews", "google-ai-mode"];
+    const DEFAULT_MODELS = ["openai", "perplexity", "google-ai-overviews", "google-ai-mode", "claude"];
     const effectiveModels = Array.isArray(models) && models.length > 0 ? models : DEFAULT_MODELS;
     const promptTypeFilter: string[] | null =
       Array.isArray(promptTypes) && promptTypes.length > 0

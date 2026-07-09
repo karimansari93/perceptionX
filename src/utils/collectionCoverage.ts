@@ -1,8 +1,10 @@
 /**
  * Expected number of AI models per prompt (one response from each model).
- * "Completed" = every prompt has 6 responses (openai, perplexity, gemini, deepseek, google-ai-overviews, google-ai-mode).
+ * "Completed" = every prompt has 7 responses (openai, perplexity, gemini, deepseek, google-ai-overviews, google-ai-mode, claude).
+ * NOTE: companies collected before Claude was added will show Incomplete until
+ * a gap-fill run collects their Claude responses.
  */
-export const EXPECTED_MODELS_PER_PROMPT = 6;
+export const EXPECTED_MODELS_PER_PROMPT = 7;
 
 export function isCoverageComplete(promptCount: number, responseCount: number): boolean {
   if (promptCount === 0) return true;

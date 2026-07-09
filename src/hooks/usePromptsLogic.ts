@@ -519,7 +519,7 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
   
   // Use batch collection function
   const promptIds = confirmedPrompts?.map(p => p.id) || [];
-  const modelNames = ['openai', 'perplexity', 'google-ai-overviews'];
+  const modelNames = ['openai', 'perplexity', 'google-ai-overviews', 'claude'];
   
   setProgress({ 
     currentModel: 'Batch Processing',
