@@ -1,6 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 
+// Default model: Sonnet is what claude.ai serves consumer users, so for GEO
+// measurement we pin the current Sonnet (claude-sonnet-5) — same rationale as
+// test-prompt-openai tracking ChatGPT's live default (gpt-5.5). Citations only
+// mean something if they reflect what real Claude users see.
+const PRIMARY_MODEL = 'claude-sonnet-5'
+// Tried in order if the primary is rejected (e.g. future deprecation) so
+// collection degrades gracefully instead of failing outright.
+const MODEL_FALLBACKS = ['claude-sonnet-4-5', 'claude-sonnet-4-20250514']
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
@@ -19,7 +28,7 @@ serve(async (req) => {
       enableWebSearch = true,
       batch = false,
       // Optional caller-overrides. Defaults preserve existing behaviour for
-      // backend pipelines (Sonnet 4, 1500 max tokens). Dashboard AI summaries
+      // backend pipelines (Sonnet, 1500 max tokens). Dashboard AI summaries
       // pass `model: 'claude-haiku-4-5'` to use Haiku's higher rate-limit tier
       // and a smaller `maxTokens` for short structured outputs.
       model: requestedModel,
@@ -42,54 +51,71 @@ serve(async (req) => {
     // In batch mode (or when web search is explicitly disabled), omit tools entirely
     // to keep responses fast (~5-10s) and within Supabase edge function timeout limits.
     const useWebSearch = enableWebSearch && !batch;
-    const model = typeof requestedModel === 'string' && requestedModel.length > 0
-      ? requestedModel
-      : 'claude-sonnet-4-20250514';
     const maxTokens = typeof requestedMaxTokens === 'number' && requestedMaxTokens > 0
       ? requestedMaxTokens
       : (batch ? 800 : 1500);
 
-    console.log(`Making request to Claude API (model=${model}, batch=${batch}, webSearch=${useWebSearch}, maxTokens=${maxTokens})...`)
+    // An explicit caller override pins a single model; otherwise walk the
+    // primary + fallback chain.
+    const modelsToTry = typeof requestedModel === 'string' && requestedModel.length > 0
+      ? [requestedModel]
+      : [PRIMARY_MODEL, ...MODEL_FALLBACKS];
 
-    const requestBody: Record<string, any> = {
-      model,
-      max_tokens: maxTokens,
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.7,
-    };
+    let claudeResponse: Response | null = null;
+    let data: any = null;
 
-    // Only include tools when web search is enabled. Pairing the tool with a
-    // system instruction that asks Claude to search and cite produces
-    // Perplexity-style answers grounded in (and citing) web sources.
-    if (useWebSearch) {
-      requestBody.tools = [{
-        type: "web_search_20250305",
-        name: "web_search",
-        max_uses: 5
-      }];
-      requestBody.system = "You are a research assistant. Use the web_search tool to find current, factual information before answering, and ground your answer in the sources you find. Always cite the sources you used.";
+    for (const model of modelsToTry) {
+      console.log(`Making request to Claude API (model=${model}, batch=${batch}, webSearch=${useWebSearch}, maxTokens=${maxTokens})...`)
+
+      const requestBody: Record<string, any> = {
+        model,
+        max_tokens: maxTokens,
+        messages: [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        // No `temperature`: Claude 5 models reject it as deprecated, and the
+        // API default matches what claude.ai users get.
+      };
+
+      // Only include tools when web search is enabled. Pairing the tool with a
+      // system instruction that asks Claude to search and cite produces
+      // Perplexity-style answers grounded in (and citing) web sources.
+      if (useWebSearch) {
+        requestBody.tools = [{
+          type: "web_search_20250305",
+          name: "web_search",
+          max_uses: 5
+        }];
+        requestBody.system = "You are a research assistant. Use the web_search tool to find current, factual information before answering, and ground your answer in the sources you find. Always cite the sources you used.";
+      }
+
+      claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': claudeApiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify(requestBody)
+      })
+
+      console.log('Claude API response status:', claudeResponse.status)
+      data = await claudeResponse.json()
+
+      // Only an unknown-model rejection moves to the next fallback; every
+      // other error (auth, rate limit, bad prompt) is handled below. The API
+      // reports an unknown model as a bare "model: <id>" message.
+      const isUnknownModel = !claudeResponse.ok &&
+        data?.error?.type === 'invalid_request_error' &&
+        /^model:/i.test((data?.error?.message || '').trim());
+      if (!isUnknownModel) break;
+      console.warn(`Model ${model} rejected (${data?.error?.message}); trying next fallback`);
     }
 
-    const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': claudeApiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify(requestBody)
-    })
-
-    console.log('Claude API response status:', claudeResponse.status)
-
-    const data = await claudeResponse.json()
-
-    if (!claudeResponse.ok) {
+    if (!claudeResponse!.ok) {
       // Handle specific Claude API errors
       if (data.error?.type === 'authentication_error') {
         console.error('Claude API authentication error:', data.error);
@@ -116,7 +142,7 @@ serve(async (req) => {
         throw new Error(`Claude API invalid request: ${data.error.message}`)
       } else {
         console.error('Claude API error:', data.error);
-        throw new Error(data.error?.message || `Claude API error: ${claudeResponse.status}`)
+        throw new Error(data.error?.message || `Claude API error: ${claudeResponse!.status}`)
       }
     }
 
@@ -126,7 +152,7 @@ serve(async (req) => {
     // Web search responses interleave text blocks with server_tool_use and
     // web_search_tool_result blocks: Claude writes a sentence, searches,
     // writes more, searches again, etc. The complete answer is the
-    // concatenation of every text block — NOT just the last one (the previous
+    // concatenation of every text block — NOT just the last one (an earlier
     // implementation returned only the last block, which truncated most
     // web-search answers down to the final sentence or two).
     const response = contentArray
@@ -195,7 +221,7 @@ serve(async (req) => {
  * answer on, matching Perplexity's `citations`) and fall back to the raw search
  * results only when no inline citations are present.
  *
- * The previous implementation looked for top-level blocks of type
+ * An earlier implementation looked for top-level blocks of type
  * 'web_search_result_location' — which never exist at the top level — so
  * citations always came back empty. That was the root cause of this function
  * "never working".
