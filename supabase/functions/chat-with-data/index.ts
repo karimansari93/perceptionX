@@ -1255,10 +1255,26 @@ async function handleStreamingRound(
     body: JSON.stringify({
       model,
       max_tokens: 4096,
-      system: systemPrompt,
+      // Prompt caching, two breakpoints:
+      //  1. Explicit breakpoint on the system block — caches the ~10K-token
+      //     tools array + system prompt prefix, which is identical on every
+      //     round of every conversation for this org. Rounds after the first
+      //     read it at 10% of input price instead of reprocessing it.
+      //  2. Top-level automatic caching — moves a breakpoint to the last
+      //     message block each round, so the growing conversation/tool-result
+      //     history is incrementally cached across rounds and across user
+      //     turns within the 5-min TTL.
+      system: [
+        {
+          type: 'text',
+          text: systemPrompt,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
       messages: currentMessages,
       tools,
       stream: true,
+      cache_control: { type: 'ephemeral' },
     }),
   });
 
@@ -1291,6 +1307,14 @@ async function handleStreamingRound(
       try { event = JSON.parse(data); } catch { continue; }
 
       switch (event.type) {
+        case 'message_start': {
+          const usage = event.message?.usage;
+          if (usage) {
+            console.log(`[${requestId}] cache read=${usage.cache_read_input_tokens ?? 0} write=${usage.cache_creation_input_tokens ?? 0} input=${usage.input_tokens ?? 0}`);
+          }
+          break;
+        }
+
         case 'content_block_start':
           if (event.content_block?.type === 'tool_use') {
             contentBlocks[event.index] = {
