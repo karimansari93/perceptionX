@@ -87,7 +87,11 @@ serve(async (req) => {
         requestBody.tools = [{
           type: "web_search_20250305",
           name: "web_search",
-          max_uses: 5
+          // 3 (down from 5): each search round re-bills the retrieved page
+          // content as input tokens, which is the dominant cost line for
+          // collection runs. 2-3 searches still yields well-cited answers;
+          // the 4th/5th rounds mostly added marginal sources at full price.
+          max_uses: 3
         }];
         requestBody.system = "You are a research assistant. Use the web_search tool to find current, factual information before answering, and ground your answer in the sources you find. Always cite the sources you used.";
       }
