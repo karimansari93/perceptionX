@@ -11,10 +11,20 @@ const PRIMARY_MODEL = 'gpt-5.5'
 // preserving the original "never silently degrade" intent while staying robust.
 const MODEL_FALLBACKS = ['gpt-5.2', 'gpt-4.1']
 
+// Soft cap on web searches per call. The built-in web_search tool has no hard
+// limit parameter, so the cap is applied via the instructions. A/B-validated
+// 2026-07-10 (scripts/ab-search-cap.mjs + uncapped control): capped runs kept
+// 57% of the uncapped run's cited domains vs a 55% noise floor between two
+// identical uncapped runs — i.e. no measurable citation loss — while cutting
+// avg searches 4.5→2.7, input tokens ~27%, and total call cost ~34%.
+const MAX_WEB_SEARCHES = 2
+
 const SYSTEM_INSTRUCTIONS =
   `You are a research assistant providing well-sourced, up-to-date information ` +
   `about companies and their reputation as employers. Use web search to ground ` +
-  `your answer in current sources, and cite the specific pages you rely on.`
+  `your answer in current sources, and cite the specific pages you rely on. ` +
+  `Use at most ${MAX_WEB_SEARCHES} web searches; pick the most authoritative ` +
+  `sources rather than searching broadly.`
 
 // Tracking params various sources (and OpenAI's web_search, which appends
 // `utm_source=openai`) add to citation URLs. Stripping them keeps
