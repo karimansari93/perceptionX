@@ -34,6 +34,12 @@ serve(async (req) => {
       // "fill April's Perplexity gap" — set to "2026-04" and only prompts
       // missing an April response get run, regardless of Jan/Feb/May data.
       skipIfCollectedInMonth = null,
+      // When true, 'claude' is stripped from the synchronous model loop and
+      // submitted to the Anthropic Message Batches API instead (50% cheaper;
+      // results land asynchronously via claude-batch-collector's poll tick).
+      // Latency-tolerant callers (process-company-batch-queue) set this;
+      // user-facing onboarding stays synchronous so its progress UI completes.
+      claudeViaBatch = false,
     } = body;
 
     // Derive month window [start, next-month-start) from "YYYY-MM".
@@ -161,9 +167,49 @@ serve(async (req) => {
       errors: [] as string[],
     };
 
+    // Route Claude through the Message Batches API when requested. The
+    // collector does its own skip-existing + in-flight dedupe, so chunked
+    // self-chaining callers (the batch queue) can invoke this repeatedly
+    // without double-submitting.
+    let syncModels = [...models];
+    let claudeBatchSummary: any = null;
+    if (claudeViaBatch && syncModels.includes("claude")) {
+      syncModels = syncModels.filter((m: string) => m !== "claude");
+      try {
+        const submitRes = await fetch(
+          `${supabaseUrl}/functions/v1/claude-batch-collector`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${supabaseKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "submit",
+              companyId,
+              promptIds: allPrompts.map((p: any) => p.id),
+              skipIfCollectedInMonth,
+            }),
+          },
+        );
+        claudeBatchSummary = await submitRes.json();
+        if (!submitRes.ok || !claudeBatchSummary?.success) {
+          throw new Error(claudeBatchSummary?.error || `status ${submitRes.status}`);
+        }
+        console.log(
+          `Claude batch submit: ${claudeBatchSummary.submitted} prompts in ${claudeBatchSummary.batchesCreated || 0} batches`,
+        );
+      } catch (err: any) {
+        // Non-fatal: the rest of the models still collect synchronously, and
+        // a later chunk/run resubmits whatever is still missing.
+        console.error("Claude batch submit failed:", err.message);
+        results.errors.push(`Claude batch submit failed: ${err.message}`);
+      }
+    }
+
     // Process prompts in batches
     const totalPrompts = allPrompts.length;
-    const totalOperations = totalPrompts * models.length;
+    const totalOperations = totalPrompts * syncModels.length;
     let batchesProcessed = 0;
 
     // TODO [12.8]: Add data_collection_last_heartbeat timestamptz column updated every ~10s
@@ -194,7 +240,7 @@ serve(async (req) => {
     // TODO [12.7]: batchSize fires more parallel calls than expected — batchSize N runs
     // N prompts × M models simultaneously via Promise.all. Consider processing prompts
     // sequentially within each batch, or keep batchSize at 2 from queue processors.
-    for (let batchOffset = 0; batchOffset < totalPrompts; batchOffset += batchSize) {
+    for (let batchOffset = 0; syncModels.length > 0 && batchOffset < totalPrompts; batchOffset += batchSize) {
       const batchEnd = Math.min(batchOffset + batchSize, totalPrompts);
       const batch = allPrompts.slice(batchOffset, batchEnd);
 
@@ -206,7 +252,7 @@ serve(async (req) => {
       const promptPromises = batch.map(async (prompt: any, promptIdx: number) => {
         try {
           // Check existing responses if skipExisting is true
-          let modelsToProcess = [...models];
+          let modelsToProcess = [...syncModels];
           if (skipExisting) {
             let existingQuery = supabase
               .from("prompt_responses")
@@ -230,7 +276,7 @@ serve(async (req) => {
             const existingModels = new Set(
               existingResponses?.map((r: any) => r.ai_model) || [],
             );
-            modelsToProcess = models.filter((m) => !existingModels.has(m));
+            modelsToProcess = syncModels.filter((m) => !existingModels.has(m));
 
             if (modelsToProcess.length === 0) {
               console.log(
@@ -383,10 +429,18 @@ serve(async (req) => {
         summary: {
           batchesProcessed,
           totalPrompts,
-          totalOperations: totalPrompts * models.length,
+          totalOperations: totalPrompts * syncModels.length,
           promptsProcessed: results.promptsProcessed,
           responsesCollected: results.responsesCollected,
           errorsCount: results.errors.length,
+          ...(claudeBatchSummary
+            ? {
+                claudeBatch: {
+                  submitted: claudeBatchSummary.submitted ?? 0,
+                  batchesCreated: claudeBatchSummary.batchesCreated ?? 0,
+                },
+              }
+            : {}),
         },
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },

@@ -771,6 +771,10 @@ serve(async (req) => {
                   batchSize: 1,
                   skipExisting: true,
                   skipIfCollectedInMonth,
+                  // Queue runs are latency-tolerant: route Claude through the
+                  // Anthropic Message Batches API (50% cheaper). Results land
+                  // asynchronously via claude-batch-collector's poll tick.
+                  claudeViaBatch: true,
                 },
               },
             );
