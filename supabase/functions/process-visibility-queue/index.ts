@@ -95,7 +95,7 @@ serve(async (req) => {
                 country: countryCode,
                 status: "pending",
                 batch_index: 0,
-                total_prompts: 16, // Default
+                total_prompts: 13, // Methodology v2: 13 discovery prompts per industry×country
               });
             }
           }

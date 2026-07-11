@@ -668,10 +668,10 @@ export const VisibilityRankingsTab = () => {
           );
 
         // Step 2: Collect responses in small batches to avoid 504 Timeouts
-        // We assume ~16 prompts total.
+        // Methodology v2: 13 discovery prompts total (one per attribute).
         // Batch size of 1 prompt * 3 models (parallel) = ~15s.
         // This is much safer for the 60s timeout limit.
-        const TOTAL_PROMPTS = 16;
+        const TOTAL_PROMPTS = 13;
         const BATCH_SIZE = 1;
 
         for (let offset = 0; offset < TOTAL_PROMPTS; offset += BATCH_SIZE) {

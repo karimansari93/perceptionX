@@ -141,170 +141,93 @@ serve(async (req) => {
     // This name will be inserted into the natural language prompts.
     const promptLocationName = resolvedCountryName;
 
-    // Visibility prompt templates for Employee Experience and Candidate Experience
+    // Visibility prompt templates — Methodology v2 (13-attribute taxonomy).
+    // Discovery wording mirrors the v2 templates in process-company-batch-queue
+    // (see docs/methodology-v2-prompt-taxonomy.md), with the industry-visibility
+    // location suffix added. Keep in sync when the taxonomy changes.
+    const locationSuffix = (country?: string) =>
+      country && country !== "GLOBAL" ? ` in ${promptLocationName}` : "";
     const VISIBILITY_PROMPTS = {
       "Employee Experience": [
         {
-          theme: "Mission & Purpose",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for having a strong, purpose-driven employer brand?`;
-          },
+          attributeId: "mission-purpose-impact",
+          theme: "Mission, Purpose & Impact",
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} are known for a strong sense of purpose and positive impact?`,
         },
         {
-          theme: "Rewards & Recognition",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for having exceptional rewards and recognition for employees?`;
-          },
+          attributeId: "compensation",
+          theme: "Compensation",
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} pay the best and offer the best benefits and perks?`,
         },
         {
+          attributeId: "company-culture",
           theme: "Company Culture",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for outstanding workplace culture?`;
-          },
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} have the best workplace culture?`,
         },
         {
-          theme: "Social Impact",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are recognized for meaningful social impact and community engagement?`;
-          },
-        },
-        {
-          theme: "Inclusion",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are most recognized for diversity, equity, and inclusion?`;
-          },
-        },
-        {
-          theme: "Innovation",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for fostering innovation and creative thinking?`;
-          },
-        },
-        {
-          theme: "Wellbeing & Balance",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are recognized for exceptional employee wellbeing and work-life balance?`;
-          },
-        },
-        {
+          attributeId: "leadership",
           theme: "Leadership",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are respected for outstanding leadership and management?`;
-          },
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} are known for great leadership and management?`,
         },
         {
-          theme: "Security & Perks",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for providing comprehensive benefits and job security?`;
-          },
+          attributeId: "job-security",
+          theme: "Job Security",
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} offer the most stable and secure jobs?`,
         },
         {
+          attributeId: "career-opportunities",
           theme: "Career Opportunities",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are most recognized for exceptional career development and progression opportunities?`;
-          },
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} are best for career growth and learning?`,
+        },
+        {
+          attributeId: "wellbeing-balance",
+          theme: "Wellbeing & Balance",
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} are best for work-life balance and flexible or remote work?`,
+        },
+        {
+          attributeId: "inclusion",
+          theme: "Inclusion",
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} are most recognized for diversity, equity, and inclusion?`,
+        },
+        {
+          attributeId: "innovation",
+          theme: "Innovation",
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} are the most innovative to work for?`,
         },
       ],
       "Candidate Experience": [
         {
-          theme: "Application Process",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} have the best application process?`;
-          },
+          attributeId: "application-communication",
+          theme: "Application & Communication",
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} have the best application process and candidate communication?`,
         },
         {
-          theme: "Candidate Communication",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are recognized for strong candidate communication?`;
-          },
-        },
-        {
-          theme: "Interview Experience",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} have the best interview experience?`;
-          },
-        },
-        {
+          attributeId: "candidate-feedback",
           theme: "Candidate Feedback",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for providing valuable candidate feedback?`;
-          },
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} are known for giving candidates valuable feedback?`,
         },
         {
-          theme: "Onboarding Experience",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} have the best onboarding experience?`;
-          },
+          attributeId: "interview-experience",
+          theme: "Interview Experience",
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} have the best interview experience?`,
         },
         {
-          theme: "Overall Candidate Experience",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} have the best overall candidate reputation?`;
-          },
+          attributeId: "onboarding-experience",
+          theme: "Onboarding",
+          text: (industry: string, country?: string) =>
+            `Which companies in ${industry}${locationSuffix(country)} have the best onboarding for new hires?`,
         },
       ],
     };
@@ -358,8 +281,12 @@ serve(async (req) => {
 
     // Create industry-wide prompts (NOT tied to specific companies)
     // These prompts ask the AI which companies are visible in the industry/market
-    const allPrompts: Array<{ category: string; theme: string; text: string }> =
-      [];
+    const allPrompts: Array<{
+      category: string;
+      theme: string;
+      attributeId: string;
+      text: string;
+    }> = [];
 
     // Add Employee Experience prompts
     console.log(
@@ -369,6 +296,7 @@ serve(async (req) => {
       allPrompts.push({
         category: "Employee Experience",
         theme: prompt.theme,
+        attributeId: prompt.attributeId,
         text: prompt.text(industry, promptLocation),
       });
       console.log(`  - Added: ${prompt.theme}`);
@@ -385,6 +313,7 @@ serve(async (req) => {
       allPrompts.push({
         category: "Candidate Experience",
         theme: prompt.theme,
+        attributeId: prompt.attributeId,
         text: prompt.text(industry, promptLocation),
       });
       console.log(`  - Added: ${prompt.theme}`);
@@ -398,7 +327,12 @@ serve(async (req) => {
     console.log(`PHASE 1: Creating all ${allPrompts.length} prompts`);
 
     const promptsWithIds: Array<{
-      promptData: { category: string; theme: string; text: string };
+      promptData: {
+        category: string;
+        theme: string;
+        attributeId: string;
+        text: string;
+      };
       promptId: string;
     }> = [];
 
@@ -421,6 +355,8 @@ serve(async (req) => {
               prompt_type: "discovery",
               prompt_category: promptData.category,
               prompt_theme: promptData.theme,
+              attribute_id: promptData.attributeId,
+              prompt_version: 2,
               industry_context: industry,
               location_context: dbLocationContext,
             })
@@ -443,6 +379,7 @@ serve(async (req) => {
                 .select("id")
                 .is("company_id", null)
                 .eq("prompt_type", "discovery")
+                .eq("prompt_version", 2)
                 .eq("prompt_category", promptData.category)
                 .eq("prompt_theme", promptData.theme)
                 .eq("industry_context", industry);

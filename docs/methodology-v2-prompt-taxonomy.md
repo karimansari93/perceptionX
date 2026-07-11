@@ -204,6 +204,15 @@ Karim's explicit requirement: every feature in Admin → Company Batch that crea
 ### F. Auto-following consumers — verify only, no edits expected
 `AttributesSummaryCard.tsx`, `OverviewTab.tsx`, `useDashboardData.ts`, `ai-thematic-analysis(-bulk)`, `company-report(-text)`, `chat-with-data`, `collect-company-responses` (`isAttributePrompt` ~312), `_shared/attributePromptService.ts` — all read `attribute_id` generically and resolve names via the `ATTRIBUTES` registry. After the registry changes they follow automatically. **Check `validAttributeIds` filtering in ThematicAnalysisTab (~292):** once retired ids leave the registry, historical themes with old ids disappear from that view — acceptable for launch; Phase 3 adds the legacy remap for trend continuity.
 
+### G. Visibility Rankings — the free public ranking pipeline (added July 11 2026; was MISSED in the original rollout)
+The industry-visibility (discovery-only, `company_id IS NULL`) pipeline has its own inline template copy and hardcoded prompt counts. Ported to v2 on July 11 2026:
+
+1. **`supabase/functions/collect-industry-visibility/index.ts`** — fourth inline template duplicate (`VISIBILITY_PROMPTS`, 13 discovery templates with an ` in {location}` suffix). Inserts stamp `attribute_id` + `prompt_version: 2`; the duplicate-recovery lookup filters `prompt_version = 2` so it can never resolve to a v1 row.
+2. **`supabase/functions/process-visibility-queue/index.ts`** — queue jobs seed `total_prompts: 13` (was 16).
+3. **`src/components/admin/VisibilityRankingsTab.tsx`** — `TOTAL_PROMPTS = 13` batching constant (was 16).
+
+Old v1 discovery rows/responses are left untouched (same coexistence rule as clients); the next collection run populates fresh v2 rows because the per-theme response-existence check keys on the new prompt ids. **This function also pins its own OpenAI model (`VISIBILITY_OPENAI_MODEL` env var, default `gpt-4.1-mini`) — cheaper than the client-facing batch flow by design.**
+
 ---
 
 ## 4. Data handling & versioning rules
