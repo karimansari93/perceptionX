@@ -214,7 +214,7 @@ serve(async (req) => {
       models?: string[];
     } = await req.json().catch(() => ({}));
 
-    const DEFAULT_MODELS = ["openai", "perplexity", "google-ai-overviews", "google-ai-mode"];
+    const DEFAULT_MODELS = ["openai", "perplexity", "google-ai-overviews", "google-ai-mode", "claude"];
     const promptTypeFilter: string[] | null =
       Array.isArray(promptTypes) && promptTypes.length > 0
         ? promptTypes
@@ -779,6 +779,10 @@ serve(async (req) => {
                   companyId: job.company_id,
                   promptIds: chunk,
                   models: effectiveModels,
+                  // Queue runs are latency-tolerant: route Claude through the
+                  // Anthropic Message Batches API (50% cheaper). Results land
+                  // asynchronously via claude-batch-collector's poll tick.
+                  claudeViaBatch: true,
                   batchSize: 1,
                   skipExisting: true,
                   skipIfCollectedInMonth,

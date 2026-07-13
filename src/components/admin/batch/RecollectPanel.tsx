@@ -45,9 +45,9 @@ const MODEL_OPTIONS = [
   { value: "perplexity", label: "Perplexity", default: true },
   { value: "google-ai-overviews", label: "Google AI Overviews", default: true },
   { value: "google-ai-mode", label: "Google AI Mode", default: true },
+  { value: "claude", label: "Claude", default: true },
   { value: "gemini", label: "Gemini", default: false },
   { value: "deepseek", label: "DeepSeek", default: false },
-  { value: "claude", label: "Claude", default: false },
 ];
 const DEFAULT_MODEL_IDS = MODEL_OPTIONS.filter((m) => m.default).map((m) => m.value);
 
