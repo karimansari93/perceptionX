@@ -214,6 +214,8 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
 
       // Config carries the month so the queue's llm_collection phase forwards
       // skipIfCollectedInMonth → only prompts missing for this month are run.
+      // It also carries the confirmed models, so the choice survives watchdog
+      // re-kicks (which invoke the processor with an empty body).
       const { data: config, error: cfgErr } = await supabase
         .from("company_batch_configs")
         .insert({
@@ -225,6 +227,7 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
           target_industries: [],
           target_job_functions: [],
           skip_if_collected_in_month: month,
+          models: Array.from(selectedModels),
         })
         .select("id")
         .single();
