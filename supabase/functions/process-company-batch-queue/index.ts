@@ -214,8 +214,7 @@ serve(async (req) => {
       models?: string[];
     } = await req.json().catch(() => ({}));
 
-    const DEFAULT_MODELS = ["openai", "perplexity", "google-ai-overviews", "google-ai-mode"];
-    const effectiveModels = Array.isArray(models) && models.length > 0 ? models : DEFAULT_MODELS;
+    const DEFAULT_MODELS = ["openai", "perplexity", "google-ai-overviews", "google-ai-mode", "claude"];
     const promptTypeFilter: string[] | null =
       Array.isArray(promptTypes) && promptTypes.length > 0
         ? promptTypes
@@ -307,7 +306,7 @@ serve(async (req) => {
       .update({ status: "processing", updated_at: now })
       .eq("id", candidate.id)
       .eq("status", "pending")
-      .select("*, company_batch_configs!inner(user_id, organization_id, created_org_id, org_mode)")
+      .select("*, company_batch_configs!inner(user_id, organization_id, created_org_id, org_mode, models, skip_if_collected_in_month)")
       .maybeSingle();
 
     if (claimErr) throw claimErr;
@@ -323,6 +322,18 @@ serve(async (req) => {
 
     const job = claimed;
     const config = job.company_batch_configs;
+
+    // Models to collect: invoke body wins (kick from the admin UI), then the
+    // config's persisted choice, then the default set. Reading from the config
+    // keeps the choice durable across watchdog-cron re-kicks, which invoke this
+    // function with an empty body.
+    const configModels: string[] | null = (config as any)?.models ?? null;
+    const effectiveModels =
+      Array.isArray(models) && models.length > 0
+        ? models
+        : Array.isArray(configModels) && configModels.length > 0
+          ? configModels
+          : DEFAULT_MODELS;
 
     console.log(`[BatchQueue] Claimed job ${job.id}: ${job.company_name} / ${job.location} / ${job.industry} / ${job.job_function || "(all)"} — phase: ${job.phase}`);
 
@@ -768,6 +779,10 @@ serve(async (req) => {
                   companyId: job.company_id,
                   promptIds: chunk,
                   models: effectiveModels,
+                  // Queue runs are latency-tolerant: route Claude through the
+                  // Anthropic Message Batches API (50% cheaper). Results land
+                  // asynchronously via claude-batch-collector's poll tick.
+                  claudeViaBatch: true,
                   batchSize: 1,
                   skipExisting: true,
                   skipIfCollectedInMonth,
