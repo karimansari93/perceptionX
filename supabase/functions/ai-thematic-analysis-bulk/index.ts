@@ -4,16 +4,11 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { analyzeThemes } from "../_shared/theme-analysis.ts";
 
 // Bulk theme extraction. Caller provides an array of { response_id,
-// response_text } plus the company_name; we run Gemini 2.5 Flash on each
-// in parallel (capped by BATCH_SIZE) and write the themes back. Used by
-// the AnalyzeThemesPanel admin tool and the theme-backfill-tick cron.
-//
-// Gemini 2.5 Flash is faster (~1-3s) and cheaper than gpt-4o-mini, so we
-// can afford higher parallelism. BATCH_SIZE 8 + 250ms gap = ~30 req/sec
-// peak, well under the Tier-2 Gemini limit (~2k RPM = 33 RPS) and far
-// faster than the old 3-parallel+1s gap pattern (~3 RPS) — a 40-response
-// chunk drops from ~70s to ~15s, keeping us comfortably under the 150s
-// edge timeout even on slow days.
+// response_text } plus the company_name; we run the shared Claude Haiku
+// theme extraction on each in parallel (capped by BATCH_SIZE) and write the
+// themes back. Used by the AnalyzeThemesPanel admin tool (synchronous,
+// interactive). The cron safety net no longer calls this — it submits
+// Anthropic Batches directly (see theme-backfill-tick).
 
 const BATCH_SIZE = 8;
 const INTER_BATCH_DELAY_MS = 250;
@@ -67,8 +62,8 @@ serve(async (req) => {
       const batchResults = await Promise.all(
         batch.map(async (response: ResponseData) => {
           try {
-            // Skip-if-themed lets the cron race the real-time trigger
-            // without double-paying for Gemini calls.
+            // Skip-if-themed lets callers race the real-time trigger
+            // without double-paying for Claude calls.
             const { data: existing } = await supabase
               .from("ai_themes")
               .select("id")
@@ -149,8 +144,8 @@ serve(async (req) => {
         if (typeof n === "number") totalThemesCreated += n;
       }
 
-      // Small gap between batches keeps us under Gemini per-second limits
-      // when the cron + admin panel happen to fire concurrently.
+      // Small gap between parallel groups keeps the interactive path
+      // comfortably under the org's live Claude rate limit.
       if (i + BATCH_SIZE < responses.length) {
         await new Promise((resolve) => setTimeout(resolve, INTER_BATCH_DELAY_MS));
       }

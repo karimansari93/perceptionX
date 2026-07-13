@@ -1,8 +1,10 @@
-// Shared theme extraction used by both ai-thematic-analysis (real-time, one
-// response at a time, called fire-and-forget from analyze-response) and
-// ai-thematic-analysis-bulk (cron + admin backfill panel). Kept in one place
-// so the prompt, attribute taxonomy, and validation behaviour can't drift
-// between the two paths.
+// Shared theme extraction used by three paths that must never drift:
+//   - ai-thematic-analysis        (real-time, one response, fire-and-forget)
+//   - ai-thematic-analysis-bulk   (admin backfill panel, synchronous)
+//   - theme-backfill-tick         (safety-net cron, Anthropic Batches API)
+// The prompt, schema, model, and validation live here; the batch path builds
+// its per-request params via buildMessageParams() so a batched request is
+// byte-identical to a synchronous one.
 //
 // Backed by Claude Haiku 4.5 with `output_config.format` JSON-schema mode.
 // Why Claude not Gemini:
@@ -12,12 +14,16 @@
 //   - Haiku 4.5 lands JSON output reliably via `output_config.format`; no
 //     markdown-fence cleanup, regex rescue, or thinking-token escape-hatch
 //     handling needed (the bugs that bit us on Gemini 2.5 Flash).
-//   - Cost: $1/$5 per 1M input/output tokens. Roughly 3-5x Gemini Flash but
-//     within budget for the ~9k backlog (~$25 total) and well below the
-//     OpenAI gpt-4o-mini path the function used originally.
-// We cache the system prompt (~2K tokens) so the 40 per-batch calls each
-// pay ~10% for the cached prefix instead of full price — saves ~$0.07 per
-// 40-response batch and reduces TTFT.
+//   - Cost: $1/$5 per 1M input/output tokens — the cheapest Claude model.
+//     Output tokens dominate spend, so the prompt caps theme count and
+//     field lengths; the cron path additionally runs through the Batches
+//     API at a flat 50% discount.
+// NOTE on prompt caching: the cache_control marker below is currently a
+// no-op — Haiku 4.5's minimum cacheable prefix is 4096 tokens and this
+// system prompt is ~1K. It is kept (harmless) so caching engages
+// automatically if the prompt ever grows past the threshold. Deliberately
+// padding the prompt to reach 4096 is NOT cheaper: a cold 5-minute-TTL
+// cache write bills at 1.25x, and batch-path cache hits are best-effort.
 
 import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
 
@@ -25,6 +31,9 @@ import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
 // Env var is CLAUDE_API_KEY (matches the existing test-prompt-claude function
 // — the platform's secret is stored under that name, not ANTHROPIC_API_KEY).
 const client = new Anthropic({ apiKey: Deno.env.get("CLAUDE_API_KEY") });
+
+export const MODEL = "claude-haiku-4-5";
+export const MAX_TOKENS = 4096;
 
 export interface AITheme {
   theme_name: string;
@@ -73,7 +82,7 @@ const LEGACY_ATTRIBUTE_MAP: Record<string, string | null> = {
   "overall-candidate-experience": null,
 };
 
-const THEME_SCHEMA = {
+export const THEME_SCHEMA = {
   type: "array",
   items: {
     type: "object",
@@ -105,16 +114,11 @@ const THEME_SCHEMA = {
   },
 } as const;
 
-// System prompt is constant across every call in a batch, so we tag it for
-// prompt caching. First call in a batch pays the 1.25x write premium; the
-// remaining 39 pay 0.1x for cache reads. Min cacheable prefix on Haiku 4.5
-// is 4096 tokens — our system prompt is comfortably above that with the
-// attribute taxonomy spelled out.
-const SYSTEM_PROMPT = `You are an expert in analyzing AI-generated responses to extract themes about a company's employer brand and talent perception.
+export const SYSTEM_PROMPT = `You are an expert in analyzing AI-generated responses to extract themes about a company's employer brand and talent perception.
 
 For each theme you identify, output an object with:
-- theme_name: clear, concise name
-- theme_description: brief description of the theme
+- theme_name: clear, concise name (max 6 words)
+- theme_description: ONE sentence, max 20 words
 - sentiment: "positive", "negative", or "neutral"
 - sentiment_score: number from -1 (very negative) to 1 (very positive)
 - attribute_id: exactly one of these strings (definition in parentheses):
@@ -133,8 +137,8 @@ For each theme you identify, output an object with:
   onboarding-experience (new-hire onboarding and first months)
 - attribute_name: human-readable form (e.g. "Mission, Purpose & Impact", "Company Culture", "Job Security")
 - confidence_score: number from 0 to 1
-- keywords: array of relevant keywords drawn from the response
-- context_snippets: array of 1-2 verbatim snippets from the response that support the theme
+- keywords: 3-5 keywords drawn from the response, each 1-3 words
+- context_snippets: 1-2 verbatim snippets from the response that support the theme, each max 20 words (truncate longer passages with "...")
 
 Classification rules — be strict:
 - company-culture is ONLY for workplace atmosphere, team dynamics, cultural practices, work environment, and feeling valued/recognized
@@ -143,8 +147,9 @@ Classification rules — be strict:
 - Work-life balance, mental health, flexibility, and remote work belong to wellbeing-balance, NOT company-culture
 - Candidate-journey topics belong to the dedicated candidate-experience attributes: the application process and recruiter communication → application-communication; interviews → interview-experience; post-interview/application feedback → candidate-feedback; onboarding → onboarding-experience
 
-Coverage:
+Coverage and concision:
 - Look for both positive and negative themes
+- Return 2-6 themes for a typical response. Merge closely related points into one theme per attribute-sentiment pair rather than fragmenting them; do not pad with marginal themes
 - If the response contains ANY information about the named company — even if it also discusses competitors or comparisons — extract themes from that information
 - Only return an empty array if the response truly contains no information about the company at all`;
 
@@ -158,7 +163,7 @@ function normalizeAttributeId(raw: any): string {
   return "unknown";
 }
 
-function validateAndCleanTheme(t: any): AITheme {
+export function validateAndCleanTheme(t: any): AITheme {
   const attributeId = normalizeAttributeId(t?.attribute_id);
   return {
     theme_name: t?.theme_name || "Unnamed Theme",
@@ -174,67 +179,79 @@ function validateAndCleanTheme(t: any): AITheme {
   };
 }
 
+// Single source of truth for the Messages request shape. The synchronous
+// paths pass this to client.messages.create(); theme-backfill-tick embeds it
+// as `params` in a Batches API request. Keeping them identical means batch
+// and realtime output are directly comparable.
+export function buildMessageParams(responseText: string, companyName: string) {
+  return {
+    model: MODEL,
+    max_tokens: MAX_TOKENS,
+    system: [
+      {
+        type: "text" as const,
+        text: SYSTEM_PROMPT,
+        cache_control: { type: "ephemeral" as const },
+      },
+    ],
+    // Structured outputs — Anthropic enforces the schema server-side,
+    // so the model's first response block is guaranteed-parseable JSON.
+    output_config: {
+      format: { type: "json_schema", schema: THEME_SCHEMA },
+    },
+    messages: [
+      {
+        role: "user" as const,
+        content: `Analyze this response about "${companyName}":\n\n"""\n${responseText}\n"""`,
+      },
+    ],
+  };
+}
+
+// Parse a Messages API response (sync or batch result) into validated themes.
+// Returns [] on any malformed output rather than throwing — a response with
+// no themes is retried by the safety-net cron, so failing soft is safe.
+export function parseThemesFromMessage(response: any, label: string): AITheme[] {
+  const textBlock = response?.content?.find((b: any) => b.type === "text") as
+    | { type: "text"; text: string }
+    | undefined;
+  if (!textBlock) {
+    console.warn(`[theme-analysis] no text block (${label}). stop_reason=${response?.stop_reason}`);
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(textBlock.text);
+  } catch (e) {
+    console.error(`[theme-analysis] JSON parse failed despite structured output (${label}):`, e, textBlock.text.slice(0, 200));
+    return [];
+  }
+
+  if (!Array.isArray(parsed)) {
+    console.warn(`[theme-analysis] structured output returned non-array (${label}):`, textBlock.text.slice(0, 200));
+    return [];
+  }
+
+  return parsed.map(validateAndCleanTheme);
+}
+
 export async function analyzeThemes(
   responseText: string,
   companyName: string,
 ): Promise<AITheme[]> {
   try {
-    const response = await client.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 4096,
-      system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT,
-          // ephemeral = 5-min TTL; we're firing 40 calls in ~30s so they
-          // all hit a warm cache after the first.
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      // Structured outputs — Anthropic enforces the schema server-side,
-      // so the model's first response block is guaranteed-parseable JSON.
-      output_config: {
-        format: { type: "json_schema", schema: THEME_SCHEMA },
-      },
-      messages: [
-        {
-          role: "user",
-          content: `Analyze this response about "${companyName}":\n\n"""\n${responseText}\n"""`,
-        },
-      ],
-    });
+    const response = await client.messages.create(
+      buildMessageParams(responseText, companyName) as any,
+    );
 
-    // Structured outputs return as a single text block containing the JSON.
-    const textBlock = response.content.find((b: any) => b.type === "text") as
-      | { type: "text"; text: string }
-      | undefined;
-    if (!textBlock) {
-      console.warn(
-        `[theme-analysis] no text block. stop_reason=${response.stop_reason}`,
-      );
-      return [];
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(textBlock.text);
-    } catch (e) {
-      console.error("[theme-analysis] JSON parse failed despite structured output:", e, textBlock.text.slice(0, 200));
-      return [];
-    }
-
-    if (!Array.isArray(parsed)) {
-      console.warn("[theme-analysis] structured output returned non-array:", textBlock.text.slice(0, 200));
-      return [];
-    }
-
-    if (parsed.length === 0) {
+    const themes = parseThemesFromMessage(response, companyName);
+    if (themes.length === 0) {
       console.warn(`[theme-analysis] EMPTY for "${companyName}". Input head: ${responseText.slice(0, 150)}`);
     } else {
-      console.log(`[theme-analysis] ${parsed.length} themes for "${companyName}". cache_read=${response.usage?.cache_read_input_tokens ?? 0} cache_write=${response.usage?.cache_creation_input_tokens ?? 0}`);
+      console.log(`[theme-analysis] ${themes.length} themes for "${companyName}". cache_read=${response.usage?.cache_read_input_tokens ?? 0} cache_write=${response.usage?.cache_creation_input_tokens ?? 0}`);
     }
-
-    return parsed.map(validateAndCleanTheme);
+    return themes;
   } catch (e: any) {
     // Surface rate-limit / overload distinctly so the bulk function's per-response
     // try/catch can decide what to do. The SDK throws typed exceptions; check by
