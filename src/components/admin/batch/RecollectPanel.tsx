@@ -9,6 +9,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   Loader2, Play, CheckCircle2, AlertCircle, X, RefreshCw, Calendar, Server,
@@ -32,6 +35,21 @@ type QueueRow = {
   error_log: string | null;
   is_cancelled: boolean | null;
 };
+
+// Must match the model names wired up in collect-company-responses (each
+// corresponds to a `test-prompt-<name>` edge function). The default-checked
+// set mirrors DEFAULT_MODELS in process-company-batch-queue, which is what a
+// recollect run used before models were confirmable here.
+const MODEL_OPTIONS = [
+  { value: "openai", label: "OpenAI (ChatGPT)", default: true },
+  { value: "perplexity", label: "Perplexity", default: true },
+  { value: "google-ai-overviews", label: "Google AI Overviews", default: true },
+  { value: "google-ai-mode", label: "Google AI Mode", default: true },
+  { value: "gemini", label: "Gemini", default: false },
+  { value: "deepseek", label: "DeepSeek", default: false },
+  { value: "claude", label: "Claude", default: false },
+];
+const DEFAULT_MODEL_IDS = MODEL_OPTIONS.filter((m) => m.default).map((m) => m.value);
 
 const isTerminal = (r: QueueRow) =>
   r.is_cancelled === true || r.status === "completed" || r.status === "failed";
@@ -62,6 +80,11 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [enqueuing, setEnqueuing] = useState(false);
+
+  // Model confirmation step: clicking "Recollect" opens this dialog so the
+  // admin confirms which models the run should collect responses for.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set(DEFAULT_MODEL_IDS));
 
   // Server-side run we're currently watching (survives tab reloads).
   const [runConfigId, setRunConfigId] = useState<string | null>(null);
@@ -157,12 +180,33 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
   const selectAll = () => setSelectedIds(new Set(coverage.map((c) => c.companyId)));
   const selectNone = () => setSelectedIds(new Set());
 
+  const toggleModel = (id: string) => {
+    setSelectedModels((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const openConfirm = () => {
+    if (selectedList.length === 0) {
+      toast.error("Select at least one company");
+      return;
+    }
+    setConfirmOpen(true);
+  };
+
   // Enqueue a server-side run: one config + one queue row per selected company.
   const handleRecollect = async () => {
     if (selectedList.length === 0) {
       toast.error("Select at least one company");
       return;
     }
+    if (selectedModels.size === 0) {
+      toast.error("Select at least one model");
+      return;
+    }
+    setConfirmOpen(false);
     setEnqueuing(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -202,9 +246,10 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
       const { error: qErr } = await supabase.from("company_batch_queue").insert(jobs);
       if (qErr) throw new Error(qErr.message);
 
-      // Kick the processor once; it self-chains server-side from here.
+      // Kick the processor once; it self-chains server-side from here,
+      // carrying the confirmed models through each chained invocation.
       await supabase.functions.invoke("process-company-batch-queue", {
-        body: { configId: config.id },
+        body: { configId: config.id, models: Array.from(selectedModels) },
       });
 
       setRunConfigId(config.id);
@@ -354,7 +399,7 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
       {/* Action */}
       <div className="flex flex-wrap items-center gap-2">
         <Button
-          onClick={handleRecollect}
+          onClick={openConfirm}
           disabled={enqueuing || loading || selectedList.length === 0 || runActive || !canRecollect}
         >
           {enqueuing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Server className="h-4 w-4 mr-2" />}
@@ -364,6 +409,44 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
           {totalMissingSelected.toLocaleString()} missing prompts in selection
         </span>
       </div>
+
+      {/* Model confirmation dialog */}
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirm models to collect</DialogTitle>
+            <DialogDescription>
+              Recollecting {monthLabel(month)} for {selectedList.length} compan
+              {selectedList.length === 1 ? "y" : "ies"}. Responses will be collected
+              for the models checked below.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-1">
+            {MODEL_OPTIONS.map((m) => (
+              <label
+                key={m.value}
+                className="flex items-center gap-2 text-sm cursor-pointer rounded-md px-2 py-1.5 hover:bg-accent/40"
+              >
+                <Checkbox
+                  checked={selectedModels.has(m.value)}
+                  onCheckedChange={() => toggleModel(m.value)}
+                />
+                {m.label}
+              </label>
+            ))}
+            {selectedModels.size === 0 && (
+              <p className="text-xs text-destructive">Select at least one model.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>Cancel</Button>
+            <Button onClick={handleRecollect} disabled={selectedModels.size === 0 || enqueuing}>
+              {enqueuing && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Start recollection ({selectedModels.size} model{selectedModels.size === 1 ? "" : "s"})
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {!canRecollect && (
         <p className="text-xs text-amber-600">
