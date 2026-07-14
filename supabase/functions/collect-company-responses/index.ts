@@ -264,6 +264,9 @@ serve(async (req) => {
                   },
                   body: JSON.stringify({
                     prompt: prompt.prompt_text,
+                    // Used by the Google functions (Scrapingdog `country`
+                    // geo-targeting); ignored by every other model function.
+                    location_context: prompt.location_context ?? null,
                   }),
                 },
               );
