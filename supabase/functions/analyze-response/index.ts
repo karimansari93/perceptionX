@@ -240,7 +240,16 @@ serve(async (req) => {
           }
         }
 
-        if (resolvedCompanyName) {
+        // Only theme responses that actually mention the company. When
+        // company_mentioned is false the company name never appears in the
+        // text, so theme extraction returns an empty array anyway (see the
+        // coverage rule in _shared/theme-analysis.ts) — skipping the call
+        // avoids paying Claude Haiku for a guaranteed-empty result, which is
+        // the single biggest lever on theme-extraction cost. The backfill
+        // picker (find_responses_missing_themes) applies the same filter, so
+        // these skipped responses are NOT flagged "missing" and re-queued
+        // every cron tick.
+        if (resolvedCompanyName && result.company_mentioned) {
           console.log(`🚀 Triggering AI thematic analysis for response ${inserted.id} (${ai_model})`);
           // Fire-and-forget — don't block the response insert on theme analysis.
           supabase.functions.invoke('ai-thematic-analysis', {
@@ -253,6 +262,11 @@ serve(async (req) => {
           }).catch(error => {
             console.warn('❌ Failed to trigger AI thematic analysis:', error);
           });
+        } else if (resolvedCompanyName && !result.company_mentioned) {
+          console.log(
+            `⏭️ Skipping AI thematic analysis for response ${inserted.id}: ` +
+            `company not mentioned in response — no themes to extract.`,
+          );
         } else {
           console.warn(
             `⚠️ Cannot trigger AI thematic analysis for response ${inserted.id}: ` +

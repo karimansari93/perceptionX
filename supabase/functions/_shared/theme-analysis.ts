@@ -15,9 +15,14 @@
 //   - Cost: $1/$5 per 1M input/output tokens. Roughly 3-5x Gemini Flash but
 //     within budget for the ~9k backlog (~$25 total) and well below the
 //     OpenAI gpt-4o-mini path the function used originally.
-// We cache the system prompt (~2K tokens) so the 40 per-batch calls each
-// pay ~10% for the cached prefix instead of full price — saves ~$0.07 per
-// 40-response batch and reduces TTFT.
+// NOTE ON CACHING: the system prompt is ~600 tokens, which is BELOW Haiku
+// 4.5's 4096-token minimum cacheable prefix. The cache_control marker below
+// is therefore a silent no-op today — cache_read/cache_write are always 0 and
+// every call pays full input price for the prefix. It's kept only so caching
+// would activate automatically if the prompt ever grows past 4096 tokens.
+// Do not count on a caching saving here. The real cost lever is upstream:
+// callers only invoke theme extraction when company_mentioned = true, so
+// responses that don't mention the company never reach this function.
 
 import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
 
@@ -105,11 +110,10 @@ const THEME_SCHEMA = {
   },
 } as const;
 
-// System prompt is constant across every call in a batch, so we tag it for
-// prompt caching. First call in a batch pays the 1.25x write premium; the
-// remaining 39 pay 0.1x for cache reads. Min cacheable prefix on Haiku 4.5
-// is 4096 tokens — our system prompt is comfortably above that with the
-// attribute taxonomy spelled out.
+// System prompt is constant across every call, so we tag it for prompt
+// caching via the cache_control marker below. IMPORTANT: this is currently
+// inactive — the prompt (~600 tokens) is under Haiku 4.5's 4096-token minimum
+// cacheable prefix, so nothing is actually cached (see the top-of-file note).
 const SYSTEM_PROMPT = `You are an expert in analyzing AI-generated responses to extract themes about a company's employer brand and talent perception.
 
 For each theme you identify, output an object with:
@@ -186,8 +190,8 @@ export async function analyzeThemes(
         {
           type: "text",
           text: SYSTEM_PROMPT,
-          // ephemeral = 5-min TTL; we're firing 40 calls in ~30s so they
-          // all hit a warm cache after the first.
+          // No-op today (prefix < 4096-token cache floor — see top-of-file
+          // note); harmless, and auto-activates if the prompt ever grows.
           cache_control: { type: "ephemeral" },
         },
       ],
