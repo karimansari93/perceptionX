@@ -32,6 +32,7 @@ interface RescoreJob {
   processed: number;
   is_cancelled: boolean;
   last_error: string | null;
+  since_date: string | null;
   created_at: string;
   finished_at: string | null;
 }
@@ -278,6 +279,11 @@ const TEST_BATCH_SIZE = 50;
 const JOB_POLL_INTERVAL_MS = 5000;
 const ALL_COMPANIES = 'all';
 
+type RescoreScope = 'latest' | 'all';
+
+const shortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
 const OrgDrillDown = ({
   org,
   onBack,
@@ -296,6 +302,10 @@ const OrgDrillDown = ({
   const [cancelling, setCancelling] = useState(false);
   const [companies, setCompanies] = useState<OrgCompany[]>([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>(ALL_COMPANIES);
+  // Rescore scope: 'latest' = only URLs from the most recent collection burst
+  // (start date auto-detected server-side), 'all' = the whole uncached backlog.
+  const [scopeMode, setScopeMode] = useState<RescoreScope>('latest');
+  const [latestStart, setLatestStart] = useState<string | null>(null);
   const pollTimer = useRef<number | null>(null);
   const companyScoped = selectedCompanyId !== ALL_COMPANIES;
 
@@ -310,7 +320,21 @@ const OrgDrillDown = ({
   // Reload the URL lists whenever the scope changes (org switch or company pick).
   useEffect(() => {
     loadUrls();
+    loadLatestStart();
   }, [org.organization_id, selectedCompanyId]);
+
+  const loadLatestStart = async () => {
+    const { data, error } = await supabase.rpc('get_latest_collection_start' as any, {
+      p_org: org.organization_id,
+      p_company: companyScoped ? selectedCompanyId : null,
+    });
+    if (error) {
+      console.error('Failed to detect latest collection:', error);
+      setLatestStart(null);
+      return;
+    }
+    setLatestStart((data as string | null) ?? null);
+  };
 
   const loadCompanies = async () => {
     const { data, error } = await supabase
@@ -378,9 +402,11 @@ const OrgDrillDown = ({
 
   const enqueueJob = async () => {
     setEnqueueing(true);
+    const latestOnly = scopeMode === 'latest' && !!latestStart;
     const { data, error } = await supabase.rpc('enqueue_recency_rescore' as any, {
       p_org: org.organization_id,
       p_company: companyScoped ? selectedCompanyId : null,
+      p_since: latestOnly ? latestStart : null,
     });
     setEnqueueing(false);
     if (error) {
@@ -397,7 +423,10 @@ const OrgDrillDown = ({
     const scopeName = companyScoped
       ? scopeCompany ? companyLabel(scopeCompany) : 'selected company'
       : 'whole organization';
-    toast.success(`Rescore queued for ${scopeName} — runs in the background.`);
+    const scopeSuffix = latestOnly && latestStart
+      ? ` (latest collection, since ${shortDate(latestStart)})`
+      : '';
+    toast.success(`Rescore queued for ${scopeName}${scopeSuffix} — runs in the background.`);
     // Pull the freshly-created (or already-active) row so we can start polling.
     await loadActiveJob();
   };
@@ -584,6 +613,22 @@ const OrgDrillDown = ({
                       ))}
                     </SelectContent>
                   </Select>
+                  <Select
+                    value={latestStart ? scopeMode : 'all'}
+                    onValueChange={(v) => setScopeMode(v as RescoreScope)}
+                    disabled={jobActive}
+                  >
+                    <SelectTrigger className="w-56 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="latest" disabled={!latestStart}>
+                        Latest collection
+                        {latestStart ? ` (since ${shortDate(latestStart)})` : ''}
+                      </SelectItem>
+                      <SelectItem value="all">All uncached URLs</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Button
                     size="sm"
                     variant="outline"
@@ -649,9 +694,15 @@ const OrgDrillDown = ({
                       </Badge>
                       <span className="ml-2 text-slate-500">
                         {(() => {
-                          if (!job.company_id) return 'Whole organization';
-                          const c = companies.find((x) => x.id === job.company_id);
-                          return c ? companyLabel(c) : 'Single company';
+                          const c = job.company_id
+                            ? companies.find((x) => x.id === job.company_id)
+                            : null;
+                          const base = job.company_id
+                            ? (c ? companyLabel(c) : 'Single company')
+                            : 'Whole organization';
+                          return job.since_date
+                            ? `${base} · latest collection (since ${shortDate(job.since_date)})`
+                            : base;
                         })()}
                       </span>
                     </span>
