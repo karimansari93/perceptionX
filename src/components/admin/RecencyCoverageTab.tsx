@@ -453,8 +453,8 @@ const OrgDrillDown = ({
     const scopeName = companyScoped
       ? scopeCompany ? companyLabel(scopeCompany) : 'selected company'
       : 'whole organization';
-    const scopeSuffix = latestOnly && latestStart
-      ? ` (latest collection, since ${shortDate(latestStart)})`
+    const scopeSuffix = since
+      ? ` (latest collection, since ${shortDate(since)})`
       : '';
     toast.success(`Rescore queued for ${scopeName}${scopeSuffix} — runs in the background.`);
     // Pull the freshly-created (or already-active) row so we can start polling.
