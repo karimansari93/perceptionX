@@ -25,7 +25,15 @@ import { buildMessageParams, parseThemesFromMessage } from "../_shared/theme-ana
 // Responses whose batch entry errored/expired still have no themes, so the
 // next submission picks them up automatically — no retry bookkeeping.
 
-const BATCH_SUBMIT_LIMIT = 500;
+// Throughput (2026-07-15, sized for the Ford July rescore ~19k responses):
+// submits stay SERIAL (one batch in flight at a time) because the picker
+// selects "responses missing themes" — a second concurrent batch would
+// re-select the same responses and double-bill. Throughput comes from a
+// bigger batch instead. Harvest is capped at one ended batch per tick so a
+// 2000-result harvest fits the 150s edge budget.
+const BATCH_SUBMIT_LIMIT = 2000;
+const MAX_IN_FLIGHT = 1;
+const MAX_HARVESTS_PER_TICK = 1;
 const INSERT_CHUNK = 200;
 const IN_CHUNK = 100; // uuids per .in() filter — keeps PostgREST URLs short
 
@@ -47,6 +55,7 @@ serve(async (req) => {
 
     const harvested: any[] = [];
     let stillInFlight = 0;
+    let harvestsThisTick = 0;
 
     for (const row of pending ?? []) {
       const batch = await anthropic.messages.batches.retrieve(row.anthropic_batch_id);
@@ -55,6 +64,14 @@ serve(async (req) => {
         harvested.push({ batch_id: row.anthropic_batch_id, status: batch.processing_status });
         continue;
       }
+      if (harvestsThisTick >= MAX_HARVESTS_PER_TICK) {
+        // Ended but deferred to the next tick — counts as in flight for the
+        // submit throttle below.
+        stillInFlight++;
+        harvested.push({ batch_id: row.anthropic_batch_id, status: "ended_deferred" });
+        continue;
+      }
+      harvestsThisTick++;
 
       // Decode every succeeded result: custom_id is the response_id.
       const themed: { response_id: string; themes: any[] }[] = [];
@@ -140,9 +157,9 @@ serve(async (req) => {
       harvested.push({ batch_id: row.anthropic_batch_id, status: "ended", ...summary });
     }
 
-    // ---- Phase 2: submit the next batch if nothing is in flight --------
-    if (stillInFlight > 0) {
-      return json({ harvested, submitted: 0, message: "batch still in flight" }, 200);
+    // ---- Phase 2: submit the next batch while below the in-flight cap ---
+    if (stillInFlight >= MAX_IN_FLIGHT) {
+      return json({ harvested, submitted: 0, message: "in-flight cap reached" }, 200);
     }
 
     const { data: missing, error: missingErr } = await supabase.rpc(

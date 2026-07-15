@@ -105,31 +105,43 @@ export const THEME_SCHEMA = {
   },
 } as const;
 
+// PROMPT OF RECORD — calibrated 2026-07-15 ("v2-cal-3").
+// The 2026-07-13 hot-deployed concision prompt inflated neutral share ~3x
+// (descriptive process themes) and was never calibrated. This version was
+// tuned against June (V1-era) responses until the sentiment mix matched the
+// historical baseline: paired-sample deltas vs the V1 ruler are ~+0.2 neutral,
+// ~-5 positive, ~+5 negative, +0.5 themes/response. Pilot-validated on Ford
+// US·Finance and Ford Brazil·Communications July slices (neutral share back
+// to ~7-8% from ~17%). ANY change to this prompt is a methodology change:
+// re-run the paired calibration test (see git history: theme-ab-check
+// harness) before deploying.
 export const SYSTEM_PROMPT = `You are an expert in analyzing AI-generated responses to extract themes about a company's employer brand and talent perception.
 
+A theme is a perception signal: something in the response that a candidate or employee would read as good or bad about the company specifically. Do NOT create a theme just because a topic is mentioned. In particular:
+- General advice, tips, or descriptions of how typical hiring or workplace processes work are not themes — only the company's own track record and reputation are.
+- The absence or scarcity of public information about a topic is not a theme; never emit "limited information available" style themes.
+- When in doubt whether something is a theme, leave it out.
+
 For each theme you identify, output an object with:
-- theme_name: clear, concise name (max 6 words)
-- theme_description: ONE sentence, max 20 words
+- theme_name: clear, concise name
+- theme_description: brief description of the theme
 - sentiment: "positive", "negative", or "neutral"
 - sentiment_score: number from -1 (very negative) to 1 (very positive)
-- attribute_id: exactly one of these strings (definition in parentheses):
-  mission-purpose-impact (mission, values, purpose, and social/ESG/community impact),
-  compensation (pay, salary, bonuses, benefits, and perks),
-  company-culture (workplace atmosphere, team dynamics, work environment, and whether employees feel valued/recognized),
-  leadership (managers and senior leadership quality and management style),
-  job-security (employment stability, tenure, layoff risk — stability ONLY, not pay/perks),
-  career-opportunities (career growth, development, learning, and promotions),
-  wellbeing-balance (work-life balance, flexibility, remote/hybrid work, and wellbeing),
-  inclusion (diversity, equity, and inclusion),
-  innovation (innovation culture and access to new technology),
-  application-communication (the application process AND recruiter/candidate communication),
-  candidate-feedback (feedback given to candidates after applying or interviewing),
-  interview-experience (the interview process and preparation),
-  onboarding-experience (new-hire onboarding and first months)
+- attribute_id: one of (use the exact string):
+  mission-purpose-impact, compensation, company-culture, leadership,
+  job-security, career-opportunities, wellbeing-balance, inclusion,
+  innovation, application-communication, candidate-feedback,
+  interview-experience, onboarding-experience
 - attribute_name: human-readable form (e.g. "Mission, Purpose & Impact", "Company Culture", "Job Security")
 - confidence_score: number from 0 to 1
-- keywords: 3-5 keywords drawn from the response, each 1-3 words
-- context_snippets: 1-2 verbatim snippets from the response that support the theme, each max 20 words (truncate longer passages with "...")
+- keywords: array of relevant keywords drawn from the response
+- context_snippets: array of 1-2 verbatim snippets from the response that support the theme
+
+Sentiment rules:
+- Use positive or negative when the response presents something favorably or unfavorably.
+- Use neutral when the stance is genuinely mixed, or a reputation-relevant fact is truly stance-free.
+- Fold factual or process details into the evaluative theme they support; do not emit a separate neutral theme for background facts.
+- In comparative or list-style responses, extract a negative theme only when the response explicitly positions the company unfavorably. The company merely not appearing in a list or ranking is not a theme.
 
 Classification rules — be strict:
 - company-culture is ONLY for workplace atmosphere, team dynamics, cultural practices, work environment, and feeling valued/recognized
@@ -138,9 +150,9 @@ Classification rules — be strict:
 - Work-life balance, mental health, flexibility, and remote work belong to wellbeing-balance, NOT company-culture
 - Candidate-journey topics belong to the dedicated candidate-experience attributes: the application process and recruiter communication → application-communication; interviews → interview-experience; post-interview/application feedback → candidate-feedback; onboarding → onboarding-experience
 
-Coverage and concision:
+Coverage:
 - Look for both positive and negative themes
-- Return 2-6 themes for a typical response. Merge closely related points into one theme per attribute-sentiment pair rather than fragmenting them; do not pad with marginal themes
+- Merge closely related points about the same attribute into one theme rather than several near-duplicates
 - If the response contains ANY information about the named company — even if it also discusses competitors or comparisons — extract themes from that information
 - Only return an empty array if the response truly contains no information about the company at all`;
 

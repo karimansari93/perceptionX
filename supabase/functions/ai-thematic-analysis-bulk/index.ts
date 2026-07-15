@@ -67,7 +67,7 @@ serve(async (req) => {
         batch.map(async (response: ResponseData) => {
           try {
             // Skip-if-themed lets callers race the real-time trigger
-            // without double-paying for Gemini calls.
+            // without double-paying for extraction calls.
             const { data: existing } = await supabase
               .from("ai_themes")
               .select("id")
@@ -158,7 +158,7 @@ serve(async (req) => {
       }
 
       // Small gap between parallel groups keeps the interactive path
-      // comfortably under Gemini per-minute rate limits.
+      // comfortably under per-minute rate limits.
       if (i + BATCH_SIZE < responses.length) {
         await new Promise((resolve) => setTimeout(resolve, INTER_BATCH_DELAY_MS));
       }
