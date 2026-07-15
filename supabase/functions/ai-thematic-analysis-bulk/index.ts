@@ -4,16 +4,14 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { analyzeThemes } from "../_shared/theme-analysis.ts";
 
 // Bulk theme extraction. Caller provides an array of { response_id,
-// response_text } plus the company_name; we run Gemini 2.5 Flash on each
-// in parallel (capped by BATCH_SIZE) and write the themes back. Used by
-// the AnalyzeThemesPanel admin tool and the theme-backfill-tick cron.
+// response_text } plus the company_name; we run the shared analyzeThemes
+// (Gemini 2.5 Flash-Lite — see _shared/theme-analysis.ts) on each in
+// parallel (capped by BATCH_SIZE) and write the themes back. Used by the
+// AnalyzeThemesPanel admin tool and the theme-backfill-tick cron.
 //
-// Gemini 2.5 Flash is faster (~1-3s) and cheaper than gpt-4o-mini, so we
-// can afford higher parallelism. BATCH_SIZE 8 + 250ms gap = ~30 req/sec
-// peak, well under the Tier-2 Gemini limit (~2k RPM = 33 RPS) and far
-// faster than the old 3-parallel+1s gap pattern (~3 RPS) — a 40-response
-// chunk drops from ~70s to ~15s, keeping us comfortably under the 150s
-// edge timeout even on slow days.
+// BATCH_SIZE 8 + 250ms gap = ~30 req/sec peak, which keeps a 40-response
+// chunk to ~15s and comfortably under the 150s edge timeout. If Gemini
+// returns 429s under load, lower BATCH_SIZE or raise INTER_BATCH_DELAY_MS.
 
 const BATCH_SIZE = 8;
 const INTER_BATCH_DELAY_MS = 250;
