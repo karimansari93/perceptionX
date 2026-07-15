@@ -4,14 +4,15 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { analyzeThemes } from "../_shared/theme-analysis.ts";
 
 // Bulk theme extraction. Caller provides an array of { response_id,
-// response_text } plus the company_name; we run the shared analyzeThemes
-// (Gemini 2.5 Flash-Lite — see _shared/theme-analysis.ts) on each in
-// parallel (capped by BATCH_SIZE) and write the themes back. Used by the
-// AnalyzeThemesPanel admin tool and the theme-backfill-tick cron.
+// response_text } plus the company_name; we run the shared Gemini 2.5
+// Flash-Lite theme extraction on each in parallel (capped by BATCH_SIZE)
+// and write the themes back. Used by the AnalyzeThemesPanel admin tool
+// (synchronous, interactive) and the theme-backfill-tick safety-net cron.
 //
-// BATCH_SIZE 8 + 250ms gap = ~30 req/sec peak, which keeps a 40-response
-// chunk to ~15s and comfortably under the 150s edge timeout. If Gemini
-// returns 429s under load, lower BATCH_SIZE or raise INTER_BATCH_DELAY_MS.
+// A successful extraction with zero themes stamps
+// prompt_responses.themes_none_found_at — that is a final answer, not a
+// failure, and the stamp stops find_responses_missing_themes() from
+// resubmitting (and re-billing) the same response every cron cycle.
 
 const BATCH_SIZE = 8;
 const INTER_BATCH_DELAY_MS = 250;
@@ -65,7 +66,7 @@ serve(async (req) => {
       const batchResults = await Promise.all(
         batch.map(async (response: ResponseData) => {
           try {
-            // Skip-if-themed lets the cron race the real-time trigger
+            // Skip-if-themed lets callers race the real-time trigger
             // without double-paying for Gemini calls.
             const { data: existing } = await supabase
               .from("ai_themes")
@@ -85,6 +86,15 @@ serve(async (req) => {
             const themes = await analyzeThemes(response.response_text, company_name);
 
             if (themes.length === 0) {
+              // Final answer — stamp so the backfill picker stops
+              // resubmitting this response every cycle.
+              const { error: markErr } = await supabase
+                .from("prompt_responses")
+                .update({ themes_none_found_at: new Date().toISOString() })
+                .eq("id", response.response_id);
+              if (markErr) {
+                console.error(`Failed to stamp themes_none_found_at for ${response.response_id}:`, markErr);
+              }
               return {
                 response_id: response.response_id,
                 success: true,
@@ -147,8 +157,8 @@ serve(async (req) => {
         if (typeof n === "number") totalThemesCreated += n;
       }
 
-      // Small gap between batches keeps us under Gemini per-second limits
-      // when the cron + admin panel happen to fire concurrently.
+      // Small gap between parallel groups keeps the interactive path
+      // comfortably under Gemini per-minute rate limits.
       if (i + BATCH_SIZE < responses.length) {
         await new Promise((resolve) => setTimeout(resolve, INTER_BATCH_DELAY_MS));
       }

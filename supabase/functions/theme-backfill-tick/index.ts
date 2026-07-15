@@ -4,12 +4,25 @@ import { corsHeaders } from "../_shared/cors.ts";
 
 // Safety-net cron tick: pick up prompt_responses whose per-response theme
 // trigger from analyze-response was lost (fire-and-forget invoke failed,
-// OpenAI/Gemini rate-limited, function cold-start timed out, etc.) and hand
-// them to ai-thematic-analysis-bulk.
+// Gemini transiently down, function cold-start timed out, etc.) and hand
+// them to ai-thematic-analysis-bulk in bounded chunks.
 //
-// Scheduled every 5 min by cron job `theme-backfill-tick` (see migration
-// 20260526_theme_backfill_safety_net.sql). In steady state most ticks find
-// nothing and return immediately.
+// History: this cron previously ran on the Anthropic Message Batches API
+// (50% off Haiku). With the Gemini 2.5 Flash-Lite swap, synchronous calls
+// are ~6x cheaper than even batched Haiku, so the batch plumbing was
+// retired (2026-07-15). The one behaviour kept from the batch era is the
+// themes_none_found_at stamp: a successful extraction with zero themes is
+// a final answer, and stamping stops find_responses_missing_themes() from
+// resubmitting (and re-billing) the same response every cycle. Stamping now
+// happens inside ai-thematic-analysis and ai-thematic-analysis-bulk.
+//
+// Any theme_backfill_batches rows still 'pending' from the Anthropic era
+// are marked 'abandoned' on the first tick: their results are never
+// harvested, and their responses simply get re-picked and re-themed here
+// (skip-if-themed in the bulk function makes that safe).
+//
+// Scheduled every 5 min by cron job `theme-backfill-tick`. In steady state
+// most ticks find nothing and return immediately.
 
 // Per-tick budget. ai-thematic-analysis-bulk processes 8 responses in
 // parallel internally with a 250ms gap between batches, so 100 responses
@@ -26,8 +39,25 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   try {
+    // Transition cleanup: abandon any Anthropic-era batches still pending.
+    // Their responses stay theme-less, so the picker below re-covers them.
+    const { data: abandoned, error: abandonErr } = await supabase
+      .from("theme_backfill_batches")
+      .update({ status: "abandoned", completed_at: new Date().toISOString() })
+      .eq("status", "pending")
+      .select("anthropic_batch_id");
+    if (abandonErr) {
+      console.warn("[theme-backfill-tick] failed to abandon pending batches:", abandonErr);
+    } else if ((abandoned ?? []).length > 0) {
+      console.log(
+        `[theme-backfill-tick] abandoned ${abandoned!.length} Anthropic-era pending batch(es): ` +
+          abandoned!.map((b: any) => b.anthropic_batch_id).join(", "),
+      );
+    }
+
     // RPC instead of PostgREST so the planner can use NOT EXISTS + the
-    // ai_themes(response_id) index for the anti-join.
+    // ai_themes(response_id) index for the anti-join. The RPC also filters
+    // company_mentioned = true and themes_none_found_at IS NULL.
     const { data: missing, error: missingErr } = await supabase.rpc(
       "find_responses_missing_themes",
       { p_limit: MAX_RESPONSES_PER_TICK, p_days: 90 },

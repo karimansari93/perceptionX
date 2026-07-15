@@ -68,9 +68,46 @@ serve(async (req) => {
       }
     }
 
+    // Cost gate: only theme responses that actually mention the company.
+    // When company_mentioned is false the model is instructed to return an
+    // empty array anyway — and in practice pads with junk "No data available"
+    // placeholder themes instead (the failure mode that polluted ai_themes
+    // with neutral company-culture noise). Skipping here protects EVERY
+    // caller. find_responses_missing_themes applies the same filter, so
+    // skipped responses are not re-queued by the backfill cron. force=true
+    // bypasses the gate for deliberate manual re-themes.
+    if (!force) {
+      const { data: pr, error: prError } = await supabase
+        .from("prompt_responses")
+        .select("company_mentioned")
+        .eq("id", response_id)
+        .maybeSingle();
+      if (prError) {
+        console.error("Error checking company_mentioned:", prError);
+        return json({ error: "Failed to check company_mentioned", details: prError }, 500);
+      }
+      if (!pr?.company_mentioned) {
+        console.log(`⏭️ Skipping theme analysis for ${response_id}: company not mentioned in response.`);
+        return json({
+          success: true,
+          message: "Skipped: company not mentioned in response",
+          themes: [],
+        });
+      }
+    }
+
     const themes = await analyzeThemes(response_text, company_name);
 
     if (themes.length === 0) {
+      // Final answer — stamp so find_responses_missing_themes() doesn't
+      // resubmit (and re-bill) this response via the backfill cron.
+      const { error: markErr } = await supabase
+        .from("prompt_responses")
+        .update({ themes_none_found_at: new Date().toISOString() })
+        .eq("id", response_id);
+      if (markErr) {
+        console.error(`Failed to stamp themes_none_found_at for ${response_id}:`, markErr);
+      }
       return json({ success: true, message: "No themes identified", themes: [] });
     }
 

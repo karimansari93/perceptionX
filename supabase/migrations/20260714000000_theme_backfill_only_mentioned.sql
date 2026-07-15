@@ -1,20 +1,23 @@
 -- Gate theme extraction on company_mentioned.
 --
--- As of 2026-07-14, analyze-response only triggers ai-thematic-analysis when
+-- analyze-response only triggers ai-thematic-analysis when
 -- prompt_responses.company_mentioned = true. Responses that never mention the
 -- company yield an empty theme array anyway (see the coverage rule in
--- supabase/functions/_shared/theme-analysis.ts), so skipping the Claude Haiku
--- call is a pure cost saving with no loss of themes.
+-- supabase/functions/_shared/theme-analysis.ts), so skipping the model call
+-- is a pure cost saving with no loss of themes.
 --
 -- The safety-net backfill picker must apply the SAME filter. Otherwise every
 -- company_mentioned=false response would forever satisfy the "missing themes"
 -- anti-join (it will never get themes), and theme-backfill-tick would re-send
--- it to ai-thematic-analysis-bulk on every 5-minute tick — turning the cost
--- saving into a cost increase. Add company_mentioned = true so those responses
--- are simply never considered "missing".
+-- it on every 5-minute tick — turning the cost saving into a cost increase.
 --
--- COALESCE guards the historical rows where company_mentioned is NULL (treated
--- as not-mentioned → excluded), matching the real-time gate's `&& result.company_mentioned`.
+-- IMPORTANT: this definition preserves the themes_none_found_at IS NULL
+-- filter that production already carries (added with the batch-era backfill:
+-- a successful extraction with zero themes stamps the response so it is
+-- never resubmitted). Both filters are required.
+--
+-- COALESCE guards historical rows where company_mentioned is NULL (treated
+-- as not-mentioned → excluded), matching the real-time gate.
 
 CREATE OR REPLACE FUNCTION public.find_responses_missing_themes(
     p_limit int DEFAULT 100,
@@ -33,6 +36,7 @@ AS $$
       AND length(pr.response_text) > 100
       AND COALESCE(pr.for_index, false) = false
       AND COALESCE(pr.company_mentioned, false) = true
+      AND pr.themes_none_found_at IS NULL
       AND NOT EXISTS (
           SELECT 1 FROM public.ai_themes t WHERE t.response_id = pr.id
       )

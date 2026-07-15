@@ -1,31 +1,34 @@
-// Shared theme extraction used by both ai-thematic-analysis (real-time, one
-// response at a time, called fire-and-forget from analyze-response) and
-// ai-thematic-analysis-bulk (cron + admin backfill panel). Kept in one place
-// so the prompt, attribute taxonomy, and validation behaviour can't drift
-// between the two paths.
+// Shared theme extraction used by three paths that must never drift:
+//   - ai-thematic-analysis        (real-time, one response, fire-and-forget)
+//   - ai-thematic-analysis-bulk   (admin backfill panel + safety-net cron)
+//   - theme-backfill-tick         (cron: picks missing responses, fans out
+//                                  to ai-thematic-analysis-bulk)
+// The prompt, schema, model, and validation live here.
 //
 // Backed by Gemini 2.5 Flash-Lite via responseSchema (schema-enforced JSON).
-// Why Flash-Lite, not Haiku:
+// Why Flash-Lite, not Claude Haiku (the previous backend):
 //   - Cost. Haiku 4.5 is $1/$5 per 1M input/output tokens; Flash-Lite is
-//     $0.10/$0.40 — roughly 11x cheaper on output, which dominates this
-//     workload. Theme extraction was the biggest line on the LLM bill.
-//   - Reliability is preserved. Gemini's `responseSchema` enforces the JSON
-//     shape server-side, INCLUDING the attribute_id enum (the 13 v2 ids), so
-//     we still avoid the markdown-fence / regex-rescue cleanup that bit us on
-//     the earlier Gemini path. `normalizeAttributeId` remains the belt-and-
-//     suspenders fallback for anything that still slips through.
-//   - The earlier Gemini pain was the FREE-tier 10K-requests/day cap (burned
-//     through on a 9k backlog), not the model. Paid billing has no daily
-//     ceiling, so that failure mode is gone.
-//   - Thinking is disabled (thinkingBudget: 0) so we don't pay for or wait on
-//     reasoning tokens on what is a straightforward classification task.
+//     $0.10/$0.40 — ~11x cheaper on output, which dominates this workload.
+//     That also beats the old cron path's batched-Haiku rate ($0.50/$2.50)
+//     by ~6x, which is why the cron went back to synchronous calls and the
+//     Anthropic Batches plumbing was retired.
+//   - Reliability is preserved. Gemini's responseSchema enforces the JSON
+//     shape server-side INCLUDING the attribute_id enum (the 13 v2 ids), so
+//     no markdown-fence/regex cleanup. Validated 2026-07-15 against a
+//     40-response production sample: 0 empty regressions, 0 enum leakage,
+//     ~0.85 sentiment agreement vs the Haiku baseline.
+//   - The 2025-era Gemini pain was the FREE-tier 10K-requests/day cap, not
+//     the model; paid billing has no daily ceiling.
+//   - Thinking is disabled (thinkingBudget: 0): straight classification.
+// Output tokens still dominate spend, so the prompt caps theme count and
+// field lengths (2-6 themes, short names/descriptions/snippets).
 //
-// The real volume lever is still upstream: callers only invoke theme
-// extraction when company_mentioned = true, so responses that don't mention
-// the company never reach this function.
+// The volume lever is upstream: analyze-response only triggers extraction
+// when company_mentioned = true, and find_responses_missing_themes applies
+// the same filter plus themes_none_found_at IS NULL, so not-mentioned and
+// confirmed-empty responses never reach this function.
 //
-// Requires the GEMINI_API_KEY secret (set it in Supabase project secrets and
-// redeploy ai-thematic-analysis + ai-thematic-analysis-bulk).
+// Requires the GEMINI_API_KEY project secret.
 
 const GEMINI_MODEL = "gemini-2.5-flash-lite";
 const GEMINI_ENDPOINT =
@@ -78,11 +81,11 @@ const LEGACY_ATTRIBUTE_MAP: Record<string, string | null> = {
   "overall-candidate-experience": null,
 };
 
-// Gemini responseSchema (a subset of OpenAPI). Note the differences from
-// Anthropic's JSON-schema mode: types are UPPERCASE, there is no
-// `additionalProperties`, and `propertyOrdering` fixes field order for
-// consistent output. The `enum` on attribute_id still constrains emissions to
-// the 13 v2 ids server-side — the property we most needed to keep enforced.
+// Gemini responseSchema (an OpenAPI subset). Differences from Anthropic's
+// JSON-schema mode: types are UPPERCASE, no `additionalProperties`, and
+// `propertyOrdering` fixes field order. The `enum` on attribute_id still
+// constrains emissions to the 13 v2 ids server-side — the property we most
+// need enforced.
 const THEME_SCHEMA = {
   type: "ARRAY",
   items: {
@@ -123,11 +126,11 @@ const THEME_SCHEMA = {
   },
 } as const;
 
-const SYSTEM_PROMPT = `You are an expert in analyzing AI-generated responses to extract themes about a company's employer brand and talent perception.
+export const SYSTEM_PROMPT = `You are an expert in analyzing AI-generated responses to extract themes about a company's employer brand and talent perception.
 
 For each theme you identify, output an object with:
-- theme_name: clear, concise name
-- theme_description: brief description of the theme
+- theme_name: clear, concise name (max 6 words)
+- theme_description: ONE sentence, max 20 words
 - sentiment: "positive", "negative", or "neutral"
 - sentiment_score: number from -1 (very negative) to 1 (very positive)
 - attribute_id: exactly one of these strings (definition in parentheses):
@@ -146,8 +149,8 @@ For each theme you identify, output an object with:
   onboarding-experience (new-hire onboarding and first months)
 - attribute_name: human-readable form (e.g. "Mission, Purpose & Impact", "Company Culture", "Job Security")
 - confidence_score: number from 0 to 1
-- keywords: array of relevant keywords drawn from the response
-- context_snippets: array of 1-2 verbatim snippets from the response that support the theme
+- keywords: 3-5 keywords drawn from the response, each 1-3 words
+- context_snippets: 1-2 verbatim snippets from the response that support the theme, each max 20 words (truncate longer passages with "...")
 
 Classification rules — be strict:
 - company-culture is ONLY for workplace atmosphere, team dynamics, cultural practices, work environment, and feeling valued/recognized
@@ -156,8 +159,9 @@ Classification rules — be strict:
 - Work-life balance, mental health, flexibility, and remote work belong to wellbeing-balance, NOT company-culture
 - Candidate-journey topics belong to the dedicated candidate-experience attributes: the application process and recruiter communication → application-communication; interviews → interview-experience; post-interview/application feedback → candidate-feedback; onboarding → onboarding-experience
 
-Coverage:
+Coverage and concision:
 - Look for both positive and negative themes
+- Return 2-6 themes for a typical response. Merge closely related points into one theme per attribute-sentiment pair rather than fragmenting them; do not pad with marginal themes
 - If the response contains ANY information about the named company — even if it also discusses competitors or comparisons — extract themes from that information
 - Only return an empty array if the response truly contains no information about the company at all`;
 
@@ -171,7 +175,7 @@ function normalizeAttributeId(raw: any): string {
   return "unknown";
 }
 
-function validateAndCleanTheme(t: any): AITheme {
+export function validateAndCleanTheme(t: any): AITheme {
   const attributeId = normalizeAttributeId(t?.attribute_id);
   return {
     theme_name: t?.theme_name || "Unnamed Theme",
@@ -214,18 +218,17 @@ export async function analyzeThemes(
       responseSchema: THEME_SCHEMA,
       // Deterministic classification.
       temperature: 0,
-      // Comfortable headroom so the JSON array is never truncated (MAX_TOKENS
-      // would yield unparseable partial JSON). Output is cheap on Flash-Lite.
+      // Headroom so the JSON array is never truncated mid-write (MAX_TOKENS
+      // yields unparseable partial JSON). Output is cheap on Flash-Lite.
       maxOutputTokens: 8192,
-      // Straightforward classification — no reasoning tokens needed. Disabling
-      // thinking keeps cost and latency down.
+      // Straight classification — no reasoning tokens needed.
       thinkingConfig: { thinkingBudget: 0 },
     },
   };
 
-  // Transient Gemini failures (429 quota, 5xx overload — we saw 503 "model
-  // overloaded" during validation) are retried with backoff so a blip doesn't
-  // drop themes and lean on the backfill cron. Non-transient statuses fail fast.
+  // Transient Gemini failures (429 quota, 5xx overload — 503 "model
+  // overloaded" showed up during validation) are retried with backoff so a
+  // blip doesn't drop themes and lean on the backfill cron.
   const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
   const MAX_ATTEMPTS = 3;
 
