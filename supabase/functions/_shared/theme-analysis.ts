@@ -3,39 +3,38 @@
 //   - ai-thematic-analysis-bulk   (admin backfill panel + safety-net cron)
 //   - theme-backfill-tick         (cron: picks missing responses, fans out
 //                                  to ai-thematic-analysis-bulk)
-// The prompt, schema, model, and validation live here.
+// The prompt, schema, model, and validation live here; buildMessageParams()
+// is the single source of truth for the request shape so any batched or
+// synchronous call is byte-identical.
 //
-// Backed by Gemini 2.5 Flash-Lite via responseSchema (schema-enforced JSON).
-// Why Flash-Lite, not Claude Haiku (the previous backend):
-//   - Cost. Haiku 4.5 is $1/$5 per 1M input/output tokens; Flash-Lite is
-//     $0.10/$0.40 — ~11x cheaper on output, which dominates this workload.
-//     That also beats the old cron path's batched-Haiku rate ($0.50/$2.50)
-//     by ~6x, which is why the cron went back to synchronous calls and the
-//     Anthropic Batches plumbing was retired.
-//   - Reliability is preserved. Gemini's responseSchema enforces the JSON
-//     shape server-side INCLUDING the attribute_id enum (the 13 v2 ids), so
-//     no markdown-fence/regex cleanup. Validated 2026-07-15 against a
-//     40-response production sample: 0 empty regressions, 0 enum leakage,
-//     ~0.85 sentiment agreement vs the Haiku baseline.
-//   - The 2025-era Gemini pain was the FREE-tier 10K-requests/day cap, not
-//     the model; paid billing has no daily ceiling.
-//   - Thinking is disabled (thinkingBudget: 0): straight classification.
-// Output tokens still dominate spend, so the prompt caps theme count and
-// field lengths (2-6 themes, short names/descriptions/snippets).
+// Backed by Claude Haiku 4.5 with `output_config.format` JSON-schema mode.
+// Cost: $1/$5 per 1M input/output tokens — the cheapest Claude model.
+// Output tokens dominate spend, so the prompt caps theme count and field
+// lengths.
 //
-// The volume lever is upstream: analyze-response only triggers extraction
-// when company_mentioned = true, and find_responses_missing_themes applies
-// the same filter plus themes_none_found_at IS NULL, so not-mentioned and
-// confirmed-empty responses never reach this function.
+// MODEL CHOICE — 2026-07-15: a Gemini 2.5 Flash-Lite swap was trialled for
+// cost (~11x cheaper output) but reverted. On a positive/total sentiment
+// metric it ran ~46% neutral vs Haiku's ~18%, which would have shifted the
+// sentiment methodology as themes accumulated. Data-methodology continuity
+// outweighs the model saving here; Haiku is the calibration of record. The
+// upstream cost levers that are model-independent stay in place: callers
+// only theme when company_mentioned = true, and find_responses_missing_themes
+// applies the same filter plus themes_none_found_at IS NULL.
 //
-// Requires the GEMINI_API_KEY project secret.
+// NOTE on prompt caching: the cache_control marker below is currently a
+// no-op — Haiku 4.5's minimum cacheable prefix is 4096 tokens and this
+// system prompt is ~1K. It is kept (harmless) so caching engages
+// automatically if the prompt ever grows past the threshold.
 
-const GEMINI_MODEL = "gemini-2.5-flash-lite";
-const GEMINI_ENDPOINT =
-  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
 
 // @ts-ignore Deno global is available in the edge runtime.
-const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+// Env var is CLAUDE_API_KEY (matches the existing test-prompt-claude function
+// — the platform's secret is stored under that name, not ANTHROPIC_API_KEY).
+const client = new Anthropic({ apiKey: Deno.env.get("CLAUDE_API_KEY") });
+
+export const MODEL = "claude-haiku-4-5";
+export const MAX_TOKENS = 4096;
 
 export interface AITheme {
   theme_name: string;
@@ -49,8 +48,6 @@ export interface AITheme {
   context_snippets: string[];
 }
 
-// Methodology v2 taxonomy (mirror of src/config/attributes.ts — Deno edge
-// functions can't import the Vite app module). id → display name.
 const V2_ATTRIBUTES: Record<string, string> = {
   "mission-purpose-impact": "Mission, Purpose & Impact",
   "compensation": "Compensation",
@@ -68,9 +65,6 @@ const V2_ATTRIBUTES: Record<string, string> = {
 };
 const V2_ATTRIBUTE_IDS = Object.keys(V2_ATTRIBUTES);
 
-// Fold any retired v1 id the model may still emit (LLMs regress to their prior
-// despite the prompt) into its v2 successor, so stray ids can't reach ai_themes
-// and split one attribute across two ids. null = retired with no successor.
 const LEGACY_ATTRIBUTE_MAP: Record<string, string | null> = {
   "mission-purpose": "mission-purpose-impact",
   "social-impact": "mission-purpose-impact",
@@ -81,25 +75,20 @@ const LEGACY_ATTRIBUTE_MAP: Record<string, string | null> = {
   "overall-candidate-experience": null,
 };
 
-// Gemini responseSchema (an OpenAPI subset). Differences from Anthropic's
-// JSON-schema mode: types are UPPERCASE, no `additionalProperties`, and
-// `propertyOrdering` fixes field order. The `enum` on attribute_id still
-// constrains emissions to the 13 v2 ids server-side — the property we most
-// need enforced.
-const THEME_SCHEMA = {
-  type: "ARRAY",
+export const THEME_SCHEMA = {
+  type: "array",
   items: {
-    type: "OBJECT",
+    type: "object",
     properties: {
-      theme_name: { type: "STRING" },
-      theme_description: { type: "STRING" },
-      sentiment: { type: "STRING", enum: ["positive", "negative", "neutral"] },
-      sentiment_score: { type: "NUMBER" },
-      attribute_id: { type: "STRING", enum: V2_ATTRIBUTE_IDS },
-      attribute_name: { type: "STRING" },
-      confidence_score: { type: "NUMBER" },
-      keywords: { type: "ARRAY", items: { type: "STRING" } },
-      context_snippets: { type: "ARRAY", items: { type: "STRING" } },
+      theme_name: { type: "string" },
+      theme_description: { type: "string" },
+      sentiment: { type: "string", enum: ["positive", "negative", "neutral"] },
+      sentiment_score: { type: "number" },
+      attribute_id: { type: "string", enum: V2_ATTRIBUTE_IDS },
+      attribute_name: { type: "string" },
+      confidence_score: { type: "number" },
+      keywords: { type: "array", items: { type: "string" } },
+      context_snippets: { type: "array", items: { type: "string" } },
     },
     required: [
       "theme_name",
@@ -112,17 +101,7 @@ const THEME_SCHEMA = {
       "keywords",
       "context_snippets",
     ],
-    propertyOrdering: [
-      "theme_name",
-      "theme_description",
-      "sentiment",
-      "sentiment_score",
-      "attribute_id",
-      "attribute_name",
-      "confidence_score",
-      "keywords",
-      "context_snippets",
-    ],
+    additionalProperties: false,
   },
 } as const;
 
@@ -165,9 +144,6 @@ Coverage and concision:
 - If the response contains ANY information about the named company — even if it also discusses competitors or comparisons — extract themes from that information
 - Only return an empty array if the response truly contains no information about the company at all`;
 
-// Resolve any emitted id to a live v2 id: pass v2 ids through, fold legacy v1
-// ids to their successor, and reject everything else (incl. retired ids that
-// map to null) as "unknown" so it never counts under a real attribute.
 function normalizeAttributeId(raw: any): string {
   const id = typeof raw === "string" ? raw.trim() : "";
   if (id in V2_ATTRIBUTES) return id;
@@ -183,7 +159,6 @@ export function validateAndCleanTheme(t: any): AITheme {
     sentiment: ["positive", "negative", "neutral"].includes(t?.sentiment) ? t.sentiment : "neutral",
     sentiment_score: Math.max(-1, Math.min(1, parseFloat(t?.sentiment_score) || 0)),
     attribute_id: attributeId,
-    // Keep the display name consistent with the (normalized) id when known.
     attribute_name: V2_ATTRIBUTES[attributeId] || t?.attribute_name || "Unknown Attribute",
     confidence_score: Math.max(0, Math.min(1, parseFloat(t?.confidence_score) || 0)),
     keywords: Array.isArray(t?.keywords) ? t.keywords : [],
@@ -191,112 +166,81 @@ export function validateAndCleanTheme(t: any): AITheme {
   };
 }
 
-export async function analyzeThemes(
-  responseText: string,
-  companyName: string,
-): Promise<AITheme[]> {
-  if (!GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not set");
-  }
-
-  const requestBody = {
-    system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-    contents: [
+// Single source of truth for the Messages request shape.
+export function buildMessageParams(responseText: string, companyName: string) {
+  return {
+    model: MODEL,
+    max_tokens: MAX_TOKENS,
+    system: [
       {
-        role: "user",
-        parts: [
-          {
-            text: `Analyze this response about "${companyName}":\n\n"""\n${responseText}\n"""`,
-          },
-        ],
+        type: "text" as const,
+        text: SYSTEM_PROMPT,
+        cache_control: { type: "ephemeral" as const },
       },
     ],
-    generationConfig: {
-      // Schema-enforced JSON — Gemini validates the shape server-side, so the
-      // returned text is guaranteed-parseable and the attribute_id enum holds.
-      responseMimeType: "application/json",
-      responseSchema: THEME_SCHEMA,
-      // Deterministic classification.
-      temperature: 0,
-      // Headroom so the JSON array is never truncated mid-write (MAX_TOKENS
-      // yields unparseable partial JSON). Output is cheap on Flash-Lite.
-      maxOutputTokens: 8192,
-      // Straight classification — no reasoning tokens needed.
-      thinkingConfig: { thinkingBudget: 0 },
+    output_config: {
+      format: { type: "json_schema", schema: THEME_SCHEMA },
     },
-  };
-
-  // Transient Gemini failures (429 quota, 5xx overload — 503 "model
-  // overloaded" showed up during validation) are retried with backoff so a
-  // blip doesn't drop themes and lean on the backfill cron.
-  const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
-  const MAX_ATTEMPTS = 3;
-
-  let resp: Response | undefined;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    resp = await fetch(GEMINI_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": GEMINI_API_KEY,
+    messages: [
+      {
+        role: "user" as const,
+        content: `Analyze this response about "${companyName}":\n\n"""\n${responseText}\n"""`,
       },
-      body: JSON.stringify(requestBody),
-    });
+    ],
+  };
+}
 
-    if (resp.ok) break;
-
-    const errText = await resp.text().catch(() => "");
-    if (RETRYABLE_STATUS.has(resp.status) && attempt < MAX_ATTEMPTS) {
-      // 500ms, then 1500ms.
-      await new Promise((r) => setTimeout(r, 500 * Math.pow(3, attempt - 1)));
-      continue;
-    }
-    // Non-retryable, or out of attempts. Surface 429 distinctly so the bulk
-    // function's per-response try/catch can treat quota exhaustion specially.
-    if (resp.status === 429) {
-      throw new Error(`Gemini rate-limited (429) after ${attempt} attempts: ${errText.slice(0, 300)}`);
-    }
-    throw new Error(`Gemini API error ${resp.status} after ${attempt} attempts: ${errText.slice(0, 300)}`);
-  }
-
-  const data = await (resp as Response).json();
-
-  // A blocked prompt (safety filter) or an empty candidate → treat as "no
-  // themes" rather than an error, mirroring the old behaviour on empty output.
-  const candidate = data?.candidates?.[0];
-  const finishReason = candidate?.finishReason;
-  const text: string = (candidate?.content?.parts ?? [])
-    .map((p: any) => p?.text ?? "")
-    .join("");
-
-  if (!text) {
-    console.warn(
-      `[theme-analysis] no text. finishReason=${finishReason} blockReason=${data?.promptFeedback?.blockReason ?? "none"}`,
-    );
+// Parse a Messages API response into validated themes. Returns [] on any
+// malformed output rather than throwing — a response with no themes is
+// retried by the safety-net cron, so failing soft is safe.
+export function parseThemesFromMessage(response: any, label: string): AITheme[] {
+  const textBlock = response?.content?.find((b: any) => b.type === "text") as
+    | { type: "text"; text: string }
+    | undefined;
+  if (!textBlock) {
+    console.warn(`[theme-analysis] no text block (${label}). stop_reason=${response?.stop_reason}`);
     return [];
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(textBlock.text);
   } catch (e) {
-    console.error("[theme-analysis] JSON parse failed despite responseSchema:", e, text.slice(0, 200));
+    console.error(`[theme-analysis] JSON parse failed despite structured output (${label}):`, e, textBlock.text.slice(0, 200));
     return [];
   }
 
   if (!Array.isArray(parsed)) {
-    console.warn("[theme-analysis] responseSchema returned non-array:", text.slice(0, 200));
+    console.warn(`[theme-analysis] structured output returned non-array (${label}):`, textBlock.text.slice(0, 200));
     return [];
   }
 
-  if (parsed.length === 0) {
-    console.warn(`[theme-analysis] EMPTY for "${companyName}". Input head: ${responseText.slice(0, 150)}`);
-  } else {
-    const usage = data?.usageMetadata;
-    console.log(
-      `[theme-analysis] ${parsed.length} themes for "${companyName}". tokens in=${usage?.promptTokenCount ?? 0} out=${usage?.candidatesTokenCount ?? 0}`,
-    );
-  }
-
   return parsed.map(validateAndCleanTheme);
+}
+
+export async function analyzeThemes(
+  responseText: string,
+  companyName: string,
+): Promise<AITheme[]> {
+  try {
+    const response = await client.messages.create(
+      buildMessageParams(responseText, companyName) as any,
+    );
+
+    const themes = parseThemesFromMessage(response, companyName);
+    if (themes.length === 0) {
+      console.warn(`[theme-analysis] EMPTY for "${companyName}". Input head: ${responseText.slice(0, 150)}`);
+    } else {
+      console.log(`[theme-analysis] ${themes.length} themes for "${companyName}". cache_read=${response.usage?.cache_read_input_tokens ?? 0} cache_write=${response.usage?.cache_creation_input_tokens ?? 0}`);
+    }
+    return themes;
+  } catch (e: any) {
+    if (e instanceof Anthropic.RateLimitError) {
+      throw new Error(`Claude rate-limited (429): ${e.message}`);
+    }
+    if (e instanceof Anthropic.APIError) {
+      throw new Error(`Claude API error ${e.status}: ${e.message}`);
+    }
+    throw e;
+  }
 }

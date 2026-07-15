@@ -4,10 +4,10 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { analyzeThemes } from "../_shared/theme-analysis.ts";
 
 // Bulk theme extraction. Caller provides an array of { response_id,
-// response_text } plus the company_name; we run the shared Gemini 2.5
-// Flash-Lite theme extraction on each in parallel (capped by BATCH_SIZE)
-// and write the themes back. Used by the AnalyzeThemesPanel admin tool
-// (synchronous, interactive) and the theme-backfill-tick safety-net cron.
+// response_text } plus the company_name; we run the shared Claude Haiku
+// theme extraction on each in parallel (capped by BATCH_SIZE) and write the
+// themes back. Used by the AnalyzeThemesPanel admin tool (synchronous,
+// interactive) and the theme-backfill-tick safety-net cron.
 //
 // A successful extraction with zero themes stamps
 // prompt_responses.themes_none_found_at — that is a final answer, not a
