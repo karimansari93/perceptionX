@@ -55,6 +55,7 @@ serve(async (req) => {
 
       // Decode every succeeded result: custom_id is the response_id.
       const themed: { response_id: string; themes: any[] }[] = [];
+      const emptyIds: string[] = [];
       let succeeded = 0;
       let failed = 0;
       const results = await anthropic.messages.batches.results(row.anthropic_batch_id);
@@ -66,6 +67,19 @@ serve(async (req) => {
         succeeded++;
         const themes = parseThemesFromMessage(entry.result.message, entry.custom_id);
         if (themes.length > 0) themed.push({ response_id: entry.custom_id, themes });
+        else emptyIds.push(entry.custom_id);
+      }
+
+      // A successful extraction with zero themes is a final answer, not a
+      // failure — stamp it so find_responses_missing_themes() stops
+      // resubmitting (and re-billing) the same response every cycle.
+      const emptyAt = new Date().toISOString();
+      for (let i = 0; i < emptyIds.length; i += IN_CHUNK) {
+        const { error: markErr } = await supabase
+          .from("prompt_responses")
+          .update({ themes_none_found_at: emptyAt })
+          .in("id", emptyIds.slice(i, i + IN_CHUNK));
+        if (markErr) console.error("[theme-backfill-tick] failed to mark empty responses:", markErr);
       }
 
       // Skip responses the realtime trigger themed while the batch ran —
@@ -112,6 +126,7 @@ serve(async (req) => {
         succeeded,
         failed,
         responses_themed: themed.length - already.size,
+        marked_no_themes: emptyIds.length,
         skipped_already_themed: already.size,
         themes_inserted: inserted,
       };
