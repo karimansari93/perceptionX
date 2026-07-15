@@ -15,7 +15,7 @@ interface CitationWithRecency {
   url?: string;
   publicationDate?: string;
   recencyScore: number | null; // null = N/A
-  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'firecrawl-json' | 'meta-tag' | 'json-ld' | 'time-tag' | 'openai-html' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen' | 'youtube-api' | 'reddit-api';
+  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'firecrawl-json' | 'meta-tag' | 'json-ld' | 'time-tag' | 'openai-html' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen' | 'youtube-api' | 'reddit-api' | 'social-post';
   sourceType?: 'perplexity' | 'google-ai-overviews' | 'bing-copilot' | 'search-results';
 }
 
@@ -196,6 +196,21 @@ serve(async (req) => {
         continue;
       }
 
+      // Static deny-list: known-dateless domains that reliably fail every scrape
+      // tier. Classify terminally now so they never reach YouTube/Reddit/Firecrawl.
+      const dateless = classifyDatelessUrl(url);
+      if (dateless) {
+        urlResults.set(url, {
+          domain: firstCitation?.domain || extractDomainFromUrl(url),
+          title: firstCitation?.title,
+          url,
+          recencyScore: null,
+          extractionMethod: dateless.method,
+          sourceType: firstCitation?.sourceType,
+        });
+        continue;
+      }
+
       if (youtubeApiKey) {
         const videoId = parseYouTubeVideoId(url);
         if (videoId) {
@@ -300,6 +315,39 @@ serve(async (req) => {
       urlsNeedingFirecrawl.length = 0;
       urlsNeedingFirecrawl.push(...stillNeedingFirecrawl);
       console.log(`Cheap tiers: meta/json-ld/time-tag=${tier2Hits}, openai-html=${tier3Hits}, still need Firecrawl=${urlsNeedingFirecrawl.length}`);
+    }
+
+    // Step 4b.i: Dynamic deny-list. Drop domains that history proves almost never
+    // yield a date (firecrawl_dead_domains MV) from the paid Firecrawl tier and
+    // mark them not-found. The free tiers above already ran, so a domain that
+    // starts exposing dates again is still caught cheaply; we only refuse to PAY
+    // to re-scrape a domain that has failed ~everything ~every time.
+    if (!testMode && firecrawlApiKey && urlsNeedingFirecrawl.length > 0) {
+      const deadDomains = await loadDeadDomains();
+      if (deadDomains.size > 0) {
+        const stillNeedingFirecrawl: string[] = [];
+        let deadSkipped = 0;
+        for (const url of urlsNeedingFirecrawl) {
+          if (deadDomains.has(extractDomainFromUrl(url))) {
+            const citationsForUrl = urlToCitations.get(url) || [];
+            const firstCitation = citationsForUrl[0];
+            urlResults.set(url, {
+              domain: firstCitation?.domain || extractDomainFromUrl(url),
+              title: firstCitation?.title,
+              url,
+              recencyScore: null,
+              extractionMethod: 'not-found',
+              sourceType: firstCitation?.sourceType,
+            });
+            deadSkipped++;
+          } else {
+            stillNeedingFirecrawl.push(url);
+          }
+        }
+        urlsNeedingFirecrawl.length = 0;
+        urlsNeedingFirecrawl.push(...stillNeedingFirecrawl);
+        console.log(`Dead-domain deny-list: skipped ${deadSkipped} URLs, remaining for Firecrawl: ${urlsNeedingFirecrawl.length}`);
+      }
     }
 
     // Step 4c: One batch Firecrawl call (concurrent, much faster than per-URL).
@@ -950,6 +998,74 @@ function isEvergreenUrl(url: string): boolean {
   }
 
   return false;
+}
+
+// ----------------------------------------------------------------------------
+// Static deny-list: domains/paths that NEVER yield a usable publication date and
+// reliably fail every scrape tier (login walls, search-result pages, doc-viewer
+// shells behind bot protection). Classifying them terminally BEFORE any tier
+// means we never spend a Firecrawl credit — least of all a 5-credit enhanced
+// retry — failing on them. Backed by production not-found data: these were the
+// highest-volume dateless domains in url_recency_cache.
+//
+// Returns a terminal method to cache, or null to let the normal pipeline run.
+//   - social-post: a real post whose date exists but is unreachable (auth wall)
+//   - not-found:   no publication date exists for this kind of page at all
+function classifyDatelessUrl(url: string): { method: CitationWithRecency['extractionMethod'] } | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  const path = parsed.pathname.toLowerCase().replace(/\/+$/, '');
+
+  // Login-walled social networks. Individual posts have real dates but are
+  // unreachable without authentication; every scrape (incl. enhanced proxies)
+  // returns a login/consent shell. Mark social-post (null score) — honest and
+  // terminal. (twitter/x profiles + linkedin company pages are handled as
+  // evergreen elsewhere; these are the ones that otherwise burn scrapes.)
+  const socialHosts = ['instagram.com', 'facebook.com', 'fb.com', 'tiktok.com'];
+  if (socialHosts.some((h) => host === h || host.endsWith('.' + h))) {
+    return { method: 'social-post' };
+  }
+
+  // Google search / maps / vertical result pages — no publication date exists.
+  if (host === 'google.com' && /^\/(search|maps|travel|flights|shopping|store)(\/|$)/.test(path)) {
+    return { method: 'not-found' };
+  }
+
+  // Document-hosting viewers behind bot walls — a scrape returns the viewer
+  // shell, never a date.
+  const deadDocHosts = ['scribd.com', 'studocu.com'];
+  if (deadDocHosts.some((h) => host === h || host.endsWith('.' + h))) {
+    return { method: 'not-found' };
+  }
+
+  return null;
+}
+
+// Dynamic deny-list: domains that history proves almost never yield a date.
+// Loaded from the firecrawl_dead_domains materialized view (refreshed daily).
+// Used ONLY to skip the paid Firecrawl tier — the free tiers still run — so if a
+// dead domain starts exposing dates again the cheap tiers will still catch it,
+// and the MV (a rolling 90-day window) drops it back off automatically.
+// Fails open: any error → empty set → normal behavior.
+async function loadDeadDomains(): Promise<Set<string>> {
+  try {
+    const { data, error } = await supabase
+      .from('firecrawl_dead_domains')
+      .select('domain');
+    if (error) {
+      console.warn('Dead-domain deny-list load failed (proceeding without it):', error.message);
+      return new Set();
+    }
+    return new Set((data ?? []).map((r: { domain: string }) => r.domain));
+  } catch (e) {
+    console.warn('Dead-domain deny-list load threw (proceeding without it):', e);
+    return new Set();
+  }
 }
 
 // ----------------------------------------------------------------------------
