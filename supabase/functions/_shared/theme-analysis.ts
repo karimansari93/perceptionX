@@ -223,26 +223,40 @@ export async function analyzeThemes(
     },
   };
 
-  const resp = await fetch(GEMINI_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": GEMINI_API_KEY,
-    },
-    body: JSON.stringify(requestBody),
-  });
+  // Transient Gemini failures (429 quota, 5xx overload — we saw 503 "model
+  // overloaded" during validation) are retried with backoff so a blip doesn't
+  // drop themes and lean on the backfill cron. Non-transient statuses fail fast.
+  const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+  const MAX_ATTEMPTS = 3;
 
-  if (!resp.ok) {
+  let resp: Response | undefined;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    resp = await fetch(GEMINI_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": GEMINI_API_KEY,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (resp.ok) break;
+
     const errText = await resp.text().catch(() => "");
-    // Surface rate-limit / quota distinctly so the bulk function's per-response
-    // try/catch can decide what to do (429 = per-minute quota, retryable).
-    if (resp.status === 429) {
-      throw new Error(`Gemini rate-limited (429): ${errText.slice(0, 300)}`);
+    if (RETRYABLE_STATUS.has(resp.status) && attempt < MAX_ATTEMPTS) {
+      // 500ms, then 1500ms.
+      await new Promise((r) => setTimeout(r, 500 * Math.pow(3, attempt - 1)));
+      continue;
     }
-    throw new Error(`Gemini API error ${resp.status}: ${errText.slice(0, 300)}`);
+    // Non-retryable, or out of attempts. Surface 429 distinctly so the bulk
+    // function's per-response try/catch can treat quota exhaustion specially.
+    if (resp.status === 429) {
+      throw new Error(`Gemini rate-limited (429) after ${attempt} attempts: ${errText.slice(0, 300)}`);
+    }
+    throw new Error(`Gemini API error ${resp.status} after ${attempt} attempts: ${errText.slice(0, 300)}`);
   }
 
-  const data = await resp.json();
+  const data = await (resp as Response).json();
 
   // A blocked prompt (safety filter) or an empty candidate → treat as "no
   // themes" rather than an error, mirroring the old behaviour on empty output.
