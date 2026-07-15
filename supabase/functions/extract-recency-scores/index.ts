@@ -666,6 +666,12 @@ async function batchExtractDatesWithFirecrawl(
         formats: ['markdown'],
         onlyMainContent: true,
         timeout: 30000,
+        // Force basic proxies (1 credit). Firecrawl defaults to proxy: 'auto',
+        // which silently retries failures on enhanced proxies at 5 credits/URL.
+        // The domains that fail basic proxies (Instagram, Facebook, TikTok,
+        // Glassdoor, Google) return no publication date anyway, so paying 5x to
+        // fail is strictly worse than paying 1x to fail.
+        proxy: 'basic',
       }),
     });
 
