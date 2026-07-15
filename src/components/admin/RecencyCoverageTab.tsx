@@ -402,11 +402,41 @@ const OrgDrillDown = ({
 
   const enqueueJob = async () => {
     setEnqueueing(true);
-    const latestOnly = scopeMode === 'latest' && !!latestStart;
+
+    // Resolve the "latest collection" cutoff. Prefer the value we pre-fetched,
+    // but fall back to a fresh lookup at click-time so a slow/failed pre-fetch
+    // never blocks the feature. If the org genuinely has no responses, bail
+    // rather than silently queuing the entire backlog.
+    let since: string | null = null;
+    if (scopeMode === 'latest') {
+      since = latestStart;
+      if (!since) {
+        const { data: freshStart, error: startErr } = await supabase.rpc(
+          'get_latest_collection_start' as any,
+          {
+            p_org: org.organization_id,
+            p_company: companyScoped ? selectedCompanyId : null,
+          }
+        );
+        if (startErr) {
+          setEnqueueing(false);
+          toast.error(`Couldn't detect the latest collection: ${startErr.message}`);
+          return;
+        }
+        since = (freshStart as string | null) ?? null;
+        if (since) setLatestStart(since);
+      }
+      if (!since) {
+        setEnqueueing(false);
+        toast.error('No collection found for this scope — nothing to rescore.');
+        return;
+      }
+    }
+
     const { data, error } = await supabase.rpc('enqueue_recency_rescore' as any, {
       p_org: org.organization_id,
       p_company: companyScoped ? selectedCompanyId : null,
-      p_since: latestOnly ? latestStart : null,
+      p_since: since,
     });
     setEnqueueing(false);
     if (error) {
@@ -614,7 +644,7 @@ const OrgDrillDown = ({
                     </SelectContent>
                   </Select>
                   <Select
-                    value={latestStart ? scopeMode : 'all'}
+                    value={scopeMode}
                     onValueChange={(v) => setScopeMode(v as RescoreScope)}
                     disabled={jobActive}
                   >
@@ -622,7 +652,7 @@ const OrgDrillDown = ({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="latest" disabled={!latestStart}>
+                      <SelectItem value="latest">
                         Latest collection
                         {latestStart ? ` (since ${shortDate(latestStart)})` : ''}
                       </SelectItem>
