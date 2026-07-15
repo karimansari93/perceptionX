@@ -15,7 +15,7 @@ interface CitationWithRecency {
   url?: string;
   publicationDate?: string;
   recencyScore: number | null; // null = N/A
-  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'firecrawl-json' | 'meta-tag' | 'json-ld' | 'time-tag' | 'openai-html' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen' | 'youtube-api' | 'reddit-api';
+  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'firecrawl-json' | 'meta-tag' | 'json-ld' | 'time-tag' | 'openai-html' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen' | 'youtube-api' | 'reddit-api' | 'social-post';
   sourceType?: 'perplexity' | 'google-ai-overviews' | 'bing-copilot' | 'search-results';
 }
 
@@ -69,10 +69,18 @@ async function getCachedUrls(urls: string[]): Promise<Map<string, CachedUrl>> {
 async function storeCachedUrl(citation: CitationWithRecency): Promise<void> {
   if (!citation.url) return;
   
+  // Last-line guard: an invalid date would make Postgres reject the upsert,
+  // leaving the URL uncached and re-analyzed on every future run. Better to
+  // cache it dateless than to retry it forever.
+  const publicationDate =
+    citation.publicationDate && isRealDate(citation.publicationDate)
+      ? citation.publicationDate
+      : null;
+
   const cacheData = {
     url: citation.url,
     domain: citation.domain,
-    publication_date: citation.publicationDate || null,
+    publication_date: publicationDate,
     recency_score: citation.recencyScore,
     extraction_method: citation.extractionMethod
   };
@@ -196,6 +204,21 @@ serve(async (req) => {
         continue;
       }
 
+      // Static deny-list: known-dateless domains that reliably fail every scrape
+      // tier. Classify terminally now so they never reach YouTube/Reddit/Firecrawl.
+      const dateless = classifyDatelessUrl(url);
+      if (dateless) {
+        urlResults.set(url, {
+          domain: firstCitation?.domain || extractDomainFromUrl(url),
+          title: firstCitation?.title,
+          url,
+          recencyScore: null,
+          extractionMethod: dateless.method,
+          sourceType: firstCitation?.sourceType,
+        });
+        continue;
+      }
+
       if (youtubeApiKey) {
         const videoId = parseYouTubeVideoId(url);
         if (videoId) {
@@ -300,6 +323,39 @@ serve(async (req) => {
       urlsNeedingFirecrawl.length = 0;
       urlsNeedingFirecrawl.push(...stillNeedingFirecrawl);
       console.log(`Cheap tiers: meta/json-ld/time-tag=${tier2Hits}, openai-html=${tier3Hits}, still need Firecrawl=${urlsNeedingFirecrawl.length}`);
+    }
+
+    // Step 4b.i: Dynamic deny-list. Drop domains that history proves almost never
+    // yield a date (firecrawl_dead_domains MV) from the paid Firecrawl tier and
+    // mark them not-found. The free tiers above already ran, so a domain that
+    // starts exposing dates again is still caught cheaply; we only refuse to PAY
+    // to re-scrape a domain that has failed ~everything ~every time.
+    if (!testMode && firecrawlApiKey && urlsNeedingFirecrawl.length > 0) {
+      const deadDomains = await loadDeadDomains();
+      if (deadDomains.size > 0) {
+        const stillNeedingFirecrawl: string[] = [];
+        let deadSkipped = 0;
+        for (const url of urlsNeedingFirecrawl) {
+          if (deadDomains.has(extractDomainFromUrl(url))) {
+            const citationsForUrl = urlToCitations.get(url) || [];
+            const firstCitation = citationsForUrl[0];
+            urlResults.set(url, {
+              domain: firstCitation?.domain || extractDomainFromUrl(url),
+              title: firstCitation?.title,
+              url,
+              recencyScore: null,
+              extractionMethod: 'not-found',
+              sourceType: firstCitation?.sourceType,
+            });
+            deadSkipped++;
+          } else {
+            stillNeedingFirecrawl.push(url);
+          }
+        }
+        urlsNeedingFirecrawl.length = 0;
+        urlsNeedingFirecrawl.push(...stillNeedingFirecrawl);
+        console.log(`Dead-domain deny-list: skipped ${deadSkipped} URLs, remaining for Firecrawl: ${urlsNeedingFirecrawl.length}`);
+      }
     }
 
     // Step 4c: One batch Firecrawl call (concurrent, much faster than per-URL).
@@ -424,6 +480,20 @@ serve(async (req) => {
   }
 });
 
+// The url_recency_cache.publication_date column is a real DATE: a string like
+// "2016-17-01" (a "2016-17" season/fiscal-year URL fragment read as month 17)
+// makes Postgres reject the row with "date/time field value out of range", the
+// URL never gets cached, and the rescore tick retries it every run forever.
+// Every extracted date must pass this before it is returned/stored.
+function isRealDate(iso: string): boolean {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return false;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (y < 1990 || y > 2050) return false;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
 function extractDateFromUrl(url: string): string | null {
   // Helper to validate year is reasonable (web content dates)
   const isValidYear = (year: string): boolean => {
@@ -447,31 +517,33 @@ function extractDateFromUrl(url: string): string | null {
   for (const pattern of patterns) {
     const match = url.match(pattern);
     if (match) {
+      let candidate: string | null = null;
       if (pattern === patterns[0]) { // YYYY/MM/DD or YYYY-MM-DD
         const [, year, month, day] = match;
         if (!isValidYear(year)) continue;
-        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        candidate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
       } else if (pattern === patterns[1]) { // YYYY/MM or YYYY-MM
         const [, year, month] = match;
         if (!isValidYear(year)) continue;
-        return `${year}-${month.padStart(2, '0')}-01`;
+        candidate = `${year}-${month.padStart(2, '0')}-01`;
       } else if (pattern === patterns[2]) { // YYYY
         const [, year] = match;
         if (!isValidYear(year)) continue;
-        return `${year}-01-01`;
+        candidate = `${year}-01-01`;
       } else if (pattern === patterns[3]) { // Month DD, YYYY (full month names)
         const [, month, day, year] = match;
         if (!isValidYear(year)) continue;
         const monthNum = new Date(`${month} 1, 2000`).getMonth() + 1;
-        return `${year}-${monthNum.toString().padStart(2, '0')}-${day.padStart(2, '0')}`;
+        candidate = `${year}-${monthNum.toString().padStart(2, '0')}-${day.padStart(2, '0')}`;
       } else if (pattern === patterns[4]) { // Month DD, YYYY (abbreviated month names)
         const [, month, day, year] = match;
         if (!isValidYear(year)) continue;
         const monthNum = getMonthNumber(month);
         if (monthNum) {
-          return `${year}-${monthNum.toString().padStart(2, '0')}-${day.padStart(2, '0')}`;
+          candidate = `${year}-${monthNum.toString().padStart(2, '0')}-${day.padStart(2, '0')}`;
         }
       }
+      if (candidate && isRealDate(candidate)) return candidate;
     }
   }
   
@@ -489,13 +561,20 @@ function normalizeDateString(raw: string | undefined | null): string | null {
   if (!raw) return null;
   const s = String(raw).trim();
   const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  if (iso) {
+    const d = `${iso[1]}-${iso[2]}-${iso[3]}`;
+    if (isRealDate(d)) return d;
+  }
   const slash = s.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-  if (slash) return `${slash[1]}-${slash[2].padStart(2, '0')}-${slash[3].padStart(2, '0')}`;
+  if (slash) {
+    const d = `${slash[1]}-${slash[2].padStart(2, '0')}-${slash[3].padStart(2, '0')}`;
+    if (isRealDate(d)) return d;
+  }
   const t = Date.parse(s);
   if (!isNaN(t)) {
     const d = new Date(t);
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    const out = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    if (isRealDate(out)) return out;
   }
   return null;
 }
@@ -666,6 +745,12 @@ async function batchExtractDatesWithFirecrawl(
         formats: ['markdown'],
         onlyMainContent: true,
         timeout: 30000,
+        // Force basic proxies (1 credit). Firecrawl defaults to proxy: 'auto',
+        // which silently retries failures on enhanced proxies at 5 credits/URL.
+        // The domains that fail basic proxies (Instagram, Facebook, TikTok,
+        // Glassdoor, Google) return no publication date anyway, so paying 5x to
+        // fail is strictly worse than paying 1x to fail.
+        proxy: 'basic',
       }),
     });
 
@@ -947,6 +1032,74 @@ function isEvergreenUrl(url: string): boolean {
 }
 
 // ----------------------------------------------------------------------------
+// Static deny-list: domains/paths that NEVER yield a usable publication date and
+// reliably fail every scrape tier (login walls, search-result pages, doc-viewer
+// shells behind bot protection). Classifying them terminally BEFORE any tier
+// means we never spend a Firecrawl credit — least of all a 5-credit enhanced
+// retry — failing on them. Backed by production not-found data: these were the
+// highest-volume dateless domains in url_recency_cache.
+//
+// Returns a terminal method to cache, or null to let the normal pipeline run.
+//   - social-post: a real post whose date exists but is unreachable (auth wall)
+//   - not-found:   no publication date exists for this kind of page at all
+function classifyDatelessUrl(url: string): { method: CitationWithRecency['extractionMethod'] } | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  const path = parsed.pathname.toLowerCase().replace(/\/+$/, '');
+
+  // Login-walled social networks. Individual posts have real dates but are
+  // unreachable without authentication; every scrape (incl. enhanced proxies)
+  // returns a login/consent shell. Mark social-post (null score) — honest and
+  // terminal. (twitter/x profiles + linkedin company pages are handled as
+  // evergreen elsewhere; these are the ones that otherwise burn scrapes.)
+  const socialHosts = ['instagram.com', 'facebook.com', 'fb.com', 'tiktok.com'];
+  if (socialHosts.some((h) => host === h || host.endsWith('.' + h))) {
+    return { method: 'social-post' };
+  }
+
+  // Google search / maps / vertical result pages — no publication date exists.
+  if (host === 'google.com' && /^\/(search|maps|travel|flights|shopping|store)(\/|$)/.test(path)) {
+    return { method: 'not-found' };
+  }
+
+  // Document-hosting viewers behind bot walls — a scrape returns the viewer
+  // shell, never a date.
+  const deadDocHosts = ['scribd.com', 'studocu.com'];
+  if (deadDocHosts.some((h) => host === h || host.endsWith('.' + h))) {
+    return { method: 'not-found' };
+  }
+
+  return null;
+}
+
+// Dynamic deny-list: domains that history proves almost never yield a date.
+// Loaded from the firecrawl_dead_domains materialized view (refreshed daily).
+// Used ONLY to skip the paid Firecrawl tier — the free tiers still run — so if a
+// dead domain starts exposing dates again the cheap tiers will still catch it,
+// and the MV (a rolling 90-day window) drops it back off automatically.
+// Fails open: any error → empty set → normal behavior.
+async function loadDeadDomains(): Promise<Set<string>> {
+  try {
+    const { data, error } = await supabase
+      .from('firecrawl_dead_domains')
+      .select('domain');
+    if (error) {
+      console.warn('Dead-domain deny-list load failed (proceeding without it):', error.message);
+      return new Set();
+    }
+    return new Set((data ?? []).map((r: { domain: string }) => r.domain));
+  } catch (e) {
+    console.warn('Dead-domain deny-list load threw (proceeding without it):', e);
+    return new Set();
+  }
+}
+
+// ----------------------------------------------------------------------------
 // YouTube Data API v3 extractor. Free (10K quota units/day; 1 unit per
 // videos.list call covering up to 50 IDs). Replaces Firecrawl for YouTube URLs.
 // ----------------------------------------------------------------------------
@@ -1121,4 +1274,3 @@ async function extractRedditDates(urls: string[]): Promise<Map<string, string>> 
   await Promise.all(Array.from({ length: Math.min(concurrency, urls.length) }, worker));
   return result;
 }
-
