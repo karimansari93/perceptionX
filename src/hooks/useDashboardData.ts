@@ -2128,20 +2128,19 @@ export const useDashboardData = () => {
       ? Math.round(prevRelevance)
       : undefined;
 
-    // Visibility — iterate availablePeriods (sorted desc by startDate) for
-    // the first entry with responses, newer than none but older than current.
+    // Visibility — most recent prior period that actually has in-scope
+    // responses (availablePeriods is sorted newest-first, so the first hit
+    // wins). Bucketed by snapshot month (response_month), not tested_at, and
+    // skipping past unmeasured/filtered-out periods just like the MV-backed
+    // metrics above do.
     let visibilityScore: number | undefined;
-    const priorAvailable = availablePeriods.filter((p) => p.key < currentKey);
-    if (priorAvailable.length > 0) {
-      // availablePeriods is already sorted newest-first.
-      const chosen = priorAvailable[0];
-      const chosenResponses = visibleResponses.filter((r) => {
-        const d = new Date(r.tested_at);
-        return d >= chosen.startDate && d <= chosen.endDate;
-      });
+    for (const p of availablePeriods) {
+      if (p.key >= currentKey) continue;
+      const chosenResponses = visibleResponses.filter((r) => responseMonthKey(r) === p.key);
       if (chosenResponses.length > 0) {
         const mentionedCount = chosenResponses.filter((r) => r.company_mentioned === true).length;
         visibilityScore = Math.round((mentionedCount / chosenResponses.length) * 100);
+        break;
       }
     }
 
@@ -2522,10 +2521,11 @@ export const useDashboardData = () => {
     const relevanceAgg = effRelevanceMetrics?.relevance_score;
 
     const full = periodsAsc.map((p) => {
-      const monthResponses = visibleResponses.filter((r) => {
-        const d = new Date(r.tested_at);
-        return d >= p.startDate && d <= p.endDate;
-      });
+      // Bucket by snapshot month (response_month), NOT tested_at: a period's
+      // responses can be physically written outside its calendar month, and a
+      // tested_at range check would then see an empty month and zero out
+      // visibility — making its delta equal the current value.
+      const monthResponses = visibleResponses.filter((r) => responseMonthKey(r) === p.key);
       const mentioned = monthResponses.filter((r) => r.company_mentioned === true).length;
       const visibility = monthResponses.length > 0
         ? Math.round((mentioned / monthResponses.length) * 100)
@@ -2549,10 +2549,17 @@ export const useDashboardData = () => {
       };
     });
 
+    // Drop periods with no in-scope responses (e.g. filtered out by location)
+    // instead of plotting them at visibility 0 — the trend compares the latest
+    // measurement period against the LAST MEASURED one, even across gaps
+    // (July vs May when June wasn't collected). The selected period is always
+    // kept so the line still ends on the month the headline is showing.
+    const measured = full.filter((d) => d.responseCount > 0 || d.key === effectivePeriod?.key);
+
     // Trim to the selected period so the line ends on the month whose EPS the
     // card headline is showing (default selection is the latest month).
-    const selIdx = effectivePeriod ? full.findIndex((d) => d.key === effectivePeriod.key) : full.length - 1;
-    return selIdx >= 0 ? full.slice(0, selIdx + 1) : full;
+    const selIdx = effectivePeriod ? measured.findIndex((d) => d.key === effectivePeriod.key) : measured.length - 1;
+    return selIdx >= 0 ? measured.slice(0, selIdx + 1) : measured;
   }, [availablePeriods, visibleResponses, effSentimentByMonth, effRelevanceByMonth, effSentimentMetrics, effRelevanceMetrics, effectivePeriod]);
 
   // Period-over-period EPS delta — last two points of the trimmed trend.
@@ -2667,8 +2674,9 @@ export const useDashboardData = () => {
       periodsAsc.forEach(p => {
         const monthResponses = visibleResponses.filter(r => {
           if (r.confirmed_prompts?.job_function_context?.trim() !== fn) return false;
-          const d = new Date(r.tested_at);
-          return d >= p.startDate && d <= p.endDate;
+          // Snapshot-month bucketing, same as the global epsTrend — tested_at
+          // can fall outside the period's calendar month.
+          return responseMonthKey(r) === p.key;
         });
         if (monthResponses.length === 0) return; // not measured this month
         const mentioned = monthResponses.filter(r => r.company_mentioned === true).length;
