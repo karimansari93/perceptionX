@@ -152,7 +152,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     availablePeriods,
     selectedPeriod,
     setSelectedPeriod,
-    previousPeriodMetrics,
     companyRelevanceByMonth,
     previousPeriodResponses,
     epsTrend,
@@ -617,7 +616,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             metricsCalculating={metricsCalculating}
             responseTexts={responseTexts}
             fetchResponseTexts={fetchResponseTexts}
-            previousPeriodMetrics={previousPeriodMetrics}
             companyRelevanceByMonth={companyRelevanceByMonth}
             previousPeriodResponses={previousPeriodResponses}
             epsTrend={epsTrend}

@@ -64,10 +64,6 @@ interface OverviewTabProps {
   metricsCalculating?: boolean; // Whether metrics are still being calculated (for UX - show all together)
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
-  // Fields are optional because the MV may not yet have per-month data for
-  // the previous period — in that case we skip the delta arrow instead of
-  // silently comparing against 0.
-  previousPeriodMetrics?: { sentimentScore?: number; visibilityScore?: number; relevanceScore?: number } | null;
   companyRelevanceByMonth?: Record<string, number>;
   previousPeriodResponses?: any[];
   // Per-month EPS series (oldest → selected period) for the headline sparkline,
@@ -133,7 +129,6 @@ export const OverviewTab = memo(({
   metricsCalculating = false,
   responseTexts = {},
   fetchResponseTexts,
-  previousPeriodMetrics = null,
   companyRelevanceByMonth = {},
   previousPeriodResponses = [],
   epsTrend = [],
@@ -291,24 +286,6 @@ export const OverviewTab = memo(({
 
 
 
-
-  // Helper for mini-cards — use the same rounded values that feed the EPS formula
-  const breakdowns = [
-    {
-      title: 'Sentiment',
-      value: metrics.sentimentScore,
-      trend: metrics.sentimentTrendComparison,
-      color: 'green',
-      description: 'How positively your brand is perceived based on AI thematic analysis.'
-    },
-    {
-      title: 'Visibility',
-      value: metrics.visibilityScore,
-      trend: metrics.visibilityTrendComparison,
-      color: 'blue',
-      description: 'How prominently your brand is mentioned.'
-    }
-  ];
 
   const getFavicon = (domain: string): string => {
     const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
