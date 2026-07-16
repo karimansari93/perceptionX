@@ -93,18 +93,6 @@ export interface PromptData {
 export interface DashboardMetrics {
   averageSentiment: number;
   sentimentLabel: string;
-  sentimentTrendComparison: {
-    value: number;
-    direction: 'up' | 'down' | 'neutral';
-  };
-  visibilityTrendComparison: {
-    value: number;
-    direction: 'up' | 'down' | 'neutral';
-  };
-  citationsTrendComparison: {
-    value: number;
-    direction: 'up' | 'down' | 'neutral';
-  };
   totalCitations: number;
   uniqueDomains: number;
   totalResponses: number;

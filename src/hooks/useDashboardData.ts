@@ -2082,77 +2082,6 @@ export const useDashboardData = () => {
     return visibleResponses.filter(r => responseMonthKey(r) === previousPeriodInfo.key);
   }, [visibleResponses, previousPeriodInfo]);
 
-  // Previous-period metrics for delta display.
-  //
-  // Each metric independently finds the MOST RECENT PRIOR MONTH that actually
-  // has data from its own source. A company with data in Feb + April but no
-  // March should compare April to Feb for sentiment — skipping the gap —
-  // rather than compare against a fake 0.
-  //
-  // Sources (each independent):
-  //   - sentiment: companySentimentByMonth (MV-backed)
-  //   - relevance: companyRelevanceByMonth (MV-backed)
-  //   - visibility: response counts in availablePeriods (response-backed)
-  //
-  // If no prior month with data exists for a given metric, that field is
-  // left UNDEFINED and the render layer skips the delta arrow — preventing
-  // the "delta always equals current" bug where a missing value was
-  // silently coerced to 0.
-  const previousPeriodMetrics = useMemo((): {
-    sentimentScore?: number;
-    visibilityScore?: number;
-    relevanceScore?: number;
-  } | null => {
-    if (!effectivePeriod) return null;
-    const currentKey = effectivePeriod.key;
-
-    // Helper: given a map keyed on "YYYY-MM", find the most recent key
-    // lexically less than currentKey that has a numeric value.
-    const findMostRecentPrior = (map: Record<string, number>): number | undefined => {
-      const priorKeys = Object.keys(map)
-        .filter((k) => k < currentKey && typeof map[k] === 'number')
-        .sort(); // lex sort works for YYYY-MM
-      if (priorKeys.length === 0) return undefined;
-      return map[priorKeys[priorKeys.length - 1]];
-    };
-
-    // Sentiment — most recent prior month in the sentiment MV.
-    const prevSentimentRatio = findMostRecentPrior(effSentimentByMonth);
-    const sentimentScore = typeof prevSentimentRatio === 'number'
-      ? Math.round(Math.max(0, Math.min(100, prevSentimentRatio * 100)))
-      : undefined;
-
-    // Relevance — most recent prior month in the relevance MV.
-    const prevRelevance = findMostRecentPrior(effRelevanceByMonth);
-    const relevanceScore = typeof prevRelevance === 'number'
-      ? Math.round(prevRelevance)
-      : undefined;
-
-    // Visibility — iterate availablePeriods (sorted desc by startDate) for
-    // the first entry with responses, newer than none but older than current.
-    let visibilityScore: number | undefined;
-    const priorAvailable = availablePeriods.filter((p) => p.key < currentKey);
-    if (priorAvailable.length > 0) {
-      // availablePeriods is already sorted newest-first.
-      const chosen = priorAvailable[0];
-      const chosenResponses = visibleResponses.filter((r) => {
-        const d = new Date(r.tested_at);
-        return d >= chosen.startDate && d <= chosen.endDate;
-      });
-      if (chosenResponses.length > 0) {
-        const mentionedCount = chosenResponses.filter((r) => r.company_mentioned === true).length;
-        visibilityScore = Math.round((mentionedCount / chosenResponses.length) * 100);
-      }
-    }
-
-    // Return null only if nothing could be computed. Otherwise return a
-    // partial object — consumer checks each field individually.
-    if (sentimentScore === undefined && visibilityScore === undefined && relevanceScore === undefined) {
-      return null;
-    }
-    return { sentimentScore, visibilityScore, relevanceScore };
-  }, [effectivePeriod, availablePeriods, visibleResponses, effSentimentByMonth, effRelevanceByMonth]);
-
   const promptsData: PromptData[] = useMemo(() => {
     // Group responses by prompt text using a Map for O(1) lookup. The prior
     // implementation used `acc.find()` inside reduce, which is O(N × M) for
@@ -2324,9 +2253,6 @@ export const useDashboardData = () => {
       return {
         averageSentiment: 0,
         sentimentLabel: 'Neutral',
-        sentimentTrendComparison: { value: 0, direction: 'neutral' as const },
-        visibilityTrendComparison: { value: 0, direction: 'neutral' as const },
-        citationsTrendComparison: { value: 0, direction: 'neutral' as const },
         totalCitations: 0,
         uniqueDomains: 0,
         totalResponses: 0,
@@ -2373,74 +2299,6 @@ export const useDashboardData = () => {
 
     const sentimentLabel = averageSentiment > 0.6 ? 'Positive' : averageSentiment < 0.4 ? 'Negative' : 'Neutral';
 
-    let sentimentTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
-    let visibilityTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
-    let citationsTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
-    
-    if (responses.length > 1) {
-      const sorted = [...responses].sort((a, b) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
-      
-      const latestDate = new Date(sorted[0].tested_at).toDateString();
-      
-      const currentResponses = sorted.filter(r => new Date(r.tested_at).toDateString() === latestDate);
-      const previousResponses = sorted.filter(r => new Date(r.tested_at).toDateString() !== latestDate);
-
-      if (previousResponses.length > 0) {
-        const previousUniqueDays = new Set(previousResponses.map(r => new Date(r.tested_at).toDateString()));
-        const numPreviousDays = Math.max(1, previousUniqueDays.size);
-
-        // Calculate sentiment trend using AI-based sentiment if available
-        let currentSentimentAvg: number;
-        let previousSentimentAvg: number;
-
-        if (sentimentCacheState.size > 0) {
-          const currentAISentiments = currentResponses.map(r => calculateAIBasedSentiment(r.id));
-          const previousAISentiments = previousResponses.map(r => calculateAIBasedSentiment(r.id));
-          
-          currentSentimentAvg = currentAISentiments.length > 0 
-            ? currentAISentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / currentAISentiments.length
-            : 0;
-          
-          previousSentimentAvg = previousAISentiments.length > 0
-            ? previousAISentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / previousAISentiments.length
-            : 0;
-        } else {
-          // No fallback to original sentiment - use neutral when no AI themes
-          currentSentimentAvg = 0;
-          previousSentimentAvg = 0;
-        }
-
-        const sentimentChange = currentSentimentAvg - previousSentimentAvg;
-        sentimentTrendComparison = {
-          value: Math.abs(Math.round(sentimentChange * 100)),
-          direction: sentimentChange > 0.05 ? 'up' : sentimentChange < -0.05 ? 'down' : 'neutral'
-        };
-
-        // Calculate visibility trend using company_mentioned percentage
-        const currentMentionedCount = currentResponses.filter(r => r.company_mentioned === true).length;
-        const currentVisibilityAvg = currentResponses.length > 0 ? (currentMentionedCount / currentResponses.length) * 100 : 0;
-        
-        const previousMentionedCount = previousResponses.filter(r => r.company_mentioned === true).length;
-        const previousVisibilityAvg = previousResponses.length > 0 ? (previousMentionedCount / previousResponses.length) * 100 : 0;
-        
-        const visibilityChange = currentVisibilityAvg - previousVisibilityAvg;
-        visibilityTrendComparison = {
-          value: Math.abs(visibilityChange),
-          direction: visibilityChange > 1 ? 'up' : visibilityChange < -1 ? 'down' : 'neutral'
-        };
-
-        // Calculate citations trend
-        const currentCitationsTotal = currentResponses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
-        const previousCitationsTotal = previousResponses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
-        const previousCitationsAvg = previousCitationsTotal / numPreviousDays;
-        const citationsChange = currentCitationsTotal - previousCitationsAvg;
-        citationsTrendComparison = {
-          value: Math.abs(Math.round(citationsChange)),
-          direction: citationsChange > 0.1 ? 'up' : citationsChange < -0.1 ? 'down' : 'neutral'
-        };
-      }
-    }
-
     const totalCitations = responses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
     const uniqueDomains = new Set(
       responses.flatMap(r => getCitations(r.id).map((c: Citation) => c.domain).filter(Boolean))
@@ -2486,9 +2344,6 @@ export const useDashboardData = () => {
     const metricsResult = {
       averageSentiment,
       sentimentLabel,
-      sentimentTrendComparison,
-      visibilityTrendComparison,
-      citationsTrendComparison,
       totalCitations,
       uniqueDomains,
       totalResponses: responses.length,
@@ -2505,7 +2360,7 @@ export const useDashboardData = () => {
     };
     
     return metricsResult;
-  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations]);
+  }, [periodFilteredResponses, promptsData, aiThemes, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations]);
 
   // Per-month EPS trend powering the Overview headline sparkline. One point per
   // available month (oldest → selected period), each computed with the SAME
@@ -2522,10 +2377,11 @@ export const useDashboardData = () => {
     const relevanceAgg = effRelevanceMetrics?.relevance_score;
 
     const full = periodsAsc.map((p) => {
-      const monthResponses = visibleResponses.filter((r) => {
-        const d = new Date(r.tested_at);
-        return d >= p.startDate && d <= p.endDate;
-      });
+      // Bucket by snapshot month (response_month), NOT tested_at: a period's
+      // responses can be physically written outside its calendar month, and a
+      // tested_at range check would then see an empty month and zero out
+      // visibility — making its delta equal the current value.
+      const monthResponses = visibleResponses.filter((r) => responseMonthKey(r) === p.key);
       const mentioned = monthResponses.filter((r) => r.company_mentioned === true).length;
       const visibility = monthResponses.length > 0
         ? Math.round((mentioned / monthResponses.length) * 100)
@@ -2549,10 +2405,17 @@ export const useDashboardData = () => {
       };
     });
 
+    // Drop periods with no in-scope responses (e.g. filtered out by location)
+    // instead of plotting them at visibility 0 — the trend compares the latest
+    // measurement period against the LAST MEASURED one, even across gaps
+    // (July vs May when June wasn't collected). The selected period is always
+    // kept so the line still ends on the month the headline is showing.
+    const measured = full.filter((d) => d.responseCount > 0 || d.key === effectivePeriod?.key);
+
     // Trim to the selected period so the line ends on the month whose EPS the
     // card headline is showing (default selection is the latest month).
-    const selIdx = effectivePeriod ? full.findIndex((d) => d.key === effectivePeriod.key) : full.length - 1;
-    return selIdx >= 0 ? full.slice(0, selIdx + 1) : full;
+    const selIdx = effectivePeriod ? measured.findIndex((d) => d.key === effectivePeriod.key) : measured.length - 1;
+    return selIdx >= 0 ? measured.slice(0, selIdx + 1) : measured;
   }, [availablePeriods, visibleResponses, effSentimentByMonth, effRelevanceByMonth, effSentimentMetrics, effRelevanceMetrics, effectivePeriod]);
 
   // Period-over-period EPS delta — last two points of the trimmed trend.
@@ -2667,8 +2530,9 @@ export const useDashboardData = () => {
       periodsAsc.forEach(p => {
         const monthResponses = visibleResponses.filter(r => {
           if (r.confirmed_prompts?.job_function_context?.trim() !== fn) return false;
-          const d = new Date(r.tested_at);
-          return d >= p.startDate && d <= p.endDate;
+          // Snapshot-month bucketing, same as the global epsTrend — tested_at
+          // can fall outside the period's calendar month.
+          return responseMonthKey(r) === p.key;
         });
         if (monthResponses.length === 0) return; // not measured this month
         const mentioned = monthResponses.filter(r => r.company_mentioned === true).length;
@@ -3037,7 +2901,6 @@ export const useDashboardData = () => {
     selectedPeriod,
     setSelectedPeriod,
     effectivePeriod,
-    previousPeriodMetrics,
     companyRelevanceByMonth,
     previousPeriodResponses,
     // Location filter
