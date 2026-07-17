@@ -163,16 +163,35 @@ export const useDashboardData = () => {
   const user = useMemo(() => rawUser, [rawUser?.id]);
 
   // THE BRAND SCOPE: the current company plus its same-name sibling profiles
-  // (legacy per-country rows, e.g. Netflix-US ↔ Netflix-JP). Every dashboard
-  // fetch below is scoped to this whole group, so "All locations" is a true
-  // cross-profile aggregate and each country is a FILTER within it — not a
-  // company switch to a different dataset.
+  // (legacy per-country rows, e.g. Netflix-US ↔ Netflix-JP) IN THE SAME
+  // ORGANIZATION. Every dashboard fetch below is scoped to this whole group,
+  // so "All locations" is a true cross-profile aggregate and each country is a
+  // FILTER within it — not a company switch to a different dataset.
+  //
+  // The organization constraint is load-bearing: multi-org users (admins,
+  // agencies) can see the same brand name across many client orgs, and
+  // matching on name alone once grouped 18 unrelated profiles into one scope
+  // — flooding the dashboard with cross-tenant queries heavy enough to hit
+  // statement timeouts. Same-org groups are the only real sibling sets.
   const scopeCompanies = useMemo(() => {
     if (!currentCompany) return [] as { id: string; country: string | null }[];
     const nameLower = currentCompany.name.toLowerCase();
-    const siblings = userCompanies.filter(
-      c => c.id !== currentCompany.id && c.name.toLowerCase() === nameLower
-    );
+    const orgId = currentCompany.organization_id ?? null;
+    let siblings = userCompanies
+      .filter(
+        c => c.id !== currentCompany.id &&
+          c.name.toLowerCase() === nameLower &&
+          (c.organization_id ?? null) === orgId
+      )
+      .sort((a, b) => a.id.localeCompare(b.id));
+    // Safety valve: a runaway group would multiply every fetch below.
+    const MAX_SIBLINGS = 9;
+    if (siblings.length > MAX_SIBLINGS) {
+      console.warn(
+        `[useDashboardData] brand scope truncated: ${siblings.length + 1} same-name profiles, keeping ${MAX_SIBLINGS + 1}`
+      );
+      siblings = siblings.slice(0, MAX_SIBLINGS);
+    }
     return [currentCompany, ...siblings].map(c => ({ id: c.id, country: c.country ?? null }));
   }, [currentCompany, userCompanies]);
   const scopeCompanyIds = useMemo(
@@ -385,10 +404,18 @@ export const useDashboardData = () => {
       // alias mapping already applied — no client-side normalization
       // needed (and no race condition between alias-map load and render).
       //
+      // PER-COMPANY pages, one pagination per scope profile, merged
+      // client-side. A single merged .in(scopeIds) query cannot be served by
+      // the (company_id, tested_at) index — Postgres must merge/sort across
+      // companies and re-walk rows for every OFFSET page, which blew the
+      // statement timeout (500s) on brands with much history. Per-company
+      // queries are exactly the shape the single-profile dashboard has always
+      // run.
+      //
       // No secondary ORDER BY tiebreaker: the (company_id, tested_at) index
       // satisfies this ordering directly, and a tiebreaker would force a
       // multi-MB sort node per page. Pages are deduped by id after fetch.
-      const fetchResponsePage = (from: number, to: number, withCount: boolean) =>
+      const fetchResponsePage = (companyId: string, from: number, to: number, withCount: boolean) =>
         retrySupabaseQuery(() =>
           supabase
             .from('prompt_responses_canonical')
@@ -418,31 +445,33 @@ export const useDashboardData = () => {
                 attribute_id
               )
             `, withCount ? { count: 'exact' } : undefined)
-            .in('company_id', requestedScopeIds)
+            .eq('company_id', companyId)
             .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
             .range(from, to)
         ) as Promise<{ data: any[] | null; error: any; count: number | null }>;
 
-      // Prompts and the newest page of responses load in parallel. The first
-      // page is enough to paint the dashboard; the remaining pages stream in
-      // behind it (they used to be a sequential do/while — 6-8 awaited
-      // round-trips for large companies, the main cause of slow first paint).
-      const [promptsResult, firstPageResult] = await Promise.all([
+      const byTestedAtDesc = (a: any, b: any) =>
+        new Date(b.tested_at || b.created_at || 0).getTime() - new Date(a.tested_at || a.created_at || 0).getTime();
+
+      // Prompts and the newest page of every profile's responses load in
+      // parallel. The merged first pages are enough to paint the dashboard;
+      // the remaining pages stream in behind.
+      const [promptsResult, ...firstPageResults] = await Promise.all([
         retrySupabaseQuery(() =>
           supabase
             .from('confirmed_prompts')
             .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, attribute_id')
             .in('company_id', requestedScopeIds)
         ) as Promise<{ data: any[] | null; error: any }>,
-        fetchResponsePage(0, PAGE_SIZE - 1, true),
+        ...requestedScopeIds.map(id => fetchResponsePage(id, 0, PAGE_SIZE - 1, true)),
       ]);
 
       if (isStale()) return;
 
       const { data: userPrompts, error: promptsError } = promptsResult;
 
-      const responsesError = firstPageResult.error;
+      const responsesError = firstPageResults.find(r => r.error)?.error;
 
       if (promptsError) {
         console.error('🔍 Error fetching prompts:', promptsError);
@@ -471,10 +500,13 @@ export const useDashboardData = () => {
       setHasDataIssues(false);
       setHasMoreResponses(false);
 
-      const firstPage = firstPageResult.data ?? [];
-      const totalCount = firstPageResult.count ?? firstPage.length;
+      const perCompanyFirstPages = firstPageResults.map(r => ({
+        rows: r.data ?? [],
+        total: r.count ?? (r.data?.length ?? 0),
+      }));
+      const firstPage = perCompanyFirstPages.flatMap(p => p.rows).sort(byTestedAtDesc);
 
-      // First paint: render the newest page immediately instead of holding
+      // First paint: render the newest pages immediately instead of holding
       // the dashboard until every page (and attributes) arrives. State is set
       // again below with the full set once the background fetches land.
       setResponses(firstPage);
@@ -485,21 +517,26 @@ export const useDashboardData = () => {
       setCompetitorLoading(false);
 
       const fetchRemainingPages = async (): Promise<any[]> => {
-        const totalPages = Math.ceil(totalCount / PAGE_SIZE);
-        if (totalPages <= 1) return firstPage;
-        const rest = await Promise.all(
-          Array.from({ length: totalPages - 1 }, (_, i) =>
-            fetchResponsePage((i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1, false)
-          )
-        );
-        let all = firstPage;
-        for (const result of rest) {
-          if (result.error) throw result.error;
-          all = all.concat(result.data ?? []);
+        const jobs: Promise<{ data: any[] | null; error: any; count: number | null }>[] = [];
+        requestedScopeIds.forEach((id, idx) => {
+          const totalPages = Math.ceil(perCompanyFirstPages[idx].total / PAGE_SIZE);
+          for (let p = 1; p < totalPages; p += 1) {
+            jobs.push(fetchResponsePage(id, p * PAGE_SIZE, (p + 1) * PAGE_SIZE - 1, false));
+          }
+        });
+        let all = perCompanyFirstPages.flatMap(p => p.rows);
+        if (jobs.length > 0) {
+          const rest = await Promise.all(jobs);
+          for (const result of rest) {
+            if (result.error) throw result.error;
+            all = all.concat(result.data ?? []);
+          }
         }
         // Offset pages can skid if rows land mid-fetch — dedupe by id.
         const seen = new Set<string>();
-        return all.filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+        return all
+          .filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)))
+          .sort(byTestedAtDesc);
       };
 
       // Attribute rows feed both the Thematic tab and Overview's attribute
@@ -508,7 +545,9 @@ export const useDashboardData = () => {
       // swallowed so the dashboard still renders with regular responses.
       const fetchAttributeRaw = async (): Promise<any[]> => {
         try {
-          const attributePage = (from: number, to: number, withCount: boolean) =>
+          // Per-company pagination for the same statement-timeout reason as
+          // the main fetch above.
+          const attributePage = (companyId: string, from: number, to: number, withCount: boolean) =>
             supabase
               // Canonicalized view — see comment on main fetch above.
               .from('prompt_responses_canonical')
@@ -538,29 +577,34 @@ export const useDashboardData = () => {
                   location_context
                 )
               `, withCount ? { count: 'exact' } : undefined)
-              .in('confirmed_prompts.company_id', requestedScopeIds)
+              .eq('confirmed_prompts.company_id', companyId)
               .not('confirmed_prompts.attribute_id', 'is', null)
               .gte('tested_at', eagerCutoffIso)
               .order('tested_at', { ascending: false })
               .range(from, to);
 
-          const first = await attributePage(0, PAGE_SIZE - 1, true);
-          if (first.error) throw first.error;
-          let rows = first.data ?? [];
-          const total = first.count ?? rows.length;
-          const pages = Math.ceil(total / PAGE_SIZE);
-          if (pages > 1) {
-            const rest = await Promise.all(
-              Array.from({ length: pages - 1 }, (_, i) =>
-                attributePage((i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1, false)
-              )
-            );
-            for (const r of rest) {
-              if (r.error) throw r.error;
-              rows = rows.concat(r.data ?? []);
+          const perCompany = await Promise.all(requestedScopeIds.map(async (companyId) => {
+            const first = await attributePage(companyId, 0, PAGE_SIZE - 1, true);
+            if (first.error) throw first.error;
+            let rows = first.data ?? [];
+            const total = first.count ?? rows.length;
+            const pages = Math.ceil(total / PAGE_SIZE);
+            if (pages > 1) {
+              const rest = await Promise.all(
+                Array.from({ length: pages - 1 }, (_, i) =>
+                  attributePage(companyId, (i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1, false)
+                )
+              );
+              for (const r of rest) {
+                if (r.error) throw r.error;
+                rows = rows.concat(r.data ?? []);
+              }
             }
-          }
-          return rows;
+            return rows;
+          }));
+          // Newest-first across the merged scope, so the latest-per-prompt
+          // dedupe below keeps the newest row.
+          return perCompany.flat().sort(byTestedAtDesc);
         } catch (error) {
           console.error('Error fetching attribute responses:', error);
           // Continue with regular responses even if the attribute fetch fails
@@ -1172,50 +1216,52 @@ export const useDashboardData = () => {
       // Keyset pagination on (created_at DESC, id DESC) instead of OFFSET.
       // OFFSET re-walks all skipped rows every page (O(n^2/page)); keyset
       // keeps every page O(PAGE_SIZE) by seeking past the last cursor.
-      let allThemes: any[] = [];
-      let cursor: { created_at: string; id: string } | null = null;
-      // Hard cap to avoid an unbounded loop if data is pathological.
-      for (let guard = 0; guard < 200; guard += 1) {
-        let q = supabase
-          .from('ai_themes')
-          .select(COLS)
-          .in('company_id', requestedScopeIds)
-          .gte('created_at', aiThemesCutoffIso)
-          .order('created_at', { ascending: false })
-          .order('id', { ascending: false })
-          .limit(PAGE_SIZE);
+      // One pagination PER scope company (merged after): keeps every page on
+      // the (company_id, created_at) index instead of a cross-company merge.
+      const fetchThemesForCompany = async (companyId: string): Promise<any[]> => {
+        let all: any[] = [];
+        let cursor: { created_at: string; id: string } | null = null;
+        // Hard cap to avoid an unbounded loop if data is pathological.
+        for (let guard = 0; guard < 200; guard += 1) {
+          let q = supabase
+            .from('ai_themes')
+            .select(COLS)
+            .eq('company_id', companyId)
+            .gte('created_at', aiThemesCutoffIso)
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .limit(PAGE_SIZE);
 
-        if (cursor) {
-          q = q.or(
-            `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
-          );
+          if (cursor) {
+            q = q.or(
+              `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
+            );
+          }
+
+          const { data, error } = (await retrySupabaseQuery(() => q)) as {
+            data: any[] | null;
+            error: any;
+          };
+
+          // Abandon early if the user already moved on — no point fetching
+          // the remaining pages for a company we won't display.
+          if (isStale()) return all;
+          if (error) throw error;
+
+          const chunk = data ?? [];
+          all = all.concat(chunk);
+          if (chunk.length < PAGE_SIZE) break;
+
+          const last = chunk[chunk.length - 1];
+          cursor = { created_at: last.created_at, id: last.id };
         }
+        return all;
+      };
 
-        const { data, error } = (await retrySupabaseQuery(() => q)) as {
-          data: any[] | null;
-          error: any;
-        };
-
-        // Abandon early if the user already moved on — no point fetching
-        // the remaining pages for a company we won't display.
-        if (isStale()) return;
-
-        if (error) {
-          console.error('Error fetching AI themes:', error);
-          setAiThemes([]);
-          return;
-        }
-
-        const chunk = data ?? [];
-        allThemes = allThemes.concat(chunk);
-        if (chunk.length < PAGE_SIZE) break;
-
-        const last = chunk[chunk.length - 1];
-        cursor = { created_at: last.created_at, id: last.id };
-      }
+      const perCompanyThemes = await Promise.all(requestedScopeIds.map(fetchThemesForCompany));
 
       if (isStale()) return;
-      setAiThemes(allThemes);
+      setAiThemes(perCompanyThemes.flat());
     } catch (error) {
       if (isStale()) return;
       console.error('Error in fetchAIThemes:', error);
@@ -1243,31 +1289,33 @@ export const useDashboardData = () => {
     const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
     try {
       const PAGE_SIZE = 1000;
-      let all: any[] = [];
-      let page = 0;
-      let chunk: any[] | null;
-      do {
-        const from = page * PAGE_SIZE;
-        const result = await retrySupabaseQuery(() =>
-          supabase
-            .from('company_attribute_themes_mv')
-            .select('attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count')
-            .in('company_id', requestedScopeIds)
-            .range(from, from + PAGE_SIZE - 1)
-        ) as { data: any[] | null; error: any };
-        if (isStale()) return;
-        if (result.error) {
-          console.error('Error fetching attribute themes:', result.error);
-          return;
-        }
-        chunk = result.data ?? [];
-        all = all.concat(chunk);
-        page += 1;
-      } while (chunk && chunk.length === PAGE_SIZE);
+      // One pagination per scope company (index-friendly), merged after.
+      const fetchForCompany = async (companyId: string): Promise<any[]> => {
+        let all: any[] = [];
+        let page = 0;
+        let chunk: any[] | null;
+        do {
+          const from = page * PAGE_SIZE;
+          const result = await retrySupabaseQuery(() =>
+            supabase
+              .from('company_attribute_themes_mv')
+              .select('attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count')
+              .eq('company_id', companyId)
+              .range(from, from + PAGE_SIZE - 1)
+          ) as { data: any[] | null; error: any };
+          if (isStale()) return all;
+          if (result.error) throw result.error;
+          chunk = result.data ?? [];
+          all = all.concat(chunk);
+          page += 1;
+        } while (chunk && chunk.length === PAGE_SIZE);
+        return all;
+      };
+      const perCompany = await Promise.all(requestedScopeIds.map(fetchForCompany));
       if (isStale()) return;
       // Rows from several sibling companies repeat (attribute, month, job
       // function) — collapse them to the single-company shape consumers expect.
-      setAttributeThemes(aggregateAttributeThemeRows(all));
+      setAttributeThemes(aggregateAttributeThemeRows(perCompany.flat()));
     } catch (err: any) {
       if (!isStale()) console.error('Error in fetchAttributeThemes:', err?.message);
     }
@@ -1287,32 +1335,35 @@ export const useDashboardData = () => {
     const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
     try {
       const PAGE_SIZE = 1000;
-      let all: any[] = [];
-      let page = 0;
-      let chunk: any[] | null;
-      do {
-        const from = page * PAGE_SIZE;
-        const result = await retrySupabaseQuery(() =>
-          supabase
-            .from('company_response_sentiment_mv')
-            .select('response_id, total_themes, positive_themes, sentiment_ratio')
-            .in('company_id', requestedScopeIds)
-            .range(from, from + PAGE_SIZE - 1)
-        ) as { data: any[] | null; error: any };
-        if (isStale()) return;
-        if (result.error) {
-          console.error('Error fetching response sentiment:', result.error);
-          return;
-        }
-        chunk = result.data ?? [];
-        all = all.concat(chunk);
-        page += 1;
-        if (chunk.length === PAGE_SIZE) {
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
-      } while (chunk && chunk.length === PAGE_SIZE);
+      // One pagination per scope company (index-friendly), merged after.
+      // response_id is globally unique, so a plain concat is safe.
+      const fetchForCompany = async (companyId: string): Promise<any[]> => {
+        let all: any[] = [];
+        let page = 0;
+        let chunk: any[] | null;
+        do {
+          const from = page * PAGE_SIZE;
+          const result = await retrySupabaseQuery(() =>
+            supabase
+              .from('company_response_sentiment_mv')
+              .select('response_id, total_themes, positive_themes, sentiment_ratio')
+              .eq('company_id', companyId)
+              .range(from, from + PAGE_SIZE - 1)
+          ) as { data: any[] | null; error: any };
+          if (isStale()) return all;
+          if (result.error) throw result.error;
+          chunk = result.data ?? [];
+          all = all.concat(chunk);
+          page += 1;
+          if (chunk.length === PAGE_SIZE) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+          }
+        } while (chunk && chunk.length === PAGE_SIZE);
+        return all;
+      };
+      const perCompany = await Promise.all(requestedScopeIds.map(fetchForCompany));
       if (isStale()) return;
-      setResponseSentimentRows(all);
+      setResponseSentimentRows(perCompany.flat());
     } catch (err: any) {
       if (!isStale()) console.error('Error in fetchResponseSentiment:', err?.message);
     }
