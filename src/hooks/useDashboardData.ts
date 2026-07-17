@@ -7,7 +7,7 @@ import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
 import { parseCompetitors } from "@/utils/competitorUtils";
-import { buildLocationOptions, canonicalizeLocationContext, GENERAL_KEY } from "@/utils/locationContext";
+import { buildLocationOptions, canonicalizeLocationContext, companyCountryKey, GENERAL_KEY, resolveResponseLocationKey } from "@/utils/locationContext";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
 
 // Pure aggregation of `company_*_by_location_mv` rows into the same shape the
@@ -113,6 +113,18 @@ const aggregateAttributeThemeRows = (rows: any[]): any[] => {
   }));
 };
 
+// Sum MV rows by a key column (e.g. domain → citation_count). Needed wherever
+// rows can arrive from several companies/location buckets that repeat a key.
+const sumRowsBy = (rows: any[], keyField: string, valField: string): Record<string, number> => {
+  const acc: Record<string, number> = {};
+  (rows || []).forEach(r => {
+    const k = r[keyField];
+    if (!k) return;
+    acc[k] = (acc[k] || 0) + (r[valField] || 0);
+  });
+  return acc;
+};
+
 export interface PeriodInfo {
   key: string;       // e.g. "2026-03"
   label: string;     // e.g. "Mar 2026"
@@ -149,6 +161,26 @@ export const useDashboardData = () => {
 
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
+
+  // THE BRAND SCOPE: the current company plus its same-name sibling profiles
+  // (legacy per-country rows, e.g. Netflix-US ↔ Netflix-JP). Every dashboard
+  // fetch below is scoped to this whole group, so "All locations" is a true
+  // cross-profile aggregate and each country is a FILTER within it — not a
+  // company switch to a different dataset.
+  const scopeCompanies = useMemo(() => {
+    if (!currentCompany) return [] as { id: string; country: string | null }[];
+    const nameLower = currentCompany.name.toLowerCase();
+    const siblings = userCompanies.filter(
+      c => c.id !== currentCompany.id && c.name.toLowerCase() === nameLower
+    );
+    return [currentCompany, ...siblings].map(c => ({ id: c.id, country: c.country ?? null }));
+  }, [currentCompany, userCompanies]);
+  const scopeCompanyIds = useMemo(
+    () => (scopeCompanies.length > 0 ? scopeCompanies.map(c => c.id) : currentCompany?.id ? [currentCompany.id] : []),
+    [scopeCompanies, currentCompany?.id]
+  );
+  // Order-independent signature for callback/effect deps.
+  const scopeKey = useMemo(() => [...scopeCompanyIds].sort().join(','), [scopeCompanyIds]);
   const [responses, setResponses] = useState<PromptResponse[]>([]);
   const [responseTexts, setResponseTexts] = useState<Record<string, string>>({});
   // Period selection state
@@ -333,6 +365,8 @@ export const useDashboardData = () => {
     // previously-selected company can't overwrite the active company's data.
     const requestedCompanyId = currentCompany.id;
     const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    // Whole brand scope (current + same-name siblings) — aggregated view.
+    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
 
     try {
       setLoading(true);
@@ -384,7 +418,7 @@ export const useDashboardData = () => {
                 attribute_id
               )
             `, withCount ? { count: 'exact' } : undefined)
-            .eq('company_id', requestedCompanyId)
+            .in('company_id', requestedScopeIds)
             .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
             .range(from, to)
@@ -399,7 +433,7 @@ export const useDashboardData = () => {
           supabase
             .from('confirmed_prompts')
             .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, attribute_id')
-            .eq('company_id', requestedCompanyId)
+            .in('company_id', requestedScopeIds)
         ) as Promise<{ data: any[] | null; error: any }>,
         fetchResponsePage(0, PAGE_SIZE - 1, true),
       ]);
@@ -504,7 +538,7 @@ export const useDashboardData = () => {
                   location_context
                 )
               `, withCount ? { count: 'exact' } : undefined)
-              .eq('confirmed_prompts.company_id', requestedCompanyId)
+              .in('confirmed_prompts.company_id', requestedScopeIds)
               .not('confirmed_prompts.attribute_id', 'is', null)
               .gte('tested_at', eagerCutoffIso)
               .order('tested_at', { ascending: false })
@@ -678,7 +712,8 @@ export const useDashboardData = () => {
       setLoading(false);
       setCompetitorLoading(false);
     }
-  }, [user, currentCompany, isOnline]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, currentCompany, isOnline, scopeKey]);
 
   const fetchResponseTexts = useCallback(async (ids: string[]) => {
     if (!ids.length) return {};
@@ -716,12 +751,14 @@ export const useDashboardData = () => {
     }
   }, [responseTexts]);
 
-  // Fetch company metrics from materialized views (backend-calculated)
+  // Fetch company metrics from materialized views (backend-calculated),
+  // aggregated across the whole brand scope (current + same-name siblings).
   const fetchCompanyMetrics = useCallback(async () => {
     if (!user || !currentCompany?.id) return;
 
     const requestedCompanyId = currentCompany.id;
     const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
 
     try {
       setCompanyMetricsLoading(true);
@@ -742,13 +779,13 @@ export const useDashboardData = () => {
         supabase
           .from('company_sentiment_scores_mv')
           .select('*')
-          .eq('company_id', requestedCompanyId)
+          .in('company_id', requestedScopeIds)
           .order('response_month', { ascending: false })
           .limit(MV_ROW_CAP),
         supabase
           .from('company_relevance_scores_mv')
           .select('*')
-          .eq('company_id', requestedCompanyId)
+          .in('company_id', requestedScopeIds)
           .order('response_month', { ascending: false })
           .limit(MV_ROW_CAP)
       ]);
@@ -913,45 +950,57 @@ export const useDashboardData = () => {
         setCompanyMetricsLoading(false);
       }
     }
-  }, [user, currentCompany?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, currentCompany?.id, scopeKey]);
 
   const fetchMVData = useCallback(async () => {
     if (!user || !currentCompany?.id) return;
 
     const requestedCompanyId = currentCompany.id;
     const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
 
     try {
+      // Scope-wide: several companies can repeat a domain/competitor/model, so
+      // fetch a generous slice ordered by count and SUM per key before ranking.
       const [sourcesResult, competitorsResult, llmResult] = await Promise.all([
         supabase
           .from('company_top_sources_mv')
           .select('domain, citation_count')
-          .eq('company_id', requestedCompanyId)
+          .in('company_id', requestedScopeIds)
           .order('citation_count', { ascending: false })
-          .limit(30),
+          .limit(200),
         supabase
           .from('company_competitors_mv')
           .select('competitor_name, mention_count')
-          .eq('company_id', requestedCompanyId)
+          .in('company_id', requestedScopeIds)
           .order('mention_count', { ascending: false })
-          .limit(30),
+          .limit(200),
         supabase
           .from('company_llm_rankings_mv')
           .select('ai_model, mentions')
-          .eq('company_id', requestedCompanyId)
+          .in('company_id', requestedScopeIds)
           .order('mentions', { ascending: false }),
       ]);
 
       if (isStale()) return;
 
-      const topCitations = (sourcesResult.data ?? []).map(row => ({ domain: row.domain, count: row.citation_count }));
-      const topCompetitors = (competitorsResult.data ?? []).map(row => ({ company: row.competitor_name, count: row.mention_count }));
-      const llmRankings = (llmResult.data ?? []).map(row => ({
-        model: row.ai_model,
-        displayName: getLLMDisplayName(row.ai_model),
-        mentions: row.mentions,
-        logoUrl: getLLMLogo(row.ai_model),
-      }));
+      const topCitations = Object.entries(sumRowsBy(sourcesResult.data ?? [], 'domain', 'citation_count'))
+        .map(([domain, count]) => ({ domain, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 30);
+      const topCompetitors = Object.entries(sumRowsBy(competitorsResult.data ?? [], 'competitor_name', 'mention_count'))
+        .map(([company, count]) => ({ company, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 30);
+      const llmRankings = Object.entries(sumRowsBy(llmResult.data ?? [], 'ai_model', 'mentions'))
+        .map(([model, mentions]) => ({
+          model,
+          displayName: getLLMDisplayName(model),
+          mentions,
+          logoUrl: getLLMLogo(model),
+        }))
+        .sort((a, b) => b.mentions - a.mentions);
 
       if (sourcesResult.data) setMvTopCitations(topCitations);
       if (competitorsResult.data) setMvTopCompetitors(topCompetitors);
@@ -969,7 +1018,8 @@ export const useDashboardData = () => {
       if (isStale()) return;
       console.warn('[fetchMVData] error — will fall back to frontend calculation:', err);
     }
-  }, [user, currentCompany?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, currentCompany?.id, scopeKey]);
 
   const fetchRecencyData = useCallback(async () => {
     if (!user) return;
@@ -1102,6 +1152,7 @@ export const useDashboardData = () => {
     // discarded so it can't overwrite the new company's themes.
     const requestedCompanyId = currentCompany.id;
     const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
 
     try {
       setAiThemesLoading(true);
@@ -1128,7 +1179,7 @@ export const useDashboardData = () => {
         let q = supabase
           .from('ai_themes')
           .select(COLS)
-          .eq('company_id', requestedCompanyId)
+          .in('company_id', requestedScopeIds)
           .gte('created_at', aiThemesCutoffIso)
           .order('created_at', { ascending: false })
           .order('id', { ascending: false })
@@ -1176,7 +1227,8 @@ export const useDashboardData = () => {
         setAiThemesLoading(false);
       }
     }
-  }, [user, currentCompany?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, currentCompany?.id, scopeKey]);
 
   // Pre-aggregated attribute scores from company_attribute_themes_mv. A few
   // hundred rows per company (16 attributes x months x job functions) instead
@@ -1188,6 +1240,7 @@ export const useDashboardData = () => {
     }
     const requestedCompanyId = currentCompany.id;
     const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
     try {
       const PAGE_SIZE = 1000;
       let all: any[] = [];
@@ -1199,7 +1252,7 @@ export const useDashboardData = () => {
           supabase
             .from('company_attribute_themes_mv')
             .select('attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count')
-            .eq('company_id', requestedCompanyId)
+            .in('company_id', requestedScopeIds)
             .range(from, from + PAGE_SIZE - 1)
         ) as { data: any[] | null; error: any };
         if (isStale()) return;
@@ -1212,11 +1265,14 @@ export const useDashboardData = () => {
         page += 1;
       } while (chunk && chunk.length === PAGE_SIZE);
       if (isStale()) return;
-      setAttributeThemes(all);
+      // Rows from several sibling companies repeat (attribute, month, job
+      // function) — collapse them to the single-company shape consumers expect.
+      setAttributeThemes(aggregateAttributeThemeRows(all));
     } catch (err: any) {
       if (!isStale()) console.error('Error in fetchAttributeThemes:', err?.message);
     }
-  }, [user, currentCompany?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, currentCompany?.id, scopeKey]);
 
   // Per-response sentiment ratios from company_response_sentiment_mv. Feeds the
   // sentiment cache (trend chart, trend arrows, per-prompt sentiment) without
@@ -1228,6 +1284,7 @@ export const useDashboardData = () => {
     }
     const requestedCompanyId = currentCompany.id;
     const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
+    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
     try {
       const PAGE_SIZE = 1000;
       let all: any[] = [];
@@ -1239,7 +1296,7 @@ export const useDashboardData = () => {
           supabase
             .from('company_response_sentiment_mv')
             .select('response_id, total_themes, positive_themes, sentiment_ratio')
-            .eq('company_id', requestedCompanyId)
+            .in('company_id', requestedScopeIds)
             .range(from, from + PAGE_SIZE - 1)
         ) as { data: any[] | null; error: any };
         if (isStale()) return;
@@ -1259,7 +1316,8 @@ export const useDashboardData = () => {
     } catch (err: any) {
       if (!isStale()) console.error('Error in fetchResponseSentiment:', err?.message);
     }
-  }, [user, currentCompany?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, currentCompany?.id, scopeKey]);
 
   // Memoized cache of sentiment calculations per response ID
   // OPTIMIZED: Only recalculates when themes change, not on every render
@@ -1751,13 +1809,14 @@ export const useDashboardData = () => {
       setMvLocationBuckets([]);
       return;
     }
+    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [companyId];
     let cancelled = false;
     (async () => {
       try {
         const { data, error } = await supabase
           .from('company_llm_rankings_by_location_mv')
           .select('location_context')
-          .eq('company_id', companyId);
+          .in('company_id', requestedScopeIds);
         if (cancelled || error) return;
         const distinct = Array.from(
           new Set((data ?? []).map(r => (r.location_context ?? '') as string))
@@ -1768,7 +1827,8 @@ export const useDashboardData = () => {
       }
     })();
     return () => { cancelled = true; };
-  }, [user?.id, currentCompany?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, currentCompany?.id, scopeKey]);
 
   // Track when metrics are ready
   // Backend metrics (from materialized views) are available immediately
@@ -1892,40 +1952,47 @@ export const useDashboardData = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCompany?.id, user?.id]);
 
-  // Same-name sibling companies (legacy country-variant rows, e.g. Netflix-JP ↔
-  // Netflix-BR) feed the cross-country "switch company" entries in the dropdown.
-  const sameNameCompanies = useMemo(() => {
-    if (!currentCompany) return [];
-    const nameLower = currentCompany.name.toLowerCase();
-    return userCompanies.filter(c => c.id !== currentCompany.id && c.name.toLowerCase() === nameLower);
-  }, [userCompanies, currentCompany]);
+  // Canonical country key of each scope company, for the attribution rule.
+  const countryKeyByCompanyId = useMemo(() => {
+    const m = new Map<string, string | null>();
+    scopeCompanies.forEach(c => m.set(c.id, companyCountryKey(c.country)));
+    return m;
+  }, [scopeCompanies]);
 
-  // Merged dropdown options (in-company location_context filters + sibling
-  // company switches) and the canonical-key → raw-values map used to filter
-  // responses against every stored spelling of a location. MV buckets widen
-  // the raw-value sets with historical spellings (extend-only).
+  // Merged dropdown options across the brand scope: one filter entry per
+  // canonical location (from location_context values AND each profile's own
+  // country), plus "General". MV buckets widen the raw-value sets with
+  // historical spellings (extend-only).
   const { options: locationOptions, rawValuesByKey: locationRawValues } = useMemo(
-    () => buildLocationOptions(responses, sameNameCompanies, mvLocationBuckets),
-    [responses, sameNameCompanies, mvLocationBuckets]
+    () => buildLocationOptions(responses, scopeCompanies, mvLocationBuckets),
+    [responses, scopeCompanies, mvLocationBuckets]
   );
 
-  // Predicate that keeps a response when no location is selected, or when its
-  // location_context matches one of the selected location's raw spellings.
+  // The active selection's entry (null when the key doesn't resolve in this
+  // scope — stale/mid-switch selections).
+  const selectedLocationEntry = useMemo(
+    () => (selectedLocation ? locationOptions.find(o => o.canonicalKey === selectedLocation) ?? null : null),
+    [selectedLocation, locationOptions]
+  );
+
+  // Predicate over responses for the active selection, using THE attribution
+  // rule (resolveResponseLocationKey): a response belongs to its prompt's
+  // location_context if tagged, else to its company's country, else General.
+  // Canonical matching covers every stored spelling and the legacy sibling
+  // profiles in one rule.
   const matchesLocation = useMemo(() => {
     if (!selectedLocation) return () => true;
-    // "General" = every no-location prompt (null/empty/GLOBAL_LIKE). Match by
-    // "canonicalizes to general" rather than raw spelling, since the response's
-    // raw value (null, 'GLOBAL', …) differs from the MV bucket key.
+    if (!selectedLocationEntry) return () => true; // selection not in this scope — don't strand the UI
+    const resolve = (r: PromptResponse) =>
+      resolveResponseLocationKey(
+        r.confirmed_prompts?.location_context,
+        r.company_id != null ? (countryKeyByCompanyId.get(r.company_id) ?? null) : null
+      );
     if (selectedLocation === GENERAL_KEY) {
-      return (r: PromptResponse) => canonicalizeLocationContext(r.confirmed_prompts?.location_context) === null;
+      return (r: PromptResponse) => resolve(r) === null;
     }
-    const allowed = new Set((locationRawValues[selectedLocation] || []).map(v => v.trim()));
-    if (allowed.size === 0) return () => true; // selection not in this company — don't strand the UI
-    return (r: PromptResponse) => {
-      const raw = r.confirmed_prompts?.location_context;
-      return !!raw && allowed.has(raw.trim());
-    };
-  }, [selectedLocation, locationRawValues]);
+    return (r: PromptResponse) => resolve(r) === selectedLocation;
+  }, [selectedLocation, selectedLocationEntry, countryKeyByCompanyId]);
 
   // Responses surfaced across the app: deprecated prompt sets hidden and the
   // active location filter applied. Everything downstream (periods, metrics,
@@ -1960,23 +2027,42 @@ export const useDashboardData = () => {
     return periods;
   }, [visibleResponses]);
 
-  // Re-scope sentiment & relevance to the selected location using the
-  // pre-aggregated `_by_location_mv` views (same columns as the company-wide
-  // MVs plus a location_context dimension). Leaves the company-wide MV state and
-  // its per-company cache untouched; the `effective*` selectors below pick the
-  // location-scoped values whenever a location is active.
+  // Re-scope sentiment & relevance (and sources/competitors/LLMs/attributes)
+  // to the selected location using the pre-aggregated `_by_location_mv` views.
+  // Two disjoint query shapes mirror the response attribution rule:
+  //  - OWNED companies — profiles whose own `country` attributes to the
+  //    selection (for "General": the countryless profiles): fetch ALL their
+  //    buckets, then drop rows tagged with a DIFFERENT location; their
+  //    untagged ('' / GLOBAL sentinel) rows belong to the selection.
+  //  - OTHER scope companies: fetch only buckets tagged with one of the
+  //    selection's raw spellings (server-side .in filter).
+  // Leaves the company-wide MV state and its per-company cache untouched; the
+  // `effective*` selectors below pick the location-scoped values whenever a
+  // location is active.
   const selectedRawValues = selectedLocation ? (locationRawValues[selectedLocation] || []) : [];
   const selectedRawKey = selectedRawValues.join('|');
+  const selectedOwnedCompanyIds = useMemo(() => {
+    if (!selectedLocation) return [] as string[];
+    if (selectedLocation === GENERAL_KEY) {
+      return scopeCompanies.filter(c => companyCountryKey(c.country) === null).map(c => c.id);
+    }
+    return selectedLocationEntry?.companyIds ?? [];
+  }, [selectedLocation, selectedLocationEntry, scopeCompanies]);
+  const selectedOwnedKey = selectedOwnedCompanyIds.join('|');
   useEffect(() => {
     const companyId = currentCompany?.id;
-    if (!user || !companyId || !selectedLocation || selectedRawValues.length === 0) {
+    const isGeneral = selectedLocation === GENERAL_KEY;
+    const canFetch = isGeneral
+      ? selectedOwnedCompanyIds.length > 0
+      : selectedRawValues.length > 0 || selectedOwnedCompanyIds.length > 0;
+    if (!user || !companyId || !selectedLocation || !canFetch) {
       // Only drop the loading flag once the selection is cleared OR this
-      // company's responses have fully loaded (raw values final). A pending/
-      // starred location applied mid-switch has no raw values yet — keeping
-      // the flag up holds the skeleton instead of flashing company-wide
-      // numbers until the location-scoped fetch below takes over. If the
-      // selection stays unresolvable after load, the reconcile effect clears
-      // it and this effect re-runs into the !selectedLocation case.
+      // company's responses have fully loaded (entries final). A pending/
+      // starred location applied mid-switch has no entry yet — keeping the
+      // flag up holds the skeleton instead of flashing company-wide numbers
+      // until the location-scoped fetch below takes over. If the selection
+      // stays unresolvable after load, the reconcile effect clears it and
+      // this effect re-runs into the !selectedLocation case.
       if (!selectedLocation || responsesLoadedCompanyId === companyId) {
         setLocationMetricsLoading(false);
       }
@@ -1993,52 +2079,64 @@ export const useDashboardData = () => {
       return;
     }
 
+    const ownedIds = selectedOwnedCompanyIds;
+    const ownedSet = new Set(ownedIds);
+    const otherIds = scopeCompanyIds.filter(id => !ownedSet.has(id));
+    // Bucket-level mirror of resolveResponseLocationKey for owned companies:
+    // an untagged bucket belongs to the selection; one tagged with another
+    // location does not.
+    const ownedBucketMatches = (bucket: string | null | undefined) => {
+      const key = canonicalizeLocationContext(bucket);
+      return isGeneral ? key === null : (key === null || key === selectedLocation);
+    };
+
     let cancelled = false;
     setLocationMetricsLoading(true);
     (async () => {
       try {
         const MV_ROW_CAP = 10000;
-        const [sentimentResult, relevanceResult, sourcesResult, competitorsResult, llmResult, attributeThemesResult] = await Promise.all([
-          supabase
-            .from('company_sentiment_scores_by_location_mv')
-            .select('*')
-            .eq('company_id', companyId)
-            .in('location_context', selectedRawValues)
-            .order('response_month', { ascending: false })
-            .limit(MV_ROW_CAP),
-          supabase
-            .from('company_relevance_scores_by_location_mv')
-            .select('*')
-            .eq('company_id', companyId)
-            .in('location_context', selectedRawValues)
-            .order('response_month', { ascending: false })
-            .limit(MV_ROW_CAP),
-          supabase
-            .from('company_top_sources_by_location_mv')
-            .select('domain, citation_count')
-            .eq('company_id', companyId)
-            .in('location_context', selectedRawValues),
-          supabase
-            .from('company_competitors_by_location_mv')
-            .select('competitor_name, mention_count')
-            .eq('company_id', companyId)
-            .in('location_context', selectedRawValues),
-          supabase
-            .from('company_llm_rankings_by_location_mv')
-            .select('ai_model, mentions')
-            .eq('company_id', companyId)
-            .in('location_context', selectedRawValues),
-          supabase
-            .from('company_attribute_themes_by_location_mv')
-            .select('attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count')
-            .eq('company_id', companyId)
-            .in('location_context', selectedRawValues)
-            .limit(MV_ROW_CAP),
+        const fetchScoped = async (
+          table: string,
+          select: string,
+          orderByMonth = false
+        ): Promise<any[]> => {
+          const jobs: { owned: boolean; q: PromiseLike<{ data: any[] | null; error: any }> }[] = [];
+          if (!isGeneral && otherIds.length > 0 && selectedRawValues.length > 0) {
+            let q: any = (supabase as any).from(table).select(select)
+              .in('company_id', otherIds)
+              .in('location_context', selectedRawValues)
+              .limit(MV_ROW_CAP);
+            if (orderByMonth) q = q.order('response_month', { ascending: false });
+            jobs.push({ owned: false, q });
+          }
+          if (ownedIds.length > 0) {
+            let q: any = (supabase as any).from(table).select(select)
+              .in('company_id', ownedIds)
+              .limit(MV_ROW_CAP);
+            if (orderByMonth) q = q.order('response_month', { ascending: false });
+            jobs.push({ owned: true, q });
+          }
+          const results = await Promise.all(jobs.map(j => j.q));
+          const rows: any[] = [];
+          results.forEach((res, i) => {
+            (res.data || []).forEach((row: any) => {
+              if (jobs[i].owned && !ownedBucketMatches(row.location_context)) return;
+              rows.push(row);
+            });
+          });
+          return rows;
+        };
+
+        const [sentimentRows, relevanceRows, sourcesRows, competitorsRows, llmRows, attributeThemeRows] = await Promise.all([
+          fetchScoped('company_sentiment_scores_by_location_mv', '*', true),
+          fetchScoped('company_relevance_scores_by_location_mv', '*', true),
+          fetchScoped('company_top_sources_by_location_mv', 'domain, citation_count, location_context'),
+          fetchScoped('company_competitors_by_location_mv', 'competitor_name, mention_count, location_context'),
+          fetchScoped('company_llm_rankings_by_location_mv', 'ai_model, mentions, location_context'),
+          fetchScoped('company_attribute_themes_by_location_mv', 'attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count, location_context'),
         ]);
         if (cancelled) return;
 
-        const sentimentRows = sentimentResult.data || [];
-        const relevanceRows = relevanceResult.data || [];
         const sentiment = aggregateSentimentRows(sentimentRows);
         const relevance = aggregateRelevanceRows(relevanceRows);
 
@@ -2049,42 +2147,30 @@ export const useDashboardData = () => {
         setLocRelevanceMetrics(relevance.metrics);
         setLocRelevanceByMonth(relevance.byMonth);
 
-        // A location can span several raw spellings (e.g. "United States" +
-        // "the United States"), so sum each domain/competitor/model across the
-        // returned buckets, then sort — mirroring the company-wide shaping.
-        const sumBy = <T extends string>(rows: any[], keyField: string, valField: string) => {
-          const acc: Record<string, number> = {};
-          (rows || []).forEach(r => {
-            const k = r[keyField];
-            if (!k) return;
-            acc[k] = (acc[k] || 0) + (r[valField] || 0);
-          });
-          return acc;
-        };
-
-        const srcAcc = sumBy(sourcesResult.data || [], 'domain', 'citation_count');
+        // A location can span several raw spellings and several companies, so
+        // sum each domain/competitor/model across all returned buckets, then
+        // sort — mirroring the company-wide shaping.
         setLocMvTopCitations(
-          Object.entries(srcAcc).map(([domain, count]) => ({ domain, count }))
+          Object.entries(sumRowsBy(sourcesRows, 'domain', 'citation_count'))
+            .map(([domain, count]) => ({ domain, count }))
             .sort((a, b) => b.count - a.count).slice(0, 30)
         );
-
-        const compAcc = sumBy(competitorsResult.data || [], 'competitor_name', 'mention_count');
         setLocMvTopCompetitors(
-          Object.entries(compAcc).map(([company, count]) => ({ company, count }))
+          Object.entries(sumRowsBy(competitorsRows, 'competitor_name', 'mention_count'))
+            .map(([company, count]) => ({ company, count }))
             .sort((a, b) => b.count - a.count).slice(0, 30)
         );
-
-        const llmAcc = sumBy(llmResult.data || [], 'ai_model', 'mentions');
         setLocMvLlmRankings(
-          Object.entries(llmAcc).map(([model, mentions]) => ({
-            model,
-            displayName: getLLMDisplayName(model),
-            mentions,
-            logoUrl: getLLMLogo(model),
-          })).sort((a, b) => b.mentions - a.mentions)
+          Object.entries(sumRowsBy(llmRows, 'ai_model', 'mentions'))
+            .map(([model, mentions]) => ({
+              model,
+              displayName: getLLMDisplayName(model),
+              mentions,
+              logoUrl: getLLMLogo(model),
+            })).sort((a, b) => b.mentions - a.mentions)
         );
 
-        setLocAttributeThemes(aggregateAttributeThemeRows(attributeThemesResult.data || []));
+        setLocAttributeThemes(aggregateAttributeThemeRows(attributeThemeRows));
       } catch (error) {
         if (!cancelled) console.warn('Error fetching location-scoped metrics:', error);
       } finally {
@@ -2093,27 +2179,27 @@ export const useDashboardData = () => {
     })();
 
     return () => { cancelled = true; };
-    // selectedRawKey captures the selected location's raw spellings; refetch
-    // when the company, selection, or that set changes.
-    // responsesLoadedCompanyId re-runs the early branch above once the
-    // company's responses finish loading, so a still-unresolved selection
-    // releases the loading flag instead of leaving the skeleton stuck.
+    // selectedRawKey/selectedOwnedKey capture the selection's spellings and
+    // owned profiles; scopeKey the sibling group; responsesLoadedCompanyId
+    // re-runs the early branch once responses finish loading so a
+    // still-unresolved selection releases the loading flag.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany?.id, selectedLocation, selectedRawKey, responsesLoadedCompanyId]);
+  }, [user, currentCompany?.id, selectedLocation, selectedRawKey, selectedOwnedKey, scopeKey, responsesLoadedCompanyId]);
 
   // Effective MV state: location-scoped when a location is active, else the
   // company-wide values. Used by every metrics memo below so the headline,
   // trends and per-job-function breakdowns all honor the location filter.
   //
-  // A location is only "active" if it actually exists in THIS company's data —
-  // i.e. it resolves to ≥1 stored spelling. A selectedLocation that doesn't
-  // (e.g. a stale value left over after switching companies, or a country code
-  // the company switcher passed) must fall back to the company-wide ("All
-  // locations") view rather than the empty location-scoped state — otherwise
-  // sentiment/relevance show 0% while visibility still renders. The trigger
-  // already shows "All locations" for such values, so this keeps data and label
-  // consistent.
-  const locActive = selectedLocation != null && (locationRawValues[selectedLocation]?.length ?? 0) > 0;
+  // A location is only "active" if it resolves to an entry in this scope —
+  // ≥1 stored spelling or ≥1 owned profile. A selectedLocation that doesn't
+  // (e.g. a stale value left over after switching companies) must fall back to
+  // the scope-wide ("All locations") view rather than the empty
+  // location-scoped state — otherwise sentiment/relevance show 0% while
+  // visibility still renders.
+  const locActive =
+    selectedLocation != null &&
+    selectedLocationEntry != null &&
+    (selectedLocationEntry.rawValues.length > 0 || selectedLocationEntry.companyIds.length > 0);
   const effSentimentMetrics = locActive ? locSentimentMetrics : companySentimentMetrics;
   const effRelevanceMetrics = locActive ? locRelevanceMetrics : companyRelevanceMetrics;
   const effSentimentByMonth = locActive ? locSentimentByMonth : companySentimentByMonth;
@@ -2136,10 +2222,10 @@ export const useDashboardData = () => {
   useEffect(() => {
     if (!selectedLocation) return;
     if (responsesLoadedCompanyId === null || responsesLoadedCompanyId !== currentCompany?.id) return;
-    if ((locationRawValues[selectedLocation]?.length ?? 0) === 0) {
+    if (!locationOptions.some(o => o.canonicalKey === selectedLocation)) {
       setSelectedLocationState(null);
     }
-  }, [selectedLocation, responsesLoadedCompanyId, currentCompany?.id, locationRawValues]);
+  }, [selectedLocation, responsesLoadedCompanyId, currentCompany?.id, locationOptions]);
 
   // Determine effective period (latest if none selected)
   const effectivePeriod = useMemo(() => {
@@ -2832,10 +2918,12 @@ export const useDashboardData = () => {
 
     // Fallback: if the MV hasn't populated yet, compute from responses. Use the
     // location+period-scoped responses when a location is active so the fallback
-    // stays scoped too.
+    // stays scoped too. Responses span the whole brand scope (siblings), so
+    // filter by the scope set rather than the current company row alone.
     const fallbackResponses = locActive ? periodFilteredResponses : responses;
     if (effMvTopCitations.length === 0 && fallbackResponses.length > 0) {
-      const currentCompanyResponses = fallbackResponses.filter(r => r.company_id === currentCompany.id);
+      const scopeSet = new Set(scopeCompanyIds);
+      const currentCompanyResponses = fallbackResponses.filter(r => !r.company_id || scopeSet.has(r.company_id));
       const allCitations = currentCompanyResponses.flatMap(r => enhanceCitations(getCitations(r.id)));
       const websiteCitations = allCitations.filter(citation => citation.type === 'website' && citation.url);
       websiteCitations.forEach((citation: EnhancedCitation) => {
@@ -2850,7 +2938,8 @@ export const useDashboardData = () => {
       .map(([domain, count]) => ({ domain, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 30);
-  }, [effMvTopCitations, locActive, periodFilteredResponses, searchResults, responses, currentCompany?.id, isSwitchingCompany, getCitations]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effMvTopCitations, locActive, periodFilteredResponses, searchResults, responses, currentCompany?.id, scopeKey, isSwitchingCompany, getCitations]);
 
   const preparePromptData = (prompts: any[], responses: any[]): PromptData[] => {
     return prompts.map(prompt => {
@@ -3005,7 +3094,7 @@ export const useDashboardData = () => {
             prompt_type
           )
         `)
-        .eq('company_id', currentCompany.id)
+        .in('company_id', scopeCompanyIds.length > 0 ? scopeCompanyIds : [currentCompany.id])
         .gte('tested_at', startDate.toISOString())
         .lte('tested_at', endDate.toISOString())
         .order('tested_at', { ascending: false });
@@ -3026,7 +3115,8 @@ export const useDashboardData = () => {
       console.error('Error fetching historical responses:', error);
       return [];
     }
-  }, [user, currentCompany]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, currentCompany, scopeKey]);
 
   // Function to get all unique collection dates for this company
   // Useful for showing a timeline or date selector for comparisons
@@ -3039,7 +3129,7 @@ export const useDashboardData = () => {
       const { data, error } = await supabase
         .from('prompt_responses')
         .select('tested_at')
-        .eq('company_id', currentCompany.id)
+        .in('company_id', scopeCompanyIds.length > 0 ? scopeCompanyIds : [currentCompany.id])
         .order('tested_at', { ascending: false });
 
       if (error) throw error;
@@ -3056,7 +3146,8 @@ export const useDashboardData = () => {
       console.error('Error fetching collection dates:', error);
       return [];
     }
-  }, [user, currentCompany]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, currentCompany, scopeKey]);
 
   return {
     responses: periodFilteredResponses, // period-filtered when multi-month

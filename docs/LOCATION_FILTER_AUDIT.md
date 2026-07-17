@@ -249,5 +249,50 @@ search-insights and recency merge paths still sit in `topCitations`/`topCompetit
 | D6 Reports hides control but keeps filter | **Withdrawn** | Reports is self-contained; see corrected finding above. |
 | D7 benchmarks keyed on labels; no global benchmark | Open | Needs `competitor_benchmarks_mv` semantics (defined outside this repo's migrations). |
 | D8 dead wiring | **Fixed** | Unused `PromptsTab.selectedLocation` and `CompanySwitcher.onLocationChange` props removed. Retired search/recency merge paths left in place (inert) for a separate cleanup. |
-| §2.1 "All locations" ≠ cross-row aggregate | Open (product) | Needs a naming/aggregation decision; no code change made. |
+| §2.1 "All locations" ≠ cross-row aggregate | **Fixed — see §8** | Product decision made (2026-07-17): "All locations" now truly aggregates same-name sibling profiles. |
 | Silent reconcile resets (§2.3 feedback) | Open | Resets are now far rarer (S1–S4), but still silent; a toast/badge is a UX follow-up. |
+
+---
+
+## 8. Cross-profile aggregation (product decision, 2026-07-17)
+
+Decision: **"All locations" must mean all locations of the brand**, including the
+legacy per-country company profiles. Implemented as follows:
+
+**Brand scope.** Every dashboard fetch (responses, prompts, all `company_*_mv`
+and `_by_location_mv` reads, AI themes, response sentiment) is scoped to the
+**current company plus its same-name siblings** via `.in('company_id', scopeIds)`
+(`scopeCompanies` in `useDashboardData`). Metrics that can repeat a key across
+companies (sources, competitors, LLM rankings, attribute themes) are summed
+client-side. "All locations" therefore shows a true cross-profile aggregate.
+
+**One attribution rule.** `resolveResponseLocationKey` (locationContext.ts):
+a response belongs to its prompt's `location_context` if tagged, **else to its
+company's `country`**, else to "General". The rule is applied identically by:
+- the dropdown builder (entries seeded from every profile's country, so a
+  country profile is always selectable even with no recent responses loaded),
+- the client-side response filter (canonical matching — raw-spelling drift no
+  longer matters for responses), and
+- the location-scoped MV queries: profiles *owned* by the selection (their
+  country attributes to it) contribute all their buckets except those tagged
+  with a different location; other profiles contribute only buckets tagged with
+  the selection's spellings.
+
+**Countries are filters now.** Selecting a country in the location dropdown
+never switches company (the `switchCompany` entry type is gone). The company
+switcher's per-country submenu still exists and still lands on that profile —
+but it also sets the country filter, and since the scope is the whole group,
+the numbers are identical either way.
+
+**Consequences worth knowing:**
+- Legacy sibling profiles' untagged prompts no longer pollute "General" — they
+  belong to their profile's country. "General" is only offered when countryless
+  profiles have untagged prompts.
+- A single-profile company with `country = US` now shows a "United States"
+  entry (its whole dataset) — making the scope visible instead of hiding it
+  behind "All locations".
+- Benchmarks (D7) still key on a single market label and remain hidden on the
+  aggregated "All locations" view.
+- The per-company response cache is keyed by the entered profile's id; entering
+  the brand through a different sibling re-fetches the same merged scope (a
+  cache-key refinement is possible later).

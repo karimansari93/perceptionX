@@ -47,11 +47,11 @@ const normalizeDomain = (domain: string): string => {
 
 export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: SourcesTabProps) => {
   
-  // Filter responses and searchResults by currentCompanyId to ensure we only show sources for the current company
-  const filteredResponses = useMemo(() => {
-    if (!currentCompanyId) return responses;
-    return responses.filter(response => response.company_id === currentCompanyId);
-  }, [responses, currentCompanyId]);
+  // Responses arrive already scoped by useDashboardData (brand scope — the
+  // current company plus same-name sibling profiles — with the location and
+  // period filters applied). Re-filtering by currentCompanyId here would drop
+  // the sibling profiles' rows from the aggregated view.
+  const filteredResponses = responses;
 
   const filteredSearchResults = useMemo(() => {
     if (!currentCompanyId) return searchResults;

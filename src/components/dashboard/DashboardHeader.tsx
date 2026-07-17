@@ -93,7 +93,6 @@ export const DashboardHeader = React.memo(({
               <LocationFilter
                 selectedLocation={selectedLocation || null}
                 onLocationChange={onLocationChange}
-                onPendingLocationChange={onPendingLocationChange}
                 options={locationOptions}
                 className={isMobile ? "min-w-[120px]" : ""}
               />
