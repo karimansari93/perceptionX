@@ -43,12 +43,15 @@ export const useRefreshPrompts = () => {
         return;
       }
 
-      // Get active confirmed prompts to refresh
+      // Get active confirmed prompts to refresh. No user_id filter: the
+      // merged brand view surfaces sibling prompts created by other org
+      // members (e.g. admin-onboarded per-country profiles), and RLS already
+      // scopes what this user can read — a creator filter just makes those
+      // prompts silently unrefreshable.
       let promptQuery = supabase
         .from('confirmed_prompts')
         .select('id, company_id')
-        .eq('is_active', true)
-        .eq('user_id', user.id);
+        .eq('is_active', true);
 
       if (promptIds && promptIds.length > 0) {
         promptQuery = promptQuery.in('id', promptIds);

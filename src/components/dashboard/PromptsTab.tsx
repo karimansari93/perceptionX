@@ -17,6 +17,7 @@ interface PromptsTabProps {
   refreshProgress: RefreshProgress | null;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
+  scopeCompanyIds?: string[];
   selectedJobFunction?: string;
   onJobFunctionChange?: (value: string) => void;
 }
@@ -30,6 +31,7 @@ export const PromptsTab = memo(({
   refreshProgress,
   responseTexts,
   fetchResponseTexts,
+  scopeCompanyIds,
   selectedJobFunction = 'all',
   onJobFunctionChange,
 }: PromptsTabProps) => {
@@ -116,6 +118,7 @@ export const PromptsTab = memo(({
           promptsData={promptsData}
           companyName={companyName}
           onRefreshPrompt={onRefreshPrompts}
+          scopeCompanyIds={scopeCompanyIds}
           isRefreshing={isRefreshing}
           refreshProgress={refreshProgress}
           responseTexts={responseTexts}

@@ -315,36 +315,16 @@ export const OverviewTab = memo(({
     return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=16`;
   };
 
-  // Helper to group responses by time period
+  // Current vs previous PERIOD (snapshot month), not latest calendar day.
+  // `responses` is already scoped to the effective snapshot month by the hook,
+  // and `previousPeriodResponses` is the prior month it passes down. The old
+  // "latest tested_at day" bucketing broke under the merged multi-profile
+  // view: sibling profiles are collected on different days, so the same
+  // collection cycle scattered across current/previous and the trend arrows
+  // compared one country against the rest of the scope.
   const groupResponsesByTimePeriod = useMemo(() => {
-    if (responses.length === 0) return { current: [], previous: [] };
-
-    // Sort responses by tested_at descending
-    const sortedResponses = [...responses].sort((a, b) => 
-      new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime()
-    );
-
-    // Find the most recent date
-    const latestDate = new Date(sortedResponses[0].tested_at);
-    
-    // Group responses into current (latest date) and previous (all other dates)
-    const current = sortedResponses.filter(r => {
-      const responseDate = new Date(r.tested_at);
-      return responseDate.toDateString() === latestDate.toDateString();
-    });
-    
-    const previous = sortedResponses.filter(r => {
-      const responseDate = new Date(r.tested_at);
-      return responseDate.toDateString() !== latestDate.toDateString();
-    });
-
-    // If we only have responses from one date, treat them all as current
-    if (previous.length === 0) {
-      return { current: sortedResponses, previous: [] };
-    }
-
-    return { current, previous };
-  }, [responses]);
+    return { current: fnResponses, previous: fnPreviousResponses };
+  }, [fnResponses, fnPreviousResponses]);
 
   // Calculate time-based competitor data
   const timeBasedCompetitors = useMemo(() => {
@@ -373,8 +353,9 @@ export const OverviewTab = memo(({
 
     // Get competitor counts for previous period and calculate average
     const previousCompetitors: Record<string, number> = {};
-    const previousUniqueDays = new Set(previous.map(r => new Date(r.tested_at).toDateString()));
-    const numPreviousDays = Math.max(1, previousUniqueDays.size);
+    // "previous" is now one whole snapshot period (not N calendar days), so
+    // compare period totals directly rather than averaging over day count.
+    const numPreviousDays = 1;
 
     previous.forEach(response => {
       if (response.competitor_mentions) {
@@ -526,8 +507,9 @@ export const OverviewTab = memo(({
 
     // Get citation counts for previous period and calculate average
     const previousCitations: Record<string, number> = {};
-    const previousUniqueDays = new Set(previous.map(r => new Date(r.tested_at).toDateString()));
-    const numPreviousDays = Math.max(1, previousUniqueDays.size);
+    // "previous" is now one whole snapshot period (not N calendar days), so
+    // compare period totals directly rather than averaging over day count.
+    const numPreviousDays = 1;
 
     previous.forEach(response => {
       const citations = parseCitations(response.citations);

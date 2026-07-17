@@ -42,6 +42,7 @@ export const COUNTRY_NAMES: Record<string, string> = {
   MX: "Mexico",
   BR: "Brazil",
   AR: "Argentina",
+  VE: "Venezuela",
   CL: "Chile",
   CO: "Colombia",
   PE: "Peru",

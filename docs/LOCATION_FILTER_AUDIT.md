@@ -259,12 +259,40 @@ search-insights and recency merge paths still sit in `topCitations`/`topCompetit
 Decision: **"All locations" must mean all locations of the brand**, including the
 legacy per-country company profiles. Implemented as follows:
 
-**Brand scope.** Every dashboard fetch (responses, prompts, all `company_*_mv`
-and `_by_location_mv` reads, AI themes, response sentiment) is scoped to the
-**current company plus its same-name siblings** via `.in('company_id', scopeIds)`
-(`scopeCompanies` in `useDashboardData`). Metrics that can repeat a key across
-companies (sources, competitors, LLM rankings, attribute themes) are summed
-client-side. "All locations" therefore shows a true cross-profile aggregate.
+**Brand scope.** The scope is the **current company plus its same-name siblings
+_in the same organization_** (`scopeCompanies` in `useDashboardData`). The
+`organization_id` constraint is load-bearing: matching on name alone once
+grouped identical brand names across unrelated client organizations (a
+multi-org admin got an 18-profile scope), which both mixed tenants and produced
+statement-timeout-heavy queries. A `MAX_SIBLINGS = 9` cap (10 profiles total)
+guards against a runaway group. The list is deterministically sorted by id.
+
+**Query shapes (this is the part the first deploy got wrong).** Do NOT fetch
+the scope with one `.in('company_id', scopeIds)` on a large row-level table:
+`.in(...) + ORDER BY tested_at + OFFSET` cannot ride the `(company_id,
+tested_at)` index, so Postgres gathers and sorts the whole window across every
+profile — the shape that hit the ~8s statement timeout and returned HTTP 500s.
+Instead:
+- **Heavy row-level fetches** (`prompt_responses_canonical` response pages and
+  the attribute pass, `ai_themes`, `company_response_sentiment_mv`,
+  `company_attribute_themes_mv`, and the `company_sentiment/relevance_scores_mv`
+  metric fetches) run **one indexed `.eq('company_id', id)` pagination per scope
+  profile**, merged client-side.
+- **Small grouped rollup MVs** (`company_top_sources_mv`, `company_competitors_mv`,
+  `company_llm_rankings_mv`) and `confirmed_prompts` may use `.in(...)`, but
+  still **paginate** — PostgREST's `max_rows` (1000, in `supabase/config.toml`)
+  silently clamps every response regardless of `.limit()`, so an unpaginated
+  request drops rows with no error. Top-N rollups fetch per-company (each with
+  its own `.limit`) so a key that ranks modestly in every profile isn't cut
+  before the merge.
+- Every paginated query carries a **stable `ORDER BY`** (the MV's unique-index
+  columns). The by-location tables are plain tables rebuilt by DELETE+INSERT, so
+  unordered OFFSET pages can duplicate or skip rows mid-refresh.
+
+Metrics that can repeat a key across companies (sources, competitors, LLM
+rankings, attribute themes) are summed client-side via `sumRowsBy` /
+`aggregateAttributeThemeRows`. "All locations" therefore shows a true
+cross-profile aggregate.
 
 **One attribution rule.** `resolveResponseLocationKey` (locationContext.ts):
 a response belongs to its prompt's `location_context` if tagged, **else to its

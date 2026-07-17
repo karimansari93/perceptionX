@@ -63,6 +63,11 @@ export function stampStarredViewCompany(
   }
 }
 
+// Fired after every write so mounted useStarredView instances stay in sync
+// with module-level writes (e.g. stampStarredViewCompany from
+// useDashboardData) — localStorage "storage" events only fire cross-tab.
+const CHANGE_EVENT = "starred-view-changed";
+
 function writeStarred(userId: string | null | undefined, view: StarredView | null) {
   if (typeof window === "undefined") return;
   try {
@@ -71,6 +76,7 @@ function writeStarred(userId: string | null | undefined, view: StarredView | nul
     } else {
       window.localStorage.setItem(starredViewStorageKey(userId), JSON.stringify(view));
     }
+    window.dispatchEvent(new CustomEvent(CHANGE_EVENT, { detail: { userId: userId ?? null } }));
   } catch {
     /* swallow quota / privacy-mode errors */
   }
@@ -80,9 +86,18 @@ export function useStarredView(userId: string | null | undefined) {
   // Keep state in React so toggles re-render the star button immediately.
   const [starredView, setStarredView] = useState<StarredView | null>(() => readStarredView(userId));
 
-  // Re-read when userId changes (different user logs in).
+  // Re-read when userId changes (different user logs in), and whenever any
+  // code path writes the stored view (star toggles elsewhere, the legacy
+  // companyId stamp) so this instance can't render a stale star.
   useEffect(() => {
     setStarredView(readStarredView(userId));
+    const onChange = () => setStarredView(readStarredView(userId));
+    window.addEventListener(CHANGE_EVENT, onChange);
+    window.addEventListener("storage", onChange);
+    return () => {
+      window.removeEventListener(CHANGE_EVENT, onChange);
+      window.removeEventListener("storage", onChange);
+    };
   }, [userId]);
 
   const saveCurrentView = useCallback(

@@ -8,6 +8,7 @@ import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
 import { parseCompetitors } from "@/utils/competitorUtils";
 import { buildLocationOptions, canonicalizeLocationContext, companyCountryKey, GENERAL_KEY, resolveResponseLocationKey } from "@/utils/locationContext";
+import { GLOBAL_LIKE } from "@/utils/locations";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
 
 // Pure aggregation of `company_*_by_location_mv` rows into the same shape the
@@ -454,16 +455,33 @@ export const useDashboardData = () => {
       const byTestedAtDesc = (a: any, b: any) =>
         new Date(b.tested_at || b.created_at || 0).getTime() - new Date(a.tested_at || a.created_at || 0).getTime();
 
+      // PostgREST clamps unpaginated requests to max_rows (1000); a
+      // multi-profile brand can exceed that in prompts alone, silently losing
+      // rows. Stable order + range pages fetch the complete set.
+      const fetchAllPrompts = async (): Promise<{ data: any[] | null; error: any }> => {
+        let all: any[] = [];
+        for (let page = 0; page < 30; page += 1) {
+          const result = await retrySupabaseQuery(() =>
+            supabase
+              .from('confirmed_prompts')
+              .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, attribute_id')
+              .in('company_id', requestedScopeIds)
+              .order('id', { ascending: true })
+              .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
+          ) as { data: any[] | null; error: any };
+          if (result.error) return result;
+          const chunk = result.data ?? [];
+          all = all.concat(chunk);
+          if (chunk.length < PAGE_SIZE) break;
+        }
+        return { data: all, error: null };
+      };
+
       // Prompts and the newest page of every profile's responses load in
       // parallel. The merged first pages are enough to paint the dashboard;
       // the remaining pages stream in behind.
       const [promptsResult, ...firstPageResults] = await Promise.all([
-        retrySupabaseQuery(() =>
-          supabase
-            .from('confirmed_prompts')
-            .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, attribute_id')
-            .in('company_id', requestedScopeIds)
-        ) as Promise<{ data: any[] | null; error: any }>,
+        fetchAllPrompts(),
         ...requestedScopeIds.map(id => fetchResponsePage(id, 0, PAGE_SIZE - 1, true)),
       ]);
 
@@ -577,6 +595,11 @@ export const useDashboardData = () => {
                   location_context
                 )
               `, withCount ? { count: 'exact' } : undefined)
+              // The base-table company_id predicate is what lets the
+              // (company_id, tested_at) index serve ORDER BY + OFFSET; the
+              // embedded filter alone forces a join-then-sort over the whole
+              // window — the statement-timeout shape from the incident.
+              .eq('company_id', companyId)
               .eq('confirmed_prompts.company_id', companyId)
               .not('confirmed_prompts.attribute_id', 'is', null)
               .gte('tested_at', eagerCutoffIso)
@@ -807,31 +830,48 @@ export const useDashboardData = () => {
     try {
       setCompanyMetricsLoading(true);
 
-      // Fetch sentiment and relevance metrics from materialized views
-      // Get the most recent month with data (not just current month)
-      // This handles cases where data is from previous months
-      // NOTE: the rows are already scoped to one company and grouped per
-      // (month, prompt_type, category, theme, industry, job_function), so the
-      // per-company count is bounded (low thousands even for heavy accounts).
-      // A small LIMIT here is a silent bug: ordering by month desc means the
-      // cap drops the OLDEST months first, so any month whose rows alone exceed
-      // the cap (relevance can have 200+ rows in a single month) leaves the
-      // per-month maps with only the current month — and every prior-month
-      // delta collapses to "no data". Fetch the company's full set instead.
-      const MV_ROW_CAP = 10000;
+      // Fetch sentiment and relevance metrics from materialized views.
+      // PER-COMPANY PAGINATED: PostgREST clamps every request to max_rows
+      // (1000 in supabase/config.toml) regardless of .limit(), and ordering by
+      // month desc means truncation silently drops the OLDEST months — the
+      // per-month maps lose history and every prior-month delta collapses to
+      // "no data". One .range() pagination per scope profile with a stable
+      // ORDER BY (the MV's unique-index columns) fetches the complete set.
+      const MV_PAGE = 1000;
+      const MV_MAX_PAGES = 20; // safety valve, far above real per-company MV sizes
+      const fetchMvAllRows = async (
+        table: 'company_sentiment_scores_mv' | 'company_relevance_scores_mv'
+      ): Promise<{ data: any[]; error: any }> => {
+        try {
+          const perCompany = await Promise.all(requestedScopeIds.map(async (companyId) => {
+            let all: any[] = [];
+            for (let page = 0; page < MV_MAX_PAGES; page += 1) {
+              const { data, error } = await (supabase as any)
+                .from(table)
+                .select('*')
+                .eq('company_id', companyId)
+                .order('response_month', { ascending: false })
+                .order('prompt_type')
+                .order('prompt_category')
+                .order('prompt_theme')
+                .order('industry_context')
+                .order('job_function_context')
+                .range(page * MV_PAGE, (page + 1) * MV_PAGE - 1);
+              if (error) throw error;
+              const chunk = data ?? [];
+              all = all.concat(chunk);
+              if (chunk.length < MV_PAGE) break;
+            }
+            return all;
+          }));
+          return { data: perCompany.flat(), error: null };
+        } catch (error) {
+          return { data: [], error };
+        }
+      };
       const [sentimentResult, relevanceResult] = await Promise.all([
-        supabase
-          .from('company_sentiment_scores_mv')
-          .select('*')
-          .in('company_id', requestedScopeIds)
-          .order('response_month', { ascending: false })
-          .limit(MV_ROW_CAP),
-        supabase
-          .from('company_relevance_scores_mv')
-          .select('*')
-          .in('company_id', requestedScopeIds)
-          .order('response_month', { ascending: false })
-          .limit(MV_ROW_CAP)
+        fetchMvAllRows('company_sentiment_scores_mv'),
+        fetchMvAllRows('company_relevance_scores_mv'),
       ]);
 
       // Drop the result if the user already moved on to a different company.
@@ -1005,26 +1045,34 @@ export const useDashboardData = () => {
     const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
 
     try {
-      // Scope-wide: several companies can repeat a domain/competitor/model, so
-      // fetch a generous slice ordered by count and SUM per key before ranking.
+      // Per-company top-N, merged and re-summed client-side. A single shared
+      // .limit() slice across the scope is ordered by per-row count, so a key
+      // that ranks modestly in EVERY profile can be cut from all of them yet
+      // belong in the merged top-30; a per-company cap keeps each profile's
+      // full head. Also preserves the (company_id, count DESC) index path.
+      const fetchTopRows = async (
+        table: string,
+        select: string,
+        orderCol: string,
+        perCompanyLimit: number | null
+      ): Promise<{ data: any[] | null; error: any }> => {
+        const results = await Promise.all(requestedScopeIds.map(id => {
+          let q: any = (supabase as any)
+            .from(table)
+            .select(select)
+            .eq('company_id', id)
+            .order(orderCol, { ascending: false });
+          if (perCompanyLimit) q = q.limit(perCompanyLimit);
+          return q as PromiseLike<{ data: any[] | null; error: any }>;
+        }));
+        const err = results.find(r => r.error)?.error ?? null;
+        return { data: err ? null : results.flatMap(r => r.data ?? []), error: err };
+      };
+
       const [sourcesResult, competitorsResult, llmResult] = await Promise.all([
-        supabase
-          .from('company_top_sources_mv')
-          .select('domain, citation_count')
-          .in('company_id', requestedScopeIds)
-          .order('citation_count', { ascending: false })
-          .limit(200),
-        supabase
-          .from('company_competitors_mv')
-          .select('competitor_name, mention_count')
-          .in('company_id', requestedScopeIds)
-          .order('mention_count', { ascending: false })
-          .limit(200),
-        supabase
-          .from('company_llm_rankings_mv')
-          .select('ai_model, mentions')
-          .in('company_id', requestedScopeIds)
-          .order('mentions', { ascending: false }),
+        fetchTopRows('company_top_sources_mv', 'domain, citation_count', 'citation_count', 200),
+        fetchTopRows('company_competitors_mv', 'competitor_name, mention_count', 'mention_count', 200),
+        fetchTopRows('company_llm_rankings_mv', 'ai_model, mentions', 'mentions', null),
       ]);
 
       if (isStale()) return;
@@ -1301,6 +1349,13 @@ export const useDashboardData = () => {
               .from('company_attribute_themes_mv')
               .select('attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count')
               .eq('company_id', companyId)
+              // Stable order (unique-index columns): these are plain tables
+              // rebuilt by DELETE+INSERT since 20260706120000 — unordered
+              // OFFSET pages can duplicate/skip rows across a mid-fetch
+              // rebuild, and duplicates get double-summed downstream.
+              .order('response_month')
+              .order('job_function_context')
+              .order('attribute_id')
               .range(from, from + PAGE_SIZE - 1)
           ) as { data: any[] | null; error: any };
           if (isStale()) return all;
@@ -1348,6 +1403,8 @@ export const useDashboardData = () => {
               .from('company_response_sentiment_mv')
               .select('response_id, total_themes, positive_themes, sentiment_ratio')
               .eq('company_id', companyId)
+              // Stable order — see the attribute-themes fetch above.
+              .order('response_id')
               .range(from, from + PAGE_SIZE - 1)
           ) as { data: any[] | null; error: any };
           if (isStale()) return all;
@@ -1645,8 +1702,14 @@ export const useDashboardData = () => {
   useEffect(() => {
     if (currentCompany?.id !== currentCompanyIdRef.current && currentCompany?.id !== undefined) {
       const previousCompanyId = currentCompanyIdRef.current;
-      // Save current company's data to cache before clearing (for instant restore when switching back)
-      if (previousCompanyId && responses.length > 0) {
+      // Save current company's data to cache before clearing (for instant
+      // restore when switching back) — but ONLY when the outgoing company's
+      // load actually completed. Switching away mid-stream would otherwise
+      // cache the first page(s), and the restore path re-declares cached
+      // responses FINAL (setResponsesLoadedCompanyId), which would let the
+      // reconcile effect wipe a valid location that only exists in the pages
+      // that never landed.
+      if (previousCompanyId && responses.length > 0 && responsesLoadedCompanyId === previousCompanyId) {
         companyDataCacheRef.current[previousCompanyId] = {
           // Merge over the existing entry so the MV/metrics snapshots
           // written by the fetches survive — they're what lets a switch-back
@@ -2100,21 +2163,42 @@ export const useDashboardData = () => {
     return selectedLocationEntry?.companyIds ?? [];
   }, [selectedLocation, selectedLocationEntry, scopeCompanies]);
   const selectedOwnedKey = selectedOwnedCompanyIds.join('|');
+  // Whether the active selection has anything to fetch: tagged spellings,
+  // owned profiles, or (for General) countryless profiles. Hoisted out of the
+  // fetch effect so the flag-release effect below can share it without adding
+  // fetch-refiring dependencies.
+  const locSelectionFetchable = useMemo(() => {
+    if (!selectedLocation) return false;
+    if (selectedLocation === GENERAL_KEY) return selectedOwnedCompanyIds.length > 0;
+    return selectedRawValues.length > 0 || selectedOwnedCompanyIds.length > 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLocation, selectedRawKey, selectedOwnedKey]);
+
+  // Release the loading flag for a selection that stays unresolvable after
+  // this company's responses finished loading (the reconcile effect will also
+  // clear the selection itself). Deliberately separate from the fetch effect:
+  // having responsesLoadedCompanyId in ITS deps made the full-set commit
+  // re-fire all location queries and flash content → skeleton → content.
+  useEffect(() => {
+    if (
+      selectedLocation &&
+      !locSelectionFetchable &&
+      responsesLoadedCompanyId === currentCompany?.id
+    ) {
+      setLocationMetricsLoading(false);
+    }
+  }, [selectedLocation, locSelectionFetchable, responsesLoadedCompanyId, currentCompany?.id]);
+
   useEffect(() => {
     const companyId = currentCompany?.id;
     const isGeneral = selectedLocation === GENERAL_KEY;
-    const canFetch = isGeneral
-      ? selectedOwnedCompanyIds.length > 0
-      : selectedRawValues.length > 0 || selectedOwnedCompanyIds.length > 0;
-    if (!user || !companyId || !selectedLocation || !canFetch) {
-      // Only drop the loading flag once the selection is cleared OR this
-      // company's responses have fully loaded (entries final). A pending/
-      // starred location applied mid-switch has no entry yet — keeping the
-      // flag up holds the skeleton instead of flashing company-wide numbers
-      // until the location-scoped fetch below takes over. If the selection
-      // stays unresolvable after load, the reconcile effect clears it and
-      // this effect re-runs into the !selectedLocation case.
-      if (!selectedLocation || responsesLoadedCompanyId === companyId) {
+    if (!user || !companyId || !selectedLocation || !locSelectionFetchable) {
+      // Only drop the loading flag when the selection is actually cleared. A
+      // pending/starred location applied mid-switch has no entry yet — keeping
+      // the flag up holds the skeleton instead of flashing company-wide
+      // numbers until the fetch below takes over; the release effect above
+      // handles selections that stay unresolvable after the load completes.
+      if (!selectedLocation) {
         setLocationMetricsLoading(false);
       }
       setLocSentimentMetrics(null);
@@ -2140,51 +2224,71 @@ export const useDashboardData = () => {
       const key = canonicalizeLocationContext(bucket);
       return isGeneral ? key === null : (key === null || key === selectedLocation);
     };
+    // Server-side bucket narrowing for owned profiles: the buckets that can
+    // possibly match are the untagged ones ('' + GLOBAL-like sentinels) plus
+    // the selection's spellings — fetching every bucket of a heavy profile
+    // pulled thousands of rows that PostgREST's max_rows clamp then truncated
+    // arbitrarily. ownedBucketMatches stays as the semantic filter on top.
+    const ownedBucketList = isGeneral
+      ? ['', ...GLOBAL_LIKE]
+      : Array.from(new Set(['', ...GLOBAL_LIKE, ...selectedRawValues]));
 
     let cancelled = false;
     setLocationMetricsLoading(true);
     (async () => {
       try {
-        const MV_ROW_CAP = 10000;
+        // PER-COMPANY, PAGINATED, STABLY ORDERED. PostgREST clamps every
+        // request to max_rows (1000) regardless of .limit(); a single capped
+        // fetch silently dropped the oldest months (month-ordered arms) or an
+        // arbitrary row subset (unordered arms), skewing sums with no error.
+        const PAGE = 1000;
+        const MAX_PAGES = 20; // safety valve per (table, company)
+        type OrderSpec = { col: string; asc?: boolean };
         const fetchScoped = async (
           table: string,
           select: string,
-          orderByMonth = false
+          orders: OrderSpec[]
         ): Promise<any[]> => {
-          const jobs: { owned: boolean; q: PromiseLike<{ data: any[] | null; error: any }> }[] = [];
-          if (!isGeneral && otherIds.length > 0 && selectedRawValues.length > 0) {
-            let q: any = (supabase as any).from(table).select(select)
-              .in('company_id', otherIds)
-              .in('location_context', selectedRawValues)
-              .limit(MV_ROW_CAP);
-            if (orderByMonth) q = q.order('response_month', { ascending: false });
-            jobs.push({ owned: false, q });
+          const jobs: { owned: boolean; companyId: string; buckets: string[] }[] = [];
+          if (!isGeneral && selectedRawValues.length > 0) {
+            otherIds.forEach(id => jobs.push({ owned: false, companyId: id, buckets: selectedRawValues }));
           }
-          if (ownedIds.length > 0) {
-            let q: any = (supabase as any).from(table).select(select)
-              .in('company_id', ownedIds)
-              .limit(MV_ROW_CAP);
-            if (orderByMonth) q = q.order('response_month', { ascending: false });
-            jobs.push({ owned: true, q });
-          }
-          const results = await Promise.all(jobs.map(j => j.q));
-          const rows: any[] = [];
-          results.forEach((res, i) => {
-            (res.data || []).forEach((row: any) => {
-              if (jobs[i].owned && !ownedBucketMatches(row.location_context)) return;
-              rows.push(row);
-            });
-          });
-          return rows;
+          ownedIds.forEach(id => jobs.push({ owned: true, companyId: id, buckets: ownedBucketList }));
+
+          const perJob = await Promise.all(jobs.map(async (job) => {
+            let all: any[] = [];
+            for (let page = 0; page < MAX_PAGES; page += 1) {
+              let q: any = (supabase as any).from(table).select(select)
+                .eq('company_id', job.companyId)
+                .in('location_context', job.buckets);
+              for (const o of orders) q = q.order(o.col, { ascending: o.asc ?? true });
+              const { data, error } = await q.range(page * PAGE, (page + 1) * PAGE - 1);
+              if (error) throw error;
+              const chunk = data ?? [];
+              all = all.concat(chunk);
+              if (chunk.length < PAGE) break;
+            }
+            return job.owned ? all.filter((row: any) => ownedBucketMatches(row.location_context)) : all;
+          }));
+          return perJob.flat();
         };
 
+        const MONTH_ORDERS: OrderSpec[] = [
+          { col: 'response_month', asc: false },
+          { col: 'prompt_type' }, { col: 'prompt_category' }, { col: 'prompt_theme' },
+          { col: 'industry_context' }, { col: 'job_function_context' }, { col: 'location_context' },
+        ];
         const [sentimentRows, relevanceRows, sourcesRows, competitorsRows, llmRows, attributeThemeRows] = await Promise.all([
-          fetchScoped('company_sentiment_scores_by_location_mv', '*', true),
-          fetchScoped('company_relevance_scores_by_location_mv', '*', true),
-          fetchScoped('company_top_sources_by_location_mv', 'domain, citation_count, location_context'),
-          fetchScoped('company_competitors_by_location_mv', 'competitor_name, mention_count, location_context'),
-          fetchScoped('company_llm_rankings_by_location_mv', 'ai_model, mentions, location_context'),
-          fetchScoped('company_attribute_themes_by_location_mv', 'attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count, location_context'),
+          fetchScoped('company_sentiment_scores_by_location_mv', '*', MONTH_ORDERS),
+          fetchScoped('company_relevance_scores_by_location_mv', '*', MONTH_ORDERS),
+          fetchScoped('company_top_sources_by_location_mv', 'domain, citation_count, location_context',
+            [{ col: 'citation_count', asc: false }, { col: 'domain' }, { col: 'location_context' }]),
+          fetchScoped('company_competitors_by_location_mv', 'competitor_name, mention_count, location_context',
+            [{ col: 'mention_count', asc: false }, { col: 'competitor_name' }, { col: 'location_context' }]),
+          fetchScoped('company_llm_rankings_by_location_mv', 'ai_model, mentions, location_context',
+            [{ col: 'mentions', asc: false }, { col: 'ai_model' }, { col: 'location_context' }]),
+          fetchScoped('company_attribute_themes_by_location_mv', 'attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count, location_context',
+            [{ col: 'response_month', asc: false }, { col: 'job_function_context' }, { col: 'attribute_id' }, { col: 'location_context' }]),
         ]);
         if (cancelled) return;
 
@@ -2231,11 +2335,11 @@ export const useDashboardData = () => {
 
     return () => { cancelled = true; };
     // selectedRawKey/selectedOwnedKey capture the selection's spellings and
-    // owned profiles; scopeKey the sibling group; responsesLoadedCompanyId
-    // re-runs the early branch once responses finish loading so a
-    // still-unresolved selection releases the loading flag.
+    // owned profiles; scopeKey the sibling group. responsesLoadedCompanyId is
+    // deliberately NOT a dep — the full-set commit must not re-fire an
+    // identical fetch (the flag-release effect above covers that transition).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany?.id, selectedLocation, selectedRawKey, selectedOwnedKey, scopeKey, responsesLoadedCompanyId]);
+  }, [user, currentCompany?.id, selectedLocation, locSelectionFetchable, selectedRawKey, selectedOwnedKey, scopeKey]);
 
   // Effective MV state: location-scoped when a location is active, else the
   // company-wide values. Used by every metrics memo below so the headline,
@@ -2489,9 +2593,20 @@ export const useDashboardData = () => {
     for (const p of responseBasedPrompts) uniqueByText.set(p.prompt, p);
 
     // Merge in currently-active prompts that aren't represented yet. Using the
-    // same Map keeps this O(N) instead of O(N × M).
+    // same Map keeps this O(N) instead of O(N × M). Under a location filter,
+    // only prompts that belong to the selection (attribution rule) are merged
+    // — otherwise sibling profiles' prompts for OTHER countries render as
+    // bogus never-tested "0 responses" rows.
     activePrompts.forEach(prompt => {
       if (uniqueByText.has(prompt.prompt_text)) return;
+      if (selectedLocation && selectedLocationEntry) {
+        const key = resolveResponseLocationKey(
+          prompt.location_context,
+          prompt.company_id != null ? (countryKeyByCompanyId.get(prompt.company_id) ?? null) : null
+        );
+        const matches = selectedLocation === GENERAL_KEY ? key === null : key === selectedLocation;
+        if (!matches) return;
+      }
       uniqueByText.set(prompt.prompt_text, {
         prompt: prompt.prompt_text,
         category: prompt.prompt_theme || 'General',
@@ -2515,7 +2630,7 @@ export const useDashboardData = () => {
     });
 
     return Array.from(uniqueByText.values());
-  }, [periodFilteredResponses, calculateAIBasedSentiment, activePrompts]);
+  }, [periodFilteredResponses, calculateAIBasedSentiment, activePrompts, selectedLocation, selectedLocationEntry, countryKeyByCompanyId]);
 
   // Track when metrics calculation is complete (all data loaded)
   // Don't show anything until sentiment loads - this ensures all metrics appear together
@@ -3123,38 +3238,49 @@ export const useDashboardData = () => {
     }
 
     try {
-      const { data, error } = await supabase
-        // Canonicalized view — historical fetch should also see merged names.
-        .from('prompt_responses_canonical')
-        .select(`
-          id,
-          confirmed_prompt_id,
-          company_id,
-          ai_model,
-          tested_at,
-          created_at,
-          updated_at,
-          company_mentioned,
-          detected_competitors,
-          citations,
-          for_index,
-          index_period,
-          confirmed_prompts(
-            prompt_text,
-            prompt_category,
-            prompt_type
-          )
-        `)
-        .in('company_id', scopeCompanyIds.length > 0 ? scopeCompanyIds : [currentCompany.id])
-        .gte('tested_at', startDate.toISOString())
-        .lte('tested_at', endDate.toISOString())
-        .order('tested_at', { ascending: false });
-
-      if (error) throw error;
+      // Per-company queries (indexed (company_id, tested_at) path, bounded)
+      // merged client-side — the merged .in() + ORDER BY tested_at shape is
+      // the one that hit statement timeouts in the incident, and PostgREST's
+      // max_rows clamp would silently truncate a single merged result anyway.
+      const ids = scopeCompanyIds.length > 0 ? scopeCompanyIds : [currentCompany.id];
+      const results = await Promise.all(ids.map(id =>
+        supabase
+          // Canonicalized view — historical fetch should also see merged names.
+          .from('prompt_responses_canonical')
+          .select(`
+            id,
+            confirmed_prompt_id,
+            company_id,
+            ai_model,
+            tested_at,
+            created_at,
+            updated_at,
+            company_mentioned,
+            detected_competitors,
+            citations,
+            for_index,
+            index_period,
+            confirmed_prompts(
+              prompt_text,
+              prompt_category,
+              prompt_type
+            )
+          `)
+          .eq('company_id', id)
+          .gte('tested_at', startDate.toISOString())
+          .lte('tested_at', endDate.toISOString())
+          .order('tested_at', { ascending: false })
+          .limit(1000)
+      ));
+      const err = results.find(r => r.error)?.error;
+      if (err) throw err;
+      const data = results
+        .flatMap(r => r.data ?? [])
+        .sort((a: any, b: any) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
 
       // Filter to get only the latest response for each prompt+model in this time range
       const latestInRangeMap = new Map<string, any>();
-      (data || []).forEach(response => {
+      data.forEach(response => {
         const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
         if (!latestInRangeMap.has(key)) {
           latestInRangeMap.set(key, response);
@@ -3177,17 +3303,31 @@ export const useDashboardData = () => {
     }
 
     try {
-      const { data, error } = await supabase
-        .from('prompt_responses')
-        .select('tested_at')
-        .in('company_id', scopeCompanyIds.length > 0 ? scopeCompanyIds : [currentCompany.id])
-        .order('tested_at', { ascending: false });
-
-      if (error) throw error;
+      // Per-company (indexed path; avoids the merged-.in ordered scan) and
+      // paginated — a single unbounded select is clamped to max_rows by
+      // PostgREST, which would silently drop the oldest collection dates.
+      const ids = scopeCompanyIds.length > 0 ? scopeCompanyIds : [currentCompany.id];
+      const PAGE = 1000;
+      const perCompany = await Promise.all(ids.map(async (id) => {
+        const rows: any[] = [];
+        for (let page = 0; page < 60; page += 1) {
+          const { data, error } = await supabase
+            .from('prompt_responses')
+            .select('tested_at')
+            .eq('company_id', id)
+            .order('tested_at', { ascending: false })
+            .range(page * PAGE, (page + 1) * PAGE - 1);
+          if (error) throw error;
+          const chunk = data ?? [];
+          rows.push(...chunk);
+          if (chunk.length < PAGE) break;
+        }
+        return rows;
+      }));
 
       // Get unique dates (just the date part, not time)
       const uniqueDates = new Set<string>();
-      (data || []).forEach(response => {
+      perCompany.flat().forEach(response => {
         const date = new Date(response.tested_at).toISOString().split('T')[0];
         uniqueDates.add(date);
       });
@@ -3264,5 +3404,10 @@ export const useDashboardData = () => {
     setPendingLocation, // Stash a location to apply right after a company switch (sibling-row brands)
     locationOptions, // Merged dropdown options (in-company location_context + sibling-company switches)
     locationMetricsLoading,
+    // Brand scope: current company + same-org same-name siblings. Consumers
+    // that resolve prompts/companies (e.g. the modal refresh, reports) must
+    // scope to this, not the single current company or all userCompanies.
+    scopeCompanyIds,
+    responsesLoadedCompanyId, // company whose responses are FINAL (loaded/empty/cached)
   };
 };

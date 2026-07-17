@@ -162,6 +162,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     setPendingLocation,
     locationOptions,
     locationMetricsLoading,
+    scopeCompanyIds,
+    allResponses,
+    responsesLoadedCompanyId,
   } = useDashboardData();
 
   // -----------------------------------------------------------------------
@@ -176,16 +179,18 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   // reloads; defaults to 'all' (All functions) until the user picks one.
   const [selectedJobFunction, setSelectedJobFunction] = usePersistedState<string>('dashboard.selectedJobFunction', 'all');
 
-  // The set of job functions that actually exist in the current company's
-  // responses — the only valid (non-'all') filter values.
+  // The set of job functions that exist ANYWHERE in the brand's data — judged
+  // against the unfiltered `allResponses`, not the location/period-filtered
+  // `responses`, so selecting a location where a function has no prompts leaves
+  // it temporarily inapplicable instead of permanently wiping the saved pill.
   const availableJobFunctions = useMemo(() => {
     const fns = new Set<string>();
-    responses.forEach(r => {
+    allResponses.forEach(r => {
       const fn = r.confirmed_prompts?.job_function_context?.trim();
       if (fn) fns.add(fn);
     });
     return fns;
-  }, [responses]);
+  }, [allResponses]);
 
   // Proper-case market name for the selected location (e.g. "United States",
   // "Burbank"), used for benchmark lookups. The benchmark MV keys on country
@@ -196,19 +201,21 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   }, [selectedLocation, locationOptions]);
 
   // GUARANTEE: never strand the dashboard in a no-data state. If the persisted
-  // selection points at a function that isn't in the current dataset (e.g.
-  // after switching company/period, or stale sessionStorage), every tab would
-  // filter down to zero rows with no selected pill to explain it. Fall back to
-  // 'all' once responses have loaded.
+  // selection points at a function that isn't in the brand's data (e.g. after
+  // switching company, or stale sessionStorage), fall back to 'all' — but only
+  // once the load is FINAL (responsesLoadedCompanyId), so the streaming first
+  // page or a location-filtered subset can't destroy a valid saved selection
+  // that lives in rows still arriving.
   useEffect(() => {
     if (
       selectedJobFunction !== 'all' &&
-      responses.length > 0 &&
+      responsesLoadedCompanyId === currentCompany?.id &&
+      allResponses.length > 0 &&
       !availableJobFunctions.has(selectedJobFunction)
     ) {
       setSelectedJobFunction('all');
     }
-  }, [selectedJobFunction, availableJobFunctions, responses.length, setSelectedJobFunction]);
+  }, [selectedJobFunction, availableJobFunctions, allResponses.length, responsesLoadedCompanyId, currentCompany?.id, setSelectedJobFunction]);
 
   // The starred view (location + period) is applied inside useDashboardData's
   // company-entry effect — same code path as pending sibling-switch locations,
@@ -689,6 +696,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 refreshProgress={refreshProgress}
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
+                scopeCompanyIds={scopeCompanyIds}
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={setSelectedJobFunction}
               />
