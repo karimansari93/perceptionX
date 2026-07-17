@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useCompany } from '@/contexts/CompanyContext';
 import { getCountryFlag } from '@/utils/countryFlags';
-import { LocationEntry } from '@/utils/locationContext';
+import { GENERAL_KEY, LocationEntry, labelForCanonicalKey } from '@/utils/locationContext';
 import { Globe, MapPin, ChevronDown, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -70,8 +70,16 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onPendingLo
   };
 
   // The trigger reflects the active focus: a chosen city/country, or "All
-  // locations" when nothing is filtered.
-  const displayName = selectedEntry ? selectedEntry.label : 'All locations';
+  // locations" when nothing is filtered. A non-null selection with no matching
+  // option (stale key mid-switch, or restored for another company) renders its
+  // own name — NOT "All locations" — so the label never claims the filter is
+  // cleared while state says otherwise; the reconcile effect in
+  // useDashboardData clears it if it stays unresolvable once data loads.
+  const displayName = selectedEntry
+    ? selectedEntry.label
+    : selectedLocation
+      ? (selectedLocation === GENERAL_KEY ? 'General' : labelForCanonicalKey(selectedLocation))
+      : 'All locations';
   const displayIcon = selectedEntry ? (
     <EntryIcon icon={selectedEntry.icon} flagCode={selectedEntry.flagCode} />
   ) : (

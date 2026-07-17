@@ -28,6 +28,7 @@ interface DashboardHeaderProps {
   selectedPeriod?: string | null;
   onPeriodChange?: (period: string | null) => void;
   userId?: string | null;
+  companyId?: string | null;
 }
 
 export const DashboardHeader = React.memo(({
@@ -47,6 +48,7 @@ export const DashboardHeader = React.memo(({
   selectedPeriod,
   onPeriodChange,
   userId,
+  companyId,
 }: DashboardHeaderProps) => {
   const isMobile = useIsMobile();
 
@@ -101,6 +103,7 @@ export const DashboardHeader = React.memo(({
             <div data-tour="saved-view">
               <StarSavedView
                 userId={userId}
+                companyId={companyId}
                 currentLocation={selectedLocation ?? null}
                 currentPeriod={selectedPeriod ?? null}
               />
@@ -110,7 +113,6 @@ export const DashboardHeader = React.memo(({
             <CompanySwitcher
               variant="outline"
               alwaysMounted={alwaysMounted}
-              onLocationChange={onLocationChange}
               onPendingLocationChange={onPendingLocationChange}
               className={isMobile ? "min-w-[120px] text-xs" : ""}
             />

@@ -177,10 +177,10 @@ verbatim (`20260628000000_codify_by_location_mvs.sql:35`), mirrored by `generalB
 in `buildLocationOptions`. It works today but nothing ties the two together — a change on
 either side breaks "General" silently.
 
-**D6 — Reports section hides the control but keeps the filter.** `Dashboard.tsx:762`
-passes `selectedLocation={undefined}` to the header on the reports section, hiding the
-dropdown — but the hook state stays active, so report inputs derived from `responses`
-remain location-filtered with no visible indicator.
+**D6 — ~~Reports section hides the control but keeps the filter.~~** *Correction after
+deeper inspection:* `CustomReports` is self-contained and does not consume the
+dashboard's filtered `responses`, so hiding the control on the Reports section is
+correct UX, not a data inconsistency. Withdrawn.
 
 **D7 — Benchmarks key on display labels.** `selectedMarketName` (`Dashboard.tsx:195`) is
 the option *label* ("United States", "Burbank"), fed to `competitor_benchmarks_mv.market`
@@ -230,3 +230,24 @@ search-insights and recency merge paths still sit in `topCitations`/`topCompetit
    (spelling collapse, GENERAL bucketing, sibling merge) and an integration test for
    company-switch + pending-location and starred-restore flows — the two paths where
    label/state desync originates.
+
+---
+
+## 7. Fixes applied on this branch
+
+| Finding | Status | How |
+|---|---|---|
+| S1 label/state desync | **Fixed** | `LocationFilter` renders an unresolved selection under its own name (via `labelForCanonicalKey`; `__general__` → "General") instead of masquerading as "All locations". |
+| S2 pending path bypasses guarded setter | **Fixed** | Company-entry location application (pending → starred → null) moved into one hook effect that raises `locationMetricsLoading` on the same tick; the location-scoped fetch effect keeps the flag up until the company's responses (and thus the raw-value sets) are final, so swaps render skeletons, never half-swapped numbers. |
+| S3 starred view leaks across companies | **Fixed** | `StarredView` now records `companyId`; it only auto-applies on that company. Legacy entries self-migrate (stamped with the first company they apply on). `pickInitialCompany` lands login directly on the starred company, so the star restores (company + location + period) coherently. |
+| S4 reconcile blind spot (zero-response companies) | **Fixed** | New `responsesLoadedCompanyId` marks when a company's responses are FINAL (all pages / empty / cache); reconcile judges on that instead of `responses.length > 0`. Also fixed the related `isSwitchingCompany` flag sticking `true` forever for zero-response companies (which kept sources/competitors empty even with MV data). |
+| D1 historical spellings dropped from MV queries | **Fixed (client-side)** | Distinct all-time `location_context` buckets are fetched from `company_llm_rankings_by_location_mv` and widen the raw-spelling sets **extend-only** (existing entries only — locations absent from the 180-day window still don't get dropdown entries, since they'd render empty prompts/visibility). Server-side canonicalization (rec. #4) remains the structural follow-up. |
+| D2 period list ignores location | **Fixed** | `availablePeriods` is built from the location-filtered `visibleResponses`. |
+| D3 mixed month bucketing | **Fixed** | `epsTrend`, `epsTrendByJobFunction`, and previous-period visibility all bucket by `responseMonthKey` (snapshot month), matching the period filter. |
+| D4 dead `sentimentTrend` | **Fixed** | Removed (memo, export, consumer destructure). |
+| D5 GENERAL bucketing contract | Open | Still an implicit frontend↔MV convention; needs a test or shared constant. |
+| D6 Reports hides control but keeps filter | **Withdrawn** | Reports is self-contained; see corrected finding above. |
+| D7 benchmarks keyed on labels; no global benchmark | Open | Needs `competitor_benchmarks_mv` semantics (defined outside this repo's migrations). |
+| D8 dead wiring | **Fixed** | Unused `PromptsTab.selectedLocation` and `CompanySwitcher.onLocationChange` props removed. Retired search/recency merge paths left in place (inert) for a separate cleanup. |
+| §2.1 "All locations" ≠ cross-row aggregate | Open (product) | Needs a naming/aggregation decision; no code change made. |
+| Silent reconcile resets (§2.3 feedback) | Open | Resets are now far rarer (S1–S4), but still silent; a toast/badge is a UX follow-up. |

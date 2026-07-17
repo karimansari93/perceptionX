@@ -117,9 +117,18 @@ type SiblingCompanyLike = { id: string; country?: string | null };
 //    isn't already represented in the current company's data (legacy behavior).
 // Also returns the canonicalKey → rawValues map so the response filter can match
 // every stored spelling of a location.
+//
+// `extraBucketValues` are distinct location_context buckets from the
+// `_by_location_mv` views (all-time), used EXTEND-ONLY: they widen the
+// rawValues of entries that already exist in the loaded responses, so the MV
+// queries match historical spellings that fell out of the eager response
+// window (e.g. "the United States" only present in old months). They never
+// create new dropdown entries — a location with zero loaded responses would
+// otherwise render an empty prompts/visibility view.
 export const buildLocationOptions = (
   responses: ResponseLike[],
-  siblingCompanies: SiblingCompanyLike[] = []
+  siblingCompanies: SiblingCompanyLike[] = [],
+  extraBucketValues: string[] = []
 ): { options: LocationEntry[]; rawValuesByKey: Record<string, string[]> } => {
   type Builder = {
     canonicalKey: string;
@@ -165,6 +174,23 @@ export const buildLocationOptions = (
       rawValues: new Set([c.country.trim()]),
       action: { type: 'switchCompany', companyId: c.id },
     });
+  }
+
+  // Widen existing entries with MV bucket spellings (extend-only; see above).
+  // The MVs bucket null/empty location_context as '' and keep GLOBAL-like
+  // sentinels verbatim, so canonicalize-to-null buckets extend "General".
+  for (const bucket of extraBucketValues) {
+    const key = canonicalizeLocationContext(bucket);
+    if (key === null) {
+      if (generalBuckets.size > 0) {
+        generalBuckets.add(bucket.trim() === '' ? '' : bucket.trim());
+      }
+      continue;
+    }
+    const existing = builders.get(key);
+    if (existing && existing.action.type === 'filter') {
+      existing.rawValues.add(bucket.trim());
+    }
   }
 
   const rawValuesByKey: Record<string, string[]> = {};

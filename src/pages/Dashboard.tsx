@@ -41,8 +41,7 @@ import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen";
 import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { readStarredView } from "@/hooks/useStarredView";
-import { canonicalizeLocationContext, GENERAL_KEY } from "@/utils/locationContext";
+import { GENERAL_KEY } from "@/utils/locationContext";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
@@ -126,7 +125,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     companyName,
     metrics,
     metricsByJobFunction,
-    sentimentTrend,
     topCitations,
     promptsData,
     refreshData,
@@ -212,21 +210,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     }
   }, [selectedJobFunction, availableJobFunctions, responses.length, setSelectedJobFunction]);
 
-  // Apply the user's starred view (location + period) once when the user
-  // session loads. Re-applies if they sign in as a different user.
-  const starredAppliedForUserRef = useRef<string | null>(null);
-  useEffect(() => {
-    const uid = user?.id ?? null;
-    if (!uid || starredAppliedForUserRef.current === uid) return;
-    const view = readStarredView(uid);
-    if (view) {
-      // Normalize the stored location so legacy ISO codes ("US") and canonical
-      // keys ("united states", "burbank") both resolve against the new dropdown.
-      setSelectedLocation(canonicalizeLocationContext(view.location));
-      setSelectedPeriod(view.period ?? null);
-    }
-    starredAppliedForUserRef.current = uid;
-  }, [user?.id, setSelectedPeriod, setSelectedLocation]);
+  // The starred view (location + period) is applied inside useDashboardData's
+  // company-entry effect — same code path as pending sibling-switch locations,
+  // so it can't clobber an explicit pick and gets the same loading-flag
+  // discipline (no half-swapped paint).
 
   // Search insights feature retired — empty array preserved for components
   // that still accept a `searchResults` prop until those are stripped.
@@ -700,7 +687,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 onRefreshPrompts={handleRefreshPrompts}
                 isRefreshing={isRefreshing}
                 refreshProgress={refreshProgress}
-                selectedLocation={selectedLocation}
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
                 selectedJobFunction={selectedJobFunction}
@@ -767,6 +753,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}
           onPeriodChange={activeSection === 'reports' ? undefined : setSelectedPeriod}
           userId={user?.id ?? null}
+          companyId={currentCompany?.id ?? null}
         />
         <div className="flex-1 overflow-auto">
           {isLoading ? (

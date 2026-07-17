@@ -24,10 +24,6 @@ interface CompanySwitcherProps {
   className?: string;
   variant?: 'default' | 'outline' | 'ghost';
   alwaysMounted?: boolean;
-  // Switching to a company also focuses the dashboard on that company's
-  // location. The header wires this to the shared location state so the
-  // location filter, `market`-based hooks, and saved views stay in sync.
-  onLocationChange?: (location: string | null) => void;
   // Stash a location to apply right after the company switch lands, so the
   // location trigger reflects the picked country (see useDashboardData).
   onPendingLocationChange?: (location: string | null) => void;
@@ -38,7 +34,7 @@ interface CompanySwitcherProps {
 // records grouped under one submenu.
 type LocationOption = { kind: 'country'; company: Company; location: string | null };
 
-export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = false, onLocationChange, onPendingLocationChange }: CompanySwitcherProps) => {
+export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = false, onPendingLocationChange }: CompanySwitcherProps) => {
   const { currentCompany, userCompanies, switchCompany, loading } = useCompany();
   const [isOpen, setIsOpen] = useState(false);
 

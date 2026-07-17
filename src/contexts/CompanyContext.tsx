@@ -95,9 +95,23 @@ const pickInitialCompany = (
   const preferSameName = (candidates: Company[]) =>
     candidates.find(c => c.name.toLowerCase() === baseName) || candidates[0];
 
-  // A starred view's location is a country code; null means Global, which
-  // LocationFilter treats the same as "no preference" (it defaults to US).
-  const starredLocation = readStarredView(userId)?.location ?? null;
+  const starred = readStarredView(userId);
+
+  // Starred views now record the company they were saved on — land there
+  // directly so the view restores as (company + location + period), not a
+  // location guessed onto whatever company loaded first. Falls through if
+  // access to that company was lost.
+  if (starred?.companyId) {
+    const starredCompany = companies.find(c => c.id === starred.companyId);
+    if (starredCompany) return starredCompany;
+  }
+
+  // Legacy starred views (pre-companyId) stored a country code as location;
+  // null means Global, which LocationFilter treats the same as "no
+  // preference" (it defaults to US). Canonical-key locations ("united
+  // states") match no country code and fall back to `base` — the
+  // company-entry effect in useDashboardData still applies the location.
+  const starredLocation = starred?.location ?? null;
   const targetLocation = starredLocation ?? 'US';
 
   const candidates = inLocation(targetLocation);

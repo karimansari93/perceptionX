@@ -2,12 +2,13 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
-import { PromptResponse, DashboardMetrics, SentimentTrendData, CitationCount, PromptData, Citation, CompetitorMention, LLMMentionRanking } from "@/types/dashboard";
+import { PromptResponse, DashboardMetrics, CitationCount, PromptData, Citation, CompetitorMention, LLMMentionRanking } from "@/types/dashboard";
 import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
 import { parseCompetitors } from "@/utils/competitorUtils";
 import { buildLocationOptions, canonicalizeLocationContext, GENERAL_KEY } from "@/utils/locationContext";
+import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
 
 // Pure aggregation of `company_*_by_location_mv` rows into the same shape the
 // company-wide MV fetch produces (snapshot + per-month map). Shared by the
@@ -208,6 +209,15 @@ export const useDashboardData = () => {
   const [locMvTopCompetitors, setLocMvTopCompetitors] = useState<{company: string; count: number}[]>([]);
   const [locMvLlmRankings, setLocMvLlmRankings] = useState<LLMMentionRanking[]>([]);
   const [locAttributeThemes, setLocAttributeThemes] = useState<any[]>([]);
+  // Company whose responses have FULLY loaded (all pages committed, loaded
+  // empty, or restored from cache). Distinguishes "no data yet" (selection
+  // validity unknowable — don't judge) from "loaded with zero rows" (final —
+  // a stale selection must clear). Reset synchronously on company switch.
+  const [responsesLoadedCompanyId, setResponsesLoadedCompanyId] = useState<string | null>(null);
+  // Distinct location_context buckets from the by-location MVs (all-time).
+  // Widens the dropdown entries' raw-spelling sets beyond the 180-day eager
+  // response window — see buildLocationOptions (extend-only).
+  const [mvLocationBuckets, setMvLocationBuckets] = useState<string[]>([]);
 
   // Public location setter. Flips the location-loading flag on the SAME tick as
   // the selection change (not later, when the fetch effect runs) so the UI goes
@@ -416,6 +426,7 @@ export const useDashboardData = () => {
         if (isStale()) return;
         setActivePrompts([]);
         setResponses([]);
+        setResponsesLoadedCompanyId(requestedCompanyId); // loaded (empty) — final
         setLoading(false);
         setCompetitorLoading(false);
         return;
@@ -590,6 +601,11 @@ export const useDashboardData = () => {
 
       if (isStale()) return;
       setResponses(allResponses);
+      // Full set committed — location options / raw-value sets are now final
+      // for this company, so selection validity may be judged (see the
+      // reconcile effect). Deliberately NOT set after the first page: a
+      // location present only in later pages would be wrongly reconciled away.
+      setResponsesLoadedCompanyId(requestedCompanyId);
 
       // Set lastUpdated to the most recent response collection time
       let lastUpdatedDate: Date | undefined;
@@ -1541,6 +1557,8 @@ export const useDashboardData = () => {
 
       // Clear all data immediately when switching companies
       setResponses([]);
+      setResponsesLoadedCompanyId(null);
+      setMvLocationBuckets([]);
       setResponseTexts({});
       setAiThemes([]);
       setAttributeThemes([]);
@@ -1590,6 +1608,7 @@ export const useDashboardData = () => {
           const cacheFresh = !!cached && (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL && cached.responses.length > 0;
           if (cacheFresh) {
             setResponses(cached.responses);
+            setResponsesLoadedCompanyId(companyId); // restored full set — final
             setLastUpdated(cached.lastUpdated);
             setLoading(false);
             setCompetitorLoading(false);
@@ -1635,12 +1654,18 @@ export const useDashboardData = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, currentCompany?.id, shouldRefetch]);
 
-  // Clear switching flag when data is actually loaded
+  // Clear switching flag when the new company's data has loaded — including a
+  // load that completed EMPTY. (It used to clear only on responses.length > 0,
+  // which left the flag stuck true for zero-response companies and kept
+  // topCitations/topCompetitors permanently empty even when MV data existed.)
   useEffect(() => {
-    if (isSwitchingCompany && (responses.length > 0 || searchResults.length > 0)) {
+    if (
+      isSwitchingCompany &&
+      (responses.length > 0 || responsesLoadedCompanyId === currentCompany?.id)
+    ) {
       setIsSwitchingCompany(false);
     }
-  }, [isSwitchingCompany, responses.length, searchResults.length]);
+  }, [isSwitchingCompany, responses.length, responsesLoadedCompanyId, currentCompany?.id]);
 
   // Reset pagination when company changes
   useEffect(() => {
@@ -1713,6 +1738,38 @@ export const useDashboardData = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, currentCompany?.id]);
 
+  // Fetch the company's distinct location_context buckets from a by-location
+  // MV (all-time), so location entries built from the 180-day response window
+  // can be widened with historical spellings — without this, MV queries with
+  // `.in('location_context', ...)` silently skip months whose spelling of a
+  // location no longer occurs in recent data. The LLM-rankings MV is the
+  // smallest per-location view (≈ locations × models rows). Failure is benign:
+  // no widening, behavior identical to before.
+  useEffect(() => {
+    const companyId = currentCompany?.id;
+    if (!user?.id || !companyId) {
+      setMvLocationBuckets([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('company_llm_rankings_by_location_mv')
+          .select('location_context')
+          .eq('company_id', companyId);
+        if (cancelled || error) return;
+        const distinct = Array.from(
+          new Set((data ?? []).map(r => (r.location_context ?? '') as string))
+        );
+        setMvLocationBuckets(distinct);
+      } catch {
+        /* extend-only: missing buckets just mean no widening */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id, currentCompany?.id]);
+
   // Track when metrics are ready
   // Backend metrics (from materialized views) are available immediately
   // Frontend metrics calculation can happen in background - don't block UI
@@ -1782,28 +1839,6 @@ export const useDashboardData = () => {
     return parsedCitationsMap.get(responseId) || [];
   }, [parsedCitationsMap]);
 
-  // --- Period detection: group responses by their snapshot month
-  // (response_month), so a run tagged for a given collection cycle shows under
-  // that month regardless of when it was physically written. ---
-  const availablePeriods: PeriodInfo[] = useMemo(() => {
-    if (responses.length === 0) return [];
-    const monthSet = new Set<string>();
-    responses.forEach(r => {
-      const key = responseMonthKey(r);
-      if (key) monthSet.add(key);
-    });
-    const periods: PeriodInfo[] = Array.from(monthSet)
-      .map((key) => {
-        const [y, m] = key.split('-').map(Number);
-        const startDate = new Date(y, m - 1, 1);
-        const endDate = new Date(y, m, 0, 23, 59, 59, 999);
-        const label = startDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-        return { key, label, startDate, endDate };
-      })
-      .sort((a, b) => b.startDate.getTime() - a.startDate.getTime());
-    return periods;
-  }, [responses]);
-
   // Reset selectedPeriod when company changes
   useEffect(() => {
     setSelectedPeriod(null);
@@ -1820,13 +1855,42 @@ export const useDashboardData = () => {
     pendingLocationRef.current = key;
   }, []);
 
-  // On company change, apply any pending location (set just before the switch),
-  // otherwise clear to "All locations" so one company's location never leaks
-  // onto the next.
+  // On company change (and first availability), pick the location to land on:
+  //  1. the pending location stashed just before a sibling-row switch, else
+  //  2. the user's starred view — only when it targets THIS company (legacy
+  //     views without a companyId still apply anywhere), else
+  //  3. null ("All locations"), so one company's location never leaks onto
+  //     the next.
+  // Applying here (not in Dashboard.tsx, as the starred restore used to be)
+  // keeps every selection mutation on the same code path: the loading flag is
+  // raised on the same tick, so the swap renders a skeleton instead of
+  // flashing company-wide numbers — and a starred view can never clobber an
+  // explicit sibling-row pick, since pending wins.
   useEffect(() => {
-    setSelectedLocationState(pendingLocationRef.current);
+    const pending = pendingLocationRef.current;
     pendingLocationRef.current = null;
-  }, [currentCompany?.id]);
+    let next = pending;
+    // Starred views (and the loading flag) only make sense with a company to
+    // scope against — with none (fresh account, mid-auth), just clear. The
+    // effect re-runs when the company arrives.
+    if (next == null && currentCompany?.id) {
+      const starred = readStarredView(user?.id);
+      if (starred && starredViewAppliesTo(starred, currentCompany.id)) {
+        // Normalize the stored location so legacy ISO codes ("US") and
+        // canonical keys ("united states", "burbank") both resolve.
+        next = canonicalizeLocationContext(starred.location);
+        if (starred.period) setSelectedPeriod(starred.period);
+        // Legacy entry (no companyId): bind it to the company it just applied
+        // on, so it stops leaking onto every other company from now on.
+        if (starred.companyId == null) {
+          stampStarredViewCompany(user?.id, currentCompany.id);
+        }
+      }
+    }
+    if (next && currentCompany?.id) setLocationMetricsLoading(true);
+    setSelectedLocationState(next ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCompany?.id, user?.id]);
 
   // Same-name sibling companies (legacy country-variant rows, e.g. Netflix-JP ↔
   // Netflix-BR) feed the cross-country "switch company" entries in the dropdown.
@@ -1838,10 +1902,11 @@ export const useDashboardData = () => {
 
   // Merged dropdown options (in-company location_context filters + sibling
   // company switches) and the canonical-key → raw-values map used to filter
-  // responses against every stored spelling of a location.
+  // responses against every stored spelling of a location. MV buckets widen
+  // the raw-value sets with historical spellings (extend-only).
   const { options: locationOptions, rawValuesByKey: locationRawValues } = useMemo(
-    () => buildLocationOptions(responses, sameNameCompanies),
-    [responses, sameNameCompanies]
+    () => buildLocationOptions(responses, sameNameCompanies, mvLocationBuckets),
+    [responses, sameNameCompanies, mvLocationBuckets]
   );
 
   // Predicate that keeps a response when no location is selected, or when its
@@ -1862,6 +1927,39 @@ export const useDashboardData = () => {
     };
   }, [selectedLocation, locationRawValues]);
 
+  // Responses surfaced across the app: deprecated prompt sets hidden and the
+  // active location filter applied. Everything downstream (periods, metrics,
+  // tabs, citations, competitors) flows through here.
+  const visibleResponses = useMemo(
+    () => responses.filter(r => !isOverallCandidateExperience(r) && matchesLocation(r)),
+    [responses, matchesLocation]
+  );
+
+  // --- Period detection: group responses by their snapshot month
+  // (response_month), so a run tagged for a given collection cycle shows under
+  // that month regardless of when it was physically written. Built from the
+  // LOCATION-FILTERED responses: with a location active, the period dropdown
+  // used to offer months with zero in-location data, whose selection produced
+  // a mixed-scope scorecard (0% visibility next to aggregate sentiment). ---
+  const availablePeriods: PeriodInfo[] = useMemo(() => {
+    if (visibleResponses.length === 0) return [];
+    const monthSet = new Set<string>();
+    visibleResponses.forEach(r => {
+      const key = responseMonthKey(r);
+      if (key) monthSet.add(key);
+    });
+    const periods: PeriodInfo[] = Array.from(monthSet)
+      .map((key) => {
+        const [y, m] = key.split('-').map(Number);
+        const startDate = new Date(y, m - 1, 1);
+        const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+        const label = startDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        return { key, label, startDate, endDate };
+      })
+      .sort((a, b) => b.startDate.getTime() - a.startDate.getTime());
+    return periods;
+  }, [visibleResponses]);
+
   // Re-scope sentiment & relevance to the selected location using the
   // pre-aggregated `_by_location_mv` views (same columns as the company-wide
   // MVs plus a location_context dimension). Leaves the company-wide MV state and
@@ -1872,7 +1970,16 @@ export const useDashboardData = () => {
   useEffect(() => {
     const companyId = currentCompany?.id;
     if (!user || !companyId || !selectedLocation || selectedRawValues.length === 0) {
-      setLocationMetricsLoading(false);
+      // Only drop the loading flag once the selection is cleared OR this
+      // company's responses have fully loaded (raw values final). A pending/
+      // starred location applied mid-switch has no raw values yet — keeping
+      // the flag up holds the skeleton instead of flashing company-wide
+      // numbers until the location-scoped fetch below takes over. If the
+      // selection stays unresolvable after load, the reconcile effect clears
+      // it and this effect re-runs into the !selectedLocation case.
+      if (!selectedLocation || responsesLoadedCompanyId === companyId) {
+        setLocationMetricsLoading(false);
+      }
       setLocSentimentMetrics(null);
       setLocRelevanceMetrics(null);
       setLocSentimentByMonth({});
@@ -1988,8 +2095,11 @@ export const useDashboardData = () => {
     return () => { cancelled = true; };
     // selectedRawKey captures the selected location's raw spellings; refetch
     // when the company, selection, or that set changes.
+    // responsesLoadedCompanyId re-runs the early branch above once the
+    // company's responses finish loading, so a still-unresolved selection
+    // releases the loading flag instead of leaving the skeleton stuck.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany?.id, selectedLocation, selectedRawKey]);
+  }, [user, currentCompany?.id, selectedLocation, selectedRawKey, responsesLoadedCompanyId]);
 
   // Effective MV state: location-scoped when a location is active, else the
   // company-wide values. Used by every metrics memo below so the headline,
@@ -2017,17 +2127,19 @@ export const useDashboardData = () => {
 
   // Reconcile a selection that isn't valid for the current company back to null
   // ("All locations"), so the internal state matches what the trigger shows and
-  // a stale value isn't persisted by the saved-view star. Waits for the
-  // company's responses to load before judging validity, so a starred location
-  // restored on mount isn't wiped before its options exist.
+  // a stale value isn't persisted by the saved-view star. Judged only once THIS
+  // company's responses have fully loaded (responsesLoadedCompanyId): a starred
+  // or pending location applied during mount/switch isn't wiped while
+  // responses/options still reflect the old company — and a company that loads
+  // ZERO responses still clears a stale selection (the old responses.length
+  // guard kept it forever).
   useEffect(() => {
-    // Don't judge validity mid-switch: responses/options still reflect the old
-    // company, which would wrongly wipe a location applied for the new one.
-    if (!selectedLocation || loading || isSwitchingCompany || responses.length === 0) return;
+    if (!selectedLocation) return;
+    if (responsesLoadedCompanyId === null || responsesLoadedCompanyId !== currentCompany?.id) return;
     if ((locationRawValues[selectedLocation]?.length ?? 0) === 0) {
       setSelectedLocationState(null);
     }
-  }, [selectedLocation, loading, isSwitchingCompany, responses.length, locationRawValues]);
+  }, [selectedLocation, responsesLoadedCompanyId, currentCompany?.id, locationRawValues]);
 
   // Determine effective period (latest if none selected)
   const effectivePeriod = useMemo(() => {
@@ -2046,19 +2158,6 @@ export const useDashboardData = () => {
   }, [availablePeriods, effectivePeriod]);
 
   // Filter responses to the selected period (by snapshot month).
-  // Responses surfaced across the app, with deprecated prompt sets hidden
-  // (Overall Candidate Experience is being removed soon). Everything the UI
-  // consumes flows through here, so hiding once covers prompts, themes,
-  // competitors, sources, and the EPS/discovery stats.
-  // Hide deprecated prompt sets AND apply the active location filter here, so
-  // both periodFilteredResponses and previousPeriodResponses (and therefore
-  // every tab, metric, citation and competitor downstream) re-scope to the
-  // selected location automatically.
-  const visibleResponses = useMemo(
-    () => responses.filter(r => !isOverallCandidateExperience(r) && matchesLocation(r)),
-    [responses, matchesLocation]
-  );
-
   const periodFilteredResponses = useMemo(() => {
     if (!effectivePeriod || availablePeriods.length <= 1) return visibleResponses;
     return visibleResponses.filter(r => responseMonthKey(r) === effectivePeriod.key);
@@ -2133,12 +2232,11 @@ export const useDashboardData = () => {
     let visibilityScore: number | undefined;
     const priorAvailable = availablePeriods.filter((p) => p.key < currentKey);
     if (priorAvailable.length > 0) {
-      // availablePeriods is already sorted newest-first.
+      // availablePeriods is already sorted newest-first. Bucket by snapshot
+      // month (responseMonthKey), matching periodFilteredResponses — a run
+      // tagged for June but collected May 30 must count under June here too.
       const chosen = priorAvailable[0];
-      const chosenResponses = visibleResponses.filter((r) => {
-        const d = new Date(r.tested_at);
-        return d >= chosen.startDate && d <= chosen.endDate;
-      });
+      const chosenResponses = visibleResponses.filter((r) => responseMonthKey(r) === chosen.key);
       if (chosenResponses.length > 0) {
         const mentionedCount = chosenResponses.filter((r) => r.company_mentioned === true).length;
         visibilityScore = Math.round((mentionedCount / chosenResponses.length) * 100);
@@ -2522,10 +2620,9 @@ export const useDashboardData = () => {
     const relevanceAgg = effRelevanceMetrics?.relevance_score;
 
     const full = periodsAsc.map((p) => {
-      const monthResponses = visibleResponses.filter((r) => {
-        const d = new Date(r.tested_at);
-        return d >= p.startDate && d <= p.endDate;
-      });
+      // Snapshot-month bucketing (responseMonthKey), matching the period
+      // filter — NOT tested_at, which can fall in the prior calendar month.
+      const monthResponses = visibleResponses.filter((r) => responseMonthKey(r) === p.key);
       const mentioned = monthResponses.filter((r) => r.company_mentioned === true).length;
       const visibility = monthResponses.length > 0
         ? Math.round((mentioned / monthResponses.length) * 100)
@@ -2665,11 +2762,10 @@ export const useDashboardData = () => {
       const agg = metricsByJobFunction[fn]; // all-months aggregate (fallback + endpoint match)
       const series: any[] = [];
       periodsAsc.forEach(p => {
-        const monthResponses = visibleResponses.filter(r => {
-          if (r.confirmed_prompts?.job_function_context?.trim() !== fn) return false;
-          const d = new Date(r.tested_at);
-          return d >= p.startDate && d <= p.endDate;
-        });
+        const monthResponses = visibleResponses.filter(r =>
+          r.confirmed_prompts?.job_function_context?.trim() === fn &&
+          responseMonthKey(r) === p.key
+        );
         if (monthResponses.length === 0) return; // not measured this month
         const mentioned = monthResponses.filter(r => r.company_mentioned === true).length;
         const visibility = Math.round((mentioned / monthResponses.length) * 100);
@@ -2714,25 +2810,6 @@ export const useDashboardData = () => {
     });
     return result;
   }, [epsTrendByJobFunction]);
-
-  const sentimentTrend: SentimentTrendData[] = useMemo(() => {
-    // Group by date via Map (O(1) lookup) instead of reduce+find (O(N²)).
-    const byDate = new Map<string, SentimentTrendData>();
-    for (const response of responses) {
-      const date = new Date(response.tested_at).toLocaleDateString();
-      const aiSentiment = calculateAIBasedSentiment(response.id);
-      const existing = byDate.get(date);
-      if (existing) {
-        existing.sentiment = (existing.sentiment + aiSentiment.sentiment_score) / 2;
-        existing.count += 1;
-      } else {
-        byDate.set(date, { date, sentiment: aiSentiment.sentiment_score, count: 1 });
-      }
-    }
-    const trend = Array.from(byDate.values());
-    trend.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    return trend.slice(-7);
-  }, [responses, calculateAIBasedSentiment]);
 
   const topCitations: CitationCount[] = useMemo(() => {
     if (!currentCompany?.id || isSwitchingCompany) return [];
@@ -2995,7 +3072,6 @@ export const useDashboardData = () => {
     epsChange, // Period-over-period EPS delta
     epsTrendByJobFunction, // Per-function per-month EPS series (for the function filter)
     epsChangeByJobFunction, // Per-function period-over-period EPS delta
-    sentimentTrend,
     topCitations,
     promptsData,
     refreshData,

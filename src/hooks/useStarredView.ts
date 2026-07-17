@@ -8,6 +8,12 @@ import { useCallback, useEffect, useState } from "react";
 export interface StarredView {
   location: string | null;
   period: string | null;
+  // Company the view was saved on. The view only auto-applies when that
+  // company is active — a location starred on company A must not leak onto
+  // company B (it would either mis-scope B or be silently reset). null on
+  // legacy entries saved before this field existed; those apply to any
+  // company (old behavior) until re-starred.
+  companyId?: string | null;
 }
 
 const STORAGE_KEY_PREFIX = "dashboard.starredView";
@@ -26,9 +32,34 @@ export function readStarredView(userId: string | null | undefined): StarredView 
     return {
       location: typeof parsed.location === "string" ? parsed.location : null,
       period: typeof parsed.period === "string" ? parsed.period : null,
+      companyId: typeof parsed.companyId === "string" ? parsed.companyId : null,
     };
   } catch {
     return null;
+  }
+}
+
+// Whether a stored view should apply while `companyId` is the active company.
+// Legacy views (no companyId) apply anywhere; new views only on their company.
+export function starredViewAppliesTo(
+  view: StarredView | null,
+  companyId: string | null | undefined
+): boolean {
+  if (!view) return false;
+  return view.companyId == null || view.companyId === (companyId ?? null);
+}
+
+// One-time migration for legacy entries: stamp the company the view first
+// applies on, so it stops applying to every company from then on. Best-effort
+// guess (the legacy record carries no company info), but it matches what the
+// old behavior did on login — just made sticky instead of repeated.
+export function stampStarredViewCompany(
+  userId: string | null | undefined,
+  companyId: string
+): void {
+  const view = readStarredView(userId);
+  if (view && view.companyId == null) {
+    writeStarred(userId, { ...view, companyId });
   }
 }
 

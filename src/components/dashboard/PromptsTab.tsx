@@ -15,7 +15,6 @@ interface PromptsTabProps {
   onRefreshPrompts: (promptIds: string[], companyName: string) => Promise<void>;
   isRefreshing: boolean;
   refreshProgress: RefreshProgress | null;
-  selectedLocation?: string | null;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   selectedJobFunction?: string;
