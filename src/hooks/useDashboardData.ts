@@ -114,6 +114,33 @@ const aggregateAttributeThemeRows = (rows: any[]): any[] => {
   }));
 };
 
+// Global cap on concurrent Supabase requests from this hook. A 10-profile
+// brand fans out to ~90 simultaneous queries across the fetch families
+// (response pages, prompts, metric MVs, rankings, themes, sentiment,
+// visibility) — individually cheap, but together they saturate the database
+// connection pool, everything queues past the ~8s statement timeout, and the
+// whole load fails with HTTP 500s (observed on flagship multi-country
+// brands). Every per-company/per-page loop below routes through this gate:
+// ~6 in flight keeps the pipeline saturated without stampeding Postgres.
+// A slot is held across retry backoff too — deliberate backpressure while
+// the database is struggling.
+const DB_CONCURRENCY = 6;
+let dbInFlight = 0;
+const dbWaiters: Array<() => void> = [];
+const withDbSlot = async <T,>(fn: () => Promise<T> | PromiseLike<T>): Promise<T> => {
+  while (dbInFlight >= DB_CONCURRENCY) {
+    await new Promise<void>(resolve => dbWaiters.push(resolve));
+  }
+  dbInFlight += 1;
+  try {
+    return await fn();
+  } finally {
+    dbInFlight -= 1;
+    const next = dbWaiters.shift();
+    if (next) next();
+  }
+};
+
 // Aggregate visibility rollup rows (company_visibility_by_location_mv) to a
 // percentage + counts, optionally scoped to one snapshot month ("YYYY-MM") and
 // one job function ('' = untagged bucket). Returns null when no rows match so
@@ -446,7 +473,7 @@ export const useDashboardData = () => {
       // satisfies this ordering directly, and a tiebreaker would force a
       // multi-MB sort node per page. Pages are deduped by id after fetch.
       const fetchResponsePage = (companyId: string, from: number, to: number, withCount: boolean) =>
-        retrySupabaseQuery(() =>
+        withDbSlot(() => retrySupabaseQuery(() =>
           supabase
             .from('prompt_responses_canonical')
             .select(`
@@ -479,7 +506,7 @@ export const useDashboardData = () => {
             .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
             .range(from, to)
-        ) as Promise<{ data: any[] | null; error: any; count: number | null }>;
+        ) as Promise<{ data: any[] | null; error: any; count: number | null }>);
 
       const byTestedAtDesc = (a: any, b: any) =>
         new Date(b.tested_at || b.created_at || 0).getTime() - new Date(a.tested_at || a.created_at || 0).getTime();
@@ -490,14 +517,14 @@ export const useDashboardData = () => {
       const fetchAllPrompts = async (): Promise<{ data: any[] | null; error: any }> => {
         let all: any[] = [];
         for (let page = 0; page < 30; page += 1) {
-          const result = await retrySupabaseQuery(() =>
+          const result = await withDbSlot(() => retrySupabaseQuery(() =>
             supabase
               .from('confirmed_prompts')
               .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, attribute_id')
               .in('company_id', requestedScopeIds)
               .order('id', { ascending: true })
               .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
-          ) as { data: any[] | null; error: any };
+          ) as Promise<{ data: any[] | null; error: any }>);
           if (result.error) return result;
           const chunk = result.data ?? [];
           all = all.concat(chunk);
@@ -595,7 +622,7 @@ export const useDashboardData = () => {
           // Per-company pagination for the same statement-timeout reason as
           // the main fetch above.
           const attributePage = (companyId: string, from: number, to: number, withCount: boolean) =>
-            supabase
+            withDbSlot(() => supabase
               // Canonicalized view — see comment on main fetch above.
               .from('prompt_responses_canonical')
               .select(`
@@ -633,7 +660,7 @@ export const useDashboardData = () => {
               .not('confirmed_prompts.attribute_id', 'is', null)
               .gte('tested_at', eagerCutoffIso)
               .order('tested_at', { ascending: false })
-              .range(from, to);
+              .range(from, to));
 
           const perCompany = await Promise.all(requestedScopeIds.map(async (companyId) => {
             const first = await attributePage(companyId, 0, PAGE_SIZE - 1, true);
@@ -875,7 +902,7 @@ export const useDashboardData = () => {
           const perCompany = await Promise.all(requestedScopeIds.map(async (companyId) => {
             let all: any[] = [];
             for (let page = 0; page < MV_MAX_PAGES; page += 1) {
-              const { data, error } = await (supabase as any)
+              const { data, error } = await withDbSlot<{ data: any[] | null; error: any }>(() => (supabase as any)
                 .from(table)
                 .select('*')
                 .eq('company_id', companyId)
@@ -885,7 +912,7 @@ export const useDashboardData = () => {
                 .order('prompt_theme')
                 .order('industry_context')
                 .order('job_function_context')
-                .range(page * MV_PAGE, (page + 1) * MV_PAGE - 1);
+                .range(page * MV_PAGE, (page + 1) * MV_PAGE - 1));
               if (error) throw error;
               const chunk = data ?? [];
               all = all.concat(chunk);
@@ -1085,15 +1112,17 @@ export const useDashboardData = () => {
         orderCol: string,
         perCompanyLimit: number | null
       ): Promise<{ data: any[] | null; error: any }> => {
-        const results = await Promise.all(requestedScopeIds.map(id => {
-          let q: any = (supabase as any)
-            .from(table)
-            .select(select)
-            .eq('company_id', id)
-            .order(orderCol, { ascending: false });
-          if (perCompanyLimit) q = q.limit(perCompanyLimit);
-          return q as PromiseLike<{ data: any[] | null; error: any }>;
-        }));
+        const results = await Promise.all(requestedScopeIds.map(id =>
+          withDbSlot<{ data: any[] | null; error: any }>(() => {
+            let q: any = (supabase as any)
+              .from(table)
+              .select(select)
+              .eq('company_id', id)
+              .order(orderCol, { ascending: false });
+            if (perCompanyLimit) q = q.limit(perCompanyLimit);
+            return q as PromiseLike<{ data: any[] | null; error: any }>;
+          })
+        ));
         const err = results.find(r => r.error)?.error ?? null;
         return { data: err ? null : results.flatMap(r => r.data ?? []), error: err };
       };
@@ -1315,10 +1344,10 @@ export const useDashboardData = () => {
             );
           }
 
-          const { data, error } = (await retrySupabaseQuery(() => q)) as {
+          const { data, error } = (await withDbSlot(() => retrySupabaseQuery(() => q) as Promise<{
             data: any[] | null;
             error: any;
-          };
+          }>));
 
           // Abandon early if the user already moved on — no point fetching
           // the remaining pages for a company we won't display.
@@ -1373,7 +1402,7 @@ export const useDashboardData = () => {
         let chunk: any[] | null;
         do {
           const from = page * PAGE_SIZE;
-          const result = await retrySupabaseQuery(() =>
+          const result = await withDbSlot(() => retrySupabaseQuery(() =>
             supabase
               .from('company_attribute_themes_mv')
               .select('attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count')
@@ -1386,7 +1415,7 @@ export const useDashboardData = () => {
               .order('job_function_context')
               .order('attribute_id')
               .range(from, from + PAGE_SIZE - 1)
-          ) as { data: any[] | null; error: any };
+          ) as Promise<{ data: any[] | null; error: any }>);
           if (isStale()) return all;
           if (result.error) throw result.error;
           chunk = result.data ?? [];
@@ -1427,7 +1456,7 @@ export const useDashboardData = () => {
         let chunk: any[] | null;
         do {
           const from = page * PAGE_SIZE;
-          const result = await retrySupabaseQuery(() =>
+          const result = await withDbSlot(() => retrySupabaseQuery(() =>
             supabase
               .from('company_response_sentiment_mv')
               .select('response_id, total_themes, positive_themes, sentiment_ratio')
@@ -1435,7 +1464,7 @@ export const useDashboardData = () => {
               // Stable order — see the attribute-themes fetch above.
               .order('response_id')
               .range(from, from + PAGE_SIZE - 1)
-          ) as { data: any[] | null; error: any };
+          ) as Promise<{ data: any[] | null; error: any }>);
           if (isStale()) return all;
           if (result.error) throw result.error;
           chunk = result.data ?? [];
@@ -1957,10 +1986,10 @@ export const useDashboardData = () => {
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await supabase
+        const { data, error } = await withDbSlot(() => supabase
           .from('company_llm_rankings_by_location_mv')
           .select('location_context')
-          .in('company_id', requestedScopeIds);
+          .in('company_id', requestedScopeIds));
         if (cancelled || error) return;
         const distinct = Array.from(
           new Set((data ?? []).map(r => (r.location_context ?? '') as string))
@@ -1992,14 +2021,14 @@ export const useDashboardData = () => {
         const perCompany = await Promise.all(ids.map(async (id) => {
           let all: any[] = [];
           for (let page = 0; page < 10; page += 1) {
-            const { data, error } = await (supabase as any)
+            const { data, error } = await withDbSlot<{ data: any[] | null; error: any }>(() => (supabase as any)
               .from('company_visibility_by_location_mv')
               .select('company_id, location_context, response_month, job_function_context, total_responses, mentioned_responses')
               .eq('company_id', id)
               .order('response_month', { ascending: false })
               .order('location_context')
               .order('job_function_context')
-              .range(page * PAGE, (page + 1) * PAGE - 1);
+              .range(page * PAGE, (page + 1) * PAGE - 1));
             if (error) throw error;
             const chunk = data ?? [];
             all = all.concat(chunk);
@@ -2347,11 +2376,13 @@ export const useDashboardData = () => {
           const perJob = await Promise.all(jobs.map(async (job) => {
             let all: any[] = [];
             for (let page = 0; page < MAX_PAGES; page += 1) {
-              let q: any = (supabase as any).from(table).select(select)
-                .eq('company_id', job.companyId)
-                .in('location_context', job.buckets);
-              for (const o of orders) q = q.order(o.col, { ascending: o.asc ?? true });
-              const { data, error } = await q.range(page * PAGE, (page + 1) * PAGE - 1);
+              const { data, error } = await withDbSlot<{ data: any[] | null; error: any }>(() => {
+                let q: any = (supabase as any).from(table).select(select)
+                  .eq('company_id', job.companyId)
+                  .in('location_context', job.buckets);
+                for (const o of orders) q = q.order(o.col, { ascending: o.asc ?? true });
+                return q.range(page * PAGE, (page + 1) * PAGE - 1);
+              });
               if (error) throw error;
               const chunk = data ?? [];
               all = all.concat(chunk);
@@ -3358,7 +3389,7 @@ export const useDashboardData = () => {
       // max_rows clamp would silently truncate a single merged result anyway.
       const ids = scopeCompanyIds.length > 0 ? scopeCompanyIds : [currentCompany.id];
       const results = await Promise.all(ids.map(id =>
-        supabase
+        withDbSlot(() => supabase
           // Canonicalized view — historical fetch should also see merged names.
           .from('prompt_responses_canonical')
           .select(`
@@ -3384,7 +3415,7 @@ export const useDashboardData = () => {
           .gte('tested_at', startDate.toISOString())
           .lte('tested_at', endDate.toISOString())
           .order('tested_at', { ascending: false })
-          .limit(1000)
+          .limit(1000))
       ));
       const err = results.find(r => r.error)?.error;
       if (err) throw err;
@@ -3425,12 +3456,12 @@ export const useDashboardData = () => {
       const perCompany = await Promise.all(ids.map(async (id) => {
         const rows: any[] = [];
         for (let page = 0; page < 60; page += 1) {
-          const { data, error } = await supabase
+          const { data, error } = await withDbSlot(() => supabase
             .from('prompt_responses')
             .select('tested_at')
             .eq('company_id', id)
             .order('tested_at', { ascending: false })
-            .range(page * PAGE, (page + 1) * PAGE - 1);
+            .range(page * PAGE, (page + 1) * PAGE - 1));
           if (error) throw error;
           const chunk = data ?? [];
           rows.push(...chunk);
