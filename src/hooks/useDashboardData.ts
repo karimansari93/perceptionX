@@ -227,20 +227,22 @@ export const useDashboardData = () => {
     if (!currentCompany) return [] as { id: string; country: string | null }[];
     const nameLower = currentCompany.name.toLowerCase();
     const orgId = currentCompany.organization_id ?? null;
-    let siblings = userCompanies
+    const siblings = userCompanies
       .filter(
         c => c.id !== currentCompany.id &&
           c.name.toLowerCase() === nameLower &&
           (c.organization_id ?? null) === orgId
       )
       .sort((a, b) => a.id.localeCompare(b.id));
-    // Safety valve: a runaway group would multiply every fetch below.
-    const MAX_SIBLINGS = 9;
-    if (siblings.length > MAX_SIBLINGS) {
+    // NO size cap: flagship brands legitimately carry 18+ country profiles,
+    // and truncating silently drops countries from the dropdown AND the
+    // aggregated totals (a correctness bug, observed on Ford). Database load
+    // is bounded by withDbSlot regardless of profile count; the cap was an
+    // emergency crutch that predates it.
+    if (siblings.length > 30) {
       console.warn(
-        `[useDashboardData] brand scope truncated: ${siblings.length + 1} same-name profiles, keeping ${MAX_SIBLINGS + 1}`
+        `[useDashboardData] unusually large brand scope: ${siblings.length + 1} same-name profiles in one org`
       );
-      siblings = siblings.slice(0, MAX_SIBLINGS);
     }
     return [currentCompany, ...siblings].map(c => ({ id: c.id, country: c.country ?? null }));
   }, [currentCompany, userCompanies]);
