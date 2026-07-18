@@ -268,16 +268,29 @@ export const ReportGenerator = ({ companyName }: ReportGeneratorProps) => {
     }
   }, [history, companyId]);
 
+  // The brand scope: current company + same-org same-name siblings — the same
+  // grouping the dashboard aggregates by. Reports must resolve markets and the
+  // target company within THIS brand, not across every company the user can
+  // see (which would silently target another brand's same-country profile).
+  const brandScope = useMemo(() => {
+    if (!currentCompany) return [] as typeof userCompanies;
+    const nameLower = currentCompany.name.toLowerCase();
+    const orgId = (currentCompany as any).organization_id ?? null;
+    return userCompanies.filter(
+      c => c.name.toLowerCase() === nameLower && ((c as any).organization_id ?? null) === orgId
+    );
+  }, [userCompanies, currentCompany]);
+
   const availableMarkets = useMemo(() => {
     if (loading) return ['GLOBAL'];
     const locs = new Set<string>(['GLOBAL']);
-    userCompanies.forEach(c => locs.add((c as any).country || 'GLOBAL'));
+    brandScope.forEach(c => locs.add((c as any).country || 'GLOBAL'));
     return Array.from(locs).sort((a, b) => {
       if (a === 'GLOBAL') return -1;
       if (b === 'GLOBAL') return 1;
       return (COUNTRY_NAMES[a] || a).localeCompare(COUNTRY_NAMES[b] || b);
     });
-  }, [userCompanies, loading]);
+  }, [brandScope, loading]);
 
   const isDuplicate = useMemo(() => {
     const marketDisplay = COUNTRY_NAMES[market] || market;
@@ -317,10 +330,12 @@ export const ReportGenerator = ({ companyName }: ReportGeneratorProps) => {
     if (!companyId) { toast.error('No company selected'); return; }
     const marketDisplay = COUNTRY_NAMES[market] || market;
 
-    // Find the company_id that matches the selected market, not the top-bar selection
+    // Resolve the market to a profile WITHIN the current brand's scope, never
+    // across other brands. Fall back to the current company (never an
+    // arbitrary userCompanies[0]).
     const targetCompany = market === 'GLOBAL'
-      ? (userCompanies.find(c => !c.country || c.country === 'GLOBAL') ?? userCompanies[0])
-      : (userCompanies.find(c => (c as any).country === market) ?? userCompanies.find(c => !c.country));
+      ? (brandScope.find(c => !c.country || c.country === 'GLOBAL') ?? currentCompany)
+      : (brandScope.find(c => (c as any).country === market) ?? currentCompany);
     const targetCompanyId = (targetCompany as any)?.id ?? companyId;
     const targetCompanyName = targetCompany?.name ?? companyName;
 

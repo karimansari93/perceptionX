@@ -1,22 +1,25 @@
 import { Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { useStarredView } from "@/hooks/useStarredView";
+import { starredViewAppliesTo, useStarredView } from "@/hooks/useStarredView";
 
 interface StarSavedViewProps {
   userId: string | null | undefined;
+  companyId: string | null | undefined;
   currentLocation: string | null;
   currentPeriod: string | null;
   className?: string;
 }
 
-export function StarSavedView({ userId, currentLocation, currentPeriod, className }: StarSavedViewProps) {
+export function StarSavedView({ userId, companyId, currentLocation, currentPeriod, className }: StarSavedViewProps) {
   const { starredView, saveCurrentView, clearStarred } = useStarredView(userId);
-  // Only show as starred when the CURRENT view actually matches the saved one.
+  // Only show as starred when the CURRENT view actually matches the saved one,
+  // company included — a view starred on another company renders outlined here.
   // If the user has drifted to a different country/period, the star reverts
   // to outlined — clicking again saves the new view as their default.
   const matchesSaved =
     starredView !== null &&
+    starredViewAppliesTo(starredView, companyId) &&
     (starredView.location ?? null) === (currentLocation ?? null) &&
     (starredView.period ?? null) === (currentPeriod ?? null);
 
@@ -24,7 +27,7 @@ export function StarSavedView({ userId, currentLocation, currentPeriod, classNam
     if (matchesSaved) {
       clearStarred();
     } else {
-      saveCurrentView({ location: currentLocation, period: currentPeriod });
+      saveCurrentView({ location: currentLocation, period: currentPeriod, companyId: companyId ?? null });
     }
   };
 

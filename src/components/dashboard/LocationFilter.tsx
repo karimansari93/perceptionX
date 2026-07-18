@@ -8,9 +8,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useCompany } from '@/contexts/CompanyContext';
 import { getCountryFlag } from '@/utils/countryFlags';
-import { LocationEntry } from '@/utils/locationContext';
+import { GENERAL_KEY, LocationEntry, labelForCanonicalKey } from '@/utils/locationContext';
 import { Globe, MapPin, ChevronDown, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -18,11 +17,8 @@ interface LocationFilterProps {
   // Canonical key of the active location, or null for "All locations".
   selectedLocation: string | null;
   onLocationChange: (location: string | null) => void;
-  // Stash a location to apply right after a company switch (sibling-row brands),
-  // so the trigger reflects the picked country once the switch lands.
-  onPendingLocationChange?: (location: string | null) => void;
-  // Merged dropdown options (in-company location_context filters + legacy
-  // sibling-company switches), built in useDashboardData.
+  // Filter entries across the merged brand scope (location_context values +
+  // each sibling profile's country), built in useDashboardData.
   options?: LocationEntry[];
   className?: string;
 }
@@ -37,11 +33,10 @@ const EntryIcon = ({ icon, flagCode }: { icon: LocationEntry['icon']; flagCode: 
   return <Globe className="h-4 w-4" />;
 };
 
-export const LocationFilter = ({ selectedLocation, onLocationChange, onPendingLocationChange, options = [], className }: LocationFilterProps) => {
-  const { switchCompany } = useCompany();
+export const LocationFilter = ({ selectedLocation, onLocationChange, options = [], className }: LocationFilterProps) => {
   const [isOpen, setIsOpen] = useState(false);
 
-  // Nothing to filter or switch to — hide the control entirely.
+  // Nothing to filter — hide the control entirely.
   if (options.length === 0) {
     return null;
   }
@@ -50,28 +45,24 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, onPendingLo
     ? options.find(o => o.canonicalKey === selectedLocation)
     : undefined;
 
-  const handleSelect = async (entry: LocationEntry) => {
+  // Every entry filters within the merged brand scope — selecting a country
+  // never switches company anymore (sibling profiles are aggregated).
+  const handleSelect = (entry: LocationEntry) => {
     setIsOpen(false);
-    if (entry.action.type === 'switchCompany') {
-      // Legacy cross-country variant: switch to the sibling company, and select
-      // this location once the switch lands so the trigger shows it (the target
-      // company's data carries the same canonical location).
-      onPendingLocationChange?.(entry.canonicalKey);
-      try {
-        await switchCompany(entry.action.companyId);
-      } catch (error) {
-        onPendingLocationChange?.(null);
-        console.error('Failed to switch company:', error);
-      }
-      return;
-    }
-    // In-company location_context filter.
     onLocationChange(entry.canonicalKey);
   };
 
   // The trigger reflects the active focus: a chosen city/country, or "All
-  // locations" when nothing is filtered.
-  const displayName = selectedEntry ? selectedEntry.label : 'All locations';
+  // locations" when nothing is filtered. A non-null selection with no matching
+  // option (stale key mid-switch, or restored for another company) renders its
+  // own name — NOT "All locations" — so the label never claims the filter is
+  // cleared while state says otherwise; the reconcile effect in
+  // useDashboardData clears it if it stays unresolvable once data loads.
+  const displayName = selectedEntry
+    ? selectedEntry.label
+    : selectedLocation
+      ? (selectedLocation === GENERAL_KEY ? 'General' : labelForCanonicalKey(selectedLocation))
+      : 'All locations';
   const displayIcon = selectedEntry ? (
     <EntryIcon icon={selectedEntry.icon} flagCode={selectedEntry.flagCode} />
   ) : (

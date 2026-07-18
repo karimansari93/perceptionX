@@ -28,6 +28,10 @@ interface ResponseDetailsModalProps {
   showMarkdownCheatSheet?: boolean;
   companyName?: string;
   onRefreshPrompt?: (promptIds: string[], companyName: string) => Promise<void>;
+  // Brand-scope company ids — the merged view can surface sibling profiles'
+  // prompts, so the zero-response refresh must resolve the prompt within this
+  // scope (not by bare text across every company the user can read).
+  scopeCompanyIds?: string[];
   isRefreshing?: boolean;
   refreshProgress?: RefreshProgress | null;
   responseTexts?: Record<string, string>;
@@ -43,6 +47,7 @@ export const ResponseDetailsModal = ({
   showMarkdownCheatSheet = false,
   companyName,
   onRefreshPrompt,
+  scopeCompanyIds = [],
   isRefreshing = false,
   refreshProgress = null,
   responseTexts = {},
@@ -809,22 +814,29 @@ export const ResponseDetailsModal = ({
 
                         setIsRefreshingPrompt(true);
                         try {
-                          // Find the prompt ID from the database
-                          const { data: promptData, error } = await supabase
+                          // Resolve the prompt within the BRAND SCOPE, not by
+                          // bare text across every readable company. Legacy
+                          // per-country siblings carry identical prompt texts,
+                          // one confirmed_prompts row each; refresh them all so
+                          // the merged view's zero-response row actually fills.
+                          // No user_id filter: sibling prompts are often
+                          // created by other org members (RLS still gates read).
+                          let query = supabase
                             .from('confirmed_prompts')
                             .select('id')
                             .eq('prompt_text', promptText)
-                            .eq('user_id', user.id)
-                            .eq('is_active', true)
-                            .limit(1)
-                            .single();
+                            .eq('is_active', true);
+                          if (scopeCompanyIds.length > 0) {
+                            query = query.in('company_id', scopeCompanyIds);
+                          }
+                          const { data: promptRows, error } = await query;
 
-                          if (error || !promptData) {
+                          if (error || !promptRows || promptRows.length === 0) {
                             toast.error('Could not find prompt to refresh');
                             return;
                           }
 
-                          await onRefreshPrompt([promptData.id], companyName);
+                          await onRefreshPrompt(promptRows.map(p => p.id), companyName);
                           toast.success('Prompt refresh started. Responses will appear shortly.');
                         } catch (error) {
                           console.error('Error refreshing prompt:', error);

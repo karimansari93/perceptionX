@@ -24,10 +24,6 @@ interface CompanySwitcherProps {
   className?: string;
   variant?: 'default' | 'outline' | 'ghost';
   alwaysMounted?: boolean;
-  // Switching to a company also focuses the dashboard on that company's
-  // location. The header wires this to the shared location state so the
-  // location filter, `market`-based hooks, and saved views stay in sync.
-  onLocationChange?: (location: string | null) => void;
   // Stash a location to apply right after the company switch lands, so the
   // location trigger reflects the picked country (see useDashboardData).
   onPendingLocationChange?: (location: string | null) => void;
@@ -38,7 +34,7 @@ interface CompanySwitcherProps {
 // records grouped under one submenu.
 type LocationOption = { kind: 'country'; company: Company; location: string | null };
 
-export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = false, onLocationChange, onPendingLocationChange }: CompanySwitcherProps) => {
+export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = false, onPendingLocationChange }: CompanySwitcherProps) => {
   const { currentCompany, userCompanies, switchCompany, loading } = useCompany();
   const [isOpen, setIsOpen] = useState(false);
 
@@ -84,19 +80,20 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
     }
   };
 
-  // Show ALL companies, grouped by name. Each company's selectable locations are
-  // either its country variants (separate records) or — for a null/GLOBAL-country
-  // record whose prompts span multiple location_context values — those contexts
-  // (e.g. Burbank / Sydney / Vancouver). >1 location → submenu; else direct item.
+  // Show ALL companies, grouped by (name, organization) — the same brand-scope
+  // rule the dashboard aggregates by. Grouping by name alone merged identical
+  // brand names ACROSS client organizations, hiding all but one org's profile
+  // behind the country dedupe below and letting a country click silently jump
+  // organizations. Same-name groups in different orgs stay separate entries.
   const groups = Object.values(
     userCompanies.reduce((acc, company) => {
-      const key = company.name.toLowerCase();
+      const key = `${company.name.toLowerCase()}::${company.organization_id ?? ''}`;
       if (!acc[key]) {
-        acc[key] = { name: company.name, companies: [] };
+        acc[key] = { key, name: company.name, companies: [] };
       }
       acc[key].companies.push(company);
       return acc;
-    }, {} as Record<string, { name: string; companies: Company[] }>)
+    }, {} as Record<string, { key: string; name: string; companies: Company[] }>)
   ).sort((a, b) => a.name.localeCompare(b.name));
 
   const optionRank = (o: LocationOption) => (o.location === null ? 0 : 1);
@@ -193,7 +190,7 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
               const isCurrent = isCurrentOption(opt);
               return (
                 <DropdownMenuItem
-                  key={group.name.toLowerCase()}
+                  key={group.key}
                   onClick={() => selectOption(opt)}
                   className="cursor-pointer flex items-center gap-2"
                 >
@@ -212,7 +209,7 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
             // Multiple locations: submenu, pick a location to focus on.
             const isCurrentGroup = group.companies.some((c) => c.id === currentCompany?.id);
             return (
-              <DropdownMenuSub key={group.name.toLowerCase()}>
+              <DropdownMenuSub key={group.key}>
                 <DropdownMenuSubTrigger className="cursor-pointer">
                   <div className="flex items-center gap-2 flex-1">
                     {isCurrentGroup ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}

@@ -24,16 +24,20 @@ export type LocationIconKind = 'flag' | 'pin' | 'globe';
 export const GENERAL_KEY = '__general__';
 
 // A single dropdown row. `canonicalKey` is the stable identity used as the
-// active-filter value; `rawValues` are the exact stored `location_context`
-// strings that collapse to this entry (so filtering matches "the United
-// States" AND "United States"). `action` decides what clicking does.
+// active-filter value. Every entry is a FILTER over the merged brand scope
+// (same-name sibling company profiles are aggregated — there is no
+// switch-company entry anymore):
+//  - `rawValues`: the exact stored `location_context` strings that collapse to
+//    this entry (so filtering matches "the United States" AND "United States");
+//  - `companyIds`: scope companies whose own `country` attributes to this
+//    entry — their untagged (no location_context) data belongs here too.
 export interface LocationEntry {
   canonicalKey: string;
   label: string;
   icon: LocationIconKind;
   flagCode: string | null; // ISO code when resolvable, for flag rendering
   rawValues: string[];
-  action: { type: 'filter' } | { type: 'switchCompany'; companyId: string };
+  companyIds: string[];
 }
 
 // Reverse lookup: lowercased country name → ISO code (e.g. "united states" → "US").
@@ -108,63 +112,115 @@ export const locationIconKind = (raw: string): LocationIconKind => {
 export const labelForCanonicalKey = (key: string): string =>
   key.replace(/\b\w/g, (c) => c.toUpperCase());
 
-type ResponseLike = { confirmed_prompts?: { location_context?: string | null } | null };
-type SiblingCompanyLike = { id: string; country?: string | null };
+type ResponseLike = {
+  company_id?: string | null;
+  confirmed_prompts?: { location_context?: string | null } | null;
+};
+type ScopeCompanyLike = { id: string; country?: string | null };
 
-// Build the merged dropdown options for the current company:
-//  - one `filter` entry per distinct in-company `location_context`, and
-//  - one `switchCompany` entry per same-name sibling company in a country that
-//    isn't already represented in the current company's data (legacy behavior).
-// Also returns the canonicalKey → rawValues map so the response filter can match
-// every stored spelling of a location.
+// Canonical location key a company's own `country` field contributes (e.g.
+// 'US' → 'united states'); null for global/empty countries.
+export const companyCountryKey = (country: string | null | undefined): string | null =>
+  canonicalizeLocationContext(country);
+
+// THE attribution rule for a response, used identically by the dropdown
+// builder, the client-side response filter, and the location-scoped MV
+// queries: a response belongs to its prompt's location_context if it has one,
+// else to its company's country, else to "General". This is what lets legacy
+// per-country company profiles (whose prompts carry no location_context)
+// participate in the merged brand view under their country.
+export const resolveResponseLocationKey = (
+  locationContext: string | null | undefined,
+  countryKey: string | null
+): string | null => canonicalizeLocationContext(locationContext) ?? countryKey;
+
+// Build the merged dropdown options for the brand SCOPE (the current company
+// plus its same-name sibling profiles, whose data is aggregated):
+//  - one entry per distinct canonical location across every scope company's
+//    `location_context` values,
+//  - one entry per scope company's own country (seeded even when no recent
+//    responses are loaded — the profile is real and selectable, matching the
+//    old sibling-switch behavior), and
+//  - a trailing "General" entry for untagged prompts of countryless companies.
+// Also returns the canonicalKey → rawValues map so filters can match every
+// stored spelling of a location.
+//
+// `extraBucketValues` are distinct location_context buckets from the
+// `_by_location_mv` views (all-time), used EXTEND-ONLY: they widen the
+// rawValues of entries that already exist, so the MV queries match historical
+// spellings that fell out of the eager response window (e.g. "the United
+// States" only present in old months). They never create new entries — a
+// context-only location with zero loaded responses would otherwise render an
+// empty prompts/visibility view.
 export const buildLocationOptions = (
   responses: ResponseLike[],
-  siblingCompanies: SiblingCompanyLike[] = []
+  scopeCompanies: ScopeCompanyLike[] = [],
+  extraBucketValues: string[] = []
 ): { options: LocationEntry[]; rawValuesByKey: Record<string, string[]> } => {
   type Builder = {
     canonicalKey: string;
     rawValues: Set<string>;
-    action: LocationEntry['action'];
+    companyIds: Set<string>;
   };
   const builders = new Map<string, Builder>();
-  // MV bucket keys for general/no-location prompts present in this company's
-  // data. The by-location MVs key null/empty location_context as '' and keep
+  const getBuilder = (key: string): Builder => {
+    let b = builders.get(key);
+    if (!b) {
+      b = { canonicalKey: key, rawValues: new Set(), companyIds: new Set() };
+      builders.set(key, b);
+    }
+    return b;
+  };
+  // MV bucket keys for general/no-location prompts of COUNTRYLESS companies.
+  // The by-location MVs key null/empty location_context as '' and keep
   // 'GLOBAL'/'Global (All Countries)' as-is, so we collect the matching bucket
   // key per general response to drive both the response filter and MV query.
   const generalBuckets = new Set<string>();
 
-  // In-company locations → response filters.
+  const countryKeyById = new Map<string, string | null>();
+  for (const c of scopeCompanies) {
+    countryKeyById.set(c.id, companyCountryKey(c.country));
+  }
+
+  // Seed one entry per scope company's country. A company's untagged data is
+  // attributed to its country, so the country is selectable even when the
+  // profile has no recent responses loaded.
+  for (const c of scopeCompanies) {
+    const key = countryKeyById.get(c.id);
+    if (key !== null && key !== undefined) {
+      getBuilder(key).companyIds.add(c.id);
+    }
+  }
+
+  // Locations from responses across the whole scope.
   for (const r of responses) {
     const raw = r.confirmed_prompts?.location_context;
     const key = canonicalizeLocationContext(raw);
-    if (key === null) {
-      // General / no-location prompt (null, '', or a GLOBAL_LIKE sentinel).
+    if (key !== null) {
+      getBuilder(key).rawValues.add(raw!.trim());
+      continue;
+    }
+    // Untagged prompt: attributed to the company's country (already seeded
+    // above); only countryless companies' untagged prompts feed "General".
+    const cKey = r.company_id != null ? (countryKeyById.get(r.company_id) ?? null) : null;
+    if (cKey === null) {
       generalBuckets.add(raw == null || raw.trim() === '' ? '' : raw.trim());
+    }
+  }
+
+  // Widen entries with MV bucket spellings (extend-only; see above).
+  for (const bucket of extraBucketValues) {
+    const key = canonicalizeLocationContext(bucket);
+    if (key === null) {
+      if (generalBuckets.size > 0) {
+        generalBuckets.add(bucket.trim() === '' ? '' : bucket.trim());
+      }
       continue;
     }
     const existing = builders.get(key);
     if (existing) {
-      existing.rawValues.add(raw!.trim());
-    } else {
-      builders.set(key, {
-        canonicalKey: key,
-        rawValues: new Set([raw!.trim()]),
-        action: { type: 'filter' },
-      });
+      existing.rawValues.add(bucket.trim());
     }
-  }
-
-  // Sibling companies in other countries → company switches. Skip any location
-  // the current company already covers in its own data (the filter entry wins).
-  for (const c of siblingCompanies) {
-    const key = canonicalizeLocationContext(c.country);
-    if (key === null || !c.country) continue;
-    if (builders.has(key)) continue;
-    builders.set(key, {
-      canonicalKey: key,
-      rawValues: new Set([c.country.trim()]),
-      action: { type: 'switchCompany', companyId: c.id },
-    });
   }
 
   const rawValuesByKey: Record<string, string[]> = {};
@@ -173,21 +229,24 @@ export const buildLocationOptions = (
     rawValuesByKey[b.canonicalKey] = rawValues;
 
     // Prefer the most descriptive label across spellings (a country name beats
-    // its ISO code: "United States" over "US").
+    // its ISO code: "United States" over "US"); seeded-only entries (no
+    // spellings) fall back to the canonical key itself.
     const label = rawValues
       .map(displayFromRaw)
-      .sort((a, b2) => b2.length - a.length)[0];
+      .sort((a, b2) => b2.length - a.length)[0] ?? labelForCanonicalKey(b.canonicalKey);
 
     const flagRaw = rawValues.find((v) => locationFlag(v));
-    const flagCode = flagRaw ? codeForLocation(stripLeadingThe(flagRaw.trim())) : null;
+    const flagCode = flagRaw
+      ? codeForLocation(stripLeadingThe(flagRaw.trim()))
+      : codeForLocation(stripLeadingThe(b.canonicalKey));
 
     return {
       canonicalKey: b.canonicalKey,
       label,
-      icon: flagCode ? 'flag' : 'pin',
+      icon: flagCode ? 'flag' : ('pin' as const),
       flagCode,
       rawValues,
-      action: b.action,
+      companyIds: Array.from(b.companyIds),
     };
   });
 
@@ -203,7 +262,7 @@ export const buildLocationOptions = (
       icon: 'globe',
       flagCode: null,
       rawValues,
-      action: { type: 'filter' },
+      companyIds: [],
     });
   }
 
