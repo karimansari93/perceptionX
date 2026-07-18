@@ -294,6 +294,19 @@ rankings, attribute themes) are summed client-side via `sumRowsBy` /
 `aggregateAttributeThemeRows`. "All locations" therefore shows a true
 cross-profile aggregate.
 
+**Visibility is rollup-first.** `company_visibility_by_location_mv` (migration
+`20260717150000`) precomputes mentioned/total per (profile, location bucket,
+snapshot month, job function), mirroring the frontend conventions exactly
+(response_month-first bucketing, `''` untagged bucket, Overall Candidate
+Experience excluded). The hook loads it once per brand entry
+(`visibilityMvRows`), scopes it to the active location with the same
+attribution rule as responses (`visibilityRowsForSelection`), and every
+visibility consumer (`metrics`, `previousPeriodMetrics`, `epsTrend`,
+`metricsByJobFunction`, `epsTrendByJobFunction`) prefers it via
+`visibilityFromMvRows(rows, monthKey, jobFn)` — exact numbers independent of
+how much of the raw response stream has arrived, with silent fallback to
+response counting when no rollup rows match (MV not yet refreshed).
+
 **One attribution rule.** `resolveResponseLocationKey` (locationContext.ts):
 a response belongs to its prompt's `location_context` if tagged, **else to its
 company's `country`**, else to "General". The rule is applied identically by:

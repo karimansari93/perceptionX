@@ -114,6 +114,28 @@ const aggregateAttributeThemeRows = (rows: any[]): any[] => {
   }));
 };
 
+// Aggregate visibility rollup rows (company_visibility_by_location_mv) to a
+// percentage + counts, optionally scoped to one snapshot month ("YYYY-MM") and
+// one job function ('' = untagged bucket). Returns null when no rows match so
+// callers fall back to raw-response computation (MV empty / not yet
+// refreshed) instead of showing a false 0%.
+const visibilityFromMvRows = (
+  rows: any[],
+  monthKey: string | null,
+  jobFn: string | null
+): { pct: number; total: number; mentioned: number } | null => {
+  let total = 0;
+  let mentioned = 0;
+  for (const r of rows) {
+    if (monthKey && String(r.response_month).slice(0, 7) !== monthKey) continue;
+    if (jobFn !== null && (r.job_function_context || '') !== jobFn) continue;
+    total += r.total_responses || 0;
+    mentioned += r.mentioned_responses || 0;
+  }
+  if (total === 0) return null;
+  return { pct: (mentioned / total) * 100, total, mentioned };
+};
+
 // Sum MV rows by a key column (e.g. domain → citation_count). Needed wherever
 // rows can arrive from several companies/location buckets that repeat a key.
 const sumRowsBy = (rows: any[], keyField: string, valField: string): Record<string, number> => {
@@ -270,6 +292,13 @@ export const useDashboardData = () => {
   // Widens the dropdown entries' raw-spelling sets beyond the 180-day eager
   // response window — see buildLocationOptions (extend-only).
   const [mvLocationBuckets, setMvLocationBuckets] = useState<string[]>([]);
+  // Precomputed visibility rollup (company_visibility_by_location_mv):
+  // mentioned/total per (profile, location bucket, snapshot month, job
+  // function). A few hundred tiny rows per brand — every visibility number
+  // derives from these, exactly, regardless of how much of the raw response
+  // stream has arrived, and location/function/month re-scoping is a pure
+  // client-side filter. Empty ⇒ consumers fall back to raw responses.
+  const [visibilityMvRows, setVisibilityMvRows] = useState<any[]>([]);
 
   // Public location setter. Flips the location-loading flag on the SAME tick as
   // the selection change (not later, when the fetch effect runs) so the UI goes
@@ -1731,6 +1760,7 @@ export const useDashboardData = () => {
       setResponses([]);
       setResponsesLoadedCompanyId(null);
       setMvLocationBuckets([]);
+      setVisibilityMvRows([]);
       setResponseTexts({});
       setAiThemes([]);
       setAttributeThemes([]);
@@ -1944,6 +1974,49 @@ export const useDashboardData = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, currentCompany?.id, scopeKey]);
 
+  // Load the visibility rollup for the whole brand scope. Deliberately its own
+  // effect (not part of the kick effect's Promise.all) so it also runs on the
+  // fully-cached switch-back path, and per-company + paginated + stably
+  // ordered like every other fetch (PostgREST clamps responses to max_rows).
+  useEffect(() => {
+    const companyId = currentCompany?.id;
+    if (!user?.id || !companyId) {
+      setVisibilityMvRows([]);
+      return;
+    }
+    const ids = scopeCompanyIds.length > 0 ? scopeCompanyIds : [companyId];
+    let cancelled = false;
+    (async () => {
+      try {
+        const PAGE = 1000;
+        const perCompany = await Promise.all(ids.map(async (id) => {
+          let all: any[] = [];
+          for (let page = 0; page < 10; page += 1) {
+            const { data, error } = await (supabase as any)
+              .from('company_visibility_by_location_mv')
+              .select('company_id, location_context, response_month, job_function_context, total_responses, mentioned_responses')
+              .eq('company_id', id)
+              .order('response_month', { ascending: false })
+              .order('location_context')
+              .order('job_function_context')
+              .range(page * PAGE, (page + 1) * PAGE - 1);
+            if (error) throw error;
+            const chunk = data ?? [];
+            all = all.concat(chunk);
+            if (chunk.length < PAGE) break;
+          }
+          return all;
+        }));
+        if (!cancelled) setVisibilityMvRows(perCompany.flat());
+      } catch {
+        // MV missing / not yet refreshed — raw-response fallback takes over.
+        if (!cancelled) setVisibilityMvRows([]);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, currentCompany?.id, scopeKey]);
+
   // Track when metrics are ready
   // Backend metrics (from materialized views) are available immediately
   // Frontend metrics calculation can happen in background - don't block UI
@@ -2107,6 +2180,22 @@ export const useDashboardData = () => {
     }
     return (r: PromptResponse) => resolve(r) === selectedLocation;
   }, [selectedLocation, selectedLocationEntry, countryKeyByCompanyId]);
+
+  // Visibility rollup rows scoped to the active location selection, via the
+  // SAME attribution rule as matchesLocation (bucket location_context, else
+  // the row's profile country, else General). An unresolved selection falls
+  // back to scope-wide, mirroring the response predicate.
+  const visibilityRowsForSelection = useMemo(() => {
+    if (visibilityMvRows.length === 0) return visibilityMvRows;
+    if (!selectedLocation || !selectedLocationEntry) return visibilityMvRows;
+    return visibilityMvRows.filter(row => {
+      const key = resolveResponseLocationKey(
+        row.location_context,
+        row.company_id != null ? (countryKeyByCompanyId.get(row.company_id) ?? null) : null
+      );
+      return selectedLocation === GENERAL_KEY ? key === null : key === selectedLocation;
+    });
+  }, [visibilityMvRows, selectedLocation, selectedLocationEntry, countryKeyByCompanyId]);
 
   // Responses surfaced across the app: deprecated prompt sets hidden and the
   // active location filter applied. Everything downstream (periods, metrics,
@@ -2473,14 +2562,19 @@ export const useDashboardData = () => {
     let visibilityScore: number | undefined;
     const priorAvailable = availablePeriods.filter((p) => p.key < currentKey);
     if (priorAvailable.length > 0) {
-      // availablePeriods is already sorted newest-first. Bucket by snapshot
-      // month (responseMonthKey), matching periodFilteredResponses — a run
-      // tagged for June but collected May 30 must count under June here too.
+      // availablePeriods is already sorted newest-first. Prefer the exact
+      // precomputed rollup for the prior month; fall back to counting loaded
+      // responses bucketed by snapshot month (responseMonthKey).
       const chosen = priorAvailable[0];
-      const chosenResponses = visibleResponses.filter((r) => responseMonthKey(r) === chosen.key);
-      if (chosenResponses.length > 0) {
-        const mentionedCount = chosenResponses.filter((r) => r.company_mentioned === true).length;
-        visibilityScore = Math.round((mentionedCount / chosenResponses.length) * 100);
+      const mvPrior = visibilityFromMvRows(visibilityRowsForSelection, chosen.key, null);
+      if (mvPrior) {
+        visibilityScore = Math.round(mvPrior.pct);
+      } else {
+        const chosenResponses = visibleResponses.filter((r) => responseMonthKey(r) === chosen.key);
+        if (chosenResponses.length > 0) {
+          const mentionedCount = chosenResponses.filter((r) => r.company_mentioned === true).length;
+          visibilityScore = Math.round((mentionedCount / chosenResponses.length) * 100);
+        }
       }
     }
 
@@ -2490,7 +2584,7 @@ export const useDashboardData = () => {
       return null;
     }
     return { sentimentScore, visibilityScore, relevanceScore };
-  }, [effectivePeriod, availablePeriods, visibleResponses, effSentimentByMonth, effRelevanceByMonth]);
+  }, [effectivePeriod, availablePeriods, visibleResponses, effSentimentByMonth, effRelevanceByMonth, visibilityRowsForSelection]);
 
   const promptsData: PromptData[] = useMemo(() => {
     // Group responses by prompt text using a Map for O(1) lookup. The prior
@@ -2796,11 +2890,16 @@ export const useDashboardData = () => {
       responses.flatMap(r => getCitations(r.id).map((c: Citation) => c.domain).filter(Boolean))
     ).size;
 
-    // Calculate average visibility as the percentage of responses where company_mentioned is TRUE
+    // Visibility: prefer the precomputed rollup (exact for the whole scope,
+    // independent of how much of the raw response stream has arrived); fall
+    // back to counting loaded responses when the rollup has no matching rows.
+    const mvVisibility = visibilityFromMvRows(visibilityRowsForSelection, effectivePeriodKey ?? null, null);
     const mentionedCount = responses.filter(r => r.company_mentioned === true).length;
-    const averageVisibility = responses.length > 0
-      ? (mentionedCount / responses.length) * 100
-      : 0;
+    const averageVisibility = mvVisibility
+      ? mvVisibility.pct
+      : responses.length > 0
+        ? (mentionedCount / responses.length) * 100
+        : 0;
 
     // Use period-specific relevance from MV when a period is active, otherwise fall back to all-months aggregate
     const averageRelevance = (effectivePeriodKey && effRelevanceByMonth[effectivePeriodKey] !== undefined)
@@ -2855,7 +2954,7 @@ export const useDashboardData = () => {
     };
     
     return metricsResult;
-  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations]);
+  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations, visibilityRowsForSelection]);
 
   // Per-month EPS trend powering the Overview headline sparkline. One point per
   // available month (oldest → selected period), each computed with the SAME
@@ -2874,11 +2973,15 @@ export const useDashboardData = () => {
     const full = periodsAsc.map((p) => {
       // Snapshot-month bucketing (responseMonthKey), matching the period
       // filter — NOT tested_at, which can fall in the prior calendar month.
+      // Visibility prefers the exact rollup for the month.
       const monthResponses = visibleResponses.filter((r) => responseMonthKey(r) === p.key);
+      const mvMonth = visibilityFromMvRows(visibilityRowsForSelection, p.key, null);
       const mentioned = monthResponses.filter((r) => r.company_mentioned === true).length;
-      const visibility = monthResponses.length > 0
-        ? Math.round((mentioned / monthResponses.length) * 100)
-        : 0;
+      const visibility = mvMonth
+        ? Math.round(mvMonth.pct)
+        : monthResponses.length > 0
+          ? Math.round((mentioned / monthResponses.length) * 100)
+          : 0;
 
       const sRatio = effSentimentByMonth[p.key] ?? sentimentAgg ?? 0;
       const sentiment = Math.round(Math.max(0, Math.min(100, sRatio * 100)));
@@ -2894,7 +2997,7 @@ export const useDashboardData = () => {
         sentiment,
         visibility,
         relevance,
-        responseCount: monthResponses.length,
+        responseCount: mvMonth ? mvMonth.total : monthResponses.length,
       };
     });
 
@@ -2902,7 +3005,7 @@ export const useDashboardData = () => {
     // card headline is showing (default selection is the latest month).
     const selIdx = effectivePeriod ? full.findIndex((d) => d.key === effectivePeriod.key) : full.length - 1;
     return selIdx >= 0 ? full.slice(0, selIdx + 1) : full;
-  }, [availablePeriods, visibleResponses, effSentimentByMonth, effRelevanceByMonth, effSentimentMetrics, effRelevanceMetrics, effectivePeriod]);
+  }, [availablePeriods, visibleResponses, effSentimentByMonth, effRelevanceByMonth, effSentimentMetrics, effRelevanceMetrics, effectivePeriod, visibilityRowsForSelection]);
 
   // Period-over-period EPS delta — last two points of the trimmed trend.
   const epsChange = useMemo<number | null>(() => {
@@ -2924,6 +3027,7 @@ export const useDashboardData = () => {
     const fns = new Set<string>();
     effSentimentMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
     effRelevanceMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    visibilityRowsForSelection.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
     periodFilteredResponses.forEach(r => {
       const f = r.confirmed_prompts?.job_function_context?.trim();
       if (f) fns.add(f);
@@ -2950,14 +3054,18 @@ export const useDashboardData = () => {
       });
       const relevanceScore = relWeight > 0 ? Math.round(relWeighted / relWeight) : 0;
 
-      // Visibility — company_mentioned rate of this function's responses
+      // Visibility — prefer the exact rollup for (function, effective period);
+      // fall back to the company_mentioned rate of this function's responses.
+      const mvFn = visibilityFromMvRows(visibilityRowsForSelection, effectivePeriod?.key ?? null, fn);
       const fnResponses = periodFilteredResponses.filter(
         r => r.confirmed_prompts?.job_function_context?.trim() === fn
       );
       const mentioned = fnResponses.filter(r => r.company_mentioned === true).length;
-      const visibilityScore = fnResponses.length > 0
-        ? Math.round((mentioned / fnResponses.length) * 100)
-        : 0;
+      const visibilityScore = mvFn
+        ? Math.round(mvFn.pct)
+        : fnResponses.length > 0
+          ? Math.round((mentioned / fnResponses.length) * 100)
+          : 0;
 
       const perceptionScore = Math.round(
         (sentimentScore * 0.5) + (visibilityScore * 0.3) + (relevanceScore * 0.2)
@@ -2972,7 +3080,7 @@ export const useDashboardData = () => {
     });
 
     return result;
-  }, [effSentimentMvRows, effRelevanceMvRows, periodFilteredResponses]);
+  }, [effSentimentMvRows, effRelevanceMvRows, periodFilteredResponses, visibilityRowsForSelection, effectivePeriod]);
 
   // Per-job-function monthly EPS trend — same 50/30/20 formula as
   // metricsByJobFunction, resolved one month at a time, so the headline
@@ -2989,6 +3097,7 @@ export const useDashboardData = () => {
     const fns = new Set<string>();
     effSentimentMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
     effRelevanceMvRows.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
+    visibilityRowsForSelection.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
     visibleResponses.forEach(r => { const f = r.confirmed_prompts?.job_function_context?.trim(); if (f) fns.add(f); });
 
     // Pre-bucket MV rows by "fn YYYY-MM" so each (fn, month) lookup is O(1).
@@ -3018,9 +3127,14 @@ export const useDashboardData = () => {
           r.confirmed_prompts?.job_function_context?.trim() === fn &&
           responseMonthKey(r) === p.key
         );
-        if (monthResponses.length === 0) return; // not measured this month
+        // Exact rollup for (function, month) preferred; a month the function
+        // wasn't measured in (no rollup rows AND no responses) is skipped.
+        const mvFnMonth = visibilityFromMvRows(visibilityRowsForSelection, p.key, fn);
+        if (monthResponses.length === 0 && !mvFnMonth) return; // not measured this month
         const mentioned = monthResponses.filter(r => r.company_mentioned === true).length;
-        const visibility = Math.round((mentioned / monthResponses.length) * 100);
+        const visibility = mvFnMonth
+          ? Math.round(mvFnMonth.pct)
+          : Math.round((mentioned / monthResponses.length) * 100);
 
         const sb = sentBucket.get(`${fn} ${p.key}`);
         const sentiment = sb && sb.tot > 0
@@ -3031,7 +3145,7 @@ export const useDashboardData = () => {
         const relevance = rb && rb.wt > 0 ? Math.round(rb.w / rb.wt) : (agg?.relevanceScore ?? 0);
 
         const score = Math.round(sentiment * 0.5 + visibility * 0.3 + relevance * 0.2);
-        series.push({ key: p.key, date: p.label, score, sentiment, visibility, relevance, responseCount: monthResponses.length });
+        series.push({ key: p.key, date: p.label, score, sentiment, visibility, relevance, responseCount: mvFnMonth ? mvFnMonth.total : monthResponses.length });
       });
 
       // Trim to the selected period; pin the endpoint to the headline metric.
@@ -3050,7 +3164,7 @@ export const useDashboardData = () => {
       result[fn] = trimmed;
     });
     return result;
-  }, [availablePeriods, effSentimentMvRows, effRelevanceMvRows, visibleResponses, effectivePeriod, metricsByJobFunction]);
+  }, [availablePeriods, effSentimentMvRows, effRelevanceMvRows, visibleResponses, effectivePeriod, metricsByJobFunction, visibilityRowsForSelection]);
 
   // Per-function period-over-period EPS delta (last two trend points).
   const epsChangeByJobFunction = useMemo<Record<string, number | null>>(() => {
