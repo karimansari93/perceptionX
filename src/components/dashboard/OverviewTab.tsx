@@ -61,6 +61,9 @@ interface OverviewTabProps {
   recencyData?: any[]; // Add recency data for relevance calculation
   recencyDataLoading?: boolean; // Loading state for recency data
   aiThemesLoading?: boolean; // Loading state for AI themes
+  // True while the raw response stream is still arriving (loads AFTER first
+  // paint) — raw-derived summary cards skeleton instead of "No data".
+  responsesLoading?: boolean;
   metricsCalculating?: boolean; // Whether metrics are still being calculated (for UX - show all together)
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
@@ -130,6 +133,7 @@ export const OverviewTab = memo(({
   recencyData = [],
   recencyDataLoading = false,
   aiThemesLoading = false,
+  responsesLoading = false,
   metricsCalculating = false,
   responseTexts = {},
   fetchResponseTexts,
@@ -1295,36 +1299,49 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 </TooltipProvider>
               </div>
               <div className="flex items-end gap-3 mb-1 mt-2">
-                <span className="text-6xl font-extrabold text-gray-900 drop-shadow-sm leading-none">
-                  {scorecardMetrics.perceptionScore}
-                </span>
-                {epsDelta !== null && (
-                  epsDelta === 0 ? (
-                    <span className="ml-4 flex items-center gap-1 text-xl font-semibold text-gray-400" style={{ marginBottom: 6 }}>
-                      <Minus className="w-5 h-5" />0
+                {metricsCalculating ? (
+                  // The score is rollup-derived; while those fetches settle,
+                  // skeleton instead of flashing a false 0 / "No Data".
+                  <Skeleton className="h-14 w-28" />
+                ) : (
+                  <>
+                    <span className="text-6xl font-extrabold text-gray-900 drop-shadow-sm leading-none">
+                      {scorecardMetrics.perceptionScore}
                     </span>
-                  ) : (
-                    <span
-                      className={`ml-4 flex items-center gap-1 text-xl font-semibold ${epsDelta > 0 ? 'text-green-600' : 'text-red-600'}`}
-                      style={{ marginBottom: 6 }}
-                    >
-                      {epsDelta > 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
-                      {Math.abs(epsDelta)}
-                    </span>
-                  )
+                    {epsDelta !== null && (
+                      epsDelta === 0 ? (
+                        <span className="ml-4 flex items-center gap-1 text-xl font-semibold text-gray-400" style={{ marginBottom: 6 }}>
+                          <Minus className="w-5 h-5" />0
+                        </span>
+                      ) : (
+                        <span
+                          className={`ml-4 flex items-center gap-1 text-xl font-semibold ${epsDelta > 0 ? 'text-green-600' : 'text-red-600'}`}
+                          style={{ marginBottom: 6 }}
+                        >
+                          {epsDelta > 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
+                          {Math.abs(epsDelta)}
+                        </span>
+                      )
+                    )}
+                  </>
                 )}
               </div>
             </div>
             {/* Badge in top right */}
             <div className="flex items-start">
-              <span className={`px-3 py-1 rounded-full text-base font-semibold mt-1 ${
-                scorecardMetrics.perceptionScore >= 80 ? 'bg-green-100 text-green-800' : scorecardMetrics.perceptionScore >= 65 ? 'bg-blue-100 text-blue-800' : scorecardMetrics.perceptionScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
-              }`}>{scorecardMetrics.perceptionLabel}</span>
+              {metricsCalculating ? (
+                <Skeleton className="h-7 w-20 mt-1 rounded-full" />
+              ) : (
+                <span className={`px-3 py-1 rounded-full text-base font-semibold mt-1 ${
+                  scorecardMetrics.perceptionScore >= 80 ? 'bg-green-100 text-green-800' : scorecardMetrics.perceptionScore >= 65 ? 'bg-blue-100 text-blue-800' : scorecardMetrics.perceptionScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                }`}>{scorecardMetrics.perceptionLabel}</span>
+              )}
             </div>
           </div>
           {/* Bottom: Chart, visually anchored */}
            <div className="w-full flex-1 flex items-end" style={{ minHeight: 0 }}>
              <div className="w-full" style={{ height: '96px' }}>
+               {!metricsCalculating && (
                <ChartContainer config={{ score: { label: "Score", color: "#0DBCBA" } }} className="w-full h-full">
                  <AreaChart
                    data={epsChartData}
@@ -1373,6 +1390,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                  />
                  </AreaChart>
                </ChartContainer>
+               )}
              </div>
            </div>
         </Card>
@@ -1518,6 +1536,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
               searchResults={searchResults}
               perceptionScoreTrend={perceptionScoreTrend}
               previousPeriodResponses={fnPreviousResponses}
+              responsesLoading={responsesLoading}
             />
           </div>
 
@@ -1529,6 +1548,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
               searchResults={searchResults}
               perceptionScoreTrend={perceptionScoreTrend}
               previousPeriodResponses={fnPreviousResponses}
+              responsesLoading={responsesLoading}
             />
           </div>
 

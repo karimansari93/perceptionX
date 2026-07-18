@@ -65,6 +65,10 @@ interface ThematicAnalysisTabProps {
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   previousPeriodResponses?: PromptResponse[];
+  // True while the raw response stream for the current company is still
+  // arriving (it loads AFTER first paint). Gates the empty state: skeleton
+  // cards, never "No Experience Data", until the stream is final.
+  responsesLoading?: boolean;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
@@ -114,7 +118,7 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
   'overall-candidate-experience': Briefcase
 };
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = [], fetchAIThemes, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = [], fetchAIThemes, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
   // Lazily pull raw themes the first time this tab mounts (and when the company
   // changes and it's already open). The Overview no longer fetches them eagerly.
   useEffect(() => {
@@ -820,19 +824,31 @@ CRITICAL: When you reference information from a source, add an inline citation l
         )}
       </div>
 
-      {/* No Data Message */}
+      {/* No Data Message — skeleton while the raw stream is still arriving */}
       {filteredResponses.length === 0 && (
-        <Card>
-          <CardContent className="p-6">
-            <div className="text-center">
-              <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No Experience Data</h3>
-              <p className="text-gray-600">
-                You need responses from experience prompts to run thematic analysis.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        responsesLoading ? (
+          <Card>
+            <CardContent className="p-6">
+              <div className="space-y-3" aria-busy="true">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="p-6">
+              <div className="text-center">
+                <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">No Experience Data</h3>
+                <p className="text-gray-600">
+                  You need responses from experience prompts to run thematic analysis.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )
       )}
 
       {/* Error Display */}

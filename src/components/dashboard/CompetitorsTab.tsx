@@ -37,13 +37,17 @@ interface CompetitorsTabProps {
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   previousPeriodResponses?: any[];
+  // True while the raw response stream for the current company is still
+  // arriving (it loads AFTER first paint). Gates the empty state: skeleton
+  // rows, never "No competitor mentions found yet", until the stream is final.
+  responsesLoading?: boolean;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
   onJobFunctionChange?: (value: string) => void;
 }
 
-export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, searchResults = [], responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: CompetitorsTabProps) => {
+export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, searchResults = [], responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: CompetitorsTabProps) => {
   // Modal states - persisted
   const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('competitorsTab.selectedCompetitor', null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = usePersistedState<boolean>('competitorsTab.isCompetitorModalOpen', false);
@@ -1078,6 +1082,12 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     <span className="text-xl font-bold text-gray-400">🔍</span>
                   </div>
                   <p className="text-sm">No competitors match "{deferredSearchQuery.trim()}".</p>
+                </div>
+              ) : responsesLoading ? (
+                <div className="space-y-3 px-2 sm:px-3 py-4" aria-busy="true">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
+                  ))}
                 </div>
               ) : (
                 <div className="text-center py-12 text-gray-500">

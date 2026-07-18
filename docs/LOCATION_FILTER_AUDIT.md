@@ -337,3 +337,56 @@ the numbers are identical either way.
 - The per-company response cache is keyed by the entered profile's id; entering
   the brand through a different sibling re-fetches the same merged scope (a
   cache-key refinement is possible later).
+
+## 9. Raw responses off the critical path (2026-07-18)
+
+The last first-paint blocker is gone: the dashboard no longer downloads any
+`prompt_responses_canonical` rows before rendering. First paint requires only
+the small fetches — `confirmed_prompts` plus the rollups (`company_*_mv`,
+`*_by_location_mv`, `company_visibility_by_location_mv`). The raw response
+stream (180-day window, per-company `.eq` pagination, citations jsonb) starts
+in the background right after the prompts commit and hydrates the
+tables/drilldowns progressively: newest page per profile first, then the
+remaining pages and the attribute pass, then the final commit that sets
+`responsesLoadedCompanyId` (unchanged semantics — it still means "the raw set
+is FINAL", and the reconcile/starred/caching machinery keyed on it is
+untouched).
+
+**No number the rollups provide changes.** Every headline metric was already
+rollup-first; what changed is only when the raw fallbacks/tables get their
+data. While the stream is arriving, raw-derived tabs (Prompts, Sources,
+Competitors, Themes) render skeleton rows instead of their "No data" empty
+states, gated on a `responsesLoading` prop = `responsesLoadedCompanyId !==
+currentCompany.id`. Raw-derived counters (total citations, unique domains,
+response counts in tables) count up as pages land — same as the old
+post-first-page streaming, just starting from zero.
+
+**Metrics readiness is rollup-gated now.** `metricsCalculating` no longer
+waits for responses; it waits for the sentiment/relevance MV fetch AND an
+exact visibility source — rollup rows (a new `visibilityMvLoading` flag holds
+the skeleton until that fetch settles), or the raw fallback once responses
+exist. A load that finishes with zero responses keeps the scorecards in the
+calculating state, exactly as before.
+
+**Period selector before raw data lands:** `availablePeriods` normally derives
+from loaded responses. Until the raw stream for the current company is final,
+the month set is widened from `company_visibility_by_location_mv` rows (scoped
+to the active location by the same attribution rule), clamped to the 180-day
+eager window so it approximates the months the raw set will contain. Once the
+load is final the fallback stops contributing and periods derive from
+responses alone — the pre-existing behavior, so a month with zero in-location
+raw data is never offered on a settled dashboard. Selecting a rollup-derived
+month while raw data is still streaming shows exact rollup numbers immediately
+and hydrates the tables as that month's rows arrive. Known transient: the
+clamp is month-granular while the raw window cuts on a `tested_at` timestamp,
+and the MV can lag the newest collection month — so the interim list can
+briefly include a month the final set drops (selection falls back to latest)
+or miss the newest month until raw lands. Both self-correct at the final
+commit and never mislabel a number.
+
+**Query shapes are unchanged.** Same per-company `.eq` pagination with stable
+ORDER BY, same PostgREST max_rows-aware paging, and every call still routes
+through the `withDbSlot` gate (DB_CONCURRENCY = 6). The only ordering change
+is that the heavy response pages now enter the gate's queue *after* the
+prompts fetch completes, so the rollup queries that gate first paint are no
+longer competing with them at kickoff.
