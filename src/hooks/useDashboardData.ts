@@ -10,6 +10,7 @@ import { parseCompetitors } from "@/utils/competitorUtils";
 import { buildLocationOptions, canonicalizeLocationContext, companyCountryKey, GENERAL_KEY, resolveResponseLocationKey } from "@/utils/locationContext";
 import { GLOBAL_LIKE } from "@/utils/locations";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
+import { sentimentRatioV2, EXCLUDED_AI_MODELS_FILTER } from "@/lib/sentimentV2";
 
 // Pure aggregation of `company_*_by_location_mv` rows into the same shape the
 // company-wide MV fetch produces (snapshot + per-month map). Shared by the
@@ -26,26 +27,29 @@ const aggregateSentimentRows = (rows: any[]): { metrics: any | null; byMonth: Re
     return acc;
   }, { totalThemes: 0, positiveThemes: 0, negativeThemes: 0, neutralThemes: 0, totalSentimentScore: 0, totalWeight: 0 });
 
+  // Methodology v2: headline ratio pools positive/(positive+negative);
+  // neutrals stay in the composition counts only.
   const metrics = agg.totalThemes > 0 ? {
-    sentiment_ratio: agg.positiveThemes / agg.totalThemes,
-    avg_sentiment_score: agg.totalWeight > 0 ? agg.totalSentimentScore / agg.totalWeight : 0,
+    sentiment_ratio: sentimentRatioV2(agg.positiveThemes, agg.negativeThemes),
+    avg_sentiment_score: agg.totalWeight > 0 ? agg.totalSentimentScore / agg.totalWeight : 0, // internal only
     total_themes: agg.totalThemes,
     positive_themes: agg.positiveThemes,
     negative_themes: agg.negativeThemes,
     neutral_themes: agg.neutralThemes,
   } : null;
 
-  const byMonthAcc: Record<string, { positive: number; total: number }> = {};
+  const byMonthAcc: Record<string, { positive: number; negative: number }> = {};
   rows.forEach(row => {
     if (!row.response_month) return;
     const key = String(row.response_month).slice(0, 7);
-    if (!byMonthAcc[key]) byMonthAcc[key] = { positive: 0, total: 0 };
+    if (!byMonthAcc[key]) byMonthAcc[key] = { positive: 0, negative: 0 };
     byMonthAcc[key].positive += row.positive_themes || 0;
-    byMonthAcc[key].total += row.total_themes || 0;
+    byMonthAcc[key].negative += row.negative_themes || 0;
   });
   const byMonth: Record<string, number> = {};
   for (const [key, val] of Object.entries(byMonthAcc)) {
-    byMonth[key] = val.total > 0 ? val.positive / val.total : 0;
+    const ratio = sentimentRatioV2(val.positive, val.negative);
+    if (ratio !== null) byMonth[key] = ratio;
   }
   return { metrics, byMonth };
 };
@@ -505,6 +509,9 @@ export const useDashboardData = () => {
               )
             `, withCount ? { count: 'exact' } : undefined)
             .eq('company_id', companyId)
+            // Methodology v2: excluded models never reach client-facing
+            // surfaces (rows stay in the DB as the audit trail).
+            .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
             .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
             .range(from, to)
@@ -658,6 +665,7 @@ export const useDashboardData = () => {
               // embedded filter alone forces a join-then-sort over the whole
               // window — the statement-timeout shape from the incident.
               .eq('company_id', companyId)
+              .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
               .eq('confirmed_prompts.company_id', companyId)
               .not('confirmed_prompts.attribute_id', 'is', null)
               .gte('tested_at', eagerCutoffIso)
@@ -969,13 +977,13 @@ export const useDashboardData = () => {
           totalWeight: 0
         });
 
-        const sentimentRatio = aggregated.totalThemes > 0
-          ? aggregated.positiveThemes / aggregated.totalThemes
-          : 0;
+        // Methodology v2: headline ratio = positive/(positive+negative),
+        // pooled over the scope. Neutrals count toward composition only.
+        const sentimentRatio = sentimentRatioV2(aggregated.positiveThemes, aggregated.negativeThemes);
 
         const avgSentimentScore = aggregated.totalWeight > 0
           ? aggregated.totalSentimentScore / aggregated.totalWeight
-          : 0;
+          : 0; // internal only — never published
 
         if (aggregated.totalThemes > 0) {
           sentimentMetricsSnapshot = {
@@ -990,17 +998,19 @@ export const useDashboardData = () => {
         // Data with no themes stays null - fallback to frontend
         setCompanySentimentMetrics(sentimentMetricsSnapshot);
 
-        // Build per-month sentiment map (positive_themes / total_themes per month)
-        const sentByMonth: Record<string, { positive: number; total: number }> = {};
+        // Per-month sentiment map: positive/(positive+negative) per month;
+        // months with no polarized themes are omitted ("no signal").
+        const sentByMonth: Record<string, { positive: number; negative: number }> = {};
         sentimentResult.data.forEach(row => {
           if (!row.response_month) return;
           const monthKey = row.response_month.slice(0, 7); // "YYYY-MM"
-          if (!sentByMonth[monthKey]) sentByMonth[monthKey] = { positive: 0, total: 0 };
+          if (!sentByMonth[monthKey]) sentByMonth[monthKey] = { positive: 0, negative: 0 };
           sentByMonth[monthKey].positive += row.positive_themes || 0;
-          sentByMonth[monthKey].total += row.total_themes || 0;
+          sentByMonth[monthKey].negative += row.negative_themes || 0;
         });
         for (const [key, val] of Object.entries(sentByMonth)) {
-          sentimentByMonthSnapshot[key] = val.total > 0 ? val.positive / val.total : 0;
+          const ratio = sentimentRatioV2(val.positive, val.negative);
+          if (ratio !== null) sentimentByMonthSnapshot[key] = ratio;
         }
         setCompanySentimentByMonth(sentimentByMonthSnapshot);
       } else {
@@ -1316,9 +1326,11 @@ export const useDashboardData = () => {
 
       // Only the columns the Overview themes/attributes cards consume —
       // skips heavy theme_description / context_snippets[] / keywords[]
-      // (cuts row width ~609B -> ~100B).
+      // (cuts row width ~609B -> ~100B). The embedded prompt_responses join
+      // exists solely to enforce the methodology-v2 model exclusion (themes
+      // don't carry ai_model).
       const COLS =
-        'id, response_id, theme_name, sentiment, sentiment_score, attribute_id, attribute_name, created_at';
+        'id, response_id, theme_name, sentiment, sentiment_score, attribute_id, attribute_name, created_at, prompt_responses!inner(ai_model)';
       const PAGE_SIZE = 1000;
 
       // Keyset pagination on (created_at DESC, id DESC) instead of OFFSET.
@@ -1335,6 +1347,7 @@ export const useDashboardData = () => {
             .from('ai_themes')
             .select(COLS)
             .eq('company_id', companyId)
+            .not('prompt_responses.ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
             .gte('created_at', aiThemesCutoffIso)
             .order('created_at', { ascending: false })
             .order('id', { ascending: false })
@@ -1461,7 +1474,7 @@ export const useDashboardData = () => {
           const result = await withDbSlot(() => retrySupabaseQuery(() =>
             supabase
               .from('company_response_sentiment_mv')
-              .select('response_id, total_themes, positive_themes, sentiment_ratio')
+              .select('response_id, total_themes, positive_themes, negative_themes, sentiment_ratio')
               .eq('company_id', companyId)
               // Stable order — see the attribute-themes fetch above.
               .order('response_id')
@@ -1490,12 +1503,13 @@ export const useDashboardData = () => {
   // Memoized cache of sentiment calculations per response ID
   // OPTIMIZED: Only recalculates when themes change, not on every render
   // This prevents expensive calculations on every render
-  const [sentimentCacheState, setSentimentCacheState] = useState<Map<string, { sentiment_score: number; sentiment_label: string }>>(new Map());
-  
+  const [sentimentCacheState, setSentimentCacheState] = useState<Map<string, { sentiment_score: number | null; sentiment_label: string; positive: number; negative: number }>>(new Map());
+
   // Build the per-response sentiment cache from the pre-aggregated MV
-  // (company_response_sentiment_mv) instead of scanning raw ai_themes. The MV
-  // already gives positive/total themes and the ratio per response; we apply
-  // the same 0-1 ratio and label thresholds the frontend used before.
+  // (company_response_sentiment_mv) instead of scanning raw ai_themes.
+  // Methodology v2: the MV ratio is positive/(positive+negative); null means
+  // the response had themes but none polarized ("no signal"). The counts ride
+  // along so per-prompt sentiment can pool them with the same formula.
   useEffect(() => {
     if (responseSentimentRows.length === 0) {
       setSentimentCacheState(new Map());
@@ -1508,35 +1522,41 @@ export const useDashboardData = () => {
     const companyResponseIds = new Set(responses.map(r => r.id));
     const scopeToResponses = companyResponseIds.size > 0;
 
-    const cache = new Map<string, { sentiment_score: number; sentiment_label: string }>();
+    const cache = new Map<string, { sentiment_score: number | null; sentiment_label: string; positive: number; negative: number }>();
     responseSentimentRows.forEach(row => {
       if (scopeToResponses && !companyResponseIds.has(row.response_id)) return;
-      const ratio = typeof row.sentiment_ratio === 'number'
-        ? row.sentiment_ratio
-        : Number(row.sentiment_ratio) || 0;
-      const sentimentLabel = ratio > 0.6 ? 'positive' : ratio < 0.4 ? 'negative' : 'neutral';
-      cache.set(row.response_id, { sentiment_score: ratio, sentiment_label: sentimentLabel });
+      const positive = Number(row.positive_themes) || 0;
+      const negative = Number(row.negative_themes) || 0;
+      const ratio = row.sentiment_ratio === null || row.sentiment_ratio === undefined
+        ? sentimentRatioV2(positive, negative)
+        : (typeof row.sentiment_ratio === 'number' ? row.sentiment_ratio : Number(row.sentiment_ratio));
+      const sentimentLabel = ratio === null ? 'neutral' : ratio > 0.6 ? 'positive' : ratio < 0.4 ? 'negative' : 'neutral';
+      cache.set(row.response_id, { sentiment_score: ratio, sentiment_label: sentimentLabel, positive, negative });
     });
 
     setSentimentCacheState(cache);
   }, [responseSentimentRows, responses]);
-  
+
   // Use state-based cache instead of useMemo (prevents recalculation on every render)
   const sentimentCache = sentimentCacheState;
 
   // Helper function to calculate AI-based sentiment for a response
   // Uses the state-based cache for O(1) lookup (calculated only when themes change)
+  // sentiment_score === null means "no polarized themes" — callers averaging
+  // scores must skip those entries rather than counting them as 0.
   const calculateAIBasedSentiment = useCallback((responseId: string) => {
     // Check cache first
     const cached = sentimentCacheState.get(responseId);
     if (cached) {
       return cached;
     }
-    
-    // No AI themes available for this response - return neutral sentiment
+
+    // No AI themes available for this response - no sentiment signal
     return {
-      sentiment_score: 0,
-      sentiment_label: 'neutral'
+      sentiment_score: null as number | null,
+      sentiment_label: 'neutral',
+      positive: 0,
+      negative: 0
     };
   }, [sentimentCacheState]);
 
@@ -2639,8 +2659,12 @@ export const useDashboardData = () => {
       
       if (existing) {
         existing.responses += 1;
-        // Use AI-based sentiment in average calculation
-        existing.avgSentiment = (existing.avgSentiment + aiSentiment.sentiment_score) / 2;
+        // Methodology v2: pool positive/negative counts across the prompt's
+        // responses, then take positive/(positive+negative).
+        (existing as any)._pos = ((existing as any)._pos || 0) + aiSentiment.positive;
+        (existing as any)._neg = ((existing as any)._neg || 0) + aiSentiment.negative;
+        existing.avgSentiment = sentimentRatioV2((existing as any)._pos, (existing as any)._neg) ?? 0;
+        existing.sentimentLabel = existing.avgSentiment > 0.6 ? 'positive' : ((existing as any)._pos + (existing as any)._neg) > 0 && existing.avgSentiment < 0.4 ? 'negative' : 'neutral';
         if (!existing.industryContext && response.confirmed_prompts?.industry_context) {
           existing.industryContext = response.confirmed_prompts.industry_context;
         }
@@ -2699,8 +2723,9 @@ export const useDashboardData = () => {
           promptCategory: promptCategoryValue,
           promptTheme: promptThemeValue,
           responses: 1,
-          avgSentiment: aiSentiment.sentiment_score,
+          avgSentiment: aiSentiment.sentiment_score ?? 0,
           sentimentLabel: aiSentiment.sentiment_label,
+          ...({ _pos: aiSentiment.positive, _neg: aiSentiment.negative } as any),
           mentionRanking: undefined,
           competitivePosition: undefined,
           detectedCompetitors: response.detected_competitors || undefined,
@@ -2833,8 +2858,10 @@ export const useDashboardData = () => {
       // Period selected — use per-month MV value
       averageSentiment = effSentimentByMonth[effectivePeriodKey];
     } else if (effSentimentMetrics) {
-      // No specific period — use all-months aggregate from MV
-      averageSentiment = effSentimentMetrics.sentiment_ratio || 0;
+      // No specific period — use all-months aggregate from MV.
+      // (v2 ratio is null when no polarized themes exist; counts below are
+      // all-neutral in that case so 0 here can't read as "fully negative".)
+      averageSentiment = effSentimentMetrics.sentiment_ratio ?? 0;
     }
     // Estimate counts based on ratios (for display purposes)
     const totalResponses = responses.length;
@@ -2871,16 +2898,19 @@ export const useDashboardData = () => {
         let previousSentimentAvg: number;
 
         if (sentimentCacheState.size > 0) {
-          const currentAISentiments = currentResponses.map(r => calculateAIBasedSentiment(r.id));
-          const previousAISentiments = previousResponses.map(r => calculateAIBasedSentiment(r.id));
-          
-          currentSentimentAvg = currentAISentiments.length > 0 
-            ? currentAISentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / currentAISentiments.length
-            : 0;
-          
-          previousSentimentAvg = previousAISentiments.length > 0
-            ? previousAISentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / previousAISentiments.length
-            : 0;
+          // Pool positive/negative counts (methodology v2) — responses with no
+          // polarized themes contribute nothing rather than dragging toward 0.
+          const poolRatio = (rs: typeof currentResponses): number => {
+            let pos = 0, neg = 0;
+            rs.forEach(r => {
+              const s = calculateAIBasedSentiment(r.id);
+              pos += s.positive;
+              neg += s.negative;
+            });
+            return sentimentRatioV2(pos, neg) ?? 0;
+          };
+          currentSentimentAvg = poolRatio(currentResponses);
+          previousSentimentAvg = poolRatio(previousResponses);
         } else {
           // No fallback to original sentiment - use neutral when no AI themes
           currentSentimentAvg = 0;
@@ -3067,15 +3097,17 @@ export const useDashboardData = () => {
     });
 
     fns.forEach(fn => {
-      // Sentiment — positive themes / total themes across this function's rows
-      let totalThemes = 0, positiveThemes = 0;
+      // Sentiment — methodology v2: positive/(positive+negative) pooled
+      // across this function's rows (neutrals excluded from the score).
+      let positiveThemes = 0, negativeThemes = 0;
       effSentimentMvRows.forEach(r => {
         if (r.job_function_context !== fn) return;
-        totalThemes += r.total_themes || 0;
         positiveThemes += r.positive_themes || 0;
+        negativeThemes += r.negative_themes || 0;
       });
-      const sentimentScore = totalThemes > 0
-        ? Math.round(Math.max(0, Math.min(100, (positiveThemes / totalThemes) * 100)))
+      const fnRatio = sentimentRatioV2(positiveThemes, negativeThemes);
+      const sentimentScore = fnRatio !== null
+        ? Math.round(Math.max(0, Math.min(100, fnRatio * 100)))
         : 0;
 
       // Relevance — citation-weighted average recency score
@@ -3134,12 +3166,12 @@ export const useDashboardData = () => {
     visibleResponses.forEach(r => { const f = r.confirmed_prompts?.job_function_context?.trim(); if (f) fns.add(f); });
 
     // Pre-bucket MV rows by "fn YYYY-MM" so each (fn, month) lookup is O(1).
-    const sentBucket = new Map<string, { pos: number; tot: number }>();
+    const sentBucket = new Map<string, { pos: number; neg: number }>();
     effSentimentMvRows.forEach(r => {
       if (!r.job_function_context || !r.response_month) return;
       const k = `${r.job_function_context} ${r.response_month.slice(0, 7)}`;
-      const b = sentBucket.get(k) || { pos: 0, tot: 0 };
-      b.pos += r.positive_themes || 0; b.tot += r.total_themes || 0;
+      const b = sentBucket.get(k) || { pos: 0, neg: 0 };
+      b.pos += r.positive_themes || 0; b.neg += r.negative_themes || 0;
       sentBucket.set(k, b);
     });
     const relBucket = new Map<string, { w: number; wt: number }>();
@@ -3170,8 +3202,9 @@ export const useDashboardData = () => {
           : Math.round((mentioned / monthResponses.length) * 100);
 
         const sb = sentBucket.get(`${fn} ${p.key}`);
-        const sentiment = sb && sb.tot > 0
-          ? Math.round(Math.max(0, Math.min(100, (sb.pos / sb.tot) * 100)))
+        const sbRatio = sb ? sentimentRatioV2(sb.pos, sb.neg) : null;
+        const sentiment = sbRatio !== null
+          ? Math.round(Math.max(0, Math.min(100, sbRatio * 100)))
           : (agg?.sentimentScore ?? 0);
 
         const rb = relBucket.get(`${fn} ${p.key}`);
@@ -3259,11 +3292,20 @@ export const useDashboardData = () => {
       const promptResponses = responses.filter(r => r.confirmed_prompt_id === prompt.id);
       const totalResponses = promptResponses.length;
 
-      const sentiments = promptResponses.map(r => calculateAIBasedSentiment(r.id));
-      const avgSentiment = totalResponses > 0
-        ? sentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / totalResponses
-        : 0;
-      const sentimentLabel = avgSentiment > 0.1 ? 'positive' : avgSentiment < -0.1 ? 'negative' : 'neutral';
+      // Methodology v2: pool positive/negative theme counts across the
+      // prompt's responses; neutral-only responses carry no signal.
+      const pooled = promptResponses.reduce(
+        (acc, r) => {
+          const s = calculateAIBasedSentiment(r.id);
+          acc.pos += s.positive;
+          acc.neg += s.negative;
+          return acc;
+        },
+        { pos: 0, neg: 0 }
+      );
+      const pooledRatio = sentimentRatioV2(pooled.pos, pooled.neg);
+      const avgSentiment = pooledRatio ?? 0;
+      const sentimentLabel = pooledRatio === null ? 'neutral' : pooledRatio > 0.6 ? 'positive' : pooledRatio < 0.4 ? 'negative' : 'neutral';
 
       const mentionedCount = promptResponses.filter(r => r.company_mentioned === true).length;
       let averageVisibility: number | undefined = undefined;
@@ -3414,6 +3456,7 @@ export const useDashboardData = () => {
             )
           `)
           .eq('company_id', id)
+          .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
           .gte('tested_at', startDate.toISOString())
           .lte('tested_at', endDate.toISOString())
           .order('tested_at', { ascending: false })
@@ -3462,6 +3505,7 @@ export const useDashboardData = () => {
             .from('prompt_responses')
             .select('tested_at')
             .eq('company_id', id)
+            .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
             .order('tested_at', { ascending: false })
             .range(page * PAGE, (page + 1) * PAGE - 1));
           if (error) throw error;

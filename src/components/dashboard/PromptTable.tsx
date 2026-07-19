@@ -118,15 +118,17 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
 
   const hasMore = filteredPrompts.length > INITIAL_ROWS && !showAll;
 
+  // avgSentiment is the methodology-v2 ratio positive/(positive+negative),
+  // 0..1 — same 0.6/0.4 label thresholds as the rest of the dashboard.
   const getSentimentIcon = (sentiment: number) => {
-    if (sentiment > 0.1) return <TrendingUp className="w-4 h-4 text-green-600" />;
-    if (sentiment < -0.1) return <TrendingDown className="w-4 h-4 text-red-600" />;
+    if (sentiment > 0.6) return <TrendingUp className="w-4 h-4 text-green-600" />;
+    if (sentiment < 0.4) return <TrendingDown className="w-4 h-4 text-red-600" />;
     return <Minus className="w-4 h-4 text-gray-600" />;
   };
 
   const getSentimentColor = (sentiment: number) => {
-    if (sentiment > 0.1) return 'text-green-600';
-    if (sentiment < -0.1) return 'text-red-600';
+    if (sentiment > 0.6) return 'text-green-600';
+    if (sentiment < 0.4) return 'text-red-600';
     return 'text-gray-600';
   };
 

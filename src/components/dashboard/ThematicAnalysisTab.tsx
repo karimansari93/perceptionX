@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import ReactMarkdown from 'react-markdown';
 import { usePersistedState } from '@/hooks/usePersistedState';
+import { sentimentRatioV2 } from '@/lib/sentimentV2';
 import { 
   Brain,
   Loader2,
@@ -483,8 +484,9 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
 
     return Object.entries(agg)
       .map(([id, a]) => {
-        const total = a.positive + a.negative + a.neutral;
-        const sentimentRatio = total > 0 ? a.positive / total : 0;
+        // Methodology v2: positive/(positive+negative); neutrals stay in the
+        // composition counts but not in the score.
+        const sentimentRatio = sentimentRatioV2(a.positive, a.negative) ?? 0;
         const sentiment = a.positive > a.negative && a.positive > a.neutral
           ? 'positive'
           : a.negative > a.positive && a.negative > a.neutral
@@ -576,8 +578,8 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     const attributeThemes = filteredThemes.filter(t => t.attribute_id === selectedAttribute);
     const positiveThemes = attributeThemes.filter(t => t.sentiment === 'positive').map(t => t.theme_name);
     const negativeThemes = attributeThemes.filter(t => t.sentiment === 'negative').map(t => t.theme_name);
-    const total = attributeThemes.length;
-    const positiveRatio = total > 0 ? Math.round((positiveThemes.length / total) * 100) : 0;
+    // Methodology v2: neutral themes are excluded from the ratio.
+    const positiveRatio = Math.round((sentimentRatioV2(positiveThemes.length, negativeThemes.length) ?? 0) * 100);
 
     const steps = [
       totalResponseCount > MAX_RESPONSES
@@ -891,13 +893,12 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 .sort((a, b) => {
                   if (rankingSort === 'az') return a.name.localeCompare(b.name);
                   if (rankingSort === 'volume') return b.count - a.count;
-                  const totalA = a.positiveCount + a.negativeCount + a.neutralCount;
-                  const totalB = b.positiveCount + b.negativeCount + b.neutralCount;
-                  return (totalB > 0 ? b.positiveCount / totalB : 0) - (totalA > 0 ? a.positiveCount / totalA : 0);
+                  // Methodology v2 ratio (neutrals excluded from the score)
+                  return (sentimentRatioV2(b.positiveCount, b.negativeCount) ?? 0)
+                    - (sentimentRatioV2(a.positiveCount, a.negativeCount) ?? 0);
                 })
                 .map((attribute, index) => {
-                  const totalThemes = attribute.positiveCount + attribute.negativeCount + attribute.neutralCount;
-                  const sentimentScore = totalThemes > 0 ? Math.round((attribute.positiveCount / totalThemes) * 100) : 0;
+                  const sentimentScore = Math.round((sentimentRatioV2(attribute.positiveCount, attribute.negativeCount) ?? 0) * 100);
                   const attributeId = attribute.id;
                   const IconComponent = attributeId ? (ATTRIBUTE_ICONS[attributeId] || Activity) : Activity;
 

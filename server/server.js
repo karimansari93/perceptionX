@@ -210,7 +210,7 @@ Visibility score (% of all AI responses that mention ${companyName}):
   ${p2Label}: ${p2.visibilityPct}%
   Change: ${delta(p2.visibilityPct, p1.visibilityPct)}
 
-Sentiment (% of "who are the best employers" type prompts that include ${companyName}):
+Sentiment (% of polarized themes about ${companyName} that are positive — positive/(positive+negative), neutrals excluded):
   ${p1Label}: ${fmtPct(p1.sentimentPct)}
   ${p2Label}: ${fmtPct(p2.sentimentPct)}
   Change: ${delta(p2.sentimentPct, p1.sentimentPct)}
@@ -482,7 +482,7 @@ app.post('/generate-report', async (req, res) => {
       }),
       supabase
         .from('company_sentiment_scores_mv')
-        .select('response_month, positive_themes, total_themes')
+        .select('response_month, positive_themes, negative_themes')
         .eq('company_id', company_id)
         .gte('response_month', p1_start)
         .lte('response_month', p2_end),
@@ -496,13 +496,15 @@ app.post('/generate-report', async (req, res) => {
 
     if (reportData.error) throw reportData.error;
 
-    // Compute metric % per period from materialized views
+    // Compute metric % per period from materialized views.
+    // Methodology v2: positive/(positive+negative) from the theme labels —
+    // neutrals excluded — matching the dashboard's headline to the decimal.
     function sentimentPctForMonth(month, rows) {
       if (!rows || !rows.length) return null;
       const matching = rows.filter(r => r.response_month && r.response_month.slice(0, 7) === month);
       const pos = matching.reduce((s, r) => s + (r.positive_themes || 0), 0);
-      const tot = matching.reduce((s, r) => s + (r.total_themes || 0), 0);
-      return tot > 0 ? Math.round(pos / tot * 100) : null;
+      const neg = matching.reduce((s, r) => s + (r.negative_themes || 0), 0);
+      return (pos + neg) > 0 ? Math.round(pos / (pos + neg) * 100) : null;
     }
 
     function relevancePctForMonth(month, rows) {

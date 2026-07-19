@@ -195,6 +195,8 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
         )
       `)
       .eq('company_id', companyId)
+      // Methodology v2: excluded models never enter client-facing calculations
+      .not('ai_model', 'in', '(claude,gemini,deepseek)')
       .order('created_at', { ascending: false });
 
     if (responsesError || !responses || responses.length === 0) {
@@ -204,8 +206,7 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
 
     // Calculate metrics
     const totalResponses = responses.length;
-    const averageSentiment = responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / totalResponses;
-    
+
     const visibilityScores = responses
       .map(r => r.visibility_score)
       .filter(score => typeof score === 'number');
@@ -220,7 +221,7 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
       ? competitivePositions.reduce((sum, ranking) => sum + ranking, 0) / competitivePositions.length
       : 0;
 
-    // Get AI themes
+    // Get AI themes (response ids are already model-filtered above)
     const responseIds = responses.map(r => r.id);
     const { data: themes, error: themesError } = await supabase
       .from('ai_themes')
@@ -228,7 +229,26 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
       .in('response_id', responseIds)
       .gte('confidence_score', 0.7);
 
-    // Process themes
+    // Methodology v2 sentiment: positive/(positive+negative) from the theme
+    // text labels — neutrals excluded from the score, numeric sentiment_score
+    // never used in a published metric. Pool per response for the competitor
+    // and per-model breakdowns, and overall for the headline.
+    const sentimentByResponse = new Map<string, { pos: number; neg: number }>();
+    let totalPos = 0;
+    let totalNeg = 0;
+    themes?.forEach(theme => {
+      if (!theme.response_id) return;
+      const entry = sentimentByResponse.get(theme.response_id) || { pos: 0, neg: 0 };
+      if (theme.sentiment === 'positive') { entry.pos++; totalPos++; }
+      else if (theme.sentiment === 'negative') { entry.neg++; totalNeg++; }
+      sentimentByResponse.set(theme.response_id, entry);
+    });
+    // 0..1 scale; 0.5 = balanced. Falls back to 0.5 (no signal) when a company
+    // has no polarized themes at all.
+    const averageSentiment = (totalPos + totalNeg) > 0 ? totalPos / (totalPos + totalNeg) : 0.5;
+
+    // Process themes: aggregate positive/negative label counts per attribute
+    // so theme-level sentiment is label-based too.
     const themeMap = new Map();
     themes?.forEach(theme => {
       const key = theme.attribute_id;
@@ -237,14 +257,18 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
           theme_name: theme.theme_name,
           theme_description: theme.theme_description,
           sentiment: theme.sentiment,
-          sentiment_score: theme.sentiment_score,
           attribute_id: theme.attribute_id,
           attribute_name: theme.attribute_name,
           frequency: 0,
+          positive_count: 0,
+          negative_count: 0,
           confidence_score: theme.confidence_score
         });
       }
-      themeMap.get(key).frequency++;
+      const t = themeMap.get(key);
+      t.frequency++;
+      if (theme.sentiment === 'positive') t.positive_count++;
+      else if (theme.sentiment === 'negative') t.negative_count++;
     });
 
     const topThemes = Array.from(themeMap.values())
@@ -258,18 +282,22 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
         const competitors = response.detected_competitors.split(',').map(c => c.trim()).filter(c => c.length > 0 && !/^(none|n\/?a|na|null|undefined)[.,:;)\]}_\-]*$/i.test(c));
         competitors.forEach((competitor: string) => {
           if (!competitorMap.has(competitor)) {
-            competitorMap.set(competitor, { competitor, frequency: 0, sentiment: 0 });
+            competitorMap.set(competitor, { competitor, frequency: 0, pos: 0, neg: 0 });
           }
-          competitorMap.get(competitor).frequency++;
-          competitorMap.get(competitor).sentiment += response.sentiment_score || 0;
+          const comp = competitorMap.get(competitor);
+          comp.frequency++;
+          const s = sentimentByResponse.get(response.id);
+          if (s) { comp.pos += s.pos; comp.neg += s.neg; }
         });
       }
     });
 
     const competitorMentions = Array.from(competitorMap.values())
-      .map(comp => ({
+      .map(({ pos, neg, ...comp }) => ({
         ...comp,
-        sentiment: comp.sentiment / comp.frequency
+        // v2 ratio pooled over the responses co-mentioning this competitor;
+        // 0.5 = no polarized signal
+        sentiment: (pos + neg) > 0 ? pos / (pos + neg) : 0.5
       }))
       .sort((a, b) => b.frequency - a.frequency)
       .slice(0, 10);
@@ -282,13 +310,15 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
         modelMap.set(model, {
           model,
           responses: 0,
-          totalSentiment: 0,
+          pos: 0,
+          neg: 0,
           mentions: 0
         });
       }
       const modelData = modelMap.get(model);
       modelData.responses++;
-      modelData.totalSentiment += response.sentiment_score || 0;
+      const s = sentimentByResponse.get(response.id);
+      if (s) { modelData.pos = (modelData.pos || 0) + s.pos; modelData.neg = (modelData.neg || 0) + s.neg; }
       if (response.company_mentioned) {
         modelData.mentions++;
       }
@@ -298,7 +328,10 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
       .map(model => ({
         model: model.model,
         responses: model.responses,
-        averageSentiment: model.totalSentiment / model.responses,
+        // v2 ratio pooled over this model's responses; 0.5 = no polarized signal
+        averageSentiment: ((model.pos || 0) + (model.neg || 0)) > 0
+          ? (model.pos || 0) / ((model.pos || 0) + (model.neg || 0))
+          : 0.5,
         mentionRate: model.mentions / model.responses
       }))
       .sort((a, b) => b.responses - a.responses);
@@ -379,10 +412,10 @@ async function generateComparisonReport(companyReports: CompanyReportData[]): Pr
   // Generate comparison insights
   const comparisonInsights = await generateComparisonInsights(companyReports);
 
-  // Identify areas for improvement
+  // Identify areas for improvement (v2 ratio: < 0.4 = negative-leaning)
   const areasForImprovement = companyReports
-    .filter(report => report.averageSentiment < 0.1)
-    .map(report => `${report.companyName}: Low sentiment (${report.averageSentiment.toFixed(2)})`);
+    .filter(report => report.averageSentiment < 0.4)
+    .map(report => `${report.companyName}: Low sentiment (${Math.round(report.averageSentiment * 100)}% positive of polarized themes)`);
 
   return {
     companies: companyReports,
@@ -551,13 +584,15 @@ function generateExecutiveSummary(
   competitivePosition: number,
   geographicAnalysis: any
 ): any {
-  const overallSentiment = averageSentiment > 0.1 ? 'Positive' : 
-                          averageSentiment < -0.1 ? 'Negative' : 'Neutral';
-  
+  // averageSentiment is the methodology-v2 ratio positive/(positive+negative),
+  // 0..1 — 0.6/0.4 label thresholds, matching the dashboard.
+  const overallSentiment = averageSentiment > 0.6 ? 'Positive' :
+                          averageSentiment < 0.4 ? 'Negative' : 'Neutral';
+
   const keyStrengths = [];
   const keyChallenges = [];
-  
-  if (averageSentiment > 0.1) {
+
+  if (averageSentiment > 0.6) {
     keyStrengths.push('Strong positive sentiment in talent perception');
   }
   if (visibilityScore > 0.7) {
@@ -566,8 +601,8 @@ function generateExecutiveSummary(
   if (competitivePosition < 3) {
     keyStrengths.push('Strong competitive positioning');
   }
-  
-  if (averageSentiment < -0.1) {
+
+  if (averageSentiment < 0.4) {
     keyChallenges.push('Negative sentiment requires attention');
   }
   if (visibilityScore < 0.3) {
@@ -596,8 +631,15 @@ function generateExecutiveSummary(
 }
 
 function generateThemeSummary(topThemes: any[]): any {
+  // Methodology v2: label-based counts only — a theme group is positive when
+  // most of its polarized occurrences are positive.
+  const ratioOf = (t: any) => {
+    const polarized = (t.positive_count || 0) + (t.negative_count || 0);
+    return polarized > 0 ? (t.positive_count || 0) / polarized : null;
+  };
+
   const positiveThemes = topThemes
-    .filter(theme => theme.sentiment_score > 0.1)
+    .filter(theme => (ratioOf(theme) ?? 0.5) > 0.6)
     .slice(0, 3)
     .map(theme => ({
       theme: theme.theme_name,
@@ -606,7 +648,7 @@ function generateThemeSummary(topThemes: any[]): any {
     }));
 
   const negativeThemes = topThemes
-    .filter(theme => theme.sentiment_score < -0.1)
+    .filter(theme => (ratioOf(theme) ?? 0.5) < 0.4)
     .slice(0, 3)
     .map(theme => ({
       theme: theme.theme_name,
@@ -614,12 +656,12 @@ function generateThemeSummary(topThemes: any[]): any {
       concern: `${theme.theme_name} is a concern in ${theme.attribute_name}`
     }));
 
-  const avgThemeSentiment = topThemes.length > 0 
-    ? topThemes.reduce((sum, theme) => sum + theme.sentiment_score, 0) / topThemes.length
-    : 0;
+  const totalPos = topThemes.reduce((s, t) => s + (t.positive_count || 0), 0);
+  const totalNeg = topThemes.reduce((s, t) => s + (t.negative_count || 0), 0);
+  const avgThemeSentiment = (totalPos + totalNeg) > 0 ? totalPos / (totalPos + totalNeg) : 0.5;
 
-  const overallThemeSentiment = avgThemeSentiment > 0.1 ? 'Positive themes dominate' :
-                               avgThemeSentiment < -0.1 ? 'Negative themes are concerning' :
+  const overallThemeSentiment = avgThemeSentiment > 0.6 ? 'Positive themes dominate' :
+                               avgThemeSentiment < 0.4 ? 'Negative themes are concerning' :
                                'Mixed theme sentiment';
 
   return {
@@ -648,8 +690,8 @@ function generateGeographicSummary(geographicAnalysis: any): any {
 function generateCompetitiveSummary(competitorMentions: any[], averageSentiment: number): any {
   const topCompetitors = competitorMentions.slice(0, 3).map(comp => comp.competitor);
   
-  const competitiveAdvantage = averageSentiment > 0.1 ? 'Positive perception advantage' :
-                              averageSentiment < -0.1 ? 'Perception disadvantage' :
+  const competitiveAdvantage = averageSentiment > 0.6 ? 'Positive perception advantage' :
+                              averageSentiment < 0.4 ? 'Perception disadvantage' :
                               'Neutral competitive position';
 
   const marketPosition = competitorMentions.length > 5 ? 'Highly competitive market' :
@@ -686,7 +728,7 @@ async function generateAIInsights(
 You are an expert in employer branding and talent perception analysis. Analyze the following data for ${companyName} (${industry}) and provide actionable insights and recommendations.
 
 COMPANY DATA:
-- Average Sentiment: ${averageSentiment.toFixed(2)}
+- Average Sentiment: ${averageSentiment.toFixed(2)} (0-1 scale: share of polarized themes that are positive; 0.5 = balanced)
 - Visibility Score: ${visibilityScore.toFixed(2)}
 - Total Themes Identified: ${topThemes.length}
 
