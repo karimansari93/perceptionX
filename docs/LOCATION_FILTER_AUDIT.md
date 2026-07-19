@@ -347,10 +347,19 @@ the small fetches — `confirmed_prompts` plus the rollups (`company_*_mv`,
 stream (180-day window, per-company `.eq` pagination, citations jsonb) starts
 in the background right after the prompts commit and hydrates the
 tables/drilldowns progressively: newest page per profile first, then the
-remaining pages and the attribute pass, then the final commit that sets
-`responsesLoadedCompanyId` (unchanged semantics — it still means "the raw set
-is FINAL", and the reconcile/starred/caching machinery keyed on it is
-untouched).
+remaining pages, then the final commit that sets `responsesLoadedCompanyId`
+(unchanged semantics — it still means "the raw set is FINAL", and the
+reconcile/starred/caching machinery keyed on it is untouched).
+
+**The attribute pass is derived, not fetched.** The old second fetch family
+(`confirmed_prompts.attribute_id=not.is.null` embedded filter) re-downloaded a
+strict subset of the main stream through a plan driven per-attribute-prompt —
+measured ~2.5s uncontended vs ~50ms for a main page, plus an equally slow
+`count: 'exact'` — and it kept crossing the ~8s statement timeout (HTTP 500)
+during the initial fan-out, silently dropping attribute data because its
+errors were swallowed. Attribute rows are now filtered client-side out of the
+already-fetched stream (attribute-tagged prompts belonging to the same
+profile), which removes that whole query family from the load.
 
 **No number the rollups provide changes.** Every headline metric was already
 rollup-first; what changed is only when the raw fallbacks/tables get their
@@ -384,9 +393,10 @@ briefly include a month the final set drops (selection falls back to latest)
 or miss the newest month until raw lands. Both self-correct at the final
 commit and never mislabel a number.
 
-**Query shapes are unchanged.** Same per-company `.eq` pagination with stable
-ORDER BY, same PostgREST max_rows-aware paging, and every call still routes
-through the `withDbSlot` gate (DB_CONCURRENCY = 6). The only ordering change
-is that the heavy response pages now enter the gate's queue *after* the
-prompts fetch completes, so the rollup queries that gate first paint are no
-longer competing with them at kickoff.
+**Query shapes are unchanged (one family removed).** Same per-company `.eq`
+pagination with stable ORDER BY, same PostgREST max_rows-aware paging, and
+every call still routes through the `withDbSlot` gate (DB_CONCURRENCY = 6).
+Two load changes: the heavy response pages now enter the gate's queue *after*
+the prompts fetch completes, so the rollup queries that gate first paint are
+no longer competing with them at kickoff; and the attribute-pass query family
+is gone entirely (derived client-side, see above).

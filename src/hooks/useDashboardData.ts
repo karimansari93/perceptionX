@@ -504,6 +504,7 @@ export const useDashboardData = () => {
               index_period,
               confirmed_prompts!inner(
                 id,
+                company_id,
                 prompt_text,
                 prompt_category,
                 prompt_type,
@@ -639,91 +640,28 @@ export const useDashboardData = () => {
           .sort(byTestedAtDesc);
       };
 
-      // Attribute rows feed both the Thematic tab and Overview's attribute
-      // cards, so fetch them eagerly: first page with a count, remaining
-      // pages in parallel, bounded to the same 180-day window. Errors are
-      // swallowed so the dashboard still renders with regular responses.
-      const fetchAttributeRaw = async (): Promise<any[]> => {
-        try {
-          // Per-company pagination for the same statement-timeout reason as
-          // the main fetch above.
-          const attributePage = (companyId: string, from: number, to: number, withCount: boolean) =>
-            withDbSlot(() => supabase
-              // Canonicalized view — see comment on main fetch above.
-              .from('prompt_responses_canonical')
-              .select(`
-                id,
-                confirmed_prompt_id,
-                company_id,
-                ai_model,
-                tested_at,
-                created_at,
-                updated_at,
-                response_month,
-                company_mentioned,
-                detected_competitors,
-                citations,
-                for_index,
-                index_period,
-                confirmed_prompts!inner(
-                  id,
-                  user_id,
-                  prompt_type,
-                  prompt_text,
-                  attribute_id,
-                  company_id,
-                  industry_context,
-                  job_function_context,
-                  location_context
-                )
-              `, withCount ? { count: 'exact' } : undefined)
-              // The base-table company_id predicate is what lets the
-              // (company_id, tested_at) index serve ORDER BY + OFFSET; the
-              // embedded filter alone forces a join-then-sort over the whole
-              // window — the statement-timeout shape from the incident.
-              .eq('company_id', companyId)
-              .eq('confirmed_prompts.company_id', companyId)
-              .not('confirmed_prompts.attribute_id', 'is', null)
-              .gte('tested_at', eagerCutoffIso)
-              .order('tested_at', { ascending: false })
-              .range(from, to));
-
-          const perCompany = await Promise.all(requestedScopeIds.map(async (companyId) => {
-            const first = await attributePage(companyId, 0, PAGE_SIZE - 1, true);
-            if (first.error) throw first.error;
-            let rows = first.data ?? [];
-            const total = first.count ?? rows.length;
-            const pages = Math.ceil(total / PAGE_SIZE);
-            if (pages > 1) {
-              const rest = await Promise.all(
-                Array.from({ length: pages - 1 }, (_, i) =>
-                  attributePage(companyId, (i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1, false)
-                )
-              );
-              for (const r of rest) {
-                if (r.error) throw r.error;
-                rows = rows.concat(r.data ?? []);
-              }
-            }
-            return rows;
-          }));
-          // Newest-first across the merged scope, so the latest-per-prompt
-          // dedupe below keeps the newest row.
-          return perCompany.flat().sort(byTestedAtDesc);
-        } catch (error) {
-          console.error('Error fetching attribute responses:', error);
-          // Continue with regular responses even if the attribute fetch fails
-          return [];
-        }
-      };
-
-      const [data, attributeRaw] = await Promise.all([
-        fetchRemainingPages(),
-        fetchAttributeRaw(),
-      ]);
+      const data = await fetchRemainingPages();
       if (isStale()) return;
 
       let allResponses = data || [];
+
+      // Attribute rows feed the Thematic tab and Overview's attribute cards.
+      // They are a STRICT SUBSET of the stream just fetched (same table, same
+      // company predicate, same 180-day window — just the attribute-tagged
+      // prompts), so derive them client-side instead of re-downloading them.
+      // The old second fetch family filtered on the embedded
+      // confirmed_prompts.attribute_id, which forces the planner to drive
+      // through confirmed_prompts (one index probe per attribute prompt,
+      // measured ~50x slower per page than the (company_id, tested_at) path,
+      // ~2.5s uncontended) plus an equally slow count: 'exact' — it kept
+      // crossing the ~8s statement timeout (HTTP 500) during the initial
+      // fan-out and, because its errors were swallowed, silently dropped all
+      // attribute data when it did. The embedded prompt-company filter is
+      // mirrored below (prompt must belong to the same profile as the row).
+      const attributeRaw = allResponses.filter(r =>
+        r.confirmed_prompts?.attribute_id != null &&
+        (r.confirmed_prompts?.company_id == null || r.confirmed_prompts.company_id === r.company_id)
+      );
 
       {
         try {
