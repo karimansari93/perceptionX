@@ -15,7 +15,7 @@ const corsHeaders = {
  * send-intake-invite
  * ------------------
  * Emails a client their tokenized onboarding link ("complete your project
- * brief"). Admin-only (profiles.is_admin). The link is rebuilt server-side from
+ * brief"). Admin-only (user_roles). The link is rebuilt server-side from
  * the invite's own token, so the caller can never route a token to a different
  * address than the one locked into the invite.
  *
@@ -151,12 +151,13 @@ serve(async (req) => {
     const { data: { user: caller }, error: authError } = await admin.auth.getUser(token);
     if (authError || !caller) return json({ error: "Invalid token" }, 401);
 
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("is_admin")
-      .eq("id", caller.id)
+    const { data: adminRole } = await admin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", caller.id)
+      .eq("role", "admin")
       .maybeSingle();
-    if (!profile?.is_admin) return json({ error: "Admin only" }, 403);
+    if (!adminRole) return json({ error: "Admin only" }, 403);
 
     const { inviteId } = (await req.json()) as { inviteId?: string };
     if (!inviteId) return json({ error: "inviteId is required" }, 400);
