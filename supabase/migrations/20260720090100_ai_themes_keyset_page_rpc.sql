@@ -1,5 +1,5 @@
 -- Keyset page over raw ai_themes for the Thematic drilldown
--- (useDashboardData.fetchAIThemes).
+-- (useDashboardData.fetchAIThemesForAttribute).
 --
 -- Replaces the PostgREST table read for two measured reasons (2026-07,
 -- 18-profile Ford brand, ~130k themes in the 180-day window):
@@ -14,27 +14,39 @@
 --    (created_at, id) < (X, Y) rides idx_ai_themes_company_created_id
 --    (company_id, created_at DESC, id DESC) as an exact index boundary.
 --
--- 2. The ai_themes RLS select policy — is_admin() OR
---    user_can_access_company(company_id) — calls a non-inlinable SECURITY
---    DEFINER helper per scanned row (~97 buffer hits per call; measured
---    1.6s for a single 1000-row page even with a perfect index boundary).
---    This function is SECURITY DEFINER and evaluates the identical
---    predicate once against p_company_id, which is equivalent because every
---    returned row has company_id = p_company_id. Returning zero rows on a
---    failed check mirrors RLS semantics (rows silently filtered, never an
---    error).
+-- 2. The ai_themes RLS select policy called a non-inlinable SECURITY DEFINER
+--    helper per scanned row (~97 buffer hits per call; measured 1.6s for a
+--    single 1000-row page even with a perfect index boundary). This function
+--    is SECURITY DEFINER and evaluates the identical predicate once against
+--    p_company_id, which is equivalent because every returned row has
+--    company_id = p_company_id. Returning zero rows on a failed check
+--    mirrors RLS semantics (rows silently filtered, never an error).
 --
 -- Measured worst-case page: ~8s before, ~8ms after.
+--
+-- p_attribute_ids (optional) narrows the page to one drilldown attribute so
+-- the Thematic tab can fetch themes on demand instead of bulk-paginating the
+-- whole window on mount. It takes an array because legacy v1 attribute ids
+-- fold into their v2 successor client-side — callers pass the v2 id plus its
+-- v1 aliases. The filter is a residual on the same index scan (worst case
+-- one window scan per profile, tens of ms); NULL keeps whole-window
+-- behavior.
 --
 -- Returns only the columns the themes/attributes UIs consume — skips heavy
 -- theme_description / context_snippets[] / keywords[] (row width ~609B ->
 -- ~100B).
+--
+-- (A changed parameter list is a new overload in Postgres — drop the 5-arg
+-- version from the first iteration of this migration if present.)
+drop function if exists public.ai_themes_keyset_page(uuid, timestamptz, timestamptz, uuid, integer);
+
 create or replace function public.ai_themes_keyset_page(
   p_company_id uuid,
   p_cutoff timestamptz,
   p_cursor_created_at timestamptz default null,
   p_cursor_id uuid default null,
-  p_limit integer default 1000
+  p_limit integer default 1000,
+  p_attribute_ids text[] default null
 )
 returns table (
   id uuid,
@@ -62,6 +74,7 @@ begin
   from public.ai_themes t
   where t.company_id = p_company_id
     and t.created_at >= p_cutoff
+    and (p_attribute_ids is null or t.attribute_id = any(p_attribute_ids))
     -- Null cursor (first page) degenerates to an always-true bound instead
     -- of an OR branch, so the row compare stays an index boundary even in a
     -- generic (parameterized) plan.
@@ -74,5 +87,5 @@ begin
 end;
 $$;
 
-revoke all on function public.ai_themes_keyset_page(uuid, timestamptz, timestamptz, uuid, integer) from public, anon;
-grant execute on function public.ai_themes_keyset_page(uuid, timestamptz, timestamptz, uuid, integer) to authenticated, service_role;
+revoke all on function public.ai_themes_keyset_page(uuid, timestamptz, timestamptz, uuid, integer, text[]) from public, anon;
+grant execute on function public.ai_themes_keyset_page(uuid, timestamptz, timestamptz, uuid, integer, text[]) to authenticated, service_role;

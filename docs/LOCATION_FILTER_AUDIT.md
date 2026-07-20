@@ -340,9 +340,21 @@ the numbers are identical either way.
 
 ## 9. Raw ai_themes pagination goes through an RPC (2026-07-20)
 
-The lazy Thematic-tab fetch of raw `ai_themes` rows (`fetchAIThemes` →
-`fetchThemesForCompany`) does **not** use a PostgREST table read. It calls the
-`ai_themes_keyset_page` RPC, one keyset pagination per scope profile, still
+Raw `ai_themes` rows are fetched **per drilldown attribute, on demand**
+(`fetchAIThemesForAttribute`), not in bulk. The Thematic tab's main ranking is
+MV-driven; only an open drilldown needs row-level data (subtheme names,
+response links for quotes/sources/visibility), so nothing is fetched until one
+opens, and rows accumulate per drilled attribute. The old design bulk-loaded
+the whole window on tab mount: ~130 requests / ~130k rows in browser memory on
+an 18-profile brand. A subtheme-level rollup MV was measured and rejected —
+LLM-generated theme names are ~75% unique (Ford US: 18,640 raw rows → 14,017
+distinct names), so a (theme_name, month, fn) grain barely compresses; a
+per-attribute fetch is ~1–3 pages per scope profile and preserves exact
+response-level scoping (periods, locations, job functions).
+
+The fetch does **not** use a PostgREST table read. It calls the
+`ai_themes_keyset_page` RPC (optional `p_attribute_ids text[]` filter — the
+v2 id plus its legacy v1 aliases), one keyset pagination per scope profile,
 1000 rows/page, 180-day window, all pages through `withDbSlot`. Two measured
 reasons (18-profile Ford brand, ~130k themes in window):
 
@@ -372,6 +384,14 @@ PostgREST `max_rows` clamps RPC responses at 1000 exactly like table reads,
 and every call rides `withDbSlot`. If the RPC's shape changes, keep the
 row-value cursor and the once-per-call access check — reverting to either the
 OR-form predicate or a per-row policy check reintroduces the timeout.
+
+Accumulation caveat: consumers that opportunistically scan `aiThemes`
+(OverviewTab's key-themes / attribute-insights memos) now see
+partial-by-attribute data — the same class of partiality as the old "empty
+until the Thematic tab was visited" behavior, and never partial within an
+attribute. Accumulated rows are invalidated on company switch, scope change,
+and explicit refresh (the open drilldown refetches automatically), and are
+deliberately not written to the per-company switch-back cache.
 
 The same per-row `user_can_access_company()` cost applied to the select
 policies of the seven per-company rollup tables (`company_response_sentiment_mv`

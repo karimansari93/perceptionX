@@ -9,6 +9,7 @@ import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonit
 import { parseCompetitors } from "@/utils/competitorUtils";
 import { buildLocationOptions, canonicalizeLocationContext, companyCountryKey, GENERAL_KEY, resolveResponseLocationKey } from "@/utils/locationContext";
 import { GLOBAL_LIKE } from "@/utils/locations";
+import { LEGACY_ATTRIBUTE_MAP } from "@/config/attributes";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
 
 // Pure aggregation of `company_*_by_location_mv` rows into the same shape the
@@ -270,6 +271,13 @@ export const useDashboardData = () => {
   const [recencyDataLoading, setRecencyDataLoading] = useState(false);
   const [aiThemes, setAiThemes] = useState<any[]>([]);
   const [aiThemesLoading, setAiThemesLoading] = useState(false);
+  // v2 attribute ids whose raw themes are fully loaded for the current scope
+  // (raw themes accumulate per drilled attribute — see
+  // fetchAIThemesForAttribute). The ref mirrors the state so the fetch
+  // callback can guard without re-creating itself on every load.
+  const [aiThemeAttrsLoaded, setAiThemeAttrsLoaded] = useState<string[]>([]);
+  const aiThemeAttrsLoadedRef = useRef<Set<string>>(new Set());
+  const aiThemeAttrsInFlightRef = useRef<Set<string>>(new Set());
   // Pre-aggregated theme data from materialized views (replaces the eager
   // ~24-page ai_themes pull on the dashboard's critical path).
   // - attributeThemes: per attribute x month x job_function rollup (company_attribute_themes_mv)
@@ -371,7 +379,6 @@ export const useDashboardData = () => {
   const COMPANY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   const companyDataCacheRef = useRef<Record<string, {
     responses: PromptResponse[];
-    aiThemes?: any[];
     attributeThemes?: any[];
     responseSentimentRows?: any[];
     activePrompts?: any[];
@@ -1290,22 +1297,45 @@ export const useDashboardData = () => {
     }
   }, [user, responses]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const fetchAIThemes = useCallback(async () => {
-    if (!user || !currentCompany?.id) {
-      setAiThemes([]);
-      setAiThemesLoading(false);
-      return;
-    }
+  // Lazy per-attribute raw-themes fetch for the Thematic drilldown. The tab's
+  // main ranking is MV-driven; only the per-attribute drilldown needs raw
+  // rows (subtheme names, response links for quotes/sources/visibility). The
+  // old design bulk-paginated the whole 180-day window on tab mount — ~130
+  // requests / ~130k rows in browser memory on an 18-profile brand — for data
+  // the user might never drill into. A subtheme-level rollup was measured and
+  // rejected: LLM-generated theme names are ~75% unique (Ford US: 18,640 raw
+  // rows → 14,017 distinct names), so a (theme_name, month, fn) grain barely
+  // compresses. Fetching one attribute on drilldown open (~1-3 pages per
+  // scope profile via the indexed RPC) is the real win.
+  //
+  // Rows ACCUMULATE across drilled attributes (merge replaces per attribute,
+  // so re-fetch after an explicit refresh can't duplicate). aiThemeAttrsLoaded
+  // tracks completed v2 attribute ids; consumers that opportunistically scan
+  // aiThemes (OverviewTab insights) therefore see partial-by-attribute data —
+  // same class of partiality as the old "empty until the Thematic tab was
+  // visited" behavior, but never partial WITHIN an attribute.
+  const fetchAIThemesForAttribute = useCallback(async (attributeId: string) => {
+    if (!user || !currentCompany?.id || !attributeId) return;
+    if (aiThemeAttrsLoadedRef.current.has(attributeId)) return;
+    if (aiThemeAttrsInFlightRef.current.has(attributeId)) return;
 
-    // Up to 200 paginated queries — easily the slowest fetch on the dashboard
-    // and the one most likely to land after the user has already switched
-    // companies. requestedCompanyId pins this call to the company that
-    // triggered it; anything not matching the live ref at commit time is
-    // discarded so it can't overwrite the new company's themes.
+    // requestedCompanyId pins this call to the company that triggered it;
+    // anything not matching the live ref at commit time is discarded so it
+    // can't overwrite the new company's themes.
     const requestedCompanyId = currentCompany.id;
     const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
     const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
 
+    // Stored rows carry either the v2 id or a legacy v1 id that folds into
+    // it (normalizeAttributeId) — filter server-side on the whole family.
+    const rawIds = [
+      attributeId,
+      ...Object.entries(LEGACY_ATTRIBUTE_MAP)
+        .filter(([, v2]) => v2 === attributeId)
+        .map(([legacy]) => legacy),
+    ];
+
+    aiThemeAttrsInFlightRef.current.add(attributeId);
     try {
       setAiThemesLoading(true);
 
@@ -1326,7 +1356,7 @@ export const useDashboardData = () => {
       //   rows, so deep pages crossed the ~8s statement timeout). The RPC's
       //   row-value comparison (created_at, id) < (X, Y) is an exact index
       //   boundary, keeping every page O(PAGE_SIZE) regardless of depth.
-      // - The ai_themes RLS policy calls user_can_access_company() per
+      // - The ai_themes RLS policy called user_can_access_company() per
       //   scanned row (~1.6s per 1000-row page on its own). The RPC is
       //   SECURITY DEFINER and makes the identical access check once per
       //   page. Worst-case page: ~8s before, ~8ms after.
@@ -1346,6 +1376,7 @@ export const useDashboardData = () => {
               p_cursor_created_at: cursor?.created_at ?? null,
               p_cursor_id: cursor?.id ?? null,
               p_limit: PAGE_SIZE,
+              p_attribute_ids: rawIds,
             })
           ) as Promise<{
             data: any[] | null;
@@ -1370,20 +1401,38 @@ export const useDashboardData = () => {
       const perCompanyThemes = await Promise.all(requestedScopeIds.map(fetchThemesForCompany));
 
       if (isStale()) return;
-      setAiThemes(perCompanyThemes.flat());
+      const rawIdSet = new Set(rawIds);
+      setAiThemes(prev => [
+        ...prev.filter(t => !rawIdSet.has(t.attribute_id)),
+        ...perCompanyThemes.flat(),
+      ]);
+      aiThemeAttrsLoadedRef.current.add(attributeId);
+      setAiThemeAttrsLoaded(prev => (prev.includes(attributeId) ? prev : [...prev, attributeId]));
     } catch (error) {
       if (isStale()) return;
-      console.error('Error in fetchAIThemes:', error);
-      setAiThemes([]);
+      // Leave the loaded flag unset so reopening the drilldown retries.
+      console.error('Error in fetchAIThemesForAttribute:', error);
     } finally {
-      // Don't flip the loading flag off if a newer fetch is in flight — it
-      // owns the spinner now.
-      if (!isStale()) {
+      aiThemeAttrsInFlightRef.current.delete(attributeId);
+      // Don't flip the loading flag off while another attribute's fetch is
+      // still in flight — it owns the spinner now.
+      if (!isStale() && aiThemeAttrsInFlightRef.current.size === 0) {
         setAiThemesLoading(false);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, currentCompany?.id, scopeKey]);
+
+  // Accumulated raw themes only cover the scope they were fetched for — a
+  // scope change (sibling profiles resolving after companies load) must
+  // invalidate them so drilldowns refetch at the new scope. Also fires on
+  // company switches (scopeKey changes with the company); the company-change
+  // effect clears the same state, so that's a harmless double-clear.
+  useEffect(() => {
+    setAiThemes([]);
+    setAiThemeAttrsLoaded([]);
+    aiThemeAttrsLoadedRef.current = new Set();
+  }, [scopeKey]);
 
   // Pre-aggregated attribute scores from company_attribute_themes_mv. A few
   // hundred rows per company (16 attributes x months x job functions) instead
@@ -1777,7 +1826,9 @@ export const useDashboardData = () => {
           // skip the network entirely.
           ...companyDataCacheRef.current[previousCompanyId],
           responses,
-          aiThemes, // cache lazily-loaded raw themes (Thematic tab) if present
+          // Raw themes deliberately NOT cached: they accumulate per drilled
+          // attribute and are scope-dependent — a restore could resurrect a
+          // stale-scoped partial set. Drilldowns refetch cheaply via the RPC.
           attributeThemes, // pre-aggregated attribute scores (MV-backed)
           responseSentimentRows, // per-response sentiment ratios (MV-backed)
           lastUpdated: lastUpdated,
@@ -1795,6 +1846,9 @@ export const useDashboardData = () => {
       setVisibilityMvRows([]);
       setResponseTexts({});
       setAiThemes([]);
+      setAiThemeAttrsLoaded([]);
+      aiThemeAttrsLoadedRef.current = new Set();
+      setAiThemesLoading(false);
       setAttributeThemes([]);
       setResponseSentimentRows([]);
       setSearchResults([]);
@@ -1831,11 +1885,17 @@ export const useDashboardData = () => {
         hasInitiallyLoadedRef.current = true;
         setShouldRefetch(false); // Reset the refetch flag
 
-        // On explicit refresh: skip cache and clear caches so we get fresh data
+        // On explicit refresh: skip cache and clear caches so we get fresh data.
+        // Raw themes are dropped rather than refetched — the Thematic
+        // drilldown effect refetches its open attribute when the loaded set
+        // empties (see fetchAIThemesForAttribute).
         if (isExplicitRefresh) {
           delete companyDataCacheRef.current[companyId];
           recencyDataCacheRef.current = null;
           previousResponseIdsRef.current = '';
+          setAiThemes([]);
+          setAiThemeAttrsLoaded([]);
+          aiThemeAttrsLoadedRef.current = new Set();
         } else {
           // Restore from cache if available (instant UI when switching back to recently viewed company)
           const cached = companyDataCacheRef.current[companyId];
@@ -1874,8 +1934,6 @@ export const useDashboardData = () => {
           fetchMVData(),
           fetchCompanyMetrics(),
           fetchResponses(),
-          // On explicit refresh, also refetch AI themes and clear search cache
-          ...(isExplicitRefresh ? [fetchAIThemes()] : []),
         ]);
         if (isExplicitRefresh) {
           searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
@@ -1945,8 +2003,8 @@ export const useDashboardData = () => {
   // On company change, load the pre-aggregated theme MVs (attribute scores +
   // per-response sentiment) instead of the old eager raw-themes pull. These are
   // small/fast and serve everything the Overview renders. Raw ai_themes are now
-  // fetched lazily — only when the Thematic tab mounts (see fetchAIThemes,
-  // wired through ThematicAnalysisTab).
+  // fetched lazily — one attribute at a time when its drilldown opens (see
+  // fetchAIThemesForAttribute, wired through ThematicAnalysisTab).
   useEffect(() => {
     if (user && currentCompany?.id) {
       // Restore from the per-company cache on quick switch-back.
@@ -1967,6 +2025,8 @@ export const useDashboardData = () => {
       setAttributeThemes([]);
       setResponseSentimentRows([]);
       setAiThemes([]);
+      setAiThemeAttrsLoaded([]);
+      aiThemeAttrsLoadedRef.current = new Set();
       setAiThemesLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3516,8 +3576,9 @@ export const useDashboardData = () => {
     searchResultsLoading,
     searchTermsData,
     fetchSearchResults,
-    aiThemes: effAiThemes, // Raw AI themes (lazy, Thematic tab) — location-scoped when a location is active
-    fetchAIThemes, // Lazy raw-themes fetch (called when Thematic tab mounts)
+    aiThemes: effAiThemes, // Raw AI themes (lazy, accumulated per drilled attribute) — location-scoped when a location is active
+    fetchAIThemesForAttribute, // Lazy per-attribute raw-themes fetch (Thematic drilldown open)
+    aiThemeAttrsLoaded, // v2 attribute ids whose raw themes are loaded for the current scope
     attributeThemes: effAttributeThemes, // Pre-aggregated attribute scores — location-scoped when a location is active
     responseSentimentRows, // Per-response sentiment ratios (company_response_sentiment_mv)
     fetchHistoricalResponses, // Fetch responses for a specific time range
