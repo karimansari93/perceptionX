@@ -145,6 +145,22 @@ export async function deleteOnboardingInvite(inviteId: string): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * Reactivate/extend an onboarding link: 30 more days from now, same token,
+ * same saved draft — expiry only locks the door, it never deletes anything.
+ * Returns the new expiry. Admin only.
+ */
+export async function extendOnboardingInvite(inviteId: string): Promise<string> {
+  const newExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await table('intake_invites')
+    .update({ expires_at: newExpiry })
+    .eq('id', inviteId)
+    .select('expires_at')
+    .single();
+  if (error) throw error;
+  return (data as { expires_at: string }).expires_at;
+}
+
 /** Persist admin edits to a submitted brief before approval. */
 export async function updateOnboardingSubmissionPayload(
   submissionId: string,
