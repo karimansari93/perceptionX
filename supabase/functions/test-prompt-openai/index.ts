@@ -11,10 +11,20 @@ const PRIMARY_MODEL = 'gpt-5.5'
 // preserving the original "never silently degrade" intent while staying robust.
 const MODEL_FALLBACKS = ['gpt-5.2', 'gpt-4.1']
 
+// Soft cap on web searches per call. The built-in web_search tool has no hard
+// limit parameter, so the cap is applied via the instructions. A/B-validated
+// 2026-07-10 (scripts/ab-search-cap.mjs + uncapped control): capped runs kept
+// 57% of the uncapped run's cited domains vs a 55% noise floor between two
+// identical uncapped runs — i.e. no measurable citation loss — while cutting
+// avg searches 4.5→2.7, input tokens ~27%, and total call cost ~34%.
+const MAX_WEB_SEARCHES = 2
+
 const SYSTEM_INSTRUCTIONS =
   `You are a research assistant providing well-sourced, up-to-date information ` +
   `about companies and their reputation as employers. Use web search to ground ` +
-  `your answer in current sources, and cite the specific pages you rely on.`
+  `your answer in current sources, and cite the specific pages you rely on. ` +
+  `Use at most ${MAX_WEB_SEARCHES} web searches; pick the most authoritative ` +
+  `sources rather than searching broadly.`
 
 // Tracking params various sources (and OpenAI's web_search, which appends
 // `utm_source=openai`) add to citation URLs. Stripping them keeps
@@ -254,6 +264,35 @@ async function callOpenAIWebSearch(prompt: string, useWebSearch: boolean, modelO
   throw new Error(`All OpenAI models failed. Last error: ${lastError?.message}`)
 }
 
+// This function runs arbitrary prompts through OpenAI (a paid API), so it must
+// never be callable with just the public anon key — that would be an open,
+// anonymous proxy to our OpenAI account. Allow only a real logged-in user (the
+// frontend sends the user's access token) or the service role (for any
+// server-to-server call). `verify_jwt` alone is insufficient here because the
+// anon key is itself a valid project JWT and would pass it.
+async function isAuthorizedCaller(req: Request): Promise<boolean> {
+  const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
+  if (!token) return false
+
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  if (serviceKey && token === serviceKey) return true
+
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+  if (anonKey && token === anonKey) return false // public key: reject outright
+
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
+  try {
+    const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { Authorization: `Bearer ${token}`, apikey: anonKey },
+    })
+    if (!res.ok) return false
+    const user = await res.json()
+    return !!user?.id && user?.role !== 'anon'
+  } catch {
+    return false
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
@@ -262,6 +301,13 @@ serve(async (req) => {
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
       },
     })
+  }
+
+  if (!(await isAuthorizedCaller(req))) {
+    return new Response(
+      JSON.stringify({ error: 'Unauthorized' }),
+      { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
   }
 
   try {
