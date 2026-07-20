@@ -373,7 +373,13 @@ and every call rides `withDbSlot`. If the RPC's shape changes, keep the
 row-value cursor and the once-per-call access check — reverting to either the
 OR-form predicate or a per-row policy check reintroduces the timeout.
 
-Known follow-up: the same per-row `user_can_access_company()` policy cost
-applies to every other RLS table read (e.g. `prompt_responses`). Rewriting
-those policies as a hashable `company_id IN (select …)` form would cut that
-cost platform-wide without per-table RPCs.
+The same per-row `user_can_access_company()` cost applied to the select
+policies of the seven per-company rollup tables (`company_response_sentiment_mv`
+etc. — ~30k first-paint rows per brand entry, 200ms per 1000 rows) and to
+direct `ai_themes` reads. Migration `20260720100000` rewrote those eight
+select policies to the hashable `(select is_admin()) OR company_id IN
+(select …)` form that `prompt_responses` / `confirmed_prompts` already used:
+the membership subquery runs once per statement and each row is a hash probe
+(200ms → 1.7ms per 1000 MV rows, verified member/non-member/admin-equivalent
+in production). Any new per-company table's select policy should use the same
+IN form, not a bare `user_can_access_company(company_id)` call.
