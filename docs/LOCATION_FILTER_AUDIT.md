@@ -400,3 +400,12 @@ Two load changes: the heavy response pages now enter the gate's queue *after*
 the prompts fetch completes, so the rollup queries that gate first paint are
 no longer competing with them at kickoff; and the attribute-pass query family
 is gone entirely (derived client-side, see above).
+
+**The gate has two tiers.** `withDbSlot` is FIFO within a tier, but bulk row
+streams (response pages, raw `ai_themes`) queue behind everything else, so the
+small critical-path fetches always claim the next free slot. Measured on the
+18-profile Ford brand's explicit-refresh path: with one FIFO queue the ~90
+`ai_themes` keyset queries starved the prompts fetch to 65s (skeleton held
+~90s, 21 of the themes queries hit the statement timeout); with the tiers the
+prompts finished at 9.4s, content was back at ~10.5s, and the same themes
+fan-out completed in the background with zero failures.

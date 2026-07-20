@@ -124,19 +124,30 @@ const aggregateAttributeThemeRows = (rows: any[]): any[] => {
 // ~6 in flight keeps the pipeline saturated without stampeding Postgres.
 // A slot is held across retry backoff too — deliberate backpressure while
 // the database is struggling.
+// TWO-TIER: the gate is FIFO within a tier, but critical-path fetches (the
+// small ones first paint depends on — prompts, rollup MVs, visibility) always
+// jump ahead of queued BULK row streams (response pages, raw ai_themes).
+// Without the tiers, an explicit refresh on an 18-profile brand queued the
+// prompts fetch's sequential pages behind ~90 ai_themes/response-page jobs
+// (some 8s each) — measured 65s before prompts finished and the skeleton
+// cleared, on a dashboard whose rollups were done at 4s.
 const DB_CONCURRENCY = 6;
 let dbInFlight = 0;
 const dbWaiters: Array<() => void> = [];
-const withDbSlot = async <T,>(fn: () => Promise<T> | PromiseLike<T>): Promise<T> => {
+const dbBulkWaiters: Array<() => void> = [];
+const withDbSlot = async <T,>(
+  fn: () => Promise<T> | PromiseLike<T>,
+  opts?: { bulk?: boolean }
+): Promise<T> => {
   while (dbInFlight >= DB_CONCURRENCY) {
-    await new Promise<void>(resolve => dbWaiters.push(resolve));
+    await new Promise<void>(resolve => (opts?.bulk ? dbBulkWaiters : dbWaiters).push(resolve));
   }
   dbInFlight += 1;
   try {
     return await fn();
   } finally {
     dbInFlight -= 1;
-    const next = dbWaiters.shift();
+    const next = dbWaiters.shift() ?? dbBulkWaiters.shift();
     if (next) next();
   }
 };
@@ -485,6 +496,8 @@ export const useDashboardData = () => {
       // satisfies this ordering directly, and a tiebreaker would force a
       // multi-MB sort node per page. Pages are deduped by id after fetch.
       const fetchResponsePage = (companyId: string, from: number, to: number, withCount: boolean) =>
+        // bulk: response pages hydrate in the background — they must never
+        // delay the critical-path fetches (prompts, rollup MVs) in the gate.
         withDbSlot(() => retrySupabaseQuery(() =>
           supabase
             .from('prompt_responses_canonical')
@@ -519,7 +532,7 @@ export const useDashboardData = () => {
             .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
             .range(from, to)
-        ) as Promise<{ data: any[] | null; error: any; count: number | null }>);
+        ) as Promise<{ data: any[] | null; error: any; count: number | null }>, { bulk: true });
 
       const byTestedAtDesc = (a: any, b: any) =>
         new Date(b.tested_at || b.created_at || 0).getTime() - new Date(a.tested_at || a.created_at || 0).getTime();
@@ -1308,10 +1321,14 @@ export const useDashboardData = () => {
             );
           }
 
+          // bulk: raw themes are a background drilldown feed — on an explicit
+          // refresh this family alone is ~90 queries and starved the prompts
+          // fetch (and therefore the whole page skeleton) when it shared the
+          // critical tier.
           const { data, error } = (await withDbSlot(() => retrySupabaseQuery(() => q) as Promise<{
             data: any[] | null;
             error: any;
-          }>));
+          }>, { bulk: true }));
 
           // Abandon early if the user already moved on — no point fetching
           // the remaining pages for a company we won't display.
