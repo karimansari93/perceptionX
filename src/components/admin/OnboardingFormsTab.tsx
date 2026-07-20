@@ -8,7 +8,7 @@
 // back the /onboarding/:token URL to paste into an email.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Copy, ExternalLink, RefreshCw, Send, Trash2 } from 'lucide-react';
+import { CalendarPlus, Check, Copy, ExternalLink, RefreshCw, Send, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -36,6 +36,7 @@ import {
   approveOnboarding,
   createOnboardingInvite,
   deleteOnboardingInvite,
+  extendOnboardingInvite,
   getOnboardingSubmission,
   OnboardingInvite,
   onboardingLinkFor,
@@ -114,6 +115,18 @@ export const OnboardingFormsTab = () => {
     toast.success('Onboarding link copied');
   };
 
+  const extendLink = async (invite: OnboardingInvite) => {
+    try {
+      const newExpiry = await extendOnboardingInvite(invite.id);
+      toast.success(
+        `Link for ${invite.company_name} is live until ${new Date(newExpiry).toLocaleDateString()} — same link, progress kept`,
+      );
+      refresh();
+    } catch {
+      toast.error('Could not extend the link');
+    }
+  };
+
   const confirmDelete = async () => {
     if (!deleteInvite) return;
     setDeleting(true);
@@ -182,11 +195,30 @@ export const OnboardingFormsTab = () => {
                 <td className="px-4 py-2.5 text-slate-500">
                   {new Date(invite.created_at).toLocaleDateString()}
                 </td>
-                <td className="px-4 py-2.5 text-slate-500">
-                  {new Date(invite.expires_at).toLocaleDateString()}
+                <td className="px-4 py-2.5">
+                  {new Date(invite.expires_at) < new Date() &&
+                  ['sent', 'in_progress'].includes(invite.status) ? (
+                    <span className="text-red-600 font-medium">
+                      Expired {new Date(invite.expires_at).toLocaleDateString()}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">
+                      {new Date(invite.expires_at).toLocaleDateString()}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-2.5">
                   <div className="flex justify-end gap-1.5">
+                    {['sent', 'in_progress'].includes(invite.status) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => extendLink(invite)}
+                        title="Extend link by 30 days — same link, progress kept"
+                      >
+                        <CalendarPlus className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
