@@ -337,3 +337,43 @@ the numbers are identical either way.
 - The per-company response cache is keyed by the entered profile's id; entering
   the brand through a different sibling re-fetches the same merged scope (a
   cache-key refinement is possible later).
+
+## 9. Raw ai_themes pagination goes through an RPC (2026-07-20)
+
+The lazy Thematic-tab fetch of raw `ai_themes` rows (`fetchAIThemes` →
+`fetchThemesForCompany`) does **not** use a PostgREST table read. It calls the
+`ai_themes_keyset_page` RPC, one keyset pagination per scope profile, still
+1000 rows/page, 180-day window, all pages through `withDbSlot`. Two measured
+reasons (18-profile Ford brand, ~130k themes in window):
+
+**PostgREST's keyset encoding defeats the index.** The cursor had to be
+expressed as `or=(created_at.lt.X,and(created_at.eq.X,id.lt.Y))`, and Postgres
+cannot use an OR as a btree boundary. EXPLAIN showed every page re-scanning all
+previously-fetched rows and filtering them out (`Rows Removed by Filter:
+10000` on page 10) — page N cost O(N × 1000), the exact OFFSET pathology
+keyset was meant to avoid, and why deep pages crossed the ~8s statement
+timeout. The RPC's row-value comparison `(created_at, id) < (X, Y)` is an
+exact boundary on `idx_ai_themes_company_created_id` (company_id, created_at
+DESC, id DESC — migration `20260720090000`, supersedes the old 2-column
+index), so every page is O(page size) regardless of depth.
+
+**Per-row RLS was the other half of the cost.** The `ai_themes` select policy
+calls `user_can_access_company(company_id)` — a non-inlinable SECURITY DEFINER
+helper (~97 buffer hits/call) — per scanned row: 1.6s for a single 1000-row
+page *even with a perfect index boundary*. The RPC is SECURITY DEFINER and
+evaluates the identical predicate once against its `p_company_id` argument
+(equivalent, since every returned row has that company_id; zero rows on
+failure, mirroring RLS filtering). Worst-case page: ~8s → ~8ms.
+
+Constraints that still hold: per-company `.eq`-equivalent queries only (the
+RPC takes a single company id — scope profiles are still paginated separately
+and merged client-side), stable ordering `(created_at DESC, id DESC)`,
+PostgREST `max_rows` clamps RPC responses at 1000 exactly like table reads,
+and every call rides `withDbSlot`. If the RPC's shape changes, keep the
+row-value cursor and the once-per-call access check — reverting to either the
+OR-form predicate or a per-row policy check reintroduces the timeout.
+
+Known follow-up: the same per-row `user_can_access_company()` policy cost
+applies to every other RLS table read (e.g. `prompt_responses`). Rewriting
+those policies as a hashable `company_id IN (select …)` form would cut that
+cost platform-wide without per-table RPCs.

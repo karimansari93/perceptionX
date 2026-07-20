@@ -1309,44 +1309,45 @@ export const useDashboardData = () => {
     try {
       setAiThemesLoading(true);
 
-      // Bound by 180 days. Served by idx_ai_themes_company_created
-      // (company_id, created_at DESC): an index range scan, no sort.
+      // Bound by 180 days. Served by idx_ai_themes_company_created_id
+      // (company_id, created_at DESC, id DESC): an index range scan, no sort.
       const AI_THEMES_DAYS = 180;
       const aiThemesCutoffIso = new Date(Date.now() - AI_THEMES_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-      // Only the columns the Overview themes/attributes cards consume —
-      // skips heavy theme_description / context_snippets[] / keywords[]
-      // (cuts row width ~609B -> ~100B).
-      const COLS =
-        'id, response_id, theme_name, sentiment, sentiment_score, attribute_id, attribute_name, created_at';
       const PAGE_SIZE = 1000;
 
-      // Keyset pagination on (created_at DESC, id DESC) instead of OFFSET.
-      // OFFSET re-walks all skipped rows every page (O(n^2/page)); keyset
-      // keeps every page O(PAGE_SIZE) by seeking past the last cursor.
+      // Keyset pagination on (created_at DESC, id DESC), via the
+      // ai_themes_keyset_page RPC instead of a PostgREST table read. The RPC
+      // exists for two measured reasons (2026-07, 18-profile Ford brand):
+      // - PostgREST can only express the cursor as
+      //   or=(created_at.lt.X,and(created_at.eq.X,id.lt.Y)), which Postgres
+      //   cannot use as a btree boundary — every page re-scanned all
+      //   previously-fetched rows and filtered them out (page N read N×1000
+      //   rows, so deep pages crossed the ~8s statement timeout). The RPC's
+      //   row-value comparison (created_at, id) < (X, Y) is an exact index
+      //   boundary, keeping every page O(PAGE_SIZE) regardless of depth.
+      // - The ai_themes RLS policy calls user_can_access_company() per
+      //   scanned row (~1.6s per 1000-row page on its own). The RPC is
+      //   SECURITY DEFINER and makes the identical access check once per
+      //   page. Worst-case page: ~8s before, ~8ms after.
+      // The RPC returns only the columns the themes/attributes UIs consume —
+      // skips heavy theme_description / context_snippets[] / keywords[].
       // One pagination PER scope company (merged after): keeps every page on
-      // the (company_id, created_at) index instead of a cross-company merge.
+      // the (company_id, created_at, id) index instead of a cross-company merge.
       const fetchThemesForCompany = async (companyId: string): Promise<any[]> => {
         let all: any[] = [];
         let cursor: { created_at: string; id: string } | null = null;
         // Hard cap to avoid an unbounded loop if data is pathological.
         for (let guard = 0; guard < 200; guard += 1) {
-          let q = supabase
-            .from('ai_themes')
-            .select(COLS)
-            .eq('company_id', companyId)
-            .gte('created_at', aiThemesCutoffIso)
-            .order('created_at', { ascending: false })
-            .order('id', { ascending: false })
-            .limit(PAGE_SIZE);
-
-          if (cursor) {
-            q = q.or(
-              `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
-            );
-          }
-
-          const { data, error } = (await withDbSlot(() => retrySupabaseQuery(() => q) as Promise<{
+          const { data, error } = (await withDbSlot(() => retrySupabaseQuery(() =>
+            (supabase as any).rpc('ai_themes_keyset_page', {
+              p_company_id: companyId,
+              p_cutoff: aiThemesCutoffIso,
+              p_cursor_created_at: cursor?.created_at ?? null,
+              p_cursor_id: cursor?.id ?? null,
+              p_limit: PAGE_SIZE,
+            })
+          ) as Promise<{
             data: any[] | null;
             error: any;
           }>));
