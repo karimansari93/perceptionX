@@ -300,7 +300,20 @@ export const groupCitationsByDomain = (citations: EnhancedCitation[]): Map<strin
   return grouped;
 };
 
-// Normalizes a URL for grouping: domain + path (no query/hash, lowercased, trims trailing slash, no www, no protocol)
+// Hosts whose page identity lives in a query parameter rather than the path.
+// youtube.com/watch?v=ID is the canonical case: the path is always "/watch",
+// so stripping the whole query string collapses every video into one page.
+// For these hosts the listed params are kept in the grouping key; all other
+// params (t=, si=, feature=, utm_*) are still dropped so timestamp/tracking
+// variants of the same video keep collapsing together.
+const IDENTITY_QUERY_PARAMS: Record<string, string[]> = {
+  'youtube.com': ['v', 'list'],
+  'music.youtube.com': ['v', 'list'],
+};
+
+// Normalizes a URL for grouping: domain + path (no query/hash, lowercased, trims trailing slash, no www, no protocol).
+// For IDENTITY_QUERY_PARAMS hosts, the identity params are appended in a fixed
+// order (param values keep their case — YouTube video IDs are case-sensitive).
 export function normalizePageKey(urlLike: string): string {
   try {
     // Extract actual source URL if it's a Google Translate URL
@@ -308,8 +321,25 @@ export function normalizePageKey(urlLike: string): string {
     if (!/^https?:\/\//.test(clean)) clean = 'https://' + clean;
     const u = new URL(clean);
     let host = u.hostname.replace(/^www\./, '').toLowerCase();
-    let path = u.pathname.replace(/\/$/, '').toLowerCase();
-    return `${host}${path}`;
+    // Mobile YouTube serves the same pages as desktop.
+    if (host === 'm.youtube.com') host = 'youtube.com';
+    const path = u.pathname.replace(/\/$/, '');
+
+    // youtu.be/<id> short links are the same page as the full watch URL.
+    if (host === 'youtu.be') {
+      const id = path.split('/')[1];
+      if (id) return `youtube.com/watch?v=${id}`;
+    }
+
+    const identityParams = IDENTITY_QUERY_PARAMS[host];
+    if (identityParams) {
+      const kept = identityParams
+        .filter((p) => u.searchParams.get(p))
+        .map((p) => `${p}=${u.searchParams.get(p)}`);
+      if (kept.length > 0) return `${host}${path.toLowerCase()}?${kept.join('&')}`;
+    }
+
+    return `${host}${path.toLowerCase()}`;
   } catch {
     // Fallback if not valid URL
     return urlLike.trim().toLowerCase();
