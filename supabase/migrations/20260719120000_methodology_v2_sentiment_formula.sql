@@ -49,11 +49,17 @@
 --     positive/(positive+negative) and only gains the model filter;
 --   * get_report_data (monthly client report) — codified, gains the filter.
 --
--- Deploy note: run over a direct connection (supabase db push) or the
--- management API. The inline rebuilds are the same cost class as ~7
--- staleness-tick full refreshes plus the matview recreations (several
--- minutes total). Readers keep seeing the old numbers until COMMIT, then
--- everything flips at once.
+-- Deploy note: as ONE transaction this is only safe on a FRESH environment
+-- (no readers). Against live prod, apply in chunks with separate
+-- transactions — the 2026-07-21 incident was caused by running this whole
+-- file as one transaction: the ALTER TABLE took an ACCESS EXCLUSIVE lock on
+-- company_response_sentiment_mv that was then held for the full ~10-minute
+-- run, wedging every dashboard read behind it (500s), and the queued readers
+-- exhausted the pool (503s). Live-prod order (what was actually applied on
+-- 2026-07-21): (1) ALTER + all function bodies in one fast transaction;
+-- (2) each table rebuild as its own statement (row locks only);
+-- (3) each matview replaced via build-alongside + rename swap;
+-- (4) refreshes, grants, comments.
 -- =============================================================================
 
 BEGIN;
@@ -796,6 +802,45 @@ AS $function$
       OR
       DATE(pr.tested_at) BETWEEN p_p2_start AND p_p2_end
     );
+$function$;
+
+-- -----------------------------------------------------------------------------
+-- 4c. ai_themes_keyset_page (dashboard theme drilldowns, 20260720095337 +
+--     PR #65/#66): the RPC is the client-facing themes read path, so the
+--     model exclusion lives inside it. Body is the live definition plus the
+--     EXISTS filter on the parent response's ai_model.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.ai_themes_keyset_page(p_company_id uuid, p_cutoff timestamp with time zone, p_cursor_created_at timestamp with time zone DEFAULT NULL::timestamp with time zone, p_cursor_id uuid DEFAULT NULL::uuid, p_limit integer DEFAULT 1000, p_attribute_ids text[] DEFAULT NULL::text[])
+ RETURNS TABLE(id uuid, response_id uuid, theme_name text, sentiment text, sentiment_score double precision, attribute_id text, attribute_name text, created_at timestamp with time zone)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if not (is_admin() or user_can_access_company(p_company_id)) then
+    return;
+  end if;
+
+  return query
+  select t.id, t.response_id, t.theme_name, t.sentiment, t.sentiment_score,
+         t.attribute_id, t.attribute_name, t.created_at
+  from public.ai_themes t
+  where t.company_id = p_company_id
+    and t.created_at >= p_cutoff
+    and (p_attribute_ids is null or t.attribute_id = any(p_attribute_ids))
+    -- Methodology v2: excluded models never reach client-facing surfaces
+    and exists (
+      select 1 from public.prompt_responses pr
+      where pr.id = t.response_id
+        and pr.ai_model not in ('claude','gemini','deepseek')
+    )
+    and (t.created_at, t.id) < (
+      coalesce(p_cursor_created_at, 'infinity'::timestamptz),
+      coalesce(p_cursor_id, 'ffffffff-ffff-ffff-ffff-ffffffffffff'::uuid)
+    )
+  order by t.created_at desc, t.id desc
+  limit least(greatest(coalesce(p_limit, 1000), 1), 1000);
+end;
 $function$;
 
 -- -----------------------------------------------------------------------------
