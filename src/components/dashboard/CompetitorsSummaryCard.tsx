@@ -16,6 +16,10 @@ interface CompetitorsSummaryCardProps {
   searchResults?: any[];
   perceptionScoreTrend?: any[];
   previousPeriodResponses?: any[];
+  // True while the raw response stream is still arriving (it loads AFTER
+  // first paint). This card derives its list from raw responses, so while
+  // streaming it skeletons instead of "No competitor mentions found yet".
+  responsesLoading?: boolean;
 }
 
 export const CompetitorsSummaryCard = ({ 
@@ -24,7 +28,8 @@ export const CompetitorsSummaryCard = ({
   companyName, 
   searchResults = [],
   perceptionScoreTrend = [],
-  previousPeriodResponses = []
+  previousPeriodResponses = [],
+  responsesLoading = false
 }: CompetitorsSummaryCardProps) => {
   const navigate = useNavigate();
 
@@ -247,12 +252,26 @@ export const CompetitorsSummaryCard = ({
           <CardTitle className="text-lg font-semibold">Competitors</CardTitle>
         </CardHeader>
         <CardContent className="px-4 sm:px-6">
-          <div className="text-center py-8 text-gray-500">
-            <div className="w-8 h-8 mx-auto mb-2 bg-gray-100 rounded-full flex items-center justify-center">
-              <span className="text-lg font-bold text-gray-400">🏢</span>
+          {responsesLoading ? (
+            <div className="space-y-3 py-2" aria-busy="true">
+              {[1, 2, 3, 4, 5].map(i => (
+                <div key={i} className="flex items-center justify-between py-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-3 w-24 bg-gray-100 rounded animate-pulse" />
+                  </div>
+                  <div className="h-3 w-8 bg-gray-100 rounded animate-pulse" />
+                </div>
+              ))}
             </div>
-            <p className="text-sm">No competitor mentions found yet.</p>
-          </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              <div className="w-8 h-8 mx-auto mb-2 bg-gray-100 rounded-full flex items-center justify-center">
+                <span className="text-lg font-bold text-gray-400">🏢</span>
+              </div>
+              <p className="text-sm">No competitor mentions found yet.</p>
+            </div>
+          )}
         </CardContent>
       </Card>
     );

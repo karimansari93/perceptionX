@@ -69,7 +69,7 @@ export default function Onboarding() {
           </h1>
           <p className="text-sm text-slate-600">
             {load.reason === 'expired'
-              ? 'Onboarding links are live for 14 days. Ask your PerceptionX contact to send a fresh one — it takes them a minute.'
+              ? 'Onboarding links are live for 30 days. Ask your PerceptionX contact to reactivate it — your answers are saved, and it takes them a minute.'
               : 'Check the link matches the one in your invite email. If it does, ask your PerceptionX contact for a fresh one.'}
           </p>
         </div>

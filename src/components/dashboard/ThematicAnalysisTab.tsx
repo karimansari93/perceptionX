@@ -58,14 +58,21 @@ interface ThematicAnalysisTabProps {
   // attribute rankings instantly; raw ai_themes load in the background only for
   // the per-attribute drilldown.
   attributeThemes?: any[];
-  // Lazily loads the raw ai_themes for this company. The dashboard no longer
-  // pulls raw themes eagerly; this tab triggers the fetch when it mounts since
-  // it needs subtheme-level detail the attribute MVs don't carry.
-  fetchAIThemes?: () => Promise<void> | void;
+  // Lazily loads the raw ai_themes for ONE attribute (the open drilldown).
+  // The main ranking renders from the attribute MV; only the drilldown needs
+  // subtheme-level rows, so nothing is fetched until one opens. Rows
+  // accumulate in the hook across drilled attributes.
+  fetchAIThemesForAttribute?: (attributeId: string) => Promise<void> | void;
+  // v2 attribute ids whose raw themes are fully loaded for the current scope.
+  aiThemeAttrsLoaded?: string[];
   onRefreshThemes: () => Promise<void>;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   previousPeriodResponses?: PromptResponse[];
+  // True while the raw response stream for the current company is still
+  // arriving (it loads AFTER first paint). Gates the empty state: skeleton
+  // cards, never "No Experience Data", until the stream is final.
+  responsesLoading?: boolean;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
@@ -115,39 +122,43 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
   'overall-candidate-experience': Briefcase
 };
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = [], fetchAIThemes, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
-  // Lazily pull raw themes the first time this tab mounts (and when the company
-  // changes and it's already open). The Overview no longer fetches them eagerly.
-  useEffect(() => {
-    if (fetchAIThemes && aiThemes.length === 0 && !aiThemesLoading) {
-      fetchAIThemes();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyName]);
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = [], fetchAIThemesForAttribute, aiThemeAttrsLoaded = [], onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  // Raw ai_themes lazy-load when this tab mounts; the per-attribute drilldown
-  // must not declare "no responses" while they're still in flight (that was
-  // the false error that resolved itself a few seconds later). "Settled" =
-  // loading finished with data, or stayed empty past a short grace period
-  // (a genuinely theme-less company).
-  const [themesSettled, setThemesSettled] = useState(false);
-  useEffect(() => {
-    if (aiThemesLoading) {
-      setThemesSettled(false);
-      return;
-    }
-    if (aiThemes.length > 0) {
-      setThemesSettled(true);
-      return;
-    }
-    const timer = setTimeout(() => setThemesSettled(true), 4000);
-    return () => clearTimeout(timer);
-  }, [aiThemesLoading, aiThemes.length]);
   // Modal and filter states - persisted
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
   const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('thematicTab.isModalOpen', false);
+
+  // Fetch raw themes for the drilldown's attribute when it opens. Also fires
+  // on mount when the persisted modal state restores an open drilldown, and
+  // again after a refresh/scope change empties the loaded set. The hook
+  // guards re-entrancy, so extra fires are no-ops.
+  useEffect(() => {
+    if (isModalOpen && selectedAttribute && fetchAIThemesForAttribute &&
+        !aiThemeAttrsLoaded.includes(selectedAttribute)) {
+      fetchAIThemesForAttribute(selectedAttribute);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isModalOpen, selectedAttribute, aiThemeAttrsLoaded]);
+
+  // The drilldown must not declare "no responses" while its attribute's raw
+  // themes are still in flight (that was the false error that resolved itself
+  // a few seconds later). "Settled" = the selected attribute's rows are
+  // loaded, or loading stopped without them past a short grace period (fetch
+  // failure / genuinely theme-less attribute). Derived — NOT plain state —
+  // and the grace marker is keyed to the attribute it elapsed for, so
+  // switching attributes can never read a stale settled=true and auto-fire
+  // the AI summary against rows that haven't arrived.
+  const selectedAttributeLoaded = !!selectedAttribute && aiThemeAttrsLoaded.includes(selectedAttribute);
+  const [graceElapsedFor, setGraceElapsedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selectedAttribute || selectedAttributeLoaded || aiThemesLoading) return;
+    const attr = selectedAttribute;
+    const timer = setTimeout(() => setGraceElapsedFor(attr), 4000);
+    return () => clearTimeout(timer);
+  }, [selectedAttribute, selectedAttributeLoaded, aiThemesLoading]);
+  const themesSettled = selectedAttributeLoaded || (!!selectedAttribute && graceElapsedFor === selectedAttribute);
   const [selectedPromptType, setSelectedPromptType] = usePersistedState<'all' | 'experience' | 'competitive'>('thematicTab.selectedPromptType', 'experience');
   // Controlled by the parent Dashboard so the job-function selection is shared
   // across all tabs and never resets on tab switch.
@@ -822,19 +833,31 @@ CRITICAL: When you reference information from a source, add an inline citation l
         )}
       </div>
 
-      {/* No Data Message */}
+      {/* No Data Message — skeleton while the raw stream is still arriving */}
       {filteredResponses.length === 0 && (
-        <Card>
-          <CardContent className="p-6">
-            <div className="text-center">
-              <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No Experience Data</h3>
-              <p className="text-gray-600">
-                You need responses from experience prompts to run thematic analysis.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        responsesLoading ? (
+          <Card>
+            <CardContent className="p-6">
+              <div className="space-y-3" aria-busy="true">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="p-6">
+              <div className="text-center">
+                <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">No Experience Data</h3>
+                <p className="text-gray-600">
+                  You need responses from experience prompts to run thematic analysis.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )
       )}
 
       {/* Error Display */}
