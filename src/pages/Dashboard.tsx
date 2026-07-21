@@ -135,7 +135,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     fixExistingPrompts,
     hasDataIssues,
     aiThemes,
-    fetchAIThemes,
+    fetchAIThemesForAttribute,
+    aiThemeAttrsLoaded,
     attributeThemes,
     responseSentimentRows,
     isOnline,
@@ -684,7 +685,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 aiThemes={aiThemes}
                 aiThemesLoading={aiThemesLoading}
                 attributeThemes={attributeThemes}
-                fetchAIThemes={fetchAIThemes}
+                fetchAIThemesForAttribute={fetchAIThemesForAttribute}
+                aiThemeAttrsLoaded={aiThemeAttrsLoaded}
                 onRefreshThemes={refreshData}
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
