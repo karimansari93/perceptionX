@@ -218,6 +218,14 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     }
   }, [selectedJobFunction, availableJobFunctions, allResponses.length, responsesLoadedCompanyId, currentCompany?.id, setSelectedJobFunction]);
 
+  // Raw prompt_responses now stream in AFTER first paint (the headline
+  // numbers are rollup-first). While the current company's stream hasn't
+  // fully landed, raw-derived tabs render skeleton rows instead of "No data"
+  // empty states. Keyed on responsesLoadedCompanyId — the one flag that means
+  // "the raw set is FINAL" (all pages committed, loaded empty, or cache-
+  // restored).
+  const responsesStreaming = responsesLoadedCompanyId !== currentCompany?.id;
+
   // The starred view (location + period) is applied inside useDashboardData's
   // company-entry effect — same code path as pending sibling-switch locations,
   // so it can't clobber an explicit pick and gets the same loading-flag
@@ -541,6 +549,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
+            responsesLoading={responsesStreaming}
             market={selectedMarketName}
             selectedJobFunction={selectedJobFunction}
             onJobFunctionChange={setSelectedJobFunction}
@@ -609,6 +618,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             recencyData={recencyData}
             recencyDataLoading={recencyDataLoading}
             aiThemesLoading={aiThemesLoading}
+            responsesLoading={responsesStreaming}
             metricsCalculating={metricsCalculating}
             responseTexts={responseTexts}
             fetchResponseTexts={fetchResponseTexts}
@@ -639,6 +649,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
                 previousPeriodResponses={previousPeriodResponses}
+                responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={setSelectedJobFunction}
               />
@@ -657,6 +668,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
                 previousPeriodResponses={previousPeriodResponses}
+                responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={setSelectedJobFunction}
               />
@@ -679,6 +691,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
                 previousPeriodResponses={previousPeriodResponses}
+                responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={setSelectedJobFunction}
               />
@@ -699,6 +712,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
                 scopeCompanyIds={scopeCompanyIds}
+                responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={setSelectedJobFunction}
               />

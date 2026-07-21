@@ -125,19 +125,30 @@ const aggregateAttributeThemeRows = (rows: any[]): any[] => {
 // ~6 in flight keeps the pipeline saturated without stampeding Postgres.
 // A slot is held across retry backoff too — deliberate backpressure while
 // the database is struggling.
+// TWO-TIER: the gate is FIFO within a tier, but critical-path fetches (the
+// small ones first paint depends on — prompts, rollup MVs, visibility) always
+// jump ahead of queued BULK row streams (response pages, raw ai_themes).
+// Without the tiers, an explicit refresh on an 18-profile brand queued the
+// prompts fetch's sequential pages behind ~90 ai_themes/response-page jobs
+// (some 8s each) — measured 65s before prompts finished and the skeleton
+// cleared, on a dashboard whose rollups were done at 4s.
 const DB_CONCURRENCY = 6;
 let dbInFlight = 0;
 const dbWaiters: Array<() => void> = [];
-const withDbSlot = async <T,>(fn: () => Promise<T> | PromiseLike<T>): Promise<T> => {
+const dbBulkWaiters: Array<() => void> = [];
+const withDbSlot = async <T,>(
+  fn: () => Promise<T> | PromiseLike<T>,
+  opts?: { bulk?: boolean }
+): Promise<T> => {
   while (dbInFlight >= DB_CONCURRENCY) {
-    await new Promise<void>(resolve => dbWaiters.push(resolve));
+    await new Promise<void>(resolve => (opts?.bulk ? dbBulkWaiters : dbWaiters).push(resolve));
   }
   dbInFlight += 1;
   try {
     return await fn();
   } finally {
     dbInFlight -= 1;
-    const next = dbWaiters.shift();
+    const next = dbWaiters.shift() ?? dbBulkWaiters.shift();
     if (next) next();
   }
 };
@@ -163,6 +174,11 @@ const visibilityFromMvRows = (
   if (total === 0) return null;
   return { pct: (mentioned / total) * 100, total, mentioned };
 };
+
+// Eager raw-response window (days). Shared by the background response fetch
+// and the rollup-derived period fallback so both agree on which months can
+// exist in the dashboard's working set.
+const EAGER_DAYS = 180;
 
 // Sum MV rows by a key column (e.g. domain → citation_count). Needed wherever
 // rows can arrive from several companies/location buckets that repeat a key.
@@ -336,6 +352,12 @@ export const useDashboardData = () => {
   // stream has arrived, and location/function/month re-scoping is a pure
   // client-side filter. Empty ⇒ consumers fall back to raw responses.
   const [visibilityMvRows, setVisibilityMvRows] = useState<any[]>([]);
+  // True while the visibility rollup fetch is in flight. The readiness effect
+  // uses it to hold the scorecard skeleton until visibility has an exact
+  // source (rollup rows, or the raw fallback once responses arrive) — raw
+  // responses are no longer on the critical path, so without this flag the
+  // scorecards could paint a false 0%/fallback value before the rollup lands.
+  const [visibilityMvLoading, setVisibilityMvLoading] = useState(false);
 
   // Public location setter. Flips the location-loading flag on the SAME tick as
   // the selection change (not later, when the fetch effect runs) so the UI goes
@@ -463,7 +485,6 @@ export const useDashboardData = () => {
       // history. Older rows are fetched on demand by tabs that need
       // historical drilldowns.
       const PAGE_SIZE = 1000;
-      const EAGER_DAYS = 180;
       const eagerCutoffIso = new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
       // Use the canonicalized view so detected_competitors arrives with
@@ -482,6 +503,8 @@ export const useDashboardData = () => {
       // satisfies this ordering directly, and a tiebreaker would force a
       // multi-MB sort node per page. Pages are deduped by id after fetch.
       const fetchResponsePage = (companyId: string, from: number, to: number, withCount: boolean) =>
+        // bulk: response pages hydrate in the background — they must never
+        // delay the critical-path fetches (prompts, rollup MVs) in the gate.
         withDbSlot(() => retrySupabaseQuery(() =>
           supabase
             .from('prompt_responses_canonical')
@@ -501,6 +524,7 @@ export const useDashboardData = () => {
               index_period,
               confirmed_prompts!inner(
                 id,
+                company_id,
                 prompt_text,
                 prompt_category,
                 prompt_type,
@@ -515,7 +539,7 @@ export const useDashboardData = () => {
             .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
             .range(from, to)
-        ) as Promise<{ data: any[] | null; error: any; count: number | null }>);
+        ) as Promise<{ data: any[] | null; error: any; count: number | null }>, { bulk: true });
 
       const byTestedAtDesc = (a: any, b: any) =>
         new Date(b.tested_at || b.created_at || 0).getTime() - new Date(a.tested_at || a.created_at || 0).getTime();
@@ -542,19 +566,17 @@ export const useDashboardData = () => {
         return { data: all, error: null };
       };
 
-      // Prompts and the newest page of every profile's responses load in
-      // parallel. The merged first pages are enough to paint the dashboard;
-      // the remaining pages stream in behind.
-      const [promptsResult, ...firstPageResults] = await Promise.all([
-        fetchAllPrompts(),
-        ...requestedScopeIds.map(id => fetchResponsePage(id, 0, PAGE_SIZE - 1, true)),
-      ]);
+      // CRITICAL PATH: prompts only. Raw response rows are heavy (citations
+      // jsonb, thousands of rows per profile) and everything the first paint
+      // shows is rollup-first — so the response pages stream in the
+      // BACKGROUND below, hydrating tables/drilldowns as they arrive. The
+      // prompt list stays eager: it's small, and the Prompts table shell and
+      // the "analysis in progress" detection need it.
+      const promptsResult = await fetchAllPrompts();
 
       if (isStale()) return;
 
       const { data: userPrompts, error: promptsError } = promptsResult;
-
-      const responsesError = firstPageResults.find(r => r.error)?.error;
 
       if (promptsError) {
         console.error('🔍 Error fetching prompts:', promptsError);
@@ -562,10 +584,6 @@ export const useDashboardData = () => {
           throw new Error('You don\'t have permission to view prompts for this company. Please contact support if you believe this is an error.');
         }
         throw new Error('Unable to load prompts. Please refresh the page or try again later.');
-      }
-
-      if (responsesError) {
-        throw responsesError;
       }
 
       if (!userPrompts || userPrompts.length === 0) {
@@ -583,21 +601,41 @@ export const useDashboardData = () => {
       setHasDataIssues(false);
       setHasMoreResponses(false);
 
+      // FIRST PAINT HAPPENS HERE. The rollup fetches running in parallel
+      // (fetchMVData / fetchCompanyMetrics / the visibility-MV effect) own
+      // every headline number; nothing below this line gates the render.
+      // Consumers key raw-dependent sections on responsesLoadedCompanyId to
+      // show skeletons (not "No data") while the stream is still arriving.
+      setLoading(false);
+      setCompetitorLoading(false);
+
+      // BACKGROUND: newest page of every profile's responses, in parallel
+      // (per-company .eq pagination — the merged .in() ordered shape is the
+      // statement-timeout incident, see §8 of the audit doc).
+      const firstPageResults = await Promise.all(
+        requestedScopeIds.map(id => fetchResponsePage(id, 0, PAGE_SIZE - 1, true))
+      );
+
+      if (isStale()) return;
+
+      const responsesError = firstPageResults.find(r => r.error)?.error;
+      if (responsesError) {
+        throw responsesError;
+      }
+
       const perCompanyFirstPages = firstPageResults.map(r => ({
         rows: r.data ?? [],
         total: r.count ?? (r.data?.length ?? 0),
       }));
       const firstPage = perCompanyFirstPages.flatMap(p => p.rows).sort(byTestedAtDesc);
 
-      // First paint: render the newest pages immediately instead of holding
-      // the dashboard until every page (and attributes) arrives. State is set
-      // again below with the full set once the background fetches land.
+      // Progressive hydration: commit the newest pages immediately instead of
+      // holding the tables until every page (and attributes) arrives. State is
+      // set again below with the full set once the background fetches land.
       setResponses(firstPage);
       if (firstPage.length > 0) {
         setLastUpdated(new Date(firstPage[0].tested_at || firstPage[0].updated_at || firstPage[0].created_at));
       }
-      setLoading(false);
-      setCompetitorLoading(false);
 
       const fetchRemainingPages = async (): Promise<any[]> => {
         const jobs: Promise<{ data: any[] | null; error: any; count: number | null }>[] = [];
@@ -622,91 +660,28 @@ export const useDashboardData = () => {
           .sort(byTestedAtDesc);
       };
 
-      // Attribute rows feed both the Thematic tab and Overview's attribute
-      // cards, so fetch them eagerly: first page with a count, remaining
-      // pages in parallel, bounded to the same 180-day window. Errors are
-      // swallowed so the dashboard still renders with regular responses.
-      const fetchAttributeRaw = async (): Promise<any[]> => {
-        try {
-          // Per-company pagination for the same statement-timeout reason as
-          // the main fetch above.
-          const attributePage = (companyId: string, from: number, to: number, withCount: boolean) =>
-            withDbSlot(() => supabase
-              // Canonicalized view — see comment on main fetch above.
-              .from('prompt_responses_canonical')
-              .select(`
-                id,
-                confirmed_prompt_id,
-                company_id,
-                ai_model,
-                tested_at,
-                created_at,
-                updated_at,
-                response_month,
-                company_mentioned,
-                detected_competitors,
-                citations,
-                for_index,
-                index_period,
-                confirmed_prompts!inner(
-                  id,
-                  user_id,
-                  prompt_type,
-                  prompt_text,
-                  attribute_id,
-                  company_id,
-                  industry_context,
-                  job_function_context,
-                  location_context
-                )
-              `, withCount ? { count: 'exact' } : undefined)
-              // The base-table company_id predicate is what lets the
-              // (company_id, tested_at) index serve ORDER BY + OFFSET; the
-              // embedded filter alone forces a join-then-sort over the whole
-              // window — the statement-timeout shape from the incident.
-              .eq('company_id', companyId)
-              .eq('confirmed_prompts.company_id', companyId)
-              .not('confirmed_prompts.attribute_id', 'is', null)
-              .gte('tested_at', eagerCutoffIso)
-              .order('tested_at', { ascending: false })
-              .range(from, to));
-
-          const perCompany = await Promise.all(requestedScopeIds.map(async (companyId) => {
-            const first = await attributePage(companyId, 0, PAGE_SIZE - 1, true);
-            if (first.error) throw first.error;
-            let rows = first.data ?? [];
-            const total = first.count ?? rows.length;
-            const pages = Math.ceil(total / PAGE_SIZE);
-            if (pages > 1) {
-              const rest = await Promise.all(
-                Array.from({ length: pages - 1 }, (_, i) =>
-                  attributePage(companyId, (i + 1) * PAGE_SIZE, (i + 2) * PAGE_SIZE - 1, false)
-                )
-              );
-              for (const r of rest) {
-                if (r.error) throw r.error;
-                rows = rows.concat(r.data ?? []);
-              }
-            }
-            return rows;
-          }));
-          // Newest-first across the merged scope, so the latest-per-prompt
-          // dedupe below keeps the newest row.
-          return perCompany.flat().sort(byTestedAtDesc);
-        } catch (error) {
-          console.error('Error fetching attribute responses:', error);
-          // Continue with regular responses even if the attribute fetch fails
-          return [];
-        }
-      };
-
-      const [data, attributeRaw] = await Promise.all([
-        fetchRemainingPages(),
-        fetchAttributeRaw(),
-      ]);
+      const data = await fetchRemainingPages();
       if (isStale()) return;
 
       let allResponses = data || [];
+
+      // Attribute rows feed the Thematic tab and Overview's attribute cards.
+      // They are a STRICT SUBSET of the stream just fetched (same table, same
+      // company predicate, same 180-day window — just the attribute-tagged
+      // prompts), so derive them client-side instead of re-downloading them.
+      // The old second fetch family filtered on the embedded
+      // confirmed_prompts.attribute_id, which forces the planner to drive
+      // through confirmed_prompts (one index probe per attribute prompt,
+      // measured ~50x slower per page than the (company_id, tested_at) path,
+      // ~2.5s uncontended) plus an equally slow count: 'exact' — it kept
+      // crossing the ~8s statement timeout (HTTP 500) during the initial
+      // fan-out and, because its errors were swallowed, silently dropped all
+      // attribute data when it did. The embedded prompt-company filter is
+      // mirrored below (prompt must belong to the same profile as the row).
+      const attributeRaw = allResponses.filter(r =>
+        r.confirmed_prompts?.attribute_id != null &&
+        (r.confirmed_prompts?.company_id == null || r.confirmed_prompts.company_id === r.company_id)
+      );
 
       {
         try {
@@ -1369,6 +1344,11 @@ export const useDashboardData = () => {
         let cursor: { created_at: string; id: string } | null = null;
         // Hard cap to avoid an unbounded loop if data is pathological.
         for (let guard = 0; guard < 200; guard += 1) {
+          // bulk: drilldown pages must never jump ahead of queued critical
+          // first-paint fetches in the gate. (Post-RPC this family is a
+          // handful of ~10ms pages per drilled attribute, not the ~90-query
+          // stream that once starved the prompts fetch — bulk is now just
+          // politeness, not survival.)
           const { data, error } = (await withDbSlot(() => retrySupabaseQuery(() =>
             (supabase as any).rpc('ai_themes_keyset_page', {
               p_company_id: companyId,
@@ -1381,7 +1361,7 @@ export const useDashboardData = () => {
           ) as Promise<{
             data: any[] | null;
             error: any;
-          }>));
+          }>, { bulk: true }));
 
           // Abandon early if the user already moved on — no point fetching
           // the remaining pages for a company we won't display.
@@ -2074,10 +2054,12 @@ export const useDashboardData = () => {
     const companyId = currentCompany?.id;
     if (!user?.id || !companyId) {
       setVisibilityMvRows([]);
+      setVisibilityMvLoading(false);
       return;
     }
     const ids = scopeCompanyIds.length > 0 ? scopeCompanyIds : [companyId];
     let cancelled = false;
+    setVisibilityMvLoading(true);
     (async () => {
       try {
         const PAGE = 1000;
@@ -2103,6 +2085,8 @@ export const useDashboardData = () => {
       } catch {
         // MV missing / not yet refreshed — raw-response fallback takes over.
         if (!cancelled) setVisibilityMvRows([]);
+      } finally {
+        if (!cancelled) setVisibilityMvLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -2304,12 +2288,29 @@ export const useDashboardData = () => {
   // used to offer months with zero in-location data, whose selection produced
   // a mixed-scope scorecard (0% visibility next to aggregate sentiment). ---
   const availablePeriods: PeriodInfo[] = useMemo(() => {
-    if (visibleResponses.length === 0) return [];
     const monthSet = new Set<string>();
     visibleResponses.forEach(r => {
       const key = responseMonthKey(r);
       if (key) monthSet.add(key);
     });
+    // Raw responses stream in AFTER first paint now, so until this company's
+    // stream has fully landed, widen the month set from the visibility
+    // rollup (already scoped to the active location by the same attribution
+    // rule), clamped to the eager response window so the interim list covers
+    // the same months the raw set will. Once the load is FINAL the fallback
+    // stops contributing and periods derive from responses alone — exactly
+    // the pre-streaming behavior (never offering a month whose in-location
+    // raw data doesn't exist, which produced mixed-scope scorecards).
+    if (responsesLoadedCompanyId !== currentCompany?.id) {
+      const cutoff = new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000);
+      const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
+      visibilityRowsForSelection.forEach(row => {
+        if (!row.response_month) return;
+        const key = String(row.response_month).slice(0, 7);
+        if (key >= cutoffKey) monthSet.add(key);
+      });
+    }
+    if (monthSet.size === 0) return [];
     const periods: PeriodInfo[] = Array.from(monthSet)
       .map((key) => {
         const [y, m] = key.split('-').map(Number);
@@ -2320,7 +2321,7 @@ export const useDashboardData = () => {
       })
       .sort((a, b) => b.startDate.getTime() - a.startDate.getTime());
     return periods;
-  }, [visibleResponses]);
+  }, [visibleResponses, visibilityRowsForSelection, responsesLoadedCompanyId, currentCompany?.id]);
 
   // Re-scope sentiment & relevance (and sources/competitors/LLMs/attributes)
   // to the selected location using the pre-aggregated `_by_location_mv` views.
@@ -2824,29 +2825,43 @@ export const useDashboardData = () => {
   // Don't show anything until sentiment loads - this ensures all metrics appear together
   // CRITICAL: Only show metrics when data is ACTUALLY ready and calculated
   useEffect(() => {
-    // Metrics are ready when:
-    // 1. Responses are loaded (needed for visibility calculation)
-    // 2. Backend metrics query is complete (sentiment comes from MV only)
-    // 3. Relevance is ready (backend metrics exist OR recency fetch completed)
-    const responsesReady = !loading && responses.length > 0;
+    // ROLLUP-FIRST READINESS: the scorecards no longer wait for the raw
+    // response stream (it now lands AFTER first paint). Metrics are ready
+    // when:
+    // 1. The sentiment/relevance MV fetch has settled (sentiment is MV-only).
+    // 2. Visibility has an EXACT source — rollup rows arrived, or (rollup
+    //    empty / still loading) enough of the raw fallback exists to count.
+    //    Without this gate the scorecards could paint a false 0% visibility
+    //    from zero loaded responses before the rollup lands.
+    // 3. Relevance has backend metrics OR the recency fetch settled.
+    // 4. No location swap is mid-fetch (would flash company-wide numbers).
+    // A load that finished with ZERO responses keeps calculating=true, same
+    // as before — the page-level setup/"analysis in progress" states own
+    // that render, not the scorecards.
+    const responsesFinal = responsesLoadedCompanyId === currentCompany?.id;
+    const finalAndEmpty = responsesFinal && responses.length === 0;
     const backendMetricsReady = !companyMetricsLoading;
-    
-    // Sentiment is ready when MV query completes (MV-only, no frontend fallback)
-    const sentimentReady = !companyMetricsLoading;
+
+    // Judge readiness on the LOCATION-SCOPED rollup rows — the same set the
+    // rendered visibility number consumes — not the scope-wide fetch result.
+    // A selection whose bucket is missing from the visibility MV (differential
+    // MV staleness) must keep waiting for the raw fallback, or the scorecard
+    // would paint real sentiment next to a false 0% visibility.
+    const visibilityReady =
+      visibilityRowsForSelection.length > 0 ||
+      (!visibilityMvLoading && responses.length > 0) ||
+      responsesFinal;
 
     // Relevance is ready if backend metrics exist OR recency fetch completed
     const hasBackendRelevance = companyRelevanceMetrics !== null;
     const recencyFetchCompleted = !recencyDataLoading && (recencyData.length >= 0 || hasBackendRelevance);
     const relevanceReady = hasBackendRelevance || recencyFetchCompleted;
-    
-    // CRITICAL: Don't show anything until sentiment is ready
-    // All metrics ready when responses are loaded, backend query complete, AND sentiment/relevance are ready.
-    // When a location filter is active, also wait for the location-scoped MV
-    // fetch so the scorecards don't flash company-wide numbers first.
-    const allReady = responsesReady && backendMetricsReady && sentimentReady && relevanceReady && !locationMetricsLoading;
+
+    const allReady = !loading && backendMetricsReady && visibilityReady && relevanceReady &&
+      !locationMetricsLoading && !finalAndEmpty;
     setMetricsCalculating(!allReady);
 
-  }, [loading, responses.length, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length, locationMetricsLoading]);
+  }, [loading, responses.length, responsesLoadedCompanyId, currentCompany?.id, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length, locationMetricsLoading, visibilityMvLoading, visibilityRowsForSelection]);
 
   const metrics: DashboardMetrics = useMemo(() => {
     // Use period-filtered responses when a period is selected (multi-month companies)
@@ -2856,9 +2871,17 @@ export const useDashboardData = () => {
     // PREFER backend-calculated metrics from materialized views if available
     // Fallback to frontend calculation if backend data is not available
 
-    // Don't calculate if still loading AND we don't have backend metrics
-    // If backend metrics exist, we can use them even if responses aren't fully loaded yet
-    if ((loading || responses.length === 0) && !effSentimentMetrics && !effRelevanceMetrics) {
+    // Visibility rollup for the effective period, computed up front so BOTH
+    // "is there any data at all" guards below can see it. Raw responses now
+    // stream in after first paint, so responses.length === 0 no longer means
+    // "no data" — the rollups may already carry exact numbers.
+    const effectivePeriodKey = effectivePeriod?.key;
+    const mvVisibility = visibilityFromMvRows(visibilityRowsForSelection, effectivePeriodKey ?? null, null);
+
+    // Don't calculate if still loading AND no rollup source (sentiment/
+    // relevance MV metrics or the visibility rollup) has anything. If any
+    // rollup has data, compute from it even before responses arrive.
+    if ((loading || responses.length === 0) && !effSentimentMetrics && !effRelevanceMetrics && !mvVisibility) {
       return {
         averageSentiment: 0,
         sentimentLabel: 'Neutral',
@@ -2889,7 +2912,6 @@ export const useDashboardData = () => {
     let negativeCount = 0;
 
     // Use materialized view sentiment only — no frontend fallback
-    const effectivePeriodKey = effectivePeriod?.key;
     if (effectivePeriodKey && effSentimentByMonth[effectivePeriodKey] !== undefined) {
       // Period selected — use per-month MV value
       averageSentiment = effSentimentByMonth[effectivePeriodKey];
@@ -2985,9 +3007,9 @@ export const useDashboardData = () => {
     ).size;
 
     // Visibility: prefer the precomputed rollup (exact for the whole scope,
-    // independent of how much of the raw response stream has arrived); fall
-    // back to counting loaded responses when the rollup has no matching rows.
-    const mvVisibility = visibilityFromMvRows(visibilityRowsForSelection, effectivePeriodKey ?? null, null);
+    // independent of how much of the raw response stream has arrived — see
+    // mvVisibility hoisted above); fall back to counting loaded responses
+    // when the rollup has no matching rows.
     const mentionedCount = responses.filter(r => r.company_mentioned === true).length;
     const averageVisibility = mvVisibility
       ? mvVisibility.pct
@@ -3002,7 +3024,12 @@ export const useDashboardData = () => {
 
     // Calculate overall perception score
     const calculatePerceptionScore = () => {
-      if (responses.length === 0) return { score: 0, label: 'No Data', sentimentScore: 0, visibilityScore: 0, relevanceScore: 0 };
+      // "No Data" only when NO source has anything — zero loaded responses
+      // used to imply that, but raw rows now stream in after first paint
+      // while the rollups already carry the exact score inputs.
+      if (responses.length === 0 && !mvVisibility && !effSentimentMetrics && !effRelevanceMetrics) {
+        return { score: 0, label: 'No Data', sentimentScore: 0, visibilityScore: 0, relevanceScore: 0 };
+      }
 
       const sentimentScore = Math.round(Math.max(0, Math.min(100, averageSentiment * 100)));
       const visibilityScore = Math.round(averageVisibility);
