@@ -218,6 +218,7 @@ serve(async (req) => {
     // Returns the new user's id.
     const createAndInvite = async (email: string, role: string): Promise<string> => {
       let userId: string;
+      let actionLink: string | null = null;
       if (resendKey) {
         const { data, error } = await admin.auth.admin.generateLink({
           type: "invite",
@@ -226,7 +227,7 @@ serve(async (req) => {
         });
         if (error) throw error;
         userId = data.user.id;
-        await sendInviteEmail(email, data.properties.action_link);
+        actionLink = data.properties.action_link;
       } else {
         const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
           data: inviteMetadata(email),
@@ -236,16 +237,31 @@ serve(async (req) => {
         userId = data.user.id;
       }
 
-      // No DB trigger creates profiles rows — the app's user lists read from
-      // profiles, so create it here.
-      await admin.from("profiles").upsert({ id: userId, email }, { onConflict: "id" });
+      try {
+        if (actionLink) await sendInviteEmail(email, actionLink);
 
-      const { error: memberError } = await admin.from("organization_members").insert({
-        organization_id: org.id,
-        user_id: userId,
-        role,
-      });
-      if (memberError) throw memberError;
+        // No DB trigger creates profiles rows — the app's user lists read from
+        // profiles, so create it here.
+        await admin.from("profiles").upsert({ id: userId, email }, { onConflict: "id" });
+
+        const { error: memberError } = await admin.from("organization_members").insert({
+          organization_id: org.id,
+          user_id: userId,
+          role,
+        });
+        if (memberError) throw memberError;
+      } catch (err) {
+        // Roll back the placeholder auth user (profile + memberships cascade
+        // away with it). Without this, a transient failure — e.g. a Resend
+        // outage — leaves an auth user with no profile, and every future
+        // invite for this email fails with "already registered".
+        try {
+          await admin.auth.admin.deleteUser(userId);
+        } catch (cleanupErr) {
+          console.error(`Rollback of placeholder user for ${email} failed:`, cleanupErr);
+        }
+        throw err;
+      }
 
       return userId;
     };
@@ -402,11 +418,13 @@ serve(async (req) => {
           results.push({ email, status: "invited" });
         } catch (err) {
           console.error(`Invite failed for ${email}:`, err);
-          results.push({
-            email,
-            status: "error",
-            message: err instanceof Error ? err.message : "Invite failed",
-          });
+          const raw = err instanceof Error ? err.message : "Invite failed";
+          // An auth user without a profiles row (pre-rollback partial invite)
+          // hits this; surface something actionable instead of a GoTrue error.
+          const message = /already (been )?registered/i.test(raw)
+            ? "This email already has an account — contact PerceptionX support to add them to your team"
+            : raw;
+          results.push({ email, status: "error", message });
         }
       }
 
