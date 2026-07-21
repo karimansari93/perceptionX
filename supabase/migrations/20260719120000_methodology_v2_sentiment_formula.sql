@@ -25,31 +25,44 @@
 -- Effect: every company/market/month restates for ALL clients (accepted —
 -- including Ford, whose interim went out on the old formula).
 --
+-- IMPORTANT — this file is based on the LIVE prod definitions as of
+-- 2026-07-21 (pg_get_functiondef / pg_get_viewdef), NOT on this repo's older
+-- migration files, because prod carries drift the repo does not:
+--   * 20260719073224_sentiment_score_all_prompt_types removed the
+--     prompt_type IN ('sentiment','competitive') filter from BOTH sentiment
+--     rollups — sentiment now pools themes from ALL prompt types. Preserved.
+--   * serialize_company_metric_rebuilds gave every _refresh_cm_* helper a
+--     per-table advisory-lock prologue. Preserved.
+--   * 20260720085728_lock_down_public_materialized_views revoked anon read
+--     on the matviews — the re-grants below are authenticated/service_role
+--     ONLY, matching the lockdown (anon intentionally gets nothing).
+--
 -- What changes here:
---   * the 7 per-company rollup TABLE helpers (_refresh_cm_*, from
---     20260706120000/20260707120000) — new ratio in the sentiment ones, model
---     filter in all of them — then a full rebuild of the 7 tables;
+--   * the 7 per-company rollup TABLE helpers (_refresh_cm_*) — new ratio in
+--     the sentiment ones, model filter in all of them — then a full rebuild
+--     of the 7 tables;
 --   * company_response_sentiment_mv gains a negative_themes column so
 --     clients can pool positive/(positive+negative) across responses;
 --   * the 7 by-location matviews — recreated with the same changes;
 --   * competitor_benchmarks_mv — codified into the repo for the first time
 --     (it previously existed only in prod); it already used
---     positive/(positive+negative) and only gains the model filter.
+--     positive/(positive+negative) and only gains the model filter;
+--   * get_report_data (monthly client report) — codified, gains the filter.
 --
--- Deploy note: run over a direct connection (supabase db push). The inline
--- rebuilds are the same cost class as ~7 staleness-tick full refreshes plus
--- the matview recreations (several minutes total). Readers keep seeing the
--- old numbers until COMMIT, then everything flips at once.
+-- Deploy note: run over a direct connection (supabase db push) or the
+-- management API. The inline rebuilds are the same cost class as ~7
+-- staleness-tick full refreshes plus the matview recreations (several
+-- minutes total). Readers keep seeing the old numbers until COMMIT, then
+-- everything flips at once.
 -- =============================================================================
 
 BEGIN;
 
 SET LOCAL statement_timeout = 0;
-SET LOCAL lock_timeout = '60s';
+SET LOCAL lock_timeout = '120s';
 
--- Serialize against the staleness tick (same lock as 20260706120000): a
--- mid-flight tick refresh finishes first; ticks firing during the migration
--- return 'busy' instead of colliding with the DROPs/rebuilds.
+-- Serialize against the staleness tick (it try-locks 913372 and returns
+-- 'busy' rather than colliding with the DROPs/rebuilds below).
 SELECT pg_advisory_xact_lock(913372);
 
 -- -----------------------------------------------------------------------------
@@ -60,16 +73,19 @@ ALTER TABLE public.company_response_sentiment_mv
   ADD COLUMN IF NOT EXISTS negative_themes bigint;
 
 -- -----------------------------------------------------------------------------
--- 1. Per-company rollup helpers (tables). Bodies are the 20260706120000 /
---    20260707120000 definitions plus:
+-- 1. Per-company rollup helpers (tables). Bodies are the LIVE prod
+--    definitions (2026-07-21, incl. the per-table advisory-lock prologue and
+--    the all-prompt-types sentiment scope) plus:
 --      * the model filter in every defining query, and
 --      * positive/(positive+negative) in the sentiment ratios (NULL when a
 --        scope has no polarized themes — "no signal", never 0).
 -- -----------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION public._refresh_cm_sentiment_scores(p_company_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $fn$
 BEGIN
+  PERFORM set_config('lock_timeout', '0', true);
+  PERFORM pg_advisory_xact_lock(hashtextextended('cm_refresh:company_sentiment_scores_mv', 0));
   DELETE FROM public.company_sentiment_scores_mv WHERE (p_company_id IS NULL OR company_id = p_company_id);
   INSERT INTO public.company_sentiment_scores_mv
     (company_id, response_month, prompt_type, prompt_category, prompt_theme, industry_context,
@@ -84,8 +100,7 @@ BEGIN
     FROM prompt_responses pr
       JOIN confirmed_prompts cp ON pr.confirmed_prompt_id = cp.id
       JOIN companies c ON pr.company_id = c.id
-    WHERE (cp.prompt_type = ANY (ARRAY['sentiment','competitive']))
-      AND pr.company_id IS NOT NULL
+    WHERE pr.company_id IS NOT NULL
       AND pr.ai_model NOT IN ('claude','gemini','deepseek')
       AND (p_company_id IS NULL OR pr.company_id = p_company_id)
   ), ai_themes_aggregated AS (
@@ -113,8 +128,10 @@ BEGIN
 END $fn$;
 
 CREATE OR REPLACE FUNCTION public._refresh_cm_relevance_scores(p_company_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $fn$
 BEGIN
+  PERFORM set_config('lock_timeout', '0', true);
+  PERFORM pg_advisory_xact_lock(hashtextextended('cm_refresh:company_relevance_scores_mv', 0));
   DELETE FROM public.company_relevance_scores_mv WHERE (p_company_id IS NULL OR company_id = p_company_id);
   INSERT INTO public.company_relevance_scores_mv
     (company_id, response_month, prompt_type, prompt_category, prompt_theme, industry_context,
@@ -156,8 +173,10 @@ BEGIN
 END $fn$;
 
 CREATE OR REPLACE FUNCTION public._refresh_cm_top_sources(p_company_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $fn$
 BEGIN
+  PERFORM set_config('lock_timeout', '0', true);
+  PERFORM pg_advisory_xact_lock(hashtextextended('cm_refresh:company_top_sources_mv', 0));
   DELETE FROM public.company_top_sources_mv WHERE (p_company_id IS NULL OR company_id = p_company_id);
   INSERT INTO public.company_top_sources_mv
     (company_id, domain, sample_url, citation_count, pct_of_total)
@@ -180,8 +199,10 @@ BEGIN
 END $fn$;
 
 CREATE OR REPLACE FUNCTION public._refresh_cm_competitors(p_company_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $fn$
 BEGIN
+  PERFORM set_config('lock_timeout', '0', true);
+  PERFORM pg_advisory_xact_lock(hashtextextended('cm_refresh:company_competitors_mv', 0));
   DELETE FROM public.company_competitors_mv WHERE (p_company_id IS NULL OR company_id = p_company_id);
   INSERT INTO public.company_competitors_mv
     (company_id, competitor_name, mention_count)
@@ -211,8 +232,10 @@ BEGIN
 END $fn$;
 
 CREATE OR REPLACE FUNCTION public._refresh_cm_llm_rankings(p_company_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $fn$
 BEGIN
+  PERFORM set_config('lock_timeout', '0', true);
+  PERFORM pg_advisory_xact_lock(hashtextextended('cm_refresh:company_llm_rankings_mv', 0));
   DELETE FROM public.company_llm_rankings_mv WHERE (p_company_id IS NULL OR company_id = p_company_id);
   INSERT INTO public.company_llm_rankings_mv
     (company_id, ai_model, total_responses, mentions, mention_pct)
@@ -227,8 +250,10 @@ BEGIN
 END $fn$;
 
 CREATE OR REPLACE FUNCTION public._refresh_cm_attribute_themes(p_company_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $fn$
 BEGIN
+  PERFORM set_config('lock_timeout', '0', true);
+  PERFORM pg_advisory_xact_lock(hashtextextended('cm_refresh:company_attribute_themes_mv', 0));
   DELETE FROM public.company_attribute_themes_mv WHERE (p_company_id IS NULL OR company_id = p_company_id);
   INSERT INTO public.company_attribute_themes_mv
     (company_id, response_month, job_function_context, attribute_id, total_themes, positive_themes,
@@ -267,8 +292,10 @@ END $fn$;
 -- Per-response ratio now needs the response's model, so this helper joins
 -- prompt_responses (indexed pk join; still cheap).
 CREATE OR REPLACE FUNCTION public._refresh_cm_response_sentiment(p_company_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS $fn$
 BEGIN
+  PERFORM set_config('lock_timeout', '0', true);
+  PERFORM pg_advisory_xact_lock(hashtextextended('cm_refresh:company_response_sentiment_mv', 0));
   DELETE FROM public.company_response_sentiment_mv WHERE (p_company_id IS NULL OR company_id = p_company_id);
   INSERT INTO public.company_response_sentiment_mv
     (company_id, response_id, total_themes, positive_themes, negative_themes, sentiment_ratio)
@@ -310,7 +337,8 @@ ANALYZE public.company_response_sentiment_mv;
 --    their names, so the staleness tick carries on maintaining them.)
 -- -----------------------------------------------------------------------------
 
--- 3a. sentiment (new ratio + model filter) ------------------------------------
+-- 3a. sentiment (new ratio + model filter; all prompt types per
+--     20260719073224 — no prompt_type filter) ---------------------------------
 DROP MATERIALIZED VIEW IF EXISTS public.company_sentiment_scores_by_location_mv;
 CREATE MATERIALIZED VIEW public.company_sentiment_scores_by_location_mv AS
  WITH sentiment_responses AS (
@@ -322,8 +350,7 @@ CREATE MATERIALIZED VIEW public.company_sentiment_scores_by_location_mv AS
            FROM prompt_responses pr
              JOIN confirmed_prompts cp ON pr.confirmed_prompt_id = cp.id
              JOIN companies c ON pr.company_id = c.id
-          WHERE (cp.prompt_type = ANY (ARRAY['sentiment'::text, 'competitive'::text]))
-            AND pr.company_id IS NOT NULL
+          WHERE pr.company_id IS NOT NULL
             AND pr.ai_model NOT IN ('claude','gemini','deepseek')
         ), ai_themes_aggregated AS (
          SELECT sr.company_id, sr.location_context, sr.response_month, sr.prompt_type, sr.prompt_category, sr.prompt_theme, sr.industry_context, sr.job_function_context,
@@ -349,7 +376,7 @@ CREATE MATERIALIZED VIEW public.company_sentiment_scores_by_location_mv AS
 CREATE INDEX company_sentiment_by_location_mv_lookup ON public.company_sentiment_scores_by_location_mv USING btree (company_id, location_context, response_month DESC);
 CREATE UNIQUE INDEX company_sentiment_by_location_mv_uniq ON public.company_sentiment_scores_by_location_mv USING btree (company_id, location_context, response_month, prompt_type, prompt_category, prompt_theme, industry_context, job_function_context);
 
--- 3b. attribute themes (model filter; keeps the 20260707120000 v1->v2 remap) --
+-- 3b. attribute themes (model filter; keeps the v1->v2 remap) -----------------
 DROP MATERIALIZED VIEW IF EXISTS public.company_attribute_themes_by_location_mv;
 CREATE MATERIALIZED VIEW public.company_attribute_themes_by_location_mv AS
   SELECT t.company_id,
@@ -599,8 +626,9 @@ CREATE INDEX company_visibility_by_location_mv_lookup
   ON public.company_visibility_by_location_mv
   USING btree (company_id, response_month DESC);
 
--- DROP discards matview ACLs; restore read access (matches prior migrations
--- and the live grants).
+-- DROP discards matview ACLs; restore read access. Deliberately NO anon grant
+-- — 20260720085728_lock_down_public_materialized_views revoked anon read on
+-- these, and this migration preserves that lockdown.
 GRANT SELECT ON public.company_sentiment_scores_by_location_mv,
                 public.company_attribute_themes_by_location_mv,
                 public.company_relevance_scores_by_location_mv,
@@ -608,12 +636,12 @@ GRANT SELECT ON public.company_sentiment_scores_by_location_mv,
                 public.company_competitors_by_location_mv,
                 public.company_llm_rankings_by_location_mv,
                 public.company_visibility_by_location_mv
-  TO anon, authenticated, service_role;
+  TO authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
 -- 4. competitor_benchmarks_mv (peer benchmarks / EPS drilldown). First time in
 --    a migration — the definition below is the live prod one (pg_get_viewdef,
---    2026-07-19) with ONE change: the model filter in the responses CTE. Its
+--    2026-07-21) with ONE change: the model filter in the responses CTE. Its
 --    sentiment_pct already used 100 * pos / NULLIF(pos + neg, 0).
 -- -----------------------------------------------------------------------------
 DROP MATERIALIZED VIEW IF EXISTS public.competitor_benchmarks_mv;
@@ -697,17 +725,8 @@ CREATE MATERIALIZED VIEW public.competitor_benchmarks_mv AS
            FROM metrics m
           WHERE m.responses >= 20
         ), ranked AS (
-         SELECT m.company_name,
-            m.market,
-            m.responses,
-            m.mentions,
-            m.total_citations,
-            m.valid_citations,
-            m.pos_themes,
-            m.neg_themes,
-            m.visibility_pct,
-            m.sentiment_pct,
-            m.relevance_pct,
+         SELECT m.company_name, m.market, m.responses, m.mentions, m.total_citations, m.valid_citations,
+            m.pos_themes, m.neg_themes, m.visibility_pct, m.sentiment_pct, m.relevance_pct,
             rank() OVER (PARTITION BY m.market ORDER BY m.visibility_pct DESC NULLS LAST) AS visibility_rank,
             count(*) FILTER (WHERE m.visibility_pct IS NOT NULL) OVER (PARTITION BY m.market) AS vis_cohort_size,
             rank() OVER (PARTITION BY m.market ORDER BY m.sentiment_pct DESC NULLS LAST) AS sentiment_rank,
@@ -729,31 +748,13 @@ CREATE MATERIALIZED VIEW public.competitor_benchmarks_mv AS
              LEFT JOIN ranked r2 ON r2.market = r1.market AND r2.company_name <> r1.company_name
           GROUP BY r1.company_name, r1.market
         )
- SELECT r.company_name,
-    r.market,
-    r.responses,
-    r.mentions,
-    r.pos_themes,
-    r.neg_themes,
-    r.total_citations,
-    r.valid_citations,
-    r.visibility_pct,
-    r.visibility_rank,
-    r.vis_cohort_size,
-    ps.visibility_peer_avg,
-    ps.visibility_peer_median,
+ SELECT r.company_name, r.market, r.responses, r.mentions, r.pos_themes, r.neg_themes,
+    r.total_citations, r.valid_citations, r.visibility_pct, r.visibility_rank, r.vis_cohort_size,
+    ps.visibility_peer_avg, ps.visibility_peer_median,
     round(r.visibility_pct - ps.visibility_peer_avg, 1) AS visibility_gap,
-    r.sentiment_pct,
-    r.sentiment_rank,
-    r.sent_cohort_size,
-    ps.sentiment_peer_avg,
-    ps.sentiment_peer_median,
+    r.sentiment_pct, r.sentiment_rank, r.sent_cohort_size, ps.sentiment_peer_avg, ps.sentiment_peer_median,
     round(r.sentiment_pct - ps.sentiment_peer_avg, 1) AS sentiment_gap,
-    r.relevance_pct,
-    r.relevance_rank,
-    r.rel_cohort_size,
-    ps.relevance_peer_avg,
-    ps.relevance_peer_median,
+    r.relevance_pct, r.relevance_rank, r.rel_cohort_size, ps.relevance_peer_avg, ps.relevance_peer_median,
     round(r.relevance_pct - ps.relevance_peer_avg, 1) AS relevance_gap,
     ps.peer_companies,
     now() AS last_refreshed
@@ -763,7 +764,8 @@ CREATE MATERIALIZED VIEW public.competitor_benchmarks_mv AS
 CREATE UNIQUE INDEX competitor_benchmarks_mv_pk ON public.competitor_benchmarks_mv USING btree (company_name, market);
 CREATE INDEX competitor_benchmarks_mv_market ON public.competitor_benchmarks_mv USING btree (market);
 
-GRANT SELECT ON public.competitor_benchmarks_mv TO anon, authenticated, service_role;
+-- Matches the post-lockdown grants: no anon read.
+GRANT SELECT ON public.competitor_benchmarks_mv TO authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
 -- 4b. get_report_data (monthly client report, server/server.js). Codified from
@@ -809,12 +811,12 @@ REFRESH MATERIALIZED VIEW public.company_search_index;
 -- 6. Comments
 -- -----------------------------------------------------------------------------
 COMMENT ON TABLE public.company_sentiment_scores_mv IS
-  'Per (company, month, prompt dims) sentiment aggregates. Methodology v2 (2026-07): sentiment_ratio = positive/(positive+negative) from ai_themes.sentiment labels (neutrals excluded from the score, still counted for composition; NULL when no polarized themes); rows exclude ai_model claude/gemini/deepseek. avg_sentiment_score is INTERNAL ONLY — never published. Maintained by refresh_company_metrics(company_id) + staleness tick.';
+  'Per (company, month, prompt dims) sentiment aggregates over ALL prompt types (20260719073224). Methodology v2 (2026-07): sentiment_ratio = positive/(positive+negative) from ai_themes.sentiment labels (neutrals excluded from the score, still counted for composition; NULL when no polarized themes); rows exclude ai_model claude/gemini/deepseek. avg_sentiment_score is INTERNAL ONLY — never published. Maintained by refresh_company_metrics(company_id) + staleness tick.';
 COMMENT ON TABLE public.company_response_sentiment_mv IS
   'Per (company, response) theme counts and sentiment_ratio = positive/(positive+negative) (NULL when no polarized themes). Methodology v2: responses from ai_model claude/gemini/deepseek are excluded. Maintained by refresh_company_metrics(company_id) + staleness tick.';
 COMMENT ON TABLE public.company_attribute_themes_mv IS
   'Per (company, month, job_function, attribute) theme composition (v1 ids folded into v2). Methodology v2: excludes ai_model claude/gemini/deepseek; avg_sentiment_score is INTERNAL ONLY. Headline attribute sentiment = positive/(positive+negative). Maintained by refresh_company_metrics(company_id) + staleness tick.';
 COMMENT ON MATERIALIZED VIEW public.competitor_benchmarks_mv IS
-  'Peer benchmark panel (Percentiles org + Netflix) per market: visibility/sentiment/relevance pcts, ranks and peer stats. sentiment_pct = 100*positive/(positive+negative) from ai_themes labels; excludes ai_model claude/gemini/deepseek (methodology v2, 2026-07). Codified from the live definition on 2026-07-19.';
+  'Peer benchmark panel (Percentiles org + Netflix) per market: visibility/sentiment/relevance pcts, ranks and peer stats. sentiment_pct = 100*positive/(positive+negative) from ai_themes labels; excludes ai_model claude/gemini/deepseek (methodology v2, 2026-07). Codified from the live definition on 2026-07-21.';
 
 COMMIT;
