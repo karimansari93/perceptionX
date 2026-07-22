@@ -342,6 +342,9 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, previou
       rows,
       hasPrev,
       netDelta: totalCurrent - totalPrevious,
+      // Percentage change in total mentions vs the previous period. null when
+      // there were no prior mentions to form a base (everything is new).
+      netPct: totalPrevious > 0 ? Math.round(((totalCurrent - totalPrevious) / totalPrevious) * 100) : null,
       newCount,
       risingCount,
       fallingCount,
@@ -361,8 +364,9 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, previou
 
   const trendingUpCount = trending.newCount + trending.risingCount;
 
-  // A compact New / ↑ / ↓ / – badge for a trend row. Returns null when there's
-  // no prior period (nothing to compare against).
+  // A compact New / ↑% / ↓% / – badge for a trend row. Shows the PERCENTAGE
+  // change vs the previous period (the raw mention counts are already on the
+  // row). Returns null when there's no prior period to compare against.
   const renderTrendBadge = (row: { current: number; previous: number; delta: number } | undefined) => {
     if (!trending.hasPrev || !row) return null;
     if (row.previous === 0 && row.current > 0) {
@@ -372,17 +376,18 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, previou
         </span>
       );
     }
-    if (row.delta > 0) {
+    const pct = row.previous > 0 ? Math.round(((row.current - row.previous) / row.previous) * 100) : 0;
+    if (pct > 0) {
       return (
         <span className="inline-flex items-center gap-0.5 rounded-full bg-green-50 px-1.5 py-0.5 text-[10px] font-semibold text-green-600 whitespace-nowrap">
-          <TrendingUp className="w-2.5 h-2.5" /> +{row.delta}
+          <TrendingUp className="w-2.5 h-2.5" /> +{pct}%
         </span>
       );
     }
-    if (row.delta < 0) {
+    if (pct < 0) {
       return (
         <span className="inline-flex items-center gap-0.5 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 whitespace-nowrap">
-          <TrendingDown className="w-2.5 h-2.5" /> {row.delta}
+          <TrendingDown className="w-2.5 h-2.5" /> {pct}%
         </span>
       );
     }
@@ -1140,15 +1145,19 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
                   >
                     {trending.netDelta > 0 ? (
                       <>
-                        <span className="font-semibold">{getSourceDisplayName(source.domain)}</span> is up{' '}
-                        <span className="font-semibold text-green-700">+{trending.netDelta}</span> citation
-                        {trending.netDelta === 1 ? '' : 's'} vs the previous period
+                        <span className="font-semibold">{getSourceDisplayName(source.domain)}</span> is{' '}
+                        {trending.netPct != null ? (
+                          <>
+                            up <span className="font-semibold text-green-700">+{trending.netPct}%</span> vs the previous period
+                          </>
+                        ) : (
+                          <>newly cited this period</>
+                        )}
                       </>
                     ) : trending.netDelta < 0 ? (
                       <>
                         <span className="font-semibold">{getSourceDisplayName(source.domain)}</span> is down{' '}
-                        <span className="font-semibold text-red-700">{trending.netDelta}</span> citation
-                        {trending.netDelta === -1 ? '' : 's'} vs the previous period
+                        <span className="font-semibold text-red-700">{trending.netPct}%</span> vs the previous period
                       </>
                     ) : (
                       <>
