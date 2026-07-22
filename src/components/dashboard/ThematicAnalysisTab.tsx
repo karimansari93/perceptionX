@@ -44,7 +44,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { ATTRIBUTES, normalizeAttributeId } from '@/config/attributes';
 import LLMLogo from '@/components/LLMLogo';
 import { getLLMDisplayName } from '@/config/llmLogos';
-import { extractSourceUrl } from '@/utils/citationUtils';
+import { extractSourceUrl, getFavicon } from '@/utils/citationUtils';
 import { ScrollablePills } from './ScrollablePills';
 import { SearchInput } from './SearchInput';
 import { useTabSearchSeed } from '@/contexts/TabSearchSeedContext';
@@ -363,11 +363,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       total: prevThemes.length
     };
   }, [previousPeriodResponses, normalizedThemes, selectedJobFunctionFilter]);
-
-  // Helper to get favicon for a domain
-  const getFavicon = (domain: string): string => {
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
-  };
 
   // Helper to format domain to a human-friendly name
   const getSourceDisplayName = (domain: string) => {

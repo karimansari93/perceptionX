@@ -10,7 +10,7 @@ import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { extractSourceUrl, extractDomain, enhanceCitations } from "@/utils/citationUtils";
+import { extractSourceUrl, extractDomain, enhanceCitations, getFavicon } from "@/utils/citationUtils";
 import { ScrollablePills } from "./ScrollablePills";
 import { SearchInput } from "./SearchInput";
 import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
@@ -424,11 +424,6 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     // of iterating and re-parsing every response.
     const list = responsesByDomain.get(normalizeDomain(domain));
     return list ? list.map((nr) => nr.raw) : [];
-  };
-
-  const getFavicon = (domain: string): string => {
-    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-    return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`;
   };
 
   // Helper to format domain to a human-friendly name

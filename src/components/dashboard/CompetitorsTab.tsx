@@ -13,7 +13,7 @@ import { extractSourceUrl } from "@/utils/citationUtils";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
-import { getCompetitorFavicon } from "@/utils/citationUtils";
+import { getCompetitorFavicon, getFavicon } from "@/utils/citationUtils";
 import LLMLogo from "@/components/LLMLogo";
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { usePersistedState } from "@/hooks/usePersistedState";
@@ -270,11 +270,6 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
       totalCount: aiResponseCount + searchResultCount,
       sources: []
     };
-  };
-
-  // Helper to get favicon for a domain
-  const getFavicon = (domain: string): string => {
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
   };
 
   // Helper to format domain to a human-friendly name
@@ -1293,7 +1288,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                         <div key={domain} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
                           <div className="flex items-center gap-2 min-w-0">
                             <img
-                              src={`https://www.google.com/s2/favicons?domain=${domain}&sz=32`}
+                              src={getFavicon(domain)}
                               alt=""
                               className="w-4 h-4 rounded shrink-0"
                               onError={(e) => { e.currentTarget.style.display = 'none'; }}

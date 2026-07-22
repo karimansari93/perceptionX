@@ -23,7 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { Favicon } from "@/components/ui/favicon";
-import { extractSourceUrl } from "@/utils/citationUtils";
+import { extractSourceUrl, getFavicon } from "@/utils/citationUtils";
 import {
   ChartContainer,
   ChartTooltip,
@@ -315,11 +315,6 @@ export const OverviewTab = memo(({
       description: 'How prominently your brand is mentioned.'
     }
   ];
-
-  const getFavicon = (domain: string): string => {
-    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-    return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=16`;
-  };
 
   // Current vs previous PERIOD (snapshot month), not latest calendar day.
   // `responses` is already scoped to the effective snapshot month by the hook,

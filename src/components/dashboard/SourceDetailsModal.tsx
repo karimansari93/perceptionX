@@ -12,7 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import LLMLogo from "@/components/LLMLogo";
-import { extractSourceUrl, enhanceCitations, normalizePageKey } from "@/utils/citationUtils";
+import { extractSourceUrl, enhanceCitations, normalizePageKey, getFavicon } from "@/utils/citationUtils";
 import { RateDonut } from "@/components/ui/rate-donut";
 // Removed chart imports since we're rendering custom bars like SourcesTab
 
@@ -213,10 +213,6 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
   const [sourceThinkingSteps, setSourceThinkingSteps] = useState<string[]>([]);
   const [hoveredSourceCitation, setHoveredSourceCitation] = useState<number | null>(null);
 
-  const getFavicon = (domain: string): string => {
-    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-    return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`;
-  };
 
   const parseAndEnhanceCitations = (citations: any) => {
     if (!citations) return [];
