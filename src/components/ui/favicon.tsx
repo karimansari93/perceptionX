@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getFavicon } from '@/utils/citationUtils';
 
 interface FaviconProps {
   domain: string;
@@ -15,7 +16,6 @@ export const Favicon: React.FC<FaviconProps> = ({
 }) => {
   const [hasError, setHasError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [currentSourceIndex, setCurrentSourceIndex] = useState(0);
 
   // Helpers declared BEFORE the early-return so the !domain branch can use
   // them without hitting TDZ errors. Function expressions (const =) don't hoist.
@@ -51,36 +51,13 @@ export const Favicon: React.FC<FaviconProps> = ({
     );
   }
 
-  const getFaviconUrls = (domain: string): string[] => {
-    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-    return [
-      // Primary: More reliable Google favicon service
-      `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`,
-      // Fallback 1: DuckDuckGo favicon service
-      `https://icons.duckduckgo.com/ip3/${cleanDomain}.ico`,
-      // Fallback 2: Direct favicon.ico
-      `https://${cleanDomain}/favicon.ico`,
-      // Fallback 3: Alternative Google service (less reliable)
-      `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`,
-    ];
-  };
-
   const handleError = (event: React.SyntheticEvent<HTMLImageElement, Event>) => {
-    const urls = getFaviconUrls(domain);
-    const nextIndex = currentSourceIndex + 1;
-    
-    if (nextIndex < urls.length) {
-      // Try next fallback source
-      setCurrentSourceIndex(nextIndex);
-      setIsLoading(true);
-      // Hide the failed image
-      event.currentTarget.style.display = 'none';
-    } else {
-      // All sources failed, show fallback
-      setHasError(true);
-      setIsLoading(false);
-      event.currentTarget.style.display = 'none';
-    }
+    // Logo.dev's monogram fallback almost always returns an image, so an error
+    // here means a hard failure (network/token issue). Fall back to the
+    // colored-initial chip below.
+    setHasError(true);
+    setIsLoading(false);
+    event.currentTarget.style.display = 'none';
   };
 
   const handleLoad = () => {
@@ -98,8 +75,7 @@ export const Favicon: React.FC<FaviconProps> = ({
     );
   }
 
-  const urls = getFaviconUrls(domain);
-  const currentUrl = urls[currentSourceIndex];
+  const currentUrl = getFavicon(domain, size === 'lg' ? 64 : 32);
 
   return (
     <div className={`relative ${getSizeClasses(size)} ${className}`}>
