@@ -78,14 +78,31 @@ export const extractDomain = (url: string): string => {
   }
 };
 
-export const getFavicon = (domain: string): string => {
+// Logo.dev publishable token (safe to expose client-side; see https://docs.logo.dev).
+const LOGODEV_TOKEN = import.meta.env.VITE_LOGO_DEV_TOKEN as string | undefined;
+
+/**
+ * Builds a Logo.dev image URL for a domain.
+ *
+ * We use Logo.dev instead of Google's favicon service because Google's
+ * faviconV2/gstatic endpoints return 404s for many domains, which spam the
+ * browser console. Logo.dev's `fallback=monogram` guarantees an image is
+ * always returned (a generated letter-mark), so it never 404s.
+ */
+export const getFavicon = (domain: string, size = 32): string => {
   if (!domain) return '';
-  
+
   // Clean the domain
   const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-  
-  // Use a more reliable favicon service with better error handling
-  return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`;
+
+  const params = new URLSearchParams({
+    size: String(size),
+    format: 'png',
+    fallback: 'monogram',
+  });
+  if (LOGODEV_TOKEN) params.set('token', LOGODEV_TOKEN);
+
+  return `https://img.logo.dev/${cleanDomain}?${params.toString()}`;
 };
 
 export const getEmailDomainFavicon = (email: string): string => {
