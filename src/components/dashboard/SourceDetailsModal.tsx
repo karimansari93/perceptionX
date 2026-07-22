@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 import { CitationCount } from "@/types/dashboard";
-import { ExternalLink, X, Download, Sparkles, Loader2, CheckCircle2, ChevronRight } from "lucide-react";
+import { ExternalLink, X, Download, Sparkles, Loader2, CheckCircle2, ChevronRight, TrendingUp, TrendingDown, Flame } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS } from "@/utils/sourceConfig";
@@ -46,6 +46,8 @@ const formatPromptType = (t?: string): string =>
 const OPPORTUNITY_MIN_ANSWERS = 2;
 // How many opportunity rows to render before collapsing behind "Show all".
 const OPPORTUNITY_PREVIEW_COUNT = 10;
+// How many trending page rows to render before collapsing behind "Show all".
+const TRENDING_PREVIEW_COUNT = 12;
 
 type SourcePromptAgg = {
   id: string;
@@ -82,6 +84,10 @@ interface SourceDetailsModalProps {
   onClose: () => void;
   source: CitationCount;
   responses: any[];
+  /** Rows from the PREVIOUS period that cite this domain. Used to compute
+   *  per-page trends (which URLs are new / rising / falling). Empty or omitted
+   *  when there is no prior period to compare against. */
+  previousResponses?: any[];
   companyName?: string;
   searchResults?: any[];
   companyId?: string;
@@ -93,7 +99,7 @@ interface SourceDetailsModalProps {
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
 }
 
-export const SourceDetailsModal = ({ isOpen, onClose, source, responses, companyName, searchResults = [], companyId, selectedThemeFilter = 'all', companyMentionedFilter = 'all', responseTexts = {}, fetchResponseTexts }: SourceDetailsModalProps) => {
+export const SourceDetailsModal = ({ isOpen, onClose, source, responses, previousResponses = [], companyName, searchResults = [], companyId, selectedThemeFilter = 'all', companyMentionedFilter = 'all', responseTexts = {}, fetchResponseTexts }: SourceDetailsModalProps) => {
   // ---------------------------------------------------------------------
   // Cited pages — derived from the same `responses` prop as every other
   // number in this modal (NOT a separate DB query). The old fetch hit raw
@@ -204,6 +210,194 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, company
 
     return rows.sort((a, b) => b.mentionCount - a.mentionCount);
   }, [responses, source?.domain, companyMentionedFilter, selectedThemeFilter, searchResults]);
+
+  // ---------------------------------------------------------------------
+  // Trending — per-page period-over-period comparison. Answers the client's
+  // question: when a source's citation count rises, WHICH specific URLs drove
+  // the increase. Aggregates the current and previous periods with identical
+  // page-keying + filter semantics as `uniqueCitations`, then joins them so
+  // each page carries current/previous counts and a delta.
+  // ---------------------------------------------------------------------
+  type TrendRow = {
+    key: string;
+    url: string;
+    title: string;
+    snippet: string;
+    current: number;
+    previous: number;
+    delta: number;
+    urlless?: boolean;
+  };
+  const trending = useMemo(() => {
+    const empty = {
+      rows: [] as TrendRow[],
+      hasPrev: false,
+      netDelta: 0,
+      newCount: 0,
+      risingCount: 0,
+      fallingCount: 0,
+      totalCurrent: 0,
+      totalPrevious: 0,
+    };
+    if (!source?.domain) return empty;
+    const target = normalizeDomainKey(source.domain);
+
+    // One period → Map<pageKey, {url,title,snippet,count}> + urlless count.
+    // Same subset semantics as the sources list and Cited Pages tab so the
+    // trend numbers reconcile with what the user clicked through from.
+    const aggregate = (rows: any[]) => {
+      const byKey = new Map<string, { url: string; title: string; snippet: string; count: number }>();
+      let urlless = 0;
+      for (const r of rows || []) {
+        if (companyMentionedFilter === 'mentioned' && r.company_mentioned !== true) continue;
+        if (companyMentionedFilter === 'not-mentioned' && r.company_mentioned === true) continue;
+        if (selectedThemeFilter !== 'all' && r.confirmed_prompts?.prompt_theme !== selectedThemeFilter) continue;
+
+        let parsed: any = r.citations;
+        if (typeof parsed === 'string') {
+          try { parsed = JSON.parse(parsed); } catch { continue; }
+        }
+        if (!Array.isArray(parsed)) continue;
+
+        const enhanced = enhanceCitations(parsed);
+        const seen = new Set<string>();
+        let cites = false;
+        let hadUrl = false;
+        for (const c of enhanced) {
+          if (c.type === 'website' && c.domain && normalizeDomainKey(c.domain) === target) {
+            cites = true;
+            if (c.url) {
+              const url = extractSourceUrl(c.url);
+              const key = normalizePageKey(url);
+              if (seen.has(key)) continue; // count each page once per answer
+              seen.add(key);
+              hadUrl = true;
+              const existing = byKey.get(key);
+              if (existing) {
+                existing.count += 1;
+                existing.url = preferDisplayUrl(existing.url, url);
+                if (!existing.title && c.title) existing.title = decodeUnicodeEscapes(c.title || '');
+                if (!existing.snippet && (c as any).snippet) existing.snippet = (c as any).snippet;
+              } else {
+                byKey.set(key, { url, title: decodeUnicodeEscapes(c.title || ''), snippet: (c as any).snippet || '', count: 1 });
+              }
+            }
+          }
+        }
+        if (cites && !hadUrl) urlless += 1;
+      }
+      return { byKey, urlless };
+    };
+
+    const cur = aggregate(responses);
+    const prev = aggregate(previousResponses);
+    const hasPrev = (previousResponses?.length ?? 0) > 0;
+
+    const keys = new Set<string>([...cur.byKey.keys(), ...prev.byKey.keys()]);
+    const rows: TrendRow[] = [];
+    for (const key of keys) {
+      const c = cur.byKey.get(key);
+      const p = prev.byKey.get(key);
+      const current = c?.count || 0;
+      const previous = p?.count || 0;
+      rows.push({
+        key,
+        url: (c?.url || p?.url) as string,
+        title: (c?.title || p?.title || '').trim(),
+        snippet: c?.snippet || p?.snippet || '',
+        current,
+        previous,
+        delta: current - previous,
+      });
+    }
+
+    // Citations that matched by name only (no URL) — one aggregate row so the
+    // signal isn't dropped, mirroring the Cited Pages tab.
+    if (cur.urlless > 0 || prev.urlless > 0) {
+      const fallbackDomain = source.domain.replace(/^www\./, '');
+      const syntheticUrl = `https://${fallbackDomain}/`;
+      rows.push({
+        key: '__urlless',
+        url: syntheticUrl,
+        title: `${fallbackDomain} (cited by name)`,
+        snippet: '',
+        current: cur.urlless,
+        previous: prev.urlless,
+        delta: cur.urlless - prev.urlless,
+        urlless: true,
+      });
+    }
+
+    // Biggest movers first: new & rising pages (largest positive delta) lead,
+    // ties broken by current citation count.
+    rows.sort((a, b) => b.delta - a.delta || b.current - a.current);
+
+    const totalCurrent = rows.reduce((s, r) => s + r.current, 0);
+    const totalPrevious = rows.reduce((s, r) => s + r.previous, 0);
+    const newCount = rows.filter(r => r.previous === 0 && r.current > 0).length;
+    const risingCount = rows.filter(r => r.previous > 0 && r.current > r.previous).length;
+    const fallingCount = rows.filter(r => r.current < r.previous).length;
+
+    return {
+      rows,
+      hasPrev,
+      netDelta: totalCurrent - totalPrevious,
+      // Percentage change in total mentions vs the previous period. null when
+      // there were no prior mentions to form a base (everything is new).
+      netPct: totalPrevious > 0 ? Math.round(((totalCurrent - totalPrevious) / totalPrevious) * 100) : null,
+      newCount,
+      risingCount,
+      fallingCount,
+      totalCurrent,
+      totalPrevious,
+    };
+  }, [responses, previousResponses, source?.domain, companyMentionedFilter, selectedThemeFilter]);
+
+  // Fast lookup so the Cited Pages tab can show the same New/↑/↓ badge per row.
+  const trendByPageKey = useMemo(() => {
+    const m = new Map<string, TrendRow>();
+    for (const r of trending.rows) {
+      m.set(r.urlless ? normalizePageKey(r.url) : r.key, r);
+    }
+    return m;
+  }, [trending]);
+
+  const trendingUpCount = trending.newCount + trending.risingCount;
+
+  // A compact New / ↑% / ↓% / – badge for a trend row. Shows the PERCENTAGE
+  // change vs the previous period (the raw mention counts are already on the
+  // row). Returns null when there's no prior period to compare against.
+  const renderTrendBadge = (row: { current: number; previous: number; delta: number } | undefined) => {
+    if (!trending.hasPrev || !row) return null;
+    if (row.previous === 0 && row.current > 0) {
+      return (
+        <span className="inline-flex items-center gap-0.5 rounded-full bg-[#0DBCBA]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#0A8B89] whitespace-nowrap">
+          <Flame className="w-2.5 h-2.5" /> New
+        </span>
+      );
+    }
+    const pct = row.previous > 0 ? Math.round(((row.current - row.previous) / row.previous) * 100) : 0;
+    if (pct > 0) {
+      return (
+        <span className="inline-flex items-center gap-0.5 rounded-full bg-green-50 px-1.5 py-0.5 text-[10px] font-semibold text-green-600 whitespace-nowrap">
+          <TrendingUp className="w-2.5 h-2.5" /> +{pct}%
+        </span>
+      );
+    }
+    if (pct < 0) {
+      return (
+        <span className="inline-flex items-center gap-0.5 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-600 whitespace-nowrap">
+          <TrendingDown className="w-2.5 h-2.5" /> {pct}%
+        </span>
+      );
+    }
+    return (
+      <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-400 whitespace-nowrap">
+        No change
+      </span>
+    );
+  };
+
   const [editingMediaType, setEditingMediaType] = useState(false);
   const [customMediaType, setCustomMediaType] = useState<string | null>(null);
   const [sourceSummary, setSourceSummary] = useState<string>("");
@@ -577,11 +771,18 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
   const [activeTab, setActiveTab] = useState<string>('pages');
   const [expandedPrompts, setExpandedPrompts] = useState<Set<string>>(new Set());
   const [showAllOpportunities, setShowAllOpportunities] = useState(false);
+  const [showAllTrending, setShowAllTrending] = useState(false);
   useEffect(() => {
     if (isOpen) {
-      setActiveTab(companyMentionedFilter === 'not-mentioned' ? 'opportunities' : 'pages');
+      // Not-mentioned flow → Opportunities. Otherwise open on Trending when
+      // there's a prior period to explain the movement, else Cited Pages.
+      const defaultTab = companyMentionedFilter === 'not-mentioned'
+        ? 'opportunities'
+        : (trending.hasPrev ? 'trending' : 'pages');
+      setActiveTab(defaultTab);
       setExpandedPrompts(new Set());
       setShowAllOpportunities(false);
+      setShowAllTrending(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, source?.domain]);
@@ -797,6 +998,15 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
           <TabsList className="w-full justify-start gap-6 rounded-none border-b border-gray-200 bg-transparent p-0 px-6 h-auto shrink-0">
+            <TabsTrigger value="trending" className={tabTriggerCls}>
+              Trending
+              {trending.hasPrev && trendingUpCount > 0 && (
+                <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-green-50 px-1.5 py-0.5 text-[10px] font-semibold text-green-600">
+                  <TrendingUp className="w-2.5 h-2.5" />
+                  {trendingUpCount}
+                </span>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="pages" className={tabTriggerCls}>
               Pages
               {uniqueCitations.length > 0 && (
@@ -901,6 +1111,126 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
             ) : null}
             </div>
 
+            {/* Trending — which specific pages drove this source up or down,
+                period-over-period. Directly answers "why did this source rise?" */}
+            <TabsContent value="trending" className="px-6 py-4 mt-0 focus-visible:outline-none">
+              {!trending.hasPrev ? (
+                <div className="flex flex-col items-center py-12 text-center">
+                  <Flame className="w-8 h-8 text-gray-300 mb-2" />
+                  <p className="text-sm font-medium text-[#13274F]">No previous period to compare</p>
+                  <p className="text-xs text-gray-500 mt-1 max-w-sm">
+                    Trends for {getSourceDisplayName(source.domain)} appear once there's an
+                    earlier period to measure against.
+                  </p>
+                </div>
+              ) : trending.rows.length === 0 ? (
+                <div className="text-center py-10">
+                  <p className="text-sm text-gray-500">No cited pages for this source in the selected period.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* What changed — one-line explanation of the movement */}
+                  <div
+                    className={`rounded-xl border px-4 py-3 text-sm text-[#13274F] ${
+                      trending.netDelta > 0
+                        ? 'border-green-200 bg-green-50/60'
+                        : trending.netDelta < 0
+                        ? 'border-red-200 bg-red-50/50'
+                        : 'border-gray-200 bg-gray-50'
+                    }`}
+                  >
+                    {trending.netDelta > 0 ? (
+                      <>
+                        <span className="font-semibold">{getSourceDisplayName(source.domain)}</span> is{' '}
+                        {trending.netPct != null ? (
+                          <>
+                            up <span className="font-semibold text-green-700">+{trending.netPct}%</span> vs the previous period
+                          </>
+                        ) : (
+                          <>newly cited this period</>
+                        )}
+                      </>
+                    ) : trending.netDelta < 0 ? (
+                      <>
+                        <span className="font-semibold">{getSourceDisplayName(source.domain)}</span> is down{' '}
+                        <span className="font-semibold text-red-700">{trending.netPct}%</span> vs the previous period
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-semibold">{getSourceDisplayName(source.domain)}</span> held steady
+                        vs the previous period
+                      </>
+                    )}
+                    {(trending.newCount > 0 || trending.risingCount > 0 || trending.fallingCount > 0) && (
+                      <>
+                        {', '}driven by{' '}
+                        {[
+                          trending.newCount > 0 ? `${trending.newCount} new page${trending.newCount === 1 ? '' : 's'}` : null,
+                          trending.risingCount > 0 ? `${trending.risingCount} rising` : null,
+                          trending.fallingCount > 0 ? `${trending.fallingCount} declining` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(', ')}
+                        .
+                      </>
+                    )}
+                  </div>
+
+                  {/* Ranked pages with per-page trend badge (biggest movers first) */}
+                  <div className="space-y-2">
+                    {(showAllTrending ? trending.rows : trending.rows.slice(0, TRENDING_PREVIEW_COUNT)).map((row) => (
+                      <div
+                        key={row.key}
+                        className="flex items-start justify-between gap-3 p-3.5 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all group"
+                      >
+                        <div className="min-w-0 flex-1">
+                          {row.title && (
+                            <h4 className="text-sm font-medium text-gray-900 group-hover:text-[#13274F] transition-colors mb-1 line-clamp-2">
+                              {row.title}
+                            </h4>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <ExternalLink className="w-3 h-3 text-gray-400 group-hover:text-[#0DBCBA] flex-shrink-0" />
+                            {row.urlless ? (
+                              <span className="text-xs text-gray-500 truncate">Cited by name — no linked page</span>
+                            ) : (
+                              <a
+                                href={row.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-[#0DBCBA] hover:text-[#0A8B89] truncate hover:underline"
+                              >
+                                {row.url.length > 80 ? row.url.substring(0, 80) + '...' : row.url}
+                              </a>
+                            )}
+                          </div>
+                          <p className="mt-1.5 text-[11px] text-gray-400">
+                            {row.current} mention{row.current === 1 ? '' : 's'} this period
+                            {row.previous > 0
+                              ? ` · was ${row.previous}`
+                              : row.current > 0
+                              ? ' · not cited last period'
+                              : ` · ${row.previous} last period`}
+                          </p>
+                        </div>
+                        <div className="shrink-0 pt-0.5">{renderTrendBadge(row)}</div>
+                      </div>
+                    ))}
+                    {trending.rows.length > TRENDING_PREVIEW_COUNT && (
+                      <button
+                        onClick={() => setShowAllTrending(v => !v)}
+                        className="w-full rounded-xl border border-dashed border-gray-200 py-2 text-xs font-medium text-gray-500 hover:text-[#13274F] hover:border-gray-300 transition-colors"
+                      >
+                        {showAllTrending
+                          ? `Show top ${TRENDING_PREVIEW_COUNT}`
+                          : `Show all ${trending.rows.length} pages`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </TabsContent>
+
             {/* Cited pages — the pages from this source that AI answers cite */}
             <TabsContent value="pages" className="px-6 py-4 mt-0 focus-visible:outline-none">
               <div className="flex items-start justify-between gap-3 mb-3">
@@ -989,6 +1319,7 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
                         </div>
                       </div>
                       <div className="flex flex-col items-end gap-1 shrink-0">
+                        {renderTrendBadge(trendByPageKey.get(normalizePageKey(citation.url)))}
                         <span
                           className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-600 whitespace-nowrap"
                           title={`Cited in ${citation.mentionCount || 1} answer${(citation.mentionCount || 1) === 1 ? '' : 's'}`}

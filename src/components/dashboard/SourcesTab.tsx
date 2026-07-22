@@ -150,7 +150,22 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     }
     return map;
   }, [normalizedResponses]);
-  
+
+  // Same reverse index for the PREVIOUS period. Used to hand the source modal
+  // the prior-period rows for a domain so it can compute per-page trends
+  // (which specific URLs drove the source's increase/decrease).
+  const prevResponsesByDomain = useMemo(() => {
+    const map = new Map<string, NormalizedResponse[]>();
+    for (const nr of normalizedPrevResponses) {
+      for (const d of nr.domains) {
+        const list = map.get(d);
+        if (list) list.push(nr);
+        else map.set(d, [nr]);
+      }
+    }
+    return map;
+  }, [normalizedPrevResponses]);
+
   // Calculate citation counts from search results
   const searchResultCitations = useMemo(() => {
     const citationCounts: Record<string, number> = {};
@@ -423,6 +438,12 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     // data is already keyed via responsesByDomain so this is O(1) instead
     // of iterating and re-parsing every response.
     const list = responsesByDomain.get(normalizeDomain(domain));
+    return list ? list.map((nr) => nr.raw) : [];
+  };
+
+  // Previous-period rows citing a domain — powers the modal's Trending tab.
+  const getPrevResponsesForSource = (domain: string) => {
+    const list = prevResponsesByDomain.get(normalizeDomain(domain));
     return list ? list.map((nr) => nr.raw) : [];
   };
 
@@ -1060,6 +1081,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
           onClose={handleCloseSourceModal}
           source={selectedSource}
           responses={getResponsesForSource(selectedSource.domain)}
+          previousResponses={getPrevResponsesForSource(selectedSource.domain)}
           companyName={companyName}
           searchResults={filteredSearchResults}
           companyId={currentCompanyId}
