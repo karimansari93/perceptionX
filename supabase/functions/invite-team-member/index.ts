@@ -42,6 +42,15 @@ const PLATFORM_ADMIN_EMAILS = [
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Durable, URL-safe invite token (256 bits of entropy). Embedded in the
+// /welcome?invite=<token> link and exchanged for a fresh session by the
+// redeem-invite function, so the emailed link itself never expires.
+const newInviteToken = () => {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+};
+
 type InviteBody = {
   action: "list" | "invite" | "resend" | "revoke";
   organizationId: string;
@@ -187,9 +196,9 @@ serve(async (req) => {
             </a>
           </p>
           <p style="font-size:13px;color:#6b7280;line-height:1.5;margin:0;">
-            This link expires after 24 hours — ask ${inviterFirstName} to resend the
-            invite if it has expired. If you weren't expecting this email, you
-            can safely ignore it.
+            This link stays active until you join, so you can open it whenever
+            you're ready. If you weren't expecting this email, you can safely
+            ignore it.
           </p>
         </div>`;
 
@@ -215,10 +224,19 @@ serve(async (req) => {
     });
 
     // Creates the auth user, profile, membership and sends the invite email.
-    // Returns the new user's id.
-    const createAndInvite = async (email: string, role: string): Promise<string> => {
+    // Returns the new user's id. `token` is the durable invite token: when
+    // Resend is configured we email our own /welcome?invite=<token> link (which
+    // never expires) instead of Supabase's short-lived auth action link.
+    const createAndInvite = async (
+      email: string,
+      role: string,
+      token: string,
+    ): Promise<string> => {
       let userId: string;
       if (resendKey) {
+        // generateLink creates the placeholder auth user (and never sends an
+        // email itself); we discard its short-lived action_link and email the
+        // durable token link instead.
         const { data, error } = await admin.auth.admin.generateLink({
           type: "invite",
           email,
@@ -226,8 +244,11 @@ serve(async (req) => {
         });
         if (error) throw error;
         userId = data.user.id;
-        await sendInviteEmail(email, data.properties.action_link);
+        const inviteLink = `${siteUrl.replace(/\/$/, "")}/welcome?invite=${token}`;
+        await sendInviteEmail(email, inviteLink);
       } else {
+        // No Resend transport: fall back to Supabase's built-in invite email.
+        // That link still carries the platform's 24h expiry (see config.toml).
         const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
           data: inviteMetadata(email),
           redirectTo,
@@ -390,7 +411,8 @@ serve(async (req) => {
           }
 
           // Brand-new user → create + send invite email
-          const userId = await createAndInvite(email, role);
+          const token = newInviteToken();
+          const userId = await createAndInvite(email, role, token);
           await admin.from("organization_invites").insert({
             organization_id: org.id,
             email,
@@ -398,6 +420,7 @@ serve(async (req) => {
             status: "pending",
             invited_by: caller.id,
             invited_user_id: userId,
+            token,
           });
           results.push({ email, status: "invited" });
         } catch (err) {
@@ -457,15 +480,17 @@ serve(async (req) => {
         return json({ ok: true, status: "revoked" });
       }
 
-      // resend: invite links are single-use and expire, so recreate the
-      // placeholder user and send a fresh link.
+      // resend: recreate the placeholder user and issue a fresh durable token.
+      // (The token link doesn't expire, but resending lets an admin re-deliver
+      // the email and rotates the token.)
       if (invite.invited_user_id) {
         await admin.auth.admin.deleteUser(invite.invited_user_id);
       }
-      const userId = await createAndInvite(invite.email, invite.role);
+      const token = newInviteToken();
+      const userId = await createAndInvite(invite.email, invite.role, token);
       await admin
         .from("organization_invites")
-        .update({ invited_user_id: userId, sent_at: new Date().toISOString() })
+        .update({ invited_user_id: userId, token, sent_at: new Date().toISOString() })
         .eq("id", invite.id);
       return json({ ok: true, status: "resent" });
     }

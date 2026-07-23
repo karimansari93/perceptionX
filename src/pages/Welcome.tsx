@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
@@ -45,14 +45,68 @@ const display = { fontFamily: 'Geologica, sans-serif' };
 // and redirects here so they can set a password before entering the dashboard.
 const Welcome = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const inviteToken = searchParams.get('invite');
   const { user, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(false);
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'valid' | 'expired'>('checking');
+  const [expiredReason, setExpiredReason] = useState<'used' | 'invalid' | null>(null);
 
+  // New flow: exchange a durable invite token (?invite=…) for a fresh session.
+  // The redeem-invite function mints a one-time OTP we verify here, so the
+  // emailed link never expires — it just stops working once accepted or revoked.
   useEffect(() => {
+    if (!inviteToken) return;
+    if (user) {
+      setSessionStatus('valid');
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('redeem-invite', {
+          body: { token: inviteToken },
+        });
+        if (error) throw error;
+        if (!data?.ok || !data?.tokenHash) {
+          if (!cancelled) {
+            setExpiredReason(data?.reason === 'used' ? 'used' : 'invalid');
+            setSessionStatus('expired');
+          }
+          return;
+        }
+        const { error: otpError } = await supabase.auth.verifyOtp({
+          token_hash: data.tokenHash,
+          type: 'magiclink',
+        });
+        if (otpError) throw otpError;
+        if (cancelled) return;
+        setSessionStatus('valid');
+        // Don't leave the token sitting in the URL / browser history.
+        searchParams.delete('invite');
+        setSearchParams(searchParams, { replace: true });
+      } catch (err) {
+        console.error('Invite redemption failed:', err);
+        if (!cancelled) {
+          setExpiredReason('invalid');
+          setSessionStatus('expired');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inviteToken, user]);
+
+  // Legacy flow (Supabase auth action link drops the session in the URL hash),
+  // or a bare /welcome visit: fall back to the previous session probe. Skipped
+  // entirely when a token is present — the redemption effect owns the status.
+  useEffect(() => {
+    if (inviteToken) return;
     if (authLoading) return;
     if (user) {
       setSessionStatus('valid');
@@ -62,7 +116,7 @@ const Welcome = () => {
       setSessionStatus((prev) => (prev === 'valid' ? 'valid' : 'expired'));
     }, 3000);
     return () => clearTimeout(timeout);
-  }, [user, authLoading]);
+  }, [user, authLoading, inviteToken]);
 
   useEffect(() => {
     if (user) setSessionStatus('valid');
@@ -118,13 +172,14 @@ const Welcome = () => {
           <div className="bg-gradient-to-br from-pink/15 via-white to-[#13274F]/5 px-8 pt-9 pb-7">
             <img src="/logos/PerceptionX-PrimaryLogo.png" alt="PerceptionX" className="h-5 mx-auto mb-6" />
             <h1 className="text-[22px] font-bold text-nightsky leading-tight" style={display}>
-              Invite link expired
+              {expiredReason === 'used' ? "You're already set up" : 'Invite link not valid'}
             </h1>
           </div>
           <div className="px-8 py-7 space-y-5">
             <p className="text-[14px] text-nightsky/70 leading-relaxed" style={sans}>
-              This invite link has expired or was already used. Ask your teammate to
-              resend the invite from their dashboard.
+              {expiredReason === 'used'
+                ? 'This invite has already been accepted. If that was you, just log in with your email and password.'
+                : 'This invite link is no longer valid or was cancelled. Ask your teammate to send you a new one from their dashboard.'}
             </p>
             <Button
               onClick={() => navigate('/auth')}
