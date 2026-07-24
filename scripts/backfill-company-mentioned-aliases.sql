@@ -29,14 +29,19 @@ WHERE pr.confirmed_prompt_id = cp.id
   );
 -- Prod run 2026-06-08: 772 rows updated (Netflix 685, Spotify 87).
 -- Prod run 2026-06-10: 40 rows updated (Warner Bros Discovery, after adding regex aliases).
+-- Pending: Ford Business Solutions FBS alias
+--   (20260724150000_add_ford_business_solutions_fbs_alias.sql) — expected 21 rows.
 
--- 2) Refresh the materialized views that depend on company_mentioned so the
---    dashboard reflects the change. MV refresh crons are currently disabled
---    (see 20260602000001_disable_mv_refresh_crons.sql), so this is required.
+-- 2) Refresh the rollups that depend on company_mentioned so the dashboard
+--    reflects the change. Since 20260706120000 the per-company rollups are
+--    plain tables refreshed via refresh_company_metrics(); the remaining
+--    matviews are the by-location/overview ones below.
 --    CONCURRENTLY cannot run inside a transaction block — run each on its own.
+-- SELECT public.refresh_company_metrics('<company-uuid>');  -- per affected company
 REFRESH MATERIALIZED VIEW CONCURRENTLY public.company_overview_stats_mv;
-REFRESH MATERIALIZED VIEW CONCURRENTLY public.company_llm_rankings_mv;
-REFRESH MATERIALIZED VIEW CONCURRENTLY public.company_relevance_scores_mv;
+REFRESH MATERIALIZED VIEW CONCURRENTLY public.company_llm_rankings_by_location_mv;
+REFRESH MATERIALIZED VIEW CONCURRENTLY public.company_relevance_scores_by_location_mv;
+REFRESH MATERIALIZED VIEW CONCURRENTLY public.company_visibility_by_location_mv;
 REFRESH MATERIALIZED VIEW CONCURRENTLY public.competitor_benchmarks_mv;
 
 -- 3) Verify: no false rows remain that an active alias would match (expect 0 rows).
