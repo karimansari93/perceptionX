@@ -192,16 +192,25 @@ export const buildLocationOptions = (
     }
   }
 
+  // Per-company evidence from loaded responses, used to prune phantom seeded
+  // entries below: a company with ≥1 loaded response, ALL of them tagged with
+  // other locations, provably contributes nothing to its seeded country bucket.
+  const companiesWithResponses = new Set<string>();
+  const companiesWithUntagged = new Set<string>();
+
   // Locations from responses across the whole scope.
   for (const r of responses) {
+    if (r.company_id != null) companiesWithResponses.add(r.company_id);
     const raw = r.confirmed_prompts?.location_context;
     const key = canonicalizeLocationContext(raw);
     if (key !== null) {
       getBuilder(key).rawValues.add(raw!.trim());
       continue;
     }
-    // Untagged prompt: attributed to the company's country (already seeded
-    // above); only countryless companies' untagged prompts feed "General".
+    // Untagged (or global-tagged) prompt: attributed to the company's country
+    // (already seeded above); only countryless companies' untagged prompts
+    // feed "General".
+    if (r.company_id != null) companiesWithUntagged.add(r.company_id);
     const cKey = r.company_id != null ? (countryKeyById.get(r.company_id) ?? null) : null;
     if (cKey === null) {
       generalBuckets.add(raw == null || raw.trim() === '' ? '' : raw.trim());
@@ -220,6 +229,31 @@ export const buildLocationOptions = (
     const existing = builders.get(key);
     if (existing) {
       existing.rawValues.add(bucket.trim());
+    }
+  }
+
+  // PRUNE phantom seeded entries. A seeded country entry with NO stored
+  // spelling anywhere (neither loaded responses nor all-time MV buckets ever
+  // spell this location) only matches a company's UNTAGGED data. If every
+  // company that seeded it has loaded responses that are all tagged with other
+  // locations, the bucket is provably empty — selecting it renders a false
+  // "No Data" view (observed on Ford Energy: a single US profile whose prompts
+  // are all "Kentucky"/"Dearborn, Michigan", leaving the seeded "United
+  // States" entry permanently hollow). Kept conservative:
+  //  - any untagged/global MV bucket in scope ⇒ historical untagged months may
+  //    attribute to seeded countries, so nothing is pruned;
+  //  - a seeding company with NO loaded responses keeps its seed (data
+  //    unknown — the profile stays selectable, matching the old behavior).
+  const scopeHasUntaggedBuckets = extraBucketValues.some(
+    (b) => canonicalizeLocationContext(b) === null
+  );
+  if (!scopeHasUntaggedBuckets) {
+    for (const [key, b] of Array.from(builders)) {
+      if (b.rawValues.size > 0 || b.companyIds.size === 0) continue;
+      const provablyEmpty = Array.from(b.companyIds).every(
+        (id) => companiesWithResponses.has(id) && !companiesWithUntagged.has(id)
+      );
+      if (provablyEmpty) builders.delete(key);
     }
   }
 
