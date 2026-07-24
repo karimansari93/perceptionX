@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/integrations/supabase/client';
@@ -10,6 +10,7 @@ import { Check, Loader2, ArrowRight, Eye, EyeOff } from 'lucide-react';
 
 const PASSWORD_MIN_LENGTH = 8;
 
+// Keep in sync with passwordError() in the accept-team-invite edge function.
 const validatePassword = (password: string): string | null => {
   if (password.length < PASSWORD_MIN_LENGTH) {
     return `Password must be at least ${PASSWORD_MIN_LENGTH} characters long`;
@@ -41,18 +42,70 @@ const PAGE_BG =
 const sans = { fontFamily: 'Plus Jakarta Sans, sans-serif' };
 const display = { fontFamily: 'Geologica, sans-serif' };
 
-// Landing page for team invites: the email's action link signs the invitee in
-// and redirects here so they can set a password before entering the dashboard.
+interface TokenInvite {
+  email: string;
+  inviterName: string | null;
+}
+
+// Pulls the real error message out of a FunctionsHttpError response body.
+const functionErrorMessage = async (error: unknown, fallback: string) => {
+  try {
+    const ctx = (error as { context?: Response }).context;
+    if (ctx) {
+      const parsed = await ctx.json();
+      if (parsed?.error) return parsed.error as string;
+    }
+  } catch { /* keep fallback */ }
+  return error instanceof Error ? error.message : fallback;
+};
+
+// Landing page for team invites. Two modes:
+//  - Token mode (/welcome?invite=<token>): 30-day invite links minted by the
+//    invite-team-member edge function; the token is validated and redeemed
+//    through accept-team-invite, then we sign in with the new password.
+//  - Legacy session mode (/welcome): older Supabase auth action links sign the
+//    invitee in and redirect here; the password is set on the live session.
 const Welcome = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const inviteToken = searchParams.get('invite');
   const { user, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(false);
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'valid' | 'expired'>('checking');
+  const [tokenInvite, setTokenInvite] = useState<TokenInvite | null>(null);
 
+  // Token mode: validate the invite token up front.
   useEffect(() => {
+    if (!inviteToken) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('accept-team-invite', {
+          body: { action: 'lookup', token: inviteToken },
+        });
+        if (cancelled) return;
+        if (error || !data?.valid) {
+          setSessionStatus('expired');
+          return;
+        }
+        setTokenInvite({ email: data.email, inviterName: data.inviterName ?? null });
+        setSessionStatus('valid');
+      } catch (err) {
+        console.error('Error validating invite token:', err);
+        if (!cancelled) setSessionStatus('expired');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [inviteToken]);
+
+  // Legacy session mode: the auth action link should have signed us in.
+  useEffect(() => {
+    if (inviteToken) return;
     if (authLoading) return;
     if (user) {
       setSessionStatus('valid');
@@ -62,13 +115,15 @@ const Welcome = () => {
       setSessionStatus((prev) => (prev === 'valid' ? 'valid' : 'expired'));
     }, 3000);
     return () => clearTimeout(timeout);
-  }, [user, authLoading]);
+  }, [user, authLoading, inviteToken]);
 
   useEffect(() => {
-    if (user) setSessionStatus('valid');
-  }, [user]);
+    if (!inviteToken && user) setSessionStatus('valid');
+  }, [user, inviteToken]);
 
-  const inviterName = (user?.user_metadata?.inviter_name as string) || null;
+  const inviterName = inviteToken
+    ? tokenInvite?.inviterName ?? null
+    : (user?.user_metadata?.inviter_name as string) || null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,16 +140,32 @@ const Welcome = () => {
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({
-        password,
-        data: { full_name: name },
-      });
-      if (error) throw error;
+      if (inviteToken) {
+        // Token mode: redeem the invite server-side, then sign in with the
+        // freshly set password.
+        const { data, error } = await supabase.functions.invoke('accept-team-invite', {
+          body: { action: 'accept', token: inviteToken, password, fullName: name },
+        });
+        if (error) throw new Error(await functionErrorMessage(error, 'Failed to accept invite'));
+        if (data?.error) throw new Error(data.error);
 
-      // Keep the app-facing profile in sync; the name is what teammates see
-      // in invite emails when this user invites others later.
-      if (user) {
-        await supabase.from('profiles').update({ full_name: name }).eq('id', user.id);
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: data.email,
+          password,
+        });
+        if (signInError) throw signInError;
+      } else {
+        const { error } = await supabase.auth.updateUser({
+          password,
+          data: { full_name: name },
+        });
+        if (error) throw error;
+
+        // Keep the app-facing profile in sync; the name is what teammates see
+        // in invite emails when this user invites others later.
+        if (user) {
+          await supabase.from('profiles').update({ full_name: name }).eq('id', user.id);
+        }
       }
 
       toast.success("You're all set — welcome to PerceptionX!");
@@ -170,6 +241,12 @@ const Welcome = () => {
                 <span className="font-semibold text-nightsky">{inviterName}</span> invited you to join them
               </span>
             </div>
+          )}
+
+          {inviteToken && tokenInvite?.email && (
+            <p className="mt-3 text-[13px] text-nightsky/50" style={sans}>
+              Setting up <span className="font-semibold text-nightsky/70">{tokenInvite.email}</span>
+            </p>
           )}
 
           <p className="mt-3 text-[14px] text-nightsky/60" style={sans}>

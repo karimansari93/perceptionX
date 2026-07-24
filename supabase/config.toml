@@ -314,6 +314,13 @@ deno_version = 1
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# accept-team-invite is public by design: the 30-day invite token in the
+# request body is the credential (same model as the intake onboarding flow).
+# Without this, a CLI deploy would default to verify_jwt = true and break
+# the invite-acceptance flow.
+[functions.accept-team-invite]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
