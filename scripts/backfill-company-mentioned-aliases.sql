@@ -29,8 +29,8 @@ WHERE pr.confirmed_prompt_id = cp.id
   );
 -- Prod run 2026-06-08: 772 rows updated (Netflix 685, Spotify 87).
 -- Prod run 2026-06-10: 40 rows updated (Warner Bros Discovery, after adding regex aliases).
--- Pending: Ford Business Solutions FBS alias
---   (20260724150000_add_ford_business_solutions_fbs_alias.sql) — expected 21 rows.
+-- Prod run 2026-07-27: 21 rows updated (Ford Business Solutions, after adding the
+--   FBS regex alias in 20260724150000_add_ford_business_solutions_fbs_alias.sql).
 
 -- 2) Refresh the rollups that depend on company_mentioned so the dashboard
 --    reflects the change. Since 20260706120000 the per-company rollups are
