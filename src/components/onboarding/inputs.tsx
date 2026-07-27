@@ -2,7 +2,7 @@
 // buttons/inputs (keyboard reachable), with visible focus rings.
 
 import { useMemo, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
 import {
   EmployerEntity,
   OWNED_PROPERTY_TYPES,
@@ -89,6 +89,11 @@ export function SkipButton({ label, onClick }: { label: string; onClick: () => v
 }
 
 export const inputClass = `w-full rounded-xl border border-silver bg-white px-3.5 py-2.5 text-sm text-nightsky placeholder:text-slate-400 ${focusRing}`;
+
+// In-place editing inside list rows (admin brief review): reads as plain text,
+// reveals its border on hover/focus so typos can be fixed without re-adding.
+const inlineInputClass =
+  'w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-sm text-nightsky placeholder:text-slate-400 hover:border-silver focus:border-teal focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal';
 
 /** "Press Enter" affordance shown inside adder inputs once there's text. */
 function EnterHint({ show }: { show: boolean }) {
@@ -336,14 +341,47 @@ export function EntityEditor({
   entities,
   onChange,
   showHelp = true,
+  editable = false,
+  parentFunctions = [],
+  parentMarkets = [],
+  parentIndustries = [],
+  trackLabel = 'Track separately',
 }: {
   companyName: string;
   entities: EmployerEntity[];
   onChange: (entities: EmployerEntity[]) => void;
   /** The wizard's question hint already explains this; admin has no hint. */
   showHelp?: boolean;
+  /**
+   * Admin review: edit entity names in place, and open each tracked sub-brand's
+   * scope (inherit the parent's roles/markets, or set its own). The wizard asks
+   * for scope in its own per-entity step, so it leaves this off.
+   */
+  editable?: boolean;
+  /** Parent's functions/markets — the options a custom scope narrows down from. */
+  parentFunctions?: string[];
+  parentMarkets?: string[];
+  /** The brief's industries — offered as a per-entity benchmark override. */
+  parentIndustries?: string[];
+  /** Wording for the per-entity toggle — client-facing views say "Report separately". */
+  trackLabel?: string;
 }) {
   const [name, setName] = useState('');
+  // One scope panel open at a time keeps a long brief readable. Index-keyed
+  // (names are editable, so a name key would collapse mid-edit).
+  const [openScope, setOpenScope] = useState<number | null>(null);
+
+  const updateEntity = (i: number, patch: Partial<EmployerEntity>) => {
+    const next = [...entities];
+    next[i] = { ...next[i], ...patch };
+    onChange(next);
+  };
+
+  const toggleIn = (list: string[], value: string) =>
+    list.some((x) => x.toLowerCase() === value.toLowerCase())
+      ? list.filter((x) => x.toLowerCase() !== value.toLowerCase())
+      : [...list, value];
+
   const add = () => {
     const v = name.trim();
     if (
@@ -369,35 +407,172 @@ export function EntityEditor({
       </ul>
       {entities.length > 0 && (
         <ul className="space-y-2">
-          {entities.map((e, i) => (
-            <li
-              key={e.name}
-              className="flex items-center gap-3 rounded-xl border border-silver bg-white px-3 py-2"
-            >
-              <span className="text-sm text-nightsky flex-1 truncate">{e.name}</span>
-              <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={e.track_separately}
-                  onChange={(ev) => {
-                    const next = [...entities];
-                    next[i] = { ...e, track_separately: ev.target.checked };
-                    onChange(next);
-                  }}
-                  className={`h-4 w-4 rounded border-silver accent-[#0CBCB9] ${focusRing}`}
-                />
-                Track separately
-              </label>
-              <button
-                type="button"
-                onClick={() => onChange(entities.filter((_, j) => j !== i))}
-                aria-label={`Remove ${e.name}`}
-                className={`text-slate-400 hover:text-nightsky rounded p-0.5 ${focusRing}`}
-              >
-                <X className="h-4 w-4" aria-hidden />
-              </button>
-            </li>
-          ))}
+          {entities.map((e, i) => {
+            const custom = e.scope_mode === 'custom';
+            const funcs = e.job_functions ?? [];
+            const markets = e.markets ?? [];
+            const scopeOpen = openScope === i;
+            return (
+              <li key={i} className="rounded-xl border border-silver bg-white px-3 py-2">
+                <div className="flex items-center gap-3">
+                  {editable ? (
+                    <input
+                      value={e.name}
+                      onChange={(ev) => updateEntity(i, { name: ev.target.value })}
+                      aria-label="Entity name"
+                      className={`flex-1 min-w-0 ${inlineInputClass}`}
+                    />
+                  ) : (
+                    <span className="text-sm text-nightsky flex-1 truncate">{e.name}</span>
+                  )}
+                  <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={e.track_separately}
+                      onChange={(ev) => updateEntity(i, { track_separately: ev.target.checked })}
+                      className={`h-4 w-4 rounded border-silver accent-[#0CBCB9] ${focusRing}`}
+                    />
+                    {trackLabel}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange(entities.filter((_, j) => j !== i));
+                      setOpenScope(null);
+                    }}
+                    aria-label={`Remove ${e.name}`}
+                    className={`text-slate-400 hover:text-nightsky rounded p-0.5 ${focusRing}`}
+                  >
+                    <X className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
+
+                {/* Scope: what this sub-brand actually hires for. Inheriting the
+                    parent's full matrix is the default and can be far too wide. */}
+                {editable && e.track_separately && (
+                  <div className="mt-2 border-t border-slate-100 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setOpenScope(scopeOpen ? null : i)}
+                      aria-expanded={scopeOpen}
+                      className={`flex items-center gap-1 rounded text-xs text-slate-500 hover:text-nightsky ${focusRing}`}
+                    >
+                      {scopeOpen ? (
+                        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      Scope:{' '}
+                      <span className="font-medium text-slate-600">
+                        {custom
+                          ? `${funcs.length} function${funcs.length === 1 ? '' : 's'} · ${markets.length} market${markets.length === 1 ? '' : 's'}`
+                          : `same as ${companyName || 'parent'}`}
+                      </span>
+                    </button>
+
+                    {scopeOpen && (
+                      <div className="mt-2 space-y-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                        <div className="flex flex-wrap gap-2">
+                          <Chip
+                            label={`Same as ${companyName || 'parent'}`}
+                            selected={!custom}
+                            onClick={() => updateEntity(i, { scope_mode: 'inherit' })}
+                          />
+                          <Chip
+                            label="Its own roles & markets"
+                            selected={custom}
+                            onClick={() =>
+                              updateEntity(i, {
+                                scope_mode: 'custom',
+                                // Seed from the parent so narrowing is a few clicks.
+                                job_functions: e.job_functions ?? [...parentFunctions],
+                                markets: e.markets ?? [...parentMarkets],
+                              })
+                            }
+                          />
+                        </div>
+
+                        {custom ? (
+                          <>
+                            <div className="space-y-1.5">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Functions
+                              </p>
+                              <MultiChipSelect
+                                options={parentFunctions}
+                                selected={funcs}
+                                onToggle={(v) =>
+                                  updateEntity(i, { job_functions: toggleIn(funcs, v) })
+                                }
+                                onAddCustom={(v) =>
+                                  updateEntity(i, { job_functions: toggleIn(funcs, v) })
+                                }
+                                addPlaceholder="Add a function"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Markets
+                              </p>
+                              <MultiChipSelect
+                                options={parentMarkets}
+                                selected={markets}
+                                onToggle={(v) => updateEntity(i, { markets: toggleIn(markets, v) })}
+                                onAddCustom={(v) =>
+                                  updateEntity(i, { markets: toggleIn(markets, v) })
+                                }
+                                addPlaceholder="Add a market"
+                              />
+                            </div>
+                            {(funcs.length === 0 || markets.length === 0) && (
+                              <p className="text-xs text-pink">
+                                Pick at least one function and one market.
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-xs text-slate-500">
+                            Covers every function in every market listed above. Switch to its
+                            own roles &amp; markets if this one hires for fewer.
+                          </p>
+                        )}
+
+                        {/* Industry is independent of role/market scope: a unit can
+                            hire for the same roles yet compete against a different set. */}
+                        {parentIndustries.length > 0 && (
+                          <div className="space-y-1.5 border-t border-slate-200 pt-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Industry
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              <Chip
+                                label="Same as the brief"
+                                selected={!e.industry}
+                                onClick={() => updateEntity(i, { industry: undefined })}
+                              />
+                              {parentIndustries.map((ind) => (
+                                <Chip
+                                  key={ind}
+                                  label={ind}
+                                  selected={e.industry?.toLowerCase() === ind.toLowerCase()}
+                                  onClick={() => updateEntity(i, { industry: ind })}
+                                />
+                              ))}
+                            </div>
+                            <p className="text-xs text-slate-500">
+                              {e.industry
+                                ? `Everything for ${e.name || 'this one'} is compared against ${e.industry}.`
+                                : 'Uses whichever industry each function is set to.'}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
       <div className="flex gap-2">
@@ -444,9 +619,12 @@ export function EntityEditor({
 export function PropertyEditor({
   properties,
   onChange,
+  editable = false,
 }: {
   properties: OwnedProperty[];
   onChange: (properties: OwnedProperty[]) => void;
+  /** Admin review: edit type + URL in place instead of remove + re-add. */
+  editable?: boolean;
 }) {
   const [type, setType] = useState<OwnedPropertyType>('linkedin');
   const [url, setUrl] = useState('');
@@ -464,13 +642,46 @@ export function PropertyEditor({
         <ul className="space-y-2">
           {properties.map((p, i) => (
             <li
-              key={`${p.type}-${p.url}`}
+              key={i}
               className="flex items-center gap-2 rounded-xl border border-silver bg-white px-3 py-2 text-sm"
             >
-              <span className="text-xs uppercase tracking-wide text-slate-500 w-24 shrink-0">
-                {OWNED_PROPERTY_TYPES.find((t) => t.value === p.type)?.label ?? p.type}
-              </span>
-              <span className="text-nightsky flex-1 truncate">{p.url}</span>
+              {editable ? (
+                <>
+                  <select
+                    value={p.type}
+                    onChange={(ev) => {
+                      const next = [...properties];
+                      next[i] = { ...p, type: ev.target.value as OwnedPropertyType };
+                      onChange(next);
+                    }}
+                    aria-label="Property type"
+                    className="w-28 shrink-0 rounded-md border border-transparent bg-transparent py-1 text-xs uppercase tracking-wide text-slate-500 hover:border-silver focus:border-teal focus-visible:outline-none"
+                  >
+                    {OWNED_PROPERTY_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    value={p.url}
+                    onChange={(ev) => {
+                      const next = [...properties];
+                      next[i] = { ...p, url: ev.target.value };
+                      onChange(next);
+                    }}
+                    aria-label="Property URL"
+                    className={`flex-1 min-w-0 ${inlineInputClass}`}
+                  />
+                </>
+              ) : (
+                <>
+                  <span className="text-xs uppercase tracking-wide text-slate-500 w-24 shrink-0">
+                    {OWNED_PROPERTY_TYPES.find((t) => t.value === p.type)?.label ?? p.type}
+                  </span>
+                  <span className="text-nightsky flex-1 truncate">{p.url}</span>
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => onChange(properties.filter((_, j) => j !== i))}
@@ -535,9 +746,12 @@ const emailLooksValid = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim(
 export function RecipientEditor({
   recipients,
   onChange,
+  editable = false,
 }: {
   recipients: ReportRecipient[];
   onChange: (recipients: ReportRecipient[]) => void;
+  /** Admin review: edit name/role/email in place instead of remove + re-add. */
+  editable?: boolean;
 }) {
   const [draft, setDraft] = useState({ name: '', role: '', email: '' });
 
@@ -562,7 +776,7 @@ export function RecipientEditor({
         <ul className="space-y-2" role="radiogroup" aria-label="Primary recipient">
           {recipients.map((r, i) => (
             <li
-              key={r.email}
+              key={i}
               className="flex items-center gap-3 rounded-xl border border-silver bg-white px-3 py-2"
             >
               <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer shrink-0">
@@ -575,13 +789,52 @@ export function RecipientEditor({
                 />
                 Primary
               </label>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-nightsky truncate">
-                  {r.name}
-                  {r.role ? <span className="text-slate-500"> · {r.role}</span> : null}
-                </p>
-                <p className="text-xs text-slate-500 truncate">{r.email}</p>
-              </div>
+              {editable ? (
+                <div className="min-w-0 flex-1 grid grid-cols-1 sm:grid-cols-[1fr_1fr_1.4fr] gap-1.5">
+                  <input
+                    value={r.name}
+                    onChange={(ev) => {
+                      const next = [...recipients];
+                      next[i] = { ...r, name: ev.target.value };
+                      onChange(next);
+                    }}
+                    placeholder="Name"
+                    aria-label="Recipient name"
+                    className={inlineInputClass}
+                  />
+                  <input
+                    value={r.role}
+                    onChange={(ev) => {
+                      const next = [...recipients];
+                      next[i] = { ...r, role: ev.target.value };
+                      onChange(next);
+                    }}
+                    placeholder="Role"
+                    aria-label="Recipient role"
+                    className={inlineInputClass}
+                  />
+                  <input
+                    value={r.email}
+                    onChange={(ev) => {
+                      const next = [...recipients];
+                      next[i] = { ...r, email: ev.target.value };
+                      onChange(next);
+                    }}
+                    placeholder="Email"
+                    type="email"
+                    aria-label="Recipient email"
+                    className={inlineInputClass}
+                  />
+                </div>
+              ) : (
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-nightsky truncate">
+                    {r.name}
+                    {r.role ? <span className="text-slate-500"> · {r.role}</span> : null}
+                  </p>
+                  <p className="text-xs text-slate-500 truncate">{r.email}</p>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -660,10 +913,13 @@ export function PriorityEditor({
   values,
   onChange,
   max = 5,
+  editable = false,
 }: {
   values: string[];
   onChange: (values: string[]) => void;
   max?: number;
+  /** Admin review: edit priority text in place instead of remove + re-add. */
+  editable?: boolean;
 }) {
   const [text, setText] = useState('');
   const add = () => {
@@ -679,13 +935,26 @@ export function PriorityEditor({
         <ol className="space-y-2 list-none">
           {values.map((v, i) => (
             <li
-              key={v}
+              key={i}
               className="flex items-center gap-3 rounded-xl border border-silver bg-white px-3 py-2 text-sm text-nightsky"
             >
               <span className="w-5 h-5 shrink-0 rounded-full bg-teal/15 text-teal text-xs flex items-center justify-center font-medium">
                 {i + 1}
               </span>
-              <span className="flex-1 truncate">{v}</span>
+              {editable ? (
+                <input
+                  value={v}
+                  onChange={(ev) => {
+                    const next = [...values];
+                    next[i] = ev.target.value;
+                    onChange(next);
+                  }}
+                  aria-label={`Priority ${i + 1}`}
+                  className={`flex-1 min-w-0 ${inlineInputClass}`}
+                />
+              ) : (
+                <span className="flex-1 truncate">{v}</span>
+              )}
               <button
                 type="button"
                 onClick={() => onChange(values.filter((_, j) => j !== i))}

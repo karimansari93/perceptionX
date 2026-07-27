@@ -121,6 +121,16 @@ export async function listOnboardingInvites(): Promise<OnboardingInvite[]> {
   return (data ?? []) as OnboardingInvite[];
 }
 
+/** Load a single invite by id — used by the brief review page. Admin only. */
+export async function getOnboardingInvite(inviteId: string): Promise<OnboardingInvite | null> {
+  const { data, error } = await table('intake_invites')
+    .select('*')
+    .eq('id', inviteId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as OnboardingInvite) ?? null;
+}
+
 export async function getOnboardingSubmission(inviteId: string): Promise<OnboardingSubmission | null> {
   const { data, error } = await table('intake_submissions')
     .select('*')
