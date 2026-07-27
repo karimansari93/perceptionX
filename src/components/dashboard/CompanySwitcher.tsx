@@ -59,18 +59,19 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
 
   const isCurrentOption = (opt: LocationOption) => opt.company.id === currentCompany?.id;
 
-  // Switch to the company record the option represents and land on its "All
-  // locations" view (null). Passing the record's country code as a location
-  // filter is wrong under the location_context model — the code rarely matches a
-  // stored context spelling, which left the dashboard in a broken 0%-metrics
-  // state. The location dropdown then filters within the newly-selected company.
-  const selectOption = async (opt: LocationOption) => {
+  // Switch to the company record the option represents. `pendingLocation` is
+  // the canonical location key to land on after the switch:
+  //  - submenu country picks pass the picked country (the user explicitly chose
+  //    it, and multi-country brands store matching location_context spellings);
+  //  - single-record brand clicks pass null ("All locations") — the user chose
+  //    a COMPANY, not a country, and pinning the record's `country` field as a
+  //    filter breaks companies whose prompts are tagged sub-nationally (e.g.
+  //    Ford Energy: all data is "Kentucky"/"Dearborn, Michigan", so the seeded
+  //    "United States" bucket is empty and rendered a false "No Data" view).
+  const selectOption = async (opt: LocationOption, pendingLocation: string | null) => {
     setIsOpen(false);
     if (isCurrentOption(opt)) return;
-    // Apply the picked location once the switch lands so the location trigger
-    // shows the country (canonicalize the record's country to match the target
-    // company's location_context spelling); null → "All locations".
-    onPendingLocationChange?.(canonicalizeLocationContext(opt.location));
+    onPendingLocationChange?.(pendingLocation);
     try {
       await switchCompany(opt.company.id);
       toast.success('Company switched');
@@ -130,7 +131,8 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
     return (
       <DropdownMenuItem
         key={key}
-        onClick={() => selectOption(opt)}
+        // Explicit country pick from the submenu: land on that country's view.
+        onClick={() => selectOption(opt, canonicalizeLocationContext(opt.location))}
         className="cursor-pointer flex items-center gap-2"
       >
         {isCurrent ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}
@@ -191,7 +193,9 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
               return (
                 <DropdownMenuItem
                   key={group.key}
-                  onClick={() => selectOption(opt)}
+                  // Brand click (no country submenu shown): land on "All
+                  // locations" — the user didn't pick a country.
+                  onClick={() => selectOption(opt, null)}
                   className="cursor-pointer flex items-center gap-2"
                 >
                   {isCurrent ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}

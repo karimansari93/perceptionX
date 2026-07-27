@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { ATTRIBUTES, normalizeAttributeId } from "@/config/attributes";
+import { sentimentRatioV2 } from "@/lib/sentimentV2";
 
 interface AttributesSummaryCardProps {
   aiThemes?: any[];
@@ -199,21 +200,24 @@ export const AttributesSummaryCard = ({
       attributeCounts[attributeId].avgSentimentScore = avgSentimentScore;
     });
 
-    // Convert to array and categorize by SWOT
+    // Convert to array and categorize by SWOT.
+    // Methodology v2: gates run on the label-based positive/(positive+negative)
+    // ratio, not the numeric sentiment_score. Thresholds are the old numeric
+    // gates translated onto the 0..1 ratio scale (0.3→0.65, 0.1→0.55, etc.).
     return Object.entries(attributeCounts)
       .map(([attributeId, data]) => {
-        // Determine SWOT category based on sentiment and mention count
+        const ratio = sentimentRatioV2(data.positiveCount, data.negativeCount);
         let swotCategory: string;
-        if (data.avgSentimentScore > 0.3 && data.count >= 3) {
+        if (ratio !== null && ratio >= 0.65 && data.count >= 3) {
           swotCategory = 'Strength';
-        } else if (data.avgSentimentScore < -0.3 && data.count >= 2) {
+        } else if (ratio !== null && ratio <= 0.35 && data.count >= 2) {
           swotCategory = 'Weakness';
-        } else if (data.avgSentimentScore > 0.1 && data.count >= 2) {
+        } else if (ratio !== null && ratio >= 0.55 && data.count >= 2) {
           swotCategory = 'Opportunity';
-        } else if (data.avgSentimentScore < -0.1) {
+        } else if (ratio !== null && ratio <= 0.45) {
           swotCategory = 'Threat';
         } else {
-          swotCategory = 'Opportunity'; // Default for neutral/low sentiment
+          swotCategory = 'Opportunity'; // Default for neutral/no-signal sentiment
         }
 
         return {
@@ -257,8 +261,8 @@ export const AttributesSummaryCard = ({
 
   const renderAttributeItem = (attribute: any) => {
     const IconComponent = ATTRIBUTE_ICONS[attribute.id] || Target;
-    const total = attribute.positiveCount + attribute.negativeCount + attribute.neutralCount;
-    const sentimentScore = total > 0 ? Math.round((attribute.positiveCount / total) * 100) : 0;
+    // Methodology v2: neutrals are excluded from the displayed score.
+    const sentimentScore = Math.round((sentimentRatioV2(attribute.positiveCount, attribute.negativeCount) ?? 0) * 100);
     const scoreColor = sentimentScore >= 70 ? 'text-green-600' : sentimentScore >= 50 ? 'text-yellow-600' : sentimentScore >= 30 ? 'text-orange-600' : 'text-red-600';
 
     const volumeLabel = getVolumeLabel(attribute.count);

@@ -68,11 +68,14 @@ serve(async (req) => {
     }
 
     companies = companies.map((c: any) => {
+      // Methodology v2: positive/(positive+negative) — neutral themes are
+      // excluded from the score; null = no polarized signal.
       const pos = c.themes.filter((t: any) => t.sentiment === 'positive').length;
-      const total = c.themes.length;
+      const neg = c.themes.filter((t: any) => t.sentiment === 'negative').length;
+      const polarized = pos + neg;
       return {
         ...c,
-        sentiment_score: total > 0 ? Math.round((pos / total) * 1000) / 10 : null,
+        sentiment_score: polarized > 0 ? Math.round((pos / polarized) * 1000) / 10 : null,
       };
     });
 

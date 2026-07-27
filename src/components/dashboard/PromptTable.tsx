@@ -7,6 +7,7 @@ import { PromptData } from "@/types/dashboard";
 import { SearchInput } from "./SearchInput";
 import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
 import { MessageSquare, TrendingUp, TrendingDown, Minus, Target, Filter, HelpCircle, Lightbulb } from "lucide-react";
+import { getTypeBadgeStyle, getThemeBadgeStyle } from "@/lib/promptBadges";
 import { useState, useMemo, useTransition, useDeferredValue, memo } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
@@ -14,11 +15,15 @@ import { getCompetitorFavicon } from "@/utils/citationUtils";
 interface PromptTableProps {
   prompts: PromptData[];
   onPromptClick: (promptText: string) => void;
+  // True while the raw response stream for the current company is still
+  // arriving (it loads AFTER first paint). Gates the empty state: skeleton
+  // rows, never "No prompts tracked yet", until the stream is final.
+  responsesLoading?: boolean;
 }
 
 const INITIAL_ROWS = 50;
 
-export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) => {
+export const PromptTable = memo(({ prompts, onPromptClick, responsesLoading = false }: PromptTableProps) => {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [showAll, setShowAll] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
@@ -118,15 +123,23 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
 
   const hasMore = filteredPrompts.length > INITIAL_ROWS && !showAll;
 
+  // Raw responses stream in after first paint. Until at least one row carries
+  // real response data, the list is only the zero-count prompt shells merged
+  // from activePrompts — rendering those reads as "every prompt has 0
+  // responses / not mentioned", which is fabricated. Skeleton instead.
+  const awaitingResponseData = responsesLoading && !filteredPrompts.some(p => (p.responses ?? 0) > 0);
+
+  // avgSentiment is the methodology-v2 ratio positive/(positive+negative),
+  // 0..1 — same 0.6/0.4 label thresholds as the rest of the dashboard.
   const getSentimentIcon = (sentiment: number) => {
-    if (sentiment > 0.1) return <TrendingUp className="w-4 h-4 text-green-600" />;
-    if (sentiment < -0.1) return <TrendingDown className="w-4 h-4 text-red-600" />;
+    if (sentiment > 0.6) return <TrendingUp className="w-4 h-4 text-green-600" />;
+    if (sentiment < 0.4) return <TrendingDown className="w-4 h-4 text-red-600" />;
     return <Minus className="w-4 h-4 text-gray-600" />;
   };
 
   const getSentimentColor = (sentiment: number) => {
-    if (sentiment > 0.1) return 'text-green-600';
-    if (sentiment < -0.1) return 'text-red-600';
+    if (sentiment > 0.6) return 'text-green-600';
+    if (sentiment < 0.4) return 'text-red-600';
     return 'text-gray-600';
   };
 
@@ -209,17 +222,14 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
       displayLabel = 'Comparison';
     }
     
-    // Apply colors matching PromptSummaryCards
-    let badgeClass = "bg-gray-100 text-gray-800 border-gray-200"; // default
-    if (typeLabel.toLowerCase() === 'sentiment') {
-      badgeClass = "bg-blue-100 text-blue-800 border-blue-200";
-    } else if (typeLabel.toLowerCase() === 'visibility') {
-      badgeClass = "bg-green-100 text-green-800 border-green-200";
-    } else if (typeLabel.toLowerCase() === 'competitive') {
-      badgeClass = "bg-purple-100 text-purple-800 border-purple-200";
-    }
-    
-    return <Badge variant="outline" className={`${badgeClass} whitespace-nowrap`}>{displayLabel}</Badge>;
+    const { icon: TypeIcon, className: badgeClass } = getTypeBadgeStyle(typeLabel);
+
+    return (
+      <Badge variant="outline" className={`${badgeClass} whitespace-nowrap inline-flex items-center gap-1`}>
+        <TypeIcon className="w-3 h-3 shrink-0" />
+        {displayLabel}
+      </Badge>
+    );
   };
 
   const getCategoryBadge = (prompt: PromptData) => {
@@ -228,9 +238,11 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
     const categoryLabel = prompt.promptTheme || 'General';
     // Format attribute names (kebab-case to Title Case)
     const formattedLabel = formatAttributeName(categoryLabel);
-    
+    const { icon: ThemeIcon, className: themeClass } = getThemeBadgeStyle(categoryLabel);
+
     return (
-      <Badge variant="outline" title={formattedLabel} className="max-w-full bg-gray-50 text-gray-700 border-gray-200">
+      <Badge variant="outline" title={formattedLabel} className={`max-w-full ${themeClass} inline-flex items-center gap-1`}>
+        <ThemeIcon className="w-3 h-3 shrink-0" />
         <span className="min-w-0 truncate">{formattedLabel}</span>
       </Badge>
     );
@@ -341,7 +353,17 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
         </Select>
       </div>
 
-      {filteredPrompts.length > 0 ? (
+      {awaitingResponseData ? (
+        <Card>
+          <CardContent className="px-4 sm:px-6">
+            <div className="space-y-3 py-4" aria-busy="true">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : filteredPrompts.length > 0 ? (
         isMobile ? (
           // Mobile-friendly card layout
           <>
@@ -544,7 +566,7 @@ export const PromptTable = memo(({ prompts, onPromptClick }: PromptTableProps) =
             </CardContent>
           </Card>
         )}
-        {hasMore && (
+        {hasMore && !awaitingResponseData && (
           <div className="text-center py-3">
             <button
               onClick={() => setShowAll(true)}

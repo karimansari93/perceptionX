@@ -18,6 +18,9 @@ interface PromptsTabProps {
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   scopeCompanyIds?: string[];
+  // True while the raw response stream is still arriving (loads AFTER first
+  // paint) — forwarded to PromptTable so it skeletons instead of "No prompts".
+  responsesLoading?: boolean;
   selectedJobFunction?: string;
   onJobFunctionChange?: (value: string) => void;
 }
@@ -32,6 +35,7 @@ export const PromptsTab = memo(({
   responseTexts,
   fetchResponseTexts,
   scopeCompanyIds,
+  responsesLoading = false,
   selectedJobFunction = 'all',
   onJobFunctionChange,
 }: PromptsTabProps) => {
@@ -103,6 +107,7 @@ export const PromptsTab = memo(({
       <PromptTable
         prompts={filteredPromptsData}
         onPromptClick={handlePromptClick}
+        responsesLoading={responsesLoading}
       />
 
       {/* Response Details Modal */}

@@ -21,6 +21,10 @@ interface SourcesSummaryCardProps {
   searchResults?: any[];
   perceptionScoreTrend?: any[];
   previousPeriodResponses?: any[];
+  // True while the raw response stream is still arriving (it loads AFTER
+  // first paint). This card derives its list from raw responses, so while
+  // streaming it skeletons instead of "No sources found yet".
+  responsesLoading?: boolean;
 }
 
 export const SourcesSummaryCard = ({ 
@@ -29,7 +33,8 @@ export const SourcesSummaryCard = ({
   companyName, 
   searchResults = [],
   perceptionScoreTrend = [],
-  previousPeriodResponses = []
+  previousPeriodResponses = [],
+  responsesLoading = false
 }: SourcesSummaryCardProps) => {
   const navigate = useNavigate();
 
@@ -209,10 +214,24 @@ export const SourcesSummaryCard = ({
           <CardTitle className="text-lg font-semibold">Sources</CardTitle>
         </CardHeader>
         <CardContent className="px-4 sm:px-6">
-          <div className="text-center py-8 text-gray-500">
-            <FileText className="w-8 h-8 mx-auto mb-2 text-gray-300" />
-            <p className="text-sm">No sources found yet.</p>
-          </div>
+          {responsesLoading ? (
+            <div className="space-y-3 py-2" aria-busy="true">
+              {[1, 2, 3, 4, 5].map(i => (
+                <div key={i} className="flex items-center justify-between py-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-3 w-24 bg-gray-100 rounded animate-pulse" />
+                  </div>
+                  <div className="h-3 w-8 bg-gray-100 rounded animate-pulse" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              <FileText className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+              <p className="text-sm">No sources found yet.</p>
+            </div>
+          )}
         </CardContent>
       </Card>
     );
