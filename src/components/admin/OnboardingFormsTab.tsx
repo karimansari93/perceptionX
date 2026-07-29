@@ -56,6 +56,7 @@ import {
   generateConfirmedPrompts,
   trackedEntities,
 } from '@/lib/onboarding/generateConfirmedPrompts';
+import { localizeConfirmedRows } from '@/lib/onboarding/localizePrompts';
 import {
   ChipAdder,
   EntityEditor,
@@ -551,9 +552,15 @@ function ReviewBriefDialog({
     try {
       // Persist any admin edits first — the approved brief is the source of truth.
       await updateOnboardingSubmissionPayload(submission.id, payload);
+      // Localize prompt text per market (DE/CH → German, …) before insertion —
+      // the same translate-prompts function the batch queue uses, so the
+      // approved rows ARE the localized set and queue setup dedupes against
+      // them instead of inserting a second wording. Throws on failure: never
+      // approve a half-translated set.
+      const localizedRows = await localizeConfirmedRows(promptPreview.rows);
       const result = await approveOnboarding(
         invite.id,
-        promptPreview.rows,
+        localizedRows,
         payload,
         extractOwnedDomainSeeds(payload),
       );
@@ -567,7 +574,12 @@ function ReviewBriefDialog({
       onChanged();
       onClose();
     } catch (e) {
-      toast.error('Approval failed — nothing was generated');
+      // Translation failures carry an actionable market name — surface them.
+      toast.error(
+        e instanceof Error && e.message.startsWith('Translation')
+          ? `Approval stopped: ${e.message}. Nothing was generated.`
+          : 'Approval failed — nothing was generated',
+      );
     } finally {
       setApproving(false);
     }

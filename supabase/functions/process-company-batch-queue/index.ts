@@ -187,6 +187,37 @@ function generatePrompts(
   return attributePrompts;
 }
 
+/**
+ * Dedupe signatures for a confirmed_prompts row.
+ *
+ * Text can never be the sole identity for localized rows: translate-prompts is
+ * LLM translation with no cache, so the same English prompt renders a
+ * different German wording on every call. The logical key —
+ * attribute × type × job function × industry (location is already fixed by the
+ * caller's query scope) — pins the template cell regardless of wording, so a
+ * freshly translated candidate dedupes against the row the onboarding
+ * approval already inserted for that cell.
+ *
+ * The text signature is kept alongside it: rows that predate methodology v2
+ * have no attribute_id, and identical text must still be skipped so the
+ * partial unique index can't abort the batch insert.
+ */
+function promptSigs(r: {
+  attribute_id?: string | null;
+  prompt_text: string;
+  prompt_type: string;
+  industry_context?: string | null;
+  job_function_context?: string | null;
+}): string[] {
+  const sigs = [`t:${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`];
+  if (r.attribute_id) {
+    sigs.push(
+      `k:${r.attribute_id}||${r.prompt_type}||${r.job_function_context || ""}||${r.industry_context || ""}`,
+    );
+  }
+  return sigs;
+}
+
 // ---------------------------------------------------------------------------
 // Queue processor
 // ---------------------------------------------------------------------------
@@ -425,48 +456,45 @@ serve(async (req) => {
         const inMemorySeen = new Set<string>();
         const candidates: any[] = [];
         for (const p of finalPrompts) {
-          const promptType = p.type;
-          const key = `${p.text}||${promptType}`;
-          if (inMemorySeen.has(key)) continue;
-          inMemorySeen.add(key);
-          candidates.push({
+          const candidate = {
             onboarding_id: null,
             user_id: config.user_id,
             company_id: job.company_id,
             prompt_text: p.text,
             prompt_category: p.promptCategory,
             prompt_theme: p.promptTheme,
-            prompt_type: promptType,
+            prompt_type: p.type,
             attribute_id: p.attributeId || null,
             industry_context: p.industryContext,
             job_function_context: p.jobFunctionContext || null,
             location_context: p.locationContext || null,
             is_active: true,
             prompt_version: 2,
-          });
+          };
+          const keys = promptSigs(candidate);
+          if (keys.some((k) => inMemorySeen.has(k))) continue;
+          keys.forEach((k) => inMemorySeen.add(k));
+          candidates.push(candidate);
         }
 
         // Pull every already-existing prompt for this (company, location) and
-        // build a set of their (prompt_text, prompt_type, industry_context)
-        // signatures — same columns the partial unique index covers (minus
-        // the ones we already fix above).
+        // dedupe on logical identity (attribute × type × function × industry)
+        // as well as text — approved onboarding rows are localized, so their
+        // wording will never byte-match a fresh translation of the same cell.
         const { data: existingForLocation, error: existingErr } = await supabase
           .from("confirmed_prompts")
-          .select("prompt_text, prompt_type, industry_context")
+          .select("prompt_text, prompt_type, industry_context, attribute_id, job_function_context")
           .eq("company_id", job.company_id)
           .eq("location_context", job.location);
         if (existingErr) throw new Error(`Existing prompt check failed: ${existingErr.message}`);
 
         const existingSig = new Set(
-          (existingForLocation || []).map(
-            (r: any) => `${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`,
-          ),
+          (existingForLocation || []).flatMap((r: any) => promptSigs(r)),
         );
 
-        const promptRows = candidates.filter((r) => {
-          const sig = `${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`;
-          return !existingSig.has(sig);
-        });
+        const promptRows = candidates.filter(
+          (r) => !promptSigs(r).some((sig) => existingSig.has(sig)),
+        );
 
         if (promptRows.length === 0) {
           console.log("[BatchQueue] All prompts already exist for this (company, location); skipping insert");
@@ -628,22 +656,26 @@ serve(async (req) => {
           prompt_version: 2,
         }));
 
+        // Dedupe on logical identity as well as text (see promptSigs) — an
+        // onboarding approval may already have inserted this cell's localized
+        // rows, whose wording won't byte-match a fresh translation.
         const { data: setupExisting, error: setupExistingErr } = await supabase
           .from("confirmed_prompts")
-          .select("prompt_text, prompt_type, industry_context")
+          .select("prompt_text, prompt_type, industry_context, attribute_id, job_function_context")
           .eq("company_id", companyId)
           .eq("location_context", finalPrompts[0]?.locationContext ?? null);
         if (setupExistingErr) throw new Error(`Existing prompt check failed: ${setupExistingErr.message}`);
 
         const setupExistingSig = new Set(
-          (setupExisting || []).map(
-            (r: any) => `${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`,
-          ),
+          (setupExisting || []).flatMap((r: any) => promptSigs(r)),
         );
 
+        const setupSeen = new Set<string>();
         const promptRows = setupCandidates.filter((r) => {
-          const sig = `${r.prompt_text}||${r.prompt_type}||${r.industry_context || ""}`;
-          return !setupExistingSig.has(sig);
+          const keys = promptSigs(r);
+          if (keys.some((k) => setupExistingSig.has(k) || setupSeen.has(k))) return false;
+          keys.forEach((k) => setupSeen.add(k));
+          return true;
         });
 
         if (promptRows.length > 0) {
