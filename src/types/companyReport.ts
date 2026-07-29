@@ -43,16 +43,20 @@ export interface ThemeData {
   theme_name: string;
   theme_description: string;
   sentiment: 'positive' | 'negative' | 'neutral';
-  sentiment_score: number;
   attribute_id: string;
   attribute_name: string;
   frequency: number;
+  // Methodology v2: label counts (positive/(positive+negative) drives polarity;
+  // the numeric ai_themes.sentiment_score is never published)
+  positive_count: number;
+  negative_count: number;
   confidence_score: number;
 }
 
 export interface CompetitorMention {
   competitor: string;
   frequency: number;
+  // v2 ratio 0..1: share of polarized themes that are positive (0.5 = no signal)
   sentiment: number;
 }
 

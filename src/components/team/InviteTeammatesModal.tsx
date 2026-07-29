@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -49,7 +51,7 @@ interface InviteTeammatesModalProps {
 // invite-team-member edge function and shows per-email results.
 const InviteTeammatesModal = ({ open, onOpenChange, orgs }: InviteTeammatesModalProps) => {
   const { user } = useAuth();
-  const userDomain = user?.email?.split('@')[1] ?? '';
+  const userDomain = user?.email?.toLowerCase().split('@')[1] ?? '';
 
   const [emails, setEmails] = useState<string[]>(['']);
   const [sending, setSending] = useState(false);
@@ -68,21 +70,36 @@ const InviteTeammatesModal = ({ open, onOpenChange, orgs }: InviteTeammatesModal
     }
   }, [open]);
 
-  const callTeamFunction = async (body: Record<string, unknown>) => {
-    const { data, error } = await supabase.functions.invoke('invite-team-member', {
+  const invokeTeamFunction = (body: Record<string, unknown>) =>
+    supabase.functions.invoke('invite-team-member', {
       body: { organizationId: selectedOrg?.organization_id, ...body },
     });
+
+  const callTeamFunction = async (body: Record<string, unknown>) => {
+    let { data, error } = await invokeTeamFunction(body);
+
+    // A dashboard tab left open past token expiry gets a 401 ("Invalid
+    // token") on its first call. The function hasn't done anything at that
+    // point, so refresh the session and retry once before surfacing it.
+    if (error && (error as { context?: Response }).context?.status === 401) {
+      await supabase.auth.refreshSession();
+      ({ data, error } = await invokeTeamFunction(body));
+    }
+
     if (error) {
       // supabase-js surfaces non-2xx as a generic error; pull the real
       // message from the response body when available.
       let message = error.message;
+      const ctx = (error as { context?: Response }).context;
       try {
-        const ctx = (error as { context?: Response }).context;
         if (ctx) {
           const parsed = await ctx.json();
           if (parsed?.error) message = parsed.error;
         }
       } catch { /* keep generic message */ }
+      if (ctx?.status === 401) {
+        message = 'Your session has expired — please refresh the page and try again.';
+      }
       throw new Error(message);
     }
     if (data?.error) throw new Error(data.error);
@@ -195,6 +212,9 @@ const InviteTeammatesModal = ({ open, onOpenChange, orgs }: InviteTeammatesModal
     setActioningId(invite.id);
     try {
       await callTeamFunction({ action: 'resend', inviteId: invite.id });
+      setPendingInvites((prev) =>
+        prev.map((i) => (i.id === invite.id ? { ...i, sent_at: new Date().toISOString() } : i)),
+      );
       toast.success(`Invite resent to ${invite.email}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to resend invite');
@@ -229,16 +249,16 @@ const InviteTeammatesModal = ({ open, onOpenChange, orgs }: InviteTeammatesModal
               <UserPlus className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <h2
-                className="text-lg font-bold text-[#13274F] leading-tight"
+              <DialogTitle
+                className="text-lg font-bold text-[#13274F] leading-tight tracking-normal"
                 style={{ fontFamily: 'Geologica, sans-serif' }}
               >
                 Invite your team
-              </h2>
-              <p className="text-[13px] text-gray-500 mt-1 leading-snug" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
+              </DialogTitle>
+              <DialogDescription className="text-[13px] text-gray-500 mt-1 leading-snug" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
                 Add a teammate with a <span className="font-semibold text-[#13274F]">@{userDomain}</span> email
                 to join you. They just set a password and land on the dashboard.
-              </p>
+              </DialogDescription>
             </div>
           </div>
         </div>

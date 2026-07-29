@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { OrganizationManagementTab } from '@/components/admin/OrganizationManagementTab';
 import { UsersTab } from '@/components/admin/UsersTab';
@@ -11,7 +11,11 @@ import { OnboardingFormsTab } from '@/components/admin/OnboardingFormsTab';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 
 export default function Admin() {
-  const [activeTab, setActiveTab] = useState<string>('organizations');
+  // Tab lives in the URL (?tab=…) so sub-pages like the brief review can link
+  // back to the tab they came from, and refresh keeps the admin where they were.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') ?? 'organizations';
+  const setActiveTab = (tab: string) => setSearchParams({ tab }, { replace: true });
   useDocumentTitle('Admin');
 
   const renderTabContent = () => {

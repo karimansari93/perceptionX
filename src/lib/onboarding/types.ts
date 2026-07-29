@@ -20,6 +20,14 @@ export interface EmployerEntity {
   job_functions?: string[];
   /** Only when scope_mode === 'custom'. */
   markets?: string[];
+  /**
+   * The industry this entity is benchmarked against, overriding the brief-level
+   * function→industry mapping for all of its prompts — the same function can
+   * compete in a different market depending on the business unit (a vaccines
+   * arm's Manufacturing competes with vaccine makers, the parent's with
+   * biopharma). Unset means inherit the brief-level mapping.
+   */
+  industry?: string;
 }
 
 export type OwnedPropertyType =

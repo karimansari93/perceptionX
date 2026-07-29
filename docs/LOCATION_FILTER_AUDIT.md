@@ -337,3 +337,141 @@ the numbers are identical either way.
 - The per-company response cache is keyed by the entered profile's id; entering
   the brand through a different sibling re-fetches the same merged scope (a
   cache-key refinement is possible later).
+
+## 9. Raw responses off the critical path (2026-07-18)
+
+The last first-paint blocker is gone: the dashboard no longer downloads any
+`prompt_responses_canonical` rows before rendering. First paint requires only
+the small fetches — `confirmed_prompts` plus the rollups (`company_*_mv`,
+`*_by_location_mv`, `company_visibility_by_location_mv`). The raw response
+stream (180-day window, per-company `.eq` pagination, citations jsonb) starts
+in the background right after the prompts commit and hydrates the
+tables/drilldowns progressively: newest page per profile first, then the
+remaining pages, then the final commit that sets `responsesLoadedCompanyId`
+(unchanged semantics — it still means "the raw set is FINAL", and the
+reconcile/starred/caching machinery keyed on it is untouched).
+
+**The attribute pass is derived, not fetched.** The old second fetch family
+(`confirmed_prompts.attribute_id=not.is.null` embedded filter) re-downloaded a
+strict subset of the main stream through a plan driven per-attribute-prompt —
+measured ~2.5s uncontended vs ~50ms for a main page, plus an equally slow
+`count: 'exact'` — and it kept crossing the ~8s statement timeout (HTTP 500)
+during the initial fan-out, silently dropping attribute data because its
+errors were swallowed. Attribute rows are now filtered client-side out of the
+already-fetched stream (attribute-tagged prompts belonging to the same
+profile), which removes that whole query family from the load.
+
+**No number the rollups provide changes.** Every headline metric was already
+rollup-first; what changed is only when the raw fallbacks/tables get their
+data. While the stream is arriving, raw-derived tabs (Prompts, Sources,
+Competitors, Themes) render skeleton rows instead of their "No data" empty
+states, gated on a `responsesLoading` prop = `responsesLoadedCompanyId !==
+currentCompany.id`. Raw-derived counters (total citations, unique domains,
+response counts in tables) count up as pages land — same as the old
+post-first-page streaming, just starting from zero.
+
+**Metrics readiness is rollup-gated now.** `metricsCalculating` no longer
+waits for responses; it waits for the sentiment/relevance MV fetch AND an
+exact visibility source — rollup rows (a new `visibilityMvLoading` flag holds
+the skeleton until that fetch settles), or the raw fallback once responses
+exist. A load that finishes with zero responses keeps the scorecards in the
+calculating state, exactly as before.
+
+**Period selector before raw data lands:** `availablePeriods` normally derives
+from loaded responses. Until the raw stream for the current company is final,
+the month set is widened from `company_visibility_by_location_mv` rows (scoped
+to the active location by the same attribution rule), clamped to the 180-day
+eager window so it approximates the months the raw set will contain. Once the
+load is final the fallback stops contributing and periods derive from
+responses alone — the pre-existing behavior, so a month with zero in-location
+raw data is never offered on a settled dashboard. Selecting a rollup-derived
+month while raw data is still streaming shows exact rollup numbers immediately
+and hydrates the tables as that month's rows arrive. Known transient: the
+clamp is month-granular while the raw window cuts on a `tested_at` timestamp,
+and the MV can lag the newest collection month — so the interim list can
+briefly include a month the final set drops (selection falls back to latest)
+or miss the newest month until raw lands. Both self-correct at the final
+commit and never mislabel a number.
+
+**Query shapes are unchanged (one family removed).** Same per-company `.eq`
+pagination with stable ORDER BY, same PostgREST max_rows-aware paging, and
+every call still routes through the `withDbSlot` gate (DB_CONCURRENCY = 6).
+Two load changes: the heavy response pages now enter the gate's queue *after*
+the prompts fetch completes, so the rollup queries that gate first paint are
+no longer competing with them at kickoff; and the attribute-pass query family
+is gone entirely (derived client-side, see above).
+
+**The gate has two tiers.** `withDbSlot` is FIFO within a tier, but bulk row
+streams (response pages, raw `ai_themes`) queue behind everything else, so the
+small critical-path fetches always claim the next free slot. Measured on the
+18-profile Ford brand's explicit-refresh path: with one FIFO queue the ~90
+`ai_themes` keyset queries starved the prompts fetch to 65s (skeleton held
+~90s, 21 of the themes queries hit the statement timeout); with the tiers the
+prompts finished at 9.4s, content was back at ~10.5s, and the same themes
+fan-out completed in the background with zero failures.
+
+## 10. Raw ai_themes pagination goes through an RPC (2026-07-20)
+
+Raw `ai_themes` rows are fetched **per drilldown attribute, on demand**
+(`fetchAIThemesForAttribute`), not in bulk. The Thematic tab's main ranking is
+MV-driven; only an open drilldown needs row-level data (subtheme names,
+response links for quotes/sources/visibility), so nothing is fetched until one
+opens, and rows accumulate per drilled attribute. The old design bulk-loaded
+the whole window on tab mount: ~130 requests / ~130k rows in browser memory on
+an 18-profile brand. A subtheme-level rollup MV was measured and rejected —
+LLM-generated theme names are ~75% unique (Ford US: 18,640 raw rows → 14,017
+distinct names), so a (theme_name, month, fn) grain barely compresses; a
+per-attribute fetch is ~1–3 pages per scope profile and preserves exact
+response-level scoping (periods, locations, job functions).
+
+The fetch does **not** use a PostgREST table read. It calls the
+`ai_themes_keyset_page` RPC (optional `p_attribute_ids text[]` filter — the
+v2 id plus its legacy v1 aliases), one keyset pagination per scope profile,
+1000 rows/page, 180-day window, all pages through `withDbSlot`. Two measured
+reasons (18-profile Ford brand, ~130k themes in window):
+
+**PostgREST's keyset encoding defeats the index.** The cursor had to be
+expressed as `or=(created_at.lt.X,and(created_at.eq.X,id.lt.Y))`, and Postgres
+cannot use an OR as a btree boundary. EXPLAIN showed every page re-scanning all
+previously-fetched rows and filtering them out (`Rows Removed by Filter:
+10000` on page 10) — page N cost O(N × 1000), the exact OFFSET pathology
+keyset was meant to avoid, and why deep pages crossed the ~8s statement
+timeout. The RPC's row-value comparison `(created_at, id) < (X, Y)` is an
+exact boundary on `idx_ai_themes_company_created_id` (company_id, created_at
+DESC, id DESC — migration `20260720090000`, supersedes the old 2-column
+index), so every page is O(page size) regardless of depth.
+
+**Per-row RLS was the other half of the cost.** The `ai_themes` select policy
+calls `user_can_access_company(company_id)` — a non-inlinable SECURITY DEFINER
+helper (~97 buffer hits/call) — per scanned row: 1.6s for a single 1000-row
+page *even with a perfect index boundary*. The RPC is SECURITY DEFINER and
+evaluates the identical predicate once against its `p_company_id` argument
+(equivalent, since every returned row has that company_id; zero rows on
+failure, mirroring RLS filtering). Worst-case page: ~8s → ~8ms.
+
+Constraints that still hold: per-company `.eq`-equivalent queries only (the
+RPC takes a single company id — scope profiles are still paginated separately
+and merged client-side), stable ordering `(created_at DESC, id DESC)`,
+PostgREST `max_rows` clamps RPC responses at 1000 exactly like table reads,
+and every call rides `withDbSlot`. If the RPC's shape changes, keep the
+row-value cursor and the once-per-call access check — reverting to either the
+OR-form predicate or a per-row policy check reintroduces the timeout.
+
+Accumulation caveat: consumers that opportunistically scan `aiThemes`
+(OverviewTab's key-themes / attribute-insights memos) now see
+partial-by-attribute data — the same class of partiality as the old "empty
+until the Thematic tab was visited" behavior, and never partial within an
+attribute. Accumulated rows are invalidated on company switch, scope change,
+and explicit refresh (the open drilldown refetches automatically), and are
+deliberately not written to the per-company switch-back cache.
+
+The same per-row `user_can_access_company()` cost applied to the select
+policies of the seven per-company rollup tables (`company_response_sentiment_mv`
+etc. — ~30k first-paint rows per brand entry, 200ms per 1000 rows) and to
+direct `ai_themes` reads. Migration `20260720100000` rewrote those eight
+select policies to the hashable `(select is_admin()) OR company_id IN
+(select …)` form that `prompt_responses` / `confirmed_prompts` already used:
+the membership subquery runs once per statement and each row is a hash probe
+(200ms → 1.7ms per 1000 MV rows, verified member/non-member/admin-equivalent
+in production). Any new per-company table's select policy should use the same
+IN form, not a bare `user_can_access_company(company_id)` call.

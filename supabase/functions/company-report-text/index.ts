@@ -129,6 +129,8 @@ async function generateCompanyTextReport(companyId: string): Promise<string> {
         )
       `)
       .eq('company_id', companyId)
+      // Methodology v2: excluded models never enter client-facing calculations
+      .not('ai_model', 'in', '(claude,gemini,deepseek)')
       .order('created_at', { ascending: false });
 
     if (responsesError || !responses || responses.length === 0) {
@@ -137,8 +139,7 @@ async function generateCompanyTextReport(companyId: string): Promise<string> {
 
     // Calculate metrics
     const totalResponses = responses.length;
-    const averageSentiment = responses.reduce((sum, r) => sum + (r.sentiment_score || 0), 0) / totalResponses;
-    
+
     const visibilityScores = responses
       .map(r => r.visibility_score)
       .filter(score => typeof score === 'number');
@@ -153,7 +154,7 @@ async function generateCompanyTextReport(companyId: string): Promise<string> {
       ? competitivePositions.reduce((sum, ranking) => sum + ranking, 0) / competitivePositions.length
       : 0;
 
-    // Get AI themes
+    // Get AI themes (response ids are already model-filtered above)
     const responseIds = responses.map(r => r.id);
     const { data: themes, error: themesError } = await supabase
       .from('ai_themes')
@@ -161,7 +162,23 @@ async function generateCompanyTextReport(companyId: string): Promise<string> {
       .in('response_id', responseIds)
       .gte('confidence_score', 0.7);
 
-    // Process themes
+    // Methodology v2 sentiment: positive/(positive+negative) from the theme
+    // text labels — neutrals excluded, numeric sentiment_score never used in
+    // a published metric.
+    const sentimentByResponse = new Map<string, { pos: number; neg: number }>();
+    let totalPos = 0;
+    let totalNeg = 0;
+    themes?.forEach(theme => {
+      if (!theme.response_id) return;
+      const entry = sentimentByResponse.get(theme.response_id) || { pos: 0, neg: 0 };
+      if (theme.sentiment === 'positive') { entry.pos++; totalPos++; }
+      else if (theme.sentiment === 'negative') { entry.neg++; totalNeg++; }
+      sentimentByResponse.set(theme.response_id, entry);
+    });
+    // 0..1 scale; 0.5 = no polarized signal
+    const averageSentiment = (totalPos + totalNeg) > 0 ? totalPos / (totalPos + totalNeg) : 0.5;
+
+    // Process themes: label-based counts per attribute
     const themeMap = new Map();
     themes?.forEach(theme => {
       const key = theme.attribute_id;
@@ -169,12 +186,16 @@ async function generateCompanyTextReport(companyId: string): Promise<string> {
         themeMap.set(key, {
           theme_name: theme.theme_name,
           attribute_name: theme.attribute_name,
-          sentiment_score: theme.sentiment_score,
           frequency: 0,
+          positive_count: 0,
+          negative_count: 0,
           confidence_score: theme.confidence_score
         });
       }
-      themeMap.get(key).frequency++;
+      const t = themeMap.get(key);
+      t.frequency++;
+      if (theme.sentiment === 'positive') t.positive_count++;
+      else if (theme.sentiment === 'negative') t.negative_count++;
     });
 
     const topThemes = Array.from(themeMap.values())
@@ -188,18 +209,21 @@ async function generateCompanyTextReport(companyId: string): Promise<string> {
         const competitors = response.detected_competitors.split(',').map(c => c.trim()).filter(c => c.length > 0 && !/^(none|n\/?a|na|null|undefined)[.,:;)\]}_\-]*$/i.test(c));
         competitors.forEach((competitor: string) => {
           if (!competitorMap.has(competitor)) {
-            competitorMap.set(competitor, { competitor, frequency: 0, sentiment: 0 });
+            competitorMap.set(competitor, { competitor, frequency: 0, pos: 0, neg: 0 });
           }
-          competitorMap.get(competitor).frequency++;
-          competitorMap.get(competitor).sentiment += response.sentiment_score || 0;
+          const comp = competitorMap.get(competitor);
+          comp.frequency++;
+          const s = sentimentByResponse.get(response.id);
+          if (s) { comp.pos += s.pos; comp.neg += s.neg; }
         });
       }
     });
 
     const competitorMentions = Array.from(competitorMap.values())
-      .map(comp => ({
+      .map(({ pos, neg, ...comp }) => ({
         ...comp,
-        sentiment: comp.sentiment / comp.frequency
+        // v2 ratio pooled over responses co-mentioning this competitor
+        sentiment: (pos + neg) > 0 ? pos / (pos + neg) : 0.5
       }))
       .sort((a, b) => b.frequency - a.frequency)
       .slice(0, 5);
@@ -364,12 +388,12 @@ async function generateAIInsights(
 You are an expert in employer branding and talent perception analysis. Create a concise executive summary for ${companyName} (${industry}) based on the following data:
 
 COMPANY DATA:
-- Average Sentiment: ${averageSentiment.toFixed(2)}
+- Average Sentiment: ${averageSentiment.toFixed(2)} (0-1 scale: share of polarized themes that are positive; 0.5 = balanced)
 - Visibility Score: ${visibilityScore.toFixed(2)}
 - Total Themes Identified: ${topThemes.length}
 
 TOP THEMES:
-${topThemes.map(theme => `- ${theme.attribute_name}: ${theme.theme_name} (${theme.sentiment_score > 0 ? 'Positive' : theme.sentiment_score < 0 ? 'Negative' : 'Neutral'}, frequency: ${theme.frequency})`).join('\n')}
+${topThemes.map(theme => `- ${theme.attribute_name}: ${theme.theme_name} (${theme.positive_count > theme.negative_count ? 'Positive' : theme.negative_count > theme.positive_count ? 'Negative' : 'Neutral'}, frequency: ${theme.frequency})`).join('\n')}
 
 COMPETITOR MENTIONS:
 ${competitorMentions.map(comp => `- ${comp.competitor}: ${comp.frequency} mentions, sentiment: ${comp.sentiment.toFixed(2)}`).join('\n')}
@@ -453,8 +477,10 @@ function generateTextReport(
   keyInsights: string[],
   recommendations: string[]
 ): string {
-  const sentimentLabel = averageSentiment > 0.1 ? 'Positive' : 
-                        averageSentiment < -0.1 ? 'Negative' : 'Neutral';
+  // averageSentiment is the methodology-v2 ratio positive/(positive+negative),
+  // 0..1 — 0.6/0.4 label thresholds, matching the dashboard.
+  const sentimentLabel = averageSentiment > 0.6 ? 'Positive' :
+                        averageSentiment < 0.4 ? 'Negative' : 'Neutral';
   
   const visibilityLabel = visibilityScore > 0.7 ? 'High' : 
                          visibilityScore > 0.3 ? 'Moderate' : 'Low';
@@ -466,8 +492,13 @@ function generateTextReport(
   const topCountries = geographicAnalysis.topCountries.slice(0, 3);
   const primaryMarkets = topCountries.map(c => `${c.flag} ${c.country} (${c.percentage.toFixed(1)}%)`).join(', ');
 
-  const positiveThemes = topThemes.filter(t => t.sentiment_score > 0.1).slice(0, 3);
-  const negativeThemes = topThemes.filter(t => t.sentiment_score < -0.1).slice(0, 3);
+  // Methodology v2: label-based theme polarity (neutrals excluded)
+  const themeRatio = (t: any) => {
+    const polarized = (t.positive_count || 0) + (t.negative_count || 0);
+    return polarized > 0 ? (t.positive_count || 0) / polarized : null;
+  };
+  const positiveThemes = topThemes.filter(t => (themeRatio(t) ?? 0.5) > 0.6).slice(0, 3);
+  const negativeThemes = topThemes.filter(t => (themeRatio(t) ?? 0.5) < 0.4).slice(0, 3);
 
   return `
 # TALENT PERCEPTION REPORT
@@ -478,7 +509,7 @@ function generateTextReport(
 
 ## EXECUTIVE SUMMARY
 
-**Overall Sentiment:** ${sentimentLabel} (${averageSentiment.toFixed(2)})
+**Overall Sentiment:** ${sentimentLabel} (${Math.round(averageSentiment * 100)}% positive of polarized themes)
 **Visibility:** ${visibilityLabel} (${(visibilityScore * 100).toFixed(1)}%)
 **Competitive Position:** ${competitiveLabel}
 **Data Sources:** ${totalResponses} responses analyzed
@@ -488,7 +519,7 @@ function generateTextReport(
 
 ## KEY METRICS
 
-• **Sentiment Score:** ${averageSentiment.toFixed(2)} (${sentimentLabel})
+• **Sentiment Score:** ${Math.round(averageSentiment * 100)}% (${sentimentLabel})
 • **Visibility Score:** ${(visibilityScore * 100).toFixed(1)}% (${visibilityLabel})
 • **Competitive Ranking:** ${competitivePosition.toFixed(1)} (${competitiveLabel})
 • **Geographic Reach:** ${geographicAnalysis.regions.length} regions

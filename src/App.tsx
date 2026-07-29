@@ -32,6 +32,7 @@ const Welcome = lazyWithRetry(() => import("./pages/Welcome"));
 const Usage = lazyWithRetry(() => import("./pages/Usage"));
 const Account = lazyWithRetry(() => import("./pages/Account"));
 const Admin = lazyWithRetry(() => import("./pages/Admin"));
+const AdminBriefReview = lazyWithRetry(() => import("./pages/AdminBriefReview"));
 const GoogleOneTapCallback = lazyWithRetry(() => import("@/components/GoogleOneTapCallback"));
 const Onboarding = lazyWithRetry(() => import("./pages/Onboarding"));
 
@@ -186,6 +187,14 @@ const App = () => (
                 <ProtectedRoute>
                   <AdminRoute>
                     <Admin />
+                  </AdminRoute>
+                </ProtectedRoute>
+              } />
+              {/* Full-page review/edit of a submitted onboarding brief */}
+              <Route path="/admin/onboarding/:inviteId" element={
+                <ProtectedRoute>
+                  <AdminRoute>
+                    <AdminBriefReview />
                   </AdminRoute>
                 </ProtectedRoute>
               } />

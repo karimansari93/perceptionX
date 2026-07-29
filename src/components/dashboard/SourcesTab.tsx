@@ -10,7 +10,7 @@ import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { extractSourceUrl, extractDomain, enhanceCitations } from "@/utils/citationUtils";
+import { extractSourceUrl, extractDomain, enhanceCitations, getFavicon } from "@/utils/citationUtils";
 import { ScrollablePills } from "./ScrollablePills";
 import { SearchInput } from "./SearchInput";
 import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
@@ -33,6 +33,10 @@ interface SourcesTabProps {
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   previousPeriodResponses?: any[];
+  // True while the raw response stream for the current company is still
+  // arriving (it loads AFTER first paint). Gates the empty state: skeleton
+  // rows, never "No citations found yet", until the stream is final.
+  responsesLoading?: boolean;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
@@ -45,7 +49,7 @@ const normalizeDomain = (domain: string): string => {
   return domain.trim().toLowerCase().replace(/^www\./, '');
 };
 
-export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: SourcesTabProps) => {
+export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: SourcesTabProps) => {
   
   // Responses arrive already scoped by useDashboardData (brand scope — the
   // current company plus same-name sibling profiles — with the location and
@@ -146,7 +150,22 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     }
     return map;
   }, [normalizedResponses]);
-  
+
+  // Same reverse index for the PREVIOUS period. Used to hand the source modal
+  // the prior-period rows for a domain so it can compute per-page trends
+  // (which specific URLs drove the source's increase/decrease).
+  const prevResponsesByDomain = useMemo(() => {
+    const map = new Map<string, NormalizedResponse[]>();
+    for (const nr of normalizedPrevResponses) {
+      for (const d of nr.domains) {
+        const list = map.get(d);
+        if (list) list.push(nr);
+        else map.set(d, [nr]);
+      }
+    }
+    return map;
+  }, [normalizedPrevResponses]);
+
   // Calculate citation counts from search results
   const searchResultCitations = useMemo(() => {
     const citationCounts: Record<string, number> = {};
@@ -422,9 +441,10 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return list ? list.map((nr) => nr.raw) : [];
   };
 
-  const getFavicon = (domain: string): string => {
-    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-    return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`;
+  // Previous-period rows citing a domain — powers the modal's Trending tab.
+  const getPrevResponsesForSource = (domain: string) => {
+    const list = prevResponsesByDomain.get(normalizeDomain(domain));
+    return list ? list.map((nr) => nr.raw) : [];
   };
 
   // Helper to format domain to a human-friendly name
@@ -1037,6 +1057,12 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                     </>
                   );
                 })()
+              ) : responsesLoading ? (
+                <div className="space-y-3 px-2 sm:px-3 py-4" aria-busy="true">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
+                  ))}
+                </div>
               ) : (
                 <div className="text-center py-12 text-gray-500">
                   <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
@@ -1055,6 +1081,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
           onClose={handleCloseSourceModal}
           source={selectedSource}
           responses={getResponsesForSource(selectedSource.domain)}
+          previousResponses={getPrevResponsesForSource(selectedSource.domain)}
           companyName={companyName}
           searchResults={filteredSearchResults}
           companyId={currentCompanyId}

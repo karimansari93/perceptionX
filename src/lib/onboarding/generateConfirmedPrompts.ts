@@ -34,6 +34,8 @@ export interface TrackedUnit {
   markets: string[];
   functionScope: FunctionScope;
   marketFunctions: MarketFunctions[];
+  /** Overrides the brief-level function→industry mapping for this unit. */
+  industry?: string;
 }
 
 export function trackedUnits(input: TrackingConfigInput): TrackedUnit[] {
@@ -50,6 +52,9 @@ export function trackedUnits(input: TrackingConfigInput): TrackedUnit[] {
     const n = e.name.trim();
     if (!e.track_separately || !n) continue;
     if (units.some((u) => u.name.toLowerCase() === n.toLowerCase())) continue;
+    // The industry override is independent of role/market scope: a sub-brand can
+    // hire for exactly the parent's roles yet compete in a different industry.
+    const industry = e.industry?.trim() || undefined;
     if (e.scope_mode === 'custom') {
       // Sub-brand runs its own roles/markets (uniform across its markets).
       units.push({
@@ -58,6 +63,7 @@ export function trackedUnits(input: TrackingConfigInput): TrackedUnit[] {
         markets: e.markets ?? [],
         functionScope: 'uniform',
         marketFunctions: [],
+        industry,
       });
     } else {
       // Inherit the parent company's exact configuration.
@@ -67,6 +73,7 @@ export function trackedUnits(input: TrackingConfigInput): TrackedUnit[] {
         markets: input.markets,
         functionScope: input.function_scope,
         marketFunctions: input.market_functions,
+        industry,
       });
     }
   }
@@ -167,7 +174,9 @@ export function generateConfirmedPrompts(input: TrackingConfigInput): ConfirmedP
   const rows: ConfirmedPromptRow[] = [];
   for (const unit of trackedUnits(input)) {
     for (const { market, fn } of unitPairs(unit)) {
-      const industry = industryForFunction(input, fn);
+      // A unit-level industry wins over the brief's per-function mapping, so the
+      // same function benchmarks differently across business units.
+      const industry = unit.industry ?? industryForFunction(input, fn);
       // v2 competitive/discovery templates reference {industry}; fall back to a
       // grammatical phrase when the brief has no industry for this function.
       const industryPhrase = industry || 'their industry';

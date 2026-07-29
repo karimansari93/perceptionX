@@ -322,34 +322,38 @@ async function executeTool(
 
 // ─── Shared Helpers ─────────────────────────────────────────────────────────
 
+// Methodology v2 (July 2026): these models are excluded from every
+// client-facing calculation, by filter — their rows stay in the DB as the
+// audit trail for previously published numbers.
+const EXCLUDED_AI_MODELS_FILTER = '(claude,gemini,deepseek)';
+
 async function getResponseSentiments(
   supabaseAdmin: any,
   responseIds: string[]
-): Promise<Map<string, { label: string; score: number }>> {
+): Promise<Map<string, { label: string; score: number | null; pos: number; neg: number }>> {
   if (!responseIds.length) return new Map();
 
+  // Methodology v2: sentiment comes from the text labels only —
+  // score = positive/(positive+negative), null when no polarized themes.
   const { data: themes } = await supabaseAdmin
     .from('ai_themes')
-    .select('response_id, sentiment, sentiment_score')
+    .select('response_id, sentiment')
     .in('response_id', responseIds);
 
-  const grouped = new Map<string, { scores: number[]; sentiments: string[] }>();
+  const grouped = new Map<string, { sentiments: string[] }>();
   for (const t of (themes || [])) {
-    if (!grouped.has(t.response_id)) grouped.set(t.response_id, { scores: [], sentiments: [] });
+    if (!grouped.has(t.response_id)) grouped.set(t.response_id, { sentiments: [] });
     const entry = grouped.get(t.response_id)!;
-    if (typeof t.sentiment_score === 'number') entry.scores.push(t.sentiment_score);
     if (t.sentiment) entry.sentiments.push(t.sentiment);
   }
 
-  const result = new Map<string, { label: string; score: number }>();
+  const result = new Map<string, { label: string; score: number | null; pos: number; neg: number }>();
   for (const [id, data] of grouped) {
-    const avgScore = data.scores.length > 0
-      ? data.scores.reduce((a, b) => a + b, 0) / data.scores.length
-      : 0;
     const pos = data.sentiments.filter(s => s === 'positive').length;
     const neg = data.sentiments.filter(s => s === 'negative').length;
+    const score = (pos + neg) > 0 ? Math.round((pos / (pos + neg)) * 100) / 100 : null;
     const label = pos > neg ? 'positive' : neg > pos ? 'negative' : 'neutral';
-    result.set(id, { label, score: Math.round(avgScore * 100) / 100 });
+    result.set(id, { label, score, pos, neg });
   }
 
   return result;
@@ -371,7 +375,7 @@ async function listCompanies(supabaseAdmin: any, organizationId: string): Promis
   const [companiesResult, industriesResult, responseCounts, onboardingResult] = await Promise.all([
     supabaseAdmin.from('companies').select('id, name').in('id', companyIds),
     supabaseAdmin.from('company_industries').select('company_id, industry').in('company_id', companyIds),
-    supabaseAdmin.from('prompt_responses').select('company_id').in('company_id', companyIds),
+    supabaseAdmin.from('prompt_responses').select('company_id').in('company_id', companyIds).not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER),
     supabaseAdmin.from('user_onboarding').select('company_id, country').in('company_id', companyIds).order('created_at', { ascending: false }),
   ]);
 
@@ -418,11 +422,13 @@ async function computeMetrics(supabaseAdmin: any, companyId: string) {
     supabaseAdmin
       .from('prompt_responses')
       .select('id, company_mentioned')
-      .eq('company_id', companyId),
+      .eq('company_id', companyId)
+      .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER),
     supabaseAdmin
       .from('ai_themes')
-      .select('sentiment_score, theme_name')
-      .eq('company_id', companyId),
+      .select('sentiment, theme_name, prompt_responses!inner(ai_model)')
+      .eq('company_id', companyId)
+      .not('prompt_responses.ai_model', 'in', EXCLUDED_AI_MODELS_FILTER),
     supabaseAdmin.from('company_relevance_scores').select('relevance_score').eq('company_id', companyId).maybeSingle(),
     supabaseAdmin.from('companies').select('name').eq('id', companyId).single(),
   ]);
@@ -435,8 +441,12 @@ async function computeMetrics(supabaseAdmin: any, companyId: string) {
     return { company: companyResult.data?.name, companyId, noData: true };
   }
 
-  const positiveThemes = themes.filter((t: any) => (t.sentiment_score || 0) > 0.1).length;
-  const sentimentScore = themes.length > 0 ? positiveThemes / themes.length : 0;
+  // Methodology v2: positive/(positive+negative) from the theme text labels;
+  // neutrals are excluded from the score.
+  const positiveThemes = themes.filter((t: any) => t.sentiment === 'positive').length;
+  const negativeThemes = themes.filter((t: any) => t.sentiment === 'negative').length;
+  const polarized = positiveThemes + negativeThemes;
+  const sentimentScore = polarized > 0 ? positiveThemes / polarized : 0.5;
   const sentimentPct = Math.round(sentimentScore * 100);
   const sentimentLabel = sentimentScore > 0.6 ? 'Positive' : sentimentScore < 0.4 ? 'Negative' : 'Neutral';
 
@@ -452,7 +462,7 @@ async function computeMetrics(supabaseAdmin: any, companyId: string) {
     companyId,
     eps,
     eps_label: epsLabel,
-    sentiment: { score: sentimentPct, label: sentimentLabel, positive_themes: positiveThemes, total_themes: themes.length },
+    sentiment: { score: sentimentPct, label: sentimentLabel, positive_themes: positiveThemes, negative_themes: negativeThemes, total_themes: themes.length },
     visibility: visibilityPct,
     relevance: relevancePct,
     total_responses: totalResponses,
@@ -529,6 +539,7 @@ async function getResponses(
       confirmed_prompts(prompt_text, prompt_category, prompt_type)
     `)
     .eq('company_id', companyId)
+    .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
     .order('tested_at', { ascending: false })
     .limit(promptType || aiModel || sentimentFilter ? maxLimit * 4 : maxLimit);
 
@@ -594,8 +605,9 @@ async function getResponses(
 async function getThemes(supabaseAdmin: any, companyId: string): Promise<string> {
   const { data, error } = await supabaseAdmin
     .from('ai_themes')
-    .select('theme_name, theme_description, sentiment, sentiment_score, attribute_name, confidence_score, keywords')
-    .eq('company_id', companyId);
+    .select('theme_name, theme_description, sentiment, attribute_name, confidence_score, keywords, prompt_responses!inner(ai_model)')
+    .eq('company_id', companyId)
+    .not('prompt_responses.ai_model', 'in', EXCLUDED_AI_MODELS_FILTER);
 
   if (error) return JSON.stringify({ error: error.message });
   if (!data?.length) return JSON.stringify({
@@ -604,7 +616,6 @@ async function getThemes(supabaseAdmin: any, companyId: string): Promise<string>
   });
 
   const themeMap = new Map<string, {
-    totalScore: number;
     occurrences: number;
     sentiment_counts: { positive: number; negative: number; neutral: number };
     attributes: Set<string>;
@@ -615,10 +626,9 @@ async function getThemes(supabaseAdmin: any, companyId: string): Promise<string>
   for (const t of data) {
     const key = t.theme_name;
     if (!themeMap.has(key)) {
-      themeMap.set(key, { totalScore: 0, occurrences: 0, sentiment_counts: { positive: 0, negative: 0, neutral: 0 }, attributes: new Set(), descriptions: [], keywords: new Set() });
+      themeMap.set(key, { occurrences: 0, sentiment_counts: { positive: 0, negative: 0, neutral: 0 }, attributes: new Set(), descriptions: [], keywords: new Set() });
     }
     const entry = themeMap.get(key)!;
-    entry.totalScore += (t.sentiment_score || 0);
     entry.occurrences++;
     if (t.sentiment) entry.sentiment_counts[t.sentiment as 'positive' | 'negative' | 'neutral']++;
     if (t.attribute_name) entry.attributes.add(t.attribute_name);
@@ -628,11 +638,15 @@ async function getThemes(supabaseAdmin: any, companyId: string): Promise<string>
 
   const themes = Array.from(themeMap.entries())
     .map(([theme_name, stats]) => {
-      const avgScore = stats.totalScore / stats.occurrences;
+      // Methodology v2: positive/(positive+negative); null = no polarized signal
+      const polarized = stats.sentiment_counts.positive + stats.sentiment_counts.negative;
+      const positiveRatio = polarized > 0
+        ? Math.round((stats.sentiment_counts.positive / polarized) * 100) / 100
+        : null;
       return {
         theme: theme_name,
         mentions: stats.occurrences,
-        avg_sentiment_score: Math.round(avgScore * 100) / 100,
+        positive_ratio: positiveRatio,
         sentiment_label: stats.sentiment_counts.positive > stats.sentiment_counts.negative ? 'Positive' :
           stats.sentiment_counts.negative > stats.sentiment_counts.positive ? 'Negative' : 'Mixed/Neutral',
         sentiment_breakdown: stats.sentiment_counts,
@@ -675,11 +689,13 @@ async function getAttributeBreakdown(supabaseAdmin: any, companyId: string): Pro
     supabaseAdmin
       .from('prompt_responses')
       .select('id, ai_model')
-      .eq('company_id', companyId),
+      .eq('company_id', companyId)
+      .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER),
     supabaseAdmin
       .from('ai_themes')
-      .select('response_id, attribute_id, attribute_name, sentiment, sentiment_score, theme_name, confidence_score, keywords, context_snippets')
+      .select('response_id, attribute_id, attribute_name, sentiment, theme_name, confidence_score, keywords, context_snippets, prompt_responses!inner(ai_model)')
       .eq('company_id', companyId)
+      .not('prompt_responses.ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
       .not('attribute_name', 'is', null),
   ]);
 
@@ -698,7 +714,6 @@ async function getAttributeBreakdown(supabaseAdmin: any, companyId: string): Pro
 
   const attrMap = new Map<string, {
     id: string;
-    scores: number[];
     sentiments: string[];
     themes: string[];
     snippets: string[];
@@ -709,10 +724,9 @@ async function getAttributeBreakdown(supabaseAdmin: any, companyId: string): Pro
     const attr = t.attribute_name;
     if (!attr) continue;
     if (!attrMap.has(attr)) {
-      attrMap.set(attr, { id: t.attribute_id, scores: [], sentiments: [], themes: [], snippets: [], models: new Set() });
+      attrMap.set(attr, { id: t.attribute_id, sentiments: [], themes: [], snippets: [], models: new Set() });
     }
     const entry = attrMap.get(attr)!;
-    if (typeof t.sentiment_score === 'number') entry.scores.push(t.sentiment_score);
     if (t.sentiment) entry.sentiments.push(t.sentiment);
     if (t.theme_name) entry.themes.push(t.theme_name);
     if (t.context_snippets?.length) entry.snippets.push(...t.context_snippets.slice(0, 2));
@@ -721,15 +735,14 @@ async function getAttributeBreakdown(supabaseAdmin: any, companyId: string): Pro
   }
 
   const attributes = Array.from(attrMap.entries()).map(([attr_name, stats]) => {
-    const avgScore = stats.scores.length > 0
-      ? stats.scores.reduce((a, b) => a + b, 0) / stats.scores.length
-      : 0;
+    // Methodology v2: score = positive/(positive+negative) as 0-100;
+    // 50 = balanced/no polarized signal. Numeric sentiment_score not used.
     const posCount = stats.sentiments.filter(s => s === 'positive').length;
     const negCount = stats.sentiments.filter(s => s === 'negative').length;
+    const polarized = posCount + negCount;
     return {
       attribute: attr_name,
-      avg_sentiment_score: Math.round(avgScore * 100) / 100,
-      score_out_of_100: Math.round((avgScore + 1) / 2 * 100),
+      score_out_of_100: polarized > 0 ? Math.round((posCount / polarized) * 100) : 50,
       sentiment_label: posCount > negCount ? 'Positive' : negCount > posCount ? 'Negative' : 'Mixed',
       positive_count: posCount,
       negative_count: negCount,
@@ -752,12 +765,14 @@ async function getCompetitors(supabaseAdmin: any, companyId: string): Promise<st
     .from('prompt_responses')
     .select('detected_competitors, ai_model')
     .eq('company_id', companyId)
+    .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
     .not('detected_competitors', 'is', null);
 
   const { count: total } = await supabaseAdmin
     .from('prompt_responses')
     .select('id', { count: 'exact', head: true })
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER);
 
   const competitorCounts = new Map<string, { count: number; models: Set<string> }>();
   for (const r of (data || [])) {
@@ -797,6 +812,7 @@ async function getCitations(
     .from('prompt_responses')
     .select('citations, ai_model')
     .eq('company_id', companyId)
+    .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
     .not('citations', 'is', null);
 
   if (error) return JSON.stringify({ error: error.message });
@@ -909,7 +925,8 @@ async function getModelBreakdown(supabaseAdmin: any, companyId: string): Promise
   const { data: responses, error } = await supabaseAdmin
     .from('prompt_responses')
     .select('id, ai_model, company_mentioned')
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER);
 
   if (error) return JSON.stringify({ error: error.message });
   if (!responses?.length) return JSON.stringify({
@@ -918,19 +935,19 @@ async function getModelBreakdown(supabaseAdmin: any, companyId: string): Promise
 
   const sentimentMap = await getResponseSentiments(supabaseAdmin, responses.map((r: any) => r.id));
 
-  const modelMap = new Map<string, { total: number; mentioned: number; sentimentSum: number; sentimentCount: number; positive: number; negative: number; neutral: number }>();
+  const modelMap = new Map<string, { total: number; mentioned: number; pos: number; neg: number; positive: number; negative: number; neutral: number }>();
 
   for (const r of responses) {
     const model = r.ai_model || 'unknown';
-    if (!modelMap.has(model)) modelMap.set(model, { total: 0, mentioned: 0, sentimentSum: 0, sentimentCount: 0, positive: 0, negative: 0, neutral: 0 });
+    if (!modelMap.has(model)) modelMap.set(model, { total: 0, mentioned: 0, pos: 0, neg: 0, positive: 0, negative: 0, neutral: 0 });
     const entry = modelMap.get(model)!;
     entry.total++;
     if (r.company_mentioned) entry.mentioned++;
 
     const s = sentimentMap.get(r.id);
     if (s) {
-      entry.sentimentSum += s.score;
-      entry.sentimentCount++;
+      entry.pos += s.pos;
+      entry.neg += s.neg;
       if (s.label === 'positive') entry.positive++;
       else if (s.label === 'negative') entry.negative++;
       else entry.neutral++;
@@ -939,11 +956,13 @@ async function getModelBreakdown(supabaseAdmin: any, companyId: string): Promise
     }
   }
 
+  // Methodology v2: per-model sentiment pools positive/(positive+negative)
+  // theme counts across the model's responses; null = no polarized signal.
   const breakdown = Array.from(modelMap.entries()).map(([model, stats]) => ({
     model,
     total_responses: stats.total,
     visibility_rate: `${Math.round((stats.mentioned / stats.total) * 100)}%`,
-    avg_sentiment: stats.sentimentCount > 0 ? Math.round((stats.sentimentSum / stats.sentimentCount) * 100) / 100 : 0,
+    avg_sentiment: (stats.pos + stats.neg) > 0 ? Math.round((stats.pos / (stats.pos + stats.neg)) * 100) / 100 : null,
     sentiment_breakdown: { positive: stats.positive, negative: stats.negative, neutral: stats.neutral },
     dominant_sentiment: stats.positive > stats.negative ? 'Positive' : stats.negative > stats.positive ? 'Negative' : 'Neutral',
   })).sort((a, b) => b.total_responses - a.total_responses);
@@ -964,6 +983,7 @@ async function searchResponses(supabaseAdmin: any, companyId: string, keyword: s
       confirmed_prompts(prompt_text, prompt_type)
     `)
     .eq('company_id', companyId)
+    .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
     .ilike('response_text', `%${keyword}%`)
     .order('tested_at', { ascending: false })
     .limit(maxLimit);
@@ -1033,8 +1053,10 @@ Your job is to give insightful, data-grounded answers that feel like they're com
 7. Comparing locations/subsidiaries → \`compare_companies\`
 
 **Schema reference:**
-- \`ai_themes\`: \`company_id\`, \`response_id\`, \`theme_name\`, \`theme_description\`, \`sentiment\` (positive/negative/neutral), \`sentiment_score\` (-1 to 1), \`attribute_name\`, \`confidence_score\`, \`keywords\`, \`context_snippets\`
+- \`ai_themes\`: \`company_id\`, \`response_id\`, \`theme_name\`, \`theme_description\`, \`sentiment\` (positive/negative/neutral), \`attribute_name\`, \`confidence_score\`, \`keywords\`, \`context_snippets\`
 - \`prompt_responses\`: \`id\`, \`company_id\`, \`confirmed_prompt_id\`, \`ai_model\`, \`response_text\`, \`company_mentioned\`, \`detected_competitors\`, \`citations\` (JSONB), \`tested_at\`
+- Sentiment (methodology v2) = positive / (positive + negative) theme labels; neutral themes are excluded from the score. The numeric sentiment_score column is internal-only and never quoted.
+- Models claude, gemini and deepseek are excluded from all published metrics (the tools already filter them).
 - Per-response sentiment is derived by aggregating theme sentiments for that response.
 - EPS = 50% sentiment + 30% visibility + 20% relevance
 

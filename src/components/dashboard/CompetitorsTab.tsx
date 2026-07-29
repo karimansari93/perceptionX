@@ -13,7 +13,7 @@ import { extractSourceUrl } from "@/utils/citationUtils";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
-import { getCompetitorFavicon } from "@/utils/citationUtils";
+import { getCompetitorFavicon, getFavicon } from "@/utils/citationUtils";
 import LLMLogo from "@/components/LLMLogo";
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { usePersistedState } from "@/hooks/usePersistedState";
@@ -37,13 +37,17 @@ interface CompetitorsTabProps {
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   previousPeriodResponses?: any[];
+  // True while the raw response stream for the current company is still
+  // arriving (it loads AFTER first paint). Gates the empty state: skeleton
+  // rows, never "No competitor mentions found yet", until the stream is final.
+  responsesLoading?: boolean;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
   onJobFunctionChange?: (value: string) => void;
 }
 
-export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, searchResults = [], responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], selectedJobFunction = 'all', onJobFunctionChange }: CompetitorsTabProps) => {
+export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, searchResults = [], responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: CompetitorsTabProps) => {
   // Modal states - persisted
   const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('competitorsTab.selectedCompetitor', null);
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = usePersistedState<boolean>('competitorsTab.isCompetitorModalOpen', false);
@@ -266,11 +270,6 @@ export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, se
       totalCount: aiResponseCount + searchResultCount,
       sources: []
     };
-  };
-
-  // Helper to get favicon for a domain
-  const getFavicon = (domain: string): string => {
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
   };
 
   // Helper to format domain to a human-friendly name
@@ -1079,6 +1078,12 @@ CRITICAL: When you reference information from a source, add an inline citation l
                   </div>
                   <p className="text-sm">No competitors match "{deferredSearchQuery.trim()}".</p>
                 </div>
+              ) : responsesLoading ? (
+                <div className="space-y-3 px-2 sm:px-3 py-4" aria-busy="true">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
+                  ))}
+                </div>
               ) : (
                 <div className="text-center py-12 text-gray-500">
                   <div className="w-12 h-12 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
@@ -1283,7 +1288,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                         <div key={domain} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
                           <div className="flex items-center gap-2 min-w-0">
                             <img
-                              src={`https://www.google.com/s2/favicons?domain=${domain}&sz=32`}
+                              src={getFavicon(domain)}
                               alt=""
                               className="w-4 h-4 rounded shrink-0"
                               onError={(e) => { e.currentTarget.style.display = 'none'; }}
