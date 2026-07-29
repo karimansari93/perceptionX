@@ -44,7 +44,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Durable, URL-safe invite token (256 bits of entropy). Embedded in the
 // /welcome?invite=<token> link and exchanged for a fresh session by the
-// redeem-invite function, so the emailed link itself never expires.
+// redeem-invite function; good for 30 days from send/resend (expires_at).
 const newInviteToken = () => {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -196,9 +196,9 @@ serve(async (req) => {
             </a>
           </p>
           <p style="font-size:13px;color:#6b7280;line-height:1.5;margin:0;">
-            This link stays active until you join, so you can open it whenever
-            you're ready. If you weren't expecting this email, you can safely
-            ignore it.
+            This link is valid for 30 days — ask ${inviterFirstName} to resend
+            the invite if it has expired. If you weren't expecting this email,
+            you can safely ignore it.
           </p>
         </div>`;
 
