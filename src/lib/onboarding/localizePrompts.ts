@@ -79,22 +79,32 @@ export async function localizeConfirmedRows(
     const countryCode = marketToCountryCode(market);
     if (countryCode === 'GLOBAL') continue; // unknown market — keep English
 
+    // Translate each distinct text ONCE. Discovery templates contain no
+    // company name, so sibling entities sharing a (market, function, industry)
+    // cell produce byte-identical English — they must stay byte-identical in
+    // German too (LLM translation is non-deterministic per call), or the
+    // cross-entity response-sharing at collection time can never match them.
+    const uniqueTexts = [...new Set(indexes.map((i) => rows[i].prompt_text))];
+
     const { data, error } = await supabase.functions.invoke('translate-prompts', {
-      body: { prompts: indexes.map((i) => rows[i].prompt_text), countryCode },
+      body: { prompts: uniqueTexts, countryCode },
     });
     if (error) {
       throw new Error(`Translation failed for ${market}: ${error.message}`);
     }
     const translated: unknown = (data as { translatedPrompts?: unknown })?.translatedPrompts;
-    if (!Array.isArray(translated) || translated.length !== indexes.length) {
+    if (!Array.isArray(translated) || translated.length !== uniqueTexts.length) {
       throw new Error(`Translation returned incomplete results for ${market}`);
     }
-    indexes.forEach((rowIdx, j) => {
-      const text = translated[j];
-      if (typeof text === 'string' && text.trim()) {
-        out[rowIdx] = { ...out[rowIdx], prompt_text: text };
-      }
+    const byText = new Map<string, string>();
+    uniqueTexts.forEach((src, j) => {
+      const t = translated[j];
+      if (typeof t === 'string' && t.trim()) byText.set(src, t);
     });
+    for (const rowIdx of indexes) {
+      const t = byText.get(rows[rowIdx].prompt_text);
+      if (t) out[rowIdx] = { ...out[rowIdx], prompt_text: t };
+    }
   }
   return out;
 }

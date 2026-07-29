@@ -92,6 +92,38 @@ serve(async (req) => {
 
     console.log(`Processing company: ${company.name} (${companyId})`);
 
+    // Sibling companies (same organization) for cross-entity response sharing.
+    // Discovery prompts contain no company name, so sibling entities that share
+    // a (market, function, industry) cell ask the byte-identical question —
+    // the model should be asked ONCE per cycle, with each company running its
+    // own analysis (mention detection is per-company) over the same response.
+    const { data: orgLinks } = await supabase
+      .from("organization_companies")
+      .select("organization_id")
+      .eq("company_id", companyId);
+    const orgIds = [...new Set((orgLinks || []).map((r: any) => r.organization_id))];
+    let siblingCompanyIds: string[] = [];
+    if (orgIds.length > 0) {
+      const { data: sibs } = await supabase
+        .from("organization_companies")
+        .select("company_id")
+        .in("organization_id", orgIds)
+        .neq("company_id", companyId);
+      siblingCompanyIds = [...new Set((sibs || []).map((r: any) => r.company_id))];
+    }
+
+    // Reuse window: the collection month being filled (explicit when the
+    // monthly-refresh cron passes skipIfCollectedInMonth, else the current
+    // calendar month). A sibling's response from a previous cycle is stale
+    // evidence and must NOT suppress a fresh ask.
+    const nowForWindow = new Date();
+    const reuseWindowStart =
+      skipMonthStart ??
+      new Date(Date.UTC(nowForWindow.getUTCFullYear(), nowForWindow.getUTCMonth(), 1)).toISOString();
+    const reuseWindowEnd =
+      skipMonthEnd ??
+      new Date(Date.UTC(nowForWindow.getUTCFullYear(), nowForWindow.getUTCMonth() + 1, 1)).toISOString();
+
     // Resolve organization_id from organization_companies (company can belong to one or more orgs)
     // Fetch prompts for this company
     let promptsQuery = supabase
@@ -246,44 +278,74 @@ serve(async (req) => {
               let responseText = "";
               let citations: any[] = [];
 
-              // Stagger Claude calls to avoid token rate limit bursts.
-              // Web search is now enabled for citations, so use longer delays.
-              if (modelName === "claude" && promptIdx > 0) {
-                await new Promise(r => setTimeout(r, Math.min(promptIdx, 5) * 4000));
+              // Cross-entity reuse: if a sibling company already collected this
+              // model's answer to the byte-identical discovery question in this
+              // cycle, reuse its response instead of asking the model again.
+              // Restricted to discovery prompts — every other type embeds the
+              // company name, so cross-company text collisions are impossible.
+              if (prompt.prompt_type === "discovery" && siblingCompanyIds.length > 0) {
+                const { data: shared } = await supabase
+                  .from("prompt_responses")
+                  .select("response_text, citations, confirmed_prompts!inner(prompt_text)")
+                  .eq("ai_model", modelName)
+                  .in("company_id", siblingCompanyIds)
+                  .eq("confirmed_prompts.prompt_text", prompt.prompt_text)
+                  .gte("created_at", reuseWindowStart)
+                  .lt("created_at", reuseWindowEnd)
+                  .not("response_text", "is", null)
+                  .order("created_at", { ascending: false })
+                  .limit(1)
+                  .maybeSingle();
+
+                if (shared?.response_text) {
+                  responseText = shared.response_text;
+                  citations = Array.isArray(shared.citations) ? shared.citations : [];
+                  console.log(
+                    `[SharedPrompt] Reusing sibling ${modelName} response for discovery prompt ${prompt.id} — no model call`,
+                  );
+                }
               }
-
-              // Call edge function for each model
-              const functionName = `test-prompt-${modelName}`;
-              const modelResponse = await fetch(
-                `${supabaseUrl}/functions/v1/${functionName}`,
-                {
-                  method: "POST",
-                  headers: {
-                    Authorization: `Bearer ${supabaseKey}`,
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify({
-                    prompt: prompt.prompt_text,
-                    // Used by the Google functions (Scrapingdog `country`
-                    // geo-targeting); ignored by every other model function.
-                    location_context: prompt.location_context ?? null,
-                  }),
-                },
-              );
-
-              if (!modelResponse.ok) {
-                const errorData = await modelResponse.json();
-                throw new Error(
-                  `${modelName} error: ${errorData.error || "Unknown error"}`,
-                );
-              }
-
-              const modelData = await modelResponse.json();
-              responseText = modelData.response || "";
-              citations = modelData.citations || [];
 
               if (!responseText) {
-                throw new Error(`No response from ${modelName}`);
+                // Stagger Claude calls to avoid token rate limit bursts.
+                // Web search is now enabled for citations, so use longer delays.
+                if (modelName === "claude" && promptIdx > 0) {
+                  await new Promise(r => setTimeout(r, Math.min(promptIdx, 5) * 4000));
+                }
+
+                // Call edge function for each model
+                const functionName = `test-prompt-${modelName}`;
+                const modelResponse = await fetch(
+                  `${supabaseUrl}/functions/v1/${functionName}`,
+                  {
+                    method: "POST",
+                    headers: {
+                      Authorization: `Bearer ${supabaseKey}`,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                      prompt: prompt.prompt_text,
+                      // Used by the Google functions (Scrapingdog `country`
+                      // geo-targeting); ignored by every other model function.
+                      location_context: prompt.location_context ?? null,
+                    }),
+                  },
+                );
+
+                if (!modelResponse.ok) {
+                  const errorData = await modelResponse.json();
+                  throw new Error(
+                    `${modelName} error: ${errorData.error || "Unknown error"}`,
+                  );
+                }
+
+                const modelData = await modelResponse.json();
+                responseText = modelData.response || "";
+                citations = modelData.citations || [];
+
+                if (!responseText) {
+                  throw new Error(`No response from ${modelName}`);
+                }
               }
 
               // Analyze response using analyze-response function
