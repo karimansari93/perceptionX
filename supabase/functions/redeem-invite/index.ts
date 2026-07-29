@@ -16,12 +16,13 @@ const corsHeaders = {
  * Exchanges a durable team-invite token (from the /welcome?invite=<token> link
  * created by invite-team-member) for a freshly-minted, short-lived auth OTP the
  * browser immediately verifies to sign in. Because the OTP is generated at click
- * time, the emailed invite link never expires — it only stops working once the
- * invite has been accepted (the invitee already signed in) or revoked.
+ * time, the emailed invite link is not bound by the platform's 24h auth-link
+ * cap — it lives for 30 days from send/resend (organization_invites.expires_at)
+ * and stops working once the invite is accepted or revoked.
  *
  * Body: { "token": "<durable invite token>" }
  * Returns on success: { ok, tokenHash, type, orgName, inviterName }
- *         otherwise:   { ok: false, reason: "invalid" | "used" }
+ *         otherwise:   { ok: false, reason: "invalid" | "used" | "expired" }
  */
 
 const json = (body: unknown, status = 200) =>
@@ -46,13 +47,19 @@ serve(async (req) => {
 
     const { data: invite } = await admin
       .from("organization_invites")
-      .select("id, organization_id, email, status, invited_user_id")
+      .select("id, organization_id, email, status, invited_user_id, expires_at")
       .eq("token", token)
       .maybeSingle();
 
     // Unknown token, or an invite that's no longer live (revoked/accepted).
     if (!invite || invite.status !== "pending") {
       return json({ ok: false, reason: invite ? "used" : "invalid" });
+    }
+
+    // Invite links are good for 30 days from send/resend; a resend from the
+    // dashboard mints a fresh token and restarts the window.
+    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+      return json({ ok: false, reason: "expired" });
     }
 
     // The invitee has an auth user from the original invite. If they've already

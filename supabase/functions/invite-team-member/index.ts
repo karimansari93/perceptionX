@@ -225,14 +225,16 @@ serve(async (req) => {
 
     // Creates the auth user, profile, membership and sends the invite email.
     // Returns the new user's id. `token` is the durable invite token: when
-    // Resend is configured we email our own /welcome?invite=<token> link (which
-    // never expires) instead of Supabase's short-lived auth action link.
+    // Resend is configured we email our own /welcome?invite=<token> link (good
+    // for 30 days, refreshed on resend) instead of Supabase's short-lived auth
+    // action link.
     const createAndInvite = async (
       email: string,
       role: string,
       token: string,
     ): Promise<string> => {
       let userId: string;
+      let inviteLink: string | null = null;
       if (resendKey) {
         // generateLink creates the placeholder auth user (and never sends an
         // email itself); we discard its short-lived action_link and email the
@@ -244,8 +246,7 @@ serve(async (req) => {
         });
         if (error) throw error;
         userId = data.user.id;
-        const inviteLink = `${siteUrl.replace(/\/$/, "")}/welcome?invite=${token}`;
-        await sendInviteEmail(email, inviteLink);
+        inviteLink = `${siteUrl.replace(/\/$/, "")}/welcome?invite=${token}`;
       } else {
         // No Resend transport: fall back to Supabase's built-in invite email.
         // That link still carries the platform's 24h expiry (see config.toml).
@@ -257,16 +258,31 @@ serve(async (req) => {
         userId = data.user.id;
       }
 
-      // No DB trigger creates profiles rows — the app's user lists read from
-      // profiles, so create it here.
-      await admin.from("profiles").upsert({ id: userId, email }, { onConflict: "id" });
+      try {
+        if (inviteLink) await sendInviteEmail(email, inviteLink);
 
-      const { error: memberError } = await admin.from("organization_members").insert({
-        organization_id: org.id,
-        user_id: userId,
-        role,
-      });
-      if (memberError) throw memberError;
+        // No DB trigger creates profiles rows — the app's user lists read from
+        // profiles, so create it here.
+        await admin.from("profiles").upsert({ id: userId, email }, { onConflict: "id" });
+
+        const { error: memberError } = await admin.from("organization_members").insert({
+          organization_id: org.id,
+          user_id: userId,
+          role,
+        });
+        if (memberError) throw memberError;
+      } catch (err) {
+        // Roll back the placeholder auth user (profile + memberships cascade
+        // away with it). Without this, a transient failure — e.g. a Resend
+        // outage — leaves an auth user with no profile, and every future
+        // invite for this email fails with "already registered".
+        try {
+          await admin.auth.admin.deleteUser(userId);
+        } catch (cleanupErr) {
+          console.error(`Rollback of placeholder user for ${email} failed:`, cleanupErr);
+        }
+        throw err;
+      }
 
       return userId;
     };
@@ -413,7 +429,7 @@ serve(async (req) => {
           // Brand-new user → create + send invite email
           const token = newInviteToken();
           const userId = await createAndInvite(email, role, token);
-          await admin.from("organization_invites").insert({
+          const { error: inviteError } = await admin.from("organization_invites").insert({
             organization_id: org.id,
             email,
             role,
@@ -421,15 +437,29 @@ serve(async (req) => {
             invited_by: caller.id,
             invited_user_id: userId,
             token,
+            expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
           });
+          if (inviteError) {
+            // The email already went out, but its token was never stored, so
+            // the link is dead. Remove the placeholder user (profile +
+            // membership cascade) so the address can be re-invited cleanly.
+            try {
+              await admin.auth.admin.deleteUser(userId);
+            } catch (cleanupErr) {
+              console.error(`Rollback of invite row for ${email} failed:`, cleanupErr);
+            }
+            throw inviteError;
+          }
           results.push({ email, status: "invited" });
         } catch (err) {
           console.error(`Invite failed for ${email}:`, err);
-          results.push({
-            email,
-            status: "error",
-            message: err instanceof Error ? err.message : "Invite failed",
-          });
+          const raw = err instanceof Error ? err.message : "Invite failed";
+          // An auth user without a profiles row (pre-rollback partial invite)
+          // hits this; surface something actionable instead of a GoTrue error.
+          const message = /already (been )?registered/i.test(raw)
+            ? "This email already has an account — contact PerceptionX support to add them to your team"
+            : raw;
+          results.push({ email, status: "error", message });
         }
       }
 
@@ -480,9 +510,8 @@ serve(async (req) => {
         return json({ ok: true, status: "revoked" });
       }
 
-      // resend: recreate the placeholder user and issue a fresh durable token.
-      // (The token link doesn't expire, but resending lets an admin re-deliver
-      // the email and rotates the token.)
+      // resend: recreate the placeholder user, issue a fresh durable token and
+      // restart the 30-day window.
       if (invite.invited_user_id) {
         await admin.auth.admin.deleteUser(invite.invited_user_id);
       }
@@ -490,7 +519,12 @@ serve(async (req) => {
       const userId = await createAndInvite(invite.email, invite.role, token);
       await admin
         .from("organization_invites")
-        .update({ invited_user_id: userId, token, sent_at: new Date().toISOString() })
+        .update({
+          invited_user_id: userId,
+          token,
+          sent_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        })
         .eq("id", invite.id);
       return json({ ok: true, status: "resent" });
     }

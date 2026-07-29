@@ -53,11 +53,12 @@ const Welcome = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'valid' | 'expired'>('checking');
-  const [expiredReason, setExpiredReason] = useState<'used' | 'invalid' | null>(null);
+  const [expiredReason, setExpiredReason] = useState<'used' | 'invalid' | 'expired' | null>(null);
 
   // New flow: exchange a durable invite token (?invite=…) for a fresh session.
   // The redeem-invite function mints a one-time OTP we verify here, so the
-  // emailed link never expires — it just stops working once accepted or revoked.
+  // emailed link lives for 30 days (resending restarts the window) — and stops
+  // working once accepted or revoked.
   useEffect(() => {
     if (!inviteToken) return;
     if (user) {
@@ -73,7 +74,9 @@ const Welcome = () => {
         if (error) throw error;
         if (!data?.ok || !data?.tokenHash) {
           if (!cancelled) {
-            setExpiredReason(data?.reason === 'used' ? 'used' : 'invalid');
+            setExpiredReason(
+              data?.reason === 'used' ? 'used' : data?.reason === 'expired' ? 'expired' : 'invalid',
+            );
             setSessionStatus('expired');
           }
           return;
@@ -172,14 +175,20 @@ const Welcome = () => {
           <div className="bg-gradient-to-br from-pink/15 via-white to-[#13274F]/5 px-8 pt-9 pb-7">
             <img src="/logos/PerceptionX-PrimaryLogo.png" alt="PerceptionX" className="h-5 mx-auto mb-6" />
             <h1 className="text-[22px] font-bold text-nightsky leading-tight" style={display}>
-              {expiredReason === 'used' ? "You're already set up" : 'Invite link not valid'}
+              {expiredReason === 'used'
+                ? "You're already set up"
+                : expiredReason === 'expired'
+                  ? 'Invite link expired'
+                  : 'Invite link not valid'}
             </h1>
           </div>
           <div className="px-8 py-7 space-y-5">
             <p className="text-[14px] text-nightsky/70 leading-relaxed" style={sans}>
               {expiredReason === 'used'
                 ? 'This invite has already been accepted. If that was you, just log in with your email and password.'
-                : 'This invite link is no longer valid or was cancelled. Ask your teammate to send you a new one from their dashboard.'}
+                : expiredReason === 'expired'
+                  ? 'This invite link has expired. Ask your teammate to resend it from their dashboard — a resent invite is good for another 30 days.'
+                  : 'This invite link is no longer valid or was cancelled. Ask your teammate to send you a new one from their dashboard.'}
             </p>
             <Button
               onClick={() => navigate('/auth')}
