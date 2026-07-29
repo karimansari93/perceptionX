@@ -15,7 +15,7 @@ interface CitationWithRecency {
   url?: string;
   publicationDate?: string;
   recencyScore: number | null; // null = N/A
-  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'firecrawl-json' | 'meta-tag' | 'json-ld' | 'time-tag' | 'openai-html' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen' | 'youtube-api' | 'reddit-api' | 'social-post';
+  extractionMethod: 'url-pattern' | 'firecrawl-metadata' | 'firecrawl-relative' | 'firecrawl-absolute' | 'firecrawl-reddit' | 'firecrawl-json' | 'meta-tag' | 'json-ld' | 'time-tag' | 'openai-html' | 'not-found' | 'rate-limit-hit' | 'cache-hit' | 'timeout' | 'manual' | 'evergreen' | 'youtube-api' | 'reddit-api' | 'social-post' | 'problematic-domain' | 'url-duplicate';
   sourceType?: 'perplexity' | 'google-ai-overviews' | 'bing-copilot' | 'search-results';
 }
 
@@ -119,13 +119,20 @@ serve(async (req) => {
     let firecrawlRequestCount = 0;
     console.log(`Starting to process ${citations.length} citations with intelligent caching and deduplication`);
     
-    // Step 1: Deduplicate URLs within this batch
+    // Step 1: Canonicalize, then deduplicate URLs within this batch. Canonical-
+    // ization unwraps Google redirect wrappers and strips fragments/tracking
+    // params, so every downstream tier works on the real destination. Two
+    // different wrappers around the same article collapse to one analysis.
     const urlToCitations = new Map<string, typeof citations>();
     const uniqueUrls: string[] = [];
-    
+    // raw citation URL -> canonical URL. Only holds entries where they differ.
+    const rawToCanonical = new Map<string, string>();
+
     for (const citation of citations) {
-      const url = citation.url || citation.link;
-      if (url) {
+      const rawUrl = citation.url || citation.link;
+      if (rawUrl) {
+        const url = canonicalizeUrl(rawUrl);
+        if (url !== rawUrl) rawToCanonical.set(rawUrl, url);
         if (!urlToCitations.has(url)) {
           urlToCitations.set(url, []);
           uniqueUrls.push(url);
@@ -133,21 +140,34 @@ serve(async (req) => {
         urlToCitations.get(url)!.push(citation);
       }
     }
+
+    console.log(`Deduplication: ${citations.length} citations reduced to ${uniqueUrls.length} unique URLs (${rawToCanonical.size} canonicalized)`);
     
-    console.log(`Deduplication: ${citations.length} citations reduced to ${uniqueUrls.length} unique URLs`);
-    
+    // canonical URL -> the raw citation URLs that collapsed onto it.
+    const canonicalToRaws = new Map<string, string[]>();
+    for (const [raw, canonical] of rawToCanonical) {
+      const list = canonicalToRaws.get(canonical);
+      if (list) list.push(raw);
+      else canonicalToRaws.set(canonical, [raw]);
+    }
+
     // Step 2: Check cache for unique URLs (unless bypassCache is set — used by
-    // backfill jobs that want to re-score existing rows via the new pipeline)
-    console.log(`Looking up ${uniqueUrls.length} unique URLs in cache (bypassCache=${bypassCache})`);
-    const cachedUrls = bypassCache ? new Map() : await getCachedUrls(uniqueUrls);
+    // backfill jobs that want to re-score existing rows via the new pipeline).
+    // Pre-canonical URLs are looked up too: rows cached before canonicalization
+    // existed are keyed by the raw URL, and re-analyzing them would spend
+    // credits to relearn what we already know.
+    const lookupUrls = [...uniqueUrls, ...rawToCanonical.keys()];
+    console.log(`Looking up ${lookupUrls.length} URLs in cache (${uniqueUrls.length} canonical + ${rawToCanonical.size} pre-canonical, bypassCache=${bypassCache})`);
+    const cachedUrls = bypassCache ? new Map() : await getCachedUrls(lookupUrls);
     console.log(`Cache lookup complete: Found ${cachedUrls.size} cached URLs`);
-    
+
     // Step 3: Build results map for unique URLs
     const urlResults = new Map<string, CitationWithRecency>();
     const urlsToAnalyze: string[] = [];
-    
+
     for (const url of uniqueUrls) {
-      const cached = cachedUrls.get(url);
+      const cached = cachedUrls.get(url)
+        ?? (canonicalToRaws.get(url) ?? []).map(raw => cachedUrls.get(raw)).find(Boolean);
       if (cached) {
         // Use cached result
         urlResults.set(url, {
@@ -265,9 +285,14 @@ serve(async (req) => {
       for (const url of youtubeCandidates.keys()) urlsNeedingFirecrawl.push(url);
     }
 
-    // Step 4a.ii: Reddit .json endpoint (concurrent, capped)
+    // Step 4a.ii: Reddit .json endpoint (concurrent, capped).
+    // Reddit is classified by the API, not by scraping: Reddit blocks Firecrawl,
+    // so a thread the API can't date is one nothing else can date either. When
+    // the API answered (tokenOk) a miss is terminal — we do NOT pay Firecrawl to
+    // fail. When the token itself failed the miss says nothing about the thread,
+    // so leave those URLs unresolved and uncached for a later run to retry.
     if (!testMode && redditCandidates.length > 0) {
-      const rdResults = await extractRedditDates(redditCandidates);
+      const { dates: rdResults, tokenOk } = await extractRedditDates(redditCandidates);
       for (const url of redditCandidates) {
         const citationsForUrl = urlToCitations.get(url) || [];
         const firstCitation = citationsForUrl[0];
@@ -282,11 +307,19 @@ serve(async (req) => {
             extractionMethod: 'reddit-api',
             sourceType: firstCitation?.sourceType,
           });
-        } else {
-          urlsNeedingFirecrawl.push(url);
+        } else if (tokenOk) {
+          // Deleted, removed, quarantined or private thread. Terminal.
+          urlResults.set(url, {
+            domain: firstCitation?.domain || extractDomainFromUrl(url),
+            title: firstCitation?.title,
+            url,
+            recencyScore: null,
+            extractionMethod: 'not-found',
+            sourceType: firstCitation?.sourceType,
+          });
         }
       }
-      console.log(`Reddit API resolved ${rdResults.size}/${redditCandidates.length}`);
+      console.log(`Reddit API resolved ${rdResults.size}/${redditCandidates.length} (tokenOk=${tokenOk}); Firecrawl fall-through: 0`);
     } else if (redditCandidates.length > 0) {
       for (const url of redditCandidates) urlsNeedingFirecrawl.push(url);
     }
@@ -343,8 +376,12 @@ serve(async (req) => {
               domain: firstCitation?.domain || extractDomainFromUrl(url),
               title: firstCitation?.title,
               url,
+              // 'problematic-domain', not 'not-found': we declined to scrape this
+              // rather than scraped and failed. The deny-list view excludes these
+              // so a denied domain can age off the list and get another chance,
+              // instead of its own skips keeping it there forever.
               recencyScore: null,
-              extractionMethod: 'not-found',
+              extractionMethod: 'problematic-domain',
               sourceType: firstCitation?.sourceType,
             });
             deadSkipped++;
@@ -407,12 +444,22 @@ serve(async (req) => {
 
     // Step 4d: Persist all newly-resolved URLs to cache (parallel writes).
     const newlyResolvedUrls = urlsToAnalyze.filter(u => urlResults.has(u));
-    await Promise.all(
-      newlyResolvedUrls
-        .map(u => urlResults.get(u)!)
-        .filter(r => r.extractionMethod !== 'rate-limit-hit' && r.extractionMethod !== 'cache-hit')
-        .map(r => storeCachedUrl(r))
-    );
+    const rowsToStore = newlyResolvedUrls
+      .map(u => urlResults.get(u)!)
+      .filter(r => r.extractionMethod !== 'rate-limit-hit' && r.extractionMethod !== 'cache-hit');
+
+    // Also cache each pre-canonical URL that collapsed onto a resolved one, so a
+    // future batch citing the same wrapper hits the cache instead of unwrapping
+    // and re-analyzing. The row carries the destination's date, score and domain
+    // — the wrapper is only an alias for it.
+    const aliasRows: CitationWithRecency[] = [];
+    for (const r of rowsToStore) {
+      for (const raw of canonicalToRaws.get(r.url!) ?? []) {
+        aliasRows.push({ ...r, url: raw, extractionMethod: 'url-duplicate' });
+      }
+    }
+
+    await Promise.all([...rowsToStore, ...aliasRows].map(r => storeCachedUrl(r)));
     
     // Step 5: Map results back to all citations (including duplicates)
     const results: CitationWithRecency[] = [];
@@ -432,11 +479,14 @@ serve(async (req) => {
         continue;
       }
       
-      const urlResult = urlResults.get(url);
+      const urlResult = urlResults.get(rawToCanonical.get(url) ?? url);
       if (urlResult) {
-        // Add citation-specific fields back
+        // Add citation-specific fields back. The URL echoed to the caller is the
+        // one it sent us, not the canonical form, so callers can still match
+        // results to the citations they passed in.
         results.push({
           ...urlResult,
+          url,
           title: citation.title,
           sourceType: citation.sourceType
         });
@@ -494,12 +544,130 @@ function isRealDate(iso: string): boolean {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 
+// ----------------------------------------------------------------------------
+// URL canonicalization. Search engines cite articles through redirect wrappers
+// (google.com/url?...&url=<destination>) rather than linking them directly.
+// Scraping the wrapper yields a redirect stub with no date, so every one of them
+// used to run the full tier stack and end at not-found — while the tracking
+// params in the wrapper (ved, psig, ust=<epoch micros>) fed the URL date parser
+// garbage, producing publication dates from 1970 to 2047.
+//
+// Unwrapping to the destination fixes both: the URL we analyze is the real
+// article, and many of them are already in the cache from being cited directly
+// elsewhere, so they cost nothing at all.
+// ----------------------------------------------------------------------------
+const REDIRECT_DESTINATION_PARAMS = ['url', 'imgurl', 'q', 'u'];
+// Google's own params, used to find where the destination ends. Google leaves
+// the destination unencoded ("url=https://host/a?b=1&c=2"), so searchParams
+// would cut it at its first "&" and hand back a truncated URL.
+const GOOGLE_WRAPPER_PARAMS = [
+  'ved', 'usg', 'sa', 'psig', 'ust', 'opi', 'cd', 'source', 'rct',
+  'uoh', 'ei', 'bvm', 'cad', 'uact', 'client', 'sqi', 'fir', 'tbm',
+];
+
+function extractDestination(search: string, param: string): string | null {
+  const query = search.startsWith('?') ? search.slice(1) : search;
+  const start = query.match(new RegExp(`(?:^|&)${param}=`));
+  if (!start) return null;
+
+  const rest = query.slice((start.index ?? 0) + start[0].length);
+  const terminator = rest.match(new RegExp(`&(?:${GOOGLE_WRAPPER_PARAMS.join('|')})(?:=|&|$)`));
+  const value = terminator ? rest.slice(0, terminator.index) : rest;
+
+  let decoded = value;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    // Malformed escape sequence — the raw value is still worth a look.
+  }
+  // Google also wraps opaque "CAES..." blobs that decode to nothing useful.
+  // Only an actual http(s) destination is worth following.
+  if (!/^https?:\/\/./i.test(decoded)) return null;
+  try {
+    new URL(decoded);
+  } catch {
+    return null;
+  }
+  return decoded;
+}
+
+// One unwrap step. Returns the destination, or null if this isn't a wrapper.
+function unwrapRedirect(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  // google.com, google.co.uk, google.com.br, ...
+  if (!/^google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host)) return null;
+  if (!/^\/(url|goto|imgres|aclk)$/.test(parsed.pathname.replace(/\/+$/, ''))) return null;
+
+  for (const param of REDIRECT_DESTINATION_PARAMS) {
+    const destination = extractDestination(parsed.search, param);
+    if (destination) return destination;
+  }
+  return null;
+}
+
+// Strip text-fragment anchors (#:~:text=...) and common tracking params. Both
+// produce distinct cache keys for what is one page. Other fragments are left
+// alone — some sites route on them.
+function stripUrlNoise(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+
+  let changed = false;
+  if (parsed.hash.startsWith('#:~:')) {
+    parsed.hash = '';
+    changed = true;
+  }
+  for (const param of [...parsed.searchParams.keys()]) {
+    if (/^utm_/i.test(param) || ['fbclid', 'gclid', 'igshid', 'mc_cid', 'mc_eid'].includes(param.toLowerCase())) {
+      parsed.searchParams.delete(param);
+      changed = true;
+    }
+  }
+
+  // Return the input untouched when there was nothing to strip. URL.toString()
+  // also normalizes case, default ports and escaping, and that rewriting would
+  // change the cache key of URLs that have no noise in them at all — turning
+  // every existing cache row into a miss and re-analyzing the whole corpus.
+  return changed ? parsed.toString() : url;
+}
+
+function canonicalizeUrl(rawUrl: string): string {
+  let current = rawUrl;
+  // Wrappers occasionally nest (a Google redirect around another redirect).
+  // Cap the hops so a self-referential URL can't spin here.
+  for (let hop = 0; hop < 3; hop++) {
+    const next = unwrapRedirect(current);
+    if (!next || next === current) break;
+    current = next;
+  }
+  return stripUrlNoise(current);
+}
+
 function extractDateFromUrl(url: string): string | null {
   // Helper to validate year is reasonable (web content dates)
   const isValidYear = (year: string): boolean => {
     const yearNum = parseInt(year, 10);
     return yearNum >= 1990 && yearNum <= 2050; // Reasonable range for web content
   };
+
+  // Match against the path only. Query strings and fragments carry epoch
+  // timestamps, session ids and highlight text, none of which are publication
+  // dates — reading them is how "2047-01-01" got into the cache.
+  try {
+    url = new URL(url).pathname;
+  } catch {
+    url = url.split('#')[0].split('?')[0];
+  }
 
   const patterns = [
     // YYYY/MM/DD or YYYY-MM-DD
@@ -1063,15 +1231,16 @@ function classifyDatelessUrl(url: string): { method: CitationWithRecency['extrac
   }
 
   // Google search / maps / vertical result pages — no publication date exists.
-  if (host === 'google.com' && /^\/(search|maps|travel|flights|shopping|store)(\/|$)/.test(path)) {
-    return { method: 'not-found' };
+  // (Redirect wrappers are unwrapped to their destination before reaching here.)
+  if (/^google\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host) && /^\/(search|maps|travel|flights|shopping|store)(\/|$)/.test(path)) {
+    return { method: 'problematic-domain' };
   }
 
   // Document-hosting viewers behind bot walls — a scrape returns the viewer
   // shell, never a date.
   const deadDocHosts = ['scribd.com', 'studocu.com'];
   if (deadDocHosts.some((h) => host === h || host.endsWith('.' + h))) {
-    return { method: 'not-found' };
+    return { method: 'problematic-domain' };
   }
 
   return null;
@@ -1257,10 +1426,13 @@ async function fetchRedditDate(url: string, token: string): Promise<string | nul
   }
 }
 
-async function extractRedditDates(urls: string[]): Promise<Map<string, string>> {
+// Returns the resolved dates plus whether we actually held a token. Callers need
+// the distinction: with a token, a missing date means the thread has none; with-
+// out one, it means we never asked.
+async function extractRedditDates(urls: string[]): Promise<{ dates: Map<string, string>; tokenOk: boolean }> {
   const result = new Map<string, string>();
   const token = await getRedditToken();
-  if (!token) return result; // No token -> fall-through to existing pipeline
+  if (!token) return { dates: result, tokenOk: false };
   const concurrency = 5;
   let i = 0;
   async function worker() {
@@ -1272,6 +1444,6 @@ async function extractRedditDates(urls: string[]): Promise<Map<string, string>> 
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, urls.length) }, worker));
-  return result;
+  return { dates: result, tokenOk: true };
 }
 
