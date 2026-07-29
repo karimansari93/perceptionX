@@ -45,6 +45,9 @@ export const CompanyCollectionTab = ({
   const loadCoverage = useCallback(async () => {
     setLoading(true);
     try {
+      // .range() lifts PostgREST's default 1000-row cap — a multi-market company
+      // (e.g. 4 entities × 5 markets) exceeds it, and the rows inserted last
+      // (typically the non-English markets) silently vanish from this view.
       const { data: promptsData, error: promptsError } = await supabase
         .from('confirmed_prompts')
         .select('id, prompt_text, prompt_type, prompt_category, prompt_theme')
@@ -52,7 +55,8 @@ export const CompanyCollectionTab = ({
         .eq('is_active', true)
         .order('prompt_category')
         .order('prompt_theme')
-        .order('prompt_type');
+        .order('prompt_type')
+        .range(0, 9999);
 
       if (promptsError) throw promptsError;
       if (!promptsData?.length) {

@@ -177,12 +177,15 @@ export const ExpandCoveragePanel = ({ organizationId, onBack }: Props) => {
 
       try {
         // Load existing prompts so we can detect the company's current country
-        // and the combos already covered.
+        // and the combos already covered. .range() lifts the default 1000-row
+        // cap — beyond it the tail markets vanish and covered combos would be
+        // offered again as "new".
         const { data: existingPrompts } = await supabase
           .from("confirmed_prompts")
           .select("location_context, industry_context, job_function_context")
           .eq("company_id", companyId)
-          .eq("is_active", true);
+          .eq("is_active", true)
+          .range(0, 9999);
 
         const existingCombos = new Set(
           (existingPrompts || []).map((p: any) =>

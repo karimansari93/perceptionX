@@ -125,12 +125,17 @@ export const CollectModelPanel = ({ organizationId, onBack }: Props) => {
       });
 
       try {
-        // Fetch every active prompt for this company.
+        // Fetch every active prompt for this company. .range() lifts the
+        // default 1000-row cap — without it a multi-market company's tail
+        // prompts (the non-English markets, inserted last) would be silently
+        // excluded from collection.
         const { data: prompts, error: promptsError } = await supabase
           .from("confirmed_prompts")
           .select("id")
           .eq("company_id", companyId)
-          .eq("is_active", true);
+          .eq("is_active", true)
+          .order("id", { ascending: true })
+          .range(0, 9999);
 
         if (promptsError) throw new Error(promptsError.message);
         const promptIds = (prompts || []).map((p: any) => p.id);

@@ -212,7 +212,8 @@ export const BulkExpandPanel = ({ organizationId, onBack }: Props) => {
           .from("confirmed_prompts")
           .select("location_context, industry_context, job_function_context")
           .eq("company_id", company.id)
-          .eq("is_active", true);
+          .eq("is_active", true)
+          .range(0, 9999); // lift the 1000-row cap or tail markets read as uncovered
 
         const existingCombos = new Set(
           (existingPrompts || []).map((p: any) =>

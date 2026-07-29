@@ -117,12 +117,19 @@ export const OrganizationDataDetail = ({ org, onBack, onViewCompany }: Organizat
           .select('company_id, country')
           .in('company_id', companyIds)
           .not('company_id', 'is', null),
+        // .range() lifts the default 1000-row cap; an org with several
+        // multi-market companies exceeds it and the counts under-report.
         supabase
           .from('confirmed_prompts')
           .select('company_id, id')
           .eq('is_active', true)
-          .in('company_id', companyIds),
-        supabase.from('prompt_responses').select('company_id, confirmed_prompt_id').in('company_id', companyIds),
+          .in('company_id', companyIds)
+          .range(0, 49999),
+        supabase
+          .from('prompt_responses')
+          .select('company_id, confirmed_prompt_id')
+          .in('company_id', companyIds)
+          .range(0, 99999),
       ]);
 
       const industriesMap = new Map<string, Set<string>>();
