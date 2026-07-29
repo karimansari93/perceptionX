@@ -185,7 +185,8 @@ export const ResponseDetailsModal = ({
 
   // Compute averages and sources - use AI-based sentiment from promptData if available
   const avgSentiment = promptData?.avgSentiment ?? 0; // No fallback to removed sentiment_score
-  const avgSentimentLabel = promptData?.sentimentLabel ?? (avgSentiment > 0.1 ? "Positive" : avgSentiment < -0.1 ? "Negative" : "Neutral");
+  // avgSentiment is the methodology-v2 ratio positive/(positive+negative), 0..1.
+  const avgSentimentLabel = promptData?.sentimentLabel ?? (avgSentiment > 0.6 ? "Positive" : avgSentiment < 0.4 ? "Negative" : "Neutral");
   const brandMentionedPct = responses.length > 0 ? Math.round(responses.filter(r => r.company_mentioned).length / responses.length * 100) : 0;
 
   // Extract real sources (with URLs)
@@ -408,16 +409,18 @@ export const ResponseDetailsModal = ({
     };
   }, [isOpen, promptText, responses, responseTexts, lazyLoadAttempted, summaryCache, summaryRetryNonce]); // responseTexts + lazyLoadAttempted required so the effect re-runs once lazy-loaded text arrives or the fetch resolves empty; summaryRetryNonce forces a manual retry
 
+  // Scores here are the methodology-v2 ratio positive/(positive+negative),
+  // 0..1 — same 0.6/0.4 thresholds as the rest of the dashboard.
   const getSentimentColor = (score: number | null) => {
-    if (!score) return "text-gray-500";
-    if (score > 0.1) return "text-green-600";
-    if (score < -0.1) return "text-red-600";
+    if (score === null || score === undefined) return "text-gray-500";
+    if (score > 0.6) return "text-green-600";
+    if (score < 0.4) return "text-red-600";
     return "text-gray-600";
   };
 
   const getSentimentBadge = (score: number | null, label: string | null) => {
-    if (!score) return "No sentiment";
-    const percentage = Math.abs(score * 100).toFixed(0);
+    if (score === null || score === undefined) return "No sentiment";
+    const percentage = (score * 100).toFixed(0);
     return `${percentage}% ${label || 'Neutral'}`;
   };
 
@@ -447,9 +450,9 @@ export const ResponseDetailsModal = ({
       
       if (useAIBasedSentiment) {
         // AI-based sentiment analysis insights
-        if (avgSentiment > 0.1) {
+        if (avgSentiment > 0.6) {
           insights.push("AI thematic analysis shows consistently positive sentiment across responses");
-        } else if (avgSentiment < -0.1) {
+        } else if (avgSentiment < 0.4) {
           insights.push("AI thematic analysis indicates negative sentiment - may need attention");
         } else {
           insights.push("AI analysis shows neutral sentiment - opportunity for stronger positioning");
@@ -459,9 +462,9 @@ export const ResponseDetailsModal = ({
         const sentimentRange = Math.max(...sentimentScores) - Math.min(...sentimentScores);
         if (sentimentRange > 0.3) {
           insights.push("High sentiment variation across models - consider standardizing messaging");
-        } else if (avgSentiment > 0.1) {
+        } else if (avgSentiment > 0.6) {
           insights.push("Consistently positive sentiment across all models");
-        } else if (avgSentiment < -0.1) {
+        } else if (avgSentiment < 0.4) {
           insights.push("Consistently negative sentiment across all models - may need attention");
         }
       }
@@ -679,8 +682,8 @@ export const ResponseDetailsModal = ({
     } else if (sentimentLabel && sentimentLabel.toLowerCase() === 'negative') {
       label = 'Negative';
     } else if (!sentimentLabel && responses.length > 0) {
-      if (avgSentiment > 0.1) label = 'Positive';
-      else if (avgSentiment < -0.1) label = 'Negative';
+      if (avgSentiment > 0.6) label = 'Positive';
+      else if (avgSentiment < 0.4) label = 'Negative';
     }
     const color = label === 'Positive' ? 'text-[#0DBCBA]' : label === 'Negative' ? 'text-[#DB5E89]' : 'text-[#13274F]';
     return { label, color };

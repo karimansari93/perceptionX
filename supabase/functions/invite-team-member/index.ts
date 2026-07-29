@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { SMTPClient } from "https://deno.land/x/denomailer@1.6.0/mod.ts";
 
 // Inlined (not imported from ../_shared/cors.ts) so the function can be
 // deployed as a single file.
@@ -30,15 +29,8 @@ const corsHeaders = {
  * Rules enforced server-side:
  *   - Caller must be a Super Admin of the org (or a platform admin).
  *   - Invitee email domain must match the caller's email domain.
- *
- * Invite links are our own 30-day tokens (/welcome?invite=<token>), accepted
- * by the accept-team-invite function — NOT Supabase auth action links, whose
- * lifetime is capped by the project's Email OTP expiry (max 24h) and kept
- * expiring under invitees. Resending regenerates the token and extends the
- * window without recreating the placeholder auth user.
- *
- * Email delivery: Resend when RESEND_API_KEY is set, else the project SMTP
- * (SMTP_HOST/SMTP_USER/SMTP_PASS, same secrets as send-intake-invite).
+ *   - Email delivery: Resend when RESEND_API_KEY is set (branded
+ *     "X invited you" email), otherwise Supabase's built-in invite email.
  */
 
 // Keep in sync with is_admin() in the DB and ADMIN_EMAILS in the frontend.
@@ -49,6 +41,15 @@ const PLATFORM_ADMIN_EMAILS = [
 ];
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Durable, URL-safe invite token (256 bits of entropy). Embedded in the
+// /welcome?invite=<token> link and exchanged for a fresh session by the
+// redeem-invite function, so the emailed link itself never expires.
+const newInviteToken = () => {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+};
 
 type InviteBody = {
   action: "list" | "invite" | "resend" | "revoke";
@@ -134,6 +135,7 @@ serve(async (req) => {
 
     const siteUrl =
       Deno.env.get("PUBLIC_SITE_URL") || req.headers.get("origin") || supabaseUrl;
+    const redirectTo = `${siteUrl.replace(/\/$/, "")}/welcome`;
     const resendKey = Deno.env.get("RESEND_API_KEY");
     // Reuse the batch-alert Slack webhook unless a dedicated invite one is set.
     const slackWebhook =
@@ -177,21 +179,7 @@ serve(async (req) => {
       }
     };
 
-    // 24 random bytes → 32 url-safe base64 chars. Long on purpose: unlike the
-    // 8-char intake tokens, possessing this token lets you claim the invitee's
-    // account, so it must stay unguessable.
-    const genInviteToken = () => {
-      const bytes = crypto.getRandomValues(new Uint8Array(24));
-      return btoa(String.fromCharCode(...bytes))
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=+$/, "");
-    };
-
-    const inviteLink = (inviteToken: string) =>
-      `${siteUrl.replace(/\/$/, "")}/welcome?invite=${inviteToken}`;
-
-    const sendInviteEmail = async (toEmail: string, link: string) => {
+    const sendInviteEmail = async (toEmail: string, actionLink: string) => {
       const fromAddress =
         Deno.env.get("INVITE_FROM_EMAIL") || "PerceptionX <team@perceptionx.ai>";
       const subject = `${inviterFirstName} invited you to join them on PerceptionX!`;
@@ -202,66 +190,29 @@ serve(async (req) => {
             Click this link to create your password and join them instantly.
           </p>
           <p style="margin:0 0 24px;">
-            <a href="${link}"
+            <a href="${actionLink}"
                style="display:inline-block;background:#e91e8c;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:600;font-size:15px;">
               Create your password
             </a>
           </p>
           <p style="font-size:13px;color:#6b7280;line-height:1.5;margin:0;">
-            This link is valid for 30 days — ask ${inviterFirstName} to resend the
-            invite if it has expired. If you weren't expecting this email, you
-            can safely ignore it.
+            This link stays active until you join, so you can open it whenever
+            you're ready. If you weren't expecting this email, you can safely
+            ignore it.
           </p>
         </div>`;
-      const text = [
-        `${inviterFirstName} invited you to join them on PerceptionX!`,
-        ``,
-        `Create your password and join them instantly: ${link}`,
-        ``,
-        `This link is valid for 30 days. If you weren't expecting this email,`,
-        `you can safely ignore it.`,
-      ].join("\n");
 
-      if (resendKey) {
-        const res = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${resendKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ from: fromAddress, to: [toEmail], subject, html }),
-        });
-        if (!res.ok) {
-          const detail = await res.text();
-          throw new Error(`Resend API error (${res.status}): ${detail}`);
-        }
-        return;
-      }
-
-      const smtpHost = Deno.env.get("SMTP_HOST");
-      const smtpUser = Deno.env.get("SMTP_USER");
-      const smtpPass = Deno.env.get("SMTP_PASS");
-      if (!smtpHost || !smtpUser || !smtpPass) {
-        throw new Error("No email provider configured (RESEND_API_KEY or SMTP_* secrets)");
-      }
-      const smtpPort = Number(Deno.env.get("SMTP_PORT") ?? "465");
-      const smtp = new SMTPClient({
-        connection: {
-          hostname: smtpHost,
-          port: smtpPort,
-          // Port 465 speaks TLS immediately; 587/25 upgrade via STARTTLS.
-          tls: smtpPort === 465,
-          auth: { username: smtpUser, password: smtpPass },
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendKey}`,
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify({ from: fromAddress, to: [toEmail], subject, html }),
       });
-      try {
-        await smtp.send({ from: fromAddress, to: toEmail, subject, content: text, html });
-      } finally {
-        try {
-          await smtp.close();
-        } catch (_) {
-          // ignore close error
-        }
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(`Resend API error (${res.status}): ${detail}`);
       }
     };
 
@@ -272,19 +223,44 @@ serve(async (req) => {
       invited_email: email,
     });
 
-    // Creates the placeholder auth user + profile + membership. Sends nothing:
-    // the invite email carries our own token link, so no auth action link is
-    // generated. accept-team-invite later sets the password and confirms the
-    // email. Returns the new user's id.
-    const createPlaceholderUser = async (email: string, role: string): Promise<string> => {
-      const { data, error } = await admin.auth.admin.createUser({
-        email,
-        user_metadata: inviteMetadata(email),
-      });
-      if (error) throw error;
-      const userId = data.user.id;
+    // Creates the auth user, profile, membership and sends the invite email.
+    // Returns the new user's id. `token` is the durable invite token: when
+    // Resend is configured we email our own /welcome?invite=<token> link (good
+    // for 30 days, refreshed on resend) instead of Supabase's short-lived auth
+    // action link.
+    const createAndInvite = async (
+      email: string,
+      role: string,
+      token: string,
+    ): Promise<string> => {
+      let userId: string;
+      let inviteLink: string | null = null;
+      if (resendKey) {
+        // generateLink creates the placeholder auth user (and never sends an
+        // email itself); we discard its short-lived action_link and email the
+        // durable token link instead.
+        const { data, error } = await admin.auth.admin.generateLink({
+          type: "invite",
+          email,
+          options: { data: inviteMetadata(email), redirectTo },
+        });
+        if (error) throw error;
+        userId = data.user.id;
+        inviteLink = `${siteUrl.replace(/\/$/, "")}/welcome?invite=${token}`;
+      } else {
+        // No Resend transport: fall back to Supabase's built-in invite email.
+        // That link still carries the platform's 24h expiry (see config.toml).
+        const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
+          data: inviteMetadata(email),
+          redirectTo,
+        });
+        if (error) throw error;
+        userId = data.user.id;
+      }
 
       try {
+        if (inviteLink) await sendInviteEmail(email, inviteLink);
+
         // No DB trigger creates profiles rows — the app's user lists read from
         // profiles, so create it here.
         await admin.from("profiles").upsert({ id: userId, email }, { onConflict: "id" });
@@ -297,9 +273,9 @@ serve(async (req) => {
         if (memberError) throw memberError;
       } catch (err) {
         // Roll back the placeholder auth user (profile + memberships cascade
-        // away with it). Without this, a transient failure leaves an auth user
-        // with no profile, and every future invite for this email fails with
-        // "already registered".
+        // away with it). Without this, a transient failure — e.g. a Resend
+        // outage — leaves an auth user with no profile, and every future
+        // invite for this email fails with "already registered".
         try {
           await admin.auth.admin.deleteUser(userId);
         } catch (cleanupErr) {
@@ -450,33 +426,29 @@ serve(async (req) => {
             continue;
           }
 
-          // Brand-new user → placeholder account, tokenized invite row, email
-          const userId = await createPlaceholderUser(email, role);
-          const inviteToken = genInviteToken();
-          try {
-            const { error: inviteError } = await admin.from("organization_invites").insert({
-              organization_id: org.id,
-              email,
-              role,
-              status: "pending",
-              invited_by: caller.id,
-              invited_user_id: userId,
-              token: inviteToken,
-              expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-            });
-            if (inviteError) throw inviteError;
-            await sendInviteEmail(email, inviteLink(inviteToken));
-          } catch (err) {
-            // Leave no half-invite behind: without the email the token is
-            // unreachable, and a dangling placeholder user would block retries.
+          // Brand-new user → create + send invite email
+          const token = newInviteToken();
+          const userId = await createAndInvite(email, role, token);
+          const { error: inviteError } = await admin.from("organization_invites").insert({
+            organization_id: org.id,
+            email,
+            role,
+            status: "pending",
+            invited_by: caller.id,
+            invited_user_id: userId,
+            token,
+            expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          });
+          if (inviteError) {
+            // The email already went out, but its token was never stored, so
+            // the link is dead. Remove the placeholder user (profile +
+            // membership cascade) so the address can be re-invited cleanly.
             try {
-              await admin.from("organization_invites").delete()
-                .eq("organization_id", org.id).eq("email", email).eq("status", "pending");
               await admin.auth.admin.deleteUser(userId);
             } catch (cleanupErr) {
-              console.error(`Rollback of invite for ${email} failed:`, cleanupErr);
+              console.error(`Rollback of invite row for ${email} failed:`, cleanupErr);
             }
-            throw err;
+            throw inviteError;
           }
           results.push({ email, status: "invited" });
         } catch (err) {
@@ -538,26 +510,22 @@ serve(async (req) => {
         return json({ ok: true, status: "revoked" });
       }
 
-      // resend: mint a fresh token and restart the 30-day window. The
-      // placeholder user is reused — no more delete/recreate churn. Legacy
-      // invites (pre-token, or whose placeholder was cleaned up) get a
-      // placeholder created here.
-      let userId = invite.invited_user_id as string | null;
-      if (!userId) {
-        userId = await createPlaceholderUser(invite.email, invite.role);
+      // resend: recreate the placeholder user, issue a fresh durable token and
+      // restart the 30-day window.
+      if (invite.invited_user_id) {
+        await admin.auth.admin.deleteUser(invite.invited_user_id);
       }
-      const freshToken = genInviteToken();
-      const { error: resendError } = await admin
+      const token = newInviteToken();
+      const userId = await createAndInvite(invite.email, invite.role, token);
+      await admin
         .from("organization_invites")
         .update({
           invited_user_id: userId,
-          token: freshToken,
-          expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          token,
           sent_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         })
         .eq("id", invite.id);
-      if (resendError) throw resendError;
-      await sendInviteEmail(invite.email, inviteLink(freshToken));
       return json({ ok: true, status: "resent" });
     }
 

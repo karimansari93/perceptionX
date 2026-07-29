@@ -10,7 +10,7 @@ import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS 
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { extractSourceUrl, extractDomain, enhanceCitations } from "@/utils/citationUtils";
+import { extractSourceUrl, extractDomain, enhanceCitations, getFavicon } from "@/utils/citationUtils";
 import { ScrollablePills } from "./ScrollablePills";
 import { SearchInput } from "./SearchInput";
 import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
@@ -150,7 +150,22 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     }
     return map;
   }, [normalizedResponses]);
-  
+
+  // Same reverse index for the PREVIOUS period. Used to hand the source modal
+  // the prior-period rows for a domain so it can compute per-page trends
+  // (which specific URLs drove the source's increase/decrease).
+  const prevResponsesByDomain = useMemo(() => {
+    const map = new Map<string, NormalizedResponse[]>();
+    for (const nr of normalizedPrevResponses) {
+      for (const d of nr.domains) {
+        const list = map.get(d);
+        if (list) list.push(nr);
+        else map.set(d, [nr]);
+      }
+    }
+    return map;
+  }, [normalizedPrevResponses]);
+
   // Calculate citation counts from search results
   const searchResultCitations = useMemo(() => {
     const citationCounts: Record<string, number> = {};
@@ -426,9 +441,10 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return list ? list.map((nr) => nr.raw) : [];
   };
 
-  const getFavicon = (domain: string): string => {
-    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-    return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`;
+  // Previous-period rows citing a domain — powers the modal's Trending tab.
+  const getPrevResponsesForSource = (domain: string) => {
+    const list = prevResponsesByDomain.get(normalizeDomain(domain));
+    return list ? list.map((nr) => nr.raw) : [];
   };
 
   // Helper to format domain to a human-friendly name
@@ -1065,6 +1081,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
           onClose={handleCloseSourceModal}
           source={selectedSource}
           responses={getResponsesForSource(selectedSource.domain)}
+          previousResponses={getPrevResponsesForSource(selectedSource.domain)}
           companyName={companyName}
           searchResults={filteredSearchResults}
           companyId={currentCompanyId}

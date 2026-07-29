@@ -10,7 +10,6 @@ import { Check, Loader2, ArrowRight, Eye, EyeOff } from 'lucide-react';
 
 const PASSWORD_MIN_LENGTH = 8;
 
-// Keep in sync with passwordError() in the accept-team-invite edge function.
 const validatePassword = (password: string): string | null => {
   if (password.length < PASSWORD_MIN_LENGTH) {
     return `Password must be at least ${PASSWORD_MIN_LENGTH} characters long`;
@@ -42,32 +41,11 @@ const PAGE_BG =
 const sans = { fontFamily: 'Plus Jakarta Sans, sans-serif' };
 const display = { fontFamily: 'Geologica, sans-serif' };
 
-interface TokenInvite {
-  email: string;
-  inviterName: string | null;
-}
-
-// Pulls the real error message out of a FunctionsHttpError response body.
-const functionErrorMessage = async (error: unknown, fallback: string) => {
-  try {
-    const ctx = (error as { context?: Response }).context;
-    if (ctx) {
-      const parsed = await ctx.json();
-      if (parsed?.error) return parsed.error as string;
-    }
-  } catch { /* keep fallback */ }
-  return error instanceof Error ? error.message : fallback;
-};
-
-// Landing page for team invites. Two modes:
-//  - Token mode (/welcome?invite=<token>): 30-day invite links minted by the
-//    invite-team-member edge function; the token is validated and redeemed
-//    through accept-team-invite, then we sign in with the new password.
-//  - Legacy session mode (/welcome): older Supabase auth action links sign the
-//    invitee in and redirect here; the password is set on the live session.
+// Landing page for team invites: the email's action link signs the invitee in
+// and redirects here so they can set a password before entering the dashboard.
 const Welcome = () => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const inviteToken = searchParams.get('invite');
   const { user, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(false);
@@ -75,35 +53,61 @@ const Welcome = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'valid' | 'expired'>('checking');
-  const [tokenInvite, setTokenInvite] = useState<TokenInvite | null>(null);
+  const [expiredReason, setExpiredReason] = useState<'used' | 'invalid' | 'expired' | null>(null);
 
-  // Token mode: validate the invite token up front.
+  // New flow: exchange a durable invite token (?invite=…) for a fresh session.
+  // The redeem-invite function mints a one-time OTP we verify here, so the
+  // emailed link lives for 30 days (resending restarts the window) — and stops
+  // working once accepted or revoked.
   useEffect(() => {
     if (!inviteToken) return;
+    if (user) {
+      setSessionStatus('valid');
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await supabase.functions.invoke('accept-team-invite', {
-          body: { action: 'lookup', token: inviteToken },
+        const { data, error } = await supabase.functions.invoke('redeem-invite', {
+          body: { token: inviteToken },
         });
-        if (cancelled) return;
-        if (error || !data?.valid) {
-          setSessionStatus('expired');
+        if (error) throw error;
+        if (!data?.ok || !data?.tokenHash) {
+          if (!cancelled) {
+            setExpiredReason(
+              data?.reason === 'used' ? 'used' : data?.reason === 'expired' ? 'expired' : 'invalid',
+            );
+            setSessionStatus('expired');
+          }
           return;
         }
-        setTokenInvite({ email: data.email, inviterName: data.inviterName ?? null });
+        const { error: otpError } = await supabase.auth.verifyOtp({
+          token_hash: data.tokenHash,
+          type: 'magiclink',
+        });
+        if (otpError) throw otpError;
+        if (cancelled) return;
         setSessionStatus('valid');
+        // Don't leave the token sitting in the URL / browser history.
+        searchParams.delete('invite');
+        setSearchParams(searchParams, { replace: true });
       } catch (err) {
-        console.error('Error validating invite token:', err);
-        if (!cancelled) setSessionStatus('expired');
+        console.error('Invite redemption failed:', err);
+        if (!cancelled) {
+          setExpiredReason('invalid');
+          setSessionStatus('expired');
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [inviteToken]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inviteToken, user]);
 
-  // Legacy session mode: the auth action link should have signed us in.
+  // Legacy flow (Supabase auth action link drops the session in the URL hash),
+  // or a bare /welcome visit: fall back to the previous session probe. Skipped
+  // entirely when a token is present — the redemption effect owns the status.
   useEffect(() => {
     if (inviteToken) return;
     if (authLoading) return;
@@ -118,12 +122,10 @@ const Welcome = () => {
   }, [user, authLoading, inviteToken]);
 
   useEffect(() => {
-    if (!inviteToken && user) setSessionStatus('valid');
-  }, [user, inviteToken]);
+    if (user) setSessionStatus('valid');
+  }, [user]);
 
-  const inviterName = inviteToken
-    ? tokenInvite?.inviterName ?? null
-    : (user?.user_metadata?.inviter_name as string) || null;
+  const inviterName = (user?.user_metadata?.inviter_name as string) || null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,32 +142,16 @@ const Welcome = () => {
 
     setLoading(true);
     try {
-      if (inviteToken) {
-        // Token mode: redeem the invite server-side, then sign in with the
-        // freshly set password.
-        const { data, error } = await supabase.functions.invoke('accept-team-invite', {
-          body: { action: 'accept', token: inviteToken, password, fullName: name },
-        });
-        if (error) throw new Error(await functionErrorMessage(error, 'Failed to accept invite'));
-        if (data?.error) throw new Error(data.error);
+      const { error } = await supabase.auth.updateUser({
+        password,
+        data: { full_name: name },
+      });
+      if (error) throw error;
 
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: data.email,
-          password,
-        });
-        if (signInError) throw signInError;
-      } else {
-        const { error } = await supabase.auth.updateUser({
-          password,
-          data: { full_name: name },
-        });
-        if (error) throw error;
-
-        // Keep the app-facing profile in sync; the name is what teammates see
-        // in invite emails when this user invites others later.
-        if (user) {
-          await supabase.from('profiles').update({ full_name: name }).eq('id', user.id);
-        }
+      // Keep the app-facing profile in sync; the name is what teammates see
+      // in invite emails when this user invites others later.
+      if (user) {
+        await supabase.from('profiles').update({ full_name: name }).eq('id', user.id);
       }
 
       toast.success("You're all set — welcome to PerceptionX!");
@@ -189,13 +175,20 @@ const Welcome = () => {
           <div className="bg-gradient-to-br from-pink/15 via-white to-[#13274F]/5 px-8 pt-9 pb-7">
             <img src="/logos/PerceptionX-PrimaryLogo.png" alt="PerceptionX" className="h-5 mx-auto mb-6" />
             <h1 className="text-[22px] font-bold text-nightsky leading-tight" style={display}>
-              Invite link expired
+              {expiredReason === 'used'
+                ? "You're already set up"
+                : expiredReason === 'expired'
+                  ? 'Invite link expired'
+                  : 'Invite link not valid'}
             </h1>
           </div>
           <div className="px-8 py-7 space-y-5">
             <p className="text-[14px] text-nightsky/70 leading-relaxed" style={sans}>
-              This invite link has expired or was already used. Ask your teammate to
-              resend the invite from their dashboard.
+              {expiredReason === 'used'
+                ? 'This invite has already been accepted. If that was you, just log in with your email and password.'
+                : expiredReason === 'expired'
+                  ? 'This invite link has expired. Ask your teammate to resend it from their dashboard — a resent invite is good for another 30 days.'
+                  : 'This invite link is no longer valid or was cancelled. Ask your teammate to send you a new one from their dashboard.'}
             </p>
             <Button
               onClick={() => navigate('/auth')}
@@ -241,12 +234,6 @@ const Welcome = () => {
                 <span className="font-semibold text-nightsky">{inviterName}</span> invited you to join them
               </span>
             </div>
-          )}
-
-          {inviteToken && tokenInvite?.email && (
-            <p className="mt-3 text-[13px] text-nightsky/50" style={sans}>
-              Setting up <span className="font-semibold text-nightsky/70">{tokenInvite.email}</span>
-            </p>
           )}
 
           <p className="mt-3 text-[14px] text-nightsky/60" style={sans}>

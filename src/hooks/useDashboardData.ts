@@ -9,7 +9,9 @@ import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonit
 import { parseCompetitors } from "@/utils/competitorUtils";
 import { buildLocationOptions, canonicalizeLocationContext, companyCountryKey, GENERAL_KEY, resolveResponseLocationKey } from "@/utils/locationContext";
 import { GLOBAL_LIKE } from "@/utils/locations";
+import { LEGACY_ATTRIBUTE_MAP } from "@/config/attributes";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
+import { sentimentRatioV2, EXCLUDED_AI_MODELS_FILTER } from "@/lib/sentimentV2";
 
 // Pure aggregation of `company_*_by_location_mv` rows into the same shape the
 // company-wide MV fetch produces (snapshot + per-month map). Shared by the
@@ -26,26 +28,29 @@ const aggregateSentimentRows = (rows: any[]): { metrics: any | null; byMonth: Re
     return acc;
   }, { totalThemes: 0, positiveThemes: 0, negativeThemes: 0, neutralThemes: 0, totalSentimentScore: 0, totalWeight: 0 });
 
+  // Methodology v2: headline ratio pools positive/(positive+negative);
+  // neutrals stay in the composition counts only.
   const metrics = agg.totalThemes > 0 ? {
-    sentiment_ratio: agg.positiveThemes / agg.totalThemes,
-    avg_sentiment_score: agg.totalWeight > 0 ? agg.totalSentimentScore / agg.totalWeight : 0,
+    sentiment_ratio: sentimentRatioV2(agg.positiveThemes, agg.negativeThemes),
+    avg_sentiment_score: agg.totalWeight > 0 ? agg.totalSentimentScore / agg.totalWeight : 0, // internal only
     total_themes: agg.totalThemes,
     positive_themes: agg.positiveThemes,
     negative_themes: agg.negativeThemes,
     neutral_themes: agg.neutralThemes,
   } : null;
 
-  const byMonthAcc: Record<string, { positive: number; total: number }> = {};
+  const byMonthAcc: Record<string, { positive: number; negative: number }> = {};
   rows.forEach(row => {
     if (!row.response_month) return;
     const key = String(row.response_month).slice(0, 7);
-    if (!byMonthAcc[key]) byMonthAcc[key] = { positive: 0, total: 0 };
+    if (!byMonthAcc[key]) byMonthAcc[key] = { positive: 0, negative: 0 };
     byMonthAcc[key].positive += row.positive_themes || 0;
-    byMonthAcc[key].total += row.total_themes || 0;
+    byMonthAcc[key].negative += row.negative_themes || 0;
   });
   const byMonth: Record<string, number> = {};
   for (const [key, val] of Object.entries(byMonthAcc)) {
-    byMonth[key] = val.total > 0 ? val.positive / val.total : 0;
+    const ratio = sentimentRatioV2(val.positive, val.negative);
+    if (ratio !== null) byMonth[key] = ratio;
   }
   return { metrics, byMonth };
 };
@@ -286,6 +291,13 @@ export const useDashboardData = () => {
   const [recencyDataLoading, setRecencyDataLoading] = useState(false);
   const [aiThemes, setAiThemes] = useState<any[]>([]);
   const [aiThemesLoading, setAiThemesLoading] = useState(false);
+  // v2 attribute ids whose raw themes are fully loaded for the current scope
+  // (raw themes accumulate per drilled attribute — see
+  // fetchAIThemesForAttribute). The ref mirrors the state so the fetch
+  // callback can guard without re-creating itself on every load.
+  const [aiThemeAttrsLoaded, setAiThemeAttrsLoaded] = useState<string[]>([]);
+  const aiThemeAttrsLoadedRef = useRef<Set<string>>(new Set());
+  const aiThemeAttrsInFlightRef = useRef<Set<string>>(new Set());
   // Pre-aggregated theme data from materialized views (replaces the eager
   // ~24-page ai_themes pull on the dashboard's critical path).
   // - attributeThemes: per attribute x month x job_function rollup (company_attribute_themes_mv)
@@ -393,7 +405,6 @@ export const useDashboardData = () => {
   const COMPANY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   const companyDataCacheRef = useRef<Record<string, {
     responses: PromptResponse[];
-    aiThemes?: any[];
     attributeThemes?: any[];
     responseSentimentRows?: any[];
     activePrompts?: any[];
@@ -529,6 +540,9 @@ export const useDashboardData = () => {
               )
             `, withCount ? { count: 'exact' } : undefined)
             .eq('company_id', companyId)
+            // Methodology v2: excluded models never reach client-facing
+            // surfaces (rows stay in the DB as the audit trail).
+            .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
             .gte('tested_at', eagerCutoffIso)
             .order('tested_at', { ascending: false })
             .range(from, to)
@@ -944,13 +958,13 @@ export const useDashboardData = () => {
           totalWeight: 0
         });
 
-        const sentimentRatio = aggregated.totalThemes > 0
-          ? aggregated.positiveThemes / aggregated.totalThemes
-          : 0;
+        // Methodology v2: headline ratio = positive/(positive+negative),
+        // pooled over the scope. Neutrals count toward composition only.
+        const sentimentRatio = sentimentRatioV2(aggregated.positiveThemes, aggregated.negativeThemes);
 
         const avgSentimentScore = aggregated.totalWeight > 0
           ? aggregated.totalSentimentScore / aggregated.totalWeight
-          : 0;
+          : 0; // internal only — never published
 
         if (aggregated.totalThemes > 0) {
           sentimentMetricsSnapshot = {
@@ -965,17 +979,19 @@ export const useDashboardData = () => {
         // Data with no themes stays null - fallback to frontend
         setCompanySentimentMetrics(sentimentMetricsSnapshot);
 
-        // Build per-month sentiment map (positive_themes / total_themes per month)
-        const sentByMonth: Record<string, { positive: number; total: number }> = {};
+        // Per-month sentiment map: positive/(positive+negative) per month;
+        // months with no polarized themes are omitted ("no signal").
+        const sentByMonth: Record<string, { positive: number; negative: number }> = {};
         sentimentResult.data.forEach(row => {
           if (!row.response_month) return;
           const monthKey = row.response_month.slice(0, 7); // "YYYY-MM"
-          if (!sentByMonth[monthKey]) sentByMonth[monthKey] = { positive: 0, total: 0 };
+          if (!sentByMonth[monthKey]) sentByMonth[monthKey] = { positive: 0, negative: 0 };
           sentByMonth[monthKey].positive += row.positive_themes || 0;
-          sentByMonth[monthKey].total += row.total_themes || 0;
+          sentByMonth[monthKey].negative += row.negative_themes || 0;
         });
         for (const [key, val] of Object.entries(sentByMonth)) {
-          sentimentByMonthSnapshot[key] = val.total > 0 ? val.positive / val.total : 0;
+          const ratio = sentimentRatioV2(val.positive, val.negative);
+          if (ratio !== null) sentimentByMonthSnapshot[key] = ratio;
         }
         setCompanySentimentByMonth(sentimentByMonthSnapshot);
       } else {
@@ -1265,67 +1281,93 @@ export const useDashboardData = () => {
     }
   }, [user, responses]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const fetchAIThemes = useCallback(async () => {
-    if (!user || !currentCompany?.id) {
-      setAiThemes([]);
-      setAiThemesLoading(false);
-      return;
-    }
+  // Lazy per-attribute raw-themes fetch for the Thematic drilldown. The tab's
+  // main ranking is MV-driven; only the per-attribute drilldown needs raw
+  // rows (subtheme names, response links for quotes/sources/visibility). The
+  // old design bulk-paginated the whole 180-day window on tab mount — ~130
+  // requests / ~130k rows in browser memory on an 18-profile brand — for data
+  // the user might never drill into. A subtheme-level rollup was measured and
+  // rejected: LLM-generated theme names are ~75% unique (Ford US: 18,640 raw
+  // rows → 14,017 distinct names), so a (theme_name, month, fn) grain barely
+  // compresses. Fetching one attribute on drilldown open (~1-3 pages per
+  // scope profile via the indexed RPC) is the real win.
+  //
+  // Rows ACCUMULATE across drilled attributes (merge replaces per attribute,
+  // so re-fetch after an explicit refresh can't duplicate). aiThemeAttrsLoaded
+  // tracks completed v2 attribute ids; consumers that opportunistically scan
+  // aiThemes (OverviewTab insights) therefore see partial-by-attribute data —
+  // same class of partiality as the old "empty until the Thematic tab was
+  // visited" behavior, but never partial WITHIN an attribute.
+  const fetchAIThemesForAttribute = useCallback(async (attributeId: string) => {
+    if (!user || !currentCompany?.id || !attributeId) return;
+    if (aiThemeAttrsLoadedRef.current.has(attributeId)) return;
+    if (aiThemeAttrsInFlightRef.current.has(attributeId)) return;
 
-    // Up to 200 paginated queries — easily the slowest fetch on the dashboard
-    // and the one most likely to land after the user has already switched
-    // companies. requestedCompanyId pins this call to the company that
-    // triggered it; anything not matching the live ref at commit time is
-    // discarded so it can't overwrite the new company's themes.
+    // requestedCompanyId pins this call to the company that triggered it;
+    // anything not matching the live ref at commit time is discarded so it
+    // can't overwrite the new company's themes.
     const requestedCompanyId = currentCompany.id;
     const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
     const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
 
+    // Stored rows carry either the v2 id or a legacy v1 id that folds into
+    // it (normalizeAttributeId) — filter server-side on the whole family.
+    const rawIds = [
+      attributeId,
+      ...Object.entries(LEGACY_ATTRIBUTE_MAP)
+        .filter(([, v2]) => v2 === attributeId)
+        .map(([legacy]) => legacy),
+    ];
+
+    aiThemeAttrsInFlightRef.current.add(attributeId);
     try {
       setAiThemesLoading(true);
 
-      // Bound by 180 days. Served by idx_ai_themes_company_created
-      // (company_id, created_at DESC): an index range scan, no sort.
+      // Bound by 180 days. Served by idx_ai_themes_company_created_id
+      // (company_id, created_at DESC, id DESC): an index range scan, no sort.
       const AI_THEMES_DAYS = 180;
       const aiThemesCutoffIso = new Date(Date.now() - AI_THEMES_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-      // Only the columns the Overview themes/attributes cards consume —
-      // skips heavy theme_description / context_snippets[] / keywords[]
-      // (cuts row width ~609B -> ~100B).
-      const COLS =
-        'id, response_id, theme_name, sentiment, sentiment_score, attribute_id, attribute_name, created_at';
       const PAGE_SIZE = 1000;
 
-      // Keyset pagination on (created_at DESC, id DESC) instead of OFFSET.
-      // OFFSET re-walks all skipped rows every page (O(n^2/page)); keyset
-      // keeps every page O(PAGE_SIZE) by seeking past the last cursor.
+      // Keyset pagination on (created_at DESC, id DESC), via the
+      // ai_themes_keyset_page RPC instead of a PostgREST table read. The RPC
+      // exists for two measured reasons (2026-07, 18-profile Ford brand):
+      // - PostgREST can only express the cursor as
+      //   or=(created_at.lt.X,and(created_at.eq.X,id.lt.Y)), which Postgres
+      //   cannot use as a btree boundary — every page re-scanned all
+      //   previously-fetched rows and filtered them out (page N read N×1000
+      //   rows, so deep pages crossed the ~8s statement timeout). The RPC's
+      //   row-value comparison (created_at, id) < (X, Y) is an exact index
+      //   boundary, keeping every page O(PAGE_SIZE) regardless of depth.
+      // - The ai_themes RLS policy called user_can_access_company() per
+      //   scanned row (~1.6s per 1000-row page on its own). The RPC is
+      //   SECURITY DEFINER and makes the identical access check once per
+      //   page. Worst-case page: ~8s before, ~8ms after.
+      // The RPC returns only the columns the themes/attributes UIs consume —
+      // skips heavy theme_description / context_snippets[] / keywords[].
       // One pagination PER scope company (merged after): keeps every page on
-      // the (company_id, created_at) index instead of a cross-company merge.
+      // the (company_id, created_at, id) index instead of a cross-company merge.
       const fetchThemesForCompany = async (companyId: string): Promise<any[]> => {
         let all: any[] = [];
         let cursor: { created_at: string; id: string } | null = null;
         // Hard cap to avoid an unbounded loop if data is pathological.
         for (let guard = 0; guard < 200; guard += 1) {
-          let q = supabase
-            .from('ai_themes')
-            .select(COLS)
-            .eq('company_id', companyId)
-            .gte('created_at', aiThemesCutoffIso)
-            .order('created_at', { ascending: false })
-            .order('id', { ascending: false })
-            .limit(PAGE_SIZE);
-
-          if (cursor) {
-            q = q.or(
-              `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
-            );
-          }
-
-          // bulk: raw themes are a background drilldown feed — on an explicit
-          // refresh this family alone is ~90 queries and starved the prompts
-          // fetch (and therefore the whole page skeleton) when it shared the
-          // critical tier.
-          const { data, error } = (await withDbSlot(() => retrySupabaseQuery(() => q) as Promise<{
+          // bulk: drilldown pages must never jump ahead of queued critical
+          // first-paint fetches in the gate. (Post-RPC this family is a
+          // handful of ~10ms pages per drilled attribute, not the ~90-query
+          // stream that once starved the prompts fetch — bulk is now just
+          // politeness, not survival.)
+          const { data, error } = (await withDbSlot(() => retrySupabaseQuery(() =>
+            (supabase as any).rpc('ai_themes_keyset_page', {
+              p_company_id: companyId,
+              p_cutoff: aiThemesCutoffIso,
+              p_cursor_created_at: cursor?.created_at ?? null,
+              p_cursor_id: cursor?.id ?? null,
+              p_limit: PAGE_SIZE,
+              p_attribute_ids: rawIds,
+            })
+          ) as Promise<{
             data: any[] | null;
             error: any;
           }>, { bulk: true }));
@@ -1348,20 +1390,38 @@ export const useDashboardData = () => {
       const perCompanyThemes = await Promise.all(requestedScopeIds.map(fetchThemesForCompany));
 
       if (isStale()) return;
-      setAiThemes(perCompanyThemes.flat());
+      const rawIdSet = new Set(rawIds);
+      setAiThemes(prev => [
+        ...prev.filter(t => !rawIdSet.has(t.attribute_id)),
+        ...perCompanyThemes.flat(),
+      ]);
+      aiThemeAttrsLoadedRef.current.add(attributeId);
+      setAiThemeAttrsLoaded(prev => (prev.includes(attributeId) ? prev : [...prev, attributeId]));
     } catch (error) {
       if (isStale()) return;
-      console.error('Error in fetchAIThemes:', error);
-      setAiThemes([]);
+      // Leave the loaded flag unset so reopening the drilldown retries.
+      console.error('Error in fetchAIThemesForAttribute:', error);
     } finally {
-      // Don't flip the loading flag off if a newer fetch is in flight — it
-      // owns the spinner now.
-      if (!isStale()) {
+      aiThemeAttrsInFlightRef.current.delete(attributeId);
+      // Don't flip the loading flag off while another attribute's fetch is
+      // still in flight — it owns the spinner now.
+      if (!isStale() && aiThemeAttrsInFlightRef.current.size === 0) {
         setAiThemesLoading(false);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, currentCompany?.id, scopeKey]);
+
+  // Accumulated raw themes only cover the scope they were fetched for — a
+  // scope change (sibling profiles resolving after companies load) must
+  // invalidate them so drilldowns refetch at the new scope. Also fires on
+  // company switches (scopeKey changes with the company); the company-change
+  // effect clears the same state, so that's a harmless double-clear.
+  useEffect(() => {
+    setAiThemes([]);
+    setAiThemeAttrsLoaded([]);
+    aiThemeAttrsLoadedRef.current = new Set();
+  }, [scopeKey]);
 
   // Pre-aggregated attribute scores from company_attribute_themes_mv. A few
   // hundred rows per company (16 attributes x months x job functions) instead
@@ -1440,7 +1500,7 @@ export const useDashboardData = () => {
           const result = await withDbSlot(() => retrySupabaseQuery(() =>
             supabase
               .from('company_response_sentiment_mv')
-              .select('response_id, total_themes, positive_themes, sentiment_ratio')
+              .select('response_id, total_themes, positive_themes, negative_themes, sentiment_ratio')
               .eq('company_id', companyId)
               // Stable order — see the attribute-themes fetch above.
               .order('response_id')
@@ -1469,12 +1529,13 @@ export const useDashboardData = () => {
   // Memoized cache of sentiment calculations per response ID
   // OPTIMIZED: Only recalculates when themes change, not on every render
   // This prevents expensive calculations on every render
-  const [sentimentCacheState, setSentimentCacheState] = useState<Map<string, { sentiment_score: number; sentiment_label: string }>>(new Map());
-  
+  const [sentimentCacheState, setSentimentCacheState] = useState<Map<string, { sentiment_score: number | null; sentiment_label: string; positive: number; negative: number }>>(new Map());
+
   // Build the per-response sentiment cache from the pre-aggregated MV
-  // (company_response_sentiment_mv) instead of scanning raw ai_themes. The MV
-  // already gives positive/total themes and the ratio per response; we apply
-  // the same 0-1 ratio and label thresholds the frontend used before.
+  // (company_response_sentiment_mv) instead of scanning raw ai_themes.
+  // Methodology v2: the MV ratio is positive/(positive+negative); null means
+  // the response had themes but none polarized ("no signal"). The counts ride
+  // along so per-prompt sentiment can pool them with the same formula.
   useEffect(() => {
     if (responseSentimentRows.length === 0) {
       setSentimentCacheState(new Map());
@@ -1487,35 +1548,41 @@ export const useDashboardData = () => {
     const companyResponseIds = new Set(responses.map(r => r.id));
     const scopeToResponses = companyResponseIds.size > 0;
 
-    const cache = new Map<string, { sentiment_score: number; sentiment_label: string }>();
+    const cache = new Map<string, { sentiment_score: number | null; sentiment_label: string; positive: number; negative: number }>();
     responseSentimentRows.forEach(row => {
       if (scopeToResponses && !companyResponseIds.has(row.response_id)) return;
-      const ratio = typeof row.sentiment_ratio === 'number'
-        ? row.sentiment_ratio
-        : Number(row.sentiment_ratio) || 0;
-      const sentimentLabel = ratio > 0.6 ? 'positive' : ratio < 0.4 ? 'negative' : 'neutral';
-      cache.set(row.response_id, { sentiment_score: ratio, sentiment_label: sentimentLabel });
+      const positive = Number(row.positive_themes) || 0;
+      const negative = Number(row.negative_themes) || 0;
+      const ratio = row.sentiment_ratio === null || row.sentiment_ratio === undefined
+        ? sentimentRatioV2(positive, negative)
+        : (typeof row.sentiment_ratio === 'number' ? row.sentiment_ratio : Number(row.sentiment_ratio));
+      const sentimentLabel = ratio === null ? 'neutral' : ratio > 0.6 ? 'positive' : ratio < 0.4 ? 'negative' : 'neutral';
+      cache.set(row.response_id, { sentiment_score: ratio, sentiment_label: sentimentLabel, positive, negative });
     });
 
     setSentimentCacheState(cache);
   }, [responseSentimentRows, responses]);
-  
+
   // Use state-based cache instead of useMemo (prevents recalculation on every render)
   const sentimentCache = sentimentCacheState;
 
   // Helper function to calculate AI-based sentiment for a response
   // Uses the state-based cache for O(1) lookup (calculated only when themes change)
+  // sentiment_score === null means "no polarized themes" — callers averaging
+  // scores must skip those entries rather than counting them as 0.
   const calculateAIBasedSentiment = useCallback((responseId: string) => {
     // Check cache first
     const cached = sentimentCacheState.get(responseId);
     if (cached) {
       return cached;
     }
-    
-    // No AI themes available for this response - return neutral sentiment
+
+    // No AI themes available for this response - no sentiment signal
     return {
-      sentiment_score: 0,
-      sentiment_label: 'neutral'
+      sentiment_score: null as number | null,
+      sentiment_label: 'neutral',
+      positive: 0,
+      negative: 0
     };
   }, [sentimentCacheState]);
 
@@ -1755,7 +1822,9 @@ export const useDashboardData = () => {
           // skip the network entirely.
           ...companyDataCacheRef.current[previousCompanyId],
           responses,
-          aiThemes, // cache lazily-loaded raw themes (Thematic tab) if present
+          // Raw themes deliberately NOT cached: they accumulate per drilled
+          // attribute and are scope-dependent — a restore could resurrect a
+          // stale-scoped partial set. Drilldowns refetch cheaply via the RPC.
           attributeThemes, // pre-aggregated attribute scores (MV-backed)
           responseSentimentRows, // per-response sentiment ratios (MV-backed)
           lastUpdated: lastUpdated,
@@ -1773,6 +1842,9 @@ export const useDashboardData = () => {
       setVisibilityMvRows([]);
       setResponseTexts({});
       setAiThemes([]);
+      setAiThemeAttrsLoaded([]);
+      aiThemeAttrsLoadedRef.current = new Set();
+      setAiThemesLoading(false);
       setAttributeThemes([]);
       setResponseSentimentRows([]);
       setSearchResults([]);
@@ -1809,11 +1881,17 @@ export const useDashboardData = () => {
         hasInitiallyLoadedRef.current = true;
         setShouldRefetch(false); // Reset the refetch flag
 
-        // On explicit refresh: skip cache and clear caches so we get fresh data
+        // On explicit refresh: skip cache and clear caches so we get fresh data.
+        // Raw themes are dropped rather than refetched — the Thematic
+        // drilldown effect refetches its open attribute when the loaded set
+        // empties (see fetchAIThemesForAttribute).
         if (isExplicitRefresh) {
           delete companyDataCacheRef.current[companyId];
           recencyDataCacheRef.current = null;
           previousResponseIdsRef.current = '';
+          setAiThemes([]);
+          setAiThemeAttrsLoaded([]);
+          aiThemeAttrsLoadedRef.current = new Set();
         } else {
           // Restore from cache if available (instant UI when switching back to recently viewed company)
           const cached = companyDataCacheRef.current[companyId];
@@ -1852,8 +1930,6 @@ export const useDashboardData = () => {
           fetchMVData(),
           fetchCompanyMetrics(),
           fetchResponses(),
-          // On explicit refresh, also refetch AI themes and clear search cache
-          ...(isExplicitRefresh ? [fetchAIThemes()] : []),
         ]);
         if (isExplicitRefresh) {
           searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
@@ -1923,8 +1999,8 @@ export const useDashboardData = () => {
   // On company change, load the pre-aggregated theme MVs (attribute scores +
   // per-response sentiment) instead of the old eager raw-themes pull. These are
   // small/fast and serve everything the Overview renders. Raw ai_themes are now
-  // fetched lazily — only when the Thematic tab mounts (see fetchAIThemes,
-  // wired through ThematicAnalysisTab).
+  // fetched lazily — one attribute at a time when its drilldown opens (see
+  // fetchAIThemesForAttribute, wired through ThematicAnalysisTab).
   useEffect(() => {
     if (user && currentCompany?.id) {
       // Restore from the per-company cache on quick switch-back.
@@ -1945,6 +2021,8 @@ export const useDashboardData = () => {
       setAttributeThemes([]);
       setResponseSentimentRows([]);
       setAiThemes([]);
+      setAiThemeAttrsLoaded([]);
+      aiThemeAttrsLoadedRef.current = new Set();
       setAiThemesLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2639,8 +2717,12 @@ export const useDashboardData = () => {
       
       if (existing) {
         existing.responses += 1;
-        // Use AI-based sentiment in average calculation
-        existing.avgSentiment = (existing.avgSentiment + aiSentiment.sentiment_score) / 2;
+        // Methodology v2: pool positive/negative counts across the prompt's
+        // responses, then take positive/(positive+negative).
+        (existing as any)._pos = ((existing as any)._pos || 0) + aiSentiment.positive;
+        (existing as any)._neg = ((existing as any)._neg || 0) + aiSentiment.negative;
+        existing.avgSentiment = sentimentRatioV2((existing as any)._pos, (existing as any)._neg) ?? 0;
+        existing.sentimentLabel = existing.avgSentiment > 0.6 ? 'positive' : ((existing as any)._pos + (existing as any)._neg) > 0 && existing.avgSentiment < 0.4 ? 'negative' : 'neutral';
         if (!existing.industryContext && response.confirmed_prompts?.industry_context) {
           existing.industryContext = response.confirmed_prompts.industry_context;
         }
@@ -2699,8 +2781,9 @@ export const useDashboardData = () => {
           promptCategory: promptCategoryValue,
           promptTheme: promptThemeValue,
           responses: 1,
-          avgSentiment: aiSentiment.sentiment_score,
+          avgSentiment: aiSentiment.sentiment_score ?? 0,
           sentimentLabel: aiSentiment.sentiment_label,
+          ...({ _pos: aiSentiment.positive, _neg: aiSentiment.negative } as any),
           mentionRanking: undefined,
           competitivePosition: undefined,
           detectedCompetitors: response.detected_competitors || undefined,
@@ -2854,8 +2937,10 @@ export const useDashboardData = () => {
       // Period selected — use per-month MV value
       averageSentiment = effSentimentByMonth[effectivePeriodKey];
     } else if (effSentimentMetrics) {
-      // No specific period — use all-months aggregate from MV
-      averageSentiment = effSentimentMetrics.sentiment_ratio || 0;
+      // No specific period — use all-months aggregate from MV.
+      // (v2 ratio is null when no polarized themes exist; counts below are
+      // all-neutral in that case so 0 here can't read as "fully negative".)
+      averageSentiment = effSentimentMetrics.sentiment_ratio ?? 0;
     }
     // Estimate counts based on ratios (for display purposes)
     const totalResponses = responses.length;
@@ -2892,16 +2977,19 @@ export const useDashboardData = () => {
         let previousSentimentAvg: number;
 
         if (sentimentCacheState.size > 0) {
-          const currentAISentiments = currentResponses.map(r => calculateAIBasedSentiment(r.id));
-          const previousAISentiments = previousResponses.map(r => calculateAIBasedSentiment(r.id));
-          
-          currentSentimentAvg = currentAISentiments.length > 0 
-            ? currentAISentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / currentAISentiments.length
-            : 0;
-          
-          previousSentimentAvg = previousAISentiments.length > 0
-            ? previousAISentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / previousAISentiments.length
-            : 0;
+          // Pool positive/negative counts (methodology v2) — responses with no
+          // polarized themes contribute nothing rather than dragging toward 0.
+          const poolRatio = (rs: typeof currentResponses): number => {
+            let pos = 0, neg = 0;
+            rs.forEach(r => {
+              const s = calculateAIBasedSentiment(r.id);
+              pos += s.positive;
+              neg += s.negative;
+            });
+            return sentimentRatioV2(pos, neg) ?? 0;
+          };
+          currentSentimentAvg = poolRatio(currentResponses);
+          previousSentimentAvg = poolRatio(previousResponses);
         } else {
           // No fallback to original sentiment - use neutral when no AI themes
           currentSentimentAvg = 0;
@@ -3093,15 +3181,17 @@ export const useDashboardData = () => {
     });
 
     fns.forEach(fn => {
-      // Sentiment — positive themes / total themes across this function's rows
-      let totalThemes = 0, positiveThemes = 0;
+      // Sentiment — methodology v2: positive/(positive+negative) pooled
+      // across this function's rows (neutrals excluded from the score).
+      let positiveThemes = 0, negativeThemes = 0;
       effSentimentMvRows.forEach(r => {
         if (r.job_function_context !== fn) return;
-        totalThemes += r.total_themes || 0;
         positiveThemes += r.positive_themes || 0;
+        negativeThemes += r.negative_themes || 0;
       });
-      const sentimentScore = totalThemes > 0
-        ? Math.round(Math.max(0, Math.min(100, (positiveThemes / totalThemes) * 100)))
+      const fnRatio = sentimentRatioV2(positiveThemes, negativeThemes);
+      const sentimentScore = fnRatio !== null
+        ? Math.round(Math.max(0, Math.min(100, fnRatio * 100)))
         : 0;
 
       // Relevance — citation-weighted average recency score
@@ -3160,12 +3250,12 @@ export const useDashboardData = () => {
     visibleResponses.forEach(r => { const f = r.confirmed_prompts?.job_function_context?.trim(); if (f) fns.add(f); });
 
     // Pre-bucket MV rows by "fn YYYY-MM" so each (fn, month) lookup is O(1).
-    const sentBucket = new Map<string, { pos: number; tot: number }>();
+    const sentBucket = new Map<string, { pos: number; neg: number }>();
     effSentimentMvRows.forEach(r => {
       if (!r.job_function_context || !r.response_month) return;
       const k = `${r.job_function_context} ${r.response_month.slice(0, 7)}`;
-      const b = sentBucket.get(k) || { pos: 0, tot: 0 };
-      b.pos += r.positive_themes || 0; b.tot += r.total_themes || 0;
+      const b = sentBucket.get(k) || { pos: 0, neg: 0 };
+      b.pos += r.positive_themes || 0; b.neg += r.negative_themes || 0;
       sentBucket.set(k, b);
     });
     const relBucket = new Map<string, { w: number; wt: number }>();
@@ -3196,8 +3286,9 @@ export const useDashboardData = () => {
           : Math.round((mentioned / monthResponses.length) * 100);
 
         const sb = sentBucket.get(`${fn} ${p.key}`);
-        const sentiment = sb && sb.tot > 0
-          ? Math.round(Math.max(0, Math.min(100, (sb.pos / sb.tot) * 100)))
+        const sbRatio = sb ? sentimentRatioV2(sb.pos, sb.neg) : null;
+        const sentiment = sbRatio !== null
+          ? Math.round(Math.max(0, Math.min(100, sbRatio * 100)))
           : (agg?.sentimentScore ?? 0);
 
         const rb = relBucket.get(`${fn} ${p.key}`);
@@ -3285,11 +3376,20 @@ export const useDashboardData = () => {
       const promptResponses = responses.filter(r => r.confirmed_prompt_id === prompt.id);
       const totalResponses = promptResponses.length;
 
-      const sentiments = promptResponses.map(r => calculateAIBasedSentiment(r.id));
-      const avgSentiment = totalResponses > 0
-        ? sentiments.reduce((sum, s) => sum + s.sentiment_score, 0) / totalResponses
-        : 0;
-      const sentimentLabel = avgSentiment > 0.1 ? 'positive' : avgSentiment < -0.1 ? 'negative' : 'neutral';
+      // Methodology v2: pool positive/negative theme counts across the
+      // prompt's responses; neutral-only responses carry no signal.
+      const pooled = promptResponses.reduce(
+        (acc, r) => {
+          const s = calculateAIBasedSentiment(r.id);
+          acc.pos += s.positive;
+          acc.neg += s.negative;
+          return acc;
+        },
+        { pos: 0, neg: 0 }
+      );
+      const pooledRatio = sentimentRatioV2(pooled.pos, pooled.neg);
+      const avgSentiment = pooledRatio ?? 0;
+      const sentimentLabel = pooledRatio === null ? 'neutral' : pooledRatio > 0.6 ? 'positive' : pooledRatio < 0.4 ? 'negative' : 'neutral';
 
       const mentionedCount = promptResponses.filter(r => r.company_mentioned === true).length;
       let averageVisibility: number | undefined = undefined;
@@ -3440,6 +3540,7 @@ export const useDashboardData = () => {
             )
           `)
           .eq('company_id', id)
+          .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
           .gte('tested_at', startDate.toISOString())
           .lte('tested_at', endDate.toISOString())
           .order('tested_at', { ascending: false })
@@ -3488,6 +3589,7 @@ export const useDashboardData = () => {
             .from('prompt_responses')
             .select('tested_at')
             .eq('company_id', id)
+            .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
             .order('tested_at', { ascending: false })
             .range(page * PAGE, (page + 1) * PAGE - 1));
           if (error) throw error;
@@ -3541,8 +3643,9 @@ export const useDashboardData = () => {
     searchResultsLoading,
     searchTermsData,
     fetchSearchResults,
-    aiThemes: effAiThemes, // Raw AI themes (lazy, Thematic tab) — location-scoped when a location is active
-    fetchAIThemes, // Lazy raw-themes fetch (called when Thematic tab mounts)
+    aiThemes: effAiThemes, // Raw AI themes (lazy, accumulated per drilled attribute) — location-scoped when a location is active
+    fetchAIThemesForAttribute, // Lazy per-attribute raw-themes fetch (Thematic drilldown open)
+    aiThemeAttrsLoaded, // v2 attribute ids whose raw themes are loaded for the current scope
     attributeThemes: effAttributeThemes, // Pre-aggregated attribute scores — location-scoped when a location is active
     responseSentimentRows, // Per-response sentiment ratios (company_response_sentiment_mv)
     fetchHistoricalResponses, // Fetch responses for a specific time range

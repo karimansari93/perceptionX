@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import ReactMarkdown from 'react-markdown';
 import { usePersistedState } from '@/hooks/usePersistedState';
+import { sentimentRatioV2 } from '@/lib/sentimentV2';
 import { 
   Brain,
   Loader2,
@@ -43,7 +44,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { ATTRIBUTES, normalizeAttributeId } from '@/config/attributes';
 import LLMLogo from '@/components/LLMLogo';
 import { getLLMDisplayName } from '@/config/llmLogos';
-import { extractSourceUrl } from '@/utils/citationUtils';
+import { extractSourceUrl, getFavicon } from '@/utils/citationUtils';
 import { ScrollablePills } from './ScrollablePills';
 import { SearchInput } from './SearchInput';
 import { useTabSearchSeed } from '@/contexts/TabSearchSeedContext';
@@ -57,10 +58,13 @@ interface ThematicAnalysisTabProps {
   // attribute rankings instantly; raw ai_themes load in the background only for
   // the per-attribute drilldown.
   attributeThemes?: any[];
-  // Lazily loads the raw ai_themes for this company. The dashboard no longer
-  // pulls raw themes eagerly; this tab triggers the fetch when it mounts since
-  // it needs subtheme-level detail the attribute MVs don't carry.
-  fetchAIThemes?: () => Promise<void> | void;
+  // Lazily loads the raw ai_themes for ONE attribute (the open drilldown).
+  // The main ranking renders from the attribute MV; only the drilldown needs
+  // subtheme-level rows, so nothing is fetched until one opens. Rows
+  // accumulate in the hook across drilled attributes.
+  fetchAIThemesForAttribute?: (attributeId: string) => Promise<void> | void;
+  // v2 attribute ids whose raw themes are fully loaded for the current scope.
+  aiThemeAttrsLoaded?: string[];
   onRefreshThemes: () => Promise<void>;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
@@ -118,39 +122,43 @@ const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string }
   'overall-candidate-experience': Briefcase
 };
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = [], fetchAIThemes, onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
-  // Lazily pull raw themes the first time this tab mounts (and when the company
-  // changes and it's already open). The Overview no longer fetches them eagerly.
-  useEffect(() => {
-    if (fetchAIThemes && aiThemes.length === 0 && !aiThemesLoading) {
-      fetchAIThemes();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyName]);
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = [], fetchAIThemesForAttribute, aiThemeAttrsLoaded = [], onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  // Raw ai_themes lazy-load when this tab mounts; the per-attribute drilldown
-  // must not declare "no responses" while they're still in flight (that was
-  // the false error that resolved itself a few seconds later). "Settled" =
-  // loading finished with data, or stayed empty past a short grace period
-  // (a genuinely theme-less company).
-  const [themesSettled, setThemesSettled] = useState(false);
-  useEffect(() => {
-    if (aiThemesLoading) {
-      setThemesSettled(false);
-      return;
-    }
-    if (aiThemes.length > 0) {
-      setThemesSettled(true);
-      return;
-    }
-    const timer = setTimeout(() => setThemesSettled(true), 4000);
-    return () => clearTimeout(timer);
-  }, [aiThemesLoading, aiThemes.length]);
   // Modal and filter states - persisted
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
   const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('thematicTab.isModalOpen', false);
+
+  // Fetch raw themes for the drilldown's attribute when it opens. Also fires
+  // on mount when the persisted modal state restores an open drilldown, and
+  // again after a refresh/scope change empties the loaded set. The hook
+  // guards re-entrancy, so extra fires are no-ops.
+  useEffect(() => {
+    if (isModalOpen && selectedAttribute && fetchAIThemesForAttribute &&
+        !aiThemeAttrsLoaded.includes(selectedAttribute)) {
+      fetchAIThemesForAttribute(selectedAttribute);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isModalOpen, selectedAttribute, aiThemeAttrsLoaded]);
+
+  // The drilldown must not declare "no responses" while its attribute's raw
+  // themes are still in flight (that was the false error that resolved itself
+  // a few seconds later). "Settled" = the selected attribute's rows are
+  // loaded, or loading stopped without them past a short grace period (fetch
+  // failure / genuinely theme-less attribute). Derived — NOT plain state —
+  // and the grace marker is keyed to the attribute it elapsed for, so
+  // switching attributes can never read a stale settled=true and auto-fire
+  // the AI summary against rows that haven't arrived.
+  const selectedAttributeLoaded = !!selectedAttribute && aiThemeAttrsLoaded.includes(selectedAttribute);
+  const [graceElapsedFor, setGraceElapsedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selectedAttribute || selectedAttributeLoaded || aiThemesLoading) return;
+    const attr = selectedAttribute;
+    const timer = setTimeout(() => setGraceElapsedFor(attr), 4000);
+    return () => clearTimeout(timer);
+  }, [selectedAttribute, selectedAttributeLoaded, aiThemesLoading]);
+  const themesSettled = selectedAttributeLoaded || (!!selectedAttribute && graceElapsedFor === selectedAttribute);
   const [selectedPromptType, setSelectedPromptType] = usePersistedState<'all' | 'experience' | 'competitive'>('thematicTab.selectedPromptType', 'experience');
   // Controlled by the parent Dashboard so the job-function selection is shared
   // across all tabs and never resets on tab switch.
@@ -356,11 +364,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     };
   }, [previousPeriodResponses, normalizedThemes, selectedJobFunctionFilter]);
 
-  // Helper to get favicon for a domain
-  const getFavicon = (domain: string): string => {
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=16`;
-  };
-
   // Helper to format domain to a human-friendly name
   const getSourceDisplayName = (domain: string) => {
     // Remove www. and domain extension
@@ -487,8 +490,9 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
 
     return Object.entries(agg)
       .map(([id, a]) => {
-        const total = a.positive + a.negative + a.neutral;
-        const sentimentRatio = total > 0 ? a.positive / total : 0;
+        // Methodology v2: positive/(positive+negative); neutrals stay in the
+        // composition counts but not in the score.
+        const sentimentRatio = sentimentRatioV2(a.positive, a.negative) ?? 0;
         const sentiment = a.positive > a.negative && a.positive > a.neutral
           ? 'positive'
           : a.negative > a.positive && a.negative > a.neutral
@@ -580,8 +584,8 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     const attributeThemes = filteredThemes.filter(t => t.attribute_id === selectedAttribute);
     const positiveThemes = attributeThemes.filter(t => t.sentiment === 'positive').map(t => t.theme_name);
     const negativeThemes = attributeThemes.filter(t => t.sentiment === 'negative').map(t => t.theme_name);
-    const total = attributeThemes.length;
-    const positiveRatio = total > 0 ? Math.round((positiveThemes.length / total) * 100) : 0;
+    // Methodology v2: neutral themes are excluded from the ratio.
+    const positiveRatio = Math.round((sentimentRatioV2(positiveThemes.length, negativeThemes.length) ?? 0) * 100);
 
     const steps = [
       totalResponseCount > MAX_RESPONSES
@@ -907,13 +911,12 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 .sort((a, b) => {
                   if (rankingSort === 'az') return a.name.localeCompare(b.name);
                   if (rankingSort === 'volume') return b.count - a.count;
-                  const totalA = a.positiveCount + a.negativeCount + a.neutralCount;
-                  const totalB = b.positiveCount + b.negativeCount + b.neutralCount;
-                  return (totalB > 0 ? b.positiveCount / totalB : 0) - (totalA > 0 ? a.positiveCount / totalA : 0);
+                  // Methodology v2 ratio (neutrals excluded from the score)
+                  return (sentimentRatioV2(b.positiveCount, b.negativeCount) ?? 0)
+                    - (sentimentRatioV2(a.positiveCount, a.negativeCount) ?? 0);
                 })
                 .map((attribute, index) => {
-                  const totalThemes = attribute.positiveCount + attribute.negativeCount + attribute.neutralCount;
-                  const sentimentScore = totalThemes > 0 ? Math.round((attribute.positiveCount / totalThemes) * 100) : 0;
+                  const sentimentScore = Math.round((sentimentRatioV2(attribute.positiveCount, attribute.negativeCount) ?? 0) * 100);
                   const attributeId = attribute.id;
                   const IconComponent = attributeId ? (ATTRIBUTE_ICONS[attributeId] || Activity) : Activity;
 

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { EpsDrilldownSheet } from "./EpsDrilldownSheet";
 import { computeDiscoveryStats } from "@/lib/discoveryStats";
+import { sentimentRatioV2 } from "@/lib/sentimentV2";
 import ReactMarkdown from 'react-markdown';
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
@@ -22,7 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { Favicon } from "@/components/ui/favicon";
-import { extractSourceUrl } from "@/utils/citationUtils";
+import { extractSourceUrl, getFavicon } from "@/utils/citationUtils";
 import {
   ChartContainer,
   ChartTooltip,
@@ -200,14 +201,15 @@ export const OverviewTab = memo(({
     return aiThemes.filter(t => ids.has(t.response_id));
   }, [aiThemes, fnResponses, selectedJobFunctionFilter]);
 
-  // Per-response positive/total theme counts from company_response_sentiment_mv.
+  // Per-response theme counts from company_response_sentiment_mv.
   // Replaces scanning raw aiThemes for the perception-score-over-time chart.
   const responseSentimentMap = useMemo(() => {
-    const map = new Map<string, { total: number; positive: number }>();
+    const map = new Map<string, { total: number; positive: number; negative: number }>();
     (responseSentimentRows || []).forEach(row => {
       map.set(row.response_id, {
         total: Number(row.total_themes) || 0,
         positive: Number(row.positive_themes) || 0,
+        negative: Number(row.negative_themes) || 0,
       });
     });
     return map;
@@ -261,24 +263,24 @@ export const OverviewTab = memo(({
       themesByResponseId.get(theme.response_id)!.push(theme);
     });
     
-    // Calculate sentiment for each response ID once
+    // Calculate sentiment for each response ID once.
+    // Methodology v2: positive/(positive+negative) from the text labels;
+    // neutral-only responses carry no signal and read as neutral.
     themesByResponseId.forEach((responseThemes, responseId) => {
-      const totalThemes = responseThemes.length;
-      
-      if (totalThemes === 0) {
+      const positiveThemes = responseThemes.filter(theme => theme.sentiment === 'positive').length;
+      const negativeThemes = responseThemes.filter(theme => theme.sentiment === 'negative').length;
+      const sentimentRatio = sentimentRatioV2(positiveThemes, negativeThemes);
+
+      if (sentimentRatio === null) {
         cache.set(responseId, { sentiment_score: 0, sentiment_label: 'neutral' });
         return;
       }
-      
-      const positiveThemes = responseThemes.filter(theme => theme.sentiment === 'positive').length;
-      
-      // Sentiment score: positive themes / total themes (0-1 scale)
-      const sentimentRatio = positiveThemes / totalThemes;
+
       const sentimentLabel = sentimentRatio > 0.6 ? 'positive' : sentimentRatio < 0.4 ? 'negative' : 'neutral';
-      
-      cache.set(responseId, { 
-        sentiment_score: sentimentRatio, 
-        sentiment_label: sentimentLabel 
+
+      cache.set(responseId, {
+        sentiment_score: sentimentRatio,
+        sentiment_label: sentimentLabel
       });
     });
     
@@ -313,11 +315,6 @@ export const OverviewTab = memo(({
       description: 'How prominently your brand is mentioned.'
     }
   ];
-
-  const getFavicon = (domain: string): string => {
-    const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
-    return `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=16`;
-  };
 
   // Current vs previous PERIOD (snapshot month), not latest calendar day.
   // `responses` is already scoped to the effective snapshot month by the hook,
@@ -872,41 +869,35 @@ CRITICAL: When you reference information from a source, add an inline citation l
     const positiveAttributes: { attribute: string; name: string; themes: AITheme[]; avgScore: number }[] = [];
     const negativeAttributes: { attribute: string; name: string; themes: AITheme[]; avgScore: number }[] = [];
 
-    // Analyze each attribute
+    // Analyze each attribute.
+    // Methodology v2: label-based only — an attribute is "overwhelmingly"
+    // positive/negative when it has at least 2 polarized themes and at least
+    // 70% of the polarized themes lean one way. avgScore carries the v2 ratio
+    // (0..1) for sorting; the numeric sentiment_score is not used.
     Object.entries(attributeGroups).forEach(([attributeId, themes]) => {
-      const totalThemes = themes.positive.length + themes.negative.length + themes.neutral.length;
-      
-      // Consider an attribute "overwhelmingly" positive/negative if:
-      // 1. It has at least 2 themes
-      // 2. At least 70% of themes are in one sentiment direction
-      // 3. The average sentiment score is significant (>0.5 or <-0.5)
-      
-      if (totalThemes >= 2) {
-        const positiveRatio = themes.positive.length / totalThemes;
-        const negativeRatio = themes.negative.length / totalThemes;
-        const avgSentimentScore = aiThemes
-          .filter(t => t.attribute_id === attributeId)
-          .reduce((sum, t) => sum + t.sentiment_score, 0) / totalThemes;
+      const polarized = themes.positive.length + themes.negative.length;
+      const ratio = sentimentRatioV2(themes.positive.length, themes.negative.length);
 
-        if (positiveRatio >= 0.7 && avgSentimentScore > 0.5) {
+      if (polarized >= 2 && ratio !== null) {
+        if (ratio >= 0.7) {
           positiveAttributes.push({
             attribute: attributeId,
             name: themes.positive[0]?.attribute_name || attributeId,
             themes: themes.positive,
-            avgScore: avgSentimentScore
+            avgScore: ratio
           });
-        } else if (negativeRatio >= 0.7 && avgSentimentScore < -0.5) {
+        } else if (ratio <= 0.3) {
           negativeAttributes.push({
             attribute: attributeId,
             name: themes.negative[0]?.attribute_name || attributeId,
             themes: themes.negative,
-            avgScore: avgSentimentScore
+            avgScore: ratio
           });
         }
       }
     });
 
-    // Sort by average score and take top 2
+    // Sort by v2 ratio (most positive first / most negative first), take top 2
     return {
       positive: positiveAttributes.sort((a, b) => b.avgScore - a.avgScore).slice(0, 2),
       negative: negativeAttributes.sort((a, b) => a.avgScore - b.avgScore).slice(0, 2)
@@ -1034,33 +1025,39 @@ CRITICAL: When you reference information from a source, add an inline citation l
     return map;
   }, [aiThemes]);
 
+  // Methodology v2: label-based positive/(positive+negative) pooled per day
+  // from the per-response sentiment rollup (numeric sentiment_score is never
+  // used in published metrics).
   const sentimentTrendData = useMemo(() => {
     if (!responses || responses.length === 0) {
       return [];
     }
-  
-    const dataByDate: Record<string, { totalScore: number; count: number }> = {};
-    
+
+    const dataByDate: Record<string, { positive: number; negative: number }> = {};
+
     responses.forEach(response => {
-      const theme = aiThemeLookup.get(response.id);
-      const sentimentScore = theme?.avg_sentiment_score;
-      if (typeof sentimentScore === 'number') {
-        const date = new Date(response.tested_at).toISOString().split('T')[0];
-        if (!dataByDate[date]) {
-          dataByDate[date] = { totalScore: 0, count: 0 };
-        }
-        dataByDate[date].totalScore += sentimentScore;
-        dataByDate[date].count += 1;
+      const counts = responseSentimentMap.get(response.id);
+      if (!counts) return;
+      const date = new Date(response.tested_at).toISOString().split('T')[0];
+      if (!dataByDate[date]) {
+        dataByDate[date] = { positive: 0, negative: 0 };
       }
+      dataByDate[date].positive += counts.positive;
+      dataByDate[date].negative += counts.negative;
     });
-  
-    const trendData = Object.entries(dataByDate).map(([date, { totalScore, count }]) => ({
-      date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      "Sentiment": Math.round((totalScore / count) * 100),
-    }));
-  
+
+    const trendData = Object.entries(dataByDate)
+      .map(([date, { positive, negative }]) => {
+        const ratio = sentimentRatioV2(positive, negative);
+        return ratio === null ? null : {
+          date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          "Sentiment": Math.round(ratio * 100),
+        };
+      })
+      .filter((d): d is { date: string; Sentiment: number } => d !== null);
+
     return trendData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [responses, aiThemeLookup]);
+  }, [responses, responseSentimentMap]);
 
   const chartConfig = {
     Visibility: {
@@ -1134,20 +1131,20 @@ CRITICAL: When you reference information from a source, add an inline citation l
                promptType === 'competitive';
       });
       
-      // Sentiment: positive themes / total themes for this period, summed from
-      // the pre-aggregated per-response sentiment MV (company_response_sentiment_mv).
+      // Sentiment (methodology v2): positive/(positive+negative) pooled for
+      // this period from the per-response rollup (company_response_sentiment_mv).
       let avgSentiment = 0;
       if (responseSentimentMap.size > 0) {
-        let totalThemes = 0;
         let positiveThemes = 0;
+        let negativeThemes = 0;
         periodResponses.forEach(r => {
           const s = responseSentimentMap.get(r.id);
           if (s) {
-            totalThemes += s.total;
             positiveThemes += s.positive;
+            negativeThemes += s.negative;
           }
         });
-        avgSentiment = totalThemes > 0 ? positiveThemes / totalThemes : 0;
+        avgSentiment = sentimentRatioV2(positiveThemes, negativeThemes) ?? 0;
       }
       // Convert ratio (0-1) to percentage (0-100)
       const normalizedSentiment = Math.max(0, Math.min(100, avgSentiment * 100));
