@@ -452,10 +452,20 @@ serve(async (req) => {
     // future batch citing the same wrapper hits the cache instead of unwrapping
     // and re-analyzing. The row carries the destination's date, score and domain
     // — the wrapper is only an alias for it.
+    //
+    // This covers cache hits as well as freshly-analyzed URLs, and that is not
+    // an optimization: the rescore tick pulls URLs with no cache row and counts
+    // progress by how many of them have one afterwards. A wrapper whose
+    // destination was already cached does no work here, so without a row of its
+    // own it would be re-pulled every tick and the job would stall at zero
+    // progress. Most wrappers hit exactly that path.
     const aliasRows: CitationWithRecency[] = [];
-    for (const r of rowsToStore) {
-      for (const raw of canonicalToRaws.get(r.url!) ?? []) {
-        aliasRows.push({ ...r, url: raw, extractionMethod: 'url-duplicate' });
+    for (const [canonical, raws] of canonicalToRaws) {
+      const resolved = urlResults.get(canonical);
+      if (!resolved || resolved.extractionMethod === 'rate-limit-hit') continue;
+      for (const raw of raws) {
+        if (cachedUrls.has(raw)) continue; // already has a row of its own
+        aliasRows.push({ ...resolved, url: raw, extractionMethod: 'url-duplicate' });
       }
     }
 
