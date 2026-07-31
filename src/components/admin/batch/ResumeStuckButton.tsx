@@ -69,8 +69,16 @@ export const ResumeStuckButton = ({ organizationId }: Props) => {
       if (updErr) throw new Error(updErr.message);
 
       // 4. Kick processor once per unique config. Fire-and-forget; the
-      //    processor self-chains from there.
+      //    processor fans out across the config's rows and chains from there.
       const uniqueConfigIds = [...new Set(rows.map((r: any) => r.config_id))];
+
+      // These configs are running again, so whatever the completion sweep
+      // concluded earlier was premature — let it report the real ending.
+      await supabase
+        .from("company_batch_configs")
+        .update({ alerted_final_at: null })
+        .in("id", uniqueConfigIds);
+
       await Promise.all(
         uniqueConfigIds.map((cid) =>
           supabase.functions.invoke("process-company-batch-queue", {
