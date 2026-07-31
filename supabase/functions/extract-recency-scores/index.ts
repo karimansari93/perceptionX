@@ -554,6 +554,23 @@ function isRealDate(iso: string): boolean {
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 
+// A date can be real (a valid calendar day) and still be an impossible
+// publication date. Firecrawl metadata, YouTube and Reddit already went through
+// validateAndFormatDate's sanity window; the URL parser and the HTML/LLM tiers
+// did not, so they were free to emit 2042-01-01 from a job id and 2027-03-06
+// from an event page's "when" field. Those score 100 for recency, which is the
+// worst possible way to be wrong.
+function isPlausiblePublicationDate(iso: string): boolean {
+  if (!isRealDate(iso)) return false;
+  // Nothing on the web was published before ~1995; nothing is published more
+  // than a month ahead. A future date is an event date, not a publish date.
+  if (iso < '1995-01-01') return false;
+  const cutoff = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .split('T')[0];
+  return iso <= cutoff;
+}
+
 // ----------------------------------------------------------------------------
 // URL canonicalization. Search engines cite articles through redirect wrappers
 // (google.com/url?...&url=<destination>) rather than linking them directly.
@@ -684,8 +701,10 @@ function extractDateFromUrl(url: string): string | null {
     /(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/,
     // YYYY/MM or YYYY-MM
     /(\d{4})[\/\-](\d{1,2})(?:\/|$)/,
-    // YYYY
-    /(\d{4})(?:\/|$)/,
+    // YYYY, but only as a whole path segment. Without the leading boundary this
+    // matched the tail of any id ("/quality-control-1671", "/job-2042") and
+    // turned it into a publication year.
+    /(?:^|\/)(\d{4})(?:\/|$)/,
     // Month DD, YYYY (full month names)
     /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})/i,
     // Month DD, YYYY (abbreviated month names)
@@ -721,7 +740,7 @@ function extractDateFromUrl(url: string): string | null {
           candidate = `${year}-${monthNum.toString().padStart(2, '0')}-${day.padStart(2, '0')}`;
         }
       }
-      if (candidate && isRealDate(candidate)) return candidate;
+      if (candidate && isPlausiblePublicationDate(candidate)) return candidate;
     }
   }
   
@@ -741,18 +760,18 @@ function normalizeDateString(raw: string | undefined | null): string | null {
   const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (iso) {
     const d = `${iso[1]}-${iso[2]}-${iso[3]}`;
-    if (isRealDate(d)) return d;
+    if (isPlausiblePublicationDate(d)) return d;
   }
   const slash = s.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
   if (slash) {
     const d = `${slash[1]}-${slash[2].padStart(2, '0')}-${slash[3].padStart(2, '0')}`;
-    if (isRealDate(d)) return d;
+    if (isPlausiblePublicationDate(d)) return d;
   }
   const t = Date.parse(s);
   if (!isNaN(t)) {
     const d = new Date(t);
     const out = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-    if (isRealDate(out)) return out;
+    if (isPlausiblePublicationDate(out)) return out;
   }
   return null;
 }
@@ -1150,9 +1169,50 @@ function isEvergreenUrl(url: string): boolean {
 
   // Glassdoor company / job pages (not articles) — covers all TLDs (.com, .de, .br, .com.mx, etc.)
   if (/(^|\.)glassdoor\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host)
-      && /^\/(überblick|uberblick|overview|jobs|reviews|salary|salaries|salarios|salaires|gehalt|gehälter|stipendi|beneficios|benefits|benefícios|beneficios|interview|interviews|entrevista|entrevistas|empleos|empleo|empresas|arbeiten-bei)(\/|$)/i.test(path)) {
+      && /^\/(überblick|uberblick|overview|jobs|reviews|salary|salaries|salarios|salaires|gehalt|gehälter|stipendi|beneficios|benefits|benefícios|beneficios|interview|interviews|entrevista|entrevistas|empleos|empleo|empresas|arbeiten-bei|avis|evaluaciones|opiniones|bewertungen|recensioni|vagas|explore|pay-and-benefits|prestaciones|empresa)(\/|$)/i.test(path)) {
     return true;
   }
+
+  // ------------------------------------------------------------------
+  // Job boards and employer-review sites. These pages are aggregates —
+  // a company profile, its salary bands, its review stream — and carry no
+  // publication date, but their URL shapes slip past the generic rules
+  // below: the slug is "biotechnology-jobs" rather than "jobs", the review
+  // section is the third path segment rather than the first. Every one of
+  // them used to run the whole tier stack and end at not-found, paid for.
+  // ------------------------------------------------------------------
+
+  // LinkedIn member profiles (/in/<person>). Company pages and /jobs are
+  // already handled above; personal profiles were the gap.
+  if (host.endsWith('linkedin.com') && /^\/in\/[^/]+/.test(path)) return true;
+
+  // Indeed search permalinks: /q-csl-behring-l-eversley-jobs.html
+  if (host.endsWith('indeed.com') && /^\/q-.*jobs\.html$/.test(path)) return true;
+
+  // kununu: /<lang>/<company> plus its salary/review/benefit sections.
+  // The magazine lives under /blog and /magazin and does carry real dates.
+  if (host.endsWith('kununu.com')
+      && !/^\/[a-z]{2}\/(blog|magazin|news)(\/|$)/.test(path)
+      && (/^\/[a-z]{2}\/[^/]+\/?$/.test(path)
+          || /^\/[a-z]{2}\/[^/]+\/(gehalt|gehaelter|kommentare|bewertung|bewertungen|benefits|kultur|arbeitgeber)(\/|$)/.test(path))) {
+    return true;
+  }
+
+  // Comparably company profiles (/companies/<x>/...); its articles are /blog.
+  if (host.endsWith('comparably.com') && /^\/companies\//.test(path)) return true;
+
+  // AmbitionBox company aggregates. /blog and /news carry real dates.
+  if (host.endsWith('ambitionbox.com')
+      && /^\/(reviews|interviews|salaries|overview|benefits|jobs|companies)(\/|$)/.test(path)) {
+    return true;
+  }
+
+  // Prosple graduate-employer profiles.
+  if (host.endsWith('prosple.com') && /^\/(graduate-employers|rankings)(\/|$)/.test(path)) return true;
+
+  // Seek and similar boards: /companies/<x>/reviews, and slug-style job
+  // searches like /biotechnology-jobs/... or /CSL-Behring-jobs/full-time.
+  if (/^\/companies(\/|$)/.test(path)) return true;
 
   // Social media — only treat *profile/account* pages as evergreen. Individual
   // posts (Reddit comments, FB posts, IG photos, etc.) have real publication
@@ -1196,6 +1256,11 @@ function isEvergreenUrl(url: string): boolean {
   // Brand-prefixed first segments: /about-ford/..., /experience-ford/..., /about_toyota/...
   // These are evergreen corporate pages on company websites (sustainability, benefits, etc.).
   if (segments.length >= 1 && /^(about|experience|our|nuestra|nossa|chez)[-_]/.test(segments[0])) {
+    return true;
+  }
+  // Slug-suffixed job searches: /biotechnology-jobs/..., /CSL-Behring-jobs/full-time,
+  // /nursing-careers. The exact-match list above only caught a bare "/jobs".
+  if (segments.length >= 1 && /[-_](jobs|job|careers|vacancies|stellenangebote|empleos|vagas)$/.test(segments[0])) {
     return true;
   }
 
