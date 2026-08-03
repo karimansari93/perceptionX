@@ -12,48 +12,110 @@ export interface EnhancedCitation {
   favicon?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Google redirect / wrapper URLs
+//
+// Google's SERP payloads point many cited links at google.com rather than at
+// the source itself:
+//   translate.google.com/translate?u=<real>&hl=es   (localized markets)
+//   www.google.com/url?sa=i&...&url=<real>&ved=...  (image / result redirect)
+//   www.google.com/imgres?imgurl=<img>&imgrefurl=<real>
+//
+// The collection pipeline now unwraps these before storing
+// (supabase/functions/_shared/citation-extraction.ts — keep the two in sync),
+// but historical rows still hold wrappers, so the dashboard unwraps on read
+// too. Wrappers with no recoverable target are Google UI surfaces, not
+// sources: isUsableCitationUrl rejects them so they don't show as google.com.
+// ---------------------------------------------------------------------------
+
+/** true for google.com, www.google.co.uk, translate.google.com … but not notgoogle.com */
+const isGoogleHost = (hostname: string): boolean =>
+  /(^|\.)google\.[a-z.]{2,}$/i.test(hostname);
+
+/** Query params carrying the real destination, by wrapper type, in priority order. */
+const redirectParamsFor = (hostname: string, pathname: string): string[] => {
+  if (/^translate\.google/i.test(hostname) || /^translate\.googleusercontent/i.test(hostname)) {
+    return ['u'];
+  }
+  if (!isGoogleHost(hostname)) return [];
+  const path = pathname.replace(/\/+$/, '').toLowerCase();
+  if (path === '/url') return ['url', 'q'];
+  if (path === '/imgres') return ['imgrefurl', 'imgurl'];
+  return [];
+};
+
+const unwrapOnce = (url: string): string => {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  for (const param of redirectParamsFor(parsed.hostname, parsed.pathname)) {
+    // URL.searchParams.get already decodes percent-encoding.
+    const target = parsed.searchParams.get(param);
+    if (target && /^https?:\/\//i.test(target)) {
+      return target.split('#:~:text=')[0];
+    }
+  }
+  return url;
+};
+
+// Google-hosted paths that are search-UI surfaces rather than sources.
+const GOOGLE_UI_PATHS = /^\/(url|imgres|search|searchviewer|viewer|async|sorry|preferences|setprefs)(\/|$)/i;
+
 /**
- * Extracts the actual source URL from Google Translate URLs.
- * If the URL is a Google Translate URL, extracts the 'u' parameter value.
- * Otherwise, returns the original URL.
+ * Whether a (already unwrapped) URL is worth showing as a citation.
+ * Rejects leftover Google redirect wrappers and search-UI pages, so a wrapper
+ * we couldn't unwrap never surfaces as a google.com source.
+ */
+export const isUsableCitationUrl = (url: string): boolean => {
+  if (!url || typeof url !== 'string') return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  if (isGoogleHost(parsed.hostname) && GOOGLE_UI_PATHS.test(parsed.pathname)) return false;
+  return true;
+};
+
+/**
+ * Extracts the actual source URL from a Google redirect wrapper
+ * (translate.google.com `u=`, google.com/url `url=`/`q=`, google.com/imgres,
+ * on any google ccTLD).
+ * Strips the #:~:text= highlight fragment Google appends. Wrappers can nest,
+ * so unwrapping repeats until the URL stops changing.
+ * Returns the original URL when it isn't a wrapper.
  */
 export const extractSourceUrl = (url: string): string => {
   if (!url || typeof url !== 'string') return url;
-  
-  try {
-    const urlObj = new URL(url.trim());
-    
-    // Check if this is a Google Translate URL
-    if (urlObj.hostname.includes('translate.google') || 
-        urlObj.hostname.includes('translate.googleusercontent')) {
-      // Extract the 'u' parameter which contains the actual source URL
-      const sourceUrl = urlObj.searchParams.get('u');
-      if (sourceUrl) {
-        // Decode the URL if it's encoded
-        try {
-          return decodeURIComponent(sourceUrl);
-        } catch {
-          return sourceUrl;
-        }
-      }
-    }
-    
-    // Not a Google Translate URL, return original
-    return url.trim();
-  } catch {
-    // If URL parsing fails, try to extract 'u' parameter manually
-    const uParamMatch = url.match(/[?&]u=([^&]+)/);
-    if (uParamMatch) {
-      try {
-        return decodeURIComponent(uParamMatch[1]);
-      } catch {
-        return uParamMatch[1];
-      }
-    }
-    
-    // Return original URL if we can't parse it
-    return url.trim();
+
+  let current = url.trim();
+  // Bounded: a wrapper chain longer than this is pathological, not real data.
+  for (let i = 0; i < 3; i++) {
+    const next = unwrapOnce(current);
+    if (next === current) break;
+    current = next;
   }
+  if (current !== url.trim()) return current;
+
+  // Malformed enough that URL() couldn't parse it, but still recognisably a
+  // Google wrapper — pull the target param out textually.
+  if (/(?:\/\/|\.)google\.[a-z.]+\/(?:url|imgres|translate)/i.test(current)) {
+    const paramMatch = current.match(/[?&](?:u|url|q|imgrefurl)=(https?[^&]+)/i);
+    if (paramMatch) {
+      try {
+        return decodeURIComponent(paramMatch[1]).split('#:~:text=')[0];
+      } catch {
+        return paramMatch[1];
+      }
+    }
+  }
+
+  return current;
 };
 
 export const extractDomain = (url: string): string => {
@@ -201,6 +263,18 @@ const buildEnhancedCitation = (
   title: string,
   citation: any
 ): EnhancedCitation | null => {
+  // A Google redirect wrapper we couldn't unwrap has no source behind it —
+  // counting it would attribute the citation to google.com.
+  if (url && !isUsableCitationUrl(url)) return null;
+
+  // Historical rows stored the wrapper's domain ("google.com") alongside the
+  // wrapper URL. Once the URL is unwrapped that domain is wrong, so re-derive
+  // it from the real target.
+  const rawUrl = typeof citation === 'string' ? citation : citation?.url;
+  if (url && typeof rawUrl === 'string' && rawUrl.trim() !== url) {
+    domain = extractDomain(url);
+  }
+
   if (isDomainMissing(domain)) {
     // Derive domain from URL when missing or "unknown" (e.g. ChatGPT citations)
     if (url) {
@@ -372,11 +446,15 @@ export function getMostMentionedPages(rawCitations: any[], max?: number) {
   // Map of pageKey => array of {title, url, domain, snippet, mentionCount}
   const pageMap = new Map<string, {titles: {[t:string]:number}, urls: string[], domain?: string, snippets: {[s:string]:number}, mentionCount: number}>();
 
-  const processOneUrl = (url: string, title: string, snippet: string, domainFromCitation: string | undefined) => {
-    url = extractSourceUrl(url);
+  const processOneUrl = (rawUrl: string, title: string, snippet: string, domainFromCitation: string | undefined) => {
+    const url = extractSourceUrl(rawUrl);
     if (!url || !url.startsWith('http')) return;
+    // Skip un-unwrappable Google redirect wrappers / search-UI pages.
+    if (!isUsableCitationUrl(url)) return;
     const pageKey = normalizePageKey(url);
-    let domain = domainFromCitation;
+    // A citation whose URL was a redirect wrapper carries the wrapper's domain
+    // ("google.com") — re-derive from the real target.
+    let domain = typeof rawUrl === 'string' && rawUrl.trim() !== url ? undefined : domainFromCitation;
     if (!domain || (typeof domain === 'string' && domain.trim().toLowerCase() === 'unknown')) {
       domain = extractDomain(url);
     }
