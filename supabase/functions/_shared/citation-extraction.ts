@@ -128,7 +128,7 @@ export function unwrapRedirectUrl(url: string): string {
 
 // Google-hosted paths that are search-UI surfaces rather than sources. Anything
 // still on one of these after unwrapping had no recoverable destination.
-const GOOGLE_UI_PATHS = /^\/(url|imgres|search|searchviewer|viewer|async|sorry|preferences|setprefs)(\/|$)/i;
+const GOOGLE_UI_PATHS = /^\/(url|imgres|search|searchviewer|viewer|translate|async|sorry|preferences|setprefs)(\/|$)/i;
 
 /**
  * Whether a (already unwrapped) URL is worth storing as a citation.

@@ -62,7 +62,7 @@ const unwrapOnce = (url: string): string => {
 };
 
 // Google-hosted paths that are search-UI surfaces rather than sources.
-const GOOGLE_UI_PATHS = /^\/(url|imgres|search|searchviewer|viewer|async|sorry|preferences|setprefs)(\/|$)/i;
+const GOOGLE_UI_PATHS = /^\/(url|imgres|search|searchviewer|viewer|translate|async|sorry|preferences|setprefs)(\/|$)/i;
 
 /**
  * Whether a (already unwrapped) URL is worth showing as a citation.

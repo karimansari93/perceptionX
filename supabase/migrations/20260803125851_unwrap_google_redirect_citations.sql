@@ -145,7 +145,7 @@ AS $$
        AND p_url ~* '^https?://'
        -- Google-hosted search-UI surfaces: an unwrapped wrapper, a results
        -- page, or a knowledge-panel viewer. None of them is a source.
-       AND p_url !~* '^https?://([a-z0-9-]+\.)*google\.[a-z.]+/(url|imgres|search|searchviewer|viewer|async|sorry|preferences|setprefs)(/|\?|$)';
+       AND p_url !~* '^https?://([a-z0-9-]+\.)*google\.[a-z.]+/(url|imgres|search|searchviewer|viewer|translate|async|sorry|preferences|setprefs)(/|\?|$)';
 $$;
 
 COMMENT ON FUNCTION public.is_usable_citation_url(text) IS

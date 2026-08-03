@@ -105,6 +105,11 @@ check(
   false,
 );
 check("searchviewer is not usable", isUsableCitationUrl("https://www.google.com/searchviewer/10?svid=x"), false);
+check(
+  "bare translate link (no u= target) is not usable",
+  isUsableCitationUrl("https://translate.google.com/translate"),
+  false,
+);
 check("results page is not usable", isUsableCitationUrl("https://www.google.com/search?q=csl"), false);
 check("non-http is not usable", isUsableCitationUrl("about:invalid#zGuavaz"), false);
 
