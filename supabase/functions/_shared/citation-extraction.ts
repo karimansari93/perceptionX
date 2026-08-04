@@ -171,12 +171,18 @@ export function normalizeCitationsForStorage<T extends { url?: string; domain?: 
 ): Array<T & { url: string; domain: string; title: string }> {
   if (!Array.isArray(citations)) return [];
   const out: Array<T & { url: string; domain: string; title: string }> = [];
+  const seen = new Set<string>();
   for (const citation of citations) {
     if (!citation || typeof citation.url !== "string") continue;
     const original = citation.url.trim();
     if (!original) continue;
     const url = unwrapRedirectUrl(original);
     if (!isUsableCitationUrl(url)) continue;
+    // Google cites one page through several wrappers (each with its own &ved=),
+    // so dedupe on the destination, not on what the payload handed us. First
+    // occurrence wins.
+    if (seen.has(url)) continue;
+    seen.add(url);
     const wasUnwrapped = url !== original;
     const domain = (!wasUnwrapped && citation.domain) || domainOfUrl(url);
     // Keep a real title (the SERP anchor text); replace the auto-generated

@@ -145,6 +145,19 @@ check(
   [{ url: "https://www.seek.com.au/x", domain: "seek.com.au", title: "Seek" }],
 );
 
+check(
+  "two wrappers pointing at the same page collapse to one citation",
+  normalizeCitationsForStorage([
+    { url: "https://www.google.com/url?sa=i&url=https://www.csl.com/careers&ved=AAA", domain: "google.com" },
+    { url: "https://www.indeed.com/cmp/Csl", domain: "indeed.com", title: "Indeed" },
+    { url: "https://www.google.com/url?sa=i&url=https://www.csl.com/careers&ved=BBB", domain: "google.com" },
+  ]),
+  [
+    { url: "https://www.csl.com/careers", domain: "csl.com", title: "Source from csl.com" },
+    { url: "https://www.indeed.com/cmp/Csl", domain: "indeed.com", title: "Indeed" },
+  ],
+);
+
 check("empty input", normalizeCitationsForStorage(undefined), []);
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
