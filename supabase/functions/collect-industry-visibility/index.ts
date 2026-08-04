@@ -113,7 +113,7 @@ serve(async (req) => {
       batchOffset = 0,
       batchSize = null,
       // Optional subset of models to collect — defaults to all 3.
-      // Valid values: 'openai', 'perplexity', 'google-ai-mode'
+      // Valid values: 'openai', 'perplexity', 'gemini'
       models = null,
     } = body;
     const modelsFilter: string[] | null = Array.isArray(models) && models.length > 0 ? models : null;
@@ -650,13 +650,13 @@ serve(async (req) => {
           .maybeSingle();
 
         const {
-          data: existingResponseGoogle,
-          error: responseCheckErrorGoogle,
+          data: existingResponseGemini,
+          error: responseCheckErrorGemini,
         } = await supabase
           .from("prompt_responses")
           .select("id, ai_model, tested_at")
           .eq("confirmed_prompt_id", promptId)
-          .eq("ai_model", "google-ai-mode")
+          .eq("ai_model", "gemini")
           .maybeSingle();
 
         // Collect responses for each model that doesn't exist yet
@@ -672,9 +672,9 @@ serve(async (req) => {
             type: "perplexity",
           },
           {
-            name: "google-ai-mode",
-            exists: !!existingResponseGoogle,
-            type: "google",
+            name: "gemini",
+            exists: !!existingResponseGemini,
+            type: "gemini",
           },
         ]
           .filter((m) => !m.exists)
@@ -762,35 +762,34 @@ serve(async (req) => {
               const perplexityData = await perplexityResponse.json();
               responseText = perplexityData.response || "";
               citations = perplexityData.citations || [];
-            } else if (model.type === "google") {
-              // Google AI Mode edge function
-              const googleResponse = await fetch(
-                `${supabaseUrl}/functions/v1/test-prompt-google-ai-mode`,
+            } else if (model.type === "gemini") {
+              // Gemini edge function (gemini-2.5-flash-lite, no web grounding).
+              // Prompt text is already localized per market, so no
+              // location_context is needed here.
+              const geminiResponse = await fetch(
+                `${supabaseUrl}/functions/v1/test-prompt-gemini`,
                 {
                   method: "POST",
                   headers: {
                     Authorization: `Bearer ${supabaseKey}`,
                     "Content-Type": "application/json",
                   },
-                  body: JSON.stringify({
-                    prompt: promptData.text,
-                    // Scrapingdog geo-targets the query by country; null
-                    // (GLOBAL) falls back to the provider default.
-                    location_context: dbLocationContext,
-                  }),
+                  body: JSON.stringify({ prompt: promptData.text }),
                 },
               );
 
-              if (!googleResponse.ok) {
-                const errorData = await googleResponse.json();
+              if (!geminiResponse.ok) {
+                const errorData = await geminiResponse.json();
                 throw new Error(
-                  `Google AI error: ${errorData.error || "Unknown error"}`,
+                  `Gemini error: ${errorData.error || "Unknown error"}`,
                 );
               }
 
-              const googleData = await googleResponse.json();
-              responseText = googleData.response || "";
-              citations = googleData.citations || [];
+              const geminiData = await geminiResponse.json();
+              responseText = geminiData.response || "";
+              // Same as the OpenAI leg: no grounded citations, so pull any
+              // URLs the model wrote into the text.
+              citations = extractCitationsFromResponse(responseText);
             }
 
             if (!responseText) {
@@ -814,7 +813,7 @@ serve(async (req) => {
                       ? unwrapCitations(citations)
                       : model.type === "perplexity"
                         ? unwrapCitations(citations)
-                        : model.type === "google"
+                        : model.type === "gemini"
                           ? unwrapCitations(citations)
                           : [],
                   company_id: null, // Industry-wide response
