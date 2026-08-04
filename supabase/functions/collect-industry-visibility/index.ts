@@ -113,7 +113,7 @@ serve(async (req) => {
       batchOffset = 0,
       batchSize = null,
       // Optional subset of models to collect — defaults to all 3.
-      // Valid values: 'openai', 'perplexity', 'google-ai-overviews'
+      // Valid values: 'openai', 'perplexity', 'google-ai-mode'
       models = null,
     } = body;
     const modelsFilter: string[] | null = Array.isArray(models) && models.length > 0 ? models : null;
@@ -656,7 +656,7 @@ serve(async (req) => {
           .from("prompt_responses")
           .select("id, ai_model, tested_at")
           .eq("confirmed_prompt_id", promptId)
-          .eq("ai_model", "google-ai-overviews")
+          .eq("ai_model", "google-ai-mode")
           .maybeSingle();
 
         // Collect responses for each model that doesn't exist yet
@@ -672,7 +672,7 @@ serve(async (req) => {
             type: "perplexity",
           },
           {
-            name: "google-ai-overviews",
+            name: "google-ai-mode",
             exists: !!existingResponseGoogle,
             type: "google",
           },
@@ -763,16 +763,21 @@ serve(async (req) => {
               responseText = perplexityData.response || "";
               citations = perplexityData.citations || [];
             } else if (model.type === "google") {
-              // Google AI Overviews edge function
+              // Google AI Mode edge function
               const googleResponse = await fetch(
-                `${supabaseUrl}/functions/v1/test-prompt-google-ai-overviews`,
+                `${supabaseUrl}/functions/v1/test-prompt-google-ai-mode`,
                 {
                   method: "POST",
                   headers: {
                     Authorization: `Bearer ${supabaseKey}`,
                     "Content-Type": "application/json",
                   },
-                  body: JSON.stringify({ prompt: promptData.text }),
+                  body: JSON.stringify({
+                    prompt: promptData.text,
+                    // Scrapingdog geo-targets the query by country; null
+                    // (GLOBAL) falls back to the provider default.
+                    location_context: dbLocationContext,
+                  }),
                 },
               );
 

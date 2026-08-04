@@ -109,7 +109,7 @@ export const VisibilityRankingsTab = () => {
   const ALL_INDUSTRY_MODELS = [
     { id: "openai", label: "OpenAI (gpt-5-nano)" },
     { id: "perplexity", label: "Perplexity" },
-    { id: "google-ai-overviews", label: "Google AI Overviews" },
+    { id: "google-ai-mode", label: "Google AI Mode" },
   ];
   const [confirmStartOpen, setConfirmStartOpen] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -1465,7 +1465,7 @@ export const VisibilityRankingsTab = () => {
             <AlertDialogTitle>Run for all models?</AlertDialogTitle>
             <AlertDialogDescription>
               This will collect responses across all models (OpenAI, Perplexity,
-              Google AI Overviews) for the pending queue items. Choose
+              Google AI Mode) for the pending queue items. Choose
               "Customize" to pick a subset (e.g. only OpenAI when re-collecting
               after an outage).
             </AlertDialogDescription>
