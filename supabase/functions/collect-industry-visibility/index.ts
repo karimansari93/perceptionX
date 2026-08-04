@@ -4,6 +4,15 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts";
 import { COUNTRY_CODE_TO_NAME } from "../_shared/countries.ts";
 
+// OpenAI model for bulk industry collection. The client-facing collection path
+// (test-prompt-openai) deliberately runs gpt-5.5 to mirror ChatGPT's live
+// default; this internal rankings pipeline just needs mention/citation data at
+// minimum cost, so it runs OpenAI's cheapest tier (nano) instead.
+const OPENAI_MODEL = "gpt-5-nano";
+// Earlier runs stored OpenAI responses under these names; a response under any
+// of them still counts as "already collected" so we don't pay to re-collect.
+const LEGACY_OPENAI_MODELS = ["gpt-5.2-chat-latest"];
+
 /**
  * Apply `unwrapTranslateUrl` to every citation in a list so the stored
  * prompt_responses.citations never contains translate.google.com redirects.
@@ -626,7 +635,8 @@ serve(async (req) => {
             .from("prompt_responses")
             .select("id, ai_model, tested_at")
             .eq("confirmed_prompt_id", promptId)
-            .eq("ai_model", "gpt-5.2-chat-latest")
+            .in("ai_model", [OPENAI_MODEL, ...LEGACY_OPENAI_MODELS])
+            .limit(1)
             .maybeSingle();
 
         const {
@@ -650,10 +660,9 @@ serve(async (req) => {
           .maybeSingle();
 
         // Collect responses for each model that doesn't exist yet
-        // TODO [12.6]: Confirm whether gpt-5.2-chat-latest should be updated to a newer model.
         const modelsToCollect = [
           {
-            name: "gpt-5.2-chat-latest",
+            name: OPENAI_MODEL,
             exists: !!existingResponseGPT,
             type: "openai",
           },
@@ -697,8 +706,14 @@ serve(async (req) => {
                         content: promptData.text,
                       },
                     ],
-                    // max_tokens: 1000, // Not supported by gpt-5.2-chat-latest (o1/o3 style models)
+                    // max_tokens: 1000, // Not supported by gpt-5.x models — use max_completion_tokens
                     max_completion_tokens: 1000,
+                    // gpt-5-nano is a reasoning model: without this, default
+                    // reasoning can eat the whole completion budget and return
+                    // empty text. Minimal effort also keeps cost lowest.
+                    // (Only gpt-5 series accepts reasoning_effort — drop it if
+                    // switching back to a *-chat-latest model.)
+                    reasoning_effort: "minimal",
                     // temperature: 0.7 // Not supported by some newer reasoning models, safer to omit if using reasoning models or set to 1
                   }),
                 },
