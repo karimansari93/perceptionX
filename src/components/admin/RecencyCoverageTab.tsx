@@ -91,11 +91,20 @@ export const RecencyCoverageTab = () => {
 
   const refreshMvs = async () => {
     setRefreshing(true);
-    const { error } = await supabase.rpc('refresh_organization_recency_coverage' as any);
+    const { data, error } = await supabase.rpc('refresh_organization_recency_coverage' as any);
     if (error) {
       toast.error(`Refresh failed: ${error.message}`);
     } else {
-      toast.success('Coverage refreshed');
+      // The RPC reports per-view outcomes instead of raising, so a partial
+      // failure (e.g. a source MV that can't refresh) still returns 200.
+      const failed = ((data as any[]) || []).filter((r) => r.success === false);
+      if (failed.length > 0) {
+        toast.error(
+          `Refresh failed for ${failed.map((f) => f.view_name).join(', ')}: ${failed[0].error_message}`
+        );
+      } else {
+        toast.success('Coverage refreshed');
+      }
       await loadCoverage();
     }
     setRefreshing(false);
