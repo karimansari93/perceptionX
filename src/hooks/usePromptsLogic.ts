@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { generateAttributePrompts } from '@/config/attributes';
 import { logger, sanitizeInput, safeStorePromptResponse, checkExistingPromptResponse } from '@/lib/utils';
-import { extractSourceUrl, extractDomain } from '@/utils/citationUtils';
+import { extractSourceUrl, extractDomain, isUsableCitationUrl } from '@/utils/citationUtils';
 
 interface OnboardingData {
   companyName: string;
@@ -584,16 +584,23 @@ export const generateAndInsertPrompts = async (user: any, onboardingRecord: any,
             };
           } else if (citation && typeof citation === 'object') {
             const sourceUrl = citation.url ? extractSourceUrl(citation.url) : '';
+            // When the URL was a Google redirect wrapper, citation.domain
+            // describes google.com — re-derive it from the real target.
+            const wasUnwrapped = sourceUrl !== (citation.url || '').trim();
+            const domain = (!wasUnwrapped && citation.domain) || (sourceUrl ? extractDomain(sourceUrl) : '');
             return {
               url: sourceUrl,
-              domain: citation.domain || (sourceUrl ? extractDomain(sourceUrl) : ''),
-              title: citation.title || `Source from ${citation.domain || (sourceUrl ? extractDomain(sourceUrl) : 'unknown')}`,
+              domain,
+              title: citation.title || `Source from ${domain || 'unknown'}`,
               sourceType: citation.sourceType || 'unknown'
             };
           }
           return null;
         })
-        .filter(Boolean);
+        .filter(Boolean)
+        // Drop Google redirect wrappers we couldn't unwrap — there is no page
+        // behind them to score for recency.
+        .filter((c: any) => isUsableCitationUrl(c.url));
     }) || [];
 
     if (allCitations.length > 0) {
