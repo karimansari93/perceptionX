@@ -278,10 +278,10 @@ For each raw variant, decide:
                       IMPORTANT — canonical_name must be the parent company's common name, never the raw
                       variant verbatim, when the variant is a regional arm, geographic/market qualifier, or
                       a brand of a well-known parent: "Hyundai Germany" -> "Hyundai", "Pepsi" -> "PepsiCo",
-                      "Vanguard UK" -> "Vanguard", "Instagram" -> "Meta" only if Meta is how competitors are
-                      tracked — keep the consumer-facing company when it operates independently
-                      (e.g. "YouTube" -> "YouTube" is fine). Strip suffixes like countries, regions,
-                      "Group", "Inc", "Ltd", "Corporation" unless they distinguish a genuinely different company.
+                      "Vanguard UK" -> "Vanguard". Keep a consumer-facing brand as its own canonical only
+                      when it competes as a distinct product/company in its own right (e.g. "YouTube",
+                      "Instagram" stay as-is). Strip suffixes like countries, regions, "Group", "Inc",
+                      "Ltd", "Corporation" unless they distinguish a genuinely different company.
 (c) "non_entity"    — only when the string is clearly NOT a real entity name. ONLY use this for:
                       • Pure phrases / sentences: "No Competitors", "Ford Does Not Operate", "Indian Firms",
                         "EV Startups", "Direct Competitors".
