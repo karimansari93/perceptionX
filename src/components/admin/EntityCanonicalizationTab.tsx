@@ -699,24 +699,37 @@ export const EntityCanonicalizationTab = () => {
 
   // Server-side, set-based auto-apply (auto_apply_entity_suggestions RPC):
   // creates missing canonicals, inserts aliases, resolves suggestions and
-  // flags the competitor rollups stale in a handful of statements — unlike the
-  // old per-row loop, it also groups variants whose canonical doesn't exist
-  // yet ("Pepsi" -> new canonical "PepsiCo"). Same thresholds as the nightly
-  // job (0.90 to group, 0.95 for non-entity), so this just drains anything the
-  // cron hasn't caught yet.
+  // flags the competitor rollups stale — unlike the old per-row loop, it also
+  // groups variants whose canonical doesn't exist yet ("Pepsi" -> new
+  // canonical "PepsiCo"). Same thresholds as the background pg_cron drain
+  // (0.90 to group, 0.95 for non-entity). Batches are tiny because approving a
+  // popular variant rewrites its whole mention history and authenticated
+  // calls get an 8s statement_timeout; on timeout the cron drain (every 2
+  // minutes, no timeout) finishes the queue on its own.
   const bulkApproveHighConfidence = async () => {
     if (!confirm("Auto-group all high-confidence pending suggestions?")) return;
     setBulkRunning(true);
     try {
       let applied = 0;
       let newCanonicals = 0;
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 40; i++) {
         const { data, error } = await supabase.rpc("auto_apply_entity_suggestions", {
           p_min_confidence: 0.9,
           p_min_confidence_non_entity: 0.95,
-          p_limit: 50,
+          p_limit: 5,
         });
-        if (error) throw error;
+        if (error) {
+          if ((error as { code?: string }).code === "57014") {
+            // statement_timeout: a heavy batch outlived the API limit. The
+            // background drain will finish it — not a failure.
+            toast.info(
+              `Auto-grouped ${applied} so far; the rest continues in the background (done within a few minutes).`
+            );
+            await loadAll();
+            return;
+          }
+          throw error;
+        }
         const batch = (data ?? {}) as { applied?: number; new_canonicals?: number };
         applied += batch.applied ?? 0;
         newCanonicals += batch.new_canonicals ?? 0;
@@ -797,8 +810,9 @@ export const EntityCanonicalizationTab = () => {
             <CardTitle>Data Cleanup</CardTitle>
             <CardDescription>
               Competitor variants (Hyundai Germany / Hyundai, Pepsi / PepsiCo) are grouped into canonical
-              entries automatically by the nightly LLM job — high-confidence suggestions apply themselves.
-              This queue only holds low-confidence leftovers for occasional review.
+              entries automatically: the nightly LLM job suggests groupings and a background drain applies
+              high-confidence ones within minutes. This queue only holds low-confidence leftovers for
+              occasional review.
             </CardDescription>
           </div>
           <div className="flex items-center gap-2 flex-wrap">

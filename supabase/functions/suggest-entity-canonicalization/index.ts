@@ -195,8 +195,11 @@ interface AutoApplyOpts {
 }
 
 // Apply high-confidence pending suggestions in small batches until the queue
-// is drained (or the safety cap hits). Small batches keep each RPC statement —
-// and the retroactive recanonicalization it triggers — comfortably fast.
+// is drained (or the safety cap hits). Batches are tiny because PostgREST
+// enforces an 8s statement_timeout and approving a popular variant rewrites
+// its whole mention history; anything this loop can't finish is picked up by
+// the auto-apply-entity-suggestions pg_cron drain (runs as postgres, no
+// timeout — see migration 20260805130000) within a couple of minutes.
 async function autoApplyPending(
   supabase: ReturnType<typeof createClient>,
   opts: AutoApplyOpts,
@@ -212,7 +215,7 @@ async function autoApplyPending(
     const { data, error } = await supabase.rpc("auto_apply_entity_suggestions", {
       p_min_confidence: opts.minConfidence,
       p_min_confidence_non_entity: opts.minConfidenceNonEntity,
-      p_limit: 50,
+      p_limit: 5,
     });
     if (error) {
       // Missing migration or transient failure: suggestions stay pending and
