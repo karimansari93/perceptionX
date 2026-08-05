@@ -72,6 +72,14 @@ GRANT EXECUTE ON FUNCTION public.auto_apply_entity_suggestions_drain(integer, in
 -- advisory lock keeps long drains from stacking. Runs right through the 03:00
 -- UTC nightly suggestion job's output, so new variants are grouped within
 -- minutes of being suggested.
+--
+-- The SET is load-bearing: cron sessions inherit a database-level
+-- statement_timeout (~2min) that cancels and rolls back heavy drains, leaving
+-- the same head-of-queue to fail every tick. pg_cron executes the command
+-- string over simple query protocol where the timeout applies per statement,
+-- so the SET takes effect before the drain runs. Work per tick is bounded
+-- (5 batches x 10) to keep each transaction short; big backlogs clear over a
+-- handful of ticks instead of one giant transaction.
 -- ----------------------------------------------------------------------------
 DO $$
 BEGIN
@@ -82,5 +90,5 @@ END $$;
 SELECT cron.schedule(
     'auto-apply-entity-suggestions',
     '*/2 * * * *',
-    $cron$ SELECT public.auto_apply_entity_suggestions_drain(); $cron$
+    $cron$SET statement_timeout TO 0; SELECT public.auto_apply_entity_suggestions_drain(5, 10);$cron$
 );
