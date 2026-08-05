@@ -8,8 +8,12 @@
 //   - propose a new canonical name + entity_type, or
 //   - flag it as a non-entity (geographies, generic phrases, error text).
 //
-// Results are inserted into entity_alias_suggestions with status='pending'
-// for admin review. Idempotent — safe to run on a nightly cron.
+// Results are inserted into entity_alias_suggestions with status='pending'.
+// High-confidence suggestions are then applied automatically via the
+// auto_apply_entity_suggestions RPC (canonical created, alias inserted,
+// suggestion approved) so grouping no longer waits on manual admin review —
+// only low-confidence rows remain in the Pending tab. Pass autoApply: false
+// to restore the old suggest-only behavior. Idempotent — safe on a nightly cron.
 // =============================================================================
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -40,7 +44,16 @@ serve(async (req) => {
       dryRun = false,
       organizationId = null,
       companyId = null,
+      autoApply = true,
+      autoApplyMinConfidence = 0.9,
+      autoApplyMinConfidenceNonEntity = 0.95,
     } = await req.json().catch(() => ({}));
+
+    const autoApplyOpts = {
+      enabled: autoApply && !dryRun,
+      minConfidence: autoApplyMinConfidence,
+      minConfidenceNonEntity: autoApplyMinConfidenceNonEntity,
+    };
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
@@ -162,10 +175,10 @@ serve(async (req) => {
           mention_count: v.count,
         }));
 
-      return await runLlm(supabase, unmapped, canonicalList, dryRun);
+      return await respond(supabase, unmapped, canonicalList, dryRun, autoApplyOpts);
     }
 
-    return await runLlm(supabase, candidates ?? [], canonicalList, dryRun);
+    return await respond(supabase, candidates ?? [], canonicalList, dryRun, autoApplyOpts);
   } catch (error) {
     console.error("suggest-entity-canonicalization error:", error);
     return new Response(
@@ -175,6 +188,67 @@ serve(async (req) => {
   }
 });
 
+interface AutoApplyOpts {
+  enabled: boolean;
+  minConfidence: number;
+  minConfidenceNonEntity: number;
+}
+
+// Apply high-confidence pending suggestions in small batches until the queue
+// is drained (or the safety cap hits). Small batches keep each RPC statement —
+// and the retroactive recanonicalization it triggers — comfortably fast.
+async function autoApplyPending(
+  supabase: ReturnType<typeof createClient>,
+  opts: AutoApplyOpts,
+) {
+  const totals = {
+    applied: 0,
+    new_canonicals: 0,
+    non_entity: 0,
+    remaining_eligible: 0,
+    remaining_pending: 0,
+  };
+  for (let i = 0; i < 20; i++) {
+    const { data, error } = await supabase.rpc("auto_apply_entity_suggestions", {
+      p_min_confidence: opts.minConfidence,
+      p_min_confidence_non_entity: opts.minConfidenceNonEntity,
+      p_limit: 50,
+    });
+    if (error) {
+      // Missing migration or transient failure: suggestions stay pending and
+      // the admin queue still works, so degrade gracefully.
+      console.warn("auto_apply_entity_suggestions failed:", error);
+      return { ...totals, error: error.message ?? String(error) };
+    }
+    totals.applied += data?.applied ?? 0;
+    totals.new_canonicals += data?.new_canonicals ?? 0;
+    totals.non_entity += data?.non_entity ?? 0;
+    totals.remaining_eligible = data?.remaining_eligible ?? 0;
+    totals.remaining_pending = data?.remaining_pending ?? 0;
+    if (!data || (data.applied ?? 0) === 0) break;
+  }
+  return totals;
+}
+
+async function respond(
+  supabase: ReturnType<typeof createClient>,
+  unmapped: Array<{ raw_alias: string; normalized_alias: string; mention_count: number }>,
+  canonicalList: string[],
+  dryRun: boolean,
+  autoApplyOpts: AutoApplyOpts,
+) {
+  const result = await runLlm(supabase, unmapped, canonicalList, dryRun);
+  // Runs even when no new variants were found this cycle, so any backlog of
+  // previously-suggested pending rows keeps draining.
+  const autoApplied = autoApplyOpts.enabled
+    ? await autoApplyPending(supabase, autoApplyOpts)
+    : null;
+  return new Response(
+    JSON.stringify({ ...result, autoApplied }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
 async function runLlm(
   supabase: ReturnType<typeof createClient>,
   unmapped: Array<{ raw_alias: string; normalized_alias: string; mention_count: number }>,
@@ -182,10 +256,7 @@ async function runLlm(
   dryRun: boolean,
 ) {
   if (unmapped.length === 0) {
-    return new Response(
-      JSON.stringify({ processed: 0, suggestions: [] }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return { processed: 0, suggestions: [] };
   }
 
   const systemPrompt =
@@ -204,6 +275,13 @@ For each raw variant, decide:
                       anything you recognize as a real entity regardless of industry. Examples that should
                       all be new_canonical: CrowdStrike, Cloudflare, Stripe, Notion, Figma, Pfizer, Marriott,
                       Mercado Libre, Spotify, Patagonia, Costco, Bridgestone. Industry doesn't matter.
+                      IMPORTANT — canonical_name must be the parent company's common name, never the raw
+                      variant verbatim, when the variant is a regional arm, geographic/market qualifier, or
+                      a brand of a well-known parent: "Hyundai Germany" -> "Hyundai", "Pepsi" -> "PepsiCo",
+                      "Vanguard UK" -> "Vanguard", "Instagram" -> "Meta" only if Meta is how competitors are
+                      tracked — keep the consumer-facing company when it operates independently
+                      (e.g. "YouTube" -> "YouTube" is fine). Strip suffixes like countries, regions,
+                      "Group", "Inc", "Ltd", "Corporation" unless they distinguish a genuinely different company.
 (c) "non_entity"    — only when the string is clearly NOT a real entity name. ONLY use this for:
                       • Pure phrases / sentences: "No Competitors", "Ford Does Not Operate", "Indian Firms",
                         "EV Startups", "Direct Competitors".
@@ -280,10 +358,7 @@ ${unmapped.map((u, i) => `${i + 1}. ${u.raw_alias}`).join("\n")}`;
   });
 
   if (dryRun) {
-    return new Response(
-      JSON.stringify({ processed: rows.length, suggestions: rows, dryRun: true }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return { processed: rows.length, suggestions: rows, dryRun: true };
   }
 
   const { error: insertErr } = await supabase
@@ -291,10 +366,7 @@ ${unmapped.map((u, i) => `${i + 1}. ${u.raw_alias}`).join("\n")}`;
     .upsert(rows, { onConflict: "normalized_alias", ignoreDuplicates: false });
   if (insertErr) throw insertErr;
 
-  return new Response(
-    JSON.stringify({ processed: rows.length, suggestions: rows }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
+  return { processed: rows.length, suggestions: rows };
 }
 
 function normalize(input: string): string {

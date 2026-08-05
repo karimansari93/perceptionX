@@ -229,12 +229,6 @@ export const EntityCanonicalizationTab = () => {
     return companies.filter((c) => c.organization_id === orgScope);
   }, [companies, orgScope]);
 
-  const canonicalByName = useMemo(() => {
-    const map = new Map<string, Canonical>();
-    for (const c of canonicals) map.set(c.canonical_name.toLowerCase(), c);
-    return map;
-  }, [canonicals]);
-
   const runSuggestionJob = async () => {
     setRunningJob(true);
     try {
@@ -254,7 +248,16 @@ export const EntityCanonicalizationTab = () => {
         { body }
       );
       if (error) throw error;
-      toast.success(`Processed ${data?.processed ?? 0} new variants`);
+      const applied = data?.autoApplied?.applied ?? 0;
+      const remaining = data?.autoApplied?.remaining_pending;
+      toast.success(
+        `Processed ${data?.processed ?? 0} new variants` +
+          (data?.autoApplied
+            ? `, auto-grouped ${applied}${
+                typeof remaining === "number" ? ` (${remaining} left for review)` : ""
+              }`
+            : "")
+      );
       await loadAll();
     } catch (e: unknown) {
       toast.error("Job failed: " + fmtError(e));
@@ -694,27 +697,41 @@ export const EntityCanonicalizationTab = () => {
     }
   };
 
+  // Server-side, set-based auto-apply (auto_apply_entity_suggestions RPC):
+  // creates missing canonicals, inserts aliases, resolves suggestions and
+  // flags the competitor rollups stale in a handful of statements — unlike the
+  // old per-row loop, it also groups variants whose canonical doesn't exist
+  // yet ("Pepsi" -> new canonical "PepsiCo"). Same thresholds as the nightly
+  // job (0.90 to group, 0.95 for non-entity), so this just drains anything the
+  // cron hasn't caught yet.
   const bulkApproveHighConfidence = async () => {
-    const eligible = suggestions.filter(
-      (s) =>
-        s.status === "pending" &&
-        (s.confidence ?? 0) >= 0.95 &&
-        s.suggested_canonical_name &&
-        !s.suggested_is_non_entity &&
-        canonicalByName.has(s.suggested_canonical_name.toLowerCase())
-    );
-    if (eligible.length === 0) {
-      toast.info("No high-confidence suggestions matching existing canonicals");
-      return;
-    }
-    if (!confirm(`Approve ${eligible.length} high-confidence suggestion(s)?`)) return;
-
-    for (const s of eligible) {
-      await approveSuggestion(
-        s,
-        s.suggested_canonical_name!,
-        s.suggested_entity_type ?? "other"
+    if (!confirm("Auto-group all high-confidence pending suggestions?")) return;
+    setBulkRunning(true);
+    try {
+      let applied = 0;
+      let newCanonicals = 0;
+      for (let i = 0; i < 20; i++) {
+        const { data, error } = await supabase.rpc("auto_apply_entity_suggestions", {
+          p_min_confidence: 0.9,
+          p_min_confidence_non_entity: 0.95,
+          p_limit: 50,
+        });
+        if (error) throw error;
+        const batch = (data ?? {}) as { applied?: number; new_canonicals?: number };
+        applied += batch.applied ?? 0;
+        newCanonicals += batch.new_canonicals ?? 0;
+        if (!batch.applied) break;
+      }
+      toast.success(
+        applied === 0
+          ? "Nothing to group — no pending suggestions at or above 0.90 confidence"
+          : `Auto-grouped ${applied} variant(s), ${newCanonicals} new canonical(s)`
       );
+      await loadAll();
+    } catch (e: unknown) {
+      toast.error("Auto-group failed: " + fmtError(e));
+    } finally {
+      setBulkRunning(false);
     }
   };
 
@@ -779,7 +796,9 @@ export const EntityCanonicalizationTab = () => {
           <div>
             <CardTitle>Data Cleanup</CardTitle>
             <CardDescription>
-              Merge competitor and source variants (Glassdoor.com / Glassdoor.ie, Disney / Disney+ Hotstar) into single canonical entries.
+              Competitor variants (Hyundai Germany / Hyundai, Pepsi / PepsiCo) are grouped into canonical
+              entries automatically by the nightly LLM job — high-confidence suggestions apply themselves.
+              This queue only holds low-confidence leftovers for occasional review.
             </CardDescription>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -1324,8 +1343,8 @@ const PendingTable = ({
             <X className="h-4 w-4 mr-2" />
             Reject selected
           </Button>
-          <Button variant="outline" size="sm" onClick={onBulkApprove}>
-            Bulk-approve high-confidence
+          <Button variant="outline" size="sm" onClick={onBulkApprove} disabled={bulkRunning}>
+            Auto-group high-confidence
           </Button>
         </div>
       </div>
