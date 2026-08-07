@@ -18,9 +18,91 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { forceConfigId } = await req.json().catch(() => ({}));
+    const {
+      forceConfigId,
+      // Admin-UI operations (see below) — the UI has no direct RLS write
+      // access to visibility_queue, so it goes through this function.
+      enqueueJobs,
+      configId,
+      models,
+      cancelJobIds,
+      clearCompletedForConfig,
+    } = await req.json().catch(() => ({}));
 
     const now = new Date();
+
+    // ----- Admin UI operations ---------------------------------------------
+
+    // Cancel specific jobs. The processor checks is_cancelled before running.
+    if (Array.isArray(cancelJobIds) && cancelJobIds.length > 0) {
+      const { error } = await supabase
+        .from("visibility_queue")
+        .update({ is_cancelled: true, updated_at: now.toISOString() })
+        .in("id", cancelJobIds);
+      if (error) throw error;
+      return new Response(JSON.stringify({ cancelled: cancelJobIds.length }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Remove finished (or cancelled) jobs for a config — the UI's "Clear
+    // Completed" / "Clear All" actions.
+    if (clearCompletedForConfig && configId) {
+      const { error: doneErr } = await supabase
+        .from("visibility_queue")
+        .delete()
+        .eq("config_id", configId)
+        .in("status", ["completed", "failed"]);
+      if (doneErr) throw doneErr;
+      const { error: cancErr } = await supabase
+        .from("visibility_queue")
+        .delete()
+        .eq("config_id", configId)
+        .eq("is_cancelled", true);
+      if (cancErr) throw cancErr;
+      return new Response(JSON.stringify({ cleared: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Enqueue ad-hoc jobs from the admin UI queue panel. config_id is
+    // required: RLS visibility and the processor's join both go through the
+    // visibility_configurations row. Falls through to the processor below so
+    // the self-chaining run starts immediately.
+    if (Array.isArray(enqueueJobs) && enqueueJobs.length > 0) {
+      if (!configId) throw new Error("configId is required to enqueue jobs");
+
+      // Skip combos that already have an active job (mirrors the UI dedupe).
+      const { data: activeJobs } = await supabase
+        .from("visibility_queue")
+        .select("industry, country")
+        .in("status", ["pending", "processing"])
+        .or("is_cancelled.is.null,is_cancelled.eq.false");
+      const activeKeys = new Set(
+        (activeJobs || []).map((j: any) => `${j.industry}|${j.country}`),
+      );
+
+      const rows = enqueueJobs
+        .filter((j: any) => j?.industry && j?.country)
+        .map((j: any) => ({
+          config_id: configId,
+          industry: j.industry,
+          country: COUNTRY_NAME_TO_CODE[j.country] || j.country,
+          status: "pending",
+          batch_index: 0,
+          total_prompts: 13, // methodology v2 discovery prompt count
+          models: Array.isArray(models) && models.length > 0 ? models : null,
+        }))
+        .filter((r: any) => !activeKeys.has(`${r.industry}|${r.country}`));
+
+      if (rows.length > 0) {
+        const { error } = await supabase.from("visibility_queue").insert(rows);
+        if (error) throw error;
+      }
+      console.log(
+        `[Enqueue] Inserted ${rows.length} jobs (${enqueueJobs.length} requested).`,
+      );
+    }
     const currentDay = now.getUTCDate();
     const currentHour = now.getUTCHours();
 
@@ -95,7 +177,7 @@ serve(async (req) => {
                 country: countryCode,
                 status: "pending",
                 batch_index: 0,
-                total_prompts: 16, // Default
+                total_prompts: 13, // methodology v2 discovery prompt count
               });
             }
           }
@@ -208,6 +290,10 @@ serve(async (req) => {
                 batchOffset: currentOffset,
                 batchSize: BATCH_SIZE,
                 skipResponses: false,
+                // Optional model subset chosen in the admin UI; omitted = all.
+                ...(Array.isArray(job.models) && job.models.length > 0
+                  ? { models: job.models }
+                  : {}),
               },
             });
 
