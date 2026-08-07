@@ -64,7 +64,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-// Queue State
+// Queue State. Staged items live only in the browser until "Start Collection"
+// enqueues them into the server-side visibility_queue table; from then on the
+// panel mirrors the DB rows, so the run survives closing the tab.
 type QueueItem = {
   id: string;
   industry: string;
@@ -72,6 +74,7 @@ type QueueItem = {
   status: "pending" | "processing" | "completed" | "failed";
   progress: number;
   error?: string;
+  staged?: boolean;
 };
 
 export const VisibilityRankingsTab = () => {
@@ -107,9 +110,9 @@ export const VisibilityRankingsTab = () => {
 
   // Start Collection confirmation / customization (mirrors NewCompanyPanel)
   const ALL_INDUSTRY_MODELS = [
-    { id: "openai", label: "OpenAI (gpt-5.2-chat-latest)" },
+    { id: "openai", label: "OpenAI (gpt-5-nano)" },
     { id: "perplexity", label: "Perplexity" },
-    { id: "google-ai-overviews", label: "Google AI Overviews" },
+    { id: "gemini", label: "Gemini (2.5 Flash-Lite)" },
   ];
   const [confirmStartOpen, setConfirmStartOpen] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -206,17 +209,31 @@ export const VisibilityRankingsTab = () => {
     loadIndustries();
     loadRecentResults();
     loadConfiguration();
+    loadServerQueue();
   }, []); // Only run once on mount
 
-  // Auto-refresh results every 10 seconds if schedule is active
+  // True while the server-side queue has work in flight.
+  const serverActive = queue.some(
+    (i) => !i.staged && (i.status === "pending" || i.status === "processing"),
+  );
+
+  // Poll the server-side queue: fast while a run is active, slow otherwise,
+  // so a reopened tab picks up in-flight runs.
+  useEffect(() => {
+    const interval = setInterval(loadServerQueue, serverActive ? 5000 : 30000);
+    return () => clearInterval(interval);
+  }, [serverActive]);
+
+  // Auto-refresh results every 10 seconds while a run is active or the
+  // schedule is on
   useEffect(() => {
     let interval: NodeJS.Timeout;
 
-    if (isScheduleActive)
+    if (isScheduleActive || serverActive)
       interval = setInterval(() => loadRecentResults(), 10000);
 
     return () => clearInterval(interval);
-  }, [isScheduleActive]);
+  }, [isScheduleActive, serverActive]);
 
   // Save configuration whenever it changes (debounced)
   useEffect(() => {
@@ -572,6 +589,7 @@ export const VisibilityRankingsTab = () => {
             country,
             status: "pending",
             progress: 0,
+            staged: true,
           });
         }
       });
@@ -586,171 +604,184 @@ export const VisibilityRankingsTab = () => {
     toast.success(`Added ${newQueueItems.length} items to queue`);
   };
 
-  const clearCompleted = () =>
-    setQueue((prev) => prev.filter((item) => item.status !== "completed"));
+  // The server-side queue hangs off the user's visibility_configurations row
+  // (RLS and the processor's join both go through it), so make sure one exists.
+  const ensureConfigId = async (): Promise<string> => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Not signed in");
 
-  const clearAll = () => {
-    if (processing) {
-      toast.error("Cannot clear queue while processing");
-      return;
+    const { data: existing } = await supabase
+      .from("visibility_configurations")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (existing?.id) return existing.id;
+
+    const { data: created, error } = await supabase
+      .from("visibility_configurations")
+      .insert({
+        user_id: user.id,
+        target_industries: targetIndustries,
+        target_countries: targetCountries,
+        schedule_day: scheduleDay,
+        schedule_hour: scheduleHour,
+        is_active: false,
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+    return created.id;
+  };
+
+  // Mirror the server-side queue into the panel. Runs on mount and on a poll,
+  // so a reopened tab shows the in-flight run.
+  const loadServerQueue = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("visibility_queue")
+        .select(
+          "id, industry, country, status, batch_index, total_prompts, error_log, is_cancelled",
+        )
+        .order("created_at", { ascending: true })
+        .limit(100);
+      if (error) throw error;
+
+      const serverItems: QueueItem[] = (data || []).map((j: any) => ({
+        id: j.id,
+        industry: j.industry,
+        country:
+          availableCountries.find((c) => c.code === j.country)?.name ||
+          j.country,
+        status: j.is_cancelled
+          ? "failed"
+          : ((j.status as QueueItem["status"]) || "pending"),
+        progress: j.total_prompts
+          ? Math.min(
+              100,
+              Math.round(((j.batch_index || 0) / j.total_prompts) * 100),
+            )
+          : 0,
+        error: j.is_cancelled ? "Cancelled" : j.error_log || undefined,
+      }));
+
+      setQueue((prev) => [...serverItems, ...prev.filter((i) => i.staged)]);
+    } catch (err) {
+      console.error("Failed to load server queue:", err);
     }
+  };
+
+  const clearCompleted = async () => {
+    setQueue((prev) =>
+      prev.filter(
+        (i) => i.staged || (i.status !== "completed" && i.status !== "failed"),
+      ),
+    );
+    try {
+      const configId = await ensureConfigId();
+      await supabase.functions.invoke("process-visibility-queue", {
+        body: { clearCompletedForConfig: true, configId },
+      });
+    } catch (err) {
+      console.error("Failed to clear completed jobs:", err);
+    }
+    await loadServerQueue();
+  };
+
+  const clearAll = async () => {
+    // Staged items just disappear; active server jobs must be cancelled.
+    const activeServerIds = queue
+      .filter(
+        (i) =>
+          !i.staged && (i.status === "pending" || i.status === "processing"),
+      )
+      .map((i) => i.id);
 
     setQueue([]);
     setLogs([]);
+
+    try {
+      if (activeServerIds.length > 0) {
+        await supabase.functions.invoke("process-visibility-queue", {
+          body: { cancelJobIds: activeServerIds },
+        });
+        toast.info(`Cancelled ${activeServerIds.length} active jobs`);
+      }
+      const configId = await ensureConfigId();
+      await supabase.functions.invoke("process-visibility-queue", {
+        body: { clearCompletedForConfig: true, configId },
+      });
+    } catch (err) {
+      console.error("Failed to clear server queue:", err);
+    }
+    await loadServerQueue();
   };
 
+  // Enqueue the staged items into the server-side visibility_queue and kick
+  // the processor. Collection then runs entirely server-side (self-chaining
+  // batches + watchdog cron), so closing the tab does not stop it — same
+  // model as the company batch collection.
   const processQueue = async (models?: string[]) => {
     if (processing) return;
 
-    const pendingItems = queue.filter((i) => i.status === "pending");
+    const pendingItems = queue.filter(
+      (i) => i.staged && i.status === "pending",
+    );
     if (pendingItems.length === 0) {
       toast.info("No pending items in queue");
       return;
     }
 
+    // null = all models (the server passes nothing to the collector).
     const effectiveModels =
-      models && models.length > 0 ? models : ALL_INDUSTRY_MODELS.map((m) => m.id);
-    const allModels = effectiveModels.length === ALL_INDUSTRY_MODELS.length;
+      models && models.length > 0 && models.length < ALL_INDUSTRY_MODELS.length
+        ? models
+        : null;
 
     setProcessing(true);
-    addLog(
-      `Starting batch processing of ${pendingItems.length} items (${
-        allModels ? "all models" : `models: ${effectiveModels.join(", ")}`
-      })...`,
-    );
+    try {
+      const configId = await ensureConfigId();
 
-    // Process items sequentially
-    for (const item of pendingItems) {
-      // Check if user cleared queue or something changed (though we blocked clear)
-      // We need to access the latest queue state or just rely on our local 'item' copy
-      // but strictly speaking, if we want to support "Stop", we need a ref.
-      // For now, we assume it runs until done or error.
-
-      // Update status to processing
-      setQueue((prev) =>
-        prev.map((q) =>
-          q.id === item.id ? { ...q, status: "processing", progress: 0 } : q,
-        ),
+      addLog(
+        `Queueing ${pendingItems.length} items for server-side collection (${
+          effectiveModels ? `models: ${effectiveModels.join(", ")}` : "all models"
+        })...`,
       );
 
-      // item.country is now likely the Full Name (e.g. United Kingdom)
-      // But we need to try and find the Code if possible, or just send Name if that's what we have.
-      // The backend expects 'country' param to be Code ideally, or Name.
-      // Let's try to map back to code if it matches a name in our list.
-      const countryCode =
-        availableCountries.find((c) => c.name === item.country)?.code ||
-        item.country;
-      const countryName = item.country; // Since we store full names now
+      const jobs = pendingItems.map((i) => ({
+        industry: i.industry,
+        // Send the code when we know it; the backend maps full names too.
+        country:
+          availableCountries.find((c) => c.name === i.country)?.code ||
+          i.country,
+      }));
 
-      addLog(`Processing: ${item.industry} (${countryName})`);
+      const { data, error } = await supabase.functions.invoke(
+        "process-visibility-queue",
+        { body: { enqueueJobs: jobs, configId, models: effectiveModels } },
+      );
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
 
-      try {
-        // Step 1: Ensure prompts exist (skipResponses: true)
-        // This creates the prompts if they don't exist
-        addLog(`  -> Initializing prompts...`);
-        const initResponse = await supabase.functions.invoke(
-          "collect-industry-visibility",
-          {
-            body: {
-              industry: item.industry,
-              country: countryCode, // Send Code (e.g. GB) if found, else Name
-              countryName: countryName, // Send Full Name
-              skipResponses: true,
-              models: effectiveModels,
-            },
-          },
-        );
-
-        if (initResponse.error) throw new Error(initResponse.error.message);
-        if (!initResponse.data?.success)
-          throw new Error(
-            initResponse.data?.error || "Failed to initialize prompts",
-          );
-
-        // Step 2: Collect responses in small batches to avoid 504 Timeouts
-        // We assume ~16 prompts total.
-        // Batch size of 1 prompt * 3 models (parallel) = ~15s.
-        // This is much safer for the 60s timeout limit.
-        const TOTAL_PROMPTS = 16;
-        const BATCH_SIZE = 1;
-
-        for (let offset = 0; offset < TOTAL_PROMPTS; offset += BATCH_SIZE) {
-          addLog(
-            `  -> Collecting batch ${Math.floor(offset / BATCH_SIZE) + 1}/${Math.ceil(TOTAL_PROMPTS / BATCH_SIZE)} (Prompts ${offset + 1}-${Math.min(offset + BATCH_SIZE, TOTAL_PROMPTS)})...`,
-          );
-
-          const batchResponse = await supabase.functions.invoke(
-            "collect-industry-visibility",
-            {
-              body: {
-                industry: item.industry,
-                country: countryCode,
-                countryName: countryName,
-                batchOffset: offset,
-                batchSize: BATCH_SIZE,
-                skipResponses: false,
-                models: effectiveModels,
-              },
-            },
-          );
-
-          if (batchResponse.error)
-            // If 504, we might want to retry with smaller batch?
-            // For now just throw to fail this item but continue queue
-            throw new Error(`Batch failed: ${batchResponse.error.message}`);
-
-          if (!batchResponse.data?.success)
-            throw new Error(
-              batchResponse.data?.error || "Unknown error in batch collection",
-            );
-
-          // Update progress
-          const progress = Math.min(
-            100,
-            Math.round(((offset + BATCH_SIZE) / TOTAL_PROMPTS) * 100),
-          );
-          setQueue((prev) =>
-            prev.map((q) => (q.id === item.id ? { ...q, progress } : q)),
-          );
-
-          // Refresh results table occasionally
-          if (offset % 4 === 0) loadRecentResults();
-
-          // Small delay between batches to be nice to the API
-          await new Promise((r) => setTimeout(r, 1000));
-        }
-
-        // Mark completed
-        setQueue((prev) =>
-          prev.map((q) =>
-            q.id === item.id ? { ...q, status: "completed", progress: 100 } : q,
-          ),
-        );
-        addLog(`  -> COMPLETED: ${item.industry} / ${item.country}`);
-        toast.success(`Completed ${item.industry} (${item.country})`);
-
-        // Final refresh of results
-        loadRecentResults();
-      } catch (err: any) {
-        console.error(`Error processing ${item.industry}:`, err);
-        addLog(`  -> ERROR: ${err.message}`);
-        setQueue((prev) =>
-          prev.map((q) =>
-            q.id === item.id
-              ? { ...q, status: "failed", error: err.message }
-              : q,
-          ),
-        );
-      }
-
-      // Delay between items
-      await new Promise((r) => setTimeout(r, 2000));
+      // The server rows replace the staged ones (they arrive via polling).
+      setQueue((prev) =>
+        prev.filter((i) => !(i.staged && i.status === "pending")),
+      );
+      addLog(
+        "Queued. Collection now runs server-side — closing this tab won't stop it.",
+      );
+      toast.success(
+        `Queued ${jobs.length} items — the run continues server-side even if you close the tab`,
+      );
+      await loadServerQueue();
+    } catch (err: any) {
+      console.error("Failed to enqueue collection:", err);
+      addLog(`ERROR: ${err.message}`);
+      toast.error(`Failed to queue collection: ${err.message}`);
+    } finally {
+      setProcessing(false);
     }
-
-    setProcessing(false);
-    addLog("Batch processing finished.");
-    toast.success("Batch processing queue finished");
-    loadRecentResults();
   };
 
   return (
@@ -1217,7 +1248,7 @@ export const VisibilityRankingsTab = () => {
                     variant="outline"
                     size="sm"
                     onClick={clearCompleted}
-                    disabled={processing || queue.length === 0}
+                    disabled={queue.length === 0}
                   >
                     Clear Completed
                   </Button>
@@ -1225,7 +1256,7 @@ export const VisibilityRankingsTab = () => {
                     variant="destructive"
                     size="sm"
                     onClick={clearAll}
-                    disabled={processing || queue.length === 0}
+                    disabled={queue.length === 0}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -1242,9 +1273,10 @@ export const VisibilityRankingsTab = () => {
               <div className="bg-slate-50 border rounded-lg p-4 flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                   <span className="font-medium">Batch Action</span>
-                  {processing && (
+                  {(processing || serverActive) && (
                     <span className="text-xs text-teal animate-pulse font-medium flex items-center gap-1">
-                      <Loader2 className="h-3 w-3 animate-spin" /> Processing
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {processing ? "Queueing" : "Running server-side"}
                     </span>
                   )}
                 </div>
@@ -1252,14 +1284,15 @@ export const VisibilityRankingsTab = () => {
                   onClick={() => setConfirmStartOpen(true)}
                   disabled={
                     processing ||
-                    queue.filter((i) => i.status === "pending").length === 0
+                    queue.filter((i) => i.staged && i.status === "pending")
+                      .length === 0
                   }
                   className="w-full bg-teal hover:bg-teal/90"
                 >
                   {processing ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Processing...
+                      Queueing...
                     </>
                   ) : (
                     <>
@@ -1268,6 +1301,12 @@ export const VisibilityRankingsTab = () => {
                     </>
                   )}
                 </Button>
+                {serverActive && (
+                  <p className="text-xs text-muted-foreground">
+                    Collection runs server-side — you can close this tab and
+                    check back later.
+                  </p>
+                )}
               </div>
 
               <ScrollArea className="flex-1 h-[400px] pr-4">
@@ -1464,10 +1503,10 @@ export const VisibilityRankingsTab = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Run for all models?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will collect responses across all models (OpenAI, Perplexity,
-              Google AI Overviews) for the pending queue items. Choose
-              "Customize" to pick a subset (e.g. only OpenAI when re-collecting
-              after an outage).
+              This will queue the pending items for server-side collection
+              across all models (OpenAI, Perplexity, Gemini) — you can close
+              the tab once it starts. Choose "Customize" to pick a subset
+              (e.g. only OpenAI when re-collecting after an outage).
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

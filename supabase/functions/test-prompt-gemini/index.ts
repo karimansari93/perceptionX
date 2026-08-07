@@ -27,22 +27,6 @@ serve(async (req) => {
 
     console.log('Making request to Gemini API...')
 
-    // First, let's try to list available models to see what's actually available
-    console.log('Checking available models...');
-    const listModelsResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
-      method: 'GET',
-      headers: {
-        'x-goog-api-key': geminiApiKey
-      }
-    });
-    
-    if (listModelsResponse.ok) {
-      const modelsData = await listModelsResponse.json();
-      console.log('Available models:', JSON.stringify(modelsData, null, 2));
-    } else {
-      console.log('Failed to list models:', listModelsResponse.status);
-    }
-
     const requestBody = {
       contents: [{
         parts: [{
