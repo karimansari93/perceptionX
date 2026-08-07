@@ -251,6 +251,18 @@ serve(async (req) => {
           .update({ status: "failed", error_log: "Cancelled by admin", updated_at: now.toISOString() })
           .eq("id", job.id);
         result = { processed: 0, message: "Job cancelled" };
+        // Don't fall through to batch processing for a cancelled job — chain
+        // so any remaining jobs keep draining.
+        fetch(`${supabaseUrl}/functions/v1/process-visibility-queue`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+          },
+        }).catch((e) => console.error("Failed to chain execution:", e));
+        return new Response(JSON.stringify(result), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       } else
       // Mark as processing if pending
       if (job.status === "pending") {
