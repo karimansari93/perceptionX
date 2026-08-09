@@ -317,33 +317,45 @@ export const CompetitorsSkeleton = () => {
   );
 };
 
+// Mirrors the SWOT quadrant layout the tab renders: title block, function
+// pills, then a full-width plot card with scattered marker placeholders.
 export const ThematicSkeleton = () => {
+  const markers = [
+    { left: '72%', bottom: '82%' }, { left: '58%', bottom: '68%' },
+    { left: '84%', bottom: '58%' }, { left: '40%', bottom: '46%' },
+    { left: '66%', bottom: '34%' }, { left: '28%', bottom: '20%' },
+    { left: '78%', bottom: '14%' },
+  ];
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="space-y-2">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-4 w-96" />
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {[1, 2, 3, 4, 5, 6].map((i) => (
-          <Card key={i} className="min-h-[200px]">
-            <CardHeader>
-              <Skeleton className="h-6 w-40 mb-2" />
-              <Skeleton className="h-4 w-24" />
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-5/6" />
-                <Skeleton className="h-4 w-3/4" />
-              </div>
-              <div className="flex gap-2 mt-4">
-                <Skeleton className="h-6 w-16" />
-                <Skeleton className="h-6 w-20" />
-              </div>
-            </CardContent>
-          </Card>
+      <div className="flex gap-4">
+        {[1, 2, 3, 4].map((i) => (
+          <Skeleton key={i} className="h-8 w-28" />
         ))}
+      </div>
+      <div className="rounded-[20px] border border-gray-100 bg-white px-7 pt-4 pb-5">
+        <div
+          className="relative rounded-2xl bg-gray-50 overflow-hidden"
+          style={{ height: 'clamp(320px, calc(100vh - 345px), 520px)' }}
+        >
+          <div className="absolute top-0 bottom-0 w-px bg-gray-200" style={{ left: '60%' }} />
+          <div className="absolute left-0 right-0 h-px bg-gray-200" style={{ top: '60%' }} />
+          {markers.map((m, i) => (
+            <div key={i} className="absolute flex items-center gap-2" style={{ left: m.left, bottom: m.bottom }}>
+              <Skeleton className="h-3.5 w-3.5 rounded-full flex-shrink-0" />
+              <Skeleton className="h-3 w-24" />
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 flex justify-between px-1">
+          <Skeleton className="h-3 w-8" />
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-3 w-8" />
+        </div>
       </div>
     </div>
   );

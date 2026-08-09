@@ -96,7 +96,7 @@ const STEPS: WalkthroughStep[] = [
     target: '[data-tour="themes-first-row"]',
     title: 'Themes',
     content:
-      'Themes groups what AI is saying about you into topics. Sort by volume or sentiment to see what matters most, then click any theme to dig into the underlying mentions.',
+      'Themes places every attribute by how loudly AI talks about it (volume) and how positively (sentiment) — loud negatives are what to fix first, quiet positives are what to amplify. Every dot here is clickable: click an attribute to open its detail view with the sentiment split, verbatim quotes, and the sources behind them.',
     placement: 'bottom',
     disableBeacon: true,
     disableScrolling: true,
