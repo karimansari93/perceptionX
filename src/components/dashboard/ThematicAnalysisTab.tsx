@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { PromptResponse } from '@/types/dashboard';
 import { ATTRIBUTES, normalizeAttributeId } from '@/config/attributes';
+import { ATTRIBUTE_ICONS } from '@/config/attributeIcons';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { Favicon } from '@/components/ui/favicon';
 import { ScrollablePills } from './ScrollablePills';
@@ -81,31 +82,8 @@ interface AITheme {
 
 // Icon mapping for attributes (methodology v2 — 13 attributes). Legacy v1 keys
 // are kept so existing-client dashboards still show icons on historical data.
-const ATTRIBUTE_ICONS: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
-  // v2 — Employee Experience
-  'mission-purpose-impact': Heart,
-  'compensation': Award,
-  'company-culture': Users,
-  'leadership': Crown,
-  'job-security': Lock,
-  'career-opportunities': TrendingUp,
-  'wellbeing-balance': Coffee,
-  'inclusion': Shield,
-  'innovation': Lightbulb,
-  // v2 — Candidate Experience
-  'application-communication': MessageSquare,
-  'candidate-feedback': MessageCircle,
-  'interview-experience': ClipboardList,
-  'onboarding-experience': UserCheck,
-  // v1 legacy (existing clients still on the old set)
-  'mission-purpose': Target,
-  'rewards-recognition': Award,
-  'social-impact': Heart,
-  'security-perks': Lock,
-  'application-process': FileText,
-  'candidate-communication': MessageSquare,
-  'overall-candidate-experience': Briefcase
-};
+// Attribute icons live in @/config/attributeIcons so every surface (Themes,
+// Sources) labels an attribute with the same mark.
 
 // ---- Design tokens (perceptionx design system) -----------------------------
 const INK = '#13274F';

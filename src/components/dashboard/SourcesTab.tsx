@@ -1,27 +1,38 @@
-import { useState, useMemo, useEffect, useCallback, useDeferredValue, memo } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useState, useMemo, useEffect, useCallback, memo } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CitationCount } from "@/types/dashboard";
-import { FileText, TrendingUp, TrendingDown, Check, X, Info } from 'lucide-react';
+import {
+  FileText, TrendingUp, TrendingDown, Info, ExternalLink, ChartLine, BarChartHorizontal,
+  Search, Tags, HelpCircle, Globe, Bot, SmilePlus,
+} from 'lucide-react';
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  LabelList,
+  Tooltip as RechartsTooltip,
+} from 'recharts';
 import { SourceDetailsModal } from "./SourceDetailsModal";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Favicon } from "@/components/ui/favicon";
-import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS } from "@/utils/sourceConfig";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { extractSourceUrl, extractDomain, enhanceCitations, getFavicon } from "@/utils/citationUtils";
+import { enhanceCitations, normalizePageKey, getFavicon } from "@/utils/citationUtils";
+import { getLLMDisplayName } from "@/config/llmLogos";
+import { getAttributeIconByName } from "@/config/attributeIcons";
+import { categorizeSourceByMediaType } from "@/utils/sourceConfig";
+import { sentimentRatioV2 } from "@/lib/sentimentV2";
+import LLMLogo from "@/components/LLMLogo";
 import { ScrollablePills } from "./ScrollablePills";
-import { SearchInput } from "./SearchInput";
+import { FilterDropdown } from "./FilterDropdown";
 import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
-
-interface TimeBasedData {
-  name: string;
-  current: number;
-  previous: number;
-  change: number;
-  changePercent: number;
-}
 
 interface SourcesTabProps {
   topCitations: CitationCount[];
@@ -41,6 +52,9 @@ interface SourcesTabProps {
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
   onJobFunctionChange?: (value: string) => void;
+  // Per-response sentiment rollup rows (company_response_sentiment_mv) —
+  // powers the Sentiment column of the cited-pages table.
+  responseSentimentRows?: any[];
 }
 
 // Helper function to normalize domains for consistent counting
@@ -49,8 +63,77 @@ const normalizeDomain = (domain: string): string => {
   return domain.trim().toLowerCase().replace(/^www\./, '');
 };
 
-export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: SourcesTabProps) => {
-  
+// Trend-line series palette — brand teal first, then hues validated for
+// CVD-safe adjacency on the white surface (dataviz six-checks). Fixed order.
+const CHART_COLORS = ['#0DBCBA', '#5B7FD9', '#DB5E89', '#E8A33D', '#8B5CF6'];
+const TREND_SERIES_LIMIT = 5;
+// The mentioned/not-mentioned split colors used by the domain-list bars.
+const MENTIONED_COLOR = '#0DBCBA';
+const NOT_MENTIONED_COLOR = '#D1D5DB';
+// Horizontal ranking (bar mode) row count and bar thickness.
+const BAR_RANK_LIMIT = 8;
+const RANK_BAR_SIZE = 18;
+// How many domain rows render before the "Show all" opt-in (each row mounts a
+// Favicon image; keeping the initial DOM small keeps the tab snappy at
+// Netflix-scale source counts).
+const INITIAL_DOMAIN_LIMIT = 50;
+// Cited-pages table pagination: initial rows + increment per "Show more".
+const INITIAL_PAGE_ROWS = 10;
+const PAGE_ROWS_STEP = 50;
+
+// Filter vocabularies, in the order they read best in a dropdown.
+const SOURCE_TYPE_ORDER = ['owned', 'influenced', 'organic', 'competitive', 'irrelevant'];
+const SENTIMENT_ORDER = ['positive', 'neutral', 'negative'];
+type SentimentBucket = 'positive' | 'neutral' | 'negative';
+
+// When several URL variants collapse into one page (highlight fragments,
+// tracking params), show the cleanest one: no #fragment, then shortest.
+const preferDisplayUrl = (a: string, b: string): string => {
+  const aHash = a.includes('#');
+  const bHash = b.includes('#');
+  if (aHash !== bHash) return aHash ? b : a;
+  return a.length <= b.length ? a : b;
+};
+
+// Some stored citation titles contain literal "&"-style escapes (JSON
+// escaping survived as text). Decode them so titles render as "&" etc.
+const decodeUnicodeEscapes = (s: string): string => {
+  if (!s || !s.includes('\\u')) return s;
+  return s.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+};
+
+// URL shown to the user: no protocol, no www, no trailing slash.
+const formatDisplayUrl = (url: string): string =>
+  url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+
+// Fallback page title when the citation carried none: the readable path.
+const titleFromUrl = (url: string, domain: string): string => {
+  try {
+    const u = new URL(url.startsWith('http') ? url : `https://${url}`);
+    const path = decodeURIComponent(u.pathname).replace(/\/$/, '');
+    return path && path !== '' ? `${domain}${path}` : domain;
+  } catch {
+    return domain;
+  }
+};
+
+type TrendGranularity = 'week' | 'month';
+
+const startOfWeekTs = (ts: number): number => {
+  const d = new Date(ts);
+  const day = (d.getDay() + 6) % 7; // Monday = 0
+  d.setDate(d.getDate() - day);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+
+const startOfMonthTs = (ts: number): number => {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+};
+
+export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, responseSentimentRows = [] }: SourcesTabProps) => {
+
   // Responses arrive already scoped by useDashboardData (brand scope — the
   // current company plus same-name sibling profiles — with the location and
   // period filters applied). Re-filtering by currentCompanyId here would drop
@@ -65,28 +148,33 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   // -----------------------------------------------------------------------
   // SINGLE-PASS CITATION NORMALIZATION
   //
-  // For orgs like Netflix (~38K responses × ~6 citations each), the prior
-  // implementation invoked JSON.parse + enhanceCitations in 8+ separate memos
-  // and helper functions. That work lives on the main thread and was the
-  // primary reason SourcesTab froze the browser on open.
-  //
-  // We do the parse ONCE here and hand every downstream consumer a cheap
-  // precomputed shape. All downstream memos read `normalizedResponses` and
-  // `responsesByDomain` instead of parsing citations again.
+  // For orgs like Netflix (~38K responses × ~6 citations each), parsing the
+  // citations jsonb is by far the heaviest client-side work on this tab. We
+  // do the parse ONCE per response here and hand every downstream consumer a
+  // cheap precomputed shape: cited domains, cited pages (normalized URL
+  // keys), and the response's model/theme/timestamp.
   // -----------------------------------------------------------------------
+  type PageCitation = {
+    key: string;    // normalized page key (domain + path)
+    url: string;    // best display URL seen for this page
+    title: string;
+    domain: string; // normalized domain, for the source modal + favicon
+  };
+
   type NormalizedResponse = {
     raw: any;
     id: string;
     company_mentioned: boolean;
-    promptType: string | undefined;
     theme: string | undefined;
+    promptType: string | undefined;
     jobFunction: string | null;
+    model: string;
+    // Epoch ms of tested_at (fallback created_at); null when unparseable.
+    testedAt: number | null;
     // Normalized, deduplicated website domains cited by this response.
     domains: string[];
-    // Per-domain lowercased "title url" text, used only to power free-text
-    // search over the page behind each source. Captured in the same single
-    // pass (the parse already runs here), then merged lazily on first search.
-    domainText: Record<string, string>;
+    // Unique cited pages (deduplicated by normalized page key).
+    pages: PageCitation[];
   };
 
   const normalizeResponsesOnce = (input: any[]): NormalizedResponse[] => {
@@ -96,32 +184,39 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
         try { parsed = JSON.parse(parsed); } catch { parsed = null; }
       }
       const arr = Array.isArray(parsed) ? enhanceCitations(parsed) : [];
-      const seen = new Set<string>();
+      const seenDomains = new Set<string>();
+      const seenPages = new Set<string>();
       const domains: string[] = [];
-      const domainText: Record<string, string> = {};
+      const pages: PageCitation[] = [];
       for (const c of arr) {
-        if (c.type === 'website' && c.domain) {
-          const d = normalizeDomain(c.domain);
-          if (!d) continue;
-          if (!seen.has(d)) {
-            seen.add(d);
-            domains.push(d);
-          }
-          const extra = `${c.title || ''} ${c.url || ''}`.trim().toLowerCase();
-          if (extra) {
-            domainText[d] = domainText[d] ? `${domainText[d]} ${extra}` : extra;
+        if (c.type !== 'website' || !c.domain) continue;
+        const d = normalizeDomain(c.domain);
+        if (!d) continue;
+        if (!seenDomains.has(d)) {
+          seenDomains.add(d);
+          domains.push(d);
+        }
+        if (c.url) {
+          const key = normalizePageKey(c.url);
+          if (key && !seenPages.has(key)) {
+            seenPages.add(key);
+            pages.push({ key, url: c.url, title: c.title || '', domain: d });
           }
         }
       }
+      const tsRaw = r.tested_at || r.created_at;
+      const ts = tsRaw ? Date.parse(tsRaw) : NaN;
       return {
         raw: r,
         id: r.id,
         company_mentioned: r.company_mentioned === true,
-        promptType: r.confirmed_prompts?.prompt_type,
         theme: r.confirmed_prompts?.prompt_theme,
+        promptType: r.confirmed_prompts?.prompt_type,
         jobFunction: r.confirmed_prompts?.job_function_context?.trim() || null,
+        model: r.ai_model || '',
+        testedAt: Number.isFinite(ts) ? ts : null,
         domains,
-        domainText,
+        pages,
       };
     });
   };
@@ -136,9 +231,8 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     [previousPeriodResponses],
   );
 
-  // Reverse index: domain → responses that cite it. Used by
-  // getResponsesForSource / isDomainFromAIResponses / isSourceFromJobFunction
-  // which previously re-parsed all responses for every source click/render.
+  // Reverse index: domain → responses that cite it. Powers the source modal
+  // (which needs the raw rows behind a domain) in O(1) per click.
   const responsesByDomain = useMemo(() => {
     const map = new Map<string, NormalizedResponse[]>();
     for (const nr of normalizedResponses) {
@@ -166,184 +260,47 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return map;
   }, [normalizedPrevResponses]);
 
-  // Calculate citation counts from search results
-  const searchResultCitations = useMemo(() => {
-    const citationCounts: Record<string, number> = {};
-    
-    filteredSearchResults.forEach(result => {
-      if (result.domain) {
-        const normalizedDomain = normalizeDomain(result.domain);
-        if (normalizedDomain) {
-          citationCounts[normalizedDomain] = (citationCounts[normalizedDomain] || 0) + (result.mentionCount || 1);
-        }
+  // response_id → sentiment ratio (positive/(positive+negative), null = the
+  // response had themes but none polarized). Same formula as the rest of the
+  // dashboard (methodology v2).
+  const sentimentById = useMemo(() => {
+    const map = new Map<string, number | null>();
+    for (const row of responseSentimentRows) {
+      if (!row?.response_id) continue;
+      let ratio: number | null;
+      if (row.sentiment_ratio === null || row.sentiment_ratio === undefined) {
+        ratio = sentimentRatioV2(Number(row.positive_themes) || 0, Number(row.negative_themes) || 0);
+      } else {
+        const n = typeof row.sentiment_ratio === 'number' ? row.sentiment_ratio : Number(row.sentiment_ratio);
+        ratio = Number.isFinite(n) ? n : null;
       }
-    });
-    
-    return Object.entries(citationCounts)
-      .map(([domain, count]) => ({ domain, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [filteredSearchResults]);
-  
+      map.set(row.response_id, ratio);
+    }
+    return map;
+  }, [responseSentimentRows]);
+
   // Modal states - persisted
   const [selectedSource, setSelectedSource] = usePersistedState<CitationCount | null>('sourcesTab.selectedSource', null);
   const [isSourceModalOpen, setIsSourceModalOpen] = usePersistedState<boolean>('sourcesTab.isSourceModalOpen', false);
-  // Render cap: each row creates Favicon + Badge + Popover + Tooltip. With
-  // 500+ source domains that's thousands of DOM nodes on mount and the tab
-  // feels frozen. Show top N by default, let the user opt in to the full list.
-  const INITIAL_RENDER_LIMIT = 100;
-  const [showAllSources, setShowAllSources] = useState(false);
-  // Free-text search over source domains + the page title/URL behind each
-  // citation (ephemeral, like the Prompts tab). The title/URL index is built
-  // lazily — only once the user actually types — so the no-search path stays
-  // exactly as fast as before.
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const deferredSearchQuery = useDeferredValue(searchQuery);
-  const searchActive = deferredSearchQuery.trim().length > 0;
-  // Let the global command palette pre-fill this tab's search.
-  useTabSearchSeed('sources', setSearchQuery);
-  // Mentioned/Not Mentioned toggle - persisted
-  const [selectedCompanyMentionedFilter, setSelectedCompanyMentionedFilter] = usePersistedState<'mentioned' | 'not-mentioned'>('sourcesTab.selectedCompanyMentionedFilter', 'mentioned');
-  // Other filters hardcoded to defaults (dropdowns removed).
-  //
-  // Typed as the full union rather than narrowed-to-literal so the
-  // "filter active" branches downstream stay valid even though the current
-  // constant value never activates them. If these dropdowns get re-enabled,
-  // they can be promoted back to useState without any caller changes.
-  const selectedMediaTypeFilter: string | null = null;
-  const selectedSourceTypeFilter = 'all' as 'all' | 'ai-responses' | 'search-results';
+  const [showAllDomains, setShowAllDomains] = useState(false);
+  const [visiblePageRows, setVisiblePageRows] = useState(INITIAL_PAGE_ROWS);
+  // Cited-pages toolbar. Empty array = filter inactive (all rows pass).
+  const [pageSearch, setPageSearch] = useState('');
+  const [filterAttributes, setFilterAttributes] = useState<string[]>([]);
+  const [filterQuestionTypes, setFilterQuestionTypes] = useState<string[]>([]);
+  const [filterSourceTypes, setFilterSourceTypes] = useState<string[]>([]);
+  const [filterModels, setFilterModels] = useState<string[]>([]);
+  const [filterSentiments, setFilterSentiments] = useState<string[]>([]);
+  // Chart form toggle for the trends card - persisted. 'bar' = horizontal
+  // ranking for the current month (the default); 'line' = trend over time.
+  const [trendChartType, setTrendChartType] = usePersistedState<'line' | 'bar'>('sourcesTab.trendChartType', 'bar');
   // Controlled by the parent Dashboard so the job-function selection is shared
   // across all tabs and never resets on tab switch.
   const selectedJobFunctionFilter = selectedJobFunction;
   const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
-  const selectedThemeFilter = 'all' as string;
-  const selectedPromptTypeFilter = 'all' as string;
 
-  // `selectedCompanyMentionedFilter` is persisted state above; widen below via
-  // comparison sites where we need to handle a legacy 'all' branch.
-  
-  // Media type editing state
-  const [editingMediaType, setEditingMediaType] = useState<string | null>(null);
-  const [customMediaTypes, setCustomMediaTypes] = useState<Record<string, string>>({});
-
-  // Get all available prompt types from responses
-  const availablePromptTypes = useMemo(() => {
-    const promptTypes = new Set<string>();
-    filteredResponses.forEach(r => {
-      const promptType = r.confirmed_prompts?.prompt_type;
-      if (promptType) {
-        if (['experience', 'competitive', 'discovery', 'informational'].includes(promptType)) {
-          promptTypes.add(promptType);
-        }
-      }
-    });
-    return Array.from(promptTypes).sort();
-  }, [filteredResponses]);
-
-  // Get all available themes/attributes from responses
-  const availableThemes = useMemo(() => {
-    const themes = new Set<string>();
-    filteredResponses.forEach(r => {
-      const theme = r.confirmed_prompts?.prompt_theme;
-      if (theme && theme.trim()) {
-        themes.add(theme);
-      }
-    });
-    
-    // Sort themes alphabetically, but put "General" first if it exists
-    const sortedThemes = Array.from(themes).sort((a, b) => {
-      if (a === 'General') return -1;
-      if (b === 'General') return 1;
-      return a.localeCompare(b);
-    });
-    
-    return sortedThemes;
-  }, [filteredResponses]);
-
-  // Helper to get filtered responses based on all filters (job function, theme, prompt_type)
-  const getFilteredResponsesByAllFilters = useMemo(() => {
-    let filtered = filteredResponses;
-    
-    // Filter by prompt_type
-    if (selectedPromptTypeFilter !== 'all') {
-      filtered = filtered.filter(response => {
-        const promptType = response.confirmed_prompts?.prompt_type;
-        if (selectedPromptTypeFilter === 'experience') {
-          return promptType === 'experience';
-        } else if (selectedPromptTypeFilter === 'competitive') {
-          return promptType === 'competitive';
-        } else if (selectedPromptTypeFilter === 'discovery') {
-          return promptType === 'discovery';
-        } else if (selectedPromptTypeFilter === 'informational') {
-          return promptType === 'informational';
-        }
-        return false;
-      });
-    }
-    
-    // Filter by job function
-    if (selectedJobFunctionFilter !== 'all') {
-      filtered = filtered.filter(response => {
-        const jobFunctionContext = response.confirmed_prompts?.job_function_context?.trim();
-        return jobFunctionContext === selectedJobFunctionFilter;
-      });
-    }
-    
-    // Filter by theme/attribute
-    if (selectedThemeFilter !== 'all') {
-      filtered = filtered.filter(response => {
-        const theme = response.confirmed_prompts?.prompt_theme;
-        return theme === selectedThemeFilter;
-      });
-    }
-    
-    return filtered;
-  }, [filteredResponses, selectedPromptTypeFilter, selectedJobFunctionFilter, selectedThemeFilter]);
-
-  // Helper to get filtered responses based on job function filter (kept for backward compatibility)
-  const getFilteredResponsesByJobFunction = useMemo(() => {
-    return getFilteredResponsesByAllFilters;
-  }, [getFilteredResponsesByAllFilters]);
-
-  // Citation counts from AI responses — reads pre-parsed normalizedResponses.
-  // getFilteredResponsesByJobFunction returns filteredResponses verbatim when
-  // the filter dropdowns are at default 'all' (current UI), so we index by
-  // normalizedResponses (same underlying data). If the filters are ever
-  // re-enabled this should be restructured to filter normalizedResponses.
-  const aiResponseCitations = useMemo(() => {
-    const citationCounts: Record<string, number> = {};
-    for (const nr of normalizedResponses) {
-      for (const d of nr.domains) {
-        citationCounts[d] = (citationCounts[d] || 0) + 1;
-      }
-    }
-    return Object.entries(citationCounts)
-      .map(([domain, count]) => ({ domain, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [normalizedResponses]);
-
-  // Combine both sources for "all" view
-  const allSourcesCitations = useMemo(() => {
-    const combinedCounts: Record<string, number> = {};
-    
-    // Add AI response citations
-    aiResponseCitations.forEach(({ domain, count }) => {
-      combinedCounts[domain] = (combinedCounts[domain] || 0) + count;
-    });
-    
-    // Add search result citations
-    searchResultCitations.forEach(({ domain, count }) => {
-      combinedCounts[domain] = (combinedCounts[domain] || 0) + count;
-    });
-    
-    return Object.entries(combinedCounts)
-      .map(([domain, count]) => ({ domain, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [aiResponseCitations, searchResultCitations]);
-
-  // Clear persisted "unknown" source so we never open the modal with unknown (domains are now derived from URLs).
-  // Note: CitationCount's identifying field is `domain`, not `name` — the earlier
-  // implementation referenced `.name` which was silently undefined and never
-  // triggered the cleanup.
+  // Clear persisted "unknown" source so we never open the modal with unknown
+  // (domains are now derived from URLs).
   useEffect(() => {
     if (selectedSource?.domain && normalizeDomain(selectedSource.domain) === 'unknown') {
       setSelectedSource(null);
@@ -356,70 +313,30 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     setIsSourceModalOpen(true);
   };
 
+  // Open a domain's source modal by name — used by every chart affordance
+  // (bars, axis labels, legend) so they all behave like the list rows.
+  // Only ever called from event handlers, so reading `analyzed` (declared
+  // below) is safe: it's initialized long before any click lands.
+  const openDomainModal = (domain: string) => {
+    const d = normalizeDomain(domain);
+    if (!d) return;
+    handleSourceClick({ domain: d, count: analyzed.domainCounts.get(d) || 0 });
+  };
+
   const handleCloseSourceModal = () => {
     setIsSourceModalOpen(false);
     setSelectedSource(null);
   };
 
-  const handleMediaTypeClick = (_mediaType: string) => {
-    // Media type filtering is disabled — the dropdown was removed and
-    // selectedMediaTypeFilter is a constant `null`. This handler is kept only
-    // because it's still wired up in the JSX; when filtering gets re-enabled,
-    // reintroduce the useState<string | null>(null) and restore the toggle
-    // logic here.
-  };
-
-
-  // Media type editing functions
-  const handleMediaTypeEdit = (domain: string) => {
-    setEditingMediaType(domain);
-  };
-
-  const handleMediaTypeSave = (domain: string, newMediaType: string) => {
-    setCustomMediaTypes(prev => ({
-      ...prev,
-      [domain]: newMediaType
-    }));
-    setEditingMediaType(null);
-  };
-
-  const handleMediaTypeCancel = () => {
-    setEditingMediaType(null);
-  };
-
-  const getEffectiveMediaType = (domain: string, sourceResponses: any[]) => {
-    // Check if there's a custom override
-    if (customMediaTypes[domain]) {
-      return customMediaTypes[domain];
-    }
-    // Otherwise use the automatic categorization
-    return categorizeSourceByMediaType(domain, sourceResponses, companyName);
-  };
-
-  // Helper function to check if a domain comes from search results
-  const isDomainFromSearchResults = (domain: string) => {
-    const normalizedDomain = normalizeDomain(domain);
-    return filteredSearchResults.some(result => normalizeDomain(result.domain) === normalizedDomain);
-  };
-
-  // Helper function to check if a domain comes from AI responses. O(1) via
-  // the precomputed responsesByDomain index instead of re-parsing everything.
-  const isDomainFromAIResponses = (domain: string) => {
-    return responsesByDomain.has(normalizeDomain(domain));
-  };
-
-  // Helper function to check if a domain has company mentions
-  const hasDomainCompanyMentions = (domain: string) => {
-    const sourceResponses = getResponsesForSource(domain);
-    
-    // Only check the company_mentioned field from the database
-    const hasMentions = sourceResponses.some(response => {
-      return response.company_mentioned === true;
-    });
-    
-    
-    return hasMentions;
-  };
+  // Picking a source in the global command palette lands here. This tab has no
+  // search box of its own (the palette IS the search), so the seed opens that
+  // domain's detail modal directly.
+  useTabSearchSeed('sources', (domain: string) => {
+    const d = normalizeDomain(domain);
+    if (!d) return;
+    setSelectedSource({ domain: d, count: 0 });
+    setIsSourceModalOpen(true);
+  });
 
   // Helper function to get unique job function contexts from responses
   const getUniqueJobFunctions = useMemo(() => {
@@ -434,9 +351,6 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   }, [filteredResponses]);
 
   const getResponsesForSource = (domain: string) => {
-    // Return the raw response rows that cite this domain. The underlying
-    // data is already keyed via responsesByDomain so this is O(1) instead
-    // of iterating and re-parsing every response.
     const list = responsesByDomain.get(normalizeDomain(domain));
     return list ? list.map((nr) => nr.raw) : [];
   };
@@ -449,496 +363,599 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
 
   // Helper to format domain to a human-friendly name
   const getSourceDisplayName = (domain: string) => {
-    return domain.replace(/^www\./, ""); // Remove www. if present
+    return domain.replace(/^www\./, "");
   };
 
-  // Cross-period citation counts for delta computation. Reads normalized data
-  // for both periods — no citation re-parsing.
-  // Does a response belong in the currently-analyzed set? Used as the shared
-  // basis for both the source counts (numerator) and the response total
-  // (denominator) so coverage percentages stay consistent.
+  // Does a response belong in the currently-analyzed set? Shared basis for
+  // domain counts, page counts, the trend chart and the coverage denominator,
+  // so every number on the page describes the same subset. Mentioned and
+  // not-mentioned responses are BOTH analyzed — the split is shown per row
+  // instead of behind a toggle.
   const responseMatchesFilters = useCallback((nr: NormalizedResponse) => {
-    const mentionOk = selectedCompanyMentionedFilter === 'mentioned'
-      ? nr.company_mentioned === true
-      : nr.company_mentioned === false;
-    if (!mentionOk) return false;
     if (selectedJobFunctionFilter !== 'all' && nr.jobFunction !== selectedJobFunctionFilter) return false;
     return true;
-  }, [selectedCompanyMentionedFilter, selectedJobFunctionFilter]);
+  }, [selectedJobFunctionFilter]);
 
-  // Coverage denominators: how many responses are in the analyzed set for the
-  // current and previous periods. A source's percentage is "share of these
-  // responses that cite it", so these do NOT sum to 100 across sources.
-  const totalResponsesAnalyzed = useMemo(
-    () => normalizedResponses.filter(responseMatchesFilters).length,
-    [normalizedResponses, responseMatchesFilters]
-  );
-  const totalPrevResponsesAnalyzed = useMemo(
-    () => normalizedPrevResponses.filter(responseMatchesFilters).length,
-    [normalizedPrevResponses, responseMatchesFilters]
-  );
+  type PageAgg = {
+    key: string;
+    url: string;
+    title: string;
+    domain: string;
+    count: number;          // responses citing this page
+    mentionedCount: number; // …of which mention the company
+    themeCounts: Map<string, number>;
+    models: Set<string>;    // raw ai_model values
+    ratioSum: number;       // sum of sentiment ratios over responses with signal
+    ratioCount: number;
+  };
 
-  const timeBasedCitations = useMemo(() => {
-    if (normalizedPrevResponses.length === 0) return [];
-
-    const countFromNormalized = (list: NormalizedResponse[]) => {
-      const counts: Record<string, number> = {};
-      for (const nr of list) {
-        if (!responseMatchesFilters(nr)) continue;
-        for (const d of nr.domains) {
-          counts[d] = (counts[d] || 0) + 1;
-        }
-      }
-      return counts;
-    };
-
-    const currentCounts = countFromNormalized(normalizedResponses);
-    const prevCounts = countFromNormalized(normalizedPrevResponses);
-
-    const allDomains = new Set([...Object.keys(currentCounts), ...Object.keys(prevCounts)]);
-
-    return Array.from(allDomains).map(domain => ({
-      name: domain,
-      current: currentCounts[domain] || 0,
-      previous: prevCounts[domain] || 0,
-      change: (currentCounts[domain] || 0) - (prevCounts[domain] || 0),
-      changePercent: 0 // computed at render time using consistent displayed totals
-    })).sort((a, b) => b.current - a.current);
-  }, [normalizedResponses, normalizedPrevResponses, responseMatchesFilters]);
-
-  // Get the appropriate citation source based on filter, with company_mentioned filtering applied
-  const allTimeCitations = useMemo(() => {
-    let sourceCitations;
-    
-    // If company mentioned filter is active and not on search-results, recalculate counts from filtered responses
-    if ((selectedCompanyMentionedFilter as string) !== 'all' && selectedSourceTypeFilter !== 'search-results') {
-      const filteredCounts: Record<string, number> = {};
-
-      // Recalculate from the normalized, pre-parsed responses. No JSON.parse
-      // on the hot path.
-      for (const nr of normalizedResponses) {
-        const matchesFilter = selectedCompanyMentionedFilter === 'mentioned'
-          ? nr.company_mentioned === true
-          : nr.company_mentioned === false;
-        if (!matchesFilter) continue;
-        for (const d of nr.domains) {
-          filteredCounts[d] = (filteredCounts[d] || 0) + 1;
-        }
-      }
-      
-      // If source type filter is 'all' and company mentioned filter is 'not-mentioned', 
-      // also include search results (they don't have company_mentioned field, so treat as not-mentioned)
-      if (selectedSourceTypeFilter === 'all' && selectedCompanyMentionedFilter === 'not-mentioned') {
-        filteredSearchResults.forEach(result => {
-          if (result.domain) {
-            const normalizedDomain = normalizeDomain(result.domain);
-            if (normalizedDomain) {
-              filteredCounts[normalizedDomain] = (filteredCounts[normalizedDomain] || 0) + (result.mentionCount || 1);
-            }
-          }
-        });
-      }
-      
-      // Convert to array format, only including sources with counts > 0
-      // This ensures that when filtering by "company IS mentioned", we only show sources
-      // that actually have citations from responses where company_mentioned = true
-      sourceCitations = Object.entries(filteredCounts)
-        .filter(([_, count]) => count > 0) // Only include sources with counts > 0
-        .map(([domain, count]) => ({ domain, count }))
-        .sort((a, b) => b.count - a.count);
-    } else {
-      // No company mentioned filter, use the standard citation sources
-      // When theme filter is active, exclude search results from "all" view
-      // since they don't have theme information
-      const hasThemeFilter = selectedThemeFilter !== 'all';
-      
-      if (selectedSourceTypeFilter === 'ai-responses') {
-        sourceCitations = aiResponseCitations;
-      } else if (selectedSourceTypeFilter === 'search-results') {
-        sourceCitations = searchResultCitations;
-      } else if (hasThemeFilter) {
-        // When filtering by theme, only show AI response citations
-        // (search results don't have theme data)
-        sourceCitations = aiResponseCitations;
-      } else {
-        sourceCitations = allSourcesCitations;
-      }
-    }
-    
-    return sourceCitations.map(citation => ({
-      name: citation.domain,
-      count: citation.count,
-      change: 0 // Will be updated after timeBasedCitations is calculated
-    }));
-  }, [aiResponseCitations, searchResultCitations, allSourcesCitations, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedThemeFilter, normalizedResponses, filteredSearchResults]);
-
-  // Calculate source counts by data type. Reads normalized data — no parsing.
-  const sourceCountsByType = useMemo(() => {
-    const counts: Record<string, { ai: number; search: number; total: number }> = {};
-
+  // ONE pass over the current-period responses producing the domain-level view
+  // (counts + mentioned split) and the matching subset, which the chart and
+  // the page aggregation below both read.
+  const analyzed = useMemo(() => {
+    const domainCounts = new Map<string, number>();
+    const domainMentioned = new Map<string, number>();
+    const matching: NormalizedResponse[] = [];
     for (const nr of normalizedResponses) {
+      if (!responseMatchesFilters(nr)) continue;
+      matching.push(nr);
       for (const d of nr.domains) {
-        if (!counts[d]) counts[d] = { ai: 0, search: 0, total: 0 };
-        counts[d].ai += 1;
-        counts[d].total += 1;
+        domainCounts.set(d, (domainCounts.get(d) || 0) + 1);
+        if (nr.company_mentioned) domainMentioned.set(d, (domainMentioned.get(d) || 0) + 1);
       }
     }
-    
-    // Count search result citations
-    filteredSearchResults.forEach(result => {
-      if (result.domain) {
-        const normalizedDomain = normalizeDomain(result.domain);
-        if (normalizedDomain) {
-          if (!counts[normalizedDomain]) {
-            counts[normalizedDomain] = { ai: 0, search: 0, total: 0 };
-          }
-          counts[normalizedDomain].search += (result.mentionCount || 1);
-          counts[normalizedDomain].total += (result.mentionCount || 1);
-        }
+    return { domainCounts, domainMentioned, matching, total: matching.length };
+  }, [normalizedResponses, responseMatchesFilters]);
+
+  // Previous-period counterpart (counts only — deltas need nothing more).
+  const prevAnalyzed = useMemo(() => {
+    const domainCounts = new Map<string, number>();
+    const pageCounts = new Map<string, number>();
+    let total = 0;
+    for (const nr of normalizedPrevResponses) {
+      if (!responseMatchesFilters(nr)) continue;
+      total += 1;
+      for (const d of nr.domains) {
+        domainCounts.set(d, (domainCounts.get(d) || 0) + 1);
       }
+      const seen = new Set<string>();
+      for (const p of nr.pages) {
+        if (seen.has(p.key)) continue;
+        seen.add(p.key);
+        pageCounts.set(p.key, (pageCounts.get(p.key) || 0) + 1);
+      }
+    }
+    return { domainCounts, pageCounts, total };
+  }, [normalizedPrevResponses, responseMatchesFilters]);
+
+  const hasPrevPeriod = normalizedPrevResponses.length > 0;
+
+  // Ranked domain list with the mentioned/not-mentioned split and
+  // previous-period counts for the delta chips.
+  const domainList = useMemo(() => {
+    return Array.from(analyzed.domainCounts.entries())
+      .filter(([domain]) => domain && domain !== 'unknown')
+      .map(([domain, count]) => ({
+        domain,
+        count,
+        mentionedCount: analyzed.domainMentioned.get(domain) || 0,
+        prevCount: prevAnalyzed.domainCounts.get(domain) || 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [analyzed, prevAnalyzed]);
+
+  // ---------------------------------------------------------------------
+  // Chart data.
+  // Line mode: responses citing each of the top domains, bucketed by week
+  // (short periods) or month, contiguous so gaps render as zero. Series keys
+  // are s0..s4 — recharts treats dots in dataKey strings ("glassdoor.com")
+  // as nested paths, so domains can't be keys directly.
+  // Bar mode: horizontal ranking of the top domains within the month the
+  // data is currently on (the latest month with responses).
+  // ---------------------------------------------------------------------
+  const trend = useMemo(() => {
+    const series = domainList.slice(0, TREND_SERIES_LIMIT).map(d => d.domain);
+    const empty = {
+      data: [] as Record<string, any>[],
+      series,
+      granularity: 'week' as TrendGranularity,
+      monthLabel: '',
+      monthTotal: 0,
+      monthRanking: [] as { name: string; domain: string; count: number }[],
+    };
+    if (series.length === 0) return empty;
+
+    let minTs = Infinity;
+    let maxTs = -Infinity;
+    const monthKeys = new Set<string>();
+    for (const nr of analyzed.matching) {
+      if (nr.testedAt == null) continue;
+      if (nr.testedAt < minTs) minTs = nr.testedAt;
+      if (nr.testedAt > maxTs) maxTs = nr.testedAt;
+      const d = new Date(nr.testedAt);
+      monthKeys.add(`${d.getFullYear()}-${d.getMonth()}`);
+    }
+    if (!Number.isFinite(minTs)) return empty;
+
+    const granularity: TrendGranularity = monthKeys.size > 2 ? 'month' : 'week';
+    const bucketOf = granularity === 'month' ? startOfMonthTs : startOfWeekTs;
+
+    const bucketStarts: number[] = [];
+    let cursor = bucketOf(minTs);
+    const last = bucketOf(maxTs);
+    while (cursor <= last && bucketStarts.length < 60) {
+      bucketStarts.push(cursor);
+      const d = new Date(cursor);
+      if (granularity === 'month') d.setMonth(d.getMonth() + 1);
+      else d.setDate(d.getDate() + 7);
+      cursor = d.getTime();
+    }
+
+    const multiYear = new Date(minTs).getFullYear() !== new Date(maxTs).getFullYear();
+    const rowByBucket = new Map<number, Record<string, any>>();
+    const data = bucketStarts.map(ts => {
+      const d = new Date(ts);
+      const label = granularity === 'month'
+        ? d.toLocaleDateString('en-US', multiYear ? { month: 'short', year: '2-digit' } : { month: 'short' })
+        : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const row: Record<string, any> = { ts, label };
+      series.forEach((_, i) => { row[`s${i}`] = 0; });
+      rowByBucket.set(ts, row);
+      return row;
     });
-    
-    return counts;
-  }, [normalizedResponses, filteredSearchResults]);
 
+    // Current-month ranking for bar mode: counts scoped to the latest month.
+    const currentMonthStart = startOfMonthTs(maxTs);
+    const monthLabel = new Date(currentMonthStart).toLocaleDateString('en-US', { month: 'long' });
+    const monthCounts = new Map<string, number>();
+    let monthTotal = 0;
 
-  // Get sources to display based on showAllSources state, media type filter, and company mentioned filter
-  // When filters are applied, we need to recalculate counts to ensure percentages are correct
-  const displayedSources = useMemo(() => {
-    // Never show "unknown" as a source (e.g. ChatGPT citations without domain are now derived from URL)
-    let sources = allTimeCitations.filter(
-      citation => citation.name && normalizeDomain(citation.name) !== 'unknown'
-    );
-    
-    // Apply media type filter if selected
-    if (selectedMediaTypeFilter) {
-      sources = sources.filter(citation => {
-        const sourceResponses = getResponsesForSource(citation.name);
-        const mediaType = getEffectiveMediaType(citation.name, sourceResponses);
-        return mediaType === selectedMediaTypeFilter;
-      });
-    }
-    
-    // If company mentioned filter is active AND media type filter is also applied,
-    // recalculate counts from normalized data so percentages stay accurate.
-    if ((selectedCompanyMentionedFilter as string) !== 'all' && selectedSourceTypeFilter !== 'search-results' && selectedMediaTypeFilter) {
-      const recalculatedCounts: Record<string, number> = {};
-      const filteredSourceDomains = new Set(sources.map(s => normalizeDomain(s.name)));
-
-      for (const nr of normalizedResponses) {
-        const matchesFilter = selectedCompanyMentionedFilter === 'mentioned'
-          ? nr.company_mentioned === true
-          : nr.company_mentioned === false;
-        if (!matchesFilter) continue;
+    const seriesIndex = new Map(series.map((domain, i) => [domain, i]));
+    for (const nr of analyzed.matching) {
+      if (nr.testedAt == null) continue;
+      const row = rowByBucket.get(bucketOf(nr.testedAt));
+      if (row) {
         for (const d of nr.domains) {
-          if (filteredSourceDomains.has(d)) {
-            recalculatedCounts[d] = (recalculatedCounts[d] || 0) + 1;
-          }
+          const i = seriesIndex.get(d);
+          if (i !== undefined) row[`s${i}`] += 1;
         }
       }
-
-      sources = sources.map(source => {
-        const normalizedName = normalizeDomain(source.name);
-        const newCount = recalculatedCounts[normalizedName] || 0;
-        return { ...source, count: newCount };
-      }).filter(source => source.count > 0);
-    }
-    
-    // Filter by job function - recalculate counts so each source's count
-    // reflects only responses within the selected function (keeps the
-    // coverage percentage consistent with totalResponsesAnalyzed).
-    if (selectedJobFunctionFilter !== 'all') {
-      const jfCounts: Record<string, number> = {};
-      for (const nr of normalizedResponses) {
-        if (!responseMatchesFilters(nr)) continue;
+      if (startOfMonthTs(nr.testedAt) === currentMonthStart) {
+        monthTotal += 1;
         for (const d of nr.domains) {
-          jfCounts[d] = (jfCounts[d] || 0) + 1;
+          if (d === 'unknown') continue;
+          monthCounts.set(d, (monthCounts.get(d) || 0) + 1);
         }
       }
-      sources = sources
-        .map(source => ({ ...source, count: jfCounts[normalizeDomain(source.name)] || 0 }))
-        .filter(source => source.count > 0);
     }
-    
-    // Filter out any sources with 0 counts (shouldn't happen, but safety check)
-    sources = sources.filter(source => source.count > 0);
-    
-    // Sort by count descending after applying filters
-    sources = sources.sort((a, b) => b.count - a.count);
-    
-    return sources;
-  }, [allTimeCitations, selectedMediaTypeFilter, selectedSourceTypeFilter, selectedCompanyMentionedFilter, selectedJobFunctionFilter, normalizedResponses, companyName, customMediaTypes, responsesByDomain, responseMatchesFilters]);
 
-  // Merge change data into all-time citations
-  const allTimeCitationsWithChanges = useMemo(() => {
-    const changeMap = new Map<string, { change: number; previous: number }>();
-    timeBasedCitations.forEach(citation => {
-      changeMap.set(citation.name, { change: citation.change, previous: citation.previous });
-    });
+    const monthRanking = Array.from(monthCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, BAR_RANK_LIMIT)
+      .map(([domain, count]) => ({ name: getSourceDisplayName(domain), domain, count }));
 
-    return displayedSources.map(citation => {
-      const prev = changeMap.get(citation.name)?.previous || 0;
-      return {
-        ...citation,
-        change: changeMap.get(citation.name)?.change || 0,
-        previousCount: prev,
-        hasPreviousData: prev > 0
-      };
-    });
-  }, [displayedSources, timeBasedCitations]);
+    return { data, series, granularity, monthLabel, monthTotal, monthRanking };
+  }, [analyzed, domainList]);
 
-  // Lazy reverse index: normalized domain → all page titles/URLs cited on it.
-  // Built once on first search (and only then), so users who never search pay
-  // nothing. Powers matching a source by the content of the page, not just the
-  // domain name.
-  const domainSearchText = useMemo(() => {
-    if (!searchActive) return null;
+  // ---------------------------------------------------------------------
+  // Source type (media type) per domain. Classified from the domain and the
+  // company name alone — the responses argument is deliberately omitted
+  // because it re-parses every citation. The "competitive" case it would
+  // otherwise detect is applied here from the mentioned split we already
+  // counted (same >60% rule).
+  // ---------------------------------------------------------------------
+  const mediaTypeByDomain = useMemo(() => {
     const map = new Map<string, string>();
-    for (const nr of normalizedResponses) {
-      const dt = nr.domainText;
-      for (const d in dt) {
-        const existing = map.get(d);
-        map.set(d, existing ? `${existing} ${dt[d]}` : dt[d]);
-      }
+    for (const row of domainList) {
+      const base = categorizeSourceByMediaType(row.domain, [], companyName);
+      const notMentioned = row.count - row.mentionedCount;
+      map.set(row.domain, base === 'owned' || notMentioned <= row.mentionedCount ? base : 'competitive');
     }
     return map;
-  }, [normalizedResponses, searchActive]);
+  }, [domainList, companyName]);
 
-  // Apply the free-text search on top of all other filters, before pagination.
-  const searchedSources = useMemo(() => {
-    const q = deferredSearchQuery.trim().toLowerCase();
-    if (!q) return allTimeCitationsWithChanges;
-    return allTimeCitationsWithChanges.filter(citation => {
-      if (citation.name.toLowerCase().includes(q)) return true;
-      const text = domainSearchText?.get(normalizeDomain(citation.name));
-      return text ? text.includes(q) : false;
-    });
-  }, [allTimeCitationsWithChanges, deferredSearchQuery, domainSearchText]);
+  // Sentiment bucket of one response, on the same cuts as the pill.
+  const sentimentBucket = (ratio: number | null | undefined): SentimentBucket | null => {
+    if (typeof ratio !== 'number') return null;
+    if (ratio > 0.6) return 'positive';
+    if (ratio < 0.4) return 'negative';
+    return 'neutral';
+  };
 
-  const renderAllTimeBar = (data: { name: string; count: number; change?: number; previousCount?: number; hasPreviousData?: boolean }, maxCount: number, totalResponses: number, totalPreviousResponses: number) => {
-    // Calculate the actual percentage width
-    const percentage = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
+  // Cited pages, aggregated under the table's own filters (attributes,
+  // question type, models, sentiment) so a filtered row's counts describe
+  // only the citations that survived the filter.
+  const pageStats = useMemo(() => {
+    const attrSet = new Set(filterAttributes);
+    const typeSet = new Set(filterQuestionTypes);
+    const modelSet = new Set(filterModels);
+    const sentSet = new Set(filterSentiments);
+    const agg = new Map<string, PageAgg>();
 
-    // Coverage: share of analyzed responses that cite this source. Capped at
-    // 100 as a safety net (search-result-only sources have no response basis).
-    const totalPercentage = totalResponses > 0 ? Math.min(100, (data.count / totalResponses) * 100) : 0;
-    
-    // Truncate labels to 15 characters
-    const displayName = getSourceDisplayName(data.name);
-    const truncatedName = displayName.length > 15 ? displayName.substring(0, 15) + '...' : displayName;
-    
-    // Get media type for this source using response data and company name
-    const sourceResponses = getResponsesForSource(data.name);
-    const mediaType = getEffectiveMediaType(data.name, sourceResponses);
-    const mediaTypeInfo = getMediaTypeInfo(mediaType);
-    
+    for (const nr of analyzed.matching) {
+      if (attrSet.size > 0 && !(nr.theme && attrSet.has(nr.theme))) continue;
+      if (typeSet.size > 0 && !(nr.promptType && typeSet.has(nr.promptType))) continue;
+      if (modelSet.size > 0 && !modelSet.has(getLLMDisplayName(nr.model))) continue;
+      const ratio = sentimentById.get(nr.id);
+      if (sentSet.size > 0) {
+        const bucket = sentimentBucket(ratio);
+        if (!bucket || !sentSet.has(bucket)) continue;
+      }
+      for (const p of nr.pages) {
+        let row = agg.get(p.key);
+        if (!row) {
+          row = { key: p.key, url: p.url, title: p.title, domain: p.domain, count: 0, mentionedCount: 0, themeCounts: new Map(), models: new Set(), ratioSum: 0, ratioCount: 0 };
+          agg.set(p.key, row);
+        }
+        row.count += 1;
+        if (nr.company_mentioned) row.mentionedCount += 1;
+        row.url = preferDisplayUrl(row.url, p.url);
+        if (!row.title && p.title) row.title = p.title;
+        if (nr.theme) row.themeCounts.set(nr.theme, (row.themeCounts.get(nr.theme) || 0) + 1);
+        if (nr.model) row.models.add(nr.model);
+        if (typeof ratio === 'number') {
+          row.ratioSum += ratio;
+          row.ratioCount += 1;
+        }
+      }
+    }
+    return agg;
+  }, [analyzed, sentimentById, filterAttributes, filterQuestionTypes, filterModels, filterSentiments]);
+
+  // Cited pages, ranked by citing responses, with render-ready derived fields.
+  const pagesList = useMemo(() => {
+    const sourceTypeSet = new Set(filterSourceTypes);
+    const q = pageSearch.trim().toLowerCase();
+    return Array.from(pageStats.values())
+      .filter(p => p.domain && p.domain !== 'unknown')
+      .filter(p => sourceTypeSet.size === 0 || sourceTypeSet.has(mediaTypeByDomain.get(p.domain) || ''))
+      .map(p => {
+        const themes = Array.from(p.themeCounts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([name]) => name);
+        // Dedupe models by display name (gpt-4o and gpt-4o-mini are both "OpenAI").
+        const models: string[] = [];
+        const seenNames = new Set<string>();
+        for (const m of p.models) {
+          const dn = getLLMDisplayName(m);
+          if (!seenNames.has(dn)) {
+            seenNames.add(dn);
+            models.push(m);
+          }
+        }
+        return {
+          key: p.key,
+          url: p.url,
+          domain: p.domain,
+          title: decodeUnicodeEscapes(p.title) || titleFromUrl(p.url, p.domain),
+          count: p.count,
+          themes,
+          models,
+          avgRatio: p.ratioCount > 0 ? p.ratioSum / p.ratioCount : null,
+          prevCount: prevAnalyzed.pageCounts.get(p.key) || 0,
+        };
+      })
+      .filter(p => !q || p.title.toLowerCase().includes(q) || p.url.toLowerCase().includes(q) || p.domain.includes(q))
+      .sort((a, b) => b.count - a.count);
+  }, [pageStats, prevAnalyzed, mediaTypeByDomain, filterSourceTypes, pageSearch]);
+
+  // ---------------------------------------------------------------------
+  // Filter option lists, derived from the analyzed responses so a filter
+  // never offers a value that can't match anything.
+  // ---------------------------------------------------------------------
+  const filterOptions = useMemo(() => {
+    const attrCounts = new Map<string, number>();
+    const typeCounts = new Map<string, number>();
+    const modelCounts = new Map<string, number>();
+    const sentCounts = new Map<string, number>();
+    for (const nr of analyzed.matching) {
+      if (nr.theme) attrCounts.set(nr.theme, (attrCounts.get(nr.theme) || 0) + 1);
+      if (nr.promptType) typeCounts.set(nr.promptType, (typeCounts.get(nr.promptType) || 0) + 1);
+      if (nr.model) {
+        const dn = getLLMDisplayName(nr.model);
+        modelCounts.set(dn, (modelCounts.get(dn) || 0) + 1);
+      }
+      const bucket = sentimentBucket(sentimentById.get(nr.id));
+      if (bucket) sentCounts.set(bucket, (sentCounts.get(bucket) || 0) + 1);
+    }
+    const sourceTypeCounts = new Map<string, number>();
+    for (const row of domainList) {
+      const t = mediaTypeByDomain.get(row.domain);
+      if (t) sourceTypeCounts.set(t, (sourceTypeCounts.get(t) || 0) + 1);
+    }
+    const byCountDesc = (a: [string, number], b: [string, number]) => b[1] - a[1];
+    return {
+      attributes: Array.from(attrCounts.entries()).sort(byCountDesc)
+        .map(([value, count]) => ({
+          value,
+          label: value,
+          count,
+          adornment: (() => {
+            const Icon = getAttributeIconByName(value);
+            return <Icon className="w-3.5 h-3.5 flex-shrink-0 text-gray-400" />;
+          })(),
+        })),
+      questionTypes: Array.from(typeCounts.entries()).sort(byCountDesc)
+        .map(([value, count]) => ({ value, label: value.replace(/_/g, ' '), count })),
+      sourceTypes: SOURCE_TYPE_ORDER.filter(t => sourceTypeCounts.has(t))
+        .map(value => ({ value, label: value, count: sourceTypeCounts.get(value) })),
+      models: Array.from(modelCounts.entries()).sort(byCountDesc)
+        .map(([value, count]) => ({
+          value,
+          label: value,
+          count,
+          adornment: <LLMLogo modelName={value} size="sm" showFallback={false} />,
+        })),
+      sentiments: SENTIMENT_ORDER.filter(s => sentCounts.has(s))
+        .map(value => ({ value, label: value, count: sentCounts.get(value) })),
+    };
+  }, [analyzed, sentimentById, domainList, mediaTypeByDomain]);
+
+  const activeFilterCount =
+    filterAttributes.length + filterQuestionTypes.length + filterSourceTypes.length +
+    filterModels.length + filterSentiments.length;
+
+  const clearAllFilters = () => {
+    setFilterAttributes([]);
+    setFilterQuestionTypes([]);
+    setFilterSourceTypes([]);
+    setFilterModels([]);
+    setFilterSentiments([]);
+  };
+
+  // Coverage share of a domain/page: % of analyzed responses citing it.
+  const shareOf = (count: number, total: number) =>
+    total > 0 ? Math.min(100, (count / total) * 100) : 0;
+
+  // Delta chip: percentage-point change of the coverage share vs the previous
+  // period. Only shown for sources that existed in the previous period.
+  const renderShareDelta = (count: number, prevCount: number) => {
+    if (!hasPrevPeriod || prevCount <= 0) return null;
+    const cur = shareOf(count, analyzed.total);
+    const prev = shareOf(prevCount, prevAnalyzed.total);
+    const delta = Math.round(cur - prev);
+    if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
     return (
-      <div className="flex items-center py-3 hover:bg-gray-50/50 transition-colors cursor-pointer rounded-lg px-2 sm:px-3">
-        {/* Source name, favicon, and media type badge */}
-        <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1 sm:w-1/3 sm:max-w-[220px]">
-          <Favicon domain={data.name} />
-          <div className="min-w-0 flex items-center space-x-2">
-            <span className="text-sm font-medium text-gray-900 truncate block" title={displayName}>
-              {truncatedName}
-            </span>
-            {editingMediaType === data.name ? (
-              <Popover open={true} onOpenChange={(open) => !open && handleMediaTypeCancel()}>
-                <PopoverContent 
-                  className="w-64 p-3"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="space-y-3">
-                    <h4 className="font-medium text-sm">Change Media Type</h4>
-                    <div className="space-y-2">
-                      {Object.entries(MEDIA_TYPE_DESCRIPTIONS).map(([type, description]) => (
-                        <button
-                          key={type}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleMediaTypeSave(data.name, type);
-                          }}
-                          className="w-full text-left p-2 rounded-md hover:bg-gray-100 transition-colors"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Badge className={`text-xs ${getMediaTypeInfo(type).colors}`}>
-                              {getMediaTypeInfo(type).label}
-                            </Badge>
-                            <span className="text-xs text-gray-600">{description}</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex gap-2 pt-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMediaTypeCancel();
-                        }}
-                        className="flex-1"
-                      >
-                        <X className="w-3 h-3 mr-1" />
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            ) : (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Badge 
-                      className={`text-xs ${mediaTypeInfo.colors} cursor-pointer hover:opacity-80 transition-opacity`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleMediaTypeEdit(data.name);
-                      }}
-                    >
-                      {mediaTypeInfo.label}
-                    </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p className="text-xs">Click to change media type</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
+      <span className={`text-xs font-semibold flex items-center gap-0.5 ${delta > 0 ? 'text-green-600' : 'text-red-600'}`}>
+        {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+        <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+      </span>
+    );
+  };
+
+  // Relative change in a page's citation count vs the previous period, as a
+  // percentage — "1,117 more citations" says nothing without the base, "+92%"
+  // does. Pages with no prior citations are flagged "New" beside the title
+  // instead (a percentage off a zero base is undefined).
+  const renderCountDelta = (count: number, prevCount: number) => {
+    if (!hasPrevPeriod || prevCount <= 0) return null;
+    const pct = Math.round(((count - prevCount) / prevCount) * 100);
+    if (pct === 0) return <span className="text-xs text-gray-400">-</span>;
+    return (
+      <span className={`text-xs font-semibold flex items-center gap-0.5 ${pct > 0 ? 'text-green-600' : 'text-red-600'}`}>
+        {pct > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+        <span className="whitespace-nowrap">{Math.abs(pct)}%</span>
+      </span>
+    );
+  };
+
+  const sentimentPill = (ratio: number | null) => {
+    if (ratio === null) return <span className="text-xs text-gray-400">—</span>;
+    let cls = 'bg-gray-100 text-gray-600';
+    let label = 'Neutral';
+    if (ratio > 0.6) { cls = 'bg-green-100 text-green-700'; label = 'Positive'; }
+    else if (ratio < 0.4) { cls = 'bg-red-100 text-red-700'; label = 'Negative'; }
+    return <Badge className={`${cls} border-0 text-xs font-medium pointer-events-none`}>{label}</Badge>;
+  };
+
+  const hasAnyData = domainList.length > 0;
+  const domainsToRender = showAllDomains ? domainList : domainList.slice(0, INITIAL_DOMAIN_LIMIT);
+  const pagesToRender = pagesList.slice(0, visiblePageRows);
+  const chartSeriesSet = useMemo(() => new Map(trend.series.map((d, i) => [d, CHART_COLORS[i]])), [trend.series]);
+
+  // Shared crosshair tooltip for the line chart: bucket label, then series
+  // rows sorted by value.
+  const TrendTooltipContent = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    const rows = [...payload].sort((a, b) => (b.value || 0) - (a.value || 0));
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-md min-w-[180px]">
+        <p className="text-xs font-semibold text-gray-900 mb-1.5">{label}</p>
+        {rows.map((p) => (
+          <div key={p.name} className="flex items-center gap-2 py-0.5">
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: p.color || p.stroke }} />
+            <Favicon domain={p.name} size="sm" />
+            <span className="text-xs text-gray-600 truncate max-w-[150px]">{p.name}</span>
+            <span className="ml-auto text-xs font-semibold text-gray-900 tabular-nums pl-3">{p.value}</span>
           </div>
-        </div>
-        
-        {/* Bar chart - HIDDEN ON MOBILE */}
-        <div className="hidden sm:flex flex-1 mx-2 sm:mx-4 bg-gray-200 rounded-full h-4 relative min-w-0 max-w-[120px] sm:max-w-none">
-          <div
-            className="h-4 rounded-full absolute left-0 top-0"
-            style={{ 
-              width: `${percentage}%`,
-              backgroundColor: '#0DBCBA'
-            }}
-          />
-        </div>
-        
-        {/* Percentage + change */}
-        <div className="flex items-center min-w-[70px] sm:min-w-[100px] justify-end gap-1.5">
-          <span className="text-sm font-semibold text-gray-900">
-            {totalPercentage.toFixed(1)}%
-          </span>
-          <span className="w-[45px] flex justify-end">
-            {(() => {
-              if (!data.hasPreviousData) return null;
-              const prevPct = totalPreviousResponses > 0 ? Math.min(100, ((data.previousCount || 0) / totalPreviousResponses) * 100) : 0;
-              const delta = Math.round(totalPercentage - prevPct);
-              if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
-              return (
-                <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                  delta > 0 ? 'text-green-600' : 'text-red-600'
-                }`}>
-                  {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                  <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
-                </span>
-              );
-            })()}
-          </span>
-        </div>
+        ))}
       </div>
     );
   };
 
-  // Add source type summary
-  const sourceTypeSummary = useMemo(() => {
-    const aiDomains = new Set(aiResponseCitations.map(c => c.domain));
-    const searchDomains = new Set(searchResultCitations.map(c => c.domain));
-    
-    const summary = {
-      ai: { count: 0, totalCitations: 0 },
-      search: { count: 0, totalCitations: 0 },
-      both: { count: 0, totalCitations: 0 }
-    };
-    
-    // Count AI-only sources
-    aiResponseCitations.forEach(citation => {
-      if (!searchDomains.has(citation.domain)) {
-        summary.ai.count++;
-        summary.ai.totalCitations += citation.count;
-      }
-    });
-    
-    // Count search-only sources
-    searchResultCitations.forEach(citation => {
-      if (!aiDomains.has(citation.domain)) {
-        summary.search.count++;
-        summary.search.totalCitations += citation.count;
-      }
-    });
-    
-    // Count sources in both
-    aiResponseCitations.forEach(citation => {
-      if (searchDomains.has(citation.domain)) {
-        summary.both.count++;
-        const aiCount = citation.count;
-        const searchCitation = searchResultCitations.find(c => c.domain === citation.domain);
-        const searchCount = searchCitation?.count || 0;
-        summary.both.totalCitations += aiCount + searchCount;
-      }
-    });
-    
-    return summary;
-  }, [aiResponseCitations, searchResultCitations]);
+  // Per-bar tooltip for the current-month ranking.
+  const RankTooltipContent = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const row = payload[0]?.payload;
+    if (!row) return null;
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-md">
+        <div className="flex items-center gap-1.5">
+          <Favicon domain={row.domain} size="sm" />
+          <p className="text-xs font-semibold text-gray-900">{row.name}</p>
+        </div>
+        <p className="text-xs text-gray-600 mt-0.5">
+          {row.count.toLocaleString()} citations
+          {trend.monthTotal > 0 && <> · {shareOf(row.count, trend.monthTotal).toFixed(1)}% of responses</>}
+        </p>
+      </div>
+    );
+  };
 
-  // Add company mentioned summary (only relevant for AI responses)
-  const companyMentionedSummary = useMemo(() => {
-    if (selectedSourceTypeFilter === 'search-results') {
-      // Company mentioned filter doesn't apply to search results
-      return {
-        mentioned: 0,
-        notMentioned: 0,
-        total: 0
-      };
+  // Y-axis tick for the ranking chart: the domain's logo beside its name, so a
+  // domain is never named without its mark. SVG <image> (not the Favicon
+  // component) because ticks render inside the chart surface.
+  const RANK_AXIS_WIDTH = 168;
+  const RankAxisTick = ({ x, y, payload }: any) => {
+    const domain: string = payload?.value || '';
+    // `x` is the axis line; the label block starts at the chart's left edge.
+    // Clamped at 0 so the logo never renders outside the SVG viewport.
+    const left = Math.max(0, x - RANK_AXIS_WIDTH + 8);
+    const label = domain.length > 18 ? `${domain.slice(0, 17)}…` : domain;
+    return (
+      <g
+        transform={`translate(${left}, ${y})`}
+        style={{ cursor: 'pointer' }}
+        onClick={() => openDomainModal(domain)}
+      >
+        {/* Invisible hit area so the whole label row is clickable, not just the glyphs. */}
+        <rect x={-4} y={-11} width={RANK_AXIS_WIDTH} height={22} fill="transparent" />
+        {/* Letter chip sits under the logo: SVG <image> has no error fallback,
+            so a logo that fails to load (e.g. no logo.dev token configured)
+            reveals this instead of a broken-image glyph. */}
+        <rect x={0} y={-7} width={14} height={14} rx={3} fill="#F3F4F6" />
+        <text x={7} y={0} dy="0.32em" textAnchor="middle" fontSize={9} fontWeight={600} fill="#9CA3AF">
+          {domain.charAt(0).toUpperCase()}
+        </text>
+        <image href={getFavicon(domain, 32)} x={0} y={-7} width={14} height={14} preserveAspectRatio="xMidYMid meet" />
+        <text x={20} y={0} dy="0.32em" textAnchor="start" fontSize={11} fill="#374151">{label}</text>
+      </g>
+    );
+  };
+
+  const axisTickStyle = { fontSize: 11, fill: '#9CA3AF' } as const;
+
+  const renderTrendChart = () => {
+    if (trendChartType === 'bar') {
+      if (trend.monthRanking.length === 0) {
+        return (
+          <div className="h-full flex items-center justify-center text-sm text-gray-400">
+            No citation data for this month.
+          </div>
+        );
+      }
+      // Nominal ranking: one series, so every bar wears the brand hue — the
+      // title carries identity, values ride the bar ends.
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={trend.monthRanking} layout="vertical" margin={{ top: 4, right: 40, left: 0, bottom: 0 }}>
+            <XAxis type="number" hide />
+            <YAxis
+              type="category"
+              dataKey="name"
+              width={RANK_AXIS_WIDTH}
+              tick={<RankAxisTick />}
+              tickLine={false}
+              axisLine={false}
+            />
+            <RechartsTooltip content={<RankTooltipContent />} cursor={{ fill: 'rgba(0,0,0,0.03)' }} />
+            <Bar
+              dataKey="count"
+              name="Citations"
+              fill={MENTIONED_COLOR}
+              // Fully rounded ends (half the bar thickness), matching the
+              // pill-shaped bars used elsewhere in the dashboard.
+              radius={[RANK_BAR_SIZE / 2, RANK_BAR_SIZE / 2, RANK_BAR_SIZE / 2, RANK_BAR_SIZE / 2]}
+              maxBarSize={RANK_BAR_SIZE}
+              cursor="pointer"
+              onClick={(data: any) => openDomainModal(data?.domain || data?.payload?.domain)}
+              // Responses stream in after first paint, so the bars re-render
+              // mid-animation and recharts' onAnimationEnd never fires — which
+              // permanently suppresses the LabelList values. No entry animation
+              // means the values are always drawn.
+              isAnimationActive={false}
+            >
+              <LabelList
+                dataKey="count"
+                position="right"
+                formatter={(v: number) => v.toLocaleString()}
+                style={{ fontSize: 11, fill: '#6B7280' }}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      );
     }
-    
-    const mentionedDomains = new Set<string>();
-    const notMentionedDomains = new Set<string>();
-
-    for (const nr of normalizedResponses) {
-      const bucket = nr.company_mentioned ? mentionedDomains : notMentionedDomains;
-      for (const d of nr.domains) bucket.add(d);
+    if (trend.data.length === 0) {
+      return (
+        <div className="h-full flex items-center justify-center text-sm text-gray-400">
+          No trend data for this period.
+        </div>
+      );
     }
-    
-    // A domain could appear in both sets if it has mixed mentions
-    // For the summary, we want unique domains in each category
-    const totalUniqueDomains = new Set([...mentionedDomains, ...notMentionedDomains]);
-    
-    return {
-      mentioned: mentionedDomains.size,
-      notMentioned: notMentionedDomains.size,
-      total: totalUniqueDomains.size
-    };
-  }, [selectedSourceTypeFilter, normalizedResponses]);
+    const showDots = trend.data.length <= 10;
+    return (
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={trend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid vertical={false} stroke="#F3F4F6" />
+          <XAxis dataKey="label" tick={axisTickStyle} tickLine={false} axisLine={false} minTickGap={24} />
+          <YAxis allowDecimals={false} width={34} tick={axisTickStyle} tickLine={false} axisLine={false} />
+          <RechartsTooltip content={<TrendTooltipContent />} cursor={{ stroke: '#E5E7EB' }} />
+          {trend.series.map((domain, i) => (
+            <Line
+              key={domain}
+              type="monotone"
+              dataKey={`s${i}`}
+              name={domain}
+              stroke={CHART_COLORS[i]}
+              strokeWidth={2}
+              dot={showDots ? { r: 3.5, fill: CHART_COLORS[i], stroke: '#ffffff', strokeWidth: 1.5 } : false}
+              activeDot={{ r: 4, fill: CHART_COLORS[i], stroke: '#ffffff', strokeWidth: 2 }}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    );
+  };
 
-  // Add media type summary section - calculated based on current source filter
-  const mediaTypeSummary = useMemo(() => {
-    const summary: Record<string, { count: number; totalCitations: number }> = {};
-    
-    // Use the appropriate source based on filter
-    const sourcesToAnalyze = selectedSourceTypeFilter === 'ai-responses' 
-      ? aiResponseCitations 
-      : selectedSourceTypeFilter === 'search-results'
-      ? searchResultCitations
-      : allSourcesCitations;
-    
-    sourcesToAnalyze.forEach(citation => {
-      const sourceResponses = getResponsesForSource(citation.domain);
-      const mediaType = getEffectiveMediaType(citation.domain, sourceResponses);
-      if (!summary[mediaType]) {
-        summary[mediaType] = { count: 0, totalCitations: 0 };
-      }
-      summary[mediaType].count++;
-      summary[mediaType].totalCitations += citation.count;
-    });
-    
-    return summary;
-  }, [selectedSourceTypeFilter, aiResponseCitations, searchResultCitations, allSourcesCitations, responsesByDomain, companyName, customMediaTypes]);
+  const renderDomainRow = (row: { domain: string; count: number; mentionedCount: number; prevCount: number }, idx: number) => {
+    const displayName = getSourceDisplayName(row.domain);
+    const share = shareOf(row.count, analyzed.total);
+    const seriesColor = chartSeriesSet.get(row.domain);
+    const mentionRate = row.count > 0 ? (row.mentionedCount / row.count) * 100 : 0;
+    return (
+      <button
+        key={row.domain}
+        onClick={() => handleSourceClick({ domain: row.domain, count: row.count })}
+        className="w-full text-left px-2 sm:px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors"
+        title={`${row.count.toLocaleString()} citations — ${companyName || 'company'} mentioned in ${row.mentionedCount.toLocaleString()} (${Math.round(mentionRate)}%)`}
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="w-5 text-right text-xs font-medium text-gray-400 tabular-nums flex-shrink-0">{idx + 1}</span>
+          <Favicon domain={row.domain} />
+          <span className="text-sm font-medium text-gray-900 truncate" title={displayName}>{displayName}</span>
+          {seriesColor && (
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: seriesColor }} aria-hidden />
+          )}
+          <span className="ml-auto flex-shrink-0 text-sm font-semibold text-gray-900 tabular-nums">
+            {share.toFixed(1)}%
+          </span>
+        </div>
+        {/* Mentioned/not-mentioned split for this domain's citations, with the
+            period-over-period change of its coverage share beside it. The left
+            inset (rank width + gap) lines the bar up with the domain logo. */}
+        <div className="mt-1.5 ml-[30px] flex items-center gap-2">
+          <div className="flex-1 h-1.5 flex gap-[2px] rounded-full overflow-hidden">
+            {mentionRate > 0 && (
+              <div className="h-full rounded-full" style={{ width: `${mentionRate}%`, backgroundColor: MENTIONED_COLOR }} />
+            )}
+            {mentionRate < 100 && (
+              <div className="h-full rounded-full" style={{ width: `${100 - mentionRate}%`, backgroundColor: NOT_MENTIONED_COLOR }} />
+            )}
+          </div>
+          <span className="w-[45px] flex justify-end flex-shrink-0">{renderShareDelta(row.count, row.prevCount)}</span>
+        </div>
+      </button>
+    );
+  };
+
+  const loadingSkeleton = (rows: number) => (
+    <div className="space-y-3 py-2" aria-busy="true">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
+      ))}
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-6 w-full h-full">
@@ -964,115 +981,371 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
         </div>
       )}
 
-      {/* Main Content with Tabs */}
-      <div className="flex-1 min-h-0">
-        <Card data-tour="sources-chart" className="shadow-sm border border-gray-200 h-full flex flex-col">
-          <CardContent className="flex-1 min-h-0 overflow-hidden p-3 sm:p-6">
-            <div className="space-y-2 h-full overflow-y-auto relative">
-              {allTimeCitationsWithChanges.length > 0 ? (
-                (() => {
-                  const maxCount = Math.max(...searchedSources.map(c => c.count), 1);
-                  // Only render the first INITIAL_RENDER_LIMIT rows unless the
-                  // user clicks "Show all". Keeps mount fast on Netflix-scale orgs.
-                  const toRender = showAllSources
-                    ? searchedSources
-                    : searchedSources.slice(0, INITIAL_RENDER_LIMIT);
-                  return (
-                    <>
-                      <div className="sticky top-0 z-10 bg-white flex items-center justify-between gap-3 px-2 sm:px-3 pb-2">
-                        <SearchInput
-                          value={searchQuery}
-                          onChange={setSearchQuery}
-                          placeholder="Search sources..."
-                          className="max-w-xs"
-                        />
-                        <div className="flex items-center gap-3">
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="flex items-center gap-1 text-xs font-medium text-gray-400 cursor-help">
-                                % of responses
-                                <Info className="w-3.5 h-3.5" />
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-[260px]">
-                              <p className="text-xs">
-                                Share of the analyzed AI responses that cite this source. A
-                                response usually cites several sources, so these percentages
-                                don't add up to 100%.
-                              </p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                        <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100">
-                          <button
-                            onClick={() => setSelectedCompanyMentionedFilter('mentioned')}
-                            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
-                              selectedCompanyMentionedFilter === 'mentioned'
-                                ? 'bg-white text-gray-900 shadow-sm'
-                                : 'text-gray-500 hover:text-gray-700'
-                            }`}
-                          >
-                            Mentioned
-                          </button>
-                          <button
-                            onClick={() => setSelectedCompanyMentionedFilter('not-mentioned')}
-                            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
-                              selectedCompanyMentionedFilter === 'not-mentioned'
-                                ? 'bg-white text-gray-900 shadow-sm'
-                                : 'text-gray-500 hover:text-gray-700'
-                            }`}
-                          >
-                            Not Mentioned
-                          </button>
-                        </div>
-                        </div>
-                      </div>
-                      {searchedSources.length > 0 ? (
-                        <>
-                          {toRender.map((citation, idx) => (
-                            <div
-                              key={idx}
-                              onClick={() => handleSourceClick({ domain: citation.name, count: citation.count })}
-                              className="cursor-pointer"
-                              {...(idx === 0 ? { 'data-tour': 'sources-first-row' } : {})}
-                            >
-                              {renderAllTimeBar(citation, maxCount, totalResponsesAnalyzed, totalPrevResponsesAnalyzed)}
-                            </div>
-                          ))}
-                          {!showAllSources && searchedSources.length > INITIAL_RENDER_LIMIT && (
-                            <div className="pt-3 pb-2 text-center">
-                              <Button variant="outline" size="sm" onClick={() => setShowAllSources(true)}>
-                                Show all {searchedSources.length} sources
-                              </Button>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <div className="text-center py-12 text-gray-500">
-                          <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                          <p className="text-sm">No sources match "{deferredSearchQuery.trim()}".</p>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()
-              ) : responsesLoading ? (
-                <div className="space-y-3 px-2 sm:px-3 py-4" aria-busy="true">
-                  {Array.from({ length: 8 }).map((_, i) => (
-                    <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-12 text-gray-500">
-                  <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                  <p className="text-sm">No citations found yet.</p>
-                </div>
-              )}
+      {!hasAnyData && !responsesLoading ? (
+        <Card className="shadow-sm border border-gray-200">
+          <CardContent className="p-6">
+            <div className="text-center py-12 text-gray-500">
+              <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+              <p className="text-sm">No citations found yet.</p>
             </div>
           </CardContent>
         </Card>
-      </div>
+      ) : (
+        <>
+          {/* Row 1: trend chart + ranked domain list */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-stretch">
+            <Card data-tour="sources-chart" className="shadow-sm border border-gray-200 lg:col-span-3 flex flex-col">
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <CardTitle className="text-base font-bold text-gray-800">Top cited domains</CardTitle>
+                  </div>
+                  {/* Ranking first — it's the default view. */}
+                  <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100 flex-shrink-0">
+                    <button
+                      onClick={() => setTrendChartType('bar')}
+                      title="This month's ranking"
+                      aria-label="This month's ranking"
+                      className={`px-2 py-1 rounded-md transition-all ${
+                        trendChartType === 'bar' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                    >
+                      <BarChartHorizontal className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setTrendChartType('line')}
+                      title="Trend over time"
+                      aria-label="Trend over time"
+                      className={`px-2 py-1 rounded-md transition-all ${
+                        trendChartType === 'line' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                    >
+                      <ChartLine className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="flex-1 flex flex-col pt-2">
+                {responsesLoading && !hasAnyData ? (
+                  <div className="flex-1 min-h-[280px] rounded-md bg-gray-100 animate-pulse" aria-busy="true" />
+                ) : (
+                  <>
+                    {/* Fills the card so the chart matches the height of the
+                        domain list beside it instead of leaving dead space. */}
+                    <div className="flex-1 min-h-[280px]">
+                      {renderTrendChart()}
+                    </div>
+                    {/* Legend (line mode): identity via favicon + name, never color alone */}
+                    {trendChartType === 'line' && (
+                      <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-3 px-1">
+                        {trend.series.map((domain, i) => (
+                          <button
+                            key={domain}
+                            onClick={() => handleSourceClick({ domain, count: analyzed.domainCounts.get(domain) || 0 })}
+                            className="flex items-center gap-1.5 group min-w-0"
+                            title={`Open ${domain}`}
+                          >
+                            <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: CHART_COLORS[i] }} />
+                            <Favicon domain={domain} size="sm" />
+                            <span className="text-xs text-gray-600 group-hover:text-gray-900 truncate max-w-[150px]">
+                              {getSourceDisplayName(domain)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card data-tour="sources-domain-list" className="shadow-sm border border-gray-200 lg:col-span-2 flex flex-col">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <CardTitle className="text-base font-bold text-gray-800">Cited domains</CardTitle>
+                    <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
+                      {domainList.length.toLocaleString()}
+                    </Badge>
+                  </div>
+                  {/* Key for the per-row split bar + the % definition */}
+                  <div className="flex items-center gap-2.5 text-[11px] text-gray-400 flex-shrink-0">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full" style={{ background: MENTIONED_COLOR }} />
+                      Mentioned
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full" style={{ background: NOT_MENTIONED_COLOR }} />
+                      Not mentioned
+                    </span>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-help"><Info className="w-3.5 h-3.5" /></span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-[280px]">
+                          <p className="text-xs">
+                            The percentage is the share of analyzed AI responses that cite
+                            this source (responses cite several sources, so these don't add
+                            up to 100%). The bar splits each source's citations into
+                            responses that mention {companyName || 'your company'} and
+                            responses where it's absent.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="flex-1 min-h-0 pt-0 px-2 sm:px-3 pb-3">
+                {responsesLoading && !hasAnyData ? (
+                  <div className="px-2">{loadingSkeleton(8)}</div>
+                ) : (
+                  <div className="h-full max-h-[400px] overflow-y-auto pr-1">
+                    {domainsToRender.map((row, idx) => renderDomainRow(row, idx))}
+                    {!showAllDomains && domainList.length > INITIAL_DOMAIN_LIMIT && (
+                      <div className="pt-3 pb-2 text-center">
+                        <Button variant="outline" size="sm" onClick={() => setShowAllDomains(true)}>
+                          Show all {domainList.length.toLocaleString()} domains
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Row 2: top cited pages */}
+          <Card data-tour="sources-pages" className="shadow-sm border border-gray-200">
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-base font-bold text-gray-800">Top cited pages</CardTitle>
+                <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
+                  {pagesList.length.toLocaleString()}
+                </Badge>
+              </div>
+              <p className="text-xs text-gray-500">
+                The specific pages behind the citations — with the attributes, models and sentiment they show up in.
+                Click a page to open its source.
+              </p>
+              {/* Toolbar: search + filters. A filter with nothing selected is
+                  inactive, so the default view shows every page. */}
+              <div className="flex items-center gap-2 flex-wrap pt-3" data-tour="sources-pages-toolbar">
+                <div className="relative w-full sm:w-64">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                  <input
+                    value={pageSearch}
+                    onChange={(e) => setPageSearch(e.target.value)}
+                    placeholder="Search URL or title…"
+                    aria-label="Search cited pages"
+                    className="h-8 w-full rounded-lg border border-gray-200 bg-white pl-8 pr-3 text-xs shadow-sm outline-none placeholder:text-gray-400 focus:border-gray-300"
+                  />
+                </div>
+                <FilterDropdown
+                  label="Attributes" icon={Tags} searchable
+                  options={filterOptions.attributes}
+                  selected={filterAttributes} onChange={setFilterAttributes}
+                />
+                <FilterDropdown
+                  label="Question Type" icon={HelpCircle}
+                  options={filterOptions.questionTypes}
+                  selected={filterQuestionTypes} onChange={setFilterQuestionTypes}
+                />
+                <FilterDropdown
+                  label="Source Types" icon={Globe}
+                  options={filterOptions.sourceTypes}
+                  selected={filterSourceTypes} onChange={setFilterSourceTypes}
+                />
+                <FilterDropdown
+                  label="Models" icon={Bot}
+                  options={filterOptions.models}
+                  selected={filterModels} onChange={setFilterModels}
+                />
+                <FilterDropdown
+                  label="Sentiment" icon={SmilePlus}
+                  options={filterOptions.sentiments}
+                  selected={filterSentiments} onChange={setFilterSentiments}
+                />
+                {activeFilterCount > 0 && (
+                  <button
+                    onClick={clearAllFilters}
+                    className="text-xs font-medium text-gray-500 hover:text-gray-800 px-1"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0 px-0 sm:px-2 pb-3">
+              {responsesLoading && !hasAnyData ? (
+                <div className="px-6">{loadingSkeleton(6)}</div>
+              ) : pagesList.length > 0 ? (
+                <>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="w-[48%] min-w-[260px] text-xs">Page</TableHead>
+                        <TableHead className="hidden md:table-cell text-xs">Attributes</TableHead>
+                        <TableHead className="hidden sm:table-cell text-xs">Models</TableHead>
+                        <TableHead className="hidden sm:table-cell text-xs">Sentiment</TableHead>
+                        <TableHead className="text-right text-xs">Citations</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pagesToRender.map((page) => {
+                        const isNew = hasPrevPeriod && page.prevCount === 0 && page.count >= 2;
+                        return (
+                          <TableRow
+                            key={page.key}
+                            onClick={() => handleSourceClick({ domain: page.domain, count: analyzed.domainCounts.get(page.domain) || page.count })}
+                            className="cursor-pointer"
+                          >
+                            <TableCell className="py-3">
+                              <div className="flex items-start gap-2.5 min-w-0">
+                                <Favicon domain={page.domain} className="mt-0.5 flex-shrink-0" />
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="text-sm font-medium text-gray-900 truncate max-w-[460px]" title={page.title}>
+                                      {page.title}
+                                    </span>
+                                    {isNew && (
+                                      <Badge className="bg-green-100 text-green-700 border-0 text-[10px] px-1.5 py-0 pointer-events-none flex-shrink-0">
+                                        New
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <a
+                                    href={page.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="group/link inline-flex items-center gap-1 text-xs text-gray-500 hover:text-[#0DBCBA] min-w-0 max-w-full"
+                                    title={page.url}
+                                  >
+                                    <span className="truncate max-w-[420px]">{formatDisplayUrl(page.url)}</span>
+                                    <ExternalLink className="w-3 h-3 flex-shrink-0 opacity-0 group-hover/link:opacity-100 transition-opacity" />
+                                  </a>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="hidden md:table-cell py-3">
+                              {page.themes.length > 0 ? (
+                                <TooltipProvider>
+                                  {/* Overlapping stack: the most-cited attribute
+                                      sits on top, the rest tuck behind it to
+                                      the right. */}
+                                  <div className="flex items-center w-fit">
+                                    <div className="flex items-center">
+                                      {page.themes.slice(0, 5).map((theme, i) => {
+                                        const Icon = getAttributeIconByName(theme);
+                                        return (
+                                          <Tooltip key={theme}>
+                                            <TooltipTrigger asChild>
+                                              <span
+                                                className="relative flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 ring-2 ring-white cursor-help transition-colors hover:bg-gray-200"
+                                                style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
+                                              >
+                                                <Icon className="w-3.5 h-3.5 text-gray-600" />
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent><p className="text-xs">{theme}</p></TooltipContent>
+                                          </Tooltip>
+                                        );
+                                      })}
+                                    </div>
+                                    {page.themes.length > 5 && (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span className="text-xs text-gray-400 cursor-help pl-3">+{page.themes.length - 5}</span>
+                                        </TooltipTrigger>
+                                        <TooltipContent className="max-w-[260px]">
+                                          <p className="text-xs">{page.themes.slice(5, 15).join(', ')}{page.themes.length > 15 ? '…' : ''}</p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    )}
+                                  </div>
+                                </TooltipProvider>
+                              ) : (
+                                <span className="text-xs text-gray-400">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="hidden sm:table-cell py-3">
+                              {page.models.length > 0 ? (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      {/* Same overlapping stack as the attributes column. */}
+                                      <div className="flex items-center w-fit cursor-default">
+                                        {page.models.slice(0, 4).map((model, i) => (
+                                          <span
+                                            key={model}
+                                            className="relative flex h-6 w-6 items-center justify-center rounded-full bg-white ring-2 ring-white"
+                                            style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
+                                          >
+                                            <LLMLogo modelName={model} size="sm" />
+                                          </span>
+                                        ))}
+                                        {page.models.length > 4 && (
+                                          <span className="pl-1.5 text-xs text-gray-400">+{page.models.length - 4}</span>
+                                        )}
+                                      </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p className="text-xs">{page.models.map((m) => getLLMDisplayName(m)).join(', ')}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              ) : (
+                                <span className="text-xs text-gray-400">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="hidden sm:table-cell py-3">
+                              {sentimentPill(page.avgRatio)}
+                            </TableCell>
+                            <TableCell className="text-right py-3">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <span className="text-sm font-semibold text-gray-900 tabular-nums">{page.count.toLocaleString()}</span>
+                                <span className="w-[52px] flex justify-end">{renderCountDelta(page.count, page.prevCount)}</span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                  {pagesList.length > visiblePageRows && (
+                    <div className="pt-3 pb-1 text-center">
+                      <Button variant="outline" size="sm" onClick={() => setVisiblePageRows(v => v + PAGE_ROWS_STEP)}>
+                        Show more ({(pagesList.length - visiblePageRows).toLocaleString()} remaining)
+                      </Button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-12 text-gray-500">
+                  <FileText className="w-10 h-10 mx-auto mb-3 text-gray-300" />
+                  {activeFilterCount > 0 || pageSearch.trim() ? (
+                    <>
+                      <p className="text-sm">No pages match these filters.</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-3"
+                        onClick={() => { clearAllFilters(); setPageSearch(''); }}
+                      >
+                        Clear filters
+                      </Button>
+                    </>
+                  ) : (
+                    <p className="text-sm">No cited pages found yet.</p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
 
       {/* Source Details Modal */}
       {selectedSource && (
@@ -1085,8 +1358,8 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
           companyName={companyName}
           searchResults={filteredSearchResults}
           companyId={currentCompanyId}
-          selectedThemeFilter={selectedThemeFilter}
-          companyMentionedFilter={selectedCompanyMentionedFilter}
+          selectedThemeFilter="all"
+          companyMentionedFilter="all"
           responseTexts={responseTexts}
           fetchResponseTexts={fetchResponseTexts}
         />

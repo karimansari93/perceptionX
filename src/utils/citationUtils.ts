@@ -88,6 +88,10 @@ const LOGODEV_TOKEN = import.meta.env.VITE_LOGO_DEV_TOKEN as string | undefined;
  * faviconV2/gstatic endpoints return 404s for many domains, which spam the
  * browser console. Logo.dev's `fallback=monogram` guarantees an image is
  * always returned (a generated letter-mark), so it never 404s.
+ *
+ * Logo.dev answers 401 without a publishable token, so an environment with no
+ * VITE_LOGO_DEV_TOKEN renders the letter-chip fallback for every source. That
+ * is a missing-env problem to fix in the environment, not in this function.
  */
 export const getFavicon = (domain: string, size = 32): string => {
   if (!domain) return '';

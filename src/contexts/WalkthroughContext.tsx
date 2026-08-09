@@ -83,13 +83,41 @@ const STEPS: WalkthroughStep[] = [
     route: '/dashboard/competitors',
   },
   {
-    target: '[data-tour="sources-first-row"]',
-    title: 'Sources',
+    target: '[data-tour="sources-chart"]',
+    title: 'Top cited domains',
     content:
-      'Sources shows where your company is being mentioned across the web — ranked by how often each domain shows up. Click any source to see the pages and snippets driving those mentions.',
+      'Sources shows where AI is getting its answers about you. This chart tracks the domains cited most often over time — switch to the bar view for this month\'s ranking. Click any bar, label or legend entry to open that source.',
     placement: 'bottom',
     disableBeacon: true,
     disableScrolling: true,
+    route: '/dashboard/sources',
+  },
+  {
+    target: '[data-tour="sources-domain-list"]',
+    title: 'Mentioned vs not mentioned',
+    content:
+      "Every cited domain, ranked by the share of AI responses citing it. The bar under each one splits those citations in two: teal where your company was mentioned in the answer, grey where it wasn't. A lot of grey on a big source is a visibility gap — that source is shaping answers you're absent from.",
+    placement: 'left',
+    disableBeacon: true,
+    disableScrolling: true,
+    route: '/dashboard/sources',
+  },
+  {
+    target: '[data-tour="sources-pages-toolbar"]',
+    title: 'Search for specific pages',
+    content:
+      'Below the domains are the individual pages behind the citations. Search by URL or title to find one, or filter by attribute, question type, source type, model and sentiment to see which pages drive a particular slice.',
+    placement: 'bottom',
+    disableBeacon: true,
+    route: '/dashboard/sources',
+  },
+  {
+    target: '[data-tour="sources-pages"]',
+    title: 'How pages are performing',
+    content:
+      'Each row shows what a page is doing for you: the attributes it gets cited for, the models citing it, the sentiment of those answers, and how its citations moved versus the previous period. Click a row to open the full source detail.',
+    placement: 'top',
+    disableBeacon: true,
     route: '/dashboard/sources',
   },
   {
