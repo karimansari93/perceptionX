@@ -291,9 +291,9 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   const [filterSourceTypes, setFilterSourceTypes] = useState<string[]>([]);
   const [filterModels, setFilterModels] = useState<string[]>([]);
   const [filterSentiments, setFilterSentiments] = useState<string[]>([]);
-  // Chart form toggle for the trends card - persisted. 'line' = trend over
-  // time; 'bar' = horizontal ranking for the current month.
-  const [trendChartType, setTrendChartType] = usePersistedState<'line' | 'bar'>('sourcesTab.trendChartType', 'line');
+  // Chart form toggle for the trends card - persisted. 'bar' = horizontal
+  // ranking for the current month (the default); 'line' = trend over time.
+  const [trendChartType, setTrendChartType] = usePersistedState<'line' | 'bar'>('sourcesTab.trendChartType', 'bar');
   // Controlled by the parent Dashboard so the job-function selection is shared
   // across all tabs and never resets on tab switch.
   const selectedJobFunctionFilter = selectedJobFunction;
@@ -859,6 +859,11 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
               maxBarSize={RANK_BAR_SIZE}
               cursor="pointer"
               onClick={(data: any) => openDomainModal(data?.domain || data?.payload?.domain)}
+              // Responses stream in after first paint, so the bars re-render
+              // mid-animation and recharts' onAnimationEnd never fires — which
+              // permanently suppresses the LabelList values. No entry animation
+              // means the values are always drawn.
+              isAnimationActive={false}
             >
               <LabelList
                 dataKey="count"
@@ -995,17 +1000,8 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                   <div className="min-w-0">
                     <CardTitle className="text-base font-bold text-gray-800">Top cited domains</CardTitle>
                   </div>
+                  {/* Ranking first — it's the default view. */}
                   <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100 flex-shrink-0">
-                    <button
-                      onClick={() => setTrendChartType('line')}
-                      title="Trend over time"
-                      aria-label="Trend over time"
-                      className={`px-2 py-1 rounded-md transition-all ${
-                        trendChartType === 'line' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                      }`}
-                    >
-                      <ChartLine className="w-3.5 h-3.5" />
-                    </button>
                     <button
                       onClick={() => setTrendChartType('bar')}
                       title="This month's ranking"
@@ -1015,6 +1011,16 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                       }`}
                     >
                       <BarChartHorizontal className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setTrendChartType('line')}
+                      title="Trend over time"
+                      aria-label="Trend over time"
+                      className={`px-2 py-1 rounded-md transition-all ${
+                        trendChartType === 'line' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                    >
+                      <ChartLine className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
