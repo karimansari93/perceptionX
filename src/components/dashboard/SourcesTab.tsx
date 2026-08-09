@@ -810,6 +810,13 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       >
         {/* Invisible hit area so the whole label row is clickable, not just the glyphs. */}
         <rect x={-4} y={-11} width={RANK_AXIS_WIDTH} height={22} fill="transparent" />
+        {/* Letter chip sits under the logo: SVG <image> has no error fallback,
+            so a logo that fails to load (e.g. no logo.dev token configured)
+            reveals this instead of a broken-image glyph. */}
+        <rect x={0} y={-7} width={14} height={14} rx={3} fill="#F3F4F6" />
+        <text x={7} y={0} dy="0.32em" textAnchor="middle" fontSize={9} fontWeight={600} fill="#9CA3AF">
+          {domain.charAt(0).toUpperCase()}
+        </text>
         <image href={getFavicon(domain, 32)} x={0} y={-7} width={14} height={14} preserveAspectRatio="xMidYMid meet" />
         <text x={20} y={0} dy="0.32em" textAnchor="start" fontSize={11} fill="#374151">{label}</text>
       </g>
@@ -907,7 +914,6 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
         onClick={() => handleSourceClick({ domain: row.domain, count: row.count })}
         className="w-full text-left px-2 sm:px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors"
         title={`${row.count.toLocaleString()} citations — ${companyName || 'company'} mentioned in ${row.mentionedCount.toLocaleString()} (${Math.round(mentionRate)}%)`}
-        {...(idx === 0 ? { 'data-tour': 'sources-first-row' } : {})}
       >
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="w-5 text-right text-xs font-medium text-gray-400 tabular-nums flex-shrink-0">{idx + 1}</span>
@@ -1047,7 +1053,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
               </CardContent>
             </Card>
 
-            <Card className="shadow-sm border border-gray-200 lg:col-span-2 flex flex-col">
+            <Card data-tour="sources-domain-list" className="shadow-sm border border-gray-200 lg:col-span-2 flex flex-col">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-2 min-w-0">
@@ -1105,7 +1111,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
           </div>
 
           {/* Row 2: top cited pages */}
-          <Card className="shadow-sm border border-gray-200">
+          <Card data-tour="sources-pages" className="shadow-sm border border-gray-200">
             <CardHeader className="pb-2">
               <div className="flex items-center gap-2">
                 <CardTitle className="text-base font-bold text-gray-800">Top cited pages</CardTitle>
@@ -1119,7 +1125,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
               </p>
               {/* Toolbar: search + filters. A filter with nothing selected is
                   inactive, so the default view shows every page. */}
-              <div className="flex items-center gap-2 flex-wrap pt-3">
+              <div className="flex items-center gap-2 flex-wrap pt-3" data-tour="sources-pages-toolbar">
                 <div className="relative w-full sm:w-64">
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                   <input
