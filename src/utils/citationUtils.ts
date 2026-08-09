@@ -82,12 +82,17 @@ export const extractDomain = (url: string): string => {
 const LOGODEV_TOKEN = import.meta.env.VITE_LOGO_DEV_TOKEN as string | undefined;
 
 /**
- * Builds a Logo.dev image URL for a domain.
+ * Builds a logo image URL for a domain.
  *
- * We use Logo.dev instead of Google's favicon service because Google's
- * faviconV2/gstatic endpoints return 404s for many domains, which spam the
- * browser console. Logo.dev's `fallback=monogram` guarantees an image is
- * always returned (a generated letter-mark), so it never 404s.
+ * Logo.dev is the preferred source: its `fallback=monogram` guarantees an
+ * image is always returned (a generated letter-mark), so it never 404s the
+ * way Google's faviconV2/gstatic endpoints do for many domains.
+ *
+ * Logo.dev rejects unauthenticated requests, though, so when no publishable
+ * token is configured — local dev and preview environments usually have no
+ * VITE_LOGO_DEV_TOKEN — every logo would fail and fall back to a letter chip.
+ * In that case we use Google's keyless s2/favicons endpoint instead, which
+ * serves a default globe rather than a 404 when a domain has no icon.
  */
 export const getFavicon = (domain: string, size = 32): string => {
   if (!domain) return '';
@@ -95,12 +100,18 @@ export const getFavicon = (domain: string, size = 32): string => {
   // Clean the domain
   const cleanDomain = domain.trim().toLowerCase().replace(/^www\./, '');
 
+  if (!LOGODEV_TOKEN) {
+    // Google serves 16/32/64/128; round up to the nearest supported size.
+    const sz = size <= 16 ? 16 : size <= 32 ? 32 : size <= 64 ? 64 : 128;
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(cleanDomain)}&sz=${sz}`;
+  }
+
   const params = new URLSearchParams({
     size: String(size),
     format: 'png',
     fallback: 'monogram',
+    token: LOGODEV_TOKEN,
   });
-  if (LOGODEV_TOKEN) params.set('token', LOGODEV_TOKEN);
 
   return `https://img.logo.dev/${cleanDomain}?${params.toString()}`;
 };
