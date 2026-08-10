@@ -153,7 +153,7 @@ export const CompetitorsTab = memo(({
   recencyData = [],
   onNavigateToSources,
 }: CompetitorsTabProps) => {
-  const { canonicalize, aliasMap } = useEntityCanonicalizer();
+  const { canonicalize, aliasMap, aliasMapLoaded } = useEntityCanonicalizer();
   const { currentCompany } = useCompany();
   const seedTabSearch = useSeedTabSearch();
 
@@ -286,10 +286,13 @@ export const CompetitorsTab = memo(({
     const universe = new Set<string>();
     for (const nr of current) nr.rawNames.forEach((n) => universe.add(n));
     for (const nr of previous) nr.rawNames.forEach((n) => universe.add(n));
-    const collapseMap = buildVariantCollapseMap(universe, {
-      curated: curatedDirect,
-      isAliasMapped,
-    });
+    // Variant collapse only runs once the alias map is loaded: with an empty
+    // map nothing is protected, and "General Motors" briefly folded into a
+    // junk standalone "General" token. Pre-load, names pass through as-is
+    // (fragmented but correct beats merged but wrong).
+    const collapseMap = aliasMapLoaded
+      ? buildVariantCollapseMap(universe, { curated: curatedDirect, isAliasMapped })
+      : new Map<string, string[]>();
 
     const finalize = (pre: PreParsed[]): CompetitorNormalizedResponse[] =>
       pre.map((nr) => {
@@ -309,7 +312,7 @@ export const CompetitorsTab = memo(({
       });
 
     return { normalized: finalize(current), prevNormalized: finalize(previous) };
-  }, [responses, previousPeriodResponses, companyName, canonicalize, curatedDirect, isAliasMapped]);
+  }, [responses, previousPeriodResponses, companyName, canonicalize, curatedDirect, isAliasMapped, aliasMapLoaded]);
 
   // Distinct job functions present on the prompts behind these responses.
   const uniqueJobFunctions = useMemo(() => {
@@ -372,11 +375,15 @@ export const CompetitorsTab = memo(({
 
   // Set membership. "Employer of choice" = detected in discovery prompts
   // (prompts that don't name the measured company); "Direct" = the curated
-  // list; "Emergent" = detected but on neither.
+  // list PLUS companies detected in competitive answers — most companies
+  // never fill in the curated list (every Ford profile has competitors = []),
+  // and the AI naming a company in a head-to-head comparison IS the direct
+  // set in practice; "Emergent" = detected but in neither race (mentioned
+  // only in experience/informational answers).
   const setOf = useCallback((agg: CompetitorAgg): CompetitorSet[] => {
     const sets: CompetitorSet[] = [];
     if (agg.discoveryCount > 0) sets.push("eoc");
-    if (curatedDirect.has(agg.name)) sets.push("direct");
+    if (curatedDirect.has(agg.name) || agg.competitiveCount > 0) sets.push("direct");
     if (sets.length === 0) sets.push("emergent");
     return sets;
   }, [curatedDirect]);
@@ -441,10 +448,14 @@ export const CompetitorsTab = memo(({
     }>();
     if (competitorThemeRows.length === 0) return byCompetitor;
 
-    const collapse = buildVariantCollapseMap(
-      new Set([...analyzed.byName.keys(), ...competitorThemeRows.map((r) => r.competitor_name)]),
-      { curated: curatedDirect, isAliasMapped },
-    );
+    // Same alias-map gating as the main parse: no collapse before protection
+    // data is available.
+    const collapse = aliasMapLoaded
+      ? buildVariantCollapseMap(
+          new Set([...analyzed.byName.keys(), ...competitorThemeRows.map((r) => r.competitor_name)]),
+          { curated: curatedDirect, isAliasMapped },
+        )
+      : new Map<string, string[]>();
 
     for (const row of competitorThemeRows) {
       if (!inScopeResponseIds.has(row.response_id)) continue;
@@ -470,7 +481,7 @@ export const CompetitorsTab = memo(({
       }
     }
     return byCompetitor;
-  }, [competitorThemeRows, inScopeResponseIds, analyzed.byName, canonicalize, curatedDirect, isAliasMapped]);
+  }, [competitorThemeRows, inScopeResponseIds, analyzed.byName, canonicalize, curatedDirect, isAliasMapped, aliasMapLoaded]);
 
   const hasAnyCompetitorThemes = compThemes.size > 0;
 
@@ -1008,11 +1019,10 @@ export const CompetitorsTab = memo(({
                       </TooltipTrigger>
                       <TooltipContent className="max-w-[290px]">
                         <p className="text-xs">
-                          Your curated competitor list, measured on the answers to
-                          comparison questions. Your row is pinned at its true rank.
-                          Answers mention several companies, so percentages don't sum
-                          to 100. Companies detected outside this list are in the
-                          table under the Set filter.
+                          Companies the AI names in comparison answers, plus your
+                          curated competitor list (curated rivals show even at 0%).
+                          Your row is pinned at its true rank. Answers mention
+                          several companies, so percentages don't sum to 100.
                         </p>
                       </TooltipContent>
                     </Tooltip>
@@ -1071,11 +1081,13 @@ export const CompetitorsTab = memo(({
                   </>
                 ) : (
                   <div className="flex-1 min-h-[280px] space-y-1">
-                    {card1Visible.length === 0 || analyzed.competitiveTotal === 0 ? (
+                    {analyzed.competitiveTotal === 0 ? (
                       <div className="h-full flex items-center justify-center text-sm text-gray-400 text-center px-6">
-                        {curatedDirect.size === 0 && card1Visible.length <= 1
-                          ? "No curated competitors yet — add them in company settings."
-                          : "No competitive-prompt answers in this period."}
+                        No competitive-prompt answers in this period.
+                      </div>
+                    ) : card1Visible.length <= 1 ? (
+                      <div className="h-full flex items-center justify-center text-sm text-gray-400 text-center px-6">
+                        No competitors detected in comparison answers yet.
                       </div>
                     ) : (
                       (() => {
