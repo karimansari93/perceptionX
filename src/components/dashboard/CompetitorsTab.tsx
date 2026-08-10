@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
+import { Fragment, useState, useMemo, useEffect, useCallback, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Users, TrendingUp, TrendingDown, Info, ChartLine, BarChartHorizontal,
@@ -187,7 +187,6 @@ export const CompetitorsTab = memo(({
   const [sortKey, setSortKey] = useState<"name" | "sources" | "markets" | "models" | "coverage">("coverage");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [tablePage, setTablePage] = useState(0);
-  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
   // A page index only means something for the row set it was chosen on —
   // jump back to page 1 whenever the rows are re-filtered or re-sorted.
@@ -785,21 +784,12 @@ export const CompetitorsTab = memo(({
   // -------------------------------------------------------------------------
   // Interactions
   // -------------------------------------------------------------------------
-  const scrollToTableRow = useCallback((name: string) => {
-    const idx = filteredTableRows.findIndex((r) => r.name === name);
-    if (idx >= 0) setTablePage(Math.floor(idx / TABLE_PAGE_SIZE));
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        rowRefs.current.get(name)?.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
-    });
-  }, [filteredTableRows]);
-
-  // Card 1/2 rows select the competitor (Card 2 emphasis) and jump to its
-  // table row; table rows open the detail modal.
+  // Clicking a competitor anywhere — card rows, legend entries, table rows —
+  // opens its detail modal. The selection highlight still tracks the last
+  // clicked competitor across the cards and the table.
   const handleChartRowClick = (name: string) => {
     setSelectedCompetitor(name);
-    scrollToTableRow(name);
+    openModal(name);
   };
 
   const openModal = (name: string) => {
@@ -1279,10 +1269,6 @@ export const CompetitorsTab = memo(({
                         {filteredTableRows.slice(tablePage * TABLE_PAGE_SIZE, (tablePage + 1) * TABLE_PAGE_SIZE).map((row) => (
                           <TableRow
                             key={row.name}
-                            ref={(el) => {
-                              if (el) rowRefs.current.set(row.name, el);
-                              else rowRefs.current.delete(row.name);
-                            }}
                             onClick={() => openModal(row.name)}
                             className={`cursor-pointer transition-colors ${
                               selectedCompetitor === row.name ? "bg-[#0DBCBA]/5" : ""
