@@ -39,10 +39,13 @@ const aggregateSentimentRows = (rows: any[]): { metrics: any | null; byMonth: Re
     neutral_themes: agg.neutralThemes,
   } : null;
 
+  // Keyed by quarter ("YYYY-Qn"); the MV stays month-grain and quarters pool
+  // their months' counts here.
   const byMonthAcc: Record<string, { positive: number; negative: number }> = {};
   rows.forEach(row => {
     if (!row.response_month) return;
-    const key = String(row.response_month).slice(0, 7);
+    const key = quarterKeyOfMonthStr(String(row.response_month));
+    if (!key) return;
     if (!byMonthAcc[key]) byMonthAcc[key] = { positive: 0, negative: 0 };
     byMonthAcc[key].positive += row.positive_themes || 0;
     byMonthAcc[key].negative += row.negative_themes || 0;
@@ -70,10 +73,12 @@ const aggregateRelevanceRows = (rows: any[]): { metrics: any | null; byMonth: Re
     valid_citations: agg.validCitations,
   } : null;
 
+  // Keyed by quarter ("YYYY-Qn") — see aggregateSentimentRows.
   const byMonthAcc: Record<string, { scoreSum: number; weight: number }> = {};
   rows.forEach(row => {
     if (!row.response_month) return;
-    const key = String(row.response_month).slice(0, 7);
+    const key = quarterKeyOfMonthStr(String(row.response_month));
+    if (!key) return;
     if (!byMonthAcc[key]) byMonthAcc[key] = { scoreSum: 0, weight: 0 };
     const w = row.valid_citations || 0;
     byMonthAcc[key].scoreSum += (row.relevance_score || 0) * w;
@@ -158,19 +163,20 @@ const withDbSlot = async <T,>(
 };
 
 // Aggregate visibility rollup rows (company_visibility_by_location_mv) to a
-// percentage + counts, optionally scoped to one snapshot month ("YYYY-MM") and
-// one job function ('' = untagged bucket). Returns null when no rows match so
-// callers fall back to raw-response computation (MV empty / not yet
-// refreshed) instead of showing a false 0%.
+// percentage + counts, optionally scoped to one period (quarter key
+// "YYYY-Qn") and one job function ('' = untagged bucket). The MV rows are
+// month-grain; a quarter scope pools all its months. Returns null when no
+// rows match so callers fall back to raw-response computation (MV empty /
+// not yet refreshed) instead of showing a false 0%.
 const visibilityFromMvRows = (
   rows: any[],
-  monthKey: string | null,
+  periodKey: string | null,
   jobFn: string | null
 ): { pct: number; total: number; mentioned: number } | null => {
   let total = 0;
   let mentioned = 0;
   for (const r of rows) {
-    if (monthKey && String(r.response_month).slice(0, 7) !== monthKey) continue;
+    if (periodKey && quarterKeyOfMonthStr(String(r.response_month)) !== periodKey) continue;
     if (jobFn !== null && (r.job_function_context || '') !== jobFn) continue;
     total += r.total_responses || 0;
     mentioned += r.mentioned_responses || 0;
@@ -197,24 +203,43 @@ const sumRowsBy = (rows: any[], keyField: string, valField: string): Record<stri
 };
 
 export interface PeriodInfo {
-  key: string;       // e.g. "2026-03"
-  label: string;     // e.g. "Mar 2026"
+  key: string;       // e.g. "2026-Q1"
+  label: string;     // e.g. "Q1 2026"
   startDate: Date;
   endDate: Date;
 }
 
-// Canonical month bucket for a response: the monthly-snapshot month
-// (response_month, e.g. "2026-06-01" → "2026-06"), NOT when the row was
-// physically written (tested_at/created_at). A run collected on May 30 but
-// tagged collection_cycle = June must show under June everywhere. Falls back
-// to tested_at/created_at only for legacy rows missing response_month.
-export const responseMonthKey = (r: { response_month?: string | null; tested_at?: string; created_at?: string }): string | null => {
-  if (r.response_month) return String(r.response_month).slice(0, 7);
+// The dashboard period is the QUARTER. Keys are "YYYY-Qn", which sorts
+// lexically in chronological order — the prior-period lookups below rely on
+// that. Collection stays monthly underneath (response_month / the unique
+// per-month response index are untouched); quarters exist only at read time.
+export const quarterKeyOfDate = (d: Date): string =>
+  `${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`;
+
+// Quarter key from a "YYYY-MM…" date string (e.g. response_month
+// "2026-05-01" → "2026-Q2"). String math on purpose: date-only strings parse
+// as UTC midnight, which shifts into the prior month (and possibly quarter)
+// in negative-offset timezones.
+export const quarterKeyOfMonthStr = (s: string): string | null => {
+  const y = Number(s.slice(0, 4));
+  const m = Number(s.slice(5, 7));
+  if (!y || !m) return null;
+  return `${y}-Q${Math.floor((m - 1) / 3) + 1}`;
+};
+
+// Canonical period bucket for a response: the quarter containing its snapshot
+// month (response_month = collection_cycle, falling back to the write month),
+// NOT when the row was physically written (tested_at/created_at). A run
+// collected on May 30 but tagged collection_cycle = June must show under
+// June's quarter everywhere. tested_at/created_at are only used for legacy
+// rows missing response_month.
+export const responsePeriodKey = (r: { response_month?: string | null; tested_at?: string; created_at?: string }): string | null => {
+  if (r.response_month) return quarterKeyOfMonthStr(String(r.response_month));
   const t = r.tested_at || r.created_at;
   if (!t) return null;
   const d = new Date(t);
   if (isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  return quarterKeyOfDate(d);
 };
 
 // "Overall Candidate Experience" is being deprecated and removed soon. Hide its
@@ -316,7 +341,7 @@ export const useDashboardData = () => {
   const [companySentimentMetrics, setCompanySentimentMetrics] = useState<any | null>(null);
   const [companyRelevanceMetrics, setCompanyRelevanceMetrics] = useState<any | null>(null);
   const [companyMetricsLoading, setCompanyMetricsLoading] = useState(false);
-  // Per-month MV data for period comparison (keyed by "YYYY-MM")
+  // Per-period MV data for period comparison (keyed by quarter, "YYYY-Qn")
   const [companyRelevanceByMonth, setCompanyRelevanceByMonth] = useState<Record<string, number>>({});
   const [companySentimentByMonth, setCompanySentimentByMonth] = useState<Record<string, number>>({});
   // Raw MV rows kept so the Overview tab can re-aggregate per job function.
@@ -979,12 +1004,14 @@ export const useDashboardData = () => {
         // Data with no themes stays null - fallback to frontend
         setCompanySentimentMetrics(sentimentMetricsSnapshot);
 
-        // Per-month sentiment map: positive/(positive+negative) per month;
-        // months with no polarized themes are omitted ("no signal").
+        // Per-period sentiment map: positive/(positive+negative) per quarter
+        // (month-grain MV rows pooled by quarter key); periods with no
+        // polarized themes are omitted ("no signal").
         const sentByMonth: Record<string, { positive: number; negative: number }> = {};
         sentimentResult.data.forEach(row => {
           if (!row.response_month) return;
-          const monthKey = row.response_month.slice(0, 7); // "YYYY-MM"
+          const monthKey = quarterKeyOfMonthStr(String(row.response_month)); // "YYYY-Qn"
+          if (!monthKey) return;
           if (!sentByMonth[monthKey]) sentByMonth[monthKey] = { positive: 0, negative: 0 };
           sentByMonth[monthKey].positive += row.positive_themes || 0;
           sentByMonth[monthKey].negative += row.negative_themes || 0;
@@ -1033,11 +1060,13 @@ export const useDashboardData = () => {
         // Data with no valid citations stays null - fallback to frontend
         setCompanyRelevanceMetrics(relevanceMetricsSnapshot);
 
-        // Build per-month relevance map (weighted avg relevance_score per month)
+        // Build per-period relevance map (weighted avg relevance_score per
+        // quarter, month-grain MV rows pooled by quarter key)
         const relByMonth: Record<string, { scoreSum: number; weight: number }> = {};
         relevanceResult.data.forEach(row => {
           if (!row.response_month) return;
-          const monthKey = row.response_month.slice(0, 7); // "YYYY-MM"
+          const monthKey = quarterKeyOfMonthStr(String(row.response_month)); // "YYYY-Qn"
+          if (!monthKey) return;
           if (!relByMonth[monthKey]) relByMonth[monthKey] = { scoreSum: 0, weight: 0 };
           const w = row.valid_citations || 0;
           relByMonth[monthKey].scoreSum += (row.relevance_score || 0) * w;
@@ -2297,42 +2326,44 @@ export const useDashboardData = () => {
     [responses, matchesLocation]
   );
 
-  // --- Period detection: group responses by their snapshot month
-  // (response_month), so a run tagged for a given collection cycle shows under
-  // that month regardless of when it was physically written. Built from the
-  // LOCATION-FILTERED responses: with a location active, the period dropdown
-  // used to offer months with zero in-location data, whose selection produced
-  // a mixed-scope scorecard (0% visibility next to aggregate sentiment). ---
+  // --- Period detection: group responses by the QUARTER of their snapshot
+  // month (response_month), so a run tagged for a given collection cycle
+  // shows under that cycle's quarter regardless of when it was physically
+  // written. Built from the LOCATION-FILTERED responses: with a location
+  // active, the period dropdown used to offer periods with zero in-location
+  // data, whose selection produced a mixed-scope scorecard (0% visibility
+  // next to aggregate sentiment). ---
   const availablePeriods: PeriodInfo[] = useMemo(() => {
-    const monthSet = new Set<string>();
+    const periodSet = new Set<string>();
     visibleResponses.forEach(r => {
-      const key = responseMonthKey(r);
-      if (key) monthSet.add(key);
+      const key = responsePeriodKey(r);
+      if (key) periodSet.add(key);
     });
     // Raw responses stream in AFTER first paint now, so until this company's
-    // stream has fully landed, widen the month set from the visibility
+    // stream has fully landed, widen the period set from the visibility
     // rollup (already scoped to the active location by the same attribution
     // rule), clamped to the eager response window so the interim list covers
-    // the same months the raw set will. Once the load is FINAL the fallback
+    // the same quarters the raw set will. Once the load is FINAL the fallback
     // stops contributing and periods derive from responses alone — exactly
-    // the pre-streaming behavior (never offering a month whose in-location
+    // the pre-streaming behavior (never offering a period whose in-location
     // raw data doesn't exist, which produced mixed-scope scorecards).
     if (responsesLoadedCompanyId !== currentCompany?.id) {
       const cutoff = new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000);
-      const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
+      const cutoffKey = quarterKeyOfDate(cutoff);
       visibilityRowsForSelection.forEach(row => {
         if (!row.response_month) return;
-        const key = String(row.response_month).slice(0, 7);
-        if (key >= cutoffKey) monthSet.add(key);
+        const key = quarterKeyOfMonthStr(String(row.response_month));
+        if (key && key >= cutoffKey) periodSet.add(key);
       });
     }
-    if (monthSet.size === 0) return [];
-    const periods: PeriodInfo[] = Array.from(monthSet)
+    if (periodSet.size === 0) return [];
+    const periods: PeriodInfo[] = Array.from(periodSet)
       .map((key) => {
-        const [y, m] = key.split('-').map(Number);
-        const startDate = new Date(y, m - 1, 1);
-        const endDate = new Date(y, m, 0, 23, 59, 59, 999);
-        const label = startDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        const y = Number(key.slice(0, 4));
+        const q = Number(key.slice(6));
+        const startDate = new Date(y, (q - 1) * 3, 1);
+        const endDate = new Date(y, (q - 1) * 3 + 3, 0, 23, 59, 59, 999);
+        const label = `Q${q} ${y}`;
         return { key, label, startDate, endDate };
       })
       .sort((a, b) => b.startDate.getTime() - a.startDate.getTime());
@@ -2591,17 +2622,17 @@ export const useDashboardData = () => {
     return availablePeriods[0];
   }, [availablePeriods, selectedPeriod]);
 
-  // Previous period (month before the effective one)
+  // Previous period (quarter before the effective one)
   const previousPeriodInfo = useMemo(() => {
     if (!effectivePeriod || availablePeriods.length < 2) return null;
     const idx = availablePeriods.findIndex(p => p.key === effectivePeriod.key);
     return idx >= 0 && idx + 1 < availablePeriods.length ? availablePeriods[idx + 1] : null;
   }, [availablePeriods, effectivePeriod]);
 
-  // Filter responses to the selected period (by snapshot month).
+  // Filter responses to the selected period (by snapshot quarter).
   const periodFilteredResponses = useMemo(() => {
     if (!effectivePeriod || availablePeriods.length <= 1) return visibleResponses;
-    return visibleResponses.filter(r => responseMonthKey(r) === effectivePeriod.key);
+    return visibleResponses.filter(r => responsePeriodKey(r) === effectivePeriod.key);
   }, [visibleResponses, effectivePeriod, availablePeriods]);
 
   // Per-response AI themes are tied to responses via response_id. When a
@@ -2619,14 +2650,14 @@ export const useDashboardData = () => {
   // Previous period responses for per-tab delta computation (by snapshot month).
   const previousPeriodResponses = useMemo(() => {
     if (!previousPeriodInfo) return [];
-    return visibleResponses.filter(r => responseMonthKey(r) === previousPeriodInfo.key);
+    return visibleResponses.filter(r => responsePeriodKey(r) === previousPeriodInfo.key);
   }, [visibleResponses, previousPeriodInfo]);
 
   // Previous-period metrics for delta display.
   //
-  // Each metric independently finds the MOST RECENT PRIOR MONTH that actually
-  // has data from its own source. A company with data in Feb + April but no
-  // March should compare April to Feb for sentiment — skipping the gap —
+  // Each metric independently finds the MOST RECENT PRIOR QUARTER that
+  // actually has data from its own source. A company with data in Q1 + Q3
+  // but no Q2 should compare Q3 to Q1 for sentiment — skipping the gap —
   // rather than compare against a fake 0.
   //
   // Sources (each independent):
@@ -2634,7 +2665,7 @@ export const useDashboardData = () => {
   //   - relevance: companyRelevanceByMonth (MV-backed)
   //   - visibility: response counts in availablePeriods (response-backed)
   //
-  // If no prior month with data exists for a given metric, that field is
+  // If no prior quarter with data exists for a given metric, that field is
   // left UNDEFINED and the render layer skips the delta arrow — preventing
   // the "delta always equals current" bug where a missing value was
   // silently coerced to 0.
@@ -2646,23 +2677,23 @@ export const useDashboardData = () => {
     if (!effectivePeriod) return null;
     const currentKey = effectivePeriod.key;
 
-    // Helper: given a map keyed on "YYYY-MM", find the most recent key
+    // Helper: given a map keyed on "YYYY-Qn", find the most recent key
     // lexically less than currentKey that has a numeric value.
     const findMostRecentPrior = (map: Record<string, number>): number | undefined => {
       const priorKeys = Object.keys(map)
         .filter((k) => k < currentKey && typeof map[k] === 'number')
-        .sort(); // lex sort works for YYYY-MM
+        .sort(); // lex sort works for YYYY-Qn
       if (priorKeys.length === 0) return undefined;
       return map[priorKeys[priorKeys.length - 1]];
     };
 
-    // Sentiment — most recent prior month in the sentiment MV.
+    // Sentiment — most recent prior quarter in the sentiment MV.
     const prevSentimentRatio = findMostRecentPrior(effSentimentByMonth);
     const sentimentScore = typeof prevSentimentRatio === 'number'
       ? Math.round(Math.max(0, Math.min(100, prevSentimentRatio * 100)))
       : undefined;
 
-    // Relevance — most recent prior month in the relevance MV.
+    // Relevance — most recent prior quarter in the relevance MV.
     const prevRelevance = findMostRecentPrior(effRelevanceByMonth);
     const relevanceScore = typeof prevRelevance === 'number'
       ? Math.round(prevRelevance)
@@ -2674,14 +2705,14 @@ export const useDashboardData = () => {
     const priorAvailable = availablePeriods.filter((p) => p.key < currentKey);
     if (priorAvailable.length > 0) {
       // availablePeriods is already sorted newest-first. Prefer the exact
-      // precomputed rollup for the prior month; fall back to counting loaded
-      // responses bucketed by snapshot month (responseMonthKey).
+      // precomputed rollup for the prior quarter; fall back to counting loaded
+      // responses bucketed by snapshot month (responsePeriodKey).
       const chosen = priorAvailable[0];
       const mvPrior = visibilityFromMvRows(visibilityRowsForSelection, chosen.key, null);
       if (mvPrior) {
         visibilityScore = Math.round(mvPrior.pct);
       } else {
-        const chosenResponses = visibleResponses.filter((r) => responseMonthKey(r) === chosen.key);
+        const chosenResponses = visibleResponses.filter((r) => responsePeriodKey(r) === chosen.key);
         if (chosenResponses.length > 0) {
           const mentionedCount = chosenResponses.filter((r) => r.company_mentioned === true).length;
           visibilityScore = Math.round((mentionedCount / chosenResponses.length) * 100);
@@ -3103,12 +3134,13 @@ export const useDashboardData = () => {
     return metricsResult;
   }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations, visibilityRowsForSelection]);
 
-  // Per-month EPS trend powering the Overview headline sparkline. One point per
-  // available month (oldest → selected period), each computed with the SAME
-  // 50/30/20 weighting as the headline metric so the latest point equals the
-  // big EPS number. Sentiment/relevance come from the monthly MVs (falling back
-  // to the all-months aggregate when a month is missing, mirroring the headline
-  // fallback); visibility is computed from that month's responses.
+  // Per-quarter EPS trend powering the Overview headline sparkline. One point
+  // per available quarter (oldest → selected period), each computed with the
+  // SAME 50/30/20 weighting as the headline metric so the latest point equals
+  // the big EPS number. Sentiment/relevance come from the month-grain MVs
+  // pooled by quarter (falling back to the all-periods aggregate when a
+  // quarter is missing, mirroring the headline fallback); visibility is
+  // computed from that quarter's responses.
   const epsTrend = useMemo(() => {
     if (availablePeriods.length === 0) return [];
     const periodsAsc = [...availablePeriods].sort(
@@ -3118,10 +3150,10 @@ export const useDashboardData = () => {
     const relevanceAgg = effRelevanceMetrics?.relevance_score;
 
     const full = periodsAsc.map((p) => {
-      // Snapshot-month bucketing (responseMonthKey), matching the period
-      // filter — NOT tested_at, which can fall in the prior calendar month.
-      // Visibility prefers the exact rollup for the month.
-      const monthResponses = visibleResponses.filter((r) => responseMonthKey(r) === p.key);
+      // Snapshot-quarter bucketing (responsePeriodKey), matching the period
+      // filter — NOT tested_at, which can fall in the prior calendar quarter.
+      // Visibility prefers the exact rollup for the quarter.
+      const monthResponses = visibleResponses.filter((r) => responsePeriodKey(r) === p.key);
       const mvMonth = visibilityFromMvRows(visibilityRowsForSelection, p.key, null);
       const mentioned = monthResponses.filter((r) => r.company_mentioned === true).length;
       const visibility = mvMonth
@@ -3148,8 +3180,8 @@ export const useDashboardData = () => {
       };
     });
 
-    // Trim to the selected period so the line ends on the month whose EPS the
-    // card headline is showing (default selection is the latest month).
+    // Trim to the selected period so the line ends on the quarter whose EPS the
+    // card headline is showing (default selection is the latest quarter).
     const selIdx = effectivePeriod ? full.findIndex((d) => d.key === effectivePeriod.key) : full.length - 1;
     return selIdx >= 0 ? full.slice(0, selIdx + 1) : full;
   }, [availablePeriods, visibleResponses, effSentimentByMonth, effRelevanceByMonth, effSentimentMetrics, effRelevanceMetrics, effectivePeriod, visibilityRowsForSelection]);
@@ -3231,12 +3263,12 @@ export const useDashboardData = () => {
     return result;
   }, [effSentimentMvRows, effRelevanceMvRows, periodFilteredResponses, visibilityRowsForSelection, effectivePeriod]);
 
-  // Per-job-function monthly EPS trend — same 50/30/20 formula as
-  // metricsByJobFunction, resolved one month at a time, so the headline
-  // sparkline + delta work while a function filter is active. Only months
-  // where the function actually has responses are included; when a month is
+  // Per-job-function quarterly EPS trend — same 50/30/20 formula as
+  // metricsByJobFunction, resolved one quarter at a time, so the headline
+  // sparkline + delta work while a function filter is active. Only quarters
+  // where the function actually has responses are included; when a quarter is
   // missing sentiment/relevance from the MVs we fall back to that function's
-  // all-months aggregate so the line never dips to an artificial zero. The
+  // all-periods aggregate so the line never dips to an artificial zero. The
   // selected-period point is aligned to metricsByJobFunction so the endpoint
   // equals the big EPS number on the card.
   const epsTrendByJobFunction = useMemo<Record<string, Array<{ key: string; date: string; score: number; sentiment: number; visibility: number; relevance: number; responseCount: number }>>>(() => {
@@ -3249,11 +3281,14 @@ export const useDashboardData = () => {
     visibilityRowsForSelection.forEach(r => { if (r.job_function_context) fns.add(r.job_function_context); });
     visibleResponses.forEach(r => { const f = r.confirmed_prompts?.job_function_context?.trim(); if (f) fns.add(f); });
 
-    // Pre-bucket MV rows by "fn YYYY-MM" so each (fn, month) lookup is O(1).
+    // Pre-bucket MV rows by "fn YYYY-Qn" so each (fn, period) lookup is O(1);
+    // month-grain MV rows pool into their quarter.
     const sentBucket = new Map<string, { pos: number; neg: number }>();
     effSentimentMvRows.forEach(r => {
       if (!r.job_function_context || !r.response_month) return;
-      const k = `${r.job_function_context} ${r.response_month.slice(0, 7)}`;
+      const qk = quarterKeyOfMonthStr(String(r.response_month));
+      if (!qk) return;
+      const k = `${r.job_function_context} ${qk}`;
       const b = sentBucket.get(k) || { pos: 0, neg: 0 };
       b.pos += r.positive_themes || 0; b.neg += r.negative_themes || 0;
       sentBucket.set(k, b);
@@ -3261,7 +3296,9 @@ export const useDashboardData = () => {
     const relBucket = new Map<string, { w: number; wt: number }>();
     effRelevanceMvRows.forEach(r => {
       if (!r.job_function_context || !r.response_month) return;
-      const k = `${r.job_function_context} ${r.response_month.slice(0, 7)}`;
+      const qk = quarterKeyOfMonthStr(String(r.response_month));
+      if (!qk) return;
+      const k = `${r.job_function_context} ${qk}`;
       const b = relBucket.get(k) || { w: 0, wt: 0 };
       b.w += (r.relevance_score || 0) * (r.valid_citations || 0); b.wt += r.valid_citations || 0;
       relBucket.set(k, b);
@@ -3269,17 +3306,17 @@ export const useDashboardData = () => {
 
     const result: Record<string, any[]> = {};
     fns.forEach(fn => {
-      const agg = metricsByJobFunction[fn]; // all-months aggregate (fallback + endpoint match)
+      const agg = metricsByJobFunction[fn]; // all-periods aggregate (fallback + endpoint match)
       const series: any[] = [];
       periodsAsc.forEach(p => {
         const monthResponses = visibleResponses.filter(r =>
           r.confirmed_prompts?.job_function_context?.trim() === fn &&
-          responseMonthKey(r) === p.key
+          responsePeriodKey(r) === p.key
         );
-        // Exact rollup for (function, month) preferred; a month the function
+        // Exact rollup for (function, quarter) preferred; a quarter the function
         // wasn't measured in (no rollup rows AND no responses) is skipped.
         const mvFnMonth = visibilityFromMvRows(visibilityRowsForSelection, p.key, fn);
-        if (monthResponses.length === 0 && !mvFnMonth) return; // not measured this month
+        if (monthResponses.length === 0 && !mvFnMonth) return; // not measured this quarter
         const mentioned = monthResponses.filter(r => r.company_mentioned === true).length;
         const visibility = mvFnMonth
           ? Math.round(mvFnMonth.pct)

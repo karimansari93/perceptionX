@@ -130,7 +130,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     refreshData,
     parseCitations,
     topCompetitors,
-    lastUpdated,
     llmMentionRankings,
     fixExistingPrompts,
     hasDataIssues,
@@ -763,12 +762,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         <DashboardHeader 
           companyName={companyName || ''}
           responsesCount={responses.length}
-          onRefresh={refreshData}
           breadcrumbs={[
             { label: activeGroup.charAt(0).toUpperCase() + activeGroup.slice(1), active: false },
             { label: activeSection.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()), active: true }
           ]}
-          lastUpdated={lastUpdated}
           onFixData={fixExistingPrompts}
           hasDataIssues={hasDataIssues}
           alwaysMounted={true}

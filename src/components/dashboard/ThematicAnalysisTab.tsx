@@ -283,12 +283,17 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       ? responses
       : responses.filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter);
 
-    const monthFn = (jf: any, dateLike: any) => {
-      const d = new Date(dateLike);
-      const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      return `${month}|${(jf || '').trim()}`;
+    // Scope keys stay at the MV's month grain — a quarterly period simply
+    // contributes every month key it contains. Responses key on their own
+    // response_month (the collection-cycle month) so they match the MV's
+    // bucketing exactly: a row tested Aug 3 but tagged to the July cycle
+    // must match the MV's July rows. tested_at is only a legacy fallback.
+    const monthOf = (r: any): string => {
+      if (r.response_month) return String(r.response_month).slice(0, 7);
+      const d = new Date(r.tested_at);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     };
-    const keys = new Set(scopedResponses.map(r => monthFn(r.confirmed_prompts?.job_function_context, r.tested_at)));
+    const keys = new Set(scopedResponses.map(r => `${monthOf(r)}|${(r.confirmed_prompts?.job_function_context || '').trim()}`));
     const rowKey = (row: any) => `${String(row.response_month).slice(0, 7)}|${(row.job_function_context || '').trim()}`;
     const scope = keys.size > 0;
 

@@ -1,7 +1,6 @@
 import React from "react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { ChevronRight, Wrench } from "lucide-react";
-import { LastUpdated } from "./LastUpdated";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { CompanySwitcher } from "./CompanySwitcher";
@@ -14,9 +13,7 @@ import { LocationEntry } from "@/utils/locationContext";
 interface DashboardHeaderProps {
   companyName: string;
   responsesCount: number;
-  onRefresh: () => Promise<void>;
   breadcrumbs?: { label: string; icon?: React.ReactNode; active: boolean }[];
-  lastUpdated?: Date;
   onFixData?: () => Promise<void>;
   hasDataIssues?: boolean;
   alwaysMounted?: boolean;
@@ -34,9 +31,7 @@ interface DashboardHeaderProps {
 export const DashboardHeader = React.memo(({
   companyName,
   responsesCount,
-  onRefresh,
   breadcrumbs,
-  lastUpdated,
   onFixData,
   hasDataIssues,
   alwaysMounted,
@@ -75,7 +70,7 @@ export const DashboardHeader = React.memo(({
             ))}
           </div>
         )}
-        {/* Right side with LocationFilter, CompanySwitcher, LastUpdated component and debug button */}
+        {/* Right side with LocationFilter, CompanySwitcher and debug button */}
         <div className="flex-1" />
         <div className="flex items-center gap-2 sm:gap-3">
           {onPeriodChange && availablePeriods && availablePeriods.length > 1 && (
@@ -128,7 +123,6 @@ export const DashboardHeader = React.memo(({
               <span className="sm:hidden">Fix</span>
             </Button>
           )}
-          <LastUpdated onRefresh={onRefresh} lastUpdated={lastUpdated} />
         </div>
       </div>
     </header>
