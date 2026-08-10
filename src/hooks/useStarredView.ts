@@ -22,6 +22,23 @@ export function starredViewStorageKey(userId: string | null | undefined): string
   return `${STORAGE_KEY_PREFIX}:${userId ?? "anon"}`;
 }
 
+// Periods were month keys ("2026-06") before the dashboard went quarterly;
+// stored stars from that era must map onto the quarter containing the month
+// ("2026-Q2") or they'd never match a period again — silently un-pinning the
+// view while the star still renders active. Canonicalized at the READ
+// boundary (not migrated in storage) so every consumer — the auto-restore in
+// useDashboardData and the star-active comparison — sees one key era.
+// Duplicated from useDashboardData's quarterKeyOfMonthStr to avoid an import
+// cycle (useDashboardData imports this module).
+function canonicalizePeriodKey(period: string | null): string | null {
+  if (!period) return null;
+  const m = /^(\d{4})-(\d{2})$/.exec(period);
+  if (!m) return period; // already "YYYY-Qn" (or unknown — pass through)
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return period;
+  return `${m[1]}-Q${Math.floor((month - 1) / 3) + 1}`;
+}
+
 export function readStarredView(userId: string | null | undefined): StarredView | null {
   if (typeof window === "undefined") return null;
   try {
@@ -31,7 +48,7 @@ export function readStarredView(userId: string | null | undefined): StarredView 
     if (typeof parsed !== "object" || parsed === null) return null;
     return {
       location: typeof parsed.location === "string" ? parsed.location : null,
-      period: typeof parsed.period === "string" ? parsed.period : null,
+      period: typeof parsed.period === "string" ? canonicalizePeriodKey(parsed.period) : null,
       companyId: typeof parsed.companyId === "string" ? parsed.companyId : null,
     };
   } catch {
