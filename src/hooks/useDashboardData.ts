@@ -2349,11 +2349,17 @@ export const useDashboardData = () => {
     // raw data doesn't exist, which produced mixed-scope scorecards).
     if (responsesLoadedCompanyId !== currentCompany?.id) {
       const cutoff = new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000);
-      const cutoffKey = quarterKeyOfDate(cutoff);
+      // Clamp at MONTH grain before mapping to a quarter: a quarter-grain
+      // cutoff would admit MV months up to two months older than the eager
+      // raw window (cutoff Feb 11 → "2026-Q1" would let January in), briefly
+      // offering a period whose raw data will never arrive.
+      const cutoffMonthKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
       visibilityRowsForSelection.forEach(row => {
         if (!row.response_month) return;
-        const key = quarterKeyOfMonthStr(String(row.response_month));
-        if (key && key >= cutoffKey) periodSet.add(key);
+        const monthKey = String(row.response_month).slice(0, 7);
+        if (monthKey < cutoffMonthKey) return;
+        const key = quarterKeyOfMonthStr(monthKey);
+        if (key) periodSet.add(key);
       });
     }
     if (periodSet.size === 0) return [];

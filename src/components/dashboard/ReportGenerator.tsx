@@ -38,6 +38,7 @@ const isQuarterKey = (p: string) => p.includes('Q');
 
 function defaultPeriod(quarterOffset: number): string {
   const d = new Date();
+  d.setDate(1); // pin to the 1st first — setMonth from day 31 overflows into the next month
   d.setMonth(d.getMonth() + quarterOffset * 3);
   return `${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`;
 }
