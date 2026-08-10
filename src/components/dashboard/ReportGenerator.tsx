@@ -30,29 +30,52 @@ const COUNTRY_NAMES: Record<string, string> = {
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
+// Period keys are quarters ("YYYY-Qn") since the dashboard went quarterly.
+// Reports saved before the switch carry legacy month keys ("YYYY-MM"); every
+// helper keeps a month path so those entries still render and regenerate.
 
-function defaultMonth(offset: number): string {
+const isQuarterKey = (p: string) => p.includes('Q');
+
+function defaultPeriod(quarterOffset: number): string {
   const d = new Date();
-  d.setMonth(d.getMonth() + offset);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  d.setMonth(d.getMonth() + quarterOffset * 3);
+  return `${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`;
 }
 
-function formatPeriodShort(ym: string): string {
-  const [year, month] = ym.split('-').map(Number);
+function formatPeriodShort(p: string): string {
+  if (isQuarterKey(p)) {
+    const [year, q] = p.split('-');
+    return `${q} ${year}`;
+  }
+  const [year, month] = p.split('-').map(Number);
   return `${MONTH_NAMES[month - 1]} ${year}`;
 }
 
 function formatPeriodRange(p1: string, p2: string): string {
+  if (isQuarterKey(p1) || isQuarterKey(p2)) {
+    const [y1, s1] = p1.split('-');
+    const [y2, s2] = p2.split('-');
+    if (y1 === y2) return `${s1} vs ${s2} ${y1}`;
+    return `${formatPeriodShort(p1)} vs ${formatPeriodShort(p2)}`;
+  }
   const [y1, m1] = p1.split('-').map(Number);
   const [y2, m2] = p2.split('-').map(Number);
   if (y1 === y2) return `${MONTH_NAMES[m1 - 1]} vs ${MONTH_NAMES[m2 - 1]} ${y1}`;
   return `${MONTH_NAMES[m1 - 1]} ${y1} vs ${MONTH_NAMES[m2 - 1]} ${y2}`;
 }
 
-function monthToRange(ym: string) {
-  const [year, month] = ym.split('-').map(Number);
-  const lastDay = new Date(year, month, 0).getDate();
+function periodToRange(p: string) {
   const pad = (n: number) => String(n).padStart(2, '0');
+  if (isQuarterKey(p)) {
+    const year = Number(p.slice(0, 4));
+    const q = Number(p.slice(6));
+    const startMonth = (q - 1) * 3 + 1;
+    const endMonth = q * 3;
+    const lastDay = new Date(year, endMonth, 0).getDate();
+    return { start: `${year}-${pad(startMonth)}-01`, end: `${year}-${pad(endMonth)}-${pad(lastDay)}` };
+  }
+  const [year, month] = p.split('-').map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
   return { start: `${year}-${pad(month)}-01`, end: `${year}-${pad(month)}-${pad(lastDay)}` };
 }
 
@@ -230,8 +253,8 @@ export const ReportGenerator = ({ companyName }: ReportGeneratorProps) => {
   const { availablePeriods } = useDashboardData();
 
   // Default to oldest and newest available periods once loaded
-  const [period1, setPeriod1] = useState(() => defaultMonth(-2));
-  const [period2, setPeriod2] = useState(() => defaultMonth(-1));
+  const [period1, setPeriod1] = useState(() => defaultPeriod(-2));
+  const [period2, setPeriod2] = useState(() => defaultPeriod(-1));
   const [market, setMarket] = useState('GLOBAL');
 
   useEffect(() => {
@@ -302,8 +325,8 @@ export const ReportGenerator = ({ companyName }: ReportGeneratorProps) => {
   }, [history, period1, period2, market]);
 
   const runDownload = useCallback(async (entry: ReportEntry) => {
-    const r1 = monthToRange(entry.period1);
-    const r2 = monthToRange(entry.period2);
+    const r1 = periodToRange(entry.period1);
+    const r2 = periodToRange(entry.period2);
     try {
       await downloadPdfReport({
         company_id: entry.companyId,

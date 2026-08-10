@@ -9,9 +9,10 @@ import { supabase } from '@/integrations/supabase/client';
  *   - Covered        = that prompt has >=1 response in the month (any model).
  *   - Missing        = active prompts with zero responses in the month.
  *
- * Bucketing uses prompt_responses.response_month (first-of-month date), which
- * is the same field the dashboard buckets by — so these numbers line up with
- * what users see on the Sources/Visibility tabs.
+ * Bucketing uses prompt_responses.response_month (first-of-month date).
+ * Deliberately MONTH-grain even though the user-facing dashboard groups by
+ * quarter: collection runs and the per-month dedupe index stay monthly, and
+ * this view monitors collection completeness, not presentation.
  */
 export type CompanyCoverage = {
   companyId: string;

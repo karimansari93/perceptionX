@@ -35,9 +35,10 @@ export interface PromptResponse {
   for_index?: boolean | null;
   index_period?: string | null;
   // Canonical monthly-snapshot bucket: generated as
-  // COALESCE(collection_cycle, date_trunc('month', created_at)). This is the
-  // field the dashboard groups periods by — NOT tested_at/created_at, which is
-  // just when the row was physically written.
+  // COALESCE(collection_cycle, date_trunc('month', created_at)). Collection
+  // and dedupe stay at this month grain; the dashboard groups periods by the
+  // QUARTER containing it (responsePeriodKey) — NOT by tested_at/created_at,
+  // which is just when the row was physically written.
   response_month?: string | null;
 }
 
