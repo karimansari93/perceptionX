@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Favicon } from "@/components/ui/favicon";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { useTabSearchSeed, useSeedTabSearch } from "@/contexts/TabSearchSeedContext";
 import { useEntityCanonicalizer } from "@/hooks/useEntityCanonicalizer";
@@ -43,12 +44,12 @@ import { CompetitorDetailsModal } from "./CompetitorDetailsModal";
 const BRAND_COLOR = "#0DBCBA";
 const COMPETITOR_BAR_COLOR = "#94A3B8";
 const CHART_COLORS = ["#0DBCBA", "#5B7FD9", "#DB5E89", "#E8A33D", "#8B5CF6"];
-const TREND_COMPETITOR_LIMIT = 4; // + the measured company = 5 series
+const TREND_SERIES_LIMIT = 5;
 const CARD1_ROW_LIMIT = 10;
 const EOC_ROW_LIMIT = 12;
 const INITIAL_TABLE_ROWS = 15;
 const TABLE_ROWS_STEP = 50;
-const OWNS_ATTRIBUTE_CHIPS = 2;
+const TOP_SOURCES_PER_ROW = 5;
 
 export type CompetitorSet = "eoc" | "direct" | "emergent";
 
@@ -111,6 +112,9 @@ type CompetitorAgg = {
   competitiveCount: number; // …on competitive (comparison) prompts
   models: Set<string>;      // LLM display names
   responseIds: string[];
+  // Domains cited in the responses mentioning this competitor — the table's
+  // "Typically mentioned on" column.
+  domainCounts: Map<string, number>;
 };
 
 interface CompetitorsTabProps {
@@ -176,7 +180,7 @@ export const CompetitorsTab = memo(({
   const [filterAttributes, setFilterAttributes] = useState<string[]>([]);
   const [filterModels, setFilterModels] = useState<string[]>([]);
   const [filterSentiments, setFilterSentiments] = useState<string[]>([]);
-  const [sortKey, setSortKey] = useState<"name" | "attributes" | "models" | "sentiment" | "coverage">("coverage");
+  const [sortKey, setSortKey] = useState<"name" | "sources" | "models" | "sentiment" | "coverage">("coverage");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [visibleRows, setVisibleRows] = useState(INITIAL_TABLE_ROWS);
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
@@ -355,7 +359,7 @@ export const CompetitorsTab = memo(({
       for (const name of nr.competitors) {
         let agg = byName.get(name);
         if (!agg) {
-          agg = { name, count: 0, coMention: 0, discoveryCount: 0, competitiveCount: 0, models: new Set(), responseIds: [] };
+          agg = { name, count: 0, coMention: 0, discoveryCount: 0, competitiveCount: 0, models: new Set(), responseIds: [], domainCounts: new Map() };
           byName.set(name, agg);
         }
         agg.count += 1;
@@ -364,6 +368,9 @@ export const CompetitorsTab = memo(({
         if (isCompetitive) agg.competitiveCount += 1;
         if (nr.model) agg.models.add(getLLMDisplayName(nr.model));
         agg.responseIds.push(nr.id);
+        for (const d of nr.domains) {
+          agg.domainCounts.set(d, (agg.domainCounts.get(d) || 0) + 1);
+        }
       }
     }
     return { byName, matching, total, companyMentioned, discoveryTotal, discoveryMentioned, competitiveTotal, competitiveMentioned };
@@ -524,36 +531,20 @@ export const CompetitorsTab = memo(({
       });
     });
 
-    // The measured company, pinned into its true position.
-    rows.push({
-      name: companyName,
-      isCompany: true,
-      coverage: denom > 0 ? (analyzed.competitiveMentioned / denom) * 100 : 0,
-      prevCoverage: hasPrevPeriod && prevDenom > 0 ? (prevAnalyzed.competitiveMentioned / prevDenom) * 100 : null,
-    });
-
+    // Deliberately NO row for the measured company: competitive prompts name
+    // it in the question, so its near-100% presence is a softball that would
+    // flatten every real competitor's bar. The honest self-comparison is the
+    // discovery race in Employers of choice, where the company IS pinned.
     return rows.sort((a, b) => b.coverage - a.coverage);
-  }, [analyzed, prevAnalyzed, setOf, curatedDirect, companyName, hasPrevPeriod]);
+  }, [analyzed, prevAnalyzed, setOf, curatedDirect, hasPrevPeriod]);
 
-  // Top rows plus the company row pinned in even when it ranks below the cut.
-  const card1Visible = useMemo(() => {
-    const top = card1Rows.slice(0, CARD1_ROW_LIMIT);
-    if (!top.some((r) => r.isCompany)) {
-      const companyRow = card1Rows.find((r) => r.isCompany);
-      if (companyRow) top.push(companyRow);
-    }
-    return top;
-  }, [card1Rows]);
+  const card1Visible = useMemo(() => card1Rows.slice(0, CARD1_ROW_LIMIT), [card1Rows]);
 
   // Line view — share-of-voice trend: % of each period bucket's competitive
-  // answers mentioning the entity, for the top direct competitors plus the
-  // measured company.
+  // answers mentioning each of the top direct competitors. The measured
+  // company is deliberately absent here too (named in the prompt → ~100%).
   const trend = useMemo(() => {
-    const topCompetitors = card1Rows
-      .filter((r) => !r.isCompany)
-      .slice(0, TREND_COMPETITOR_LIMIT)
-      .map((r) => r.name);
-    const series = [companyName, ...topCompetitors];
+    const series = card1Rows.slice(0, TREND_SERIES_LIMIT).map((r) => r.name);
     const empty = { data: [] as Record<string, any>[], series, granularity: "week" as TrendGranularity };
 
     const scope = analyzed.matching.filter((nr) => nr.promptType === "competitive");
@@ -604,8 +595,7 @@ export const CompetitorsTab = memo(({
       const bucket = buckets.get(bucketOf(nr.testedAt));
       if (!bucket) continue;
       bucket.total += 1;
-      if (nr.mentioned) bucket.counts[0] += 1;
-      for (let i = 1; i < series.length; i += 1) {
+      for (let i = 0; i < series.length; i += 1) {
         if (nr.competitors.includes(series[i])) bucket.counts[i] += 1;
       }
     }
@@ -618,7 +608,7 @@ export const CompetitorsTab = memo(({
     });
 
     return { data, series, granularity };
-  }, [card1Rows, analyzed, companyName]);
+  }, [card1Rows, analyzed]);
 
   // -------------------------------------------------------------------------
   // Card 2 — employers of choice: the discovery-prompt race. Coverage = % of
@@ -667,6 +657,9 @@ export const CompetitorsTab = memo(({
     name: string;
     sets: CompetitorSet[];
     attributes: Array<{ id: string; name: string; count: number }>;
+    /** Top cited domains in this competitor's answers ("Typically mentioned on"). */
+    sources: string[];
+    sourceCount: number;
     models: string[];
     sentiment: number | null;
     coverage: number;
@@ -683,11 +676,17 @@ export const CompetitorsTab = memo(({
             .map(([id, v]) => ({ id, name: v.name, count: v.count }))
             .sort((a, b) => b.count - a.count)
         : [];
+      const sources = Array.from(agg.domainCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, TOP_SOURCES_PER_ROW)
+        .map(([domain]) => domain);
       const prevAgg = prevAnalyzed.byName.get(agg.name);
       rows.push({
         name: agg.name,
         sets: setOf(agg),
         attributes,
+        sources,
+        sourceCount: agg.domainCounts.size,
         models: Array.from(agg.models).sort(),
         sentiment: themes ? sentimentRatioV2(themes.positive, themes.negative) : null,
         coverage: analyzed.total > 0 ? (agg.count / analyzed.total) * 100 : 0,
@@ -728,7 +727,7 @@ export const CompetitorsTab = memo(({
     return [...rows].sort((a, b) => {
       switch (sortKey) {
         case "name": return dir * a.name.localeCompare(b.name);
-        case "attributes": return dir * (a.attributes.length - b.attributes.length);
+        case "sources": return dir * (a.sourceCount - b.sourceCount);
         case "models": return dir * (a.models.length - b.models.length);
         case "sentiment": {
           // Nulls always sink to the bottom regardless of direction.
@@ -1021,8 +1020,10 @@ export const CompetitorsTab = memo(({
                         <p className="text-xs">
                           Companies the AI names in comparison answers, plus your
                           curated competitor list (curated rivals show even at 0%).
-                          Your row is pinned at its true rank. Answers mention
-                          several companies, so percentages don't sum to 100.
+                          {companyName || "Your company"} isn't ranked here — comparison
+                          prompts name it in the question, so its presence is a given.
+                          Answers mention several companies, so percentages don't sum
+                          to 100.
                         </p>
                       </TooltipContent>
                     </Tooltip>
@@ -1053,7 +1054,7 @@ export const CompetitorsTab = memo(({
                                 dataKey={`s${i}`}
                                 name={name}
                                 stroke={CHART_COLORS[i]}
-                                strokeWidth={i === 0 ? 3 : 2}
+                                strokeWidth={2}
                                 dot={trend.data.length <= 10 ? { r: 3, fill: CHART_COLORS[i], stroke: "#fff", strokeWidth: 1.5 } : false}
                                 activeDot={{ r: 4, fill: CHART_COLORS[i], stroke: "#fff", strokeWidth: 2 }}
                               />
@@ -1067,13 +1068,13 @@ export const CompetitorsTab = memo(({
                       {trend.series.map((name, i) => (
                         <button
                           key={name}
-                          onClick={() => i > 0 && handleChartRowClick(name)}
-                          className={`flex items-center gap-1.5 min-w-0 ${i > 0 ? "group cursor-pointer" : "cursor-default"}`}
+                          onClick={() => handleChartRowClick(name)}
+                          className="flex items-center gap-1.5 min-w-0 group cursor-pointer"
                         >
                           <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: CHART_COLORS[i] }} />
-                          <CompetitorFavicon name={name} isCompany={i === 0} />
-                          <span className={`text-xs truncate max-w-[150px] ${i === 0 ? "font-semibold text-gray-900" : "text-gray-600 group-hover:text-gray-900"}`}>
-                            {name}{i === 0 ? " (you)" : ""}
+                          <CompetitorFavicon name={name} />
+                          <span className="text-xs truncate max-w-[150px] text-gray-600 group-hover:text-gray-900">
+                            {name}
                           </span>
                         </button>
                       ))}
@@ -1286,7 +1287,7 @@ export const CompetitorsTab = memo(({
                       <TableHeader>
                         <TableRow className="hover:bg-transparent">
                           <SortableHead label="Competitor" k="name" className="min-w-[180px]" />
-                          <SortableHead label="Owns attribute" k="attributes" className="min-w-[190px]" />
+                          <SortableHead label="Typically mentioned on" k="sources" className="min-w-[170px]" />
                           <SortableHead label="Models" k="models" className="min-w-[120px]" />
                           <SortableHead label="Sentiment" k="sentiment" className="min-w-[100px]" />
                           <SortableHead label="Coverage" k="coverage" className="min-w-[110px] text-right" />
@@ -1317,21 +1318,19 @@ export const CompetitorsTab = memo(({
                               </div>
                             </TableCell>
                             <TableCell>
-                              {row.attributes.length === 0 ? (
+                              {row.sources.length === 0 ? (
                                 <span className="text-xs text-gray-400">—</span>
                               ) : (
-                                <div className="flex items-center gap-1 flex-wrap">
-                                  {row.attributes.slice(0, OWNS_ATTRIBUTE_CHIPS).map((a) => {
-                                    const Icon = getAttributeIconByName(a.name);
-                                    return (
-                                      <span key={a.id} className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 rounded-full px-2 py-0.5 text-[11px]">
-                                        <Icon className="w-3 h-3 flex-shrink-0" />
-                                        <span className="truncate max-w-[110px]">{a.name}</span>
-                                      </span>
-                                    );
-                                  })}
-                                  {row.attributes.length > OWNS_ATTRIBUTE_CHIPS && (
-                                    <span className="text-[11px] text-gray-400">+{row.attributes.length - OWNS_ATTRIBUTE_CHIPS}</span>
+                                <div className="flex items-center gap-1.5">
+                                  {row.sources.map((domain) => (
+                                    <span key={domain} title={domain}>
+                                      <Favicon domain={domain} />
+                                    </span>
+                                  ))}
+                                  {row.sourceCount > TOP_SOURCES_PER_ROW && (
+                                    <span className="text-[11px] text-gray-400 whitespace-nowrap">
+                                      +{row.sourceCount - TOP_SOURCES_PER_ROW}
+                                    </span>
                                   )}
                                 </div>
                               )}
