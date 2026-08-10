@@ -32,6 +32,7 @@ import { sentimentRatioV2 } from "@/lib/sentimentV2";
 import LLMLogo from "@/components/LLMLogo";
 import { ScrollablePills } from "./ScrollablePills";
 import { FilterDropdown } from "./FilterDropdown";
+import { TablePagination } from "./TablePagination";
 import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
 
 interface SourcesTabProps {
@@ -77,9 +78,8 @@ const RANK_BAR_SIZE = 18;
 // Favicon image; keeping the initial DOM small keeps the tab snappy at
 // Netflix-scale source counts).
 const INITIAL_DOMAIN_LIMIT = 50;
-// Cited-pages table pagination: initial rows + increment per "Show more".
-const INITIAL_PAGE_ROWS = 10;
-const PAGE_ROWS_STEP = 50;
+// Cited-pages table: rows per page (classic numbered pagination).
+const PAGES_TABLE_PAGE_SIZE = 10;
 
 // Filter vocabularies, in the order they read best in a dropdown.
 const SOURCE_TYPE_ORDER = ['owned', 'influenced', 'organic', 'competitive', 'irrelevant'];
@@ -366,7 +366,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   const [selectedSource, setSelectedSource] = usePersistedState<CitationCount | null>('sourcesTab.selectedSource', null);
   const [isSourceModalOpen, setIsSourceModalOpen] = usePersistedState<boolean>('sourcesTab.isSourceModalOpen', false);
   const [showAllDomains, setShowAllDomains] = useState(false);
-  const [visiblePageRows, setVisiblePageRows] = useState(INITIAL_PAGE_ROWS);
+  const [pagesTablePage, setPagesTablePage] = useState(0);
   // Cited-pages toolbar. Empty array = filter inactive (all rows pass).
   const [pageSearch, setPageSearch] = useState('');
   const [filterAttributes, setFilterAttributes] = useState<string[]>([]);
@@ -374,6 +374,12 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
   const [filterSourceTypes, setFilterSourceTypes] = useState<string[]>([]);
   const [filterModels, setFilterModels] = useState<string[]>([]);
   const [filterSentiments, setFilterSentiments] = useState<string[]>([]);
+
+  // A page index only means something for the row set it was chosen on —
+  // jump back to page 1 whenever the cited-pages rows are re-filtered.
+  useEffect(() => {
+    setPagesTablePage(0);
+  }, [pageSearch, filterAttributes, filterQuestionTypes, filterSourceTypes, filterModels, filterSentiments, selectedJobFunction]);
   // Chart form toggle for the trends card - persisted. 'bar' = horizontal
   // ranking for the current month (the default); 'line' = trend over time.
   const [trendChartType, setTrendChartType] = usePersistedState<'line' | 'bar'>('sourcesTab.trendChartType', 'bar');
@@ -931,7 +937,10 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
 
   const hasAnyData = domainList.length > 0;
   const domainsToRender = showAllDomains ? domainList : domainList.slice(0, INITIAL_DOMAIN_LIMIT);
-  const pagesToRender = pagesList.slice(0, visiblePageRows);
+  const pagesToRender = pagesList.slice(
+    pagesTablePage * PAGES_TABLE_PAGE_SIZE,
+    (pagesTablePage + 1) * PAGES_TABLE_PAGE_SIZE,
+  );
   const chartSeriesSet = useMemo(() => new Map(trend.series.map((d, i) => [d, CHART_COLORS[i]])), [trend.series]);
 
   // Shared crosshair tooltip for the line chart: bucket label, then series
@@ -1603,13 +1612,12 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                       })}
                     </TableBody>
                   </Table>
-                  {pagesList.length > visiblePageRows && (
-                    <div className="pt-3 pb-1 text-center">
-                      <Button variant="outline" size="sm" onClick={() => setVisiblePageRows(v => v + PAGE_ROWS_STEP)}>
-                        Show more ({(pagesList.length - visiblePageRows).toLocaleString()} remaining)
-                      </Button>
-                    </div>
-                  )}
+                  <TablePagination
+                    page={pagesTablePage}
+                    pageCount={Math.ceil(pagesList.length / PAGES_TABLE_PAGE_SIZE)}
+                    onPageChange={setPagesTablePage}
+                    totalLabel={`${(pagesTablePage * PAGES_TABLE_PAGE_SIZE + 1).toLocaleString()}–${Math.min((pagesTablePage + 1) * PAGES_TABLE_PAGE_SIZE, pagesList.length).toLocaleString()} of ${pagesList.length.toLocaleString()} pages`}
+                  />
                 </>
               ) : (
                 <div className="text-center py-12 text-gray-500">

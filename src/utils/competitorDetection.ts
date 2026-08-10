@@ -28,18 +28,27 @@ export const escapeRegExp = (s: string): string =>
   s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Word-boundary containment — the JS equivalent of Postgres \mNEEDLE\M.
- *  \b is ASCII-only, so boundaries are "not a unicode letter/digit". */
+ *  \b is ASCII-only, so boundaries are "not a unicode letter/digit".
+ *  Compiled patterns are cached: this runs per detected name per response
+ *  at dashboard scale, and regex construction dominates the cost. */
+const WHOLE_WORD_CACHE = new Map<string, RegExp | null>();
 export const containsWholeWord = (haystack: string, needle: string): boolean => {
   if (!haystack || !needle) return false;
-  try {
-    const re = new RegExp(
-      `(^|[^\\p{L}\\p{N}])${escapeRegExp(needle)}([^\\p{L}\\p{N}]|$)`,
-      'iu',
-    );
-    return re.test(haystack);
-  } catch {
-    return haystack.toLowerCase().includes(needle.toLowerCase());
+  let re = WHOLE_WORD_CACHE.get(needle);
+  if (re === undefined) {
+    try {
+      re = new RegExp(
+        `(^|[^\\p{L}\\p{N}])${escapeRegExp(needle)}([^\\p{L}\\p{N}]|$)`,
+        'iu',
+      );
+    } catch {
+      re = null;
+    }
+    if (WHOLE_WORD_CACHE.size > 8000) WHOLE_WORD_CACHE.clear();
+    WHOLE_WORD_CACHE.set(needle, re);
   }
+  if (re === null) return haystack.toLowerCase().includes(needle.toLowerCase());
+  return re.test(haystack);
 };
 
 export const isPlaceholderName = (name: string): boolean =>
@@ -119,35 +128,79 @@ export function buildVariantCollapseMap(
   const isProtected = (n: string): boolean =>
     curatedLower.has(n.toLowerCase()) || (opts.isAliasMapped?.(n) ?? false);
 
-  // Sort short→long so anchor checks only need to look at shorter names.
-  const sorted = [...names].sort((a, b) => a.length - b.length);
-  const anchors: string[] = [];
-  for (const name of sorted) {
-    if (isProtected(name)) {
-      anchors.push(name);
-      continue;
+  // Containment is evaluated on token sequences: name A is "contained" in
+  // name B when A's tokens appear contiguously in B's tokens (and A has
+  // strictly fewer tokens — equal-token twins like "GM/Chevrolet" vs
+  // "GM Chevrolet" don't fold either way). Same word boundaries as
+  // \mA\M, but computed through a first-token index instead of pairwise
+  // regexes — the previous O(N²)-regex version froze the tab for tens of
+  // seconds at Ford scale (thousands of distinct names).
+  const tokensOf = new Map<string, string[]>();
+  for (const n of names) {
+    tokensOf.set(n, n.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  }
+
+  const byFirstToken = new Map<string, string[]>();
+  for (const n of names) {
+    const t = tokensOf.get(n)!;
+    if (t.length === 0) continue;
+    const bucket = byFirstToken.get(t[0]);
+    if (bucket) bucket.push(n);
+    else byFirstToken.set(t[0], [n]);
+  }
+
+  const windowMatches = (b: string[], start: number, a: string[]): boolean => {
+    for (let j = 0; j < a.length; j += 1) {
+      if (b[start + j] !== a[j]) return false;
     }
-    const containsOther = sorted.some(
-      (other) =>
-        other !== name &&
-        other.length < name.length &&
-        containsWholeWord(name, other),
-    );
-    if (!containsOther) anchors.push(name);
+    return true;
+  };
+
+  const seqContains = (b: string[], a: string[]): boolean => {
+    if (a.length === 0 || a.length >= b.length) return false;
+    for (let i = 0; i + a.length <= b.length; i += 1) {
+      if (windowMatches(b, i, a)) return true;
+    }
+    return false;
+  };
+
+  /** Other names contained in `name` (contiguous token run, strictly shorter). */
+  const containedNames = (name: string, stopAtFirst: boolean): string[] => {
+    const b = tokensOf.get(name)!;
+    const out: string[] = [];
+    for (let i = 0; i < b.length; i += 1) {
+      const bucket = byFirstToken.get(b[i]);
+      if (!bucket) continue;
+      for (const cand of bucket) {
+        if (cand === name || out.includes(cand)) continue;
+        const a = tokensOf.get(cand)!;
+        if (a.length === 0 || a.length >= b.length || i + a.length > b.length) continue;
+        if (windowMatches(b, i, a)) {
+          out.push(cand);
+          if (stopAtFirst) return out;
+        }
+      }
+    }
+    return out;
+  };
+
+  const anchors = new Set<string>();
+  for (const name of names) {
+    if (isProtected(name) || containedNames(name, true).length === 0) {
+      anchors.add(name);
+    }
   }
 
   const map = new Map<string, string[]>();
   for (const name of names) {
-    if (isProtected(name) || anchors.includes(name)) {
+    if (anchors.has(name)) {
       map.set(name, [name]);
       continue;
     }
-    let matched = anchors.filter(
-      (a) => a !== name && containsWholeWord(name, a),
-    );
+    let matched = containedNames(name, false).filter((a) => anchors.has(a));
     // Keep only maximal anchors: drop an anchor contained in another match.
     matched = matched.filter(
-      (a) => !matched.some((b) => b !== a && containsWholeWord(b, a)),
+      (a) => !matched.some((b) => b !== a && seqContains(tokensOf.get(b)!, tokensOf.get(a)!)),
     );
     map.set(name, matched.length > 0 ? matched : [name]);
   }
