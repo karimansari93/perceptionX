@@ -86,6 +86,89 @@ const SOURCE_TYPE_ORDER = ['owned', 'influenced', 'organic', 'competitive', 'irr
 const SENTIMENT_ORDER = ['positive', 'neutral', 'negative'];
 type SentimentBucket = 'positive' | 'neutral' | 'negative';
 
+// ---------------------------------------------------------------------------
+// Focus-chart platform groups (row 2's three small charts). Grouping is by
+// PLATFORM, not raw domain, so fr.glassdoor.com, glassdoor.de and
+// glassdoor.com read as one Glassdoor row. A bare token ("glassdoor") matches
+// the name as a whole domain label in any position — never as a substring, so
+// "monster.com" is listed as a dotted token rather than "monster" catching
+// monsterenergy.com. A dotted token ("youtu.be") matches that exact domain or
+// a subdomain of it.
+// ---------------------------------------------------------------------------
+type PlatformGroup = {
+  name: string;      // display name for the row
+  canonical: string; // domain whose logo represents the platform
+  tokens: string[];
+};
+
+const EMPLOYER_REVIEW_PLATFORMS: PlatformGroup[] = [
+  { name: 'Glassdoor', canonical: 'glassdoor.com', tokens: ['glassdoor'] },
+  { name: 'Indeed', canonical: 'indeed.com', tokens: ['indeed'] },
+  { name: 'AmbitionBox', canonical: 'ambitionbox.com', tokens: ['ambitionbox'] },
+  { name: 'Kununu', canonical: 'kununu.com', tokens: ['kununu'] },
+  { name: 'Comparably', canonical: 'comparably.com', tokens: ['comparably'] },
+  { name: 'Blind', canonical: 'teamblind.com', tokens: ['teamblind'] },
+  { name: 'Fishbowl', canonical: 'fishbowlapp.com', tokens: ['fishbowlapp'] },
+  { name: 'Levels.fyi', canonical: 'levels.fyi', tokens: ['levels.fyi'] },
+  { name: 'The Muse', canonical: 'themuse.com', tokens: ['themuse'] },
+  { name: 'Seek', canonical: 'seek.com.au', tokens: ['seek'] },
+  { name: 'Great Place to Work', canonical: 'greatplacetowork.com', tokens: ['greatplacetowork'] },
+  { name: 'Built In', canonical: 'builtin.com', tokens: ['builtin'] },
+  { name: 'Vault', canonical: 'vault.com', tokens: ['vault.com'] },
+  { name: 'FairyGodBoss', canonical: 'fairygodboss.com', tokens: ['fairygodboss'] },
+  { name: 'CareerBliss', canonical: 'careerbliss.com', tokens: ['careerbliss'] },
+  { name: 'InHerSight', canonical: 'inhersight.com', tokens: ['inhersight'] },
+  { name: 'JobCase', canonical: 'jobcase.com', tokens: ['jobcase'] },
+  { name: 'WayUp', canonical: 'wayup.com', tokens: ['wayup'] },
+  { name: 'Zippia', canonical: 'zippia.com', tokens: ['zippia'] },
+  { name: 'ZipRecruiter', canonical: 'ziprecruiter.com', tokens: ['ziprecruiter'] },
+  { name: 'Monster', canonical: 'monster.com', tokens: ['monster.com'] },
+  { name: 'CareerBuilder', canonical: 'careerbuilder.com', tokens: ['careerbuilder'] },
+  { name: 'SimplyHired', canonical: 'simplyhired.com', tokens: ['simplyhired'] },
+  { name: 'Dice', canonical: 'dice.com', tokens: ['dice.com'] },
+  { name: 'Naukri', canonical: 'naukri.com', tokens: ['naukri'] },
+  { name: 'JobStreet', canonical: 'jobstreet.com', tokens: ['jobstreet'] },
+  { name: 'StepStone', canonical: 'stepstone.de', tokens: ['stepstone'] },
+  { name: 'Welcome to the Jungle', canonical: 'welcometothejungle.com', tokens: ['welcometothejungle'] },
+  { name: 'The Job Crowd', canonical: 'thejobcrowd.com', tokens: ['thejobcrowd'] },
+  { name: 'Rate My Employer', canonical: 'ratemyemployer.com', tokens: ['ratemyemployer'] },
+];
+
+const SOCIAL_PLATFORMS: PlatformGroup[] = [
+  { name: 'LinkedIn', canonical: 'linkedin.com', tokens: ['linkedin'] },
+  { name: 'Reddit', canonical: 'reddit.com', tokens: ['reddit'] },
+  { name: 'YouTube', canonical: 'youtube.com', tokens: ['youtube', 'youtu.be'] },
+  { name: 'X (Twitter)', canonical: 'x.com', tokens: ['x.com', 'twitter'] },
+  { name: 'Facebook', canonical: 'facebook.com', tokens: ['facebook', 'fb.com'] },
+  { name: 'Instagram', canonical: 'instagram.com', tokens: ['instagram'] },
+  { name: 'TikTok', canonical: 'tiktok.com', tokens: ['tiktok'] },
+  { name: 'Quora', canonical: 'quora.com', tokens: ['quora'] },
+  { name: 'Medium', canonical: 'medium.com', tokens: ['medium.com'] },
+  { name: 'Threads', canonical: 'threads.net', tokens: ['threads'] },
+  { name: 'Pinterest', canonical: 'pinterest.com', tokens: ['pinterest'] },
+  { name: 'Discord', canonical: 'discord.com', tokens: ['discord'] },
+  { name: 'Snapchat', canonical: 'snapchat.com', tokens: ['snapchat'] },
+  { name: 'Bluesky', canonical: 'bsky.app', tokens: ['bsky.app', 'bluesky'] },
+  { name: 'Tumblr', canonical: 'tumblr.com', tokens: ['tumblr'] },
+  { name: 'Mastodon', canonical: 'mastodon.social', tokens: ['mastodon'] },
+];
+
+const domainMatchesPlatformToken = (domain: string, token: string): boolean => {
+  if (token.includes('.')) {
+    return domain === token || domain.endsWith(`.${token}`);
+  }
+  return (
+    domain === token ||
+    domain.startsWith(`${token}.`) ||   // glassdoor.com, glassdoor.in
+    domain.includes(`.${token}.`) ||    // fr.glassdoor.com
+    domain.endsWith(`.${token}`)
+  );
+};
+
+// Rows per focus chart. Six keeps the three cards level with each other and
+// scannable; the full ranking lives in the domain list above.
+const FOCUS_ROW_LIMIT = 6;
+
 // When several URL variants collapse into one page (highlight fragments,
 // tracking params), show the cleanest one: no #fragment, then shortest.
 const preferDisplayUrl = (a: string, b: string): string => {
@@ -554,6 +637,104 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return map;
   }, [domainList, companyName]);
 
+  // ---------------------------------------------------------------------
+  // Focus charts: three ranked slices of the domain list.
+  // - Influence opportunities: sources AI leans on that the company is
+  //   largely absent from. A domain qualifies when the company is mentioned
+  //   in UNDER HALF of the responses citing it (the same majority-absent cut
+  //   that classifies a source as "competitive"), and is ranked by its
+  //   citing responses WITHOUT a mention — citation volume × absence, so a
+  //   heavily-cited source at a 10% mention rate outranks a tiny one at 0%.
+  //   Owned domains are excluded (your own site is not something to win).
+  // - Employer review sites / social platforms: cited domains grouped into
+  //   known platforms, keeping the mentioned split. Clicking a grouped row
+  //   opens the platform's most-cited underlying domain.
+  // ---------------------------------------------------------------------
+  type FocusChartRow = {
+    key: string;
+    name: string;
+    domain: string;        // click target (source modal)
+    faviconDomain: string; // logo shown on the row
+    count: number;         // total citing responses (drives the bar)
+    mentionedCount: number;
+    // Number shown on the row when the ranking metric isn't the total —
+    // the opportunities card ranks and labels by citations WITHOUT a mention.
+    displayCount?: number;
+    tooltip: string;
+  };
+
+  const focusCharts = useMemo(() => {
+    const company = companyName || 'your company';
+
+    const opportunities: FocusChartRow[] = [];
+    for (const row of domainList) {
+      const gap = row.count - row.mentionedCount;
+      if (gap <= row.mentionedCount) continue; // present in half or more of its answers
+      if (mediaTypeByDomain.get(row.domain) === 'owned') continue;
+      const rate = Math.round((row.mentionedCount / row.count) * 100);
+      opportunities.push({
+        key: row.domain,
+        name: getSourceDisplayName(row.domain),
+        domain: row.domain,
+        faviconDomain: row.domain,
+        count: row.count,
+        mentionedCount: row.mentionedCount,
+        displayCount: gap,
+        tooltip: row.mentionedCount === 0
+          ? `${row.count.toLocaleString()} citations — ${company} is never mentioned in these responses`
+          : `${gap.toLocaleString()} responses cite this source without mentioning ${company} — ${row.count.toLocaleString()} citations total, only ${rate}% with a mention`,
+      });
+    }
+    const rankedOpportunities = opportunities
+      .sort((a, b) => (b.displayCount ?? b.count) - (a.displayCount ?? a.count))
+      .slice(0, FOCUS_ROW_LIMIT);
+
+    const groupPlatformRows = (platforms: PlatformGroup[]): FocusChartRow[] => {
+      type Group = { platform: PlatformGroup; count: number; mentionedCount: number; domains: string[]; topDomain: string; topCount: number };
+      const acc = new Map<string, Group>();
+      for (const row of domainList) {
+        const platform = platforms.find((p) => p.tokens.some((t) => domainMatchesPlatformToken(row.domain, t)));
+        if (!platform) continue;
+        let g = acc.get(platform.name);
+        if (!g) {
+          g = { platform, count: 0, mentionedCount: 0, domains: [], topDomain: row.domain, topCount: 0 };
+          acc.set(platform.name, g);
+        }
+        g.count += row.count;
+        g.mentionedCount += row.mentionedCount;
+        g.domains.push(row.domain);
+        if (row.count > g.topCount) {
+          g.topCount = row.count;
+          g.topDomain = row.domain;
+        }
+      }
+      return Array.from(acc.values())
+        .sort((a, b) => b.count - a.count)
+        .slice(0, FOCUS_ROW_LIMIT)
+        .map((g) => {
+          const rate = g.count > 0 ? Math.round((g.mentionedCount / g.count) * 100) : 0;
+          const domainsNote = g.domains.length > 1
+            ? ` · includes ${g.domains.slice(0, 3).join(', ')}${g.domains.length > 3 ? '…' : ''}`
+            : '';
+          return {
+            key: g.platform.name,
+            name: g.platform.name,
+            domain: g.topDomain,
+            faviconDomain: g.platform.canonical,
+            count: g.count,
+            mentionedCount: g.mentionedCount,
+            tooltip: `${g.count.toLocaleString()} citations — ${company} mentioned in ${g.mentionedCount.toLocaleString()} (${rate}%)${domainsNote}`,
+          };
+        });
+    };
+
+    return {
+      opportunities: rankedOpportunities,
+      employerReview: groupPlatformRows(EMPLOYER_REVIEW_PLATFORMS),
+      social: groupPlatformRows(SOCIAL_PLATFORMS),
+    };
+  }, [domainList, mediaTypeByDomain, companyName]);
+
   // Sentiment bucket of one response, on the same cuts as the pill.
   const sentimentBucket = (ratio: number | null | undefined): SentimentBucket | null => {
     if (typeof ratio !== 'number') return null;
@@ -957,6 +1138,90 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     </div>
   );
 
+  // One row of a focus chart: platform/domain identity on top, a magnitude bar
+  // below it. Bars share the card's left baseline and are scaled to the card's
+  // largest total, so each card reads as its own small ranking. The bar reuses
+  // the page-wide split encoding — teal for citations in responses that
+  // mention the company, gray where it's absent. The row's number is the
+  // ranking metric (total citations, or the without-a-mention count on the
+  // opportunities card).
+  const renderFocusRow = (row: {
+    key: string; name: string; domain: string; faviconDomain: string;
+    count: number; mentionedCount: number; displayCount?: number; tooltip: string;
+  }, maxCount: number) => {
+    const barPct = maxCount > 0 ? (row.count / maxCount) * 100 : 0;
+    const mentionedPct = row.count > 0 ? (barPct * row.mentionedCount) / row.count : 0;
+    const notMentionedPct = barPct - mentionedPct;
+    return (
+      <button
+        key={row.key}
+        onClick={() => handleSourceClick({ domain: row.domain, count: analyzed.domainCounts.get(row.domain) || row.count })}
+        className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+        title={row.tooltip}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Favicon domain={row.faviconDomain} />
+          <span className="text-sm font-medium text-gray-900 truncate" title={row.name}>{row.name}</span>
+          <span className="ml-auto flex-shrink-0 pl-2 text-sm font-semibold text-gray-900 tabular-nums">
+            {(row.displayCount ?? row.count).toLocaleString()}
+          </span>
+        </div>
+        <div className="mt-1 flex gap-[2px]" aria-hidden>
+          {mentionedPct > 0 && (
+            <div className="h-1.5 rounded-full" style={{ width: `${mentionedPct}%`, backgroundColor: MENTIONED_COLOR }} />
+          )}
+          {notMentionedPct > 0 && (
+            <div className="h-1.5 rounded-full" style={{ width: `${notMentionedPct}%`, backgroundColor: NOT_MENTIONED_COLOR }} />
+          )}
+        </div>
+      </button>
+    );
+  };
+
+  const renderFocusCard = (opts: {
+    title: string;
+    subtitle: string;
+    rows: { key: string; name: string; domain: string; faviconDomain: string; count: number; mentionedCount: number; displayCount?: number; tooltip: string }[];
+    emptyText: string;
+  }) => {
+    // Bars are sized by TOTAL citations; on the opportunities card the rows
+    // are ordered by the gap instead, so the max isn't necessarily row 0.
+    const maxCount = opts.rows.reduce((m, r) => Math.max(m, r.count), 0);
+    return (
+      <Card key={opts.title} className="shadow-sm border border-gray-200 flex flex-col">
+        <CardHeader className="pb-2">
+          <div className="flex items-start justify-between gap-2 flex-wrap">
+            <CardTitle className="text-base font-bold text-gray-800">{opts.title}</CardTitle>
+            {opts.rows.length > 0 && (
+              <div className="flex items-center gap-2.5 text-[11px] text-gray-400 flex-shrink-0 pt-0.5">
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full" style={{ background: MENTIONED_COLOR }} />
+                  Mentioned
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full" style={{ background: NOT_MENTIONED_COLOR }} />
+                  Not mentioned
+                </span>
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-gray-500">{opts.subtitle}</p>
+        </CardHeader>
+        <CardContent className="flex-1 pt-0 px-2 sm:px-3 pb-3">
+          {responsesLoading && !hasAnyData ? (
+            <div className="px-2">{loadingSkeleton(4)}</div>
+          ) : opts.rows.length === 0 ? (
+            <div className="h-full min-h-[120px] flex items-center justify-center px-4 text-center text-sm text-gray-400">
+              {opts.emptyText}
+            </div>
+          ) : (
+            opts.rows.map((row) => renderFocusRow(row, maxCount))
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-6 w-full h-full">
       {/* Main Section Header */}
@@ -1116,7 +1381,31 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
             </Card>
           </div>
 
-          {/* Row 2: top cited pages */}
+          {/* Row 2: focus charts — the influence gap and the two platform
+              families clients act on. Same data as the domain list above,
+              sliced three ways. */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch" data-tour="sources-focus">
+            {renderFocusCard({
+              title: 'Top influence opportunities',
+              subtitle: `Sources AI leans on where ${companyName || 'your company'} is missing from most answers — ranked by citations without a mention.`,
+              rows: focusCharts.opportunities,
+              emptyText: `No influence gaps — ${companyName || 'your company'} appears in most answers across every cited source.`,
+            })}
+            {renderFocusCard({
+              title: 'Top employer review sites',
+              subtitle: 'The review platforms AI leans on when describing employers.',
+              rows: focusCharts.employerReview,
+              emptyText: 'No employer review sites cited in this period.',
+            })}
+            {renderFocusCard({
+              title: 'Top social media platforms',
+              subtitle: 'The social platforms AI pulls into its answers.',
+              rows: focusCharts.social,
+              emptyText: 'No social media platforms cited in this period.',
+            })}
+          </div>
+
+          {/* Row 3: top cited pages */}
           <Card data-tour="sources-pages" className="shadow-sm border border-gray-200">
             <CardHeader className="pb-2">
               <div className="flex items-center gap-2">
