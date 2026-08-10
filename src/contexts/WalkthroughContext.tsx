@@ -103,6 +103,15 @@ const STEPS: WalkthroughStep[] = [
     route: '/dashboard/sources',
   },
   {
+    target: '[data-tour="sources-focus"]',
+    title: 'Influence opportunities & key platforms',
+    content:
+      "Three quick reads on the same citations: your biggest influence opportunities — sources AI leans on where you're missing from most of the answers citing them — plus the employer review sites and social platforms AI relies on. Click any row to open that source.",
+    placement: 'top',
+    disableBeacon: true,
+    route: '/dashboard/sources',
+  },
+  {
     target: '[data-tour="sources-pages-toolbar"]',
     title: 'Search for specific pages',
     content:
