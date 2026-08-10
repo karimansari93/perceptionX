@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Users, TrendingUp, TrendingDown, Info, ChartLine, BarChartHorizontal,
-  Tags, Bot, SmilePlus, Layers,
+  Tags, Bot, Globe, Layers,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -32,10 +32,12 @@ import {
   buildVariantCollapseMap,
 } from "@/utils/competitorDetection";
 import { normalizeEntityName } from "@/utils/competitorUtils";
+import { locationFlag } from "@/utils/locationContext";
 import LLMLogo from "@/components/LLMLogo";
 import { ScrollablePills } from "./ScrollablePills";
 import { SearchInput } from "./SearchInput";
 import { FilterDropdown } from "./FilterDropdown";
+import { TablePagination } from "./TablePagination";
 import { CompetitorDetailsModal } from "./CompetitorDetailsModal";
 
 // ---------------------------------------------------------------------------
@@ -47,9 +49,9 @@ const CHART_COLORS = ["#0DBCBA", "#5B7FD9", "#DB5E89", "#E8A33D", "#8B5CF6"];
 const TREND_SERIES_LIMIT = 5;
 const CARD1_ROW_LIMIT = 10;
 const EOC_ROW_LIMIT = 12;
-const INITIAL_TABLE_ROWS = 15;
-const TABLE_ROWS_STEP = 50;
+const TABLE_PAGE_SIZE = 15;
 const TOP_SOURCES_PER_ROW = 5;
+const TOP_MARKETS_PER_ROW = 4;
 
 export type CompetitorSet = "eoc" | "direct" | "emergent";
 
@@ -115,6 +117,9 @@ type CompetitorAgg = {
   // Domains cited in the responses mentioning this competitor — the table's
   // "Typically mentioned on" column.
   domainCounts: Map<string, number>;
+  // Markets (location_context) of the responses mentioning this competitor —
+  // the table's "Markets" column.
+  locationCounts: Map<string, number>;
 };
 
 interface CompetitorsTabProps {
@@ -179,11 +184,16 @@ export const CompetitorsTab = memo(({
   const [filterSets, setFilterSets] = useState<string[]>([]);
   const [filterAttributes, setFilterAttributes] = useState<string[]>([]);
   const [filterModels, setFilterModels] = useState<string[]>([]);
-  const [filterSentiments, setFilterSentiments] = useState<string[]>([]);
-  const [sortKey, setSortKey] = useState<"name" | "sources" | "models" | "sentiment" | "coverage">("coverage");
+  const [sortKey, setSortKey] = useState<"name" | "sources" | "markets" | "models" | "coverage">("coverage");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [visibleRows, setVisibleRows] = useState(INITIAL_TABLE_ROWS);
+  const [tablePage, setTablePage] = useState(0);
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+
+  // A page index only means something for the row set it was chosen on —
+  // jump back to page 1 whenever the rows are re-filtered or re-sorted.
+  useEffect(() => {
+    setTablePage(0);
+  }, [searchQuery, filterSets, filterAttributes, filterModels, sortKey, sortDir, selectedJobFunction]);
 
   // Let the global command palette pre-fill this tab's search.
   useTabSearchSeed("competitors", setSearchQuery);
@@ -359,7 +369,7 @@ export const CompetitorsTab = memo(({
       for (const name of nr.competitors) {
         let agg = byName.get(name);
         if (!agg) {
-          agg = { name, count: 0, coMention: 0, discoveryCount: 0, competitiveCount: 0, models: new Set(), responseIds: [], domainCounts: new Map() };
+          agg = { name, count: 0, coMention: 0, discoveryCount: 0, competitiveCount: 0, models: new Set(), responseIds: [], domainCounts: new Map(), locationCounts: new Map() };
           byName.set(name, agg);
         }
         agg.count += 1;
@@ -370,6 +380,9 @@ export const CompetitorsTab = memo(({
         agg.responseIds.push(nr.id);
         for (const d of nr.domains) {
           agg.domainCounts.set(d, (agg.domainCounts.get(d) || 0) + 1);
+        }
+        if (nr.location) {
+          agg.locationCounts.set(nr.location, (agg.locationCounts.get(nr.location) || 0) + 1);
         }
       }
     }
@@ -660,8 +673,10 @@ export const CompetitorsTab = memo(({
     /** Top cited domains in this competitor's answers ("Typically mentioned on"). */
     sources: string[];
     sourceCount: number;
+    /** Top markets (location_context) where this competitor appears. */
+    markets: string[];
+    marketCount: number;
     models: string[];
-    sentiment: number | null;
     coverage: number;
     prevCoverage: number | null;
     count: number;
@@ -680,6 +695,10 @@ export const CompetitorsTab = memo(({
         .sort((a, b) => b[1] - a[1])
         .slice(0, TOP_SOURCES_PER_ROW)
         .map(([domain]) => domain);
+      const markets = Array.from(agg.locationCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, TOP_MARKETS_PER_ROW)
+        .map(([location]) => location);
       const prevAgg = prevAnalyzed.byName.get(agg.name);
       rows.push({
         name: agg.name,
@@ -687,8 +706,9 @@ export const CompetitorsTab = memo(({
         attributes,
         sources,
         sourceCount: agg.domainCounts.size,
+        markets,
+        marketCount: agg.locationCounts.size,
         models: Array.from(agg.models).sort(),
-        sentiment: themes ? sentimentRatioV2(themes.positive, themes.negative) : null,
         coverage: analyzed.total > 0 ? (agg.count / analyzed.total) * 100 : 0,
         prevCoverage: hasPrevPeriod && prevAgg && prevAnalyzed.total > 0
           ? (prevAgg.count / prevAnalyzed.total) * 100
@@ -699,28 +719,16 @@ export const CompetitorsTab = memo(({
     return rows;
   }, [analyzed, prevAnalyzed, compThemes, setOf, hasPrevPeriod]);
 
-  const sentimentBucket = (ratio: number | null): "positive" | "neutral" | "negative" | null => {
-    if (typeof ratio !== "number") return null;
-    if (ratio > 0.6) return "positive";
-    if (ratio < 0.4) return "negative";
-    return "neutral";
-  };
-
   const filteredTableRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const setFilter = new Set(filterSets);
     const attrFilter = new Set(filterAttributes);
     const modelFilter = new Set(filterModels);
-    const sentFilter = new Set(filterSentiments);
     const rows = allTableRows.filter((row) => {
       if (q && !row.name.toLowerCase().includes(q)) return false;
       if (setFilter.size > 0 && !row.sets.some((s) => setFilter.has(s))) return false;
       if (attrFilter.size > 0 && !row.attributes.some((a) => attrFilter.has(a.id))) return false;
       if (modelFilter.size > 0 && !row.models.some((m) => modelFilter.has(m))) return false;
-      if (sentFilter.size > 0) {
-        const bucket = sentimentBucket(row.sentiment);
-        if (!bucket || !sentFilter.has(bucket)) return false;
-      }
       return true;
     });
     const dir = sortDir === "asc" ? 1 : -1;
@@ -728,24 +736,17 @@ export const CompetitorsTab = memo(({
       switch (sortKey) {
         case "name": return dir * a.name.localeCompare(b.name);
         case "sources": return dir * (a.sourceCount - b.sourceCount);
+        case "markets": return dir * (a.marketCount - b.marketCount);
         case "models": return dir * (a.models.length - b.models.length);
-        case "sentiment": {
-          // Nulls always sink to the bottom regardless of direction.
-          if (a.sentiment === null && b.sentiment === null) return 0;
-          if (a.sentiment === null) return 1;
-          if (b.sentiment === null) return -1;
-          return dir * (a.sentiment - b.sentiment);
-        }
         default: return dir * (a.coverage - b.coverage) || dir * (a.count - b.count);
       }
     });
-  }, [allTableRows, searchQuery, filterSets, filterAttributes, filterModels, filterSentiments, sortKey, sortDir]);
+  }, [allTableRows, searchQuery, filterSets, filterAttributes, filterModels, sortKey, sortDir]);
 
   const tableFilterOptions = useMemo(() => {
     const setCounts = new Map<CompetitorSet, number>();
     const attrCounts = new Map<string, { name: string; count: number }>();
     const modelCounts = new Map<string, number>();
-    const sentCounts = new Map<string, number>();
     for (const row of allTableRows) {
       row.sets.forEach((s) => setCounts.set(s, (setCounts.get(s) || 0) + 1));
       row.attributes.forEach((a) => {
@@ -754,8 +755,6 @@ export const CompetitorsTab = memo(({
         attrCounts.set(a.id, agg);
       });
       row.models.forEach((m) => modelCounts.set(m, (modelCounts.get(m) || 0) + 1));
-      const bucket = sentimentBucket(row.sentiment);
-      if (bucket) sentCounts.set(bucket, (sentCounts.get(bucket) || 0) + 1);
     }
     return {
       sets: (Object.keys(SET_LABELS) as CompetitorSet[])
@@ -780,20 +779,16 @@ export const CompetitorsTab = memo(({
           count,
           adornment: <LLMLogo modelName={value} size="sm" showFallback={false} />,
         })),
-      sentiments: ["positive", "neutral", "negative"]
-        .filter((s) => sentCounts.has(s))
-        .map((value) => ({ value, label: value, count: sentCounts.get(value) })),
     };
   }, [allTableRows]);
 
   const activeFilterCount =
-    filterSets.length + filterAttributes.length + filterModels.length + filterSentiments.length;
+    filterSets.length + filterAttributes.length + filterModels.length;
 
   const clearAllFilters = () => {
     setFilterSets([]);
     setFilterAttributes([]);
     setFilterModels([]);
-    setFilterSentiments([]);
   };
 
   // -------------------------------------------------------------------------
@@ -801,13 +796,13 @@ export const CompetitorsTab = memo(({
   // -------------------------------------------------------------------------
   const scrollToTableRow = useCallback((name: string) => {
     const idx = filteredTableRows.findIndex((r) => r.name === name);
-    if (idx >= visibleRows) setVisibleRows(idx + 10);
+    if (idx >= 0) setTablePage(Math.floor(idx / TABLE_PAGE_SIZE));
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         rowRefs.current.get(name)?.scrollIntoView({ behavior: "smooth", block: "center" });
       });
     });
-  }, [filteredTableRows, visibleRows]);
+  }, [filteredTableRows]);
 
   // Card 1/2 rows select the competitor (Card 2 emphasis) and jump to its
   // table row; table rows open the detail modal.
@@ -873,31 +868,6 @@ export const CompetitorsTab = memo(({
         </span>
       </span>
     );
-  };
-
-  const sentimentPill = (ratio: number | null) => {
-    if (ratio === null) {
-      return (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="text-xs text-gray-400 cursor-help">—</span>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-[240px]">
-              <p className="text-xs">
-                No competitor sentiment yet — it accrues as new answers are
-                collected and themed.
-              </p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      );
-    }
-    let cls = "bg-gray-100 text-gray-600";
-    let label = "Neutral";
-    if (ratio > 0.6) { cls = "bg-green-100 text-green-700"; label = "Positive"; }
-    else if (ratio < 0.4) { cls = "bg-red-100 text-red-700"; label = "Negative"; }
-    return <Badge className={`${cls} border-0 text-xs font-medium pointer-events-none`}>{label}</Badge>;
   };
 
   const SortableHead = ({ label, k, className }: { label: string; k: typeof sortKey; className?: string }) => (
@@ -1262,7 +1232,6 @@ export const CompetitorsTab = memo(({
                 <FilterDropdown label="Set" icon={Layers} options={tableFilterOptions.sets} selected={filterSets} onChange={setFilterSets} />
                 <FilterDropdown label="Attributes" icon={Tags} options={tableFilterOptions.attributes} selected={filterAttributes} onChange={setFilterAttributes} searchable />
                 <FilterDropdown label="Models" icon={Bot} options={tableFilterOptions.models} selected={filterModels} onChange={setFilterModels} />
-                <FilterDropdown label="Sentiment" icon={SmilePlus} options={tableFilterOptions.sentiments} selected={filterSentiments} onChange={setFilterSentiments} />
               </div>
             </CardHeader>
             <CardContent className="pt-0">
@@ -1289,12 +1258,12 @@ export const CompetitorsTab = memo(({
                           <SortableHead label="Competitor" k="name" className="min-w-[180px]" />
                           <SortableHead label="Typically mentioned on" k="sources" className="min-w-[170px]" />
                           <SortableHead label="Models" k="models" className="min-w-[120px]" />
-                          <SortableHead label="Sentiment" k="sentiment" className="min-w-[100px]" />
+                          <SortableHead label="Markets" k="markets" className="min-w-[110px]" />
                           <SortableHead label="Coverage" k="coverage" className="min-w-[110px] text-right" />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredTableRows.slice(0, visibleRows).map((row) => (
+                        {filteredTableRows.slice(tablePage * TABLE_PAGE_SIZE, (tablePage + 1) * TABLE_PAGE_SIZE).map((row) => (
                           <TableRow
                             key={row.name}
                             ref={(el) => {
@@ -1345,7 +1314,27 @@ export const CompetitorsTab = memo(({
                                 </span>
                               </div>
                             </TableCell>
-                            <TableCell>{sentimentPill(row.sentiment)}</TableCell>
+                            <TableCell>
+                              {row.markets.length === 0 ? (
+                                <span className="text-xs text-gray-400">—</span>
+                              ) : (
+                                <div className="flex items-center gap-1">
+                                  {row.markets.map((market) => {
+                                    const flag = locationFlag(market);
+                                    return (
+                                      <span key={market} title={market} className="text-base leading-none">
+                                        {flag || <Globe className="w-3.5 h-3.5 text-gray-400 inline" />}
+                                      </span>
+                                    );
+                                  })}
+                                  {row.marketCount > TOP_MARKETS_PER_ROW && (
+                                    <span className="text-[11px] text-gray-400 whitespace-nowrap">
+                                      +{row.marketCount - TOP_MARKETS_PER_ROW}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </TableCell>
                             <TableCell className="text-right">
                               <span className="inline-flex items-center gap-1.5 justify-end">
                                 <span className="text-sm font-semibold text-gray-900 tabular-nums">{row.coverage.toFixed(1)}%</span>
@@ -1357,18 +1346,12 @@ export const CompetitorsTab = memo(({
                       </TableBody>
                     </Table>
                   </div>
-                  {filteredTableRows.length > visibleRows && (
-                    <div className="flex justify-center pt-3">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setVisibleRows((v) => v + TABLE_ROWS_STEP)}
-                        className="text-xs"
-                      >
-                        Show more ({filteredTableRows.length - visibleRows} remaining)
-                      </Button>
-                    </div>
-                  )}
+                  <TablePagination
+                    page={tablePage}
+                    pageCount={Math.ceil(filteredTableRows.length / TABLE_PAGE_SIZE)}
+                    onPageChange={setTablePage}
+                    totalLabel={`${(tablePage * TABLE_PAGE_SIZE + 1).toLocaleString()}–${Math.min((tablePage + 1) * TABLE_PAGE_SIZE, filteredTableRows.length).toLocaleString()} of ${filteredTableRows.length.toLocaleString()} competitors`}
+                  />
                 </>
               )}
             </CardContent>
