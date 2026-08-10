@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
+import { Fragment, useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Users, TrendingUp, TrendingDown, Info, ChartLine, BarChartHorizontal,
@@ -48,7 +48,7 @@ const COMPETITOR_BAR_COLOR = "#94A3B8";
 const CHART_COLORS = ["#0DBCBA", "#5B7FD9", "#DB5E89", "#E8A33D", "#8B5CF6"];
 const TREND_SERIES_LIMIT = 5;
 const CARD1_ROW_LIMIT = 10;
-const EOC_ROW_LIMIT = 12;
+const EOC_ROW_LIMIT = 10;
 const TABLE_PAGE_SIZE = 15;
 const TOP_SOURCES_PER_ROW = 5;
 const TOP_MARKETS_PER_ROW = 4;
@@ -653,15 +653,6 @@ export const CompetitorsTab = memo(({
     return rows.sort((a, b) => b.coverage - a.coverage);
   }, [analyzed, prevAnalyzed, hasPrevPeriod, companyName]);
 
-  // Top rows plus the company row pinned in even when it ranks below the cut.
-  const eocVisible = useMemo(() => {
-    const top = eocRows.slice(0, EOC_ROW_LIMIT);
-    if (!top.some((r) => r.isCompany)) {
-      const companyRow = eocRows.find((r) => r.isCompany);
-      if (companyRow) top.push(companyRow);
-    }
-    return top;
-  }, [eocRows]);
 
   // -------------------------------------------------------------------------
   // Card 3 — table rows with filters + sorting.
@@ -1139,7 +1130,7 @@ export const CompetitorsTab = memo(({
                 </div>
                 <p className="text-xs text-gray-400 pt-1">% of discovery answers surfacing each company</p>
               </CardHeader>
-              <CardContent className="flex-1 pt-2">
+              <CardContent className="flex-1 pt-2 flex flex-col min-h-0">
                 {responsesLoading && totalDetected === 0 ? (
                   <div className="space-y-3 py-2" aria-busy="true">
                     {Array.from({ length: 8 }).map((_, i) => (
@@ -1151,51 +1142,73 @@ export const CompetitorsTab = memo(({
                     No discovery answers in this period.
                   </div>
                 ) : (
-                  <div className="space-y-0.5 max-h-[420px] overflow-y-auto pr-1">
-                    {(() => {
-                      const maxCoverage = Math.max(...eocVisible.map((r) => r.coverage), 1);
-                      return eocVisible.map((row) => {
-                        const rank = eocRows.findIndex((r) => r.name === row.name) + 1;
-                        return (
-                          <button
-                            key={row.name}
-                            onClick={() => { if (!row.isCompany) handleChartRowClick(row.name); }}
-                            className={`w-full text-left px-2 py-1.5 rounded-lg transition-colors ${
-                              row.isCompany
-                                ? "bg-[#0DBCBA]/5 border border-[#0DBCBA]/30 cursor-default"
-                                : "hover:bg-gray-50 cursor-pointer"
-                            } ${selectedCompetitor === row.name ? "ring-1 ring-[#0DBCBA]/60" : ""}`}
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="w-5 text-right text-xs font-medium text-gray-400 tabular-nums flex-shrink-0">{rank}</span>
-                              <CompetitorFavicon name={row.name} isCompany={row.isCompany} />
-                              <span className={`text-sm truncate ${row.isCompany ? "font-bold text-gray-900" : "font-medium text-gray-900"}`} title={row.name}>
-                                {row.name}
-                              </span>
-                              {row.isCompany && (
-                                <Badge className="bg-[#0DBCBA]/15 text-[#0B9E9C] border-0 text-[10px] font-semibold px-1.5 py-0 pointer-events-none">
-                                  You
-                                </Badge>
-                              )}
-                              <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
-                                <span className="text-sm font-semibold text-gray-900 tabular-nums">{row.coverage.toFixed(1)}%</span>
-                                <span className="w-[45px] flex justify-end">{renderDeltaChip(row.coverage, row.prevCoverage)}</span>
-                              </span>
+                  (() => {
+                    const companyIdx = eocRows.findIndex((r) => r.isCompany);
+                    const companyRow = companyIdx >= 0 ? eocRows[companyIdx] : null;
+                    const companyBeyondTop = companyRow !== null && companyIdx + 1 > EOC_ROW_LIMIT;
+                    const list = eocRows.slice(0, EOC_ROW_LIMIT);
+                    const maxCoverage = Math.max(...list.map((r) => r.coverage), companyRow?.coverage ?? 0, 1);
+                    const renderRow = (row: SetRow) => {
+                      const rank = eocRows.findIndex((r) => r.name === row.name) + 1;
+                      return (
+                        <button
+                          key={row.name}
+                          onClick={() => { if (!row.isCompany) handleChartRowClick(row.name); }}
+                          className={`w-full text-left px-2 py-1.5 rounded-lg transition-colors ${
+                            row.isCompany
+                              ? "bg-[#0DBCBA]/5 border border-[#0DBCBA]/30 cursor-default"
+                              : "hover:bg-gray-50 cursor-pointer"
+                          } ${selectedCompetitor === row.name ? "ring-1 ring-[#0DBCBA]/60" : ""}`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-5 text-right text-xs font-medium text-gray-400 tabular-nums flex-shrink-0">{rank}</span>
+                            <CompetitorFavicon name={row.name} isCompany={row.isCompany} />
+                            <span className={`text-sm truncate ${row.isCompany ? "font-bold text-gray-900" : "font-medium text-gray-900"}`} title={row.name}>
+                              {row.name}
+                            </span>
+                            {row.isCompany && (
+                              <Badge className="bg-[#0DBCBA]/15 text-[#0B9E9C] border-0 text-[10px] font-semibold px-1.5 py-0 pointer-events-none">
+                                You
+                              </Badge>
+                            )}
+                            <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+                              <span className="text-sm font-semibold text-gray-900 tabular-nums">{row.coverage.toFixed(1)}%</span>
+                              <span className="w-[45px] flex justify-end">{renderDeltaChip(row.coverage, row.prevCoverage)}</span>
+                            </span>
+                          </div>
+                          <div className="mt-1 ml-[30px] h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `${(row.coverage / maxCoverage) * 100}%`,
+                                backgroundColor: row.isCompany ? BRAND_COLOR : COMPETITOR_BAR_COLOR,
+                              }}
+                            />
+                          </div>
+                        </button>
+                      );
+                    };
+                    return (
+                      <Fragment>
+                        {/* On desktop the Direct card sets the row height; this
+                            list fills exactly that space and clips its tail
+                            instead of stretching the card taller. */}
+                        <div className="lg:relative lg:flex-1 lg:min-h-0">
+                          <div className="space-y-0.5 lg:absolute lg:inset-0 lg:overflow-hidden">
+                            {list.map(renderRow)}
+                          </div>
+                        </div>
+                        {companyBeyondTop && companyRow && (
+                          <div className="pt-0.5">
+                            <div className="text-center text-gray-300 text-sm leading-4 select-none" aria-hidden>
+                              ⋯
                             </div>
-                            <div className="mt-1 ml-[30px] h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                              <div
-                                className="h-full rounded-full"
-                                style={{
-                                  width: `${(row.coverage / maxCoverage) * 100}%`,
-                                  backgroundColor: row.isCompany ? BRAND_COLOR : COMPETITOR_BAR_COLOR,
-                                }}
-                              />
-                            </div>
-                          </button>
-                        );
-                      });
-                    })()}
-                  </div>
+                            {renderRow(companyRow)}
+                          </div>
+                        )}
+                      </Fragment>
+                    );
+                  })()
                 )}
               </CardContent>
             </Card>
@@ -1290,26 +1303,48 @@ export const CompetitorsTab = memo(({
                               {row.sources.length === 0 ? (
                                 <span className="text-xs text-gray-400">—</span>
                               ) : (
-                                <div className="flex items-center gap-1.5">
-                                  {row.sources.map((domain) => (
-                                    <span key={domain} title={domain}>
-                                      <Favicon domain={domain} />
-                                    </span>
-                                  ))}
-                                  {row.sourceCount > TOP_SOURCES_PER_ROW && (
-                                    <span className="text-[11px] text-gray-400 whitespace-nowrap">
-                                      +{row.sourceCount - TOP_SOURCES_PER_ROW}
-                                    </span>
-                                  )}
-                                </div>
+                                <TooltipProvider>
+                                  {/* Overlapping stack, same as the Sources tab. */}
+                                  <div className="flex items-center w-fit">
+                                    <div className="flex items-center">
+                                      {row.sources.map((domain, i) => (
+                                        <Tooltip key={domain}>
+                                          <TooltipTrigger asChild>
+                                            <span
+                                              className="relative flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 ring-2 ring-white cursor-help overflow-hidden"
+                                              style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
+                                            >
+                                              <Favicon domain={domain} />
+                                            </span>
+                                          </TooltipTrigger>
+                                          <TooltipContent><p className="text-xs">{domain}</p></TooltipContent>
+                                        </Tooltip>
+                                      ))}
+                                    </div>
+                                    {row.sourceCount > TOP_SOURCES_PER_ROW && (
+                                      <span className="text-xs text-gray-400 pl-3 whitespace-nowrap">
+                                        +{(row.sourceCount - TOP_SOURCES_PER_ROW).toLocaleString()}
+                                      </span>
+                                    )}
+                                  </div>
+                                </TooltipProvider>
                               )}
                             </TableCell>
                             <TableCell>
-                              <div className="flex items-center gap-1">
-                                {row.models.slice(0, 5).map((m) => (
-                                  <LLMLogo key={m} modelName={m} size="sm" showFallback={false} />
-                                ))}
-                                <span className="text-xs text-gray-500 ml-1 whitespace-nowrap">
+                              <div className="flex items-center w-fit">
+                                <div className="flex items-center">
+                                  {row.models.slice(0, 5).map((m, i) => (
+                                    <span
+                                      key={m}
+                                      title={m}
+                                      className="relative flex h-6 w-6 items-center justify-center rounded-full bg-white ring-2 ring-white"
+                                      style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
+                                    >
+                                      <LLMLogo modelName={m} size="sm" showFallback={false} />
+                                    </span>
+                                  ))}
+                                </div>
+                                <span className="text-xs text-gray-500 pl-2 whitespace-nowrap">
                                   {row.models.length} of {totalModelCount}
                                 </span>
                               </div>
@@ -1318,21 +1353,34 @@ export const CompetitorsTab = memo(({
                               {row.markets.length === 0 ? (
                                 <span className="text-xs text-gray-400">—</span>
                               ) : (
-                                <div className="flex items-center gap-1">
-                                  {row.markets.map((market) => {
-                                    const flag = locationFlag(market);
-                                    return (
-                                      <span key={market} title={market} className="text-base leading-none">
-                                        {flag || <Globe className="w-3.5 h-3.5 text-gray-400 inline" />}
+                                <TooltipProvider>
+                                  {/* Overlapping stack, same as the Sources tab. */}
+                                  <div className="flex items-center w-fit">
+                                    <div className="flex items-center">
+                                      {row.markets.map((market, i) => {
+                                        const flag = locationFlag(market);
+                                        return (
+                                          <Tooltip key={market}>
+                                            <TooltipTrigger asChild>
+                                              <span
+                                                className="relative flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 ring-2 ring-white cursor-help text-sm leading-none"
+                                                style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
+                                              >
+                                                {flag || <Globe className="w-3.5 h-3.5 text-gray-400" />}
+                                              </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent><p className="text-xs">{market}</p></TooltipContent>
+                                          </Tooltip>
+                                        );
+                                      })}
+                                    </div>
+                                    {row.marketCount > TOP_MARKETS_PER_ROW && (
+                                      <span className="text-xs text-gray-400 pl-3 whitespace-nowrap">
+                                        +{row.marketCount - TOP_MARKETS_PER_ROW}
                                       </span>
-                                    );
-                                  })}
-                                  {row.marketCount > TOP_MARKETS_PER_ROW && (
-                                    <span className="text-[11px] text-gray-400 whitespace-nowrap">
-                                      +{row.marketCount - TOP_MARKETS_PER_ROW}
-                                    </span>
-                                  )}
-                                </div>
+                                    )}
+                                  </div>
+                                </TooltipProvider>
                               )}
                             </TableCell>
                             <TableCell className="text-right">
