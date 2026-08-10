@@ -12,7 +12,7 @@
 //     total discovery responses, so the numbers are directly comparable
 //     to the target's visibility.
 
-import { isValidCompetitor } from "@/utils/competitorUtils";
+import { parseDetectedCompetitors } from "@/utils/competitorDetection";
 
 const DISCOVERY_PROMPT_TYPES = new Set(["discovery"]);
 
@@ -32,18 +32,6 @@ interface ResponseLike {
   company_mentioned?: boolean | null;
   detected_competitors?: string | string[] | null;
   confirmed_prompts?: { prompt_type?: string | null } | null;
-}
-
-function parseCompetitors(raw: ResponseLike["detected_competitors"]): string[] {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw.map((s) => String(s).trim()).filter(Boolean);
-  if (typeof raw === "string") {
-    return raw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
-  return [];
 }
 
 function normalizeKey(name: string): string {
@@ -71,17 +59,18 @@ export function computeDiscoveryStats(
   const targetKey = normalizeKey(targetCompanyName);
 
   for (const r of discovery) {
-    const items = parseCompetitors(r.detected_competitors);
-    const seenInResponse = new Set<string>();
+    // Shared detection rules (competitorDetection.ts): placeholder tokens
+    // ("None"/"N/A"/…) out, the target company self-excluded by word-boundary
+    // match, deduped per response. Job boards and other non-entities are
+    // excluded at the data layer (canonical_entities.is_active = false), not
+    // by hardcoded lists here.
+    const raw = Array.isArray(r.detected_competitors)
+      ? r.detected_competitors.join(",")
+      : r.detected_competitors;
+    const items = parseDetectedCompetitors(raw, targetCompanyName);
     for (const item of items) {
       const key = normalizeKey(item);
-      if (!key || seenInResponse.has(key)) continue;
-      // Drop the target itself if it shows up in detected_competitors
-      if (key === targetKey || key.includes(targetKey)) continue;
-      // Drop non-companies — "None"/"N/A" placeholders, job boards, etc. — so they
-      // never surface as a competitor in the visibility comparison or EPS summary.
-      if (!isValidCompetitor(item, targetCompanyName)) continue;
-      seenInResponse.add(key);
+      if (key === targetKey) continue;
       const existing = counts.get(key);
       if (existing) {
         existing.n += 1;

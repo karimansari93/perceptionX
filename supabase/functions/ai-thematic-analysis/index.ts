@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { analyzeThemes } from "../_shared/theme-analysis.ts";
+import { analyzeThemes, parseCompetitorList } from "../_shared/theme-analysis.ts";
 
 // Real-time, single-response theme extraction. Invoked fire-and-forget from
 // analyze-response immediately after a prompt_response row is inserted.
@@ -66,12 +66,65 @@ serve(async (req) => {
         console.error("Error deleting existing themes:", deleteError);
         return json({ error: "Failed to delete existing themes", details: deleteError }, 500);
       }
+      // Competitor triples are generated in the same extraction pass, so a
+      // forced re-theme regenerates them too.
+      const { error: deleteCompError } = await supabase
+        .from("competitor_themes")
+        .delete()
+        .eq("response_id", response_id);
+      if (deleteCompError) {
+        console.warn("Error deleting existing competitor themes:", deleteCompError);
+      }
     }
 
-    const themes = await analyzeThemes(response_text, company_name);
+    // Competitors detected in this response (canonical form — the write-time
+    // trigger keeps canonical_competitors fresh). Passed into the SAME
+    // extraction call so competitor ↔ attribute ↔ sentiment triples come out
+    // alongside the company themes.
+    const { data: responseRow } = await supabase
+      .from("prompt_responses")
+      .select("canonical_competitors, detected_competitors")
+      .eq("id", response_id)
+      .maybeSingle();
+    const competitors = parseCompetitorList(
+      responseRow?.canonical_competitors ?? responseRow?.detected_competitors,
+      company_name,
+    );
+
+    const { themes, competitorThemes } = await analyzeThemes(response_text, company_name, competitors);
+
+    // Competitor rows are inserted regardless of whether company themes were
+    // found (a discovery answer can describe competitors without saying
+    // anything about the company). The BEFORE INSERT trigger canonicalizes
+    // names, stamps company_id, and drops noise/self rows.
+    let competitorThemesInserted = 0;
+    if (competitorThemes.length > 0) {
+      const { data: insertedComp, error: compInsertError } = await supabase
+        .from("competitor_themes")
+        .insert(competitorThemes.map((t) => ({
+          response_id,
+          competitor_name: t.competitor_name,
+          attribute_id: t.attribute_id,
+          attribute_name: t.attribute_name,
+          sentiment: t.sentiment,
+          sentiment_score: t.sentiment_score,
+          context_snippet: t.context_snippet,
+        })))
+        .select();
+      if (compInsertError) {
+        console.warn("Error inserting competitor themes:", compInsertError);
+      } else {
+        competitorThemesInserted = insertedComp?.length ?? 0;
+      }
+    }
 
     if (themes.length === 0) {
-      return json({ success: true, message: "No themes identified", themes: [] });
+      return json({
+        success: true,
+        message: "No themes identified",
+        themes: [],
+        competitor_themes: competitorThemesInserted,
+      });
     }
 
     const themeInserts = themes.map((theme) => ({
@@ -104,6 +157,7 @@ serve(async (req) => {
       positive_themes: themes.filter((t) => t.sentiment === "positive").length,
       negative_themes: themes.filter((t) => t.sentiment === "negative").length,
       neutral_themes: themes.filter((t) => t.sentiment === "neutral").length,
+      competitor_themes: competitorThemesInserted,
     });
   } catch (error: any) {
     console.error("Error in AI thematic analysis:", error);

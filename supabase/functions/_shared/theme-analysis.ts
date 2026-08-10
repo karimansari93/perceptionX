@@ -38,6 +38,25 @@ export interface AITheme {
   context_snippets: string[];
 }
 
+// Competitor ↔ attribute ↔ sentiment triple, extracted in the SAME call as
+// the company themes (input tokens dominate cost, so a second pass would
+// nearly double spend for the same reading). Stored in competitor_themes,
+// never ai_themes — existing rollups aggregate ai_themes by response_id and
+// would absorb competitor rows into the measured company's numbers.
+export interface CompetitorTheme {
+  competitor_name: string;
+  attribute_id: string;
+  attribute_name: string;
+  sentiment: "positive" | "negative" | "neutral";
+  sentiment_score: number;
+  context_snippet: string;
+}
+
+export interface ThemeAnalysisResult {
+  themes: AITheme[];
+  competitorThemes: CompetitorTheme[];
+}
+
 // JSON schema enforced by Anthropic structured outputs. `additionalProperties: false`
 // is required on every object node; numerical/string constraints like minimum/maxLength
 // aren't supported (the SDK strips them anyway).
@@ -73,7 +92,7 @@ const LEGACY_ATTRIBUTE_MAP: Record<string, string | null> = {
   "overall-candidate-experience": null,
 };
 
-const THEME_SCHEMA = {
+const COMPANY_THEMES_SCHEMA = {
   type: "array",
   items: {
     type: "object",
@@ -105,6 +124,42 @@ const THEME_SCHEMA = {
   },
 } as const;
 
+// One response → company themes + competitor triples in a single structured
+// output. The schema (and system prompt) are constant across every call so
+// prompt caching keeps working; the competitor list rides in the user
+// message, and competitor_names are validated after the fact against it.
+const THEME_SCHEMA = {
+  type: "object",
+  properties: {
+    company_themes: COMPANY_THEMES_SCHEMA,
+    competitor_themes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          competitor_name: { type: "string" },
+          attribute_id: { type: "string", enum: V2_ATTRIBUTE_IDS },
+          attribute_name: { type: "string" },
+          sentiment: { type: "string", enum: ["positive", "negative", "neutral"] },
+          sentiment_score: { type: "number" },
+          context_snippet: { type: "string" },
+        },
+        required: [
+          "competitor_name",
+          "attribute_id",
+          "attribute_name",
+          "sentiment",
+          "sentiment_score",
+          "context_snippet",
+        ],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["company_themes", "competitor_themes"],
+  additionalProperties: false,
+} as const;
+
 // System prompt is constant across every call in a batch, so we tag it for
 // prompt caching. First call in a batch pays the 1.25x write premium; the
 // remaining 39 pay 0.1x for cache reads. Min cacheable prefix on Haiku 4.5
@@ -112,7 +167,9 @@ const THEME_SCHEMA = {
 // attribute taxonomy spelled out.
 const SYSTEM_PROMPT = `You are an expert in analyzing AI-generated responses to extract themes about a company's employer brand and talent perception.
 
-For each theme you identify, output an object with:
+Your output is an object with two arrays: "company_themes" (themes about the named company) and "competitor_themes" (see the competitor section at the end).
+
+For each company theme you identify, output an object with:
 - theme_name: clear, concise name
 - theme_description: brief description of the theme
 - sentiment: "positive", "negative", or "neutral"
@@ -146,7 +203,13 @@ Classification rules — be strict:
 Coverage:
 - Look for both positive and negative themes
 - If the response contains ANY information about the named company — even if it also discusses competitors or comparisons — extract themes from that information
-- Only return an empty array if the response truly contains no information about the company at all`;
+- Only return an empty company_themes array if the response truly contains no information about the company at all
+
+Competitor themes ("competitor_themes" array):
+- The user message may list OTHER companies detected in the response. For each listed company the response actually DESCRIBES — says something evaluative or factual about what it's like as an employer (pay, culture, growth, stability, …) — emit one object per described attribute: competitor_name (copied EXACTLY from the provided list), attribute_id (same taxonomy and rules as above), attribute_name, sentiment, sentiment_score, and context_snippet (ONE short verbatim snippet supporting it).
+- Being merely name-dropped in a list or ranking with nothing said about it does NOT count — emit nothing for that company.
+- Only use companies from the provided list; never invent or add others. If no list is provided or none are described, return an empty competitor_themes array.
+- company_themes must stay strictly about the named company; never move competitor information there.`;
 
 // Resolve any emitted id to a live v2 id: pass v2 ids through, fold legacy v1
 // ids to their successor, and reject everything else (incl. retired ids that
@@ -174,11 +237,86 @@ function validateAndCleanTheme(t: any): AITheme {
   };
 }
 
+// Parse a (canonical_)competitors string from prompt_responses into the list
+// handed to the extraction call. Mirrors the client-side rules: placeholder
+// tokens out, measured company out (word-boundary — subsidiaries count as
+// self), deduped. Capped so a listy response can't blow up the output size.
+const PLACEHOLDER_TOKENS = new Set(["none", "n/a", "na", "null", "undefined"]);
+const MAX_COMPETITORS_PER_CALL = 8;
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function containsWholeWord(haystack: string, needle: string): boolean {
+  if (!haystack || !needle) return false;
+  try {
+    return new RegExp(
+      `(^|[^\\p{L}\\p{N}])${escapeRegExp(needle)}([^\\p{L}\\p{N}]|$)`,
+      "iu",
+    ).test(haystack);
+  } catch {
+    return haystack.toLowerCase().includes(needle.toLowerCase());
+  }
+}
+
+export function parseCompetitorList(
+  raw: string | null | undefined,
+  companyName: string,
+): string[] {
+  if (!raw) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of raw.split(",")) {
+    const name = part.trim();
+    if (!name || PLACEHOLDER_TOKENS.has(name.toLowerCase())) continue;
+    if (
+      name.toLowerCase() === companyName.toLowerCase() ||
+      containsWholeWord(name, companyName)
+    ) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+    if (out.length >= MAX_COMPETITORS_PER_CALL) break;
+  }
+  return out;
+}
+
+function validateCompetitorTheme(
+  t: any,
+  allowedCompetitors: string[],
+): CompetitorTheme | null {
+  const attributeId = normalizeAttributeId(t?.attribute_id);
+  if (attributeId === "unknown") return null;
+  const rawName = typeof t?.competitor_name === "string" ? t.competitor_name.trim() : "";
+  if (!rawName) return null;
+  // Snap the emitted name onto the provided list (exact first, then
+  // word-boundary containment either way round); drop anything else — the
+  // model must not introduce entities detection didn't find.
+  const matched =
+    allowedCompetitors.find((c) => c.toLowerCase() === rawName.toLowerCase()) ??
+    allowedCompetitors.find(
+      (c) => containsWholeWord(rawName, c) || containsWholeWord(c, rawName),
+    );
+  if (!matched) return null;
+  return {
+    competitor_name: matched,
+    attribute_id: attributeId,
+    attribute_name: V2_ATTRIBUTES[attributeId],
+    sentiment: ["positive", "negative", "neutral"].includes(t?.sentiment) ? t.sentiment : "neutral",
+    sentiment_score: Math.max(-1, Math.min(1, parseFloat(t?.sentiment_score) || 0)),
+    context_snippet: typeof t?.context_snippet === "string" ? t.context_snippet.slice(0, 500) : "",
+  };
+}
+
 export async function analyzeThemes(
   responseText: string,
   companyName: string,
-): Promise<AITheme[]> {
+  competitors: string[] = [],
+): Promise<ThemeAnalysisResult> {
   try {
+    const competitorLine = competitors.length > 0
+      ? `\n\nOther companies detected in this response (extract competitor_themes ONLY for these): ${competitors.join(", ")}`
+      : "\n\nNo other companies were detected; return an empty competitor_themes array.";
     const response = await client.messages.create({
       model: "claude-haiku-4-5",
       max_tokens: 4096,
@@ -199,12 +337,13 @@ export async function analyzeThemes(
       messages: [
         {
           role: "user",
-          content: `Analyze this response about "${companyName}":\n\n"""\n${responseText}\n"""`,
+          content: `Analyze this response about "${companyName}":\n\n"""\n${responseText}\n"""${competitorLine}`,
         },
       ],
     });
 
     // Structured outputs return as a single text block containing the JSON.
+    const EMPTY: ThemeAnalysisResult = { themes: [], competitorThemes: [] };
     const textBlock = response.content.find((b: any) => b.type === "text") as
       | { type: "text"; text: string }
       | undefined;
@@ -212,29 +351,32 @@ export async function analyzeThemes(
       console.warn(
         `[theme-analysis] no text block. stop_reason=${response.stop_reason}`,
       );
-      return [];
+      return EMPTY;
     }
 
-    let parsed: unknown;
+    let parsed: any;
     try {
       parsed = JSON.parse(textBlock.text);
     } catch (e) {
       console.error("[theme-analysis] JSON parse failed despite structured output:", e, textBlock.text.slice(0, 200));
-      return [];
+      return EMPTY;
     }
 
-    if (!Array.isArray(parsed)) {
-      console.warn("[theme-analysis] structured output returned non-array:", textBlock.text.slice(0, 200));
-      return [];
-    }
+    const companyThemes = Array.isArray(parsed?.company_themes) ? parsed.company_themes : [];
+    const rawCompetitorThemes = Array.isArray(parsed?.competitor_themes) ? parsed.competitor_themes : [];
 
-    if (parsed.length === 0) {
+    if (companyThemes.length === 0) {
       console.warn(`[theme-analysis] EMPTY for "${companyName}". Input head: ${responseText.slice(0, 150)}`);
     } else {
-      console.log(`[theme-analysis] ${parsed.length} themes for "${companyName}". cache_read=${response.usage?.cache_read_input_tokens ?? 0} cache_write=${response.usage?.cache_creation_input_tokens ?? 0}`);
+      console.log(`[theme-analysis] ${companyThemes.length} themes + ${rawCompetitorThemes.length} competitor themes for "${companyName}". cache_read=${response.usage?.cache_read_input_tokens ?? 0} cache_write=${response.usage?.cache_creation_input_tokens ?? 0}`);
     }
 
-    return parsed.map(validateAndCleanTheme);
+    return {
+      themes: companyThemes.map(validateAndCleanTheme),
+      competitorThemes: rawCompetitorThemes
+        .map((t: any) => validateCompetitorTheme(t, competitors))
+        .filter((t: CompetitorTheme | null): t is CompetitorTheme => t !== null),
+    };
   } catch (e: any) {
     // Surface rate-limit / overload distinctly so the bulk function's per-response
     // try/catch can decide what to do. The SDK throws typed exceptions; check by

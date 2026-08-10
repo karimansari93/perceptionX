@@ -662,16 +662,18 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           <div style={{ display: activeSection === 'competitors' ? 'block' : 'none' }}>
             <Suspense fallback={<CompetitorsSkeleton />}>
               <CompetitorsTab
-                topCompetitors={topCompetitors}
                 responses={responses}
                 companyName={companyName}
-                searchResults={currentCompanySearchResults}
+                currentCompanyId={currentCompany?.id}
                 responseTexts={responseTexts}
                 fetchResponseTexts={fetchResponseTexts}
                 previousPeriodResponses={previousPeriodResponses}
                 responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={setSelectedJobFunction}
+                responseSentimentRows={responseSentimentRows}
+                recencyData={recencyData}
+                onNavigateToSources={() => handleSectionChange('sources')}
               />
             </Suspense>
           </div>

@@ -19,6 +19,11 @@ import { normalizeEntityName } from "@/utils/competitorUtils";
  */
 export function useEntityCanonicalizer() {
   const [aliasMap, setAliasMap] = useState<Map<string, { canonical_name: string; is_active: boolean }>>(new Map());
+  // False until the alias map has actually arrived. Consumers that make
+  // merge/protection decisions based on "is this name alias-mapped?" (the
+  // Competitors variant collapse) must wait for this — an empty map reads as
+  // "nothing is protected" and produces wrong merges, not missing ones.
+  const [aliasMapLoaded, setAliasMapLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -26,7 +31,7 @@ export function useEntityCanonicalizer() {
       const { data, error } = await supabase
         .from('entity_aliases')
         .select('normalized_alias, canonical_entities!inner(canonical_name, is_active)')
-        .limit(5000);
+        .limit(10000);
       if (cancelled || error || !data) return;
       const next = new Map<string, { canonical_name: string; is_active: boolean }>();
       for (const row of data as Array<{
@@ -40,6 +45,7 @@ export function useEntityCanonicalizer() {
         next.set(row.normalized_alias, { canonical_name: ce.canonical_name, is_active: ce.is_active });
       }
       setAliasMap(next);
+      setAliasMapLoaded(true);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -54,5 +60,5 @@ export function useEntityCanonicalizer() {
     return trimmed;
   }, [aliasMap]);
 
-  return { canonicalize, aliasMap };
+  return { canonicalize, aliasMap, aliasMapLoaded };
 }

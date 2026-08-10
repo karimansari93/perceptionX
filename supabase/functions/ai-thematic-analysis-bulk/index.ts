@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { analyzeThemes } from "../_shared/theme-analysis.ts";
+import { analyzeThemes, parseCompetitorList } from "../_shared/theme-analysis.ts";
 
 // Bulk theme extraction. Caller provides an array of { response_id,
 // response_text } plus the company_name; we run Gemini 2.5 Flash on each
@@ -56,6 +56,35 @@ serve(async (req) => {
       if (deleteError) {
         console.warn("Error clearing existing themes:", deleteError);
       }
+      // Competitor triples come from the same extraction pass — clear them
+      // together so a re-run can't leave stale competitor rows behind.
+      const { error: deleteCompError } = await supabase
+        .from("competitor_themes")
+        .delete()
+        .in("response_id", responseIds);
+      if (deleteCompError) {
+        console.warn("Error clearing existing competitor themes:", deleteCompError);
+      }
+    }
+
+    // Detected competitors per response (canonical form), one query for the
+    // whole batch. Passed into the extraction call so competitor ↔ attribute
+    // ↔ sentiment triples come out alongside the company themes.
+    const competitorsByResponse = new Map<string, string[]>();
+    if (responseIds.length > 0) {
+      const { data: responseRows, error: rowsError } = await supabase
+        .from("prompt_responses")
+        .select("id, canonical_competitors, detected_competitors")
+        .in("id", responseIds);
+      if (rowsError) {
+        console.warn("Error fetching competitor lists for batch:", rowsError);
+      }
+      for (const row of responseRows ?? []) {
+        competitorsByResponse.set(
+          row.id,
+          parseCompetitorList(row.canonical_competitors ?? row.detected_competitors, company_name),
+        );
+      }
     }
 
     const results: Array<Record<string, unknown>> = [];
@@ -84,7 +113,36 @@ serve(async (req) => {
               };
             }
 
-            const themes = await analyzeThemes(response.response_text, company_name);
+            const { themes, competitorThemes } = await analyzeThemes(
+              response.response_text,
+              company_name,
+              competitorsByResponse.get(response.response_id) ?? [],
+            );
+
+            // Insert competitor triples even when no company themes were
+            // found (a discovery answer can describe competitors without
+            // saying anything about the company). The BEFORE INSERT trigger
+            // canonicalizes names, stamps company_id, drops noise/self rows.
+            let competitorThemesCreated = 0;
+            if (competitorThemes.length > 0) {
+              const { data: insertedComp, error: compInsertError } = await supabase
+                .from("competitor_themes")
+                .insert(competitorThemes.map((t) => ({
+                  response_id: response.response_id,
+                  competitor_name: t.competitor_name,
+                  attribute_id: t.attribute_id,
+                  attribute_name: t.attribute_name,
+                  sentiment: t.sentiment,
+                  sentiment_score: t.sentiment_score,
+                  context_snippet: t.context_snippet,
+                })))
+                .select();
+              if (compInsertError) {
+                console.warn(`Competitor-theme insert error for ${response.response_id}:`, compInsertError);
+              } else {
+                competitorThemesCreated = insertedComp?.length ?? 0;
+              }
+            }
 
             if (themes.length === 0) {
               return {
@@ -92,6 +150,7 @@ serve(async (req) => {
                 success: true,
                 message: "No themes identified",
                 themes_count: 0,
+                competitor_themes_count: competitorThemesCreated,
               };
             }
 
@@ -127,6 +186,7 @@ serve(async (req) => {
               response_id: response.response_id,
               success: true,
               themes_count: insertedThemes?.length ?? 0,
+              competitor_themes_count: competitorThemesCreated,
               positive_themes: themes.filter((t) => t.sentiment === "positive").length,
               negative_themes: themes.filter((t) => t.sentiment === "negative").length,
               neutral_themes: themes.filter((t) => t.sentiment === "neutral").length,
