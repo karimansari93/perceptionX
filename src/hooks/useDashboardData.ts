@@ -6,7 +6,7 @@ import { PromptResponse, DashboardMetrics, CitationCount, PromptData, Citation, 
 import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
-import { parseCompetitors } from "@/utils/competitorUtils";
+import { parseDetectedCompetitors } from "@/utils/competitorDetection";
 import { buildLocationOptions, canonicalizeLocationContext, companyCountryKey, GENERAL_KEY, resolveResponseLocationKey } from "@/utils/locationContext";
 import { GLOBAL_LIKE } from "@/utils/locations";
 import { LEGACY_ATTRIBUTE_MAP } from "@/config/attributes";
@@ -3426,7 +3426,7 @@ export const useDashboardData = () => {
     // Merge in search result competitors (already cached, lightweight)
     searchResults.forEach(result => {
       if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
-        const validCompetitors = parseCompetitors(result.detectedCompetitors, companyName);
+        const validCompetitors = parseDetectedCompetitors(result.detectedCompetitors, companyName);
         validCompetitors.forEach(competitor => {
           const weight = result.mentionCount || 1;
           combined[competitor] = (combined[competitor] || 0) + weight;
@@ -3440,7 +3440,7 @@ export const useDashboardData = () => {
     if (effMvTopCompetitors.length === 0 && fallbackResponses.length > 0 && !loading) {
       fallbackResponses.forEach(response => {
         if (response.detected_competitors) {
-          const validCompetitors = parseCompetitors(response.detected_competitors, companyName);
+          const validCompetitors = parseDetectedCompetitors(response.detected_competitors, companyName);
           validCompetitors.forEach(competitor => {
             combined[competitor] = (combined[competitor] || 0) + 1;
           });

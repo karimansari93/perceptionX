@@ -1,1480 +1,1404 @@
-import { useState, useMemo, useEffect, useRef, useTransition, useDeferredValue, memo } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import ReactMarkdown from 'react-markdown';
-import { Sparkles, Loader2, CheckCircle2, TrendingUp, TrendingDown, Info } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Users, TrendingUp, TrendingDown, Info, ChartLine, BarChartHorizontal,
+  Tags, Bot, SmilePlus, Layers,
+} from "lucide-react";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+} from "recharts";
+import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { usePersistedState } from "@/hooks/usePersistedState";
+import { useTabSearchSeed, useSeedTabSearch } from "@/contexts/TabSearchSeedContext";
+import { useEntityCanonicalizer } from "@/hooks/useEntityCanonicalizer";
+import { useCompany } from "@/contexts/CompanyContext";
+import { supabase } from "@/integrations/supabase/client";
+import { enhanceCitations, getCompetitorFavicon } from "@/utils/citationUtils";
+import { getLLMDisplayName } from "@/config/llmLogos";
+import { getAttributeIconByName } from "@/config/attributeIcons";
+import { sentimentRatioV2 } from "@/lib/sentimentV2";
+import {
+  parseDetectedCompetitors,
+  buildVariantCollapseMap,
+} from "@/utils/competitorDetection";
+import { normalizeEntityName } from "@/utils/competitorUtils";
+import LLMLogo from "@/components/LLMLogo";
 import { ScrollablePills } from "./ScrollablePills";
 import { SearchInput } from "./SearchInput";
-import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
-import { Button } from "@/components/ui/button";
-import { extractSourceUrl } from "@/utils/citationUtils";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { supabase } from "@/integrations/supabase/client";
-import { getCompetitorFavicon, getFavicon } from "@/utils/citationUtils";
-import LLMLogo from "@/components/LLMLogo";
-import { getLLMDisplayName } from "@/config/llmLogos";
-import { usePersistedState } from "@/hooks/usePersistedState";
-// Canonicalization now happens at the data layer (prompt_responses_canonical
-// view). The dashboard receives detected_competitors with variants already
-// merged into canonical entities, so no client-side alias hook is needed.
+import { FilterDropdown } from "./FilterDropdown";
+import { CompetitorDetailsModal } from "./CompetitorDetailsModal";
 
-interface TimeBasedData {
+// ---------------------------------------------------------------------------
+// Shared constants (mirroring the Sources tab patterns)
+// ---------------------------------------------------------------------------
+const BRAND_COLOR = "#0DBCBA";
+const COMPETITOR_BAR_COLOR = "#94A3B8";
+const CHART_COLORS = ["#0DBCBA", "#5B7FD9", "#DB5E89", "#E8A33D", "#8B5CF6"];
+const TREND_COMPETITOR_LIMIT = 4; // + the measured company = 5 series
+const CARD1_ROW_LIMIT = 10;
+const EOC_ROW_LIMIT = 12;
+const INITIAL_TABLE_ROWS = 15;
+const TABLE_ROWS_STEP = 50;
+const OWNS_ATTRIBUTE_CHIPS = 2;
+
+export type CompetitorSet = "eoc" | "direct" | "emergent";
+
+const SET_LABELS: Record<CompetitorSet, string> = {
+  eoc: "Employer of choice",
+  direct: "Direct",
+  emergent: "Emergent",
+};
+
+type TrendGranularity = "week" | "month";
+
+const startOfWeekTs = (ts: number): number => {
+  const d = new Date(ts);
+  const day = (d.getDay() + 6) % 7; // Monday = 0
+  d.setDate(d.getDate() - day);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+
+const startOfMonthTs = (ts: number): number => {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+};
+
+const normalizeDomain = (domain: string): string =>
+  (domain || "").trim().toLowerCase().replace(/^www\./, "");
+
+// Placeholder guard for post-canonicalization output (the parse util owns the
+// canonical exclusion list; alias mapping can reintroduce a junk display name).
+const isPlaceholder = (name: string): boolean =>
+  ["none", "n/a", "na", "null", "undefined"].includes(name.trim().toLowerCase());
+
+// ---------------------------------------------------------------------------
+// Normalized response shape — one parse per response, shared by every card,
+// the table and the detail modal (the Sources tab pattern).
+// ---------------------------------------------------------------------------
+export type CompetitorNormalizedResponse = {
+  raw: any;
+  id: string;
+  mentioned: boolean;
+  model: string;
+  jobFunction: string | null;
+  location: string | null;
+  promptType: string | undefined;
+  promptText: string | undefined;
+  promptId: string | undefined;
+  testedAt: number | null;
+  /** Final competitor names: canonicalized, self/noise-excluded, variant-collapsed. */
+  competitors: string[];
+  /** Normalized website domains cited by this response. */
+  domains: string[];
+};
+
+/** Per-competitor rollup used by the cards and the table. */
+type CompetitorAgg = {
   name: string;
-  current: number;
-  previous: number;
-  change: number;
-  changePercent: number;
-}
+  count: number;            // responses mentioning the competitor
+  coMention: number;        // …of which also mention the measured company
+  discoveryCount: number;   // …on discovery prompts
+  competitiveCount: number; // …on competitive (comparison) prompts
+  models: Set<string>;      // LLM display names
+  responseIds: string[];
+};
 
 interface CompetitorsTabProps {
-  topCompetitors: { company: string; count: number }[];
   responses: any[];
   companyName: string;
-  searchResults?: any[];
+  currentCompanyId?: string;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   previousPeriodResponses?: any[];
   // True while the raw response stream for the current company is still
   // arriving (it loads AFTER first paint). Gates the empty state: skeleton
-  // rows, never "No competitor mentions found yet", until the stream is final.
+  // rows, never "No competitors found yet", until the stream is final.
   responsesLoading?: boolean;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
   onJobFunctionChange?: (value: string) => void;
+  // Per-response sentiment rollup rows (company_response_sentiment_mv) — the
+  // measured company's side of the head-to-head sentiment comparison.
+  responseSentimentRows?: any[];
+  // url_recency_cache rows {url, domain, recency_score 0-100} — the
+  // freshness/relevance comparison in the head-to-head scorecard.
+  recencyData?: any[];
+  // Switches the dashboard to the Sources tab (competitor-only cited domains
+  // link through to it; the seed is set here via useSeedTabSearch).
+  onNavigateToSources?: () => void;
 }
 
-export const CompetitorsTab = memo(({ topCompetitors, responses, companyName, searchResults = [], responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: CompetitorsTabProps) => {
-  // Modal states - persisted
-  const [selectedCompetitor, setSelectedCompetitor] = usePersistedState<string | null>('competitorsTab.selectedCompetitor', null);
-  const [isCompetitorModalOpen, setIsCompetitorModalOpen] = usePersistedState<boolean>('competitorsTab.isCompetitorModalOpen', false);
-  const [competitorSnippets, setCompetitorSnippets] = useState<{ snippet: string; full: string }[]>([]);
-  const [expandedSnippetIdx, setExpandedSnippetIdx] = useState<number | null>(null);
-  const [competitorSummary, setCompetitorSummary] = useState<string>("");
-  const [loadingCompetitorSummary, setLoadingCompetitorSummary] = useState(false);
-  const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
-  const [competitorThinkingStep, setCompetitorThinkingStep] = useState<number>(-1);
-  const [competitorThinkingSteps, setCompetitorThinkingSteps] = useState<string[]>([]);
-  const [competitorSummarySources, setCompetitorSummarySources] = useState<{ domain: string; url: string | null; displayName: string }[]>([]);
-  // Track last competitor we auto-fetched a summary for, so reopening the
-  // sheet for the same competitor doesn't re-fire, but switching does.
-  const lastCompetitorFetchKeyRef = useRef<string>("");
+export const CompetitorsTab = memo(({
+  responses,
+  companyName,
+  currentCompanyId,
+  responseTexts = {},
+  fetchResponseTexts,
+  previousPeriodResponses = [],
+  responsesLoading = false,
+  selectedJobFunction = "all",
+  onJobFunctionChange,
+  responseSentimentRows = [],
+  recencyData = [],
+  onNavigateToSources,
+}: CompetitorsTabProps) => {
+  const { canonicalize, aliasMap } = useEntityCanonicalizer();
+  const { currentCompany } = useCompany();
+  const seedTabSearch = useSeedTabSearch();
 
-  const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = usePersistedState<boolean>('competitorsTab.isMentionsDrawerOpen', false);
-  const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
-  const [selectedSource, setSelectedSource] = usePersistedState<{ domain: string; count: number } | null>('competitorsTab.selectedSource', null);
-  const [isSourceModalOpen, setIsSourceModalOpen] = usePersistedState<boolean>('competitorsTab.isSourceModalOpen', false);
-  const [showAllCompetitorSources, setShowAllCompetitorSources] = useState(false);
-  // Filter state - persisted
-  const [selectedCompetitorTypeFilter, setSelectedCompetitorTypeFilter] = usePersistedState<'all' | 'direct'>('competitorsTab.selectedCompetitorTypeFilter', 'direct');
-  const deferredCompetitorTypeFilter = useDeferredValue(selectedCompetitorTypeFilter);
-  // Controlled by the parent Dashboard so the job-function selection is shared
-  // across all tabs and never resets on tab switch.
+  // "Competitor-only cited domains" rows in the modal land on the Sources tab
+  // with that domain's detail modal pre-opened (the palette-seed mechanism).
+  const handleOpenSourcesForDomain = useCallback((domain: string) => {
+    seedTabSearch("sources", domain);
+    onNavigateToSources?.();
+  }, [seedTabSearch, onNavigateToSources]);
+
+  // -------------------------------------------------------------------------
+  // UI state
+  // -------------------------------------------------------------------------
+  const [chartType, setChartType] = usePersistedState<"bar" | "line">("competitorsTab.chartType", "bar");
+  const [selectedCompetitor, setSelectedCompetitor] = useState<string | null>(null);
+  const [modalCompetitor, setModalCompetitor] = usePersistedState<string | null>("competitorsTab.modalCompetitor", null);
+  const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>("competitorsTab.isModalOpen", false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterSets, setFilterSets] = useState<string[]>([]);
+  const [filterAttributes, setFilterAttributes] = useState<string[]>([]);
+  const [filterModels, setFilterModels] = useState<string[]>([]);
+  const [filterSentiments, setFilterSentiments] = useState<string[]>([]);
+  const [sortKey, setSortKey] = useState<"name" | "attributes" | "models" | "sentiment" | "coverage">("coverage");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [visibleRows, setVisibleRows] = useState(INITIAL_TABLE_ROWS);
+  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+
+  // Let the global command palette pre-fill this tab's search.
+  useTabSearchSeed("competitors", setSearchQuery);
+
   const selectedJobFunctionFilter = selectedJobFunction;
   const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
-  const deferredJobFunctionFilter = useDeferredValue(selectedJobFunctionFilter);
-  // Free-text search over competitor names (ephemeral, like the Prompts tab).
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const deferredSearchQuery = useDeferredValue(searchQuery);
-  // Let the global command palette pre-fill this tab's search.
-  useTabSearchSeed('competitors', setSearchQuery);
-  const [, startTransition] = useTransition();
+
+  // -------------------------------------------------------------------------
+  // Competitor ↔ attribute ↔ sentiment triples (competitor_themes). Loaded
+  // once per company; rows only exist for responses themed after the
+  // extraction pass started emitting them, so every consumer must degrade to
+  // "—" when a competitor has no rows yet.
+  // -------------------------------------------------------------------------
+  const [competitorThemeRows, setCompetitorThemeRows] = useState<any[]>([]);
+  useEffect(() => {
+    if (!currentCompanyId) {
+      setCompetitorThemeRows([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const PAGE = 1000;
+      const all: any[] = [];
+      for (let page = 0; page < 25; page += 1) {
+        const { data, error } = await (supabase as any)
+          .from("competitor_themes")
+          .select("response_id, competitor_name, attribute_id, attribute_name, sentiment")
+          .eq("company_id", currentCompanyId)
+          .range(page * PAGE, (page + 1) * PAGE - 1);
+        if (cancelled) return;
+        if (error) {
+          console.warn("competitor_themes fetch failed:", error.message);
+          break;
+        }
+        all.push(...(data ?? []));
+        if (!data || data.length < PAGE) break;
+      }
+      if (!cancelled) setCompetitorThemeRows(all);
+    })();
+    return () => { cancelled = true; };
+  }, [currentCompanyId]);
+
+  // -------------------------------------------------------------------------
+  // Curated Direct list (companies.competitors), run through the same
+  // exclusion rules as detected names.
+  // -------------------------------------------------------------------------
+  const curatedDirect = useMemo(() => {
+    const list = currentCompany?.competitors ?? [];
+    return new Set(
+      parseDetectedCompetitors(list.join(","), companyName, canonicalize),
+    );
+  }, [currentCompany?.competitors, companyName, canonicalize]);
+
+  const isAliasMapped = useCallback(
+    (name: string) => aliasMap.has(normalizeEntityName(name)),
+    [aliasMap],
+  );
+
+  // -------------------------------------------------------------------------
+  // SINGLE-PASS NORMALIZATION — parse detected_competitors and citations once
+  // per response. The variant-collapse map is built over the union of both
+  // periods so deltas compare like-for-like.
+  // -------------------------------------------------------------------------
+  const { normalized, prevNormalized } = useMemo(() => {
+    type PreParsed = Omit<CompetitorNormalizedResponse, "competitors"> & { rawNames: string[] };
+    const preParse = (input: any[]): PreParsed[] =>
+      input.map((r) => {
+        let parsed: any = r.citations;
+        if (typeof parsed === "string") {
+          try { parsed = JSON.parse(parsed); } catch { parsed = null; }
+        }
+        const arr = Array.isArray(parsed) ? enhanceCitations(parsed) : [];
+        const seenDomains = new Set<string>();
+        const domains: string[] = [];
+        for (const c of arr) {
+          if (c.type !== "website" || !c.domain) continue;
+          const d = normalizeDomain(c.domain);
+          if (d && d !== "unknown" && !seenDomains.has(d)) {
+            seenDomains.add(d);
+            domains.push(d);
+          }
+        }
+        const tsRaw = r.tested_at || r.created_at;
+        const ts = tsRaw ? Date.parse(tsRaw) : NaN;
+        return {
+          raw: r,
+          id: r.id,
+          mentioned: r.company_mentioned === true,
+          model: r.ai_model || "",
+          jobFunction: r.confirmed_prompts?.job_function_context?.trim() || null,
+          location: r.confirmed_prompts?.location_context?.trim() || null,
+          promptType: r.confirmed_prompts?.prompt_type,
+          promptText: r.confirmed_prompts?.prompt_text,
+          promptId: r.confirmed_prompts?.id ?? r.confirmed_prompt_id,
+          testedAt: Number.isFinite(ts) ? ts : null,
+          rawNames: parseDetectedCompetitors(r.detected_competitors, companyName, canonicalize),
+          domains,
+        };
+      });
+
+    const current = preParse(responses);
+    const previous = preParse(previousPeriodResponses);
+
+    const universe = new Set<string>();
+    for (const nr of current) nr.rawNames.forEach((n) => universe.add(n));
+    for (const nr of previous) nr.rawNames.forEach((n) => universe.add(n));
+    const collapseMap = buildVariantCollapseMap(universe, {
+      curated: curatedDirect,
+      isAliasMapped,
+    });
+
+    const finalize = (pre: PreParsed[]): CompetitorNormalizedResponse[] =>
+      pre.map((nr) => {
+        const seen = new Set<string>();
+        const competitors: string[] = [];
+        for (const name of nr.rawNames) {
+          for (const target of collapseMap.get(name) ?? [name]) {
+            const key = target.toLowerCase();
+            if (!seen.has(key)) {
+              seen.add(key);
+              competitors.push(target);
+            }
+          }
+        }
+        const { rawNames: _drop, ...rest } = nr;
+        return { ...rest, competitors };
+      });
+
+    return { normalized: finalize(current), prevNormalized: finalize(previous) };
+  }, [responses, previousPeriodResponses, companyName, canonicalize, curatedDirect, isAliasMapped]);
 
   // Distinct job functions present on the prompts behind these responses.
-  const getUniqueJobFunctions = useMemo(() => {
+  const uniqueJobFunctions = useMemo(() => {
     const fns = new Set<string>();
-    responses.forEach(response => {
-      const fn = response.confirmed_prompts?.job_function_context?.trim();
-      if (fn) fns.add(fn);
-    });
+    normalized.forEach((nr) => { if (nr.jobFunction) fns.add(nr.jobFunction); });
     return Array.from(fns).sort();
-  }, [responses]);
+  }, [normalized]);
 
-  const directCompetitorNames = useMemo(() => {
-    const names = new Set<string>();
-    responses.forEach(response => {
-      const isComp = response.confirmed_prompts?.prompt_type === 'competitive';
-      if (!isComp || !response.detected_competitors) return;
-      response.detected_competitors.split(',').forEach((comp: string) => {
-        const name = comp.trim();
-        if (name) names.add(name.toLowerCase());
-      });
-    });
-    return names;
-  }, [responses]);
+  const matchesFilters = useCallback(
+    (nr: CompetitorNormalizedResponse) =>
+      selectedJobFunctionFilter === "all" || nr.jobFunction === selectedJobFunctionFilter,
+    [selectedJobFunctionFilter],
+  );
 
-
-
-  // Helper to get filtered responses based on competitor type toggle
-  const getFilteredResponses = useMemo(() => {
-    let filtered = responses;
-
-    if (deferredCompetitorTypeFilter === 'direct') {
-      filtered = filtered.filter(response => {
-        return response.confirmed_prompts?.prompt_type === 'competitive';
-      });
-    }
-
-    if (deferredJobFunctionFilter !== 'all') {
-      filtered = filtered.filter(response =>
-        response.confirmed_prompts?.job_function_context?.trim() === deferredJobFunctionFilter
-      );
-    }
-
-    return filtered;
-  }, [responses, deferredCompetitorTypeFilter, deferredJobFunctionFilter]);
-
-  const handleCompetitorTypeToggle = (value: 'all' | 'direct') => {
-    startTransition(() => {
-      setSelectedCompetitorTypeFilter(value);
-    });
-  };
-
-
-
-  // Helper to normalize competitor names
-  const normalizeCompetitorName = (name: string): string => {
-    const trimmedName = name.trim();
-    const lowerName = trimmedName.toLowerCase();
-
-    // Canonicalization happens server-side (prompt_responses_canonical view),
-    // so trimmedName is already the canonical name. This function now only
-    // handles noise filtering (none / n/a / numeric-only / etc.) and
-    // display-name casing.
-
-    // Check for excluded patterns first
-    const excludedPatterns = [
-      /^none$/i,
-      /^n\/a$/i,
-      /^na$/i,
-      /^null$/i,
-      /^undefined$/i,
-      /^none\.?$/i,
-      /^n\/a\.?$/i,
-      /^na\.?$/i,
-      /^null\.?$/i,
-      /^undefined\.?$/i,
-      /^none[,:;\)\]}\-_]$/i,
-      /^n\/a[,:;\)\]}\-_]$/i,
-      /^na[,:;\)\]}\-_]$/i,
-      /^null[,:;\)\]}\-_]$/i,
-      /^undefined[,:;\)\]}\-_]$/i,
-      /^[0-9]+$/i, // Pure numbers
-      /^[^a-zA-Z0-9]+$/i, // Only special characters
-      /^[a-z]{1,2}$/i, // Single or double letter words (likely abbreviations that aren't company names)
-    ];
-    
-    // If the name matches any excluded pattern, return empty string
-    if (excludedPatterns.some(pattern => pattern.test(trimmedName))) {
-      return '';
-    }
-    
-    // Check for excluded words
-    const excludedWords = new Set([
-      'none', 'n/a', 'na', 'null', 'undefined', 'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;',
-      'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
-      'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_',
-      'null.', 'null,', 'null:', 'null;', 'null)', 'null]', 'null}', 'null-', 'null_',
-      'undefined.', 'undefined,', 'undefined:', 'undefined;', 'undefined)', 'undefined]', 'undefined}', 'undefined_',
-      'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;', 'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_',
-      'none', 'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
-      'na', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_'
-    ]);
-    
-    if (excludedWords.has(lowerName)) {
-      return '';
-    }
-    
-    // If name is too short or empty after trimming, return empty string
-    if (trimmedName.length <= 1) {
-      return '';
-    }
-    
-    const aliases: { [key: string]: string } = {
-      'amazon web services': 'AWS',
-      'google cloud': 'GCP',
-      // Add other aliases as needed
-    };
-    for (const alias in aliases) {
-      if (lowerName === alias) {
-        return aliases[alias];
+  // -------------------------------------------------------------------------
+  // Aggregation over the analyzed scope (current + previous period).
+  // -------------------------------------------------------------------------
+  const buildAgg = (input: CompetitorNormalizedResponse[], filter: (nr: CompetitorNormalizedResponse) => boolean) => {
+    const byName = new Map<string, CompetitorAgg>();
+    const matching: CompetitorNormalizedResponse[] = [];
+    let total = 0;
+    let companyMentioned = 0;
+    let discoveryTotal = 0;
+    let discoveryMentioned = 0;
+    let competitiveTotal = 0;
+    let competitiveMentioned = 0;
+    for (const nr of input) {
+      if (!filter(nr)) continue;
+      matching.push(nr);
+      total += 1;
+      const isDiscovery = nr.promptType === "discovery";
+      const isCompetitive = nr.promptType === "competitive";
+      if (isDiscovery) discoveryTotal += 1;
+      if (isCompetitive) competitiveTotal += 1;
+      if (nr.mentioned) {
+        companyMentioned += 1;
+        if (isDiscovery) discoveryMentioned += 1;
+        if (isCompetitive) competitiveMentioned += 1;
       }
-    }
-    return trimmedName.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-  };
-
-  // Helper to get sources contributing to competitor mentions
-  const getCompetitorSources = (competitorName: string) => {
-    const sourceCounts: Record<string, number> = {};
-    
-    getFilteredResponses.forEach(response => {
-      // Check if response mentions the competitor
-      if (response.response_text?.toLowerCase().includes(competitorName.toLowerCase())) {
-        // Parse citations from the response
-        try {
-          const citations = typeof response.citations === 'string' 
-            ? JSON.parse(response.citations) 
-            : response.citations;
-          
-          if (Array.isArray(citations)) {
-            citations.forEach((citation: any) => {
-              if (citation.domain) {
-                sourceCounts[citation.domain] = (sourceCounts[citation.domain] || 0) + 1;
-              }
-            });
-          }
-        } catch {
-          // Skip invalid citations
+      for (const name of nr.competitors) {
+        let agg = byName.get(name);
+        if (!agg) {
+          agg = { name, count: 0, coMention: 0, discoveryCount: 0, competitiveCount: 0, models: new Set(), responseIds: [] };
+          byName.set(name, agg);
         }
+        agg.count += 1;
+        if (nr.mentioned) agg.coMention += 1;
+        if (isDiscovery) agg.discoveryCount += 1;
+        if (isCompetitive) agg.competitiveCount += 1;
+        if (nr.model) agg.models.add(getLLMDisplayName(nr.model));
+        agg.responseIds.push(nr.id);
       }
-    });
-    
-    // Convert to array and sort by count
-    return Object.entries(sourceCounts)
-      .map(([domain, count]) => ({ domain, count }))
-      .sort((a, b) => b.count - a.count);
-  };
-
-  // Helper to determine competitor source (AI responses vs search results)
-  const getCompetitorSourceInfo = (competitorName: string) => {
-    const aiResponseCount = getFilteredResponses.filter(response => {
-      if (response.detected_competitors) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
-        return mentions.some((mention: any) => 
-          mention.name && mention.name.toLowerCase() === competitorName.toLowerCase()
-        );
-      }
-      return false;
-    }).length;
-
-    const searchResultCount = searchResults.filter(result => {
-      if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
-        const competitors = result.detectedCompetitors
-          .split(',')
-          .map((comp: string) => comp.trim().toLowerCase());
-        return competitors.includes(competitorName.toLowerCase());
-      }
-      return false;
-    }).length;
-
-    return {
-      aiResponseCount,
-      searchResultCount,
-      totalCount: aiResponseCount + searchResultCount,
-      sources: []
-    };
-  };
-
-  // Helper to format domain to a human-friendly name
-  const getSourceDisplayName = (domain: string) => {
-    // Remove www. and domain extension
-    let name = domain.replace(/^www\./, "");
-    name = name.replace(/\.(com|org|net|io|co|edu|gov|info|biz|us|uk|ca|au|in|de|fr|jp|ru|ch|it|nl|se|no|es|mil|tv|me|ai|ly|app|site|online|tech|dev|xyz|pro|club|store|blog|io|co|us|ca|uk|au|in|de|fr|jp|ru|ch|it|nl|se|no|es|mil|tv|me|ai|ly|app|site|online|tech|dev|xyz|pro|club|store|blog)(\.[a-z]{2})?$/, "");
-    // Capitalize first letter
-    return name.charAt(0).toUpperCase() + name.slice(1);
-  };
-
-  // Group responses into current period and previous period (applying same filter to both)
-  const groupResponsesByTimePeriod = useMemo(() => {
-    let filteredPrevious = previousPeriodResponses;
-    if (deferredCompetitorTypeFilter === 'direct') {
-      filteredPrevious = filteredPrevious.filter(response =>
-        response.confirmed_prompts?.prompt_type === 'competitive'
-      );
     }
-    if (deferredJobFunctionFilter !== 'all') {
-      filteredPrevious = filteredPrevious.filter(response =>
-        response.confirmed_prompts?.job_function_context?.trim() === deferredJobFunctionFilter
-      );
-    }
-    return {
-      current: getFilteredResponses,
-      previous: filteredPrevious
-    };
-  }, [getFilteredResponses, previousPeriodResponses, deferredCompetitorTypeFilter, deferredJobFunctionFilter]);
-
-  // Coverage denominators: how many responses are analyzed. A competitor's
-  // percentage is "share of these responses that mention it", so they do NOT
-  // sum to 100 across competitors.
-  const totalResponsesAnalyzed = getFilteredResponses.length;
-  const totalPrevResponsesAnalyzed = groupResponsesByTimePeriod.previous.length;
-
-  // Calculate time-based competitor data with share % deltas
-  const timeBasedCompetitors = useMemo(() => {
-    const { current, previous } = groupResponsesByTimePeriod;
-
-    const getCompetitorCounts = (responseList: any[]) => {
-      const counts: Record<string, number> = {};
-      responseList.forEach(response => {
-        if (response.detected_competitors) {
-          const mentions = response.detected_competitors
-            .split(',')
-            .map((comp: string) => comp.trim())
-            .filter((comp: string) => comp.length > 0);
-          const seen = new Set<string>();
-          mentions.forEach((comp: string) => {
-            const name = normalizeCompetitorName(comp);
-            if (name && name.toLowerCase() !== companyName.toLowerCase() && name.length > 1 && !seen.has(name)) {
-              seen.add(name);
-              counts[name] = (counts[name] || 0) + 1;
-            }
-          });
-        }
-      });
-      return counts;
-    };
-
-    const currentCompetitors = getCompetitorCounts(current);
-    const previousCompetitors = getCompetitorCounts(previous);
-
-    // Combine all unique competitors
-    const allNames = new Set([
-      ...Object.keys(currentCompetitors),
-      ...Object.keys(previousCompetitors)
-    ]);
-
-    const timeBasedData: TimeBasedData[] = Array.from(allNames).map(competitor => {
-      const currentCount = currentCompetitors[competitor] || 0;
-      const previousCount = previousCompetitors[competitor] || 0;
-
-      return {
-        name: competitor,
-        current: currentCount,
-        previous: previousCount,
-        change: currentCount - previousCount,
-        changePercent: 0  // computed later in renderAllTimeBar using consistent totals
-      };
-    });
-
-    let result = timeBasedData.sort((a, b) => b.current - a.current);
-
-    if (deferredCompetitorTypeFilter === 'direct') {
-      result = result.filter(competitor =>
-        directCompetitorNames.has(competitor.name.toLowerCase())
-      );
-    }
-
-    return result;
-  }, [groupResponsesByTimePeriod, companyName, deferredCompetitorTypeFilter, directCompetitorNames]);
-
-
-  // Calculate all-time competitor data based on filtered responses
-  const allTimeCompetitors = useMemo(() => {
-    const competitorCounts: Record<string, number> = {};
-    
-    // Count from filtered AI responses
-    getFilteredResponses.forEach(response => {
-      if (response.detected_competitors) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0);
-        
-        // Dedupe per response: a competitor counts once per response so the
-        // count is "responses mentioning it", not raw mention occurrences.
-        const seen = new Set<string>();
-        mentions.forEach((name: string) => {
-          const normalized = normalizeCompetitorName(name);
-          if (normalized &&
-              normalized.toLowerCase() !== companyName.toLowerCase() &&
-              normalized.length > 1 &&
-              !seen.has(normalized)) {
-            seen.add(normalized);
-            competitorCounts[normalized] = (competitorCounts[normalized] || 0) + 1;
-          }
-        });
-      }
-    });
-
-    if (deferredCompetitorTypeFilter === 'all') {
-      searchResults.forEach(result => {
-        if (result.detectedCompetitors && result.detectedCompetitors.trim()) {
-          const competitors = result.detectedCompetitors
-            .split(',')
-            .map((comp: string) => comp.trim());
-          
-          competitors.forEach(competitor => {
-            const name = normalizeCompetitorName(competitor);
-            if (name && 
-                name.toLowerCase() !== companyName.toLowerCase() &&
-                name.length > 1) {
-              competitorCounts[name] = (competitorCounts[name] || 0) + 1;
-            }
-          });
-        }
-      });
-    }
-
-    return Object.entries(competitorCounts)
-      .map(([name, count]) => ({ name, count, change: 0 }))
-      .sort((a, b) => b.count - a.count);
-  }, [getFilteredResponses, companyName, deferredCompetitorTypeFilter, searchResults]);
-
-  // Merge change data into all-time competitors
-  const allTimeCompetitorsWithChanges = useMemo(() => {
-    const changeData = new Map<string, { change: number; changePercent: number; previous: number }>();
-    timeBasedCompetitors.forEach(competitor => {
-      changeData.set(competitor.name, { change: competitor.change, changePercent: competitor.changePercent, previous: competitor.previous });
-    });
-
-    // Excluded competitors and words
-    const excludedCompetitors = new Set([
-      'glassdoor', 'indeed', 'ambitionbox', 'workday', 'linkedin', 'monster', 'careerbuilder', 'ziprecruiter',
-      'dice', 'angelist', 'wellfound', 'builtin', 'stackoverflow', 'github'
-    ]);
-    
-    const excludedWords = new Set([
-      'none', 'n/a', 'na', 'null', 'undefined', 'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;',
-      'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
-      'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_',
-      'null.', 'null,', 'null:', 'null;', 'null)', 'null]', 'null}', 'null-', 'null_',
-      'undefined.', 'undefined,', 'undefined:', 'undefined;', 'undefined)', 'undefined]', 'undefined}', 'undefined_',
-      'n/a', 'n/a.', 'n/a,', 'n/a:', 'n/a;', 'n/a)', 'n/a]', 'n/a}', 'n/a-', 'n/a_',
-      'none', 'none.', 'none,', 'none:', 'none;', 'none)', 'none]', 'none}', 'none-', 'none_',
-      'na', 'na.', 'na,', 'na:', 'na;', 'na)', 'na]', 'na}', 'na-', 'na_'
-    ]);
-
-    const filteredCompetitors = allTimeCompetitors
-      .filter(competitor => 
-        !excludedCompetitors.has(competitor.name.toLowerCase()) &&
-        !excludedWords.has(competitor.name.toLowerCase())
-      );
-
-    return filteredCompetitors.map(competitor => {
-      const prev = changeData.get(competitor.name)?.previous || 0;
-      return {
-        ...competitor,
-        change: changeData.get(competitor.name)?.change || 0,
-        previousCount: prev,
-        hasPreviousData: prev > 0
-      };
-    });
-  }, [allTimeCompetitors, timeBasedCompetitors]);
-
-  // Apply the free-text search on top of all other filters, before rendering.
-  const searchedCompetitors = useMemo(() => {
-    const q = deferredSearchQuery.trim().toLowerCase();
-    if (!q) return allTimeCompetitorsWithChanges;
-    return allTimeCompetitorsWithChanges.filter(c => c.name.toLowerCase().includes(q));
-  }, [allTimeCompetitorsWithChanges, deferredSearchQuery]);
-
-  // Helper to extract snippets for a competitor from all responses
-  const getSnippetsForCompetitor = (competitor: string) => {
-    const snippets: { snippet: string; full: string }[] = [];
-    // Regex to match competitor name with optional bolding and punctuation after
-    const competitorPattern = `(?:\\*\\*|__)?${competitor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(?:\\*\\*|__)?[\\s]*[:*\-]*`;
-    const regex = new RegExp(`((?:\\S+\\s+){0,4})(${competitorPattern})`, 'gi');
-    getFilteredResponses.forEach(response => {
-      if (!response.response_text) return;
-      let match;
-      while ((match = regex.exec(response.response_text)) !== null) {
-        // Get 4 words before
-        const before = match[1]?.split(/\s+/).slice(-4).join(' ') || '';
-        // Find the index just after the match
-        const afterStartIdx = match.index + match[0].length;
-        // Take the next 12 words from the remaining text
-        const afterText = response.response_text.slice(afterStartIdx).replace(/^([:*\-\s])+/, '');
-        const after = afterText.split(/\s+/).slice(0, 12).join(' ');
-        snippets.push({
-          snippet: `${before} ${match[2]} ${after}`.trim(),
-          full: response.response_text
-        });
-      }
-    });
-    return snippets;
+    return { byName, matching, total, companyMentioned, discoveryTotal, discoveryMentioned, competitiveTotal, competitiveMentioned };
   };
 
-  const handleCompetitorClick = (competitor: string) => {
-    const snippets = getSnippetsForCompetitor(competitor);
-    setSelectedCompetitor(competitor);
-    setCompetitorSnippets(snippets);
-    setShowAllCompetitorSources(false);
-    setIsCompetitorModalOpen(true);
-  };
+  const analyzed = useMemo(() => buildAgg(normalized, matchesFilters), [normalized, matchesFilters]);
+  const prevAnalyzed = useMemo(() => buildAgg(prevNormalized, matchesFilters), [prevNormalized, matchesFilters]);
+  const hasPrevPeriod = prevAnalyzed.total > 0;
 
-  const handleCloseCompetitorModal = () => {
-    setIsCompetitorModalOpen(false);
-    setSelectedCompetitor(null);
-    setCompetitorSnippets([]);
-    setShowAllCompetitorSources(false);
-    setCompetitorSummary("");
-    setCompetitorSummaryError(null);
-    setCompetitorThinkingStep(-1);
-    setCompetitorThinkingSteps([]);
-    setCompetitorSummarySources([]);
-  };
+  // Set membership. "Employer of choice" = detected in discovery prompts
+  // (prompts that don't name the measured company); "Direct" = the curated
+  // list; "Emergent" = detected but on neither.
+  const setOf = useCallback((agg: CompetitorAgg): CompetitorSet[] => {
+    const sets: CompetitorSet[] = [];
+    if (agg.discoveryCount > 0) sets.push("eoc");
+    if (curatedDirect.has(agg.name)) sets.push("direct");
+    if (sets.length === 0) sets.push("emergent");
+    return sets;
+  }, [curatedDirect]);
 
-  const handleSourceClick = (source: { domain: string; count: number }) => {
-    setSelectedSource(source);
-    setIsSourceModalOpen(true);
-  };
+  const totalModelCount = useMemo(() => {
+    const models = new Set<string>();
+    analyzed.matching.forEach((nr) => { if (nr.model) models.add(getLLMDisplayName(nr.model)); });
+    return models.size;
+  }, [analyzed]);
 
-  const handleCloseSourceModal = () => {
-    setIsSourceModalOpen(false);
-    setSelectedSource(null);
-  };
-
-  // Helper to get all full responses mentioning a competitor
-  const getFullResponsesForCompetitor = (competitor: string) => {
-    return responses.filter(response => {
-      // Respect the active job-function filter. Without this, the AI summary
-      // and the modal's mentions/top-sources silently mixed every function's
-      // data while the rest of the tab was filtered.
-      if (selectedJobFunctionFilter !== 'all' &&
-          response.confirmed_prompts?.job_function_context?.trim() !== selectedJobFunctionFilter) {
-        return false;
-      }
-      // Check if competitor is mentioned in detected_competitors field
-      if (response.detected_competitors) {
-        const mentions = response.detected_competitors
-          .split(',')
-          .map((comp: string) => comp.trim())
-          .filter((comp: string) => comp.length > 0)
-          .map((comp: string) => ({ name: comp }));
-        const hasMention = mentions.some((mention: any) => 
-          mention.name && mention.name.toLowerCase() === competitor.toLowerCase()
-        );
-        if (hasMention) return true;
-      }
-      
-      // Also check if competitor is mentioned in response text
-      if (response.response_text) {
-        const competitorPattern = `(?:\\*\\*|__)?${competitor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(?:\\*\\*|__)?[\\s]*[:*\-]*`;
-        const regex = new RegExp(competitorPattern, 'i');
-        return regex.test(response.response_text);
-      }
-      
-      return false;
-    });
-  };
-
-  // Helper to highlight competitor name and remove other bold/italic
-  function highlightCompetitor(snippet: string, competitor: string) {
-    // Remove all markdown bold/italic except for the competitor name
-    // 1. Remove all **text** and __text__ and *text* and _text_ except for competitor
-    // 2. Highlight competitor name (case-insensitive, all occurrences)
-    // 3. Return as HTML string
-    // First, escape competitor for regex
-    const competitorEscaped = competitor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-    // Remove bold/italic markdown except for competitor name
-    let clean = snippet
-      // Remove **text** and __text__ unless it's the competitor
-      .replace(/(\*\*|__)(?!\s*" + competitorEscaped + ")(.*?)\1/g, '$2')
-      // Remove *text* and _text_ unless it's the competitor
-      .replace(/(\*|_)(?!\s*" + competitorEscaped + ")(.*?)\1/g, '$2');
-    // Now highlight competitor name (all case-insensitive occurrences)
-    const regex = new RegExp(`(${competitorEscaped})`, 'gi');
-    clean = clean.replace(regex, '<span class="bg-yellow-200 font-bold">$1</span>');
-    return clean;
-  }
-
-  const fetchCompetitorSummary = async () => {
-    if (!selectedCompetitor) return;
-    // Capture the key this fetch was kicked off for. If the user switches
-    // competitors (or the job-function filter changes) before the response
-    // lands, we'll discard stale results rather than overwriting the new one.
-    // Must mirror the composite key set by the auto-fetch effect below.
-    const fetchKey = `${selectedCompetitor}::${selectedJobFunctionFilter}`;
-    setCompetitorSummary("");
-    setCompetitorSummaryError(null);
-    setLoadingCompetitorSummary(true);
-    setCompetitorThinkingStep(0);
-    setCompetitorThinkingSteps([]);
-
-    const allResponses = getFullResponsesForCompetitor(selectedCompetitor);
-    if (allResponses.length === 0) {
-      setCompetitorSummaryError("No responses found for this competitor.");
-      setLoadingCompetitorSummary(false);
-      setCompetitorThinkingStep(-1);
-      return;
-    }
-
-    // Cap the prompt size to stay well under Claude's per-minute token budget
-    // (org limit: 30k input tokens/min). Popular competitors can have 200+
-    // mentions; sending all of them blows the budget. Sample down hard.
-    const MAX_RESPONSES = 25;
-    const RESPONSE_EXCERPT_CHARS = 380;
-    const totalResponseCount = allResponses.length;
-
-    // Head-to-head stats over ALL competitor answers, not just the sample.
-    // NULL company_mentioned counts as "without", matching the rest of the app.
-    const alongsideCount = allResponses.filter((r: any) => r.company_mentioned === true).length;
-    const withoutCompanyCount = totalResponseCount - alongsideCount;
-
-    // Sample for the prompt: lead with answers where the company is ABSENT
-    // (that's where the competitor is winning ground), then fill with the rest.
-    const withoutCompany = allResponses.filter((r: any) => r.company_mentioned !== true);
-    const withCompany = allResponses.filter((r: any) => r.company_mentioned === true);
-    const gapTarget = Math.min(withoutCompany.length, Math.ceil(MAX_RESPONSES / 2));
-    const relevantResponses = [
-      ...withoutCompany.slice(0, gapTarget),
-      ...withCompany.slice(0, MAX_RESPONSES - gapTarget),
-    ];
-    if (relevantResponses.length < MAX_RESPONSES) {
-      relevantResponses.push(
-        ...withoutCompany.slice(gapTarget, gapTarget + (MAX_RESPONSES - relevantResponses.length))
-      );
-    }
-
-    // Source frequency across ALL competitor answers — which sources carry
-    // this competitor's visibility.
-    const domainCounts = new Map<string, number>();
-    allResponses.forEach((r: any) => {
-      try {
-        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
-        if (Array.isArray(citations)) {
-          const seenInResponse = new Set<string>();
-          citations.forEach((c: any) => {
-            if (c.domain && !seenInResponse.has(c.domain)) {
-              seenInResponse.add(c.domain);
-              domainCounts.set(c.domain, (domainCounts.get(c.domain) ?? 0) + 1);
-            }
-          });
-        }
-      } catch { /* skip */ }
-    });
-    const topSourcesLine = [...domainCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6)
-      .map(([d, c]) => `${getSourceDisplayName(d)} (${c})`)
-      .join(', ');
-
-    let texts = responseTexts;
-    const missingTextIds = relevantResponses.filter(r => !r.response_text && !texts[r.id]).map(r => r.id);
-    if (missingTextIds.length > 0 && fetchResponseTexts) {
-      texts = await fetchResponseTexts(missingTextIds) || texts;
-    }
-
-    const sourceMap: { domain: string; url: string | null; displayName: string }[] = [];
-    const seenDomains = new Set<string>();
-    relevantResponses.forEach(r => {
-      try {
-        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
-        if (Array.isArray(citations)) {
-          citations.forEach((c: any) => {
-            if (c.domain && !seenDomains.has(c.domain)) {
-              seenDomains.add(c.domain);
-              sourceMap.push({
-                domain: c.domain,
-                url: c.url ? extractSourceUrl(c.url) : null,
-                displayName: getSourceDisplayName(c.domain),
-              });
-            }
-          });
-        }
-      } catch { /* skip */ }
-    });
-    setCompetitorSummarySources(sourceMap);
-
-    // Each step previews a section the user will see in the sheet.
-    const steps = [
-      totalResponseCount > MAX_RESPONSES
-        ? `Sampling ${relevantResponses.length} of ${totalResponseCount} responses…`
-        : `Reading ${relevantResponses.length} responses…`,
-      `Writing the summary…`,
-      `Comparing mention frequency vs ${companyName}…`,
-      `Ranking top sources…`,
-      `Counting mentions by model…`,
-    ];
-    setCompetitorThinkingSteps(steps);
-
-    const stepTimers: ReturnType<typeof setTimeout>[] = [];
-    for (let i = 1; i < steps.length; i++) {
-      stepTimers.push(setTimeout(() => setCompetitorThinkingStep(i), i * 1100));
-    }
-
-    const sourcesList = sourceMap.map((s, i) => `[${i + 1}] ${s.displayName} (${s.domain})`).join('\n');
-
-    // Aggregate location + job function across ALL competitor answers so the
-    // AI can ground the summary in the specific markets and roles involved.
-    const locationCounts = new Map<string, number>();
-    const jobFunctionCounts = new Map<string, number>();
-    allResponses.forEach((r: any) => {
-      const loc = r.confirmed_prompts?.location_context;
-      const jf = r.confirmed_prompts?.job_function_context;
-      if (loc) locationCounts.set(loc, (locationCounts.get(loc) ?? 0) + 1);
-      if (jf) jobFunctionCounts.set(jf, (jobFunctionCounts.get(jf) ?? 0) + 1);
-    });
-    const topLocations = [...locationCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 4)
-      .map(([l, c]) => `${l} (${c})`)
-      .join(', ');
-    const topJobFunctions = [...jobFunctionCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 4)
-      .map(([j, c]) => `${j} (${c})`)
-      .join(', ');
-
-    const sampleNote =
-      totalResponseCount > MAX_RESPONSES
-        ? `\n(Below is a sample of ${relevantResponses.length} of ${totalResponseCount} answers, weighted toward ones where ${companyName} is absent. Don't claim to have read every answer.)\n`
-        : "";
-
-    // Excerpt AROUND the competitor mention. Slicing from the top of the
-    // answer routinely cut the mention out entirely — the model would then
-    // (correctly, given its inputs) conclude there was no competitor data.
-    const excerptAround = (text: string, needle: string): string => {
-      const idx = text.toLowerCase().indexOf(needle.toLowerCase());
-      if (idx === -1) return text.slice(0, RESPONSE_EXCERPT_CHARS);
-      const start = Math.max(0, idx - Math.floor(RESPONSE_EXCERPT_CHARS / 3));
-      const end = Math.min(text.length, start + RESPONSE_EXCERPT_CHARS);
-      return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`;
-    };
-
-    const prompt = `You are an employer brand analyst. Analyze how ${selectedCompetitor} shows up in AI answers about the talent market, and what that means for ${companyName}.
-
-${selectedJobFunctionFilter !== 'all' ? `Scope: this analysis is filtered to ${selectedJobFunctionFilter} roles only — keep every claim within that function.\n\n` : ''}Hard numbers, computed over ALL ${totalResponseCount} AI answers that mention ${selectedCompetitor}${selectedJobFunctionFilter !== 'all' ? ` for ${selectedJobFunctionFilter}` : ''}:
-- ${withoutCompanyCount} of ${totalResponseCount} answers mention ${selectedCompetitor} WITHOUT mentioning ${companyName} — this is where ${selectedCompetitor} is winning visibility.
-- ${alongsideCount} answers mention both companies.
-- Top sources carrying ${selectedCompetitor}'s visibility (answer counts): ${topSourcesLine || 'n/a'}
-- Markets (answer counts): ${topLocations || 'unspecified'}
-- Job functions (answer counts): ${topJobFunctions || 'unspecified'}
-
-Available sources:
-${sourcesList || 'No sources available'}
-${sampleNote}
-Excerpts from answers mentioning ${selectedCompetitor} — each tagged with whether ${companyName} also appeared in that answer:
-${relevantResponses.map((r) => {
-      let responseSources = '';
-      try {
-        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
-        if (Array.isArray(citations)) {
-          const domains = [...new Set(citations.map((c: any) => c.domain).filter(Boolean))];
-          const indices = domains.map((d: string) => sourceMap.findIndex(s => s.domain === d) + 1).filter((n: number) => n > 0);
-          if (indices.length > 0) responseSources = ` [Sources: ${indices.join(', ')}]`;
-        }
-      } catch { /* skip */ }
-      const tag = r.company_mentioned === true ? `[both mentioned]` : `[${companyName} ABSENT]`;
-      return `${tag} ${excerptAround(texts[r.id] || r.response_text || '', selectedCompetitor)}${responseSources}`;
-    }).join('\n---\n')}
-
-Write a short, actionable analysis with three short sections. Each section uses a markdown bold header on its own line, followed by ONE or TWO short sentences. Total output is short — keep it tight. Ground every claim in the hard numbers or excerpts, naming specific markets, functions, or sources.
-
-**Where ${selectedCompetitor} is visible**
-Which sources, markets, and roles ${selectedCompetitor} shows up in — lean on the hard numbers.
-
-**Where they're winning vs ${companyName}**
-What ${selectedCompetitor} is recognized for in the answers where ${companyName} is absent — the themes or claims earning them that visibility.
-
-**Your move**
-One concrete, actionable recommendation for ${companyName} in response — targeted at a specific market, function, or source.
-
-Be direct, specific, professional. No hedging, no preamble, no summary paragraph. Do not open with "${selectedCompetitor} is...". **Do NOT include a top-level title or heading** (no "# Title", no "## Heading"). Only the three bold section headers exactly as specified.
-
-CRITICAL: every excerpt above comes from an answer that mentions ${selectedCompetitor}. NEVER claim the dataset lacks ${selectedCompetitor} data or that comparison is impossible — if the excerpts are thin, lean on the hard numbers instead.
-
-CRITICAL: When you reference information from a source, add an inline citation like [1], [2], etc. matching the source numbers above. Place citations naturally at the end of the relevant sentence. Use citations frequently. Only cite sources from the numbered list above.`;
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setCompetitorSummaryError("Authentication required");
-        setLoadingCompetitorSummary(false);
-        setCompetitorThinkingStep(-1);
-        stepTimers.forEach(clearTimeout);
-        return;
-      }
-      const res = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-claude", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({
-          prompt,
-          enableWebSearch: false,
-          model: "claude-haiku-4-5",
-          maxTokens: 900,
-        })
-      });
-      const data = await res.json();
-      stepTimers.forEach(clearTimeout);
-      // Drop stale responses if the user has since switched competitors.
-      if (lastCompetitorFetchKeyRef.current !== fetchKey) return;
-      if (data.response) {
-        setCompetitorSummary(data.response.trim());
+  // response_id → sentiment ratio for the measured company (methodology v2).
+  const companySentimentById = useMemo(() => {
+    const map = new Map<string, number | null>();
+    for (const row of responseSentimentRows) {
+      if (!row?.response_id) continue;
+      let ratio: number | null;
+      if (row.sentiment_ratio === null || row.sentiment_ratio === undefined) {
+        ratio = sentimentRatioV2(Number(row.positive_themes) || 0, Number(row.negative_themes) || 0);
       } else {
-        const isRateLimit = /rate limit|429/i.test(data.error || "");
-        setCompetitorSummaryError(
-          isRateLimit
-            ? "We're a bit overloaded right now — give it a moment."
-            : "Couldn't generate the summary. Try again?",
-        );
+        const n = typeof row.sentiment_ratio === "number" ? row.sentiment_ratio : Number(row.sentiment_ratio);
+        ratio = Number.isFinite(n) ? n : null;
       }
-    } catch {
-      stepTimers.forEach(clearTimeout);
-      if (lastCompetitorFetchKeyRef.current !== fetchKey) return;
-      setCompetitorSummaryError("Couldn't generate the summary. Try again?");
-    } finally {
-      if (lastCompetitorFetchKeyRef.current === fetchKey) {
-        setLoadingCompetitorSummary(false);
-        setCompetitorThinkingStep(-1);
+      map.set(row.response_id, ratio);
+    }
+    return map;
+  }, [responseSentimentRows]);
+
+  // domain → average recency score (0-100). Freshness side of head-to-head.
+  const domainRecencyAvg = useMemo(() => {
+    const sums = new Map<string, { sum: number; n: number }>();
+    for (const row of recencyData) {
+      const d = normalizeDomain(row?.domain || "");
+      const score = Number(row?.recency_score);
+      if (!d || !Number.isFinite(score)) continue;
+      const agg = sums.get(d) ?? { sum: 0, n: 0 };
+      agg.sum += score;
+      agg.n += 1;
+      sums.set(d, agg);
+    }
+    const map = new Map<string, number>();
+    sums.forEach((v, k) => map.set(k, v.sum / v.n));
+    return map;
+  }, [recencyData]);
+
+  // -------------------------------------------------------------------------
+  // Competitor theme aggregation (per competitor: attribute counts + polarity;
+  // per response: attribute sets for the modal's unique-attributes section).
+  // Names are re-canonicalized + collapsed on read so admin alias edits made
+  // after the rows were written still merge correctly.
+  // -------------------------------------------------------------------------
+  const inScopeResponseIds = useMemo(
+    () => new Set(analyzed.matching.map((nr) => nr.id)),
+    [analyzed],
+  );
+
+  const compThemes = useMemo(() => {
+    const byCompetitor = new Map<string, {
+      attrCounts: Map<string, { name: string; count: number }>;
+      positive: number;
+      negative: number;
+      byResponse: Map<string, Set<string>>;
+    }>();
+    if (competitorThemeRows.length === 0) return byCompetitor;
+
+    const collapse = buildVariantCollapseMap(
+      new Set([...analyzed.byName.keys(), ...competitorThemeRows.map((r) => r.competitor_name)]),
+      { curated: curatedDirect, isAliasMapped },
+    );
+
+    for (const row of competitorThemeRows) {
+      if (!inScopeResponseIds.has(row.response_id)) continue;
+      const canonical = canonicalize(row.competitor_name) ?? row.competitor_name;
+      if (!canonical || isPlaceholder(canonical)) continue;
+      for (const target of collapse.get(canonical) ?? [canonical]) {
+        let agg = byCompetitor.get(target);
+        if (!agg) {
+          agg = { attrCounts: new Map(), positive: 0, negative: 0, byResponse: new Map() };
+          byCompetitor.set(target, agg);
+        }
+        const attr = agg.attrCounts.get(row.attribute_id) ?? { name: row.attribute_name || row.attribute_id, count: 0 };
+        attr.count += 1;
+        agg.attrCounts.set(row.attribute_id, attr);
+        if (row.sentiment === "positive") agg.positive += 1;
+        else if (row.sentiment === "negative") agg.negative += 1;
+        let respSet = agg.byResponse.get(row.response_id);
+        if (!respSet) {
+          respSet = new Set();
+          agg.byResponse.set(row.response_id, respSet);
+        }
+        respSet.add(row.attribute_id);
       }
+    }
+    return byCompetitor;
+  }, [competitorThemeRows, inScopeResponseIds, analyzed.byName, canonicalize, curatedDirect, isAliasMapped]);
+
+  const hasAnyCompetitorThemes = compThemes.size > 0;
+
+  // -------------------------------------------------------------------------
+  // Card 1 — direct competitors: the curated list measured on COMPETITIVE
+  // prompts (the head-to-head comparison questions). The discovery race has
+  // its own card (Employers of choice); emergent competitors live in the
+  // table behind the Set filter.
+  // -------------------------------------------------------------------------
+  type SetRow = {
+    name: string;
+    isCompany: boolean;
+    coverage: number;      // %
+    prevCoverage: number | null;
+  };
+
+  const card1Rows = useMemo((): SetRow[] => {
+    const rows: SetRow[] = [];
+    const denom = analyzed.competitiveTotal;
+    const prevDenom = prevAnalyzed.competitiveTotal;
+
+    const namesInSet = new Set<string>();
+    analyzed.byName.forEach((agg) => {
+      if (setOf(agg).includes("direct")) namesInSet.add(agg.name);
+    });
+    // Also list curated competitors that never appear — a curated rival with
+    // zero visibility is a finding, not a data gap.
+    curatedDirect.forEach((n) => namesInSet.add(n));
+
+    namesInSet.forEach((name) => {
+      const agg = analyzed.byName.get(name);
+      const prevAgg = prevAnalyzed.byName.get(name);
+      const count = agg?.competitiveCount ?? 0;
+      const prevCount = prevAgg?.competitiveCount ?? 0;
+      rows.push({
+        name,
+        isCompany: false,
+        coverage: denom > 0 ? (count / denom) * 100 : 0,
+        prevCoverage: hasPrevPeriod && prevCount > 0 && prevDenom > 0 ? (prevCount / prevDenom) * 100 : null,
+      });
+    });
+
+    // The measured company, pinned into its true position.
+    rows.push({
+      name: companyName,
+      isCompany: true,
+      coverage: denom > 0 ? (analyzed.competitiveMentioned / denom) * 100 : 0,
+      prevCoverage: hasPrevPeriod && prevDenom > 0 ? (prevAnalyzed.competitiveMentioned / prevDenom) * 100 : null,
+    });
+
+    return rows.sort((a, b) => b.coverage - a.coverage);
+  }, [analyzed, prevAnalyzed, setOf, curatedDirect, companyName, hasPrevPeriod]);
+
+  // Top rows plus the company row pinned in even when it ranks below the cut.
+  const card1Visible = useMemo(() => {
+    const top = card1Rows.slice(0, CARD1_ROW_LIMIT);
+    if (!top.some((r) => r.isCompany)) {
+      const companyRow = card1Rows.find((r) => r.isCompany);
+      if (companyRow) top.push(companyRow);
+    }
+    return top;
+  }, [card1Rows]);
+
+  // Line view — share-of-voice trend: % of each period bucket's competitive
+  // answers mentioning the entity, for the top direct competitors plus the
+  // measured company.
+  const trend = useMemo(() => {
+    const topCompetitors = card1Rows
+      .filter((r) => !r.isCompany)
+      .slice(0, TREND_COMPETITOR_LIMIT)
+      .map((r) => r.name);
+    const series = [companyName, ...topCompetitors];
+    const empty = { data: [] as Record<string, any>[], series, granularity: "week" as TrendGranularity };
+
+    const scope = analyzed.matching.filter((nr) => nr.promptType === "competitive");
+    if (scope.length === 0) return empty;
+
+    let minTs = Infinity;
+    let maxTs = -Infinity;
+    const monthKeys = new Set<string>();
+    for (const nr of scope) {
+      if (nr.testedAt == null) continue;
+      if (nr.testedAt < minTs) minTs = nr.testedAt;
+      if (nr.testedAt > maxTs) maxTs = nr.testedAt;
+      const d = new Date(nr.testedAt);
+      monthKeys.add(`${d.getFullYear()}-${d.getMonth()}`);
+    }
+    if (!Number.isFinite(minTs)) return empty;
+
+    const granularity: TrendGranularity = monthKeys.size > 2 ? "month" : "week";
+    const bucketOf = granularity === "month" ? startOfMonthTs : startOfWeekTs;
+
+    const bucketStarts: number[] = [];
+    let cursor = bucketOf(minTs);
+    const last = bucketOf(maxTs);
+    while (cursor <= last && bucketStarts.length < 60) {
+      bucketStarts.push(cursor);
+      const d = new Date(cursor);
+      if (granularity === "month") d.setMonth(d.getMonth() + 1);
+      else d.setDate(d.getDate() + 7);
+      cursor = d.getTime();
+    }
+
+    const multiYear = new Date(minTs).getFullYear() !== new Date(maxTs).getFullYear();
+    type Bucket = { row: Record<string, any>; total: number; counts: number[] };
+    const buckets = new Map<number, Bucket>();
+    const data = bucketStarts.map((ts) => {
+      const d = new Date(ts);
+      const label = granularity === "month"
+        ? d.toLocaleDateString("en-US", multiYear ? { month: "short", year: "2-digit" } : { month: "short" })
+        : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const row: Record<string, any> = { ts, label };
+      series.forEach((_, i) => { row[`s${i}`] = 0; });
+      buckets.set(ts, { row, total: 0, counts: series.map(() => 0) });
+      return row;
+    });
+
+    for (const nr of scope) {
+      if (nr.testedAt == null) continue;
+      const bucket = buckets.get(bucketOf(nr.testedAt));
+      if (!bucket) continue;
+      bucket.total += 1;
+      if (nr.mentioned) bucket.counts[0] += 1;
+      for (let i = 1; i < series.length; i += 1) {
+        if (nr.competitors.includes(series[i])) bucket.counts[i] += 1;
+      }
+    }
+    buckets.forEach((bucket) => {
+      series.forEach((_, i) => {
+        bucket.row[`s${i}`] = bucket.total > 0
+          ? Math.round((bucket.counts[i] / bucket.total) * 1000) / 10
+          : 0;
+      });
+    });
+
+    return { data, series, granularity };
+  }, [card1Rows, analyzed, companyName]);
+
+  // -------------------------------------------------------------------------
+  // Card 2 — employers of choice: the discovery-prompt race. Coverage = % of
+  // discovery answers (prompts that don't name the measured company)
+  // surfacing each company, with the measured company pinned into its true
+  // rank.
+  // -------------------------------------------------------------------------
+  const eocRows = useMemo((): SetRow[] => {
+    const rows: SetRow[] = [];
+    const denom = analyzed.discoveryTotal;
+    const prevDenom = prevAnalyzed.discoveryTotal;
+    analyzed.byName.forEach((agg) => {
+      if (agg.discoveryCount === 0) return;
+      const prevAgg = prevAnalyzed.byName.get(agg.name);
+      const prevCount = prevAgg?.discoveryCount ?? 0;
+      rows.push({
+        name: agg.name,
+        isCompany: false,
+        coverage: denom > 0 ? (agg.discoveryCount / denom) * 100 : 0,
+        prevCoverage: hasPrevPeriod && prevCount > 0 && prevDenom > 0 ? (prevCount / prevDenom) * 100 : null,
+      });
+    });
+    rows.push({
+      name: companyName,
+      isCompany: true,
+      coverage: denom > 0 ? (analyzed.discoveryMentioned / denom) * 100 : 0,
+      prevCoverage: hasPrevPeriod && prevDenom > 0 ? (prevAnalyzed.discoveryMentioned / prevDenom) * 100 : null,
+    });
+    return rows.sort((a, b) => b.coverage - a.coverage);
+  }, [analyzed, prevAnalyzed, hasPrevPeriod, companyName]);
+
+  // Top rows plus the company row pinned in even when it ranks below the cut.
+  const eocVisible = useMemo(() => {
+    const top = eocRows.slice(0, EOC_ROW_LIMIT);
+    if (!top.some((r) => r.isCompany)) {
+      const companyRow = eocRows.find((r) => r.isCompany);
+      if (companyRow) top.push(companyRow);
+    }
+    return top;
+  }, [eocRows]);
+
+  // -------------------------------------------------------------------------
+  // Card 3 — table rows with filters + sorting.
+  // -------------------------------------------------------------------------
+  type TableRowData = {
+    name: string;
+    sets: CompetitorSet[];
+    attributes: Array<{ id: string; name: string; count: number }>;
+    models: string[];
+    sentiment: number | null;
+    coverage: number;
+    prevCoverage: number | null;
+    count: number;
+  };
+
+  const allTableRows = useMemo((): TableRowData[] => {
+    const rows: TableRowData[] = [];
+    analyzed.byName.forEach((agg) => {
+      const themes = compThemes.get(agg.name);
+      const attributes = themes
+        ? Array.from(themes.attrCounts.entries())
+            .map(([id, v]) => ({ id, name: v.name, count: v.count }))
+            .sort((a, b) => b.count - a.count)
+        : [];
+      const prevAgg = prevAnalyzed.byName.get(agg.name);
+      rows.push({
+        name: agg.name,
+        sets: setOf(agg),
+        attributes,
+        models: Array.from(agg.models).sort(),
+        sentiment: themes ? sentimentRatioV2(themes.positive, themes.negative) : null,
+        coverage: analyzed.total > 0 ? (agg.count / analyzed.total) * 100 : 0,
+        prevCoverage: hasPrevPeriod && prevAgg && prevAnalyzed.total > 0
+          ? (prevAgg.count / prevAnalyzed.total) * 100
+          : null,
+        count: agg.count,
+      });
+    });
+    return rows;
+  }, [analyzed, prevAnalyzed, compThemes, setOf, hasPrevPeriod]);
+
+  const sentimentBucket = (ratio: number | null): "positive" | "neutral" | "negative" | null => {
+    if (typeof ratio !== "number") return null;
+    if (ratio > 0.6) return "positive";
+    if (ratio < 0.4) return "negative";
+    return "neutral";
+  };
+
+  const filteredTableRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const setFilter = new Set(filterSets);
+    const attrFilter = new Set(filterAttributes);
+    const modelFilter = new Set(filterModels);
+    const sentFilter = new Set(filterSentiments);
+    const rows = allTableRows.filter((row) => {
+      if (q && !row.name.toLowerCase().includes(q)) return false;
+      if (setFilter.size > 0 && !row.sets.some((s) => setFilter.has(s))) return false;
+      if (attrFilter.size > 0 && !row.attributes.some((a) => attrFilter.has(a.id))) return false;
+      if (modelFilter.size > 0 && !row.models.some((m) => modelFilter.has(m))) return false;
+      if (sentFilter.size > 0) {
+        const bucket = sentimentBucket(row.sentiment);
+        if (!bucket || !sentFilter.has(bucket)) return false;
+      }
+      return true;
+    });
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      switch (sortKey) {
+        case "name": return dir * a.name.localeCompare(b.name);
+        case "attributes": return dir * (a.attributes.length - b.attributes.length);
+        case "models": return dir * (a.models.length - b.models.length);
+        case "sentiment": {
+          // Nulls always sink to the bottom regardless of direction.
+          if (a.sentiment === null && b.sentiment === null) return 0;
+          if (a.sentiment === null) return 1;
+          if (b.sentiment === null) return -1;
+          return dir * (a.sentiment - b.sentiment);
+        }
+        default: return dir * (a.coverage - b.coverage) || dir * (a.count - b.count);
+      }
+    });
+  }, [allTableRows, searchQuery, filterSets, filterAttributes, filterModels, filterSentiments, sortKey, sortDir]);
+
+  const tableFilterOptions = useMemo(() => {
+    const setCounts = new Map<CompetitorSet, number>();
+    const attrCounts = new Map<string, { name: string; count: number }>();
+    const modelCounts = new Map<string, number>();
+    const sentCounts = new Map<string, number>();
+    for (const row of allTableRows) {
+      row.sets.forEach((s) => setCounts.set(s, (setCounts.get(s) || 0) + 1));
+      row.attributes.forEach((a) => {
+        const agg = attrCounts.get(a.id) ?? { name: a.name, count: 0 };
+        agg.count += 1;
+        attrCounts.set(a.id, agg);
+      });
+      row.models.forEach((m) => modelCounts.set(m, (modelCounts.get(m) || 0) + 1));
+      const bucket = sentimentBucket(row.sentiment);
+      if (bucket) sentCounts.set(bucket, (sentCounts.get(bucket) || 0) + 1);
+    }
+    return {
+      sets: (Object.keys(SET_LABELS) as CompetitorSet[])
+        .filter((s) => setCounts.has(s))
+        .map((s) => ({ value: s, label: SET_LABELS[s], count: setCounts.get(s) })),
+      attributes: Array.from(attrCounts.entries())
+        .sort((a, b) => b[1].count - a[1].count)
+        .map(([id, v]) => ({
+          value: id,
+          label: v.name,
+          count: v.count,
+          adornment: (() => {
+            const Icon = getAttributeIconByName(v.name);
+            return <Icon className="w-3.5 h-3.5 flex-shrink-0 text-gray-400" />;
+          })(),
+        })),
+      models: Array.from(modelCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([value, count]) => ({
+          value,
+          label: value,
+          count,
+          adornment: <LLMLogo modelName={value} size="sm" showFallback={false} />,
+        })),
+      sentiments: ["positive", "neutral", "negative"]
+        .filter((s) => sentCounts.has(s))
+        .map((value) => ({ value, label: value, count: sentCounts.get(value) })),
+    };
+  }, [allTableRows]);
+
+  const activeFilterCount =
+    filterSets.length + filterAttributes.length + filterModels.length + filterSentiments.length;
+
+  const clearAllFilters = () => {
+    setFilterSets([]);
+    setFilterAttributes([]);
+    setFilterModels([]);
+    setFilterSentiments([]);
+  };
+
+  // -------------------------------------------------------------------------
+  // Interactions
+  // -------------------------------------------------------------------------
+  const scrollToTableRow = useCallback((name: string) => {
+    const idx = filteredTableRows.findIndex((r) => r.name === name);
+    if (idx >= visibleRows) setVisibleRows(idx + 10);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        rowRefs.current.get(name)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    });
+  }, [filteredTableRows, visibleRows]);
+
+  // Card 1/2 rows select the competitor (Card 2 emphasis) and jump to its
+  // table row; table rows open the detail modal.
+  const handleChartRowClick = (name: string) => {
+    setSelectedCompetitor(name);
+    scrollToTableRow(name);
+  };
+
+  const openModal = (name: string) => {
+    setModalCompetitor(name);
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setModalCompetitor(null);
+  };
+
+  const toggleSort = (key: typeof sortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "name" ? "asc" : "desc");
     }
   };
 
-  // Auto-generate the competitor summary whenever the sheet is opened for a
-  // new competitor OR the job-function filter changes. The key includes the
-  // filter so a summary generated for one function is never shown for another.
-  useEffect(() => {
-    if (!isCompetitorModalOpen || !selectedCompetitor) return;
-    const fetchStateKey = `${selectedCompetitor}::${selectedJobFunctionFilter}`;
-    if (fetchStateKey === lastCompetitorFetchKeyRef.current) return;
-    setCompetitorSummary("");
-    setCompetitorSummaryError(null);
-    setLoadingCompetitorSummary(false);
-    lastCompetitorFetchKeyRef.current = fetchStateKey;
-    fetchCompetitorSummary();
-    // fetchCompetitorSummary intentionally omitted — closes over current state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCompetitorModalOpen, selectedCompetitor, selectedJobFunctionFilter]);
-
-  // Stagger-reveal the cards below the AI summary. They stay hidden while
-  // the summary is generating, then cascade in once it's ready.
-  const [competitorRevealStep, setCompetitorRevealStep] = useState(0);
-  useEffect(() => {
-    if (!isCompetitorModalOpen) {
-      setCompetitorRevealStep(0);
-      return;
-    }
-    if (loadingCompetitorSummary) {
-      setCompetitorRevealStep(0);
-      return;
-    }
-    if (competitorSummary || competitorSummaryError) {
-      const timers = [
-        setTimeout(() => setCompetitorRevealStep(1), 200),
-        setTimeout(() => setCompetitorRevealStep(2), 500),
-        setTimeout(() => setCompetitorRevealStep(3), 800),
-      ];
-      return () => timers.forEach(clearTimeout);
-    }
-  }, [isCompetitorModalOpen, loadingCompetitorSummary, competitorSummary, competitorSummaryError]);
-
-  const competitorRevealClass = (step: number) =>
-    `transition-all duration-500 ease-out ${
-      competitorRevealStep >= step
-        ? "opacity-100 translate-y-0"
-        : "opacity-0 translate-y-3 pointer-events-none"
-    }`;
-
-  // Top citation domains for the selected competitor — used by the "Top
-  // sources where they appear" card in the sheet. Ordered by frequency.
-  const competitorComparison = useMemo(() => {
-    if (!selectedCompetitor) return null;
-    const competitorResponses = getFullResponsesForCompetitor(selectedCompetitor);
-
-    const domainCounts = new Map<string, number>();
-    for (const r of competitorResponses) {
-      try {
-        const citations =
-          typeof r.citations === "string" ? JSON.parse(r.citations) : r.citations;
-        if (!Array.isArray(citations)) continue;
-        const seen = new Set<string>();
-        for (const c of citations) {
-          const d = (c?.domain || "").toLowerCase().trim();
-          if (!d || seen.has(d)) continue;
-          seen.add(d);
-          domainCounts.set(d, (domainCounts.get(d) ?? 0) + 1);
-        }
-      } catch {
-        /* skip */
-      }
-    }
-    const topDomains = [...domainCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([domain, count]) => ({ domain, count }));
-
-    return { topDomains };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCompetitor, responses]);
-
-  const renderAllTimeBar = (data: { name: string; count: number; change?: number; previousCount?: number; hasPreviousData?: boolean }, maxCount: number, totalResponses: number, totalPreviousResponses: number) => {
-    const barWidth = maxCount > 0 ? (data.count / maxCount) * 100 : 0;
-    // Coverage: share of analyzed responses that mention this competitor.
-    const mentionPercent = totalResponses > 0 ? Math.min(100, (data.count / totalResponses) * 100) : 0;
-    
-    const displayName = data.name;
-    const truncatedName = displayName.length > 15 ? displayName.substring(0, 15) + '...' : displayName;
-    
-    const faviconUrl = getCompetitorFavicon(displayName);
-    const initials = displayName.charAt(0).toUpperCase();
-    
+  // -------------------------------------------------------------------------
+  // Small render helpers
+  // -------------------------------------------------------------------------
+  const renderDeltaChip = (current: number, previous: number | null) => {
+    if (previous === null) return null;
+    const delta = Math.round(current - previous);
+    if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
     return (
-      <div 
-        className="flex items-center py-3 hover:bg-gray-50/50 transition-colors cursor-pointer rounded-lg px-3"
-        onClick={() => handleCompetitorClick(data.name)}
-      >
-        {/* Competitor name with favicon */}
-        <div className="flex items-center space-x-3 min-w-0 w-1/3 sm:w-1/3 max-w-[140px] sm:max-w-[220px]">
-          <div className="w-4 h-4 flex-shrink-0 bg-blue-100 rounded flex items-center justify-center">
-            {faviconUrl ? (
-              <img 
-                src={faviconUrl} 
-                alt={`${displayName} favicon`}
-                className="w-full h-full rounded object-contain"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                  const fallback = e.currentTarget.nextElementSibling as HTMLElement;
-                  if (fallback) fallback.style.display = 'flex';
-                }}
-                style={{ display: 'block' }}
-              />
-            ) : null}
-            <span 
-              className="text-xs font-bold text-blue-600"
-              style={{ display: faviconUrl ? 'none' : 'flex' }}
-            >
-              {initials}
-            </span>
-          </div>
-          <span className="text-sm font-medium text-gray-900 truncate" title={displayName}>
-            {truncatedName}
-          </span>
-        </div>
-        
-        {/* Bar chart */}
-        <div className="flex-1 mx-2 sm:mx-4 bg-gray-200 rounded-full h-4 relative min-w-0 max-w-[120px] sm:max-w-none">
-          <div
-            className="h-4 rounded-full absolute left-0 top-0"
-            style={{ 
-              width: `${barWidth}%`,
-              backgroundColor: '#0DBCBA'
+      <span className={`text-xs font-semibold flex items-center gap-0.5 ${delta > 0 ? "text-green-600" : "text-red-600"}`}>
+        {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+        <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+      </span>
+    );
+  };
+
+  const CompetitorFavicon = ({ name, isCompany }: { name: string; isCompany?: boolean }) => {
+    const src = getCompetitorFavicon(name);
+    return (
+      <span className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 overflow-hidden ${isCompany ? "bg-[#0DBCBA]/10" : "bg-gray-100"}`}>
+        {src ? (
+          <img
+            src={src}
+            alt=""
+            className="w-full h-full object-contain"
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+              (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.setProperty("display", "flex");
             }}
           />
-        </div>
-        
-        {/* Percentage + change */}
-        <div className="flex items-center min-w-[70px] sm:min-w-[100px] justify-end gap-1.5">
-          <span className="text-sm font-semibold text-gray-900">
-            {mentionPercent.toFixed(1)}%
-          </span>
-          <span className="w-[45px] flex justify-end">
-            {(() => {
-              if (!data.hasPreviousData) return null;
-              const prevPct = totalPreviousResponses > 0 ? Math.min(100, ((data.previousCount || 0) / totalPreviousResponses) * 100) : 0;
-              const delta = Math.round(mentionPercent - prevPct);
-              if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
-              return (
-                <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                  delta > 0 ? 'text-green-600' : 'text-red-600'
-                }`}>
-                  {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                  <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
-                </span>
-              );
-            })()}
-          </span>
-        </div>
+        ) : null}
+        <span
+          className={`text-[9px] font-bold ${isCompany ? "text-[#0DBCBA]" : "text-gray-500"}`}
+          style={{ display: src ? "none" : "flex" }}
+        >
+          {name.charAt(0).toUpperCase()}
+        </span>
+      </span>
+    );
+  };
+
+  const sentimentPill = (ratio: number | null) => {
+    if (ratio === null) {
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-xs text-gray-400 cursor-help">—</span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-[240px]">
+              <p className="text-xs">
+                No competitor sentiment yet — it accrues as new answers are
+                collected and themed.
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
+    }
+    let cls = "bg-gray-100 text-gray-600";
+    let label = "Neutral";
+    if (ratio > 0.6) { cls = "bg-green-100 text-green-700"; label = "Positive"; }
+    else if (ratio < 0.4) { cls = "bg-red-100 text-red-700"; label = "Negative"; }
+    return <Badge className={`${cls} border-0 text-xs font-medium pointer-events-none`}>{label}</Badge>;
+  };
+
+  const SortableHead = ({ label, k, className }: { label: string; k: typeof sortKey; className?: string }) => (
+    <TableHead
+      className={`cursor-pointer select-none hover:text-gray-900 ${className ?? ""}`}
+      onClick={() => toggleSort(k)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {sortKey === k && <span className="text-[10px] text-gray-400">{sortDir === "desc" ? "▼" : "▲"}</span>}
+      </span>
+    </TableHead>
+  );
+
+  const TrendTooltipContent = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    const rows = [...payload].sort((a, b) => (b.value || 0) - (a.value || 0));
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-md min-w-[190px]">
+        <p className="text-xs font-semibold text-gray-900 mb-1.5">{label}</p>
+        {rows.map((p) => (
+          <div key={p.name} className="flex items-center gap-2 py-0.5">
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: p.color || p.stroke }} />
+            <span className="text-xs text-gray-600 truncate max-w-[140px]">{p.name}</span>
+            <span className="ml-auto text-xs font-semibold text-gray-900 tabular-nums pl-3">{p.value}%</span>
+          </div>
+        ))}
       </div>
     );
   };
 
+  const axisTickStyle = { fontSize: 11, fill: "#9CA3AF" } as const;
+
+  const hasAnyData = analyzed.byName.size > 0 || curatedDirect.size > 0;
+  const totalDetected = analyzed.byName.size;
+
+  // Modal data for the selected competitor.
+  const modalAgg = modalCompetitor ? analyzed.byName.get(modalCompetitor) : undefined;
+  const modalThemes = modalCompetitor ? compThemes.get(modalCompetitor) : undefined;
+
+  // ==========================================================================
   return (
     <div className="flex flex-col gap-6 w-full h-full">
-      {/* Main Section Header */}
+      {/* Section header */}
       <div className="space-y-2" data-tour="competitors-heading">
         <h2 className="text-2xl font-bold text-gray-900">Competitors</h2>
         <p className="text-gray-600">
-          Track competitor mentions and analyze how {companyName} compares in AI responses and search results.
+          Who AI models surface alongside {companyName} — and where they win the answers you don't.
         </p>
       </div>
 
-      {/* Job function filter */}
-      {getUniqueJobFunctions.length > 0 && (
+      {/* Global job function filter */}
+      {uniqueJobFunctions.length > 0 && (
         <div className="sticky top-0 z-10 bg-white pb-2">
           <ScrollablePills
             selected={selectedJobFunctionFilter}
             onSelect={setSelectedJobFunctionFilter}
             options={[
-              { value: 'all', label: 'All functions' },
-              ...getUniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
+              { value: "all", label: "All functions" },
+              ...uniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
             ]}
           />
         </div>
       )}
 
-      {/* Main Content */}
-      <div className="flex-1 min-h-0">
-        <Card className="shadow-sm border border-gray-200 h-full flex flex-col">
-          <CardContent className="flex-1 min-h-0 overflow-hidden p-6">
-            <div className="space-y-2 h-full overflow-y-auto relative">
-              <div className="sticky top-0 z-10 bg-white flex items-center justify-between gap-3 px-3 pb-2">
+      {!hasAnyData && !responsesLoading ? (
+        <Card className="shadow-sm border border-gray-200">
+          <CardContent className="p-6">
+            <div className="text-center py-12 text-gray-500">
+              <Users className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+              <p className="text-sm">No competitors detected yet.</p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          {/* Row 1: competitive set + when they appear */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-stretch">
+            {/* ------------------------------------------------ Card 1 */}
+            <Card data-tour="competitors-chart" className="shadow-sm border border-gray-200 lg:col-span-3 flex flex-col">
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <CardTitle className="text-base font-bold text-gray-800">Direct competitors</CardTitle>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                    {/* Bar / line toggle */}
+                    <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100">
+                      <button
+                        onClick={() => setChartType("bar")}
+                        title="Coverage ranking"
+                        aria-label="Coverage ranking"
+                        className={`px-2 py-1 rounded-md transition-all ${
+                          chartType === "bar" ? "bg-white text-gray-900 shadow-sm" : "text-gray-400 hover:text-gray-600"
+                        }`}
+                      >
+                        <BarChartHorizontal className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setChartType("line")}
+                        title="Share-of-voice trend"
+                        aria-label="Share-of-voice trend"
+                        className={`px-2 py-1 rounded-md transition-all ${
+                          chartType === "line" ? "bg-white text-gray-900 shadow-sm" : "text-gray-400 hover:text-gray-600"
+                        }`}
+                      >
+                        <ChartLine className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 flex items-center gap-1 pt-1">
+                  % of competitive answers (comparison questions) mentioning each company
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="cursor-help"><Info className="w-3.5 h-3.5" /></span>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[290px]">
+                        <p className="text-xs">
+                          Your curated competitor list, measured on the answers to
+                          comparison questions. Your row is pinned at its true rank.
+                          Answers mention several companies, so percentages don't sum
+                          to 100. Companies detected outside this list are in the
+                          table under the Set filter.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </p>
+              </CardHeader>
+              <CardContent className="flex-1 flex flex-col pt-2">
+                {responsesLoading && totalDetected === 0 ? (
+                  <div className="flex-1 min-h-[280px] rounded-md bg-gray-100 animate-pulse" aria-busy="true" />
+                ) : chartType === "line" ? (
+                  <>
+                    <div className="flex-1 min-h-[280px]">
+                      {trend.data.length === 0 ? (
+                        <div className="h-full flex items-center justify-center text-sm text-gray-400">
+                          No trend data for this period.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={trend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                            <CartesianGrid vertical={false} stroke="#F3F4F6" />
+                            <XAxis dataKey="label" tick={axisTickStyle} tickLine={false} axisLine={false} minTickGap={24} />
+                            <YAxis width={38} tick={axisTickStyle} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
+                            <RechartsTooltip content={<TrendTooltipContent />} cursor={{ stroke: "#E5E7EB" }} />
+                            {trend.series.map((name, i) => (
+                              <Line
+                                key={name}
+                                type="monotone"
+                                dataKey={`s${i}`}
+                                name={name}
+                                stroke={CHART_COLORS[i]}
+                                strokeWidth={i === 0 ? 3 : 2}
+                                dot={trend.data.length <= 10 ? { r: 3, fill: CHART_COLORS[i], stroke: "#fff", strokeWidth: 1.5 } : false}
+                                activeDot={{ r: 4, fill: CHART_COLORS[i], stroke: "#fff", strokeWidth: 2 }}
+                              />
+                            ))}
+                          </LineChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                    {/* Legend: identity via favicon + name, never color alone */}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-3 px-1">
+                      {trend.series.map((name, i) => (
+                        <button
+                          key={name}
+                          onClick={() => i > 0 && handleChartRowClick(name)}
+                          className={`flex items-center gap-1.5 min-w-0 ${i > 0 ? "group cursor-pointer" : "cursor-default"}`}
+                        >
+                          <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: CHART_COLORS[i] }} />
+                          <CompetitorFavicon name={name} isCompany={i === 0} />
+                          <span className={`text-xs truncate max-w-[150px] ${i === 0 ? "font-semibold text-gray-900" : "text-gray-600 group-hover:text-gray-900"}`}>
+                            {name}{i === 0 ? " (you)" : ""}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 min-h-[280px] space-y-1">
+                    {card1Visible.length === 0 || analyzed.competitiveTotal === 0 ? (
+                      <div className="h-full flex items-center justify-center text-sm text-gray-400 text-center px-6">
+                        {curatedDirect.size === 0 && card1Visible.length <= 1
+                          ? "No curated competitors yet — add them in company settings."
+                          : "No competitive-prompt answers in this period."}
+                      </div>
+                    ) : (
+                      (() => {
+                        const maxCoverage = Math.max(...card1Visible.map((r) => r.coverage), 1);
+                        return card1Visible.map((row, idx) => {
+                          const rank = card1Rows.findIndex((r) => r.name === row.name) + 1;
+                          return (
+                            <button
+                              key={row.name}
+                              onClick={() => { if (!row.isCompany) handleChartRowClick(row.name); }}
+                              className={`w-full text-left px-2 sm:px-3 py-1.5 rounded-lg transition-colors ${
+                                row.isCompany
+                                  ? "bg-[#0DBCBA]/5 border border-[#0DBCBA]/30 cursor-default"
+                                  : "hover:bg-gray-50 cursor-pointer"
+                              } ${selectedCompetitor === row.name ? "ring-1 ring-[#0DBCBA]/60" : ""}`}
+                              {...(idx === 0 ? { "data-tour": "competitors-first-row" } : {})}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <span className="w-5 text-right text-xs font-medium text-gray-400 tabular-nums flex-shrink-0">{rank}</span>
+                                <CompetitorFavicon name={row.name} isCompany={row.isCompany} />
+                                <span className={`text-sm truncate ${row.isCompany ? "font-bold text-gray-900" : "font-medium text-gray-900"}`} title={row.name}>
+                                  {row.name}
+                                </span>
+                                {row.isCompany && (
+                                  <Badge className="bg-[#0DBCBA]/15 text-[#0B9E9C] border-0 text-[10px] font-semibold px-1.5 py-0 pointer-events-none">
+                                    You
+                                  </Badge>
+                                )}
+                                <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+                                  <span className="text-sm font-semibold text-gray-900 tabular-nums">{row.coverage.toFixed(1)}%</span>
+                                  <span className="w-[45px] flex justify-end">{renderDeltaChip(row.coverage, row.prevCoverage)}</span>
+                                </span>
+                              </div>
+                              <div className="mt-1 ml-[30px] h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{
+                                    width: `${(row.coverage / maxCoverage) * 100}%`,
+                                    backgroundColor: row.isCompany ? BRAND_COLOR : COMPETITOR_BAR_COLOR,
+                                  }}
+                                />
+                              </div>
+                            </button>
+                          );
+                        });
+                      })()
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* ------------------------------------------------ Card 2 */}
+            <Card data-tour="competitors-eoc" className="shadow-sm border border-gray-200 lg:col-span-2 flex flex-col">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <CardTitle className="text-base font-bold text-gray-800">Employers of choice</CardTitle>
+                    <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
+                      {eocRows.filter((r) => !r.isCompany).length.toLocaleString()}
+                    </Badge>
+                  </div>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="cursor-help text-gray-400 flex-shrink-0"><Info className="w-3.5 h-3.5" /></span>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[280px]">
+                        <p className="text-xs">
+                          The open race: % of discovery answers (prompts that don't
+                          name {companyName}) surfacing each company. Your row is
+                          pinned at its true rank. Answers surface several
+                          companies, so percentages don't sum to 100.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <p className="text-xs text-gray-400 pt-1">% of discovery answers surfacing each company</p>
+              </CardHeader>
+              <CardContent className="flex-1 pt-2">
+                {responsesLoading && totalDetected === 0 ? (
+                  <div className="space-y-3 py-2" aria-busy="true">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
+                    ))}
+                  </div>
+                ) : analyzed.discoveryTotal === 0 ? (
+                  <div className="h-full flex items-center justify-center text-sm text-gray-400 py-10">
+                    No discovery answers in this period.
+                  </div>
+                ) : (
+                  <div className="space-y-0.5 max-h-[420px] overflow-y-auto pr-1">
+                    {(() => {
+                      const maxCoverage = Math.max(...eocVisible.map((r) => r.coverage), 1);
+                      return eocVisible.map((row) => {
+                        const rank = eocRows.findIndex((r) => r.name === row.name) + 1;
+                        return (
+                          <button
+                            key={row.name}
+                            onClick={() => { if (!row.isCompany) handleChartRowClick(row.name); }}
+                            className={`w-full text-left px-2 py-1.5 rounded-lg transition-colors ${
+                              row.isCompany
+                                ? "bg-[#0DBCBA]/5 border border-[#0DBCBA]/30 cursor-default"
+                                : "hover:bg-gray-50 cursor-pointer"
+                            } ${selectedCompetitor === row.name ? "ring-1 ring-[#0DBCBA]/60" : ""}`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="w-5 text-right text-xs font-medium text-gray-400 tabular-nums flex-shrink-0">{rank}</span>
+                              <CompetitorFavicon name={row.name} isCompany={row.isCompany} />
+                              <span className={`text-sm truncate ${row.isCompany ? "font-bold text-gray-900" : "font-medium text-gray-900"}`} title={row.name}>
+                                {row.name}
+                              </span>
+                              {row.isCompany && (
+                                <Badge className="bg-[#0DBCBA]/15 text-[#0B9E9C] border-0 text-[10px] font-semibold px-1.5 py-0 pointer-events-none">
+                                  You
+                                </Badge>
+                              )}
+                              <span className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+                                <span className="text-sm font-semibold text-gray-900 tabular-nums">{row.coverage.toFixed(1)}%</span>
+                                <span className="w-[45px] flex justify-end">{renderDeltaChip(row.coverage, row.prevCoverage)}</span>
+                              </span>
+                            </div>
+                            <div className="mt-1 ml-[30px] h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full"
+                                style={{
+                                  width: `${(row.coverage / maxCoverage) * 100}%`,
+                                  backgroundColor: row.isCompany ? BRAND_COLOR : COMPETITOR_BAR_COLOR,
+                                }}
+                              />
+                            </div>
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* ------------------------------------------------ Card 3: table */}
+          <Card data-tour="competitors-table" className="shadow-sm border border-gray-200">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <CardTitle className="text-base font-bold text-gray-800">Competitors</CardTitle>
+                <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
+                  {totalDetected.toLocaleString()}
+                </Badge>
+                {activeFilterCount > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearAllFilters}
+                    className="h-6 px-2 text-xs text-gray-400 hover:text-gray-600"
+                  >
+                    Clear filters ({activeFilterCount})
+                  </Button>
+                )}
+              </div>
+              {/* Filter row: search, Set, Attributes, Models, Sentiment. Job
+                  function and market are global — never duplicated here. */}
+              <div className="flex items-center gap-2 flex-wrap pt-2">
                 <SearchInput
                   value={searchQuery}
                   onChange={setSearchQuery}
                   placeholder="Search competitors..."
                   className="max-w-xs"
                 />
-                <div className="flex items-center gap-3">
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="flex items-center gap-1 text-xs font-medium text-gray-400 cursor-help">
-                        % of responses
-                        <Info className="w-3.5 h-3.5" />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-[260px]">
-                      <p className="text-xs">
-                        Share of the analyzed AI responses that mention this competitor. A
-                        response often mentions several competitors, so these percentages
-                        don't add up to 100%.
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-                <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100">
-                  <button
-                    onClick={() => handleCompetitorTypeToggle('direct')}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
-                      selectedCompetitorTypeFilter === 'direct'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    Direct Competitors
-                  </button>
-                  <button
-                    onClick={() => handleCompetitorTypeToggle('all')}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
-                      selectedCompetitorTypeFilter === 'all'
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    All Competitors
-                  </button>
-                </div>
-                </div>
+                <FilterDropdown label="Set" icon={Layers} options={tableFilterOptions.sets} selected={filterSets} onChange={setFilterSets} />
+                <FilterDropdown label="Attributes" icon={Tags} options={tableFilterOptions.attributes} selected={filterAttributes} onChange={setFilterAttributes} searchable />
+                <FilterDropdown label="Models" icon={Bot} options={tableFilterOptions.models} selected={filterModels} onChange={setFilterModels} />
+                <FilterDropdown label="Sentiment" icon={SmilePlus} options={tableFilterOptions.sentiments} selected={filterSentiments} onChange={setFilterSentiments} />
               </div>
-              {searchedCompetitors.length > 0 ? (
-                (() => {
-                  const maxCount = Math.max(...searchedCompetitors.map(c => c.count), 1);
-
-                  return searchedCompetitors.map((competitor, idx) => (
-                    <div
-                      key={`${competitor.name}-${deferredCompetitorTypeFilter}-${idx}`}
-                      className="cursor-pointer"
-                      {...(idx === 0 ? { 'data-tour': 'competitors-first-row' } : {})}
-                    >
-                      {renderAllTimeBar(competitor, maxCount, totalResponsesAnalyzed, totalPrevResponsesAnalyzed)}
-                    </div>
-                  ));
-                })()
-              ) : deferredSearchQuery.trim() ? (
-                <div className="text-center py-12 text-gray-500">
-                  <div className="w-12 h-12 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-                    <span className="text-xl font-bold text-gray-400">🔍</span>
-                  </div>
-                  <p className="text-sm">No competitors match "{deferredSearchQuery.trim()}".</p>
-                </div>
-              ) : responsesLoading ? (
-                <div className="space-y-3 px-2 sm:px-3 py-4" aria-busy="true">
+            </CardHeader>
+            <CardContent className="pt-0">
+              {responsesLoading && totalDetected === 0 ? (
+                <div className="space-y-3 py-2" aria-busy="true">
                   {Array.from({ length: 8 }).map((_, i) => (
                     <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
                   ))}
                 </div>
-              ) : (
+              ) : filteredTableRows.length === 0 ? (
                 <div className="text-center py-12 text-gray-500">
-                  <div className="w-12 h-12 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-                    <span className="text-xl font-bold text-gray-400">🏢</span>
-                  </div>
                   <p className="text-sm">
-                    {selectedCompetitorTypeFilter === 'direct'
-                      ? "No direct competitors found in competitive prompts."
-                      : "No competitor mentions found yet."
-                    }
+                    {searchQuery.trim() || activeFilterCount > 0
+                      ? "No competitors match the current filters."
+                      : "No competitors detected in this period."}
                   </p>
-                  {selectedCompetitorTypeFilter === 'direct' && (
-                    <p className="text-xs text-gray-400 mt-1">
-                      Try switching to "All Competitors" to see all mentions.
-                    </p>
-                  )}
                 </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Competitor Panel (slide from right) */}
-      <Sheet open={isCompetitorModalOpen} onOpenChange={(open) => { if (!open) handleCloseCompetitorModal(); }}>
-        <SheetContent
-          side="right"
-          className="p-0 flex flex-col gap-0 [&>button]:hidden w-full sm:max-w-2xl inset-y-0 h-full rounded-none"
-        >
-          <div className="flex items-center justify-between px-5 py-4 bg-white border-b">
-            <SheetTitle className="flex items-center gap-2 text-base font-semibold">
-              <img
-                src={getCompetitorFavicon(selectedCompetitor || '')}
-                alt={`${selectedCompetitor} favicon`}
-                className="w-5 h-5 rounded"
-                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                style={{ display: 'block' }}
-              />
-              <span>{selectedCompetitor}</span>
-              {(() => {
-                const sourceInfo = getCompetitorSourceInfo(selectedCompetitor || '');
-                return <Badge variant="secondary">{sourceInfo.totalCount} mentions</Badge>;
-              })()}
-            </SheetTitle>
-          </div>
-          <div className="flex-1 overflow-y-auto px-5 py-4">
-            <div className="space-y-5">
-              {/* AI Summary — auto-fires on open */}
-              {competitorSummary ? (
-                <Card className="border-[#0DBCBA]/30 bg-[#0DBCBA]/5">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-base font-semibold flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
-                        AI Summary
-                      </CardTitle>
-                      <Button variant="ghost" size="sm" onClick={fetchCompetitorSummary} disabled={loadingCompetitorSummary} className="text-xs text-gray-400 hover:text-gray-600 h-auto py-1">
-                        {loadingCompetitorSummary ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-                        Regenerate
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-gray-800 text-sm leading-relaxed">
-                      {competitorSummary.split('\n\n').filter(Boolean).map((paragraph, pIdx) => {
-                        const trimmed = paragraph.trim();
-                        // Strip stray markdown ATX headings — the prompt forbids them
-                        // but models occasionally still produce them.
-                        if (/^#{1,6}\s/.test(trimmed)) return null;
-                        // Header-only paragraph (just **Title**) → render as a heading
-                        const headerOnlyMatch = trimmed.match(/^\*\*([^*]+)\*\*$/);
-                        if (headerOnlyMatch) {
-                          return (
-                            <h4
-                              key={pIdx}
-                              className="text-sm font-semibold text-gray-900 mt-4 first:mt-0 mb-1.5"
-                            >
-                              {headerOnlyMatch[1]}
-                            </h4>
-                          );
-                        }
-                        // Mixed paragraph — split on citations AND inline bold
-                        const parts = paragraph.split(/(\[\d+(?:\s*,\s*\d+)*\]|\*\*[^*]+\*\*)/g);
-                        return (
-                          <p key={pIdx} className="mb-3 last:mb-0">
-                            {parts.map((part, partIdx) => {
-                              const citationMatch = part.match(/^\[([\d\s,]+)\]$/);
-                              const boldMatch = part.match(/^\*\*([^*]+)\*\*$/);
-                              if (citationMatch) {
-                                const nums = citationMatch[1].split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
-                                return (
-                                  <span key={partIdx}>
-                                    {nums.map((num, nIdx) => {
-                                      const source = competitorSummarySources[num - 1];
-                                      if (!source) return null;
-                                      return (
-                                        <button
-                                          key={nIdx}
-                                          onClick={() => { if (source.url) window.open(source.url, '_blank', 'noopener,noreferrer'); }}
-                                          className={`inline-flex items-center gap-1 bg-white hover:bg-gray-50 pl-1 pr-2 py-0.5 rounded-full text-xs text-gray-600 transition-colors border border-gray-200 mx-0.5 align-middle ${source.url ? 'cursor-pointer' : 'cursor-default'}`}
-                                        >
-                                          <img src={getFavicon(source.domain)} alt="" className="w-3.5 h-3.5 rounded flex-shrink-0" style={{ background: '#fff', display: 'block' }} onError={e => { e.currentTarget.style.display = 'none'; }} />
-                                          <span>{source.displayName}</span>
-                                        </button>
-                                      );
-                                    })}
-                                  </span>
-                                );
-                              }
-                              if (boldMatch) {
-                                return (
-                                  <strong key={partIdx} className="font-semibold text-gray-900">
-                                    {boldMatch[1]}
-                                  </strong>
-                                );
-                              }
-                              return <span key={partIdx}>{part}</span>;
-                            })}
-                          </p>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : loadingCompetitorSummary ? (
-                <Card className="border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/5 to-[#0DBCBA]/10 overflow-hidden">
-                  <CardContent className="py-4 px-5">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="relative">
-                        <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
-                        <div className="absolute inset-0 animate-ping">
-                          <Sparkles className="w-4 h-4 text-[#0DBCBA] opacity-30" />
-                        </div>
-                      </div>
-                      <span className="text-sm font-semibold text-[#0A8B89]">Thinking…</span>
-                    </div>
-                    <div className="space-y-1">
-                      {competitorThinkingSteps.map((step, i) => {
-                        const isActive = i === competitorThinkingStep;
-                        const isComplete = i < competitorThinkingStep;
-                        const isPending = i > competitorThinkingStep;
-                        return (
-                          <div
-                            key={i}
-                            className="flex items-center gap-2.5 py-1"
-                            style={{
-                              opacity: isPending ? 0.35 : 1,
-                              transform: isPending ? "translateX(4px)" : "translateX(0)",
-                              transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="hover:bg-transparent">
+                          <SortableHead label="Competitor" k="name" className="min-w-[180px]" />
+                          <SortableHead label="Owns attribute" k="attributes" className="min-w-[190px]" />
+                          <SortableHead label="Models" k="models" className="min-w-[120px]" />
+                          <SortableHead label="Sentiment" k="sentiment" className="min-w-[100px]" />
+                          <SortableHead label="Coverage" k="coverage" className="min-w-[110px] text-right" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredTableRows.slice(0, visibleRows).map((row) => (
+                          <TableRow
+                            key={row.name}
+                            ref={(el) => {
+                              if (el) rowRefs.current.set(row.name, el);
+                              else rowRefs.current.delete(row.name);
                             }}
+                            onClick={() => openModal(row.name)}
+                            className={`cursor-pointer transition-colors ${
+                              selectedCompetitor === row.name ? "bg-[#0DBCBA]/5" : ""
+                            }`}
                           >
-                            <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
-                              {isComplete ? (
-                                <CheckCircle2 className="w-4 h-4 text-[#0DBCBA]" />
-                              ) : isActive ? (
-                                <Loader2 className="w-4 h-4 text-[#0DBCBA] animate-spin" />
+                            <TableCell>
+                              <div className="flex items-center gap-2 min-w-0">
+                                <CompetitorFavicon name={row.name} />
+                                <span className="text-sm font-medium text-gray-900 truncate" title={row.name}>{row.name}</span>
+                                {row.sets.includes("direct") && (
+                                  <Badge variant="secondary" className="bg-gray-100 text-gray-500 border-0 text-[10px] px-1.5 py-0 pointer-events-none flex-shrink-0">
+                                    Direct
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {row.attributes.length === 0 ? (
+                                <span className="text-xs text-gray-400">—</span>
                               ) : (
-                                <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  {row.attributes.slice(0, OWNS_ATTRIBUTE_CHIPS).map((a) => {
+                                    const Icon = getAttributeIconByName(a.name);
+                                    return (
+                                      <span key={a.id} className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 rounded-full px-2 py-0.5 text-[11px]">
+                                        <Icon className="w-3 h-3 flex-shrink-0" />
+                                        <span className="truncate max-w-[110px]">{a.name}</span>
+                                      </span>
+                                    );
+                                  })}
+                                  {row.attributes.length > OWNS_ATTRIBUTE_CHIPS && (
+                                    <span className="text-[11px] text-gray-400">+{row.attributes.length - OWNS_ATTRIBUTE_CHIPS}</span>
+                                  )}
+                                </div>
                               )}
-                            </div>
-                            <span
-                              className={`text-sm ${
-                                isActive
-                                  ? "text-[#0A8B89] font-medium"
-                                  : isComplete
-                                    ? "text-[#0DBCBA]"
-                                    : "text-gray-400"
-                              }`}
-                            >
-                              {step}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : competitorSummaryError ? (
-                <Card className="border-amber-200 bg-amber-50/40">
-                  <CardContent className="py-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-amber-800 text-sm">{competitorSummaryError}</span>
-                      <Button variant="ghost" size="sm" onClick={fetchCompetitorSummary} className="text-xs">
-                        Retry
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1">
+                                {row.models.slice(0, 5).map((m) => (
+                                  <LLMLogo key={m} modelName={m} size="sm" showFallback={false} />
+                                ))}
+                                <span className="text-xs text-gray-500 ml-1 whitespace-nowrap">
+                                  {row.models.length} of {totalModelCount}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>{sentimentPill(row.sentiment)}</TableCell>
+                            <TableCell className="text-right">
+                              <span className="inline-flex items-center gap-1.5 justify-end">
+                                <span className="text-sm font-semibold text-gray-900 tabular-nums">{row.coverage.toFixed(1)}%</span>
+                                <span className="w-[45px] flex justify-end">{renderDeltaChip(row.coverage, row.prevCoverage)}</span>
+                              </span>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  {filteredTableRows.length > visibleRows && (
+                    <div className="flex justify-center pt-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setVisibleRows((v) => v + TABLE_ROWS_STEP)}
+                        className="text-xs"
+                      >
+                        Show more ({filteredTableRows.length - visibleRows} remaining)
                       </Button>
                     </div>
-                  </CardContent>
-                </Card>
-              ) : null}
-
-              {/* Top sources where this competitor appears */}
-              {competitorComparison && competitorComparison.topDomains.length > 0 && (
-                <Card className={competitorRevealClass(2)}>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
-                      Top sources where they appear
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="divide-y">
-                      {competitorComparison.topDomains.map(({ domain, count }) => (
-                        <div key={domain} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <img
-                              src={getFavicon(domain)}
-                              alt=""
-                              className="w-4 h-4 rounded shrink-0"
-                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                            />
-                            <span className="text-sm text-gray-900 truncate">{domain}</span>
-                          </div>
-                          <span className="text-xs text-gray-500 shrink-0">{count} response{count === 1 ? "" : "s"}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+                  )}
+                </>
               )}
+            </CardContent>
+          </Card>
+        </>
+      )}
 
-              {/* Mentions by model — bar chart */}
-              {selectedCompetitor && (() => {
-                const competitorResponses = getFullResponsesForCompetitor(selectedCompetitor);
-                const modelCounts = new Map<string, number>();
-                competitorResponses.forEach((r) => {
-                  if (r.ai_model) {
-                    modelCounts.set(r.ai_model, (modelCounts.get(r.ai_model) ?? 0) + 1);
-                  }
-                });
-                const sorted = [...modelCounts.entries()]
-                  .map(([model, count]) => ({ model, count }))
-                  .sort((a, b) => b.count - a.count);
-                if (sorted.length === 0) return null;
-                const maxCount = sorted[0].count;
-                return (
-                  <Card className={competitorRevealClass(3)}>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
-                        Mentions by model
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2.5">
-                        {sorted.map(({ model, count }) => {
-                          const widthPct = maxCount > 0 ? (count / maxCount) * 100 : 0;
-                          return (
-                            <div key={model} className="flex items-center gap-3">
-                              <div className="flex items-center gap-1.5 w-44 shrink-0">
-                                <LLMLogo modelName={model} size="sm" />
-                                <span className="text-sm text-gray-700 truncate">{getLLMDisplayName(model)}</span>
-                              </div>
-                              <div className="flex-1 relative h-2 bg-gray-100 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-[#0DBCBA] rounded-full transition-all duration-500"
-                                  style={{ width: `${widthPct}%` }}
-                                />
-                              </div>
-                              <span className="text-sm font-semibold text-gray-900 w-10 text-right shrink-0 tabular-nums">
-                                {count}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })()}
-            </div>
-          </div>
-
-        </SheetContent>
-      </Sheet>
-
-      {/* Mentions Drawer Modal */}
-      <Dialog open={isMentionsDrawerOpen} onOpenChange={setIsMentionsDrawerOpen}>
-        <DialogContent className="max-w-3xl w-full h-[90vh] flex flex-col p-0">
-          <div className="flex items-center gap-2 px-6 py-4 border-b">
-            <DialogTitle className="text-lg font-semibold">All Mentions of {selectedCompetitor}</DialogTitle>
-            <Badge variant="secondary">{competitorSnippets.length} mentions</Badge>
-          </div>
-          <div className="px-6 py-3 border-b bg-gray-50">
-            {/* Search input removed as requested */}
-          </div>
-          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
-            {competitorSnippets.length > 0 ? (
-              competitorSnippets.map((item, idx) => {
-                // Show only first 2 lines unless expanded
-                const lines = item.snippet.split(/\n|\r/);
-                const isExpanded = expandedMentionIdx === idx;
-                const preview = lines.slice(0, 2).join(' ');
-                const rest = lines.slice(2).join(' ');
-                return (
-                  <div key={idx} className="p-3 bg-gray-50 rounded border text-sm text-gray-800">
-                    <div
-                      className="prose prose-sm max-w-none"
-                      dangerouslySetInnerHTML={{
-                        __html: highlightCompetitor(isExpanded ? item.snippet : preview, selectedCompetitor || "")
-                      }}
-                    />
-                    {lines.length > 2 && (
-                      <button
-                        className="text-xs text-blue-600 underline mt-1 hover:text-blue-800"
-                        onClick={() => setExpandedMentionIdx(isExpanded ? null : idx)}
-                      >
-                        {isExpanded ? 'Show less' : 'Show more'}
-                      </button>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              <div className="text-gray-500 text-sm">No mentions found.</div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Source Modal */}
-      <Dialog open={isSourceModalOpen} onOpenChange={handleCloseSourceModal}>
-        <DialogContent className="max-w-xl w-full sm:max-w-2xl sm:w-[90vw] p-2 sm:p-6">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <img 
-                src={getFavicon(selectedSource?.domain || '')} 
-                alt={`${selectedSource?.domain} favicon`}
-                className="w-5 h-5 rounded"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                }}
-              />
-              <span>Source: {selectedSource && getSourceDisplayName(selectedSource.domain)}</span>
-              <Badge variant="secondary">
-                {selectedSource?.count} {selectedSource?.count === 1 ? 'mention' : 'mentions'}
-              </Badge>
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="text-sm text-gray-600">
-              <p>This source contributes to {selectedCompetitor}'s presence in your analysis.</p>
-            </div>
-            
-            {/* Show responses that mention both the competitor and this source */}
-            {selectedSource && selectedCompetitor && (() => {
-              const relevantResponses = responses.filter(response => {
-                // Check if response mentions both the competitor and has this source
-                const mentionsCompetitor = response.response_text?.toLowerCase().includes(selectedCompetitor.toLowerCase());
-                if (!mentionsCompetitor) return false;
-                
-                try {
-                  const citations = typeof response.citations === 'string' 
-                    ? JSON.parse(response.citations) 
-                    : response.citations;
-                  
-                  if (Array.isArray(citations)) {
-                    return citations.some((citation: any) => citation.domain === selectedSource.domain);
-                  }
-                } catch {
-                  return false;
-                }
-                return false;
-              });
-              
-              return (
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-900 mb-3">
-                    Responses mentioning {selectedCompetitor} from {getSourceDisplayName(selectedSource.domain)}:
-                  </h3>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {relevantResponses.slice(0, 5).map((response, index) => (
-                      <div key={index} className="p-3 bg-gray-50 rounded-lg text-sm text-gray-800">
-                        <div
-                          className="prose prose-sm max-w-none"
-                          dangerouslySetInnerHTML={{
-                            __html: highlightCompetitor((response.response_text || '').slice(0, 200) + '...', selectedCompetitor)
-                          }}
-                        />
-                      </div>
-                    ))}
-                    {relevantResponses.length > 5 && (
-                      <div className="text-xs text-gray-500 text-center py-2">
-                        Showing first 5 of {relevantResponses.length} responses
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Detail modal */}
+      {modalCompetitor && (
+        <CompetitorDetailsModal
+          isOpen={isModalOpen}
+          onClose={closeModal}
+          competitorName={modalCompetitor}
+          companyName={companyName}
+          companyId={currentCompanyId}
+          analyzedResponses={analyzed.matching}
+          totals={{
+            total: analyzed.total,
+            companyMentioned: analyzed.companyMentioned,
+          }}
+          competitorAgg={modalAgg ? {
+            count: modalAgg.count,
+            coMention: modalAgg.coMention,
+            responseIds: modalAgg.responseIds,
+          } : null}
+          competitorThemeAgg={modalThemes ? {
+            positive: modalThemes.positive,
+            negative: modalThemes.negative,
+            byResponse: modalThemes.byResponse,
+            attrNames: new Map(Array.from(modalThemes.attrCounts.entries()).map(([id, v]) => [id, v.name])),
+          } : null}
+          hasCompetitorThemeData={hasAnyCompetitorThemes}
+          companySentimentById={companySentimentById}
+          domainRecencyAvg={domainRecencyAvg}
+          responseTexts={responseTexts}
+          fetchResponseTexts={fetchResponseTexts}
+          onOpenSourcesForDomain={onNavigateToSources ? handleOpenSourcesForDomain : undefined}
+        />
+      )}
     </div>
   );
 });
-CompetitorsTab.displayName = 'CompetitorsTab';
+
+CompetitorsTab.displayName = "CompetitorsTab";
