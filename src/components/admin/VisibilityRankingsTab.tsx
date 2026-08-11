@@ -106,11 +106,12 @@ export const VisibilityRankingsTab = () => {
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   // Start Collection confirmation / customization (mirrors NewCompanyPanel)
+  // Must match the models supported by the collect-industry-visibility edge
+  // function (Google AI Overviews was dropped from that pipeline).
   const ALL_INDUSTRY_MODELS = [
-    { id: "openai", label: "OpenAI (gpt-5.2-chat-latest)" },
+    { id: "openai", label: "OpenAI (gpt-5-nano)" },
     { id: "perplexity", label: "Perplexity" },
     { id: "gemini", label: "Gemini" },
-    { id: "google-ai-overviews", label: "Google AI Overviews" },
   ];
   const [confirmStartOpen, setConfirmStartOpen] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -670,7 +671,7 @@ export const VisibilityRankingsTab = () => {
 
         // Step 2: Collect responses in small batches to avoid 504 Timeouts
         // We assume ~16 prompts total.
-        // Batch size of 1 prompt * 4 models (parallel) = ~15s.
+        // Batch size of 1 prompt * 3 models (parallel) = ~15s.
         // This is much safer for the 60s timeout limit.
         const TOTAL_PROMPTS = 16;
         const BATCH_SIZE = 1;
@@ -1466,7 +1467,7 @@ export const VisibilityRankingsTab = () => {
             <AlertDialogTitle>Run for all models?</AlertDialogTitle>
             <AlertDialogDescription>
               This will collect responses across all models (OpenAI, Perplexity,
-              Gemini, Google AI Overviews) for the pending queue items. Choose
+              Gemini) for the pending queue items. Choose
               "Customize" to pick a subset (e.g. only OpenAI when re-collecting
               after an outage).
             </AlertDialogDescription>
