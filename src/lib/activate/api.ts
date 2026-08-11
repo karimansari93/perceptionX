@@ -20,6 +20,8 @@ export interface ActivateOrgBranding {
   tagline: string | null;
   blurb: string | null;
   logo_url: string | null;
+  /** Company domain for the logo.dev lookup; initials fallback when absent. */
+  logo_domain: string | null;
   primary_color: string;
   accent_color: string;
 }
@@ -150,6 +152,23 @@ export function resolveRoutes(
 /** Markets that have their own (active) rows — pinned atop the country picker. */
 export function marketsWithRoutes(all: ActivateRoute[]): string[] {
   return [...new Set(all.map((r) => r.market_code).filter((c): c is string => c !== null))].sort();
+}
+
+/** Measured (tier 1) markets only — the pills that carry the "Measured" chip. */
+export function measuredMarketCodes(all: ActivateRoute[]): string[] {
+  return [
+    ...new Set(
+      all
+        .filter((r) => r.tier === 1 && r.market_code !== null)
+        .map((r) => r.market_code as string),
+    ),
+  ].sort();
+}
+
+/** First percentage in a rationale sentence, for the count-up stat block. */
+export function parseStatPct(text: string | null): number | null {
+  const m = /(\d+(?:\.\d+)?)\s*%/.exec(text ?? '');
+  return m ? parseFloat(m[1]) : null;
 }
 
 // ---------------------------------------------------------------------------

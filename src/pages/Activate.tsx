@@ -4,12 +4,24 @@
 // employer in their market. We route; we never script — copy stays
 // non-directive throughout. Spec: docs/ACTIVATE_LINK_ROUTER.md
 //
-// Visual identity derives entirely from two brand tokens (primary/accent) so
-// any client gets a branded page with no bespoke design work.
+// Visuals follow the high-fidelity design handoff (full-bleed brand canvas,
+// on-colour ink system, link-in-bio pills, count-up stat block). Everything
+// derives from two client tokens: --activate-primary / --activate-accent plus
+// a computed on-colour, so a pale brand flips the whole canvas to navy ink in
+// one step. Company/platform marks resolve from logo.dev by domain, with
+// initials fallback.
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowUpRight, Check, MapPin, Search } from 'lucide-react';
+import ReactCountryFlag from 'react-country-flag';
+import { AlertCircle, ArrowRight, ChevronLeft, ExternalLink, Search } from 'lucide-react';
 import { useMetaTags } from '@/hooks/useMetaTags';
 import {
   ActivateConfig,
@@ -19,18 +31,26 @@ import {
   countryName,
   getActivateByToken,
   logActivateEvent,
-  marketsWithRoutes,
+  measuredMarketCodes,
+  parseStatPct,
   resolveRoutes,
 } from '@/lib/activate/api';
 
 type LoadState =
   | { kind: 'loading' }
-  | { kind: 'invalid'; reason: 'not_found' | 'expired' | 'revoked' | 'error' }
+  | { kind: 'invalid' }
   | { kind: 'ready'; config: ActivateConfig };
 
-type Step = 'market' | 'entity' | 'routes';
+type Step = 'country' | 'entity' | 'routes';
 
 const UNSURE = 'unsure';
+
+// Publishable logo.dev token from the design handoff (pk_ keys are meant for
+// the client); override per environment via VITE_LOGO_DEV_TOKEN.
+const LOGO_DEV_TOKEN = import.meta.env.VITE_LOGO_DEV_TOKEN ?? 'pk_ekarmbf-SbmRJ537a9wdxA';
+
+const logoSrc = (domain: string, size = 120) =>
+  `https://img.logo.dev/${domain}?token=${LOGO_DEV_TOKEN}&size=${size}&format=png`;
 
 const PLATFORM_NAMES: Record<string, string> = {
   kununu: 'kununu',
@@ -39,54 +59,46 @@ const PLATFORM_NAMES: Record<string, string> = {
   seek: 'Seek',
 };
 
+const PLATFORM_DOMAINS: Record<string, string> = {
+  kununu: 'kununu.com',
+  glassdoor: 'glassdoor.com',
+  indeed: 'indeed.com',
+  seek: 'seek.com.au',
+};
+
 function platformName(key: string): string {
   return PLATFORM_NAMES[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
 }
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
-}
-
-/** Readable foreground for an arbitrary client color (WCAG-ish luminance cut). */
-function textOn(hex: string): string {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return '#10151d';
-  const n = parseInt(m[1], 16);
-  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
-    const c = v / 255;
-    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+/** Design handoff's AA mechanism: luminance > 0.45 → navy ink, else white. */
+function onColor(hex: string): string {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return '#FFFFFF';
+  const v = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const s = parseInt(v.slice(i, i + 2), 16) / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
   });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 ? '#10151d' : '#ffffff';
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.45 ? '#13274F' : '#FFFFFF';
 }
 
-/** Bold the measured numbers inside a rationale sentence. */
-function emphasizeStats(text: string) {
-  const parts = text.split(/(\d+(?:\.\d+)?%)/);
-  return parts.map((part, i) =>
-    /^\d+(?:\.\d+)?%$/.test(part) ? (
-      <strong key={i} className="font-bold text-[var(--px-brand)]">{part}</strong>
-    ) : (
-      <span key={i}>{part}</span>
-    ),
-  );
-}
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export default function Activate() {
   const { token } = useParams<{ token: string }>();
   // One random id per pageview: identifies a pageview, not a person. Never
-  // persisted — it's the only thing that ties a click to the declaration
-  // before it.
+  // persisted — the only thing tying a click to the declaration before it.
   const sessionId = useMemo(() => crypto.randomUUID(), []);
 
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
-  const [step, setStep] = useState<Step>('market');
+  const [step, setStep] = useState<Step>('country');
   const [market, setMarket] = useState<string | null>(null);
   const [entityId, setEntityId] = useState<string | null>(null); // company id or UNSURE
   const [prefilled, setPrefilled] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const mountedOnce = useRef(false);
 
   useMetaTags({
     title:
@@ -100,17 +112,13 @@ export default function Activate() {
     let cancelled = false;
     (async () => {
       if (!token) {
-        setLoad({ kind: 'invalid', reason: 'not_found' });
+        setLoad({ kind: 'invalid' });
         return;
       }
       const res = await getActivateByToken(token, sessionId);
       if (cancelled) return;
-      if (res.error === 'not_found' || res.error === 'expired' || res.error === 'revoked') {
-        setLoad({ kind: 'invalid', reason: res.error });
-        return;
-      }
       if (res.error || !res.config) {
-        setLoad({ kind: 'invalid', reason: 'error' });
+        setLoad({ kind: 'invalid' });
         return;
       }
       const cfg = res.config;
@@ -144,37 +152,32 @@ export default function Activate() {
     };
   }, [token, sessionId]);
 
+  // Focus follows the step heading (skip the initial mount).
+  useEffect(() => {
+    if (load.kind !== 'ready') return;
+    if (!mountedOnce.current) {
+      mountedOnce.current = true;
+      return;
+    }
+    headingRef.current?.focus();
+  }, [step, load.kind]);
+
   if (load.kind === 'loading') {
     return (
-      <NeutralShell>
-        <p className="text-sm text-slate-500" role="status">Opening…</p>
-      </NeutralShell>
+      <Canvas primary="#13274F" accent="#DB5E89">
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="act-spinner" role="status" aria-label="Opening" />
+        </div>
+      </Canvas>
     );
   }
 
   if (load.kind === 'invalid') {
-    const copy: Record<string, string> = {
-      not_found: "This link doesn't seem to exist. Double-check the address you were sent.",
-      expired: 'This link has expired. Ask whoever sent it for a fresh one.',
-      revoked: 'This link is no longer active. Ask whoever sent it for a fresh one.',
-      error: "Something went wrong opening this link. Give it another try in a minute.",
-    };
-    return (
-      <NeutralShell>
-        <h1 className="font-headline text-lg font-medium text-slate-800 mb-2">Hm — no luck</h1>
-        <p className="text-sm text-slate-500">{copy[load.reason]}</p>
-      </NeutralShell>
-    );
+    return <DeadLink />;
   }
 
   const { config } = load;
   const { org } = config;
-  const brandVars = {
-    '--px-brand': org.primary_color,
-    '--px-accent': org.accent_color,
-    '--px-brand-fg': textOn(org.primary_color),
-    '--px-accent-fg': textOn(org.accent_color),
-  } as CSSProperties;
 
   const declareMarket = (code: string) => {
     setMarket(code);
@@ -198,42 +201,34 @@ export default function Activate() {
   };
 
   return (
-    <div style={brandVars} className="min-h-screen relative overflow-hidden px-bg text-slate-800">
-      <style>{activateCss}</style>
-      <div className="px-blob px-blob-a" aria-hidden />
-      <div className="px-blob px-blob-b" aria-hidden />
-
-      <div className="relative max-w-xl mx-auto px-5 pt-10 pb-16 sm:pt-16">
-        <Hero org={org} compact={step === 'routes'} />
-
-        <div key={step} className="px-step mt-8">
-          {step === 'market' && (
-            <MarketStep
-              orgName={org.display_name}
-              audience={config.audience}
-              blurb={org.blurb}
-              pinned={marketsWithRoutes(config.routes)}
-              selected={market}
-              onSelect={declareMarket}
+    <Canvas primary={org.primary_color} accent={org.accent_color}>
+      <main
+        aria-live="polite"
+        className="relative z-[1] mx-auto flex min-h-screen w-full max-w-[460px] flex-col items-center gap-4 px-[22px] pb-11 pt-16 md:px-8"
+      >
+        <div key={step} className="act-step flex w-full flex-col items-center gap-4">
+          {step === 'country' && (
+            <CountryStep
+              org={org}
+              measured={measuredMarketCodes(config.routes)}
+              onPick={declareMarket}
+              headingRef={headingRef}
             />
           )}
-
           {step === 'entity' && (
             <EntityStep
-              orgName={org.display_name}
-              audience={config.audience}
+              org={org}
               entities={config.entities}
-              selected={entityId}
-              onSelect={declareEntity}
-              onBack={() => setStep('market')}
+              onPick={declareEntity}
+              onBack={() => setStep('country')}
+              headingRef={headingRef}
             />
           )}
-
           {step === 'routes' && market && (
             <RoutesStep
               token={token!}
               sessionId={sessionId}
-              orgName={org.display_name}
+              org={org}
               audience={config.audience}
               market={market}
               entityName={
@@ -241,214 +236,291 @@ export default function Activate() {
                   ? config.entities.find((e) => e.id === entityId)?.name ?? null
                   : null
               }
-              resolved={resolveRoutes(config.routes, market, entityId === UNSURE ? null : entityId)}
               entityId={entityId === UNSURE ? null : entityId}
+              resolved={resolveRoutes(config.routes, market, entityId === UNSURE ? null : entityId)}
               prefilled={prefilled}
               onChange={() => {
                 setPrefilled(false);
-                setStep('market');
+                setEntityId(null);
+                setStep('country');
               }}
+              headingRef={headingRef}
             />
           )}
         </div>
+      </main>
+    </Canvas>
+  );
+}
 
-        <footer className="mt-14 text-center text-xs text-slate-500 space-y-1.5">
-          <p>We don't see what you write — or whether you write at all.</p>
-          <p className="text-slate-400">Routed by PerceptionX</p>
-        </footer>
-      </div>
+// ---------------------------------------------------------------------------
+// Canvas: everything derives from the two client tokens + computed on-colour.
+// ---------------------------------------------------------------------------
+
+function Canvas({
+  primary,
+  accent,
+  children,
+}: {
+  primary: string;
+  accent: string;
+  children: ReactNode;
+}) {
+  const vars = {
+    '--activate-primary': primary,
+    '--activate-accent': accent,
+    '--activate-on': onColor(primary),
+  } as CSSProperties;
+  return (
+    <div style={vars} className="act-canvas relative min-h-screen overflow-hidden">
+      <style>{activateCss}</style>
+      <div className="act-blob act-blob-organic" aria-hidden />
+      <div className="act-blob act-blob-ring" aria-hidden />
+      <div className="act-blob act-blob-accent" aria-hidden />
+      {children}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
+// Shared bits
+// ---------------------------------------------------------------------------
 
-function NeutralShell({ children }: { children: React.ReactNode }) {
+function CompanyAvatar({
+  org,
+  size,
+  markSize,
+  className = '',
+}: {
+  org: ActivateConfig['org'];
+  size: number;
+  markSize: number;
+  className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const src = org.logo_domain
+    ? logoSrc(org.logo_domain, 160)
+    : org.logo_url ?? null;
+  const initials = org.display_name
+    .split(/\s+/)
+    .map((w) => w.charAt(0))
+    .join('')
+    .slice(0, 3)
+    .toUpperCase();
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
-      <div className="max-w-sm w-full bg-white rounded-2xl border border-slate-200 shadow-sm p-6 text-center">
-        {children}
-      </div>
+    <div
+      className={`act-avatar flex items-center justify-center rounded-full bg-white ${className}`}
+      style={{ width: size, height: size, boxShadow: '0 8px 24px rgba(0,0,0,.16)' }}
+    >
+      {src && !failed ? (
+        <img
+          src={src}
+          alt=""
+          width={markSize}
+          height={markSize}
+          style={{ width: markSize, height: markSize, objectFit: 'contain' }}
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span
+          className="font-headline font-bold"
+          style={{ color: 'var(--activate-primary)', fontSize: size * 0.32 }}
+        >
+          {initials}
+        </span>
+      )}
     </div>
   );
 }
 
-function Hero({
+function StepDots({ step }: { step: 1 | 2 }) {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <div className="flex gap-1.5">
+        <span className="act-dot" data-filled="true" />
+        <span className="act-dot" data-filled={step === 2} />
+      </div>
+      <span className="act-eyebrow">Step {step} of 2</span>
+    </div>
+  );
+}
+
+function Flag({ code, size }: { code: string; size: number }) {
+  return (
+    <ReactCountryFlag
+      countryCode={code}
+      svg
+      aria-hidden
+      style={{ width: size, height: size, borderRadius: 3 }}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 1 — welcome + country
+// ---------------------------------------------------------------------------
+
+function CountryStep({
   org,
-  compact,
+  measured,
+  onPick,
+  headingRef,
 }: {
   org: ActivateConfig['org'];
-  compact: boolean;
-}) {
-  return (
-    <header className="text-center">
-      {org.logo_url ? (
-        <img
-          src={org.logo_url}
-          alt={`${org.display_name} logo`}
-          className={`mx-auto object-contain transition-all ${compact ? 'h-8' : 'h-12'}`}
-        />
-      ) : (
-        <div
-          className={`mx-auto rounded-2xl flex items-center justify-center font-headline font-bold bg-[var(--px-brand)] text-[var(--px-brand-fg)] transition-all ${
-            compact ? 'h-10 w-10 text-lg' : 'h-14 w-14 text-2xl'
-          }`}
-        >
-          {org.display_name.charAt(0)}
-        </div>
-      )}
-      <h1
-        className={`font-headline font-bold tracking-tight mt-4 transition-all ${
-          compact ? 'text-xl' : 'text-2xl sm:text-3xl'
-        }`}
-      >
-        {org.tagline ?? org.display_name}
-      </h1>
-    </header>
-  );
-}
-
-function StepCard({ children }: { children: React.ReactNode }) {
-  return (
-    <section className="bg-white/85 backdrop-blur rounded-3xl border border-slate-200/80 shadow-[0_8px_40px_-12px_rgba(15,23,42,0.15)] p-5 sm:p-7">
-      {children}
-    </section>
-  );
-}
-
-function MarketStep({
-  orgName,
-  audience,
-  blurb,
-  pinned,
-  selected,
-  onSelect,
-}: {
-  orgName: string;
-  audience: ActivateConfig['audience'];
-  blurb: string | null;
-  pinned: string[];
-  selected: string | null;
-  onSelect: (code: string) => void;
+  measured: string[];
+  onPick: (code: string) => void;
+  headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
+  const byName = (a: string, b: string) => countryName(a).localeCompare(countryName(b));
+  const others = COUNTRY_CODES.filter((c) => !measured.includes(c)).sort(byName);
   const matches = q
-    ? COUNTRY_CODES.filter((c) => countryName(c).toLowerCase().includes(q) || c.toLowerCase() === q)
+    ? [...measured, ...others].filter(
+        (c) => countryName(c).toLowerCase().includes(q) || c.toLowerCase() === q,
+      )
     : [];
 
   return (
-    <StepCard>
-      <p className="text-sm text-slate-600 leading-relaxed">
-        {blurb ??
-          `AI assistants are shaping how candidates see ${orgName} — here's where they listen.`}{' '}
-        {audience === 'candidate'
-          ? 'The places that shape those answers differ by country.'
-          : 'Where those answers come from differs by country.'}
-      </p>
+    <>
+      <CompanyAvatar org={org} size={88} markSize={58} className="act-avatar-entry" />
+      <h1 className="act-display">{org.display_name}</h1>
+      {org.tagline && <p className="act-tagline">{org.tagline}</p>}
+      {org.blurb && <p className="act-blurb">{org.blurb}</p>}
+      <StepDots step={1} />
+      <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
+        Where are you based?
+      </h2>
 
-      <h2 className="font-headline text-lg font-bold mt-5 mb-3">Where are you based?</h2>
+      <label className="act-search w-full">
+        <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search countries"
+          aria-label="Search countries"
+        />
+      </label>
 
-      {pinned.length > 0 && !q && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {pinned.map((code) => (
+      {q === '' ? (
+        <>
+          <div className="flex w-full flex-col gap-2.5">
+            {measured.map((code) => (
+              <button key={code} onClick={() => onPick(code)} className="act-pill-solid">
+                <Flag code={code} size={20} />
+                <span className="flex-1 text-left">{countryName(code)}</span>
+                <span className="act-measured-chip">Measured</span>
+              </button>
+            ))}
+          </div>
+          <p className="act-eyebrow mt-2 self-start" style={{ opacity: 0.9 }}>
+            Everywhere else
+          </p>
+          <div
+            className="act-scroll flex w-full flex-col gap-2 overflow-y-auto"
+            role="listbox"
+            aria-label="All countries"
+          >
+            {others.map((code) => (
+              <button key={code} onClick={() => onPick(code)} className="act-pill-ghost" role="option" aria-selected="false">
+                <Flag code={code} size={18} />
+                <span className="flex-1 text-left">{countryName(code)}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="flex w-full flex-col gap-2" role="listbox" aria-label="Search results">
+          {matches.length === 0 && (
+            <p className="py-2 text-center text-sm" style={{ color: 'color-mix(in srgb, var(--activate-on) 70%, transparent)' }}>
+              No matches — try another spelling
+            </p>
+          )}
+          {matches.slice(0, 30).map((code) => (
             <button
               key={code}
-              onClick={() => onSelect(code)}
-              className={`px-chip ${selected === code ? 'px-chip-active' : ''}`}
+              onClick={() => {
+                setQuery('');
+                onPick(code);
+              }}
+              className="act-pill-ghost"
+              style={{ minHeight: 52 }}
+              role="option"
+              aria-selected="false"
             >
-              <MapPin className="h-3.5 w-3.5 opacity-60" />
-              {countryName(code)}
+              <Flag code={code} size={18} />
+              <span className="flex-1 text-left">{countryName(code)}</span>
+              {measured.includes(code) && <span className="act-measured-chip">Measured</span>}
             </button>
           ))}
         </div>
       )}
-
-      <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search any country…"
-          aria-label="Search for your country"
-          className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-[var(--px-brand)] focus:ring-2 focus:ring-[var(--px-brand)]/20"
-        />
-      </div>
-
-      {q && (
-        <ul className="mt-2 max-h-56 overflow-y-auto rounded-xl border border-slate-100 divide-y divide-slate-50">
-          {matches.length === 0 && (
-            <li className="px-4 py-3 text-sm text-slate-400">No matches — try another spelling</li>
-          )}
-          {matches.slice(0, 30).map((code) => (
-            <li key={code}>
-              <button
-                onClick={() => onSelect(code)}
-                className="w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 flex items-center justify-between"
-              >
-                {countryName(code)}
-                <span className="text-xs text-slate-300">{code}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </StepCard>
+    </>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Step 2 — entity
+// ---------------------------------------------------------------------------
 
 function EntityStep({
-  orgName,
-  audience,
+  org,
   entities,
-  selected,
-  onSelect,
+  onPick,
   onBack,
+  headingRef,
 }: {
-  orgName: string;
-  audience: ActivateConfig['audience'];
+  org: ActivateConfig['org'];
   entities: ActivateConfig['entities'];
-  selected: string | null;
-  onSelect: (id: string) => void;
+  onPick: (id: string) => void;
   onBack: () => void;
+  headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
   return (
-    <StepCard>
-      <button onClick={onBack} className="text-xs text-slate-400 hover:text-slate-600 inline-flex items-center gap-1 mb-3">
-        <ArrowLeft className="h-3 w-3" /> Back
-      </button>
-      <h2 className="font-headline text-lg font-bold mb-1">
-        {audience === 'candidate'
-          ? `Which part of ${orgName} are you interested in?`
-          : `Which part of ${orgName} are you in?`}
+    <>
+      <div className="flex w-full items-center justify-between">
+        <button onClick={onBack} className="act-back">
+          <ChevronLeft size={15} aria-hidden />
+          Back
+        </button>
+        <StepDots step={2} />
+      </div>
+      <CompanyAvatar org={org} size={64} markSize={42} />
+      <h2
+        ref={headingRef}
+        tabIndex={-1}
+        className="act-question outline-none"
+        style={{ fontSize: 22 }}
+      >
+        Which part of {org.display_name}?
       </h2>
-      <p className="text-sm text-slate-500 mb-4">Some platforms have separate pages per division.</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+      <p className="act-hint">
+        It helps us point you at the right pages. Pick "Not sure" and we'll keep it general.
+      </p>
+      <div className="flex w-full flex-col" style={{ gap: 11 }}>
         {entities.map((e) => (
-          <button
-            key={e.id}
-            onClick={() => onSelect(e.id)}
-            className={`px-entity ${selected === e.id ? 'px-entity-active' : ''}`}
-          >
-            {e.name}
-            {selected === e.id && <Check className="h-4 w-4 shrink-0" />}
+          <button key={e.id} onClick={() => onPick(e.id)} className="act-entity">
+            <span className="flex-1 text-left">{e.name}</span>
+            <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-primary)' }} />
           </button>
         ))}
-        <button
-          onClick={() => onSelect(UNSURE)}
-          className={`px-entity text-slate-500 ${selected === UNSURE ? 'px-entity-active' : ''}`}
-        >
-          Not sure
+        <button onClick={() => onPick(UNSURE)} className="act-entity">
+          <span className="flex-1 text-left">Not sure</span>
+          <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-primary)' }} />
         </button>
       </div>
-    </StepCard>
+    </>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Step 3 — routes (payoff)
+// ---------------------------------------------------------------------------
 
 function RoutesStep({
   token,
   sessionId,
-  orgName,
+  org,
   audience,
   market,
   entityName,
@@ -456,10 +528,11 @@ function RoutesStep({
   resolved,
   prefilled,
   onChange,
+  headingRef,
 }: {
   token: string;
   sessionId: string;
-  orgName: string;
+  org: ActivateConfig['org'];
   audience: ActivateConfig['audience'];
   market: string;
   entityName: string | null;
@@ -467,158 +540,478 @@ function RoutesStep({
   resolved: ReturnType<typeof resolveRoutes>;
   prefilled: boolean;
   onChange: () => void;
+  headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
   const { tier, routes } = resolved;
-  const countryLabel = countryName(market);
-  const country = countryInSentence(market);
-  const hearAbout =
-    audience === 'candidate' ? `candidates hear about ${orgName}` : `candidates hear about life at ${orgName}`;
+  const top = routes[0];
+  const statPct = tier === 1 ? parseStatPct(top?.rationale_stat ?? null) : null;
+
+  const who =
+    audience === 'candidate'
+      ? `candidates hear about life at ${org.display_name}`
+      : audience === 'alumni'
+        ? `people hear about working at ${org.display_name}`
+        : `people hear about life at ${org.display_name}`;
 
   return (
-    <div className="space-y-4">
-      <button
-        onClick={onChange}
-        className="mx-auto flex items-center gap-1.5 text-xs bg-white/70 border border-slate-200 rounded-full px-3.5 py-1.5 text-slate-600 hover:border-slate-300"
-      >
-        <MapPin className="h-3 w-3 text-[var(--px-brand)]" />
-        {countryLabel}
-        {entityName ? ` · ${entityName}` : ''}
-        <span className="underline decoration-slate-300 underline-offset-2 ml-1">
-          {prefilled ? 'not you? change' : 'change'}
-        </span>
-      </button>
-
-      <StepCard>
-        <h2 className="font-headline text-lg font-bold mb-2">
-          {tier === 1 ? `Where AI listens in ${country}` : `Where ${hearAbout}`}
-        </h2>
-        <p className="text-sm text-slate-600 leading-relaxed mb-5">
-          {tier === 1 &&
-            `This is where ${hearAbout} in ${country} — measured from the AI answers themselves. Whether you share anything, and what, is entirely up to you.`}
-          {tier === 2 &&
-            `We haven't measured ${country} yet, so no local stats — but these are the platforms that carry the most weight there. Whether you share anything, and what, is entirely up to you.`}
-          {tier === 3 &&
-            `We haven't measured ${country} yet, so here are the global heavyweights — the platforms AI leans on most everywhere. Whether you share anything, and what, is entirely up to you.`}
-        </p>
-
-        <div className="space-y-3">
-          {routes.map((route, i) => (
-            <PlatformCard
-              key={route.platform}
-              route={route}
-              hero={i === 0 && tier === 1}
-              onOpen={() =>
-                logActivateEvent(token, sessionId, 'platform_click', {
-                  marketCode: market,
-                  entityCompanyId: entityId,
-                  platform: route.platform,
-                  tier: route.tier,
-                })
-              }
-            />
-          ))}
+    <>
+      <div className="flex w-full items-center justify-between gap-3">
+        <CompanyAvatar org={org} size={46} markSize={30} />
+        <div className="flex flex-col items-end gap-1">
+          <button onClick={onChange} className="act-context" data-prefilled={prefilled}>
+            <span>
+              Based in {countryName(market)}
+              {entityName ? ` · ${entityName}` : ''}
+            </span>
+            <span className="underline underline-offset-2" style={{ opacity: 0.75 }}>
+              change
+            </span>
+          </button>
+          {prefilled && <span className="act-prefill-caption">prefilled by the sender</span>}
         </div>
-      </StepCard>
+      </div>
+
+      {tier === 1 && statPct !== null ? (
+        <StatBlock
+          pct={statPct}
+          sentence={
+            <>
+              of AI answers about working at {org.display_name} in {countryInSentence(market)}{' '}
+              cite <strong className="font-bold">{platformName(top.platform)}</strong>.
+            </>
+          }
+          headingRef={headingRef}
+        />
+      ) : (
+        <div className="act-rise flex flex-col items-center gap-2 text-center">
+          <h2 ref={headingRef} tabIndex={-1} className="act-generic-heading outline-none">
+            These are the platforms AI leans on most for employer answers worldwide.
+          </h2>
+          <p className="act-generic-sub">
+            We don't measure {countryInSentence(market)} yet, so there's no local number to show
+            you.
+          </p>
+        </div>
+      )}
+
+      <p className="act-intro">
+        Here's where {who}. If you'd like to share your experience — that's entirely up to you.
+      </p>
+
+      <div className="act-cards flex w-full flex-col gap-3">
+        {routes.map((route, i) => (
+          <PlatformCard
+            key={route.platform}
+            route={route}
+            // The stat block already tells the top platform's story — repeating
+            // the same sentence on its card reads as a glitch.
+            hideRationale={i === 0 && tier === 1 && statPct !== null}
+            onOpen={() =>
+              logActivateEvent(token, sessionId, 'platform_click', {
+                marketCode: market,
+                entityCompanyId: entityId,
+                platform: route.platform,
+                tier: route.tier,
+              })
+            }
+          />
+        ))}
+      </div>
+
+      <footer className="mt-2 flex flex-col items-center gap-2.5 text-center">
+        <p className="act-honesty">We don't see what you write — or whether you write at all.</p>
+        <span className="act-px-pill">
+          <span className="act-px-dot" aria-hidden />
+          Routed by PerceptionX
+        </span>
+      </footer>
+    </>
+  );
+}
+
+function StatBlock({
+  pct,
+  sentence,
+  headingRef,
+}: {
+  pct: number;
+  sentence: ReactNode;
+  headingRef: React.RefObject<HTMLHeadingElement>;
+}) {
+  const [value, setValue] = useState(prefersReducedMotion() ? pct : 0);
+  useEffect(() => {
+    if (prefersReducedMotion()) {
+      setValue(pct);
+      return;
+    }
+    let raf = 0;
+    const t0 = performance.now();
+    const tick = (t: number) => {
+      const k = Math.min(1, (t - t0) / 900);
+      setValue(pct * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [pct]);
+
+  return (
+    <div className="act-rise flex flex-col items-center gap-2 text-center">
+      <div className="relative flex items-center justify-center">
+        <span className="act-ring" aria-hidden />
+        <h2 ref={headingRef} tabIndex={-1} className="act-stat outline-none" aria-label={`${pct}%`}>
+          {value.toFixed(1)}%
+        </h2>
+      </div>
+      <p className="act-stat-sentence">{sentence}</p>
     </div>
   );
 }
 
 function PlatformCard({
   route,
-  hero,
   onOpen,
+  hideRationale = false,
 }: {
   route: ActivateRoute;
-  hero: boolean;
   onOpen: () => void;
+  hideRationale?: boolean;
 }) {
-  const href = route.write_url ?? route.destination_url;
+  const [logoFailed, setLogoFailed] = useState(false);
+  const domain = PLATFORM_DOMAINS[route.platform];
+  const name = platformName(route.platform);
   // use_direct_link → strip the Referer too: a bare URL alone still announces
   // this page to the platform unless the anchor is noreferrer.
   const rel = route.use_direct_link ? 'noopener noreferrer' : 'noopener';
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel={rel}
-      onClick={onOpen}
-      className={`px-platform group ${hero ? 'px-platform-hero' : ''}`}
-    >
-      <div
-        className={`rounded-xl flex items-center justify-center font-headline font-bold shrink-0 ${
-          hero
-            ? 'h-12 w-12 text-xl bg-[var(--px-brand)] text-[var(--px-brand-fg)]'
-            : 'h-10 w-10 text-lg bg-[var(--px-accent)]/15 text-[var(--px-brand)]'
-        }`}
+    <div className="act-card act-rise-late overflow-hidden bg-white">
+      <a
+        href={route.destination_url}
+        target="_blank"
+        rel={rel}
+        onClick={onOpen}
+        className="flex items-center"
+        style={{ minHeight: 66, padding: '14px 18px', gap: 13 }}
+        aria-label={`${name} — opens in a new tab`}
       >
-        {platformName(route.platform).charAt(0)}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className={`font-headline font-bold ${hero ? 'text-base' : 'text-sm'}`}>
-            {platformName(route.platform)}
+        <span
+          className="flex shrink-0 items-center justify-center"
+          style={{ width: 34, height: 34, borderRadius: 9, background: '#F4F6F7' }}
+        >
+          {domain && !logoFailed ? (
+            <img
+              src={logoSrc(domain)}
+              alt=""
+              width={34}
+              height={34}
+              style={{ width: 34, height: 34, borderRadius: 9, objectFit: 'contain' }}
+              onError={() => setLogoFailed(true)}
+            />
+          ) : (
+            <span className="font-headline text-base font-semibold" style={{ color: '#13274F' }}>
+              {name.charAt(0)}
+            </span>
+          )}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-headline font-semibold" style={{ fontSize: 16.5, letterSpacing: '-.01em', color: '#13274F' }}>
+            {name}
           </span>
-          <ArrowUpRight className="h-4 w-4 text-slate-300 group-hover:text-[var(--px-brand)] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-        </div>
-        {route.rationale_stat ? (
-          <p className={`text-slate-600 mt-0.5 leading-snug ${hero ? 'text-sm' : 'text-xs'}`}>
-            {emphasizeStats(route.rationale_stat)}
-          </p>
-        ) : (
-          <p className="text-xs text-slate-400 mt-0.5">{hostOf(href)} · opens in a new tab</p>
-        )}
-      </div>
-    </a>
+          {route.rationale_stat && !hideRationale && (
+            <span className="block" style={{ fontSize: 12.5, lineHeight: 1.4, color: 'rgba(19,39,79,.6)' }}>
+              {route.rationale_stat}
+            </span>
+          )}
+        </span>
+        <ExternalLink size={16} aria-hidden style={{ color: 'rgba(19,39,79,.4)' }} />
+      </a>
+      {route.write_url && (
+        <a
+          href={route.write_url}
+          target="_blank"
+          rel={rel}
+          onClick={onOpen}
+          className="flex items-center justify-between font-semibold"
+          style={{
+            minHeight: 46,
+            padding: '0 18px',
+            borderTop: '1px solid rgba(19,39,79,.08)',
+            fontSize: 13.5,
+            color: 'var(--activate-primary)',
+          }}
+          aria-label={`Write on ${name} — opens in a new tab`}
+        >
+          Write on {name}
+          <ArrowRight size={13} aria-hidden />
+        </a>
+      )}
+    </div>
   );
 }
 
-// Brand-token-driven styling. Tints derive from the two tokens via color-mix;
-// solid fallbacks come first for older engines. Motion is decorative only and
-// fully disabled under prefers-reduced-motion.
+// ---------------------------------------------------------------------------
+// Dead link — neutral, no branding leakage
+// ---------------------------------------------------------------------------
+
+function DeadLink() {
+  return (
+    <div className="flex min-h-screen items-center justify-center p-6" style={{ background: '#F4F6F7' }}>
+      <div
+        className="flex w-full flex-col items-center gap-3 bg-white text-center"
+        style={{
+          maxWidth: 330,
+          borderRadius: 24,
+          border: '1px solid rgba(19,39,79,.1)',
+          padding: '30px 26px',
+        }}
+      >
+        <span
+          className="flex items-center justify-center rounded-full"
+          style={{ width: 44, height: 44, background: '#F4F6F7' }}
+        >
+          <AlertCircle size={22} aria-hidden style={{ color: 'rgba(19,39,79,.55)' }} />
+        </span>
+        <h1 className="font-headline font-semibold" style={{ fontSize: 19, color: '#13274F' }}>
+          This link isn't active
+        </h1>
+        <p style={{ fontSize: 14, lineHeight: 1.55, color: 'rgba(19,39,79,.62)' }}>
+          It may have expired or been withdrawn. If you were sent it by a colleague, ask them for
+          a fresh one.
+        </p>
+        <span
+          className="mt-1 inline-flex items-center gap-1.5 rounded-full font-medium"
+          style={{
+            padding: '7px 12px',
+            background: '#F4F6F7',
+            fontSize: 11,
+            letterSpacing: '.06em',
+            color: 'rgba(19,39,79,.76)',
+          }}
+        >
+          <span
+            aria-hidden
+            style={{ width: 6, height: 6, borderRadius: 999, background: '#DB5E89' }}
+          />
+          Routed by PerceptionX
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Canvas + component styling. Every translucent fill/border/muted text is a
+// color-mix of the computed on-colour, so arbitrary client tokens stay AA.
+// ---------------------------------------------------------------------------
+
 const activateCss = `
-.px-bg {
-  background: #f8fafc;
+.act-canvas {
   background:
-    radial-gradient(1200px 600px at 85% -10%, color-mix(in srgb, var(--px-accent) 14%, transparent), transparent 60%),
-    radial-gradient(1000px 700px at -10% 20%, color-mix(in srgb, var(--px-brand) 10%, transparent), transparent 55%),
-    #f8fafc;
+    radial-gradient(115% 85% at 12% -6%,
+      color-mix(in oklab, var(--activate-accent) 62%, var(--activate-primary)), transparent 62%),
+    radial-gradient(95% 70% at 100% 26%,
+      color-mix(in oklab, var(--activate-accent) 30%, var(--activate-primary)), transparent 58%),
+    radial-gradient(110% 80% at 82% 108%,
+      color-mix(in oklab, var(--activate-primary) 74%, #000), transparent 64%),
+    var(--activate-primary);
+  color: var(--activate-on);
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
 }
-.px-blob {
-  position: absolute; border-radius: 9999px; filter: blur(70px); opacity: .35; pointer-events: none;
+
+/* Float shapes */
+.act-blob { position: absolute; pointer-events: none; z-index: 0; }
+.act-blob-organic {
+  width: 190px; height: 190px; top: 8%; left: -60px;
+  border-radius: 46% 54% 60% 40% / 50% 44% 56% 50%;
+  background: color-mix(in srgb, var(--activate-on) 10%, transparent);
+  animation: act-drift-a 11s ease-in-out infinite alternate;
 }
-.px-blob-a { width: 340px; height: 340px; top: -120px; right: -80px; background: color-mix(in srgb, var(--px-accent) 45%, white); animation: px-drift 16s ease-in-out infinite alternate; }
-.px-blob-b { width: 300px; height: 300px; bottom: -100px; left: -100px; background: color-mix(in srgb, var(--px-brand) 35%, white); animation: px-drift 20s ease-in-out infinite alternate-reverse; }
-@keyframes px-drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(30px, 24px) scale(1.08); } }
-.px-step { animation: px-rise .35s ease both; }
-@keyframes px-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.act-blob-ring {
+  width: 220px; height: 220px; top: 55%; right: -90px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--activate-on) 22%, transparent);
+  animation: act-drift-b 13s ease-in-out infinite alternate;
+}
+.act-blob-accent {
+  width: 96px; height: 96px; bottom: 6%; left: 12%;
+  border-radius: 42% 58% 52% 48% / 55% 45% 55% 45%;
+  background: color-mix(in oklab, var(--activate-accent) 55%, transparent);
+  animation: act-drift-a 9s ease-in-out infinite alternate-reverse;
+}
+@keyframes act-drift-a { from { transform: translate(0,0) rotate(0); } to { transform: translate(14px,18px) rotate(7deg); } }
+@keyframes act-drift-b { from { transform: translate(0,0) rotate(0); } to { transform: translate(-16px,12px) rotate(-6deg); } }
+@media (min-width: 768px) {
+  .act-blob-organic { left: 4%; transform: scale(1.6); }
+  .act-blob-ring { right: 6%; transform: scale(1.6); }
+  .act-blob-accent { left: 8%; }
+}
+
+/* Step transition + rises */
+.act-step { animation: act-step-in 360ms cubic-bezier(.2,.8,.2,1) both; }
+@keyframes act-step-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.act-avatar-entry { animation: act-pop 500ms cubic-bezier(.2,.8,.2,1) both; }
+@keyframes act-pop { 0% { transform: scale(.86); opacity: 0; } 70% { transform: scale(1.03); opacity: 1; } 100% { transform: scale(1); } }
+.act-rise { animation: act-rise 520ms cubic-bezier(.2,.8,.2,1) 80ms both; }
+.act-rise-late { animation: act-rise 500ms cubic-bezier(.2,.8,.2,1) 160ms both; }
+@keyframes act-rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+
+/* Type */
+.act-display {
+  font-family: 'Geologica', sans-serif; font-weight: 700;
+  font-size: 27px; line-height: 1.1; letter-spacing: -.02em;
+}
+.act-tagline { font-size: 14px; line-height: 1.5; color: color-mix(in srgb, var(--activate-on) 72%, transparent); }
+.act-blurb {
+  font-size: 15px; line-height: 1.55; max-width: 300px; text-align: center;
+  text-wrap: pretty; color: color-mix(in srgb, var(--activate-on) 88%, transparent);
+}
+.act-question {
+  font-family: 'Geologica', sans-serif; font-weight: 600;
+  font-size: 20px; line-height: 1.2; letter-spacing: -.015em; text-align: center;
+}
+.act-hint {
+  font-size: 14px; line-height: 1.55; max-width: 290px; text-align: center;
+  color: color-mix(in srgb, var(--activate-on) 72%, transparent);
+}
+.act-eyebrow {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--activate-on) 62%, transparent);
+}
+.act-dot { width: 20px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--activate-on) 32%, transparent); }
+.act-dot[data-filled="true"] { background: var(--activate-on); }
+
+/* Search */
+.act-search {
+  display: flex; align-items: center; gap: 10px; height: 50px;
+  border-radius: 999px; padding: 0 16px;
+  background: color-mix(in srgb, var(--activate-on) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--activate-on) 28%, transparent);
+}
+.act-search:focus-within { border-color: color-mix(in srgb, var(--activate-on) 55%, transparent); }
+.act-search-icon { color: color-mix(in srgb, var(--activate-on) 70%, transparent); }
+.act-search input {
+  flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+  font-size: 15px; font-weight: 500; color: var(--activate-on);
+}
+.act-search input::placeholder { color: color-mix(in srgb, var(--activate-on) 55%, transparent); }
+
+/* Pills */
+.act-pill-solid {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  min-height: 56px; padding: 0 18px; border-radius: 999px;
+  background: #fff; border: none; box-shadow: 0 6px 16px rgba(0,0,0,.14);
+  font-size: 15.5px; font-weight: 600; color: #13274F;
+  transition: transform 180ms; cursor: pointer;
+}
+.act-pill-solid:hover, .act-pill-solid:active { transform: translateY(-2px); }
+.act-measured-chip {
+  font-size: 9.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  padding: 5px 8px; border-radius: 999px;
+  background: color-mix(in oklab, var(--activate-accent) 20%, #fff);
+  color: color-mix(in oklab, var(--activate-accent) 80%, #13274F);
+}
+.act-pill-ghost {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  min-height: 50px; padding: 0 18px; border-radius: 999px;
+  background: color-mix(in srgb, var(--activate-on) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--activate-on) 30%, transparent);
+  font-size: 15px; font-weight: 500; color: var(--activate-on);
+  transition: background 180ms; cursor: pointer;
+}
+.act-pill-ghost:hover { background: color-mix(in srgb, var(--activate-on) 22%, transparent); }
+.act-scroll { max-height: 184px; }
+@media (min-width: 768px) { .act-scroll { max-height: 320px; } }
+
+/* Entity chips */
+.act-entity {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  min-height: 60px; padding: 0 20px; border-radius: 999px;
+  background: #fff; border: none; box-shadow: 0 6px 16px rgba(0,0,0,.14);
+  font-family: 'Geologica', sans-serif; font-weight: 500;
+  font-size: 17px; letter-spacing: -.01em; color: #13274F;
+  transition: transform 180ms; cursor: pointer;
+}
+.act-entity:hover, .act-entity:active { transform: translateY(-2px); }
+
+/* Back */
+.act-back {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 44px;
+  background: transparent; border: none; cursor: pointer;
+  font-size: 14px; font-weight: 600;
+  color: color-mix(in srgb, var(--activate-on) 82%, transparent);
+}
+
+/* Context pill */
+.act-context {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px;
+  padding: 0 14px; border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--activate-on) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--activate-on) 34%, transparent);
+  font-size: 12.5px; font-weight: 600; color: var(--activate-on); text-align: left;
+}
+.act-context[data-prefilled="true"] {
+  background: color-mix(in srgb, var(--activate-on) 22%, transparent);
+  border-color: color-mix(in srgb, var(--activate-on) 52%, transparent);
+}
+.act-prefill-caption { font-size: 11px; color: color-mix(in srgb, var(--activate-on) 58%, transparent); }
+
+/* Stat block */
+.act-stat {
+  font-family: 'Geologica', sans-serif; font-weight: 700;
+  font-size: 66px; line-height: 1; letter-spacing: -.04em;
+  font-variant-numeric: tabular-nums; position: relative; z-index: 1;
+}
+@media (min-width: 768px) { .act-stat { font-size: 88px; } }
+.act-ring {
+  position: absolute; width: 96px; height: 96px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--activate-on) 45%, transparent);
+  animation: act-pulse 1.5s ease-out 500ms both;
+}
+@keyframes act-pulse { from { transform: scale(.55); opacity: 1; } to { transform: scale(2); opacity: 0; } }
+.act-stat-sentence {
+  font-size: 16px; line-height: 1.45; max-width: 300px;
+  color: color-mix(in srgb, var(--activate-on) 88%, transparent);
+}
+.act-generic-heading {
+  font-family: 'Geologica', sans-serif; font-weight: 600;
+  font-size: 25px; line-height: 1.2; max-width: 320px;
+}
+.act-generic-sub { font-size: 14px; color: color-mix(in srgb, var(--activate-on) 68%, transparent); }
+.act-intro {
+  font-size: 14.5px; line-height: 1.55; max-width: 320px; text-align: center;
+  color: color-mix(in srgb, var(--activate-on) 74%, transparent);
+}
+
+/* Route cards */
+.act-card { border-radius: 24px; box-shadow: 0 8px 20px rgba(0,0,0,.16); }
+
+/* Footer */
+.act-honesty {
+  font-size: 12.5px; line-height: 1.5; max-width: 300px;
+  color: color-mix(in srgb, var(--activate-on) 66%, transparent);
+}
+.act-px-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 999px;
+  background: color-mix(in srgb, var(--activate-on) 12%, transparent);
+  font-size: 11px; font-weight: 500; letter-spacing: .06em;
+  color: color-mix(in srgb, var(--activate-on) 76%, transparent);
+}
+.act-px-dot { width: 6px; height: 6px; border-radius: 999px; background: #DB5E89; }
+
+/* Spinner */
+.act-spinner {
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 2.5px solid color-mix(in srgb, var(--activate-on) 26%, transparent);
+  border-top-color: var(--activate-on);
+  animation: act-spin 900ms linear infinite;
+}
+@keyframes act-spin { to { transform: rotate(360deg); } }
+
 @media (prefers-reduced-motion: reduce) {
-  .px-blob, .px-step { animation: none; }
-}
-.px-chip {
-  display: inline-flex; align-items: center; gap: .375rem;
-  border-radius: 9999px; border: 1px solid rgb(226 232 240);
-  background: white; padding: .5rem .875rem; font-size: .875rem; font-weight: 500;
-  transition: border-color .15s, background .15s;
-}
-.px-chip:hover { border-color: var(--px-brand); }
-.px-chip-active { background: var(--px-brand); border-color: var(--px-brand); color: var(--px-brand-fg); }
-.px-entity {
-  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
-  border-radius: 1rem; border: 1px solid rgb(226 232 240); background: white;
-  padding: .875rem 1rem; font-size: .875rem; font-weight: 600; text-align: left;
-  min-height: 44px; transition: border-color .15s, box-shadow .15s;
-}
-.px-entity:hover { border-color: var(--px-brand); box-shadow: 0 2px 12px -4px color-mix(in srgb, var(--px-brand) 35%, transparent); }
-.px-entity-active { border-color: var(--px-brand); background: color-mix(in srgb, var(--px-brand) 6%, white); }
-.px-platform {
-  display: flex; align-items: center; gap: .875rem;
-  border-radius: 1.25rem; border: 1px solid rgb(226 232 240); background: white;
-  padding: .875rem 1rem; transition: border-color .15s, box-shadow .15s, transform .15s;
-}
-.px-platform:hover { border-color: var(--px-brand); box-shadow: 0 6px 24px -8px color-mix(in srgb, var(--px-brand) 40%, transparent); transform: translateY(-1px); }
-.px-platform-hero {
-  border-color: color-mix(in srgb, var(--px-brand) 35%, rgb(226 232 240));
-  background: linear-gradient(135deg, color-mix(in srgb, var(--px-brand) 5%, white), color-mix(in srgb, var(--px-accent) 7%, white));
-  padding: 1.125rem 1.125rem;
+  .act-blob, .act-step, .act-avatar-entry, .act-rise, .act-rise-late, .act-ring { animation: none; }
+  .act-ring { opacity: 0; }
+  .act-pill-solid:hover, .act-pill-solid:active,
+  .act-entity:hover, .act-entity:active { transform: none; }
 }
 `;

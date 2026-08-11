@@ -131,6 +131,7 @@ activate_link_events
 
 activate_branding
   org_id pk, display_name, tagline, blurb, logo_url null
+  logo_domain null            -- logo.dev lookup domain; initials fallback
   primary_color, accent_color -- the two tokens the whole page derives from
 
 activate_org_settings
