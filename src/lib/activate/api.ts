@@ -34,13 +34,27 @@ export interface ActivateEntity {
 export interface ActivateRoute {
   market_code: string | null;
   tier: 1 | 2 | 3;
+  /** 'review' = the measured tiered mechanic; 'social' = public conversation. */
+  channel: 'review' | 'social';
   platform: string;
   destination_url: string;
   write_url: string | null;
   rationale_stat: string | null;
+  /** Card sub-line for social rows (never a market statistic). */
+  fit_note: string | null;
+  /** Affinity for ranking the social section; null = everyone. */
+  audience_functions: string[] | null;
+  audience_seniority: string[] | null;
   rank: number;
   use_direct_link: boolean;
   entity_company_id: string | null;
+}
+
+export interface ActivateTheme {
+  market_code: string | null;
+  theme: string;
+  detail: string | null;
+  rank: number;
 }
 
 export interface ActivateConfig {
@@ -50,6 +64,7 @@ export interface ActivateConfig {
   prefill_entity_company_id: string | null;
   entities: ActivateEntity[];
   routes: ActivateRoute[];
+  themes: ActivateTheme[];
 }
 
 export type ActivateTokenError = 'not_found' | 'expired' | 'revoked' | string;
@@ -82,7 +97,11 @@ export async function getActivateByToken(
   return { config: data as ActivateConfig };
 }
 
-export type ActivateEventType = 'market_declared' | 'entity_declared' | 'platform_click';
+export type ActivateEventType =
+  | 'market_declared'
+  | 'entity_declared'
+  | 'profile_declared'
+  | 'platform_click';
 
 /** Fire-and-forget: event loss must never block the recipient's flow. */
 export function logActivateEvent(
@@ -94,6 +113,8 @@ export function logActivateEvent(
     entityCompanyId?: string | null;
     platform?: string | null;
     tier?: number | null;
+    functionId?: string | null;
+    seniorityId?: string | null;
   } = {},
 ): void {
   void rpc('activate_log_event', {
@@ -104,6 +125,8 @@ export function logActivateEvent(
     p_entity_company_id: fields.entityCompanyId ?? null,
     p_platform: fields.platform ?? null,
     p_tier: fields.tier ?? null,
+    p_function: fields.functionId ?? null,
+    p_seniority: fields.seniorityId ?? null,
   }).then(
     () => undefined,
     () => undefined,
@@ -121,18 +144,20 @@ export interface ResolvedRoutes {
 }
 
 /**
- * Resolve the route list for a declared market + entity. Market rows (tier 1/2)
- * win over the tier-3 global rows; within a market, an entity-specific row
- * beats the entity-agnostic row for the same platform. Entity rows for *other*
- * entities never show.
+ * Resolve the route list for a declared market + entity, within one channel.
+ * Market rows (tier 1/2) win over the tier-3 global rows; within a market, an
+ * entity-specific row beats the entity-agnostic row for the same platform.
+ * Entity rows for *other* entities never show.
  */
 export function resolveRoutes(
   all: ActivateRoute[],
   marketCode: string,
   entityCompanyId: string | null,
+  channel: 'review' | 'social' = 'review',
 ): ResolvedRoutes {
-  const pool = all.filter((r) => r.market_code === marketCode);
-  const effective = pool.length > 0 ? pool : all.filter((r) => r.market_code === null);
+  const inChannel = all.filter((r) => r.channel === channel);
+  const pool = inChannel.filter((r) => r.market_code === marketCode);
+  const effective = pool.length > 0 ? pool : inChannel.filter((r) => r.market_code === null);
 
   const byPlatform = new Map<string, ActivateRoute>();
   for (const route of effective) {
@@ -169,6 +194,54 @@ export function measuredMarketCodes(all: ActivateRoute[]): string[] {
 export function parseStatPct(text: string | null): number | null {
   const m = /(\d+(?:\.\d+)?)\s*%/.exec(text ?? '');
   return m ? parseFloat(m[1]) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Optional profile declaration (function + seniority)
+//
+// Review routing NEVER keys on these — the baseline measured that function
+// does not move the review-platform mix. They rank the social section only
+// (where a person actually has a voice is demographic) and are stored as
+// declared signal on events.
+// ---------------------------------------------------------------------------
+
+export interface ProfileOption {
+  id: string;
+  label: string;
+}
+
+export const JOB_FUNCTIONS: ProfileOption[] = [
+  { id: 'engineering-tech', label: 'Engineering & Tech' },
+  { id: 'science-rd', label: 'Science & R&D' },
+  { id: 'manufacturing-ops', label: 'Manufacturing & Operations' },
+  { id: 'healthcare-medical', label: 'Medical & Healthcare' },
+  { id: 'commercial-sales', label: 'Commercial & Sales' },
+  { id: 'corporate-functions', label: 'Corporate functions' },
+];
+
+export const SENIORITIES: ProfileOption[] = [
+  { id: 'early-career', label: 'Early career' },
+  { id: 'mid-level', label: 'Mid-level' },
+  { id: 'senior', label: 'Senior' },
+  { id: 'executive', label: 'Executive' },
+];
+
+/**
+ * Order social routes for a declared profile: affinity matches float up
+ * (ranking, never filtering — everyone sees every social route), ties keep
+ * curated rank. Returns [routes, matchedPlatforms].
+ */
+export function rankSocialRoutes(
+  routes: ActivateRoute[],
+  functionId: string | null,
+  seniorityId: string | null,
+): { routes: ActivateRoute[]; matched: Set<string> } {
+  const score = (r: ActivateRoute) =>
+    (functionId && r.audience_functions?.includes(functionId) ? 1 : 0) +
+    (seniorityId && r.audience_seniority?.includes(seniorityId) ? 1 : 0);
+  const matched = new Set(routes.filter((r) => score(r) > 0).map((r) => r.platform));
+  const ordered = [...routes].sort((a, b) => score(b) - score(a) || a.rank - b.rank);
+  return { routes: ordered, matched };
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +367,37 @@ export async function revokeActivateLink(linkId: string): Promise<void> {
     .update({ revoked_at: new Date().toISOString() })
     .eq('id', linkId)
     .is('revoked_at', null);
+  if (error) throw error;
+}
+
+export interface ActivateBrandingRow {
+  org_id: string;
+  display_name: string;
+  tagline: string | null;
+  blurb: string | null;
+  logo_url: string | null;
+  logo_domain: string | null;
+  primary_color: string;
+  accent_color: string;
+}
+
+export async function getActivateBranding(orgId: string): Promise<ActivateBrandingRow | null> {
+  const { data, error } = await table('activate_branding')
+    .select('org_id, display_name, tagline, blurb, logo_url, logo_domain, primary_color, accent_color')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as ActivateBrandingRow) ?? null;
+}
+
+export async function saveActivateBranding(row: ActivateBrandingRow): Promise<void> {
+  const { error } = await table('activate_branding').upsert({
+    ...row,
+    tagline: row.tagline || null,
+    blurb: row.blurb || null,
+    logo_url: row.logo_url || null,
+    logo_domain: row.logo_domain || null,
+  });
   if (error) throw error;
 }
 

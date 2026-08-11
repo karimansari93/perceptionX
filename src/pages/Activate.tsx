@@ -30,10 +30,13 @@ import {
   countryInSentence,
   countryName,
   getActivateByToken,
+  JOB_FUNCTIONS,
   logActivateEvent,
   measuredMarketCodes,
   parseStatPct,
+  rankSocialRoutes,
   resolveRoutes,
+  SENIORITIES,
 } from '@/lib/activate/api';
 
 type LoadState =
@@ -41,7 +44,7 @@ type LoadState =
   | { kind: 'invalid' }
   | { kind: 'ready'; config: ActivateConfig };
 
-type Step = 'country' | 'entity' | 'routes';
+type Step = 'country' | 'entity' | 'profile' | 'routes';
 
 const UNSURE = 'unsure';
 
@@ -57,6 +60,10 @@ const PLATFORM_NAMES: Record<string, string> = {
   glassdoor: 'Glassdoor',
   indeed: 'Indeed',
   seek: 'Seek',
+  linkedin: 'LinkedIn',
+  reddit: 'Reddit',
+  instagram: 'Instagram',
+  tiktok: 'TikTok',
 };
 
 const PLATFORM_DOMAINS: Record<string, string> = {
@@ -64,6 +71,10 @@ const PLATFORM_DOMAINS: Record<string, string> = {
   glassdoor: 'glassdoor.com',
   indeed: 'indeed.com',
   seek: 'seek.com.au',
+  linkedin: 'linkedin.com',
+  reddit: 'reddit.com',
+  instagram: 'instagram.com',
+  tiktok: 'tiktok.com',
 };
 
 function platformName(key: string): string {
@@ -96,6 +107,8 @@ export default function Activate() {
   const [step, setStep] = useState<Step>('country');
   const [market, setMarket] = useState<string | null>(null);
   const [entityId, setEntityId] = useState<string | null>(null); // company id or UNSURE
+  const [functionId, setFunctionId] = useState<string | null>(null);
+  const [seniorityId, setSeniorityId] = useState<string | null>(null);
   const [prefilled, setPrefilled] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const mountedOnce = useRef(false);
@@ -197,6 +210,19 @@ export default function Activate() {
       marketCode: market,
       entityCompanyId: id === UNSURE ? null : id,
     });
+    setStep('profile');
+  };
+
+  const declareProfile = (fn: string | null, sen: string | null) => {
+    setFunctionId(fn);
+    setSeniorityId(sen);
+    if (fn || sen) {
+      logActivateEvent(token!, sessionId, 'profile_declared', {
+        marketCode: market,
+        functionId: fn,
+        seniorityId: sen,
+      });
+    }
     setStep('routes');
   };
 
@@ -224,6 +250,15 @@ export default function Activate() {
               headingRef={headingRef}
             />
           )}
+          {step === 'profile' && (
+            <ProfileStep
+              onDone={declareProfile}
+              onBack={() => setStep('entity')}
+              initialFunction={functionId}
+              initialSeniority={seniorityId}
+              headingRef={headingRef}
+            />
+          )}
           {step === 'routes' && market && (
             <RoutesStep
               token={token!}
@@ -238,6 +273,13 @@ export default function Activate() {
               }
               entityId={entityId === UNSURE ? null : entityId}
               resolved={resolveRoutes(config.routes, market, entityId === UNSURE ? null : entityId)}
+              social={rankSocialRoutes(
+                resolveRoutes(config.routes, market, entityId === UNSURE ? null : entityId, 'social')
+                  .routes,
+                functionId,
+                seniorityId,
+              )}
+              themes={config.themes}
               prefilled={prefilled}
               onChange={() => {
                 setPrefilled(false);
@@ -333,14 +375,17 @@ function CompanyAvatar({
   );
 }
 
-function StepDots({ step }: { step: 1 | 2 }) {
+// Three steps now (the profile step is skippable) — a deliberate deviation
+// from the two-step handoff, driven by the function/seniority gathering ask.
+function StepDots({ step }: { step: 1 | 2 | 3 }) {
   return (
     <div className="flex flex-col items-center gap-1.5">
       <div className="flex gap-1.5">
         <span className="act-dot" data-filled="true" />
-        <span className="act-dot" data-filled={step === 2} />
+        <span className="act-dot" data-filled={step >= 2} />
+        <span className="act-dot" data-filled={step === 3} />
       </div>
-      <span className="act-eyebrow">Step {step} of 2</span>
+      <span className="act-eyebrow">Step {step} of 3</span>
     </div>
   );
 }
@@ -514,7 +559,93 @@ function EntityStep({
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 — routes (payoff)
+// Step 3 — optional profile (function + seniority)
+//
+// Review routing never keys on these (measured: function doesn't move the
+// review mix). They rank the social section and are gathered as signal.
+// ---------------------------------------------------------------------------
+
+function ProfileStep({
+  onDone,
+  onBack,
+  initialFunction,
+  initialSeniority,
+  headingRef,
+}: {
+  onDone: (functionId: string | null, seniorityId: string | null) => void;
+  onBack: () => void;
+  initialFunction: string | null;
+  initialSeniority: string | null;
+  headingRef: React.RefObject<HTMLHeadingElement>;
+}) {
+  const [fn, setFn] = useState<string | null>(initialFunction);
+  const [sen, setSen] = useState<string | null>(initialSeniority);
+  return (
+    <>
+      <div className="flex w-full items-center justify-between">
+        <button onClick={onBack} className="act-back">
+          <ChevronLeft size={15} aria-hidden />
+          Back
+        </button>
+        <StepDots step={3} />
+      </div>
+      <h2
+        ref={headingRef}
+        tabIndex={-1}
+        className="act-question outline-none"
+        style={{ fontSize: 22 }}
+      >
+        Last one — what kind of work do you do?
+      </h2>
+      <p className="act-hint">
+        Optional. It helps us point at the places where people like you actually get heard.
+      </p>
+
+      <p className="act-eyebrow self-start">Your kind of work</p>
+      <div className="flex w-full flex-wrap gap-2">
+        {JOB_FUNCTIONS.map((o) => (
+          <button
+            key={o.id}
+            onClick={() => setFn(fn === o.id ? null : o.id)}
+            className="act-select-chip"
+            data-on={fn === o.id}
+            aria-pressed={fn === o.id}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      <p className="act-eyebrow self-start" style={{ marginTop: 4 }}>
+        Seniority
+      </p>
+      <div className="flex w-full flex-wrap gap-2">
+        {SENIORITIES.map((o) => (
+          <button
+            key={o.id}
+            onClick={() => setSen(sen === o.id ? null : o.id)}
+            className="act-select-chip"
+            data-on={sen === o.id}
+            aria-pressed={sen === o.id}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      <button onClick={() => onDone(fn, sen)} className="act-primary-btn mt-2">
+        Show my places
+        <ArrowRight size={16} aria-hidden />
+      </button>
+      <button onClick={() => onDone(null, null)} className="act-skip">
+        Skip
+      </button>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 4 — routes (payoff)
 // ---------------------------------------------------------------------------
 
 function RoutesStep({
@@ -526,6 +657,8 @@ function RoutesStep({
   entityName,
   entityId,
   resolved,
+  social,
+  themes,
   prefilled,
   onChange,
   headingRef,
@@ -538,10 +671,18 @@ function RoutesStep({
   entityName: string | null;
   entityId: string | null;
   resolved: ReturnType<typeof resolveRoutes>;
+  social: ReturnType<typeof rankSocialRoutes>;
+  themes: ActivateConfig['themes'];
   prefilled: boolean;
   onChange: () => void;
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
+  // Market-specific theme weights win over the portfolio-wide set.
+  const marketThemes = themes.filter((t) => t.market_code === market);
+  const shownThemes = (marketThemes.length > 0
+    ? marketThemes
+    : themes.filter((t) => t.market_code === null)
+  ).slice(0, 5);
   const { tier, routes } = resolved;
   const top = routes[0];
   const statPct = tier === 1 ? parseStatPct(top?.rationale_stat ?? null) : null;
@@ -618,6 +759,51 @@ function RoutesStep({
         ))}
       </div>
 
+      {social.routes.length > 0 && (
+        <section className="act-rise-late mt-3 flex w-full flex-col items-center gap-3">
+          <p className="act-eyebrow">Beyond reviews</p>
+          <h3 className="act-question" style={{ fontSize: 19 }}>
+            AI reads the public conversation too
+          </h3>
+          {shownThemes.length > 0 && (
+            <>
+              <p className="act-intro" style={{ maxWidth: 320 }}>
+                Right now, these themes carry the most weight in how AI describes working at{' '}
+                {org.display_name}:
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {shownThemes.map((t) => (
+                  <span key={t.theme} className="act-theme-chip">
+                    {t.theme}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+          <p className="act-intro" style={{ maxWidth: 320 }}>
+            If you ever post about your work life, these are the places AI listens. What you make
+            of any of it is yours.
+          </p>
+          <div className="flex w-full flex-col gap-3">
+            {social.routes.map((route) => (
+              <PlatformCard
+                key={route.platform}
+                route={route}
+                matched={social.matched.has(route.platform)}
+                onOpen={() =>
+                  logActivateEvent(token, sessionId, 'platform_click', {
+                    marketCode: market,
+                    entityCompanyId: entityId,
+                    platform: route.platform,
+                    tier: route.tier,
+                  })
+                }
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
       <footer className="mt-2 flex flex-col items-center gap-2.5 text-center">
         <p className="act-honesty">We don't see what you write — or whether you write at all.</p>
         <span className="act-px-pill">
@@ -672,14 +858,18 @@ function PlatformCard({
   route,
   onOpen,
   hideRationale = false,
+  matched = false,
 }: {
   route: ActivateRoute;
   onOpen: () => void;
   hideRationale?: boolean;
+  /** Social affinity match for the declared profile — floats up + gets a chip. */
+  matched?: boolean;
 }) {
   const [logoFailed, setLogoFailed] = useState(false);
   const domain = PLATFORM_DOMAINS[route.platform];
   const name = platformName(route.platform);
+  const subLine = route.rationale_stat ?? route.fit_note;
   // use_direct_link → strip the Referer too: a bare URL alone still announces
   // this page to the platform unless the anchor is noreferrer.
   const rel = route.use_direct_link ? 'noopener noreferrer' : 'noopener';
@@ -714,12 +904,15 @@ function PlatformCard({
           )}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block font-headline font-semibold" style={{ fontSize: 16.5, letterSpacing: '-.01em', color: '#13274F' }}>
-            {name}
+          <span className="flex items-center gap-2">
+            <span className="font-headline font-semibold" style={{ fontSize: 16.5, letterSpacing: '-.01em', color: '#13274F' }}>
+              {name}
+            </span>
+            {matched && <span className="act-measured-chip">Your world</span>}
           </span>
-          {route.rationale_stat && !hideRationale && (
+          {subLine && !hideRationale && (
             <span className="block" style={{ fontSize: 12.5, lineHeight: 1.4, color: 'rgba(19,39,79,.6)' }}>
-              {route.rationale_stat}
+              {subLine}
             </span>
           )}
         </span>
@@ -984,6 +1177,44 @@ const activateCss = `
 
 /* Route cards */
 .act-card { border-radius: 24px; box-shadow: 0 8px 20px rgba(0,0,0,.16); }
+
+/* Profile step */
+.act-select-chip {
+  display: inline-flex; align-items: center; min-height: 44px;
+  padding: 0 16px; border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--activate-on) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--activate-on) 30%, transparent);
+  font-size: 14px; font-weight: 500; color: var(--activate-on);
+  transition: background 180ms, transform 180ms;
+}
+.act-select-chip:hover { background: color-mix(in srgb, var(--activate-on) 22%, transparent); }
+.act-select-chip[data-on="true"] {
+  background: #fff; border-color: #fff; color: #13274F; font-weight: 600;
+  box-shadow: 0 6px 16px rgba(0,0,0,.14);
+}
+.act-primary-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 56px; padding: 0 26px; border-radius: 999px; border: none; cursor: pointer;
+  background: #fff; color: #13274F; box-shadow: 0 6px 16px rgba(0,0,0,.14);
+  font-family: 'Geologica', sans-serif; font-weight: 600; font-size: 16px;
+  transition: transform 180ms;
+}
+.act-primary-btn:hover { transform: translateY(-2px); }
+.act-skip {
+  background: transparent; border: none; cursor: pointer; min-height: 44px;
+  font-size: 14px; font-weight: 600;
+  color: color-mix(in srgb, var(--activate-on) 62%, transparent);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+
+/* Theme chips — topic visibility, never sentiment */
+.act-theme-chip {
+  display: inline-flex; align-items: center; min-height: 34px;
+  padding: 0 14px; border-radius: 999px;
+  background: color-mix(in srgb, var(--activate-on) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--activate-on) 32%, transparent);
+  font-size: 13px; font-weight: 600; color: var(--activate-on);
+}
 
 /* Footer */
 .act-honesty {

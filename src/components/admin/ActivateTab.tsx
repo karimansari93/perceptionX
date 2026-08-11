@@ -31,6 +31,7 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   ActivateAdminRoute,
   ActivateAudience,
+  ActivateBrandingRow,
   ActivateLink,
   ActivateLinkStats,
   ActivateOrgSettings,
@@ -38,11 +39,13 @@ import {
   confirmActivateConsent,
   countryName,
   createActivateLink,
+  getActivateBranding,
   getActivateLinkStats,
   getActivateOrgSettings,
   listActivateLinks,
   listActivateRoutes,
   revokeActivateLink,
+  saveActivateBranding,
 } from '@/lib/activate/api';
 
 interface OrgOption {
@@ -61,6 +64,7 @@ export const ActivateTab = () => {
   const [orgs, setOrgs] = useState<OrgOption[]>([]);
   const [orgId, setOrgId] = useState<string>('');
   const [settings, setSettings] = useState<ActivateOrgSettings | null>(null);
+  const [branding, setBranding] = useState<ActivateBrandingRow | null>(null);
   const [links, setLinks] = useState<ActivateLink[]>([]);
   const [stats, setStats] = useState<Record<string, ActivateLinkStats>>({});
   const [routes, setRoutes] = useState<ActivateAdminRoute[]>([]);
@@ -81,17 +85,20 @@ export const ActivateTab = () => {
     if (!orgId) return;
     setLoading(true);
     try {
-      const [orgSettings, orgLinks, orgStats, orgRoutes, entityRows] = await Promise.all([
-        getActivateOrgSettings(orgId),
-        listActivateLinks(orgId),
-        getActivateLinkStats(orgId),
-        listActivateRoutes(orgId),
-        supabase
-          .from('organization_companies')
-          .select('companies(id, name)')
-          .eq('organization_id', orgId),
-      ]);
+      const [orgSettings, orgBranding, orgLinks, orgStats, orgRoutes, entityRows] =
+        await Promise.all([
+          getActivateOrgSettings(orgId),
+          getActivateBranding(orgId),
+          listActivateLinks(orgId),
+          getActivateLinkStats(orgId),
+          listActivateRoutes(orgId),
+          supabase
+            .from('organization_companies')
+            .select('companies(id, name)')
+            .eq('organization_id', orgId),
+        ]);
       setSettings(orgSettings);
+      setBranding(orgBranding);
       setLinks(orgLinks);
       setStats(Object.fromEntries(orgStats.map((s) => [s.link_id, s])));
       setRoutes(orgRoutes);
@@ -192,6 +199,14 @@ export const ActivateTab = () => {
             )}
           </div>
 
+          {/* Branding */}
+          <BrandingCard
+            orgId={orgId}
+            orgName={orgs.find((o) => o.id === orgId)?.name ?? ''}
+            branding={branding}
+            onSaved={refresh}
+          />
+
           {/* Links */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
@@ -266,6 +281,175 @@ export const ActivateTab = () => {
     </div>
   );
 };
+
+/**
+ * Per-client look of the recipient page. The whole page derives from the two
+ * color tokens + the logo domain, so this is the entire design surface —
+ * changes are live on every open link as soon as they're saved.
+ */
+function BrandingCard({
+  orgId,
+  orgName,
+  branding,
+  onSaved,
+}: {
+  orgId: string;
+  orgName: string;
+  branding: ActivateBrandingRow | null;
+  onSaved: () => void;
+}) {
+  const empty: ActivateBrandingRow = {
+    org_id: orgId,
+    display_name: orgName,
+    tagline: null,
+    blurb: null,
+    logo_url: null,
+    logo_domain: null,
+    primary_color: '#13274F',
+    accent_color: '#DB5E89',
+  };
+  const [form, setForm] = useState<ActivateBrandingRow>(branding ?? empty);
+  const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  // Re-sync when the org (or freshly loaded branding) changes.
+  useEffect(() => {
+    setForm(branding ?? empty);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branding, orgId]);
+
+  const set = (patch: Partial<ActivateBrandingRow>) => setForm((f) => ({ ...f, ...patch }));
+  const validHex = (v: string) => /^#[0-9a-fA-F]{6}$/.test(v);
+
+  const save = async () => {
+    if (!form.display_name.trim()) {
+      toast.error('Display name is required');
+      return;
+    }
+    if (!validHex(form.primary_color) || !validHex(form.accent_color)) {
+      toast.error('Colors must be 6-digit hex values like #003D6B');
+      return;
+    }
+    setSaving(true);
+    try {
+      await saveActivateBranding({ ...form, display_name: form.display_name.trim() });
+      toast.success('Branding saved — live on every open link');
+      onSaved();
+    } catch {
+      toast.error('Could not save branding');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border">
+      <button
+        className="flex w-full items-center justify-between p-4 text-left"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <div className="flex items-center gap-3">
+          {/* Live swatch of the recipient-page canvas */}
+          <span
+            className="flex h-10 w-16 items-center justify-center rounded-md text-xs font-bold text-white"
+            style={{
+              background: `radial-gradient(120% 120% at 15% 0%, ${form.accent_color}, transparent 65%), ${form.primary_color}`,
+            }}
+          >
+            {form.display_name.charAt(0)}
+          </span>
+          <div>
+            <p className="text-sm font-semibold">Branding</p>
+            <p className="text-xs text-muted-foreground">
+              {form.display_name}
+              {form.tagline ? ` · ${form.tagline}` : ''} — the page derives everything from these
+              tokens
+            </p>
+          </div>
+        </div>
+        <span className="text-xs text-muted-foreground">{open ? 'Hide' : 'Edit'}</span>
+      </button>
+
+      {open && (
+        <div className="space-y-3 border-t p-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="b-name">Display name</Label>
+              <Input
+                id="b-name"
+                value={form.display_name}
+                onChange={(e) => set({ display_name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="b-domain">Logo domain (logo.dev)</Label>
+              <Input
+                id="b-domain"
+                value={form.logo_domain ?? ''}
+                onChange={(e) => set({ logo_domain: e.target.value.trim() || null })}
+                placeholder="e.g. csl.com — blank shows initials"
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="b-tagline">Tagline</Label>
+            <Input
+              id="b-tagline"
+              value={form.tagline ?? ''}
+              onChange={(e) => set({ tagline: e.target.value || null })}
+              placeholder="e.g. Global biotech · 32,000 people · 35 countries"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="b-blurb">Blurb (one sentence on the welcome screen)</Label>
+            <Input
+              id="b-blurb"
+              value={form.blurb ?? ''}
+              onChange={(e) => set({ blurb: e.target.value || null })}
+              placeholder="Two questions, and we'll show you…"
+            />
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {(
+              [
+                ['primary_color', 'Primary color (canvas)'],
+                ['accent_color', 'Accent color (gradient + chips)'],
+              ] as const
+            ).map(([key, label]) => (
+              <div key={key} className="space-y-1.5">
+                <Label htmlFor={`b-${key}`}>{label}</Label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    aria-label={`${label} picker`}
+                    value={validHex(form[key]) ? form[key] : '#000000'}
+                    onChange={(e) => set({ [key]: e.target.value } as Partial<ActivateBrandingRow>)}
+                    className="h-9 w-12 cursor-pointer rounded border bg-transparent p-0.5"
+                  />
+                  <Input
+                    id={`b-${key}`}
+                    value={form[key]}
+                    onChange={(e) => set({ [key]: e.target.value } as Partial<ActivateBrandingRow>)}
+                    className="font-mono"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Text on the canvas auto-flips between white and navy for contrast, so any pair of
+            colors stays readable. Save, then reload an open Activate link to see it.
+          </p>
+          <div className="flex justify-end">
+            <Button size="sm" onClick={save} disabled={saving}>
+              Save branding
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function LinkRow({
   link,
@@ -414,6 +598,11 @@ function RoutesOverview({
                   {r.use_direct_link && (
                     <Badge variant="outline" className="text-[10px]">
                       noreferrer
+                    </Badge>
+                  )}
+                  {r.channel === 'social' && (
+                    <Badge variant="outline" className="text-[10px]">
+                      social
                     </Badge>
                   )}
                 </li>

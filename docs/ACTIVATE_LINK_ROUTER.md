@@ -308,6 +308,38 @@ verification, Reddit routing (pending strategy), `source_agency_rules` (moves
 to the measurement phase), anything touching client-influenced sources, a
 branding self-service editor (branding is seeded per org for now).
 
+## Demo-stage extensions (2026-08-11 — ideation build)
+
+The product is in ideation; demos are screen-share only for the next few
+months, and the consent gate blocks any real link minting. Four extensions
+were added for demo richness, with their integrity lines drawn explicitly:
+
+- **Social channel.** Routes carry `channel: review | social`. Review routing
+  stays market × entity only (measured: function does not move the review
+  mix). The social section shows where AI reads the *public conversation*
+  (LinkedIn, Reddit, Instagram, TikTok), ranked — never filtered — by the
+  recipient's optional declared function + seniority (`audience_functions` /
+  `audience_seniority` on the route; a "Your world" chip marks matches).
+  Reddit's inclusion here is demo-only; the review-mechanic exclusion stands
+  and real-distribution strategy stays open.
+- **Theme visibility.** `activate_market_themes` (seeded portfolio-wide with
+  the five drag attributes) renders as chips: "these themes carry the most
+  weight in how AI describes working here." **Topic visibility, never
+  sentiment direction** — pointing at where AI's weight sits is measurement;
+  "show these topics some love" would be the scripting this product bans.
+  Flag for the compliance/works-council review before real distribution.
+- **Optional profile step.** A third, skippable step gathers declared job
+  function + seniority (`profile_declared` events). Signal + social ranking
+  only. This makes the flow three steps — a deliberate deviation from the
+  two-step design handoff.
+- **DEMO MODE: DE/CH routes are active** so screens can show the kununu
+  story (55.1%). Re-gate (`active = false`) before anything real — kununu
+  consolidation and the client review remain prerequisites for those markets.
+
+Admin → Activate also gained a per-org **branding editor** (display name,
+tagline, blurb, logo domain, both color tokens) — the page's entire design
+surface, live on every open link at save.
+
 ## Related infrastructure
 
 `url_recency_cache` feeds the Relevance measurement Activate will be judged on;
