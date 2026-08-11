@@ -105,11 +105,14 @@ export const VisibilityRankingsTab = () => {
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Start Collection confirmation / customization (mirrors NewCompanyPanel)
+  // Start Collection confirmation / customization (mirrors NewCompanyPanel).
+  // ids MUST match collect-industry-visibility's model loop ('openai' |
+  // 'perplexity' | 'gemini') — an unrecognized id silently skipped that
+  // model's leg until Aug 2026 (the collector now also reports unknown ids).
   const ALL_INDUSTRY_MODELS = [
-    { id: "openai", label: "OpenAI (gpt-5.2-chat-latest)" },
+    { id: "openai", label: "OpenAI (gpt-5-nano)" },
     { id: "perplexity", label: "Perplexity" },
-    { id: "google-ai-overviews", label: "Google AI Overviews" },
+    { id: "gemini", label: "Gemini (gemini-2.5-flash-lite)" },
   ];
   const [confirmStartOpen, setConfirmStartOpen] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -1465,7 +1468,7 @@ export const VisibilityRankingsTab = () => {
             <AlertDialogTitle>Run for all models?</AlertDialogTitle>
             <AlertDialogDescription>
               This will collect responses across all models (OpenAI, Perplexity,
-              Google AI Overviews) for the pending queue items. Choose
+              Gemini) for the pending queue items. Choose
               "Customize" to pick a subset (e.g. only OpenAI when re-collecting
               after an outage).
             </AlertDialogDescription>
