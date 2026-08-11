@@ -152,7 +152,13 @@ const BAND_LABELS: Record<number, string> = {
 const EYEBROW_CLS = 'text-[11px] font-bold uppercase tracking-[0.24em]';
 const SMALL_LABEL_CLS = 'text-[11px] font-semibold uppercase tracking-[0.1em]';
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = [], fetchAIThemesForAttribute, aiThemeAttrsLoaded = [], onRefreshThemes, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
+// Stable fallbacks for the optional array/object props. Inline `= []` / `= {}`
+// defaults mint a fresh identity on every render whenever a prop arrives
+// undefined, which would churn every useMemo/effect keyed on them below.
+const EMPTY_ARRAY: any[] = [];
+const EMPTY_OBJECT: Record<string, string> = {};
+
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = EMPTY_ARRAY, fetchAIThemesForAttribute, aiThemeAttrsLoaded = EMPTY_ARRAY, onRefreshThemes, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
 
   // Modal state — persisted so a reload restores the open drilldown.
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
@@ -519,6 +525,9 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   // actually about this attribute; each carries the matched theme (for the
   // theme filter), polarity, AI platform and market.
   const attrResponses = useMemo(() => {
+    // attrThemes is [] while the drilldown is closed — skip the full responses
+    // scan on every stream/scope change until one is actually open.
+    if (attrThemes.length === 0) return [];
     const ids = new Set(attrThemes.map(t => t.response_id));
     return responses.filter(r => ids.has(r.id));
   }, [attrThemes, responses]);

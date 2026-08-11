@@ -125,12 +125,14 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [userMemberships, setUserMemberships] = useState<CompanyMembership[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Fetch user's companies through organization membership
-  const fetchUserCompanies = useCallback(async () => {
+  // Fetch user's companies through organization membership. Also returns the
+  // fetched list: the setState below isn't visible to a caller's closure until
+  // the next render, and switchCompany needs the fresh list synchronously.
+  const fetchUserCompanies = useCallback(async (): Promise<Company[]> => {
     // CRITICAL: Wait for auth to be fully loaded before fetching companies
     // This prevents race conditions where user data is fetched before auth context is ready
     if (authLoading) {
-      return;
+      return [];
     }
 
     if (!user) {
@@ -139,7 +141,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setUserCompanies([]);
       setUserMemberships([]);
       setLoading(false);
-      return;
+      return [];
     }
 
     try {
@@ -263,12 +265,15 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
           }
         });
+
+        return companies;
       } else {
         // No org memberships → user has no access to any company yet.
         // Admin must add them to an organization in the admin panel.
         setCurrentCompany(null);
         setUserCompanies([]);
         setUserMemberships([]);
+        return [];
       }
 
     } catch (error) {
@@ -277,6 +282,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setCurrentCompany(null);
       setUserCompanies([]);
       setUserMemberships([]);
+      return [];
     } finally {
       setLoading(false);
     }
@@ -336,105 +342,47 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const switchCompany = useCallback(async (companyId: string) => {
     let company = userCompanies.find(c => c.id === companyId);
-    
-    // If company not found in current list, refresh companies first
+
+    // If company not found in current list, refresh companies first. Search
+    // the returned fresh list, not `userCompanies` — this closure's copy stays
+    // stale until the next render, and fetchUserCompanies already runs the
+    // full nested org query, so no per-org fallback queries are needed.
     if (!company) {
-      await fetchUserCompanies();
-      
-      // For admins, fetch all companies directly
-      const isAdmin = user && isAdminUser(user.email);
-      if (isAdmin) {
+      const freshCompanies = await fetchUserCompanies();
+      company = freshCompanies.find(c => c.id === companyId);
+
+      // Admins can switch to companies outside their own org memberships
+      // (e.g. from /admin) — fetch the row directly. Industries and the org
+      // link ride the same query instead of two follow-up round-trips.
+      if (!company && user && isAdminUser(user.email)) {
         const { data: companyData } = await supabase
           .from('companies')
-          .select('id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by')
+          .select('id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by, company_industries(industry), organization_companies(organization_id)')
           .eq('id', companyId)
           .single();
-        
+
         if (companyData) {
-          // Fetch additional data
-          const { data: industriesData } = await supabase
-            .from('company_industries')
-            .select('industry')
-            .eq('company_id', companyId);
-          
+          const { company_industries: industryRows, organization_companies: orgLinks, ...companyRow } =
+            companyData as Record<string, any> & {
+              company_industries?: { industry: string }[];
+              organization_companies?: { organization_id: string }[];
+            };
+
           const industries = new Set<string>();
-          if (companyData.industry) industries.add(companyData.industry);
-          if (industriesData) {
-            industriesData.forEach(row => industries.add(row.industry));
-          }
-          
-          const { data: orgCompany } = await supabase
-            .from('organization_companies')
-            .select('organization_id, organizations(name)')
-            .eq('company_id', companyId)
-            .maybeSingle();
-          
-          const org = Array.isArray(orgCompany?.organizations) 
-            ? orgCompany?.organizations[0] 
-            : orgCompany?.organizations;
-          
+          if (companyRow.industry) industries.add(companyRow.industry);
+          (industryRows ?? []).forEach(row => industries.add(row.industry));
+
           company = {
-            ...companyData,
-            organization_id: orgCompany?.organization_id,
+            ...(companyRow as Company),
+            organization_id: orgLinks?.[0]?.organization_id,
             is_default: false,
             industries: Array.from(industries),
             country: null
           };
         }
-      } else {
-        // Non-admin: fetch through organization memberships
-        const { data: freshCompanies } = await supabase
-          .from('organization_members')
-          .select(`
-            organization_id,
-            role,
-            is_default,
-            organizations!inner(
-              id,
-              name
-            )
-          `)
-          .eq('user_id', user?.id);
-
-        if (freshCompanies && freshCompanies.length > 0) {
-          // Get companies for the organizations
-          const companies: Company[] = [];
-          for (const orgMembership of freshCompanies) {
-            const org = Array.isArray(orgMembership.organizations) 
-              ? orgMembership.organizations[0] 
-              : orgMembership.organizations;
-            
-            const { data: orgCompanies } = await supabase
-              .from('organization_companies')
-              .select('company_id')
-              .eq('organization_id', orgMembership.organization_id);
-
-            if (orgCompanies && orgCompanies.length > 0) {
-              // Fetch company details separately
-              const companyIds = orgCompanies.map(oc => oc.company_id);
-              const { data: companiesData } = await supabase
-                .from('companies')
-                .select('id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by')
-                .in('id', companyIds);
-
-              for (const companyData of companiesData || []) {
-                if (companyData) {
-                  companies.push({
-                    ...companyData,
-                    organization_id: org.id,
-                    is_default: false,
-                    country: companyData.country ?? null,
-                  });
-                }
-              }
-            }
-          }
-          
-          company = companies.find(c => c.id === companyId);
-        }
       }
     }
-    
+
     if (company) {
       setCurrentCompany(company);
     } else {
@@ -470,7 +418,10 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return membership?.role === 'owner' || membership?.role === 'admin';
   }, [currentCompany, userMemberships, user]);
 
-  const value: CompanyContextType = {
+  // Memoized (all members are state or useCallback/useMemo values) so a
+  // provider render doesn't hand every useCompany consumer a fresh object —
+  // and a re-render — when nothing company-related changed.
+  const value: CompanyContextType = useMemo(() => ({
     currentCompany,
     userCompanies,
     userMemberships,
@@ -479,7 +430,16 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     refreshCompanies,
     setAsDefaultCompany,
     isOwnerOrAdmin
-  };
+  }), [
+    currentCompany,
+    userCompanies,
+    userMemberships,
+    loading,
+    switchCompany,
+    refreshCompanies,
+    setAsDefaultCompany,
+    isOwnerOrAdmin
+  ]);
 
   return (
     <CompanyContext.Provider value={value}>

@@ -53,6 +53,12 @@ const TABLE_PAGE_SIZE = 15;
 const TOP_SOURCES_PER_ROW = 5;
 const TOP_MARKETS_PER_ROW = 4;
 
+// Stable fallbacks for the optional array/object props. Inline `= []` / `= {}`
+// defaults mint a fresh identity on every render whenever a prop arrives
+// undefined, which would churn every useMemo keyed on them below.
+const EMPTY_ARRAY: any[] = [];
+const EMPTY_OBJECT: Record<string, string> = {};
+
 export type CompetitorSet = "eoc" | "direct" | "emergent";
 
 const SET_LABELS: Record<CompetitorSet, string> = {
@@ -152,14 +158,14 @@ export const CompetitorsTab = memo(({
   responses,
   companyName,
   currentCompanyId,
-  responseTexts = {},
+  responseTexts = EMPTY_OBJECT,
   fetchResponseTexts,
-  previousPeriodResponses = [],
+  previousPeriodResponses = EMPTY_ARRAY,
   responsesLoading = false,
   selectedJobFunction = "all",
   onJobFunctionChange,
-  responseSentimentRows = [],
-  recencyData = [],
+  responseSentimentRows = EMPTY_ARRAY,
+  recencyData = EMPTY_ARRAY,
   onNavigateToSources,
 }: CompetitorsTabProps) => {
   const { canonicalize, aliasMap, aliasMapLoaded } = useEntityCanonicalizer();

@@ -233,6 +233,7 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, previou
       rows: [] as TrendRow[],
       hasPrev: false,
       netDelta: 0,
+      netPct: null as number | null,
       newCount: 0,
       risingCount: 0,
       fallingCount: 0,

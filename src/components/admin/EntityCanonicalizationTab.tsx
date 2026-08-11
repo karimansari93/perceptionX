@@ -43,6 +43,8 @@ type Suggestion = {
   llm_rationale: string | null;
   llm_model: string | null;
   created_at: string;
+  resolved_canonical_id?: string | null;
+  resolved_at?: string | null;
 };
 
 type Canonical = {

@@ -35,20 +35,35 @@ export const useCompanyDataCollection = () => {
       }
 
       try {
-        const { data: company, error } = await supabase
-          .from('companies')
-          .select('id, name, data_collection_status, data_collection_progress, onboarding_id')
-          .eq('id', currentCompany.id)
-          .single();
+        // The context already holds this companies row — refetch it only when
+        // the provider's select didn't include the collection fields. Presence
+        // is checked (not assumed) since Company doesn't declare them.
+        const contextRow = currentCompany as unknown as Record<string, unknown>;
+        const hasCollectionFields =
+          'data_collection_status' in contextRow &&
+          'data_collection_progress' in contextRow &&
+          'onboarding_id' in contextRow;
 
-        if (error) {
-          // If column doesn't exist, migration hasn't been run
-          if (error.code === '42703' || error.message?.includes('column') || error.message?.includes('does not exist')) {
-            console.warn('[Collection] Migration not applied yet. Please run the migration:', error);
+        let company;
+        if (hasCollectionFields) {
+          company = currentCompany as any;
+        } else {
+          const { data, error } = await supabase
+            .from('companies')
+            .select('id, name, data_collection_status, data_collection_progress, onboarding_id')
+            .eq('id', currentCompany.id)
+            .single();
+
+          if (error) {
+            // If column doesn't exist, migration hasn't been run
+            if (error.code === '42703' || error.message?.includes('column') || error.message?.includes('does not exist')) {
+              console.warn('[Collection] Migration not applied yet. Please run the migration:', error);
+              return;
+            }
+            console.error('[Collection] Error checking collection status:', error);
             return;
           }
-          console.error('[Collection] Error checking collection status:', error);
-          return;
+          company = data;
         }
 
         // Check if status exists and is incomplete (null means completed for old companies)

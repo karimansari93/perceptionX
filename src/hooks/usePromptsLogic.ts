@@ -94,8 +94,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         industry: onboardingData.industry,
         country: onboardingData.country,
         jobFunction: onboardingData.jobFunction || onboardingData.job_function,
-      },
-      true
+      }
     );
 
     // For onboarding preview we only need the core prompts
