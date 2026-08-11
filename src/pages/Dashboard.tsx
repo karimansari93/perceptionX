@@ -164,6 +164,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     responsesLoadedCompanyId,
     prefetchLocationRollups,
     prefetchCompanyRollups,
+    hydration,
   } = dashboardData;
 
   // `isRefreshing` ships with the TanStack rewrite of useDashboardData (true
@@ -360,7 +361,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     // !competitorLoading, which always settles (even for empty/setup
     // accounts), so this can't hang.
     if (!sessionFirstLoadDoneRef.current) {
-      return companyLoading || isLoading || !isFullyLoaded;
+      // Hold until the FULL data set has hydrated (hydration.complete), not
+      // just the headline rollups — so the reveal never hands off to
+      // still-loading Sources/Competitors cards. hydration treats fetch
+      // errors and no-company accounts as complete, so this can't hang.
+      return companyLoading || isLoading || !isFullyLoaded || !hydration.complete;
     }
     // After the first full load this session, fall back to the original
     // persisted-state behavior so in-app tab returns / company switches don't
@@ -368,8 +373,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (hasInitiallyLoaded) {
       return companyLoading && currentCompany === null;
     }
-    return companyLoading || isLoading || !isFullyLoaded;
-  }, [companyLoading, isLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany]);
+    return companyLoading || isLoading || !isFullyLoaded || !hydration.complete;
+  }, [companyLoading, isLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany, hydration.complete]);
 
   // Keep the loading screen mounted long enough to play its completion
   // (bar snaps to 100% + fade) before the dashboard is revealed.
@@ -711,7 +716,20 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
 
   // Show full loading screen during initial load (and through its completion).
   if (loadingHandoff.show) {
-    return <LoadingScreen completing={loadingHandoff.completing} />;
+    // Narrate the real load: each line maps to an actual fetch family in
+    // useDashboardData, so the checklist reflects genuine progress rather
+    // than a timer.
+    return (
+      <LoadingScreen
+        completing={loadingHandoff.completing}
+        stages={[
+          { label: 'Loading your prompt library', done: hydration.prompts },
+          { label: 'Collecting the latest AI responses', done: hydration.responsesFirst },
+          { label: 'Analysing sources, competitors & sentiment', done: hydration.rollups },
+          { label: 'Finalising the full response set', done: hydration.responsesFull },
+        ]}
+      />
+    );
   }
 
   // Always render the sidebar and main layout, only show loading in content area

@@ -1742,6 +1742,28 @@ export const useDashboardData = () => {
     });
   }, [userCompanies, currentCompany?.id, queryClient]);
 
+  // Hydration stages for the branded first-load screen: which fetch families
+  // have landed, derived synchronously from query data so cached scopes read
+  // complete on their very first render (no loader flash on switch-back).
+  // A fetch error counts as complete so the loader can hand off to the
+  // connection-error state instead of hanging.
+  const hydration = useMemo(() => {
+    const errored = !!(promptsQuery.error || rollupsQuery.error || firstPagesQuery.error || fullStreamQuery.error);
+    const prompts = !scopeReady || errored || promptsQuery.data !== undefined;
+    const rollupsDone = !scopeReady || errored || rollupsQuery.data !== undefined;
+    const responsesFirst = !scopeReady || errored || firstPagesQuery.data !== undefined;
+    const responsesFull = !scopeReady || errored || fullStreamQuery.data !== undefined;
+    return {
+      prompts,
+      rollups: rollupsDone,
+      responsesFirst,
+      responsesFull,
+      complete: prompts && rollupsDone && responsesFirst && responsesFull,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeReady, promptsQuery.data, rollupsQuery.data, firstPagesQuery.data, fullStreamQuery.data,
+      promptsQuery.error, rollupsQuery.error, firstPagesQuery.error, fullStreamQuery.error]);
+
   // True while any dashboard family revalidates in the background with data
   // already on screen — consumers show a subtle indicator, never a skeleton.
   const isRefreshing = (
@@ -2902,6 +2924,7 @@ export const useDashboardData = () => {
     scopeCompanyIds,
     responsesLoadedCompanyId, // company whose responses are FINAL (loaded/empty/cached)
     isRefreshing, // background revalidation with content on screen — subtle indicator, never a skeleton
+    hydration, // per-family first-load progress for the branded loading screen
     prefetchLocationRollups, // intent prefetch for the location dropdown
     prefetchCompanyRollups, // intent prefetch for the company switcher
   };
