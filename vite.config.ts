@@ -2,7 +2,6 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import fs from "fs";
-import { componentTagger } from "lovable-tagger";
 
 // Emits dist/onboarding.html — index.html with onboarding-specific meta tags.
 // Netlify serves it for /onboarding/* (see public/_redirects) so link-preview
@@ -49,12 +48,7 @@ export default defineConfig(({ mode }) => ({
     // the default for local dev.
     port: process.env.PORT ? Number(process.env.PORT) : 8080,
   },
-  plugins: [
-    react(),
-    onboardingHtml(),
-    mode === 'development' &&
-    componentTagger(),
-  ].filter(Boolean),
+  plugins: [react(), onboardingHtml()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
