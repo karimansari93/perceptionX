@@ -72,7 +72,31 @@ BEGIN
   END IF;
 END $$;
 
--- 3. Live-data invariant: no row may score > 0 for a family that has zero
+-- 3. Current branch must be methodology v2 only (see
+--    20260811150000_rankings_overview_current_v2_only): the definition keeps
+--    its prompt_version filter, and no current-branch slice carries a
+--    retired v1 theme in its combinations.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_matviews
+    WHERE matviewname = 'rankings_overview'
+      AND definition ILIKE '%prompt_version = 2%'
+  ) THEN
+    RAISE EXCEPTION 'rankings_overview no longer filters raw_data to prompt_version = 2';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM rankings_overview
+    WHERE data_period IS NULL
+      AND EXISTS (SELECT 1 FROM unnest(all_industry_combinations) c(c)
+                  WHERE c ILIKE '%Mission & Purpose%')
+  ) THEN
+    RAISE EXCEPTION 'retired v1 theme found in a current-branch slice of rankings_overview';
+  END IF;
+END $$;
+
+-- 4. Live-data invariant: no row may score > 0 for a family that has zero
 --    combinations in its slice.
 DO $$
 DECLARE
