@@ -4,6 +4,15 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts";
 import { COUNTRY_CODE_TO_NAME } from "../_shared/countries.ts";
 
+// OpenAI model for bulk industry collection. The client-facing collection path
+// (test-prompt-openai) deliberately runs gpt-5.5 to mirror ChatGPT's live
+// default; this internal rankings pipeline just needs mention/citation data at
+// minimum cost, so it runs OpenAI's cheapest tier (nano) instead.
+const OPENAI_MODEL = "gpt-5-nano";
+// Earlier runs stored OpenAI responses under these names; a response under any
+// of them still counts as "already collected" so we don't pay to re-collect.
+const LEGACY_OPENAI_MODELS = ["gpt-5.2-chat-latest"];
+
 /**
  * Apply `unwrapTranslateUrl` to every citation in a list so the stored
  * prompt_responses.citations never contains translate.google.com redirects.
@@ -104,7 +113,7 @@ serve(async (req) => {
       batchOffset = 0,
       batchSize = null,
       // Optional subset of models to collect — defaults to all 3.
-      // Valid values: 'openai', 'perplexity', 'google-ai-overviews'
+      // Valid values: 'openai', 'perplexity', 'gemini'
       models = null,
     } = body;
     const modelsFilter: string[] | null = Array.isArray(models) && models.length > 0 ? models : null;
@@ -131,179 +140,46 @@ serve(async (req) => {
     // If 'GLOBAL' is selected, we store null to indicate no specific country constraint.
     const dbLocationContext = country === "GLOBAL" ? null : resolvedCountryName;
 
-    // This name will be inserted into the natural language prompts.
-    const promptLocationName = resolvedCountryName;
-
-    // Visibility prompt templates for Employee Experience and Candidate Experience
-    const VISIBILITY_PROMPTS = {
-      "Employee Experience": [
-        {
-          theme: "Mission & Purpose",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for having a strong, purpose-driven employer brand?`;
-          },
-        },
-        {
-          theme: "Rewards & Recognition",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for having exceptional rewards and recognition for employees?`;
-          },
-        },
-        {
-          theme: "Company Culture",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for outstanding workplace culture?`;
-          },
-        },
-        {
-          theme: "Social Impact",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are recognized for meaningful social impact and community engagement?`;
-          },
-        },
-        {
-          theme: "Inclusion",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are most recognized for diversity, equity, and inclusion?`;
-          },
-        },
-        {
-          theme: "Innovation",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for fostering innovation and creative thinking?`;
-          },
-        },
-        {
-          theme: "Wellbeing & Balance",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are recognized for exceptional employee wellbeing and work-life balance?`;
-          },
-        },
-        {
-          theme: "Leadership",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are respected for outstanding leadership and management?`;
-          },
-        },
-        {
-          theme: "Security & Perks",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for providing comprehensive benefits and job security?`;
-          },
-        },
-        {
-          theme: "Career Opportunities",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are most recognized for exceptional career development and progression opportunities?`;
-          },
-        },
-      ],
-      "Candidate Experience": [
-        {
-          theme: "Application Process",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} have the best application process?`;
-          },
-        },
-        {
-          theme: "Candidate Communication",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are recognized for strong candidate communication?`;
-          },
-        },
-        {
-          theme: "Interview Experience",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} have the best interview experience?`;
-          },
-        },
-        {
-          theme: "Candidate Feedback",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} are known for providing valuable candidate feedback?`;
-          },
-        },
-        {
-          theme: "Onboarding Experience",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} have the best onboarding experience?`;
-          },
-        },
-        {
-          theme: "Overall Candidate Experience",
-          text: (industry: string, country?: string) => {
-            const location =
-              country && country !== "GLOBAL"
-                ? ` in ${promptLocationName}`
-                : "";
-            return `What companies in ${industry}${location} have the best overall candidate reputation?`;
-          },
-        },
-      ],
-    };
+    // Methodology v2 (July 2026): the industry-wide visibility set mirrors the
+    // discovery-intent prompts of the 13 company-batch attributes — the same
+    // ATTRIBUTE_PROMPT_TEMPLATES used by process-company-batch-queue /
+    // src/config/attributes.ts. 9 Employee Experience + 4 Candidate Experience.
+    // Keep wording, themes, and attribute ids in lockstep with that list.
+    const DISCOVERY_PROMPTS: Array<{
+      attributeId: string;
+      category: string;
+      theme: string;
+      text: string; // {industry} placeholder, location appended separately
+    }> = [
+      { attributeId: "mission-purpose-impact", category: "Employee Experience", theme: "Mission, Purpose & Impact", text: "Which companies in {industry} are known for a strong sense of purpose and positive impact?" },
+      { attributeId: "compensation", category: "Employee Experience", theme: "Compensation", text: "Which companies in {industry} pay the best and offer the best benefits and perks?" },
+      { attributeId: "company-culture", category: "Employee Experience", theme: "Company Culture", text: "Which companies in {industry} have the best workplace culture?" },
+      { attributeId: "leadership", category: "Employee Experience", theme: "Leadership", text: "Which companies in {industry} are known for great leadership and management?" },
+      { attributeId: "job-security", category: "Employee Experience", theme: "Job Security", text: "Which companies in {industry} offer the most stable and secure jobs?" },
+      { attributeId: "career-opportunities", category: "Employee Experience", theme: "Career Opportunities", text: "Which companies in {industry} are best for career growth and learning?" },
+      { attributeId: "wellbeing-balance", category: "Employee Experience", theme: "Wellbeing & Balance", text: "Which companies in {industry} are best for work-life balance and flexible or remote work?" },
+      { attributeId: "inclusion", category: "Employee Experience", theme: "Inclusion", text: "Which companies in {industry} are most recognized for diversity, equity, and inclusion?" },
+      { attributeId: "innovation", category: "Employee Experience", theme: "Innovation", text: "Which companies in {industry} are the most innovative to work for?" },
+      { attributeId: "application-communication", category: "Candidate Experience", theme: "Application & Communication", text: "Which companies in {industry} have the best application process and candidate communication?" },
+      { attributeId: "candidate-feedback", category: "Candidate Experience", theme: "Candidate Feedback", text: "Which companies in {industry} are known for giving candidates valuable feedback?" },
+      { attributeId: "interview-experience", category: "Candidate Experience", theme: "Interview Experience", text: "Which companies in {industry} have the best interview experience?" },
+      { attributeId: "onboarding-experience", category: "Candidate Experience", theme: "Onboarding", text: "Which companies in {industry} have the best onboarding for new hires?" },
+    ];
 
     const promptLocation =
       country === "GLOBAL" ? undefined : resolvedCountryName;
+
+    // Same behavior as the batch pipeline's appendPromptContext: append the
+    // location before the trailing "?" unless the text already mentions it.
+    const appendLocationContext = (text: string, location?: string): string => {
+      if (!location) return text;
+      const trimmed = text.trim();
+      if (trimmed.toLowerCase().includes(location.toLowerCase())) return trimmed;
+      const suffix = ` in ${location}`;
+      if (trimmed.endsWith("?")) return trimmed.replace(/\?$/, `${suffix}?`);
+      if (trimmed.endsWith(".")) return trimmed.replace(/\.$/, `${suffix}.`);
+      return `${trimmed}${suffix}`;
+    };
 
     console.log(
       "Starting collection for industry:",
@@ -351,37 +227,21 @@ serve(async (req) => {
 
     // Create industry-wide prompts (NOT tied to specific companies)
     // These prompts ask the AI which companies are visible in the industry/market
-    const allPrompts: Array<{ category: string; theme: string; text: string }> =
-      [];
+    const allPrompts: Array<{
+      attributeId: string;
+      category: string;
+      theme: string;
+      text: string;
+    }> = DISCOVERY_PROMPTS.map((t) => ({
+      attributeId: t.attributeId,
+      category: t.category,
+      theme: t.theme,
+      text: appendLocationContext(
+        t.text.replace(/{industry}/g, industry),
+        promptLocation,
+      ),
+    }));
 
-    // Add Employee Experience prompts
-    console.log(
-      `Adding Employee Experience prompts. Total in array: ${VISIBILITY_PROMPTS["Employee Experience"].length}`,
-    );
-    for (const prompt of VISIBILITY_PROMPTS["Employee Experience"]) {
-      allPrompts.push({
-        category: "Employee Experience",
-        theme: prompt.theme,
-        text: prompt.text(industry, promptLocation),
-      });
-      console.log(`  - Added: ${prompt.theme}`);
-    }
-    console.log(
-      `Employee Experience prompts added. allPrompts.length = ${allPrompts.length}`,
-    );
-
-    // Add Candidate Experience prompts
-    console.log(
-      `Adding Candidate Experience prompts. Total in array: ${VISIBILITY_PROMPTS["Candidate Experience"].length}`,
-    );
-    for (const prompt of VISIBILITY_PROMPTS["Candidate Experience"]) {
-      allPrompts.push({
-        category: "Candidate Experience",
-        theme: prompt.theme,
-        text: prompt.text(industry, promptLocation),
-      });
-      console.log(`  - Added: ${prompt.theme}`);
-    }
     console.log(
       `Prompt list:`,
       allPrompts.map((p) => `${p.theme} (${p.category})`).join(", "),
@@ -391,7 +251,12 @@ serve(async (req) => {
     console.log(`PHASE 1: Creating all ${allPrompts.length} prompts`);
 
     const promptsWithIds: Array<{
-      promptData: { category: string; theme: string; text: string };
+      promptData: {
+        attributeId: string;
+        category: string;
+        theme: string;
+        text: string;
+      };
       promptId: string;
     }> = [];
 
@@ -414,8 +279,11 @@ serve(async (req) => {
               prompt_type: "discovery",
               prompt_category: promptData.category,
               prompt_theme: promptData.theme,
+              attribute_id: promptData.attributeId,
               industry_context: industry,
               location_context: dbLocationContext,
+              is_active: true,
+              prompt_version: 2,
             })
             .select("id")
             .single();
@@ -438,6 +306,9 @@ serve(async (req) => {
                 .eq("prompt_type", "discovery")
                 .eq("prompt_category", promptData.category)
                 .eq("prompt_theme", promptData.theme)
+                // Pin to the v2 row — legacy pre-attribute rows share some
+                // theme names (e.g. "Company Culture") but have null attribute_id.
+                .eq("attribute_id", promptData.attributeId)
                 .eq("industry_context", industry);
 
               if (dbLocationContext) {
@@ -626,7 +497,8 @@ serve(async (req) => {
             .from("prompt_responses")
             .select("id, ai_model, tested_at")
             .eq("confirmed_prompt_id", promptId)
-            .eq("ai_model", "gpt-5.2-chat-latest")
+            .in("ai_model", [OPENAI_MODEL, ...LEGACY_OPENAI_MODELS])
+            .limit(1)
             .maybeSingle();
 
         const {
@@ -640,20 +512,19 @@ serve(async (req) => {
           .maybeSingle();
 
         const {
-          data: existingResponseGoogle,
-          error: responseCheckErrorGoogle,
+          data: existingResponseGemini,
+          error: responseCheckErrorGemini,
         } = await supabase
           .from("prompt_responses")
           .select("id, ai_model, tested_at")
           .eq("confirmed_prompt_id", promptId)
-          .eq("ai_model", "google-ai-overviews")
+          .eq("ai_model", "gemini")
           .maybeSingle();
 
         // Collect responses for each model that doesn't exist yet
-        // TODO [12.6]: Confirm whether gpt-5.2-chat-latest should be updated to a newer model.
         const modelsToCollect = [
           {
-            name: "gpt-5.2-chat-latest",
+            name: OPENAI_MODEL,
             exists: !!existingResponseGPT,
             type: "openai",
           },
@@ -663,9 +534,9 @@ serve(async (req) => {
             type: "perplexity",
           },
           {
-            name: "google-ai-overviews",
-            exists: !!existingResponseGoogle,
-            type: "google",
+            name: "gemini",
+            exists: !!existingResponseGemini,
+            type: "gemini",
           },
         ]
           .filter((m) => !m.exists)
@@ -697,8 +568,14 @@ serve(async (req) => {
                         content: promptData.text,
                       },
                     ],
-                    // max_tokens: 1000, // Not supported by gpt-5.2-chat-latest (o1/o3 style models)
+                    // max_tokens: 1000, // Not supported by gpt-5.x models — use max_completion_tokens
                     max_completion_tokens: 1000,
+                    // gpt-5-nano is a reasoning model: without this, default
+                    // reasoning can eat the whole completion budget and return
+                    // empty text. Minimal effort also keeps cost lowest.
+                    // (Only gpt-5 series accepts reasoning_effort — drop it if
+                    // switching back to a *-chat-latest model.)
+                    reasoning_effort: "minimal",
                     // temperature: 0.7 // Not supported by some newer reasoning models, safer to omit if using reasoning models or set to 1
                   }),
                 },
@@ -747,10 +624,12 @@ serve(async (req) => {
               const perplexityData = await perplexityResponse.json();
               responseText = perplexityData.response || "";
               citations = perplexityData.citations || [];
-            } else if (model.type === "google") {
-              // Google AI Overviews edge function
-              const googleResponse = await fetch(
-                `${supabaseUrl}/functions/v1/test-prompt-google-ai-overviews`,
+            } else if (model.type === "gemini") {
+              // Gemini edge function (gemini-2.5-flash-lite, no web grounding).
+              // Prompt text is already localized per market, so no
+              // location_context is needed here.
+              const geminiResponse = await fetch(
+                `${supabaseUrl}/functions/v1/test-prompt-gemini`,
                 {
                   method: "POST",
                   headers: {
@@ -761,16 +640,18 @@ serve(async (req) => {
                 },
               );
 
-              if (!googleResponse.ok) {
-                const errorData = await googleResponse.json();
+              if (!geminiResponse.ok) {
+                const errorData = await geminiResponse.json();
                 throw new Error(
-                  `Google AI error: ${errorData.error || "Unknown error"}`,
+                  `Gemini error: ${errorData.error || "Unknown error"}`,
                 );
               }
 
-              const googleData = await googleResponse.json();
-              responseText = googleData.response || "";
-              citations = googleData.citations || [];
+              const geminiData = await geminiResponse.json();
+              responseText = geminiData.response || "";
+              // Same as the OpenAI leg: no grounded citations, so pull any
+              // URLs the model wrote into the text.
+              citations = extractCitationsFromResponse(responseText);
             }
 
             if (!responseText) {
@@ -794,7 +675,7 @@ serve(async (req) => {
                       ? unwrapCitations(citations)
                       : model.type === "perplexity"
                         ? unwrapCitations(citations)
-                        : model.type === "google"
+                        : model.type === "gemini"
                           ? unwrapCitations(citations)
                           : [],
                   company_id: null, // Industry-wide response
