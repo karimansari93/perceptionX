@@ -1,5 +1,18 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from "@/integrations/supabase/client";
+import {
+  dashboardKeys,
+  fetchScopePrompts,
+  fetchScopeRollups,
+  fetchLocationRollups,
+  fetchResponsesFirstPages,
+  fetchResponsesRemaining,
+  sentimentRowsFromStream,
+  type FirstPages,
+  type ScopeRollups,
+  type LocationRollups,
+} from "@/hooks/dashboard/dashboardQueries";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
 import { PromptResponse, DashboardMetrics, CitationCount, PromptData, Citation, CompetitorMention, LLMMentionRanking } from "@/types/dashboard";
@@ -190,6 +203,66 @@ const visibilityFromMvRows = (
 // exist in the dashboard's working set.
 const EAGER_DAYS = 180;
 
+// Stable identities for empty derived values, so memo cascades don't re-run
+// when a query has no data yet.
+const EMPTY_ARRAY: any[] = [];
+const EMPTY_OBJECT = Object.freeze({});
+
+// Join slim response rows to their prompts (the stream no longer embeds a
+// copy of the prompt in every row — that duplication alone was ~40% of the
+// old 73 MB payload) and mirror the historical shaping: rows whose prompt is
+// missing are dropped (the old !inner join semantics), and attribute-tagged
+// rows get the reformatted duplicate entry the Thematic/Overview attribute
+// views consume.
+const stitchResponses = (rows: any[], prompts: any[]): PromptResponse[] => {
+  const promptById = new Map<string, any>(prompts.map(p => [p.id, p]));
+  const base: any[] = [];
+  for (const r of rows) {
+    const prompt = promptById.get(r.confirmed_prompt_id);
+    if (!prompt) continue;
+    base.push({ ...r, confirmed_prompts: prompt });
+  }
+
+  const attributeRaw = base.filter(r =>
+    r.confirmed_prompts?.attribute_id != null &&
+    (r.confirmed_prompts?.company_id == null || r.confirmed_prompts.company_id === r.company_id)
+  );
+  const attributeLatestMap = new Map<string, any>();
+  attributeRaw.forEach(response => {
+    const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
+    if (!attributeLatestMap.has(key)) {
+      attributeLatestMap.set(key, response);
+    }
+  });
+  const attributeResponsesFormatted: PromptResponse[] = Array.from(attributeLatestMap.values()).map(response => {
+    const promptType = response.confirmed_prompts.prompt_type;
+    const attributeId = response.confirmed_prompts.attribute_id || promptType;
+    const promptText = response.confirmed_prompts?.prompt_text || `${promptType} analysis for ${attributeId}`;
+    return {
+      id: response.id,
+      confirmed_prompt_id: response.confirmed_prompt_id,
+      company_id: response.confirmed_prompts.company_id,
+      ai_model: response.ai_model,
+      response_text: response.response_text,
+      citations: response.citations,
+      tested_at: response.tested_at || response.updated_at || response.created_at,
+      response_month: response.response_month,
+      company_mentioned: response.company_mentioned,
+      detected_competitors: response.detected_competitors,
+      confirmed_prompts: {
+        prompt_text: promptText,
+        prompt_category: attributeId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        prompt_type: promptType,
+        industry_context: response.confirmed_prompts.industry_context,
+        job_function_context: response.confirmed_prompts.job_function_context,
+        location_context: response.confirmed_prompts.location_context
+      }
+    };
+  });
+
+  return [...base, ...attributeResponsesFormatted];
+};
+
 // Sum MV rows by a key column (e.g. domain → citation_count). Needed wherever
 // rows can arrive from several companies/location buckets that repeat a key.
 const sumRowsBy = (rows: any[], keyField: string, valField: string): Record<string, number> => {
@@ -303,8 +376,6 @@ export const useDashboardData = () => {
   // Period selection state
   const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null); // null = latest
   const [responseTextsLoading, setResponseTextsLoading] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [competitorLoading, setCompetitorLoading] = useState(false);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [companyName, setCompanyName] = useState('');
   const [hasDataIssues, setHasDataIssues] = useState(false);
@@ -323,83 +394,141 @@ export const useDashboardData = () => {
   const [aiThemeAttrsLoaded, setAiThemeAttrsLoaded] = useState<string[]>([]);
   const aiThemeAttrsLoadedRef = useRef<Set<string>>(new Set());
   const aiThemeAttrsInFlightRef = useRef<Set<string>>(new Set());
-  // Pre-aggregated theme data from materialized views (replaces the eager
-  // ~24-page ai_themes pull on the dashboard's critical path).
-  // - attributeThemes: per attribute x month x job_function rollup (company_attribute_themes_mv)
-  // - responseSentimentRows: per-response positive/total themes + ratio (company_response_sentiment_mv)
-  const [attributeThemes, setAttributeThemes] = useState<any[]>([]);
-  const [responseSentimentRows, setResponseSentimentRows] = useState<any[]>([]);
-  const [activePrompts, setActivePrompts] = useState<any[]>([]);
   const [isOnline, setIsOnline] = useState(networkMonitor.online);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [recencyDataError, setRecencyDataError] = useState<string | null>(null);
-  // Pre-aggregated data from materialized views (Phase 1 MV migration)
-  const [mvTopCitations, setMvTopCitations] = useState<CitationCount[]>([]);
-  const [mvTopCompetitors, setMvTopCompetitors] = useState<{company: string; count: number}[]>([]);
-  const [mvLlmRankings, setMvLlmRankings] = useState<LLMMentionRanking[]>([]);
-  // Backend-calculated metrics from materialized views
-  const [companySentimentMetrics, setCompanySentimentMetrics] = useState<any | null>(null);
-  const [companyRelevanceMetrics, setCompanyRelevanceMetrics] = useState<any | null>(null);
-  const [companyMetricsLoading, setCompanyMetricsLoading] = useState(false);
-  // Per-period MV data for period comparison (keyed by quarter, "YYYY-Qn")
-  const [companyRelevanceByMonth, setCompanyRelevanceByMonth] = useState<Record<string, number>>({});
-  const [companySentimentByMonth, setCompanySentimentByMonth] = useState<Record<string, number>>({});
-  // Raw MV rows kept so the Overview tab can re-aggregate per job function.
-  const [sentimentMvRows, setSentimentMvRows] = useState<any[]>([]);
-  const [relevanceMvRows, setRelevanceMvRows] = useState<any[]>([]);
   // Location filter (canonical key from confirmed_prompts.location_context, or
   // null for "all locations"). When set, sentiment/relevance are re-scoped from
-  // the `_by_location_mv` views below and responses are filtered in-memory.
+  // the `_by_location_mv` rollups; responses are filtered in-memory.
   const [selectedLocation, setSelectedLocationState] = useState<string | null>(null);
-  const [locationMetricsLoading, setLocationMetricsLoading] = useState(false);
-  const [locSentimentMetrics, setLocSentimentMetrics] = useState<any | null>(null);
-  const [locRelevanceMetrics, setLocRelevanceMetrics] = useState<any | null>(null);
-  const [locSentimentByMonth, setLocSentimentByMonth] = useState<Record<string, number>>({});
-  const [locRelevanceByMonth, setLocRelevanceByMonth] = useState<Record<string, number>>({});
-  const [locSentimentMvRows, setLocSentimentMvRows] = useState<any[]>([]);
-  const [locRelevanceMvRows, setLocRelevanceMvRows] = useState<any[]>([]);
-  // Location-scoped sources / competitors / LLM rankings (from the
-  // `_by_location_mv` views), used in place of the company-wide MV state when a
-  // location is active so Sources, Competitors and the LLM list re-scope too.
-  const [locMvTopCitations, setLocMvTopCitations] = useState<CitationCount[]>([]);
-  const [locMvTopCompetitors, setLocMvTopCompetitors] = useState<{company: string; count: number}[]>([]);
-  const [locMvLlmRankings, setLocMvLlmRankings] = useState<LLMMentionRanking[]>([]);
-  const [locAttributeThemes, setLocAttributeThemes] = useState<any[]>([]);
   // Company whose responses have FULLY loaded (all pages committed, loaded
   // empty, or restored from cache). Distinguishes "no data yet" (selection
   // validity unknowable — don't judge) from "loaded with zero rows" (final —
-  // a stale selection must clear). Reset synchronously on company switch.
+  // a stale selection must clear).
   const [responsesLoadedCompanyId, setResponsesLoadedCompanyId] = useState<string | null>(null);
-  // Distinct location_context buckets from the by-location MVs (all-time).
-  // Widens the dropdown entries' raw-spelling sets beyond the 180-day eager
-  // response window — see buildLocationOptions (extend-only).
-  const [mvLocationBuckets, setMvLocationBuckets] = useState<string[]>([]);
-  // Precomputed visibility rollup (company_visibility_by_location_mv):
-  // mentioned/total per (profile, location bucket, snapshot month, job
-  // function). A few hundred tiny rows per brand — every visibility number
-  // derives from these, exactly, regardless of how much of the raw response
-  // stream has arrived, and location/function/month re-scoping is a pure
-  // client-side filter. Empty ⇒ consumers fall back to raw responses.
-  const [visibilityMvRows, setVisibilityMvRows] = useState<any[]>([]);
-  // True while the visibility rollup fetch is in flight. The readiness effect
-  // uses it to hold the scorecard skeleton until visibility has an exact
-  // source (rollup rows, or the raw fallback once responses arrive) — raw
-  // responses are no longer on the critical path, so without this flag the
-  // scorecards could paint a false 0%/fallback value before the rollup lands.
-  const [visibilityMvLoading, setVisibilityMvLoading] = useState(false);
 
-  // Public location setter. Flips the location-loading flag on the SAME tick as
-  // the selection change (not later, when the fetch effect runs) so the UI goes
-  // straight to a skeleton instead of briefly painting half-swapped content.
-  // Skipped when re-selecting the current location (the fetch effect wouldn't
-  // run, so the flag would never clear) or when clearing to "all locations"
-  // (company-wide data is already loaded — no fetch, no skeleton needed).
-  const selectedLocationRef = useRef(selectedLocation);
-  selectedLocationRef.current = selectedLocation;
-  const setSelectedLocation = useCallback((loc: string | null) => {
-    if (loc && loc !== selectedLocationRef.current) setLocationMetricsLoading(true);
-    setSelectedLocationState(loc);
-  }, []);
+  // ---- Query-cached fetch families (TanStack Query) ----
+  // Every family is keyed by the brand-scope signature, so anything the user
+  // has already seen this session (any company, any country) renders
+  // instantly from cache and revalidates in the background when stale. This
+  // replaces the per-family fetch effects, the module-global DB slot gate for
+  // these paths, and the 5-minute companyDataCacheRef restore machinery.
+  const queryClient = useQueryClient();
+  const scopeReady = !!user?.id && !!currentCompany?.id && scopeCompanyIds.length > 0;
+  const FRESH_MS = 5 * 60 * 1000; // parity with the old per-company cache TTL
+  const KEEP_MS = 45 * 60 * 1000;
+
+  const promptsQuery = useQuery({
+    queryKey: dashboardKeys.prompts(scopeKey),
+    queryFn: ({ signal }) => fetchScopePrompts(scopeCompanyIds, signal),
+    enabled: scopeReady,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+  const rollupsQuery = useQuery({
+    queryKey: dashboardKeys.rollups(scopeKey),
+    queryFn: ({ signal }) => fetchScopeRollups(scopeCompanyIds, signal),
+    enabled: scopeReady,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+  // Response stream, two stages: the newest page of every profile commits
+  // eagerly (tables hydrate fast), then the full keyset walk replaces it.
+  // Prompts gate the stream so the critical path gets bandwidth first.
+  const firstPagesQuery = useQuery({
+    queryKey: dashboardKeys.responsesFirst(scopeKey),
+    queryFn: ({ signal }) => fetchResponsesFirstPages(scopeCompanyIds, signal),
+    enabled: scopeReady && promptsQuery.data !== undefined,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+  const fullStreamQuery = useQuery({
+    queryKey: dashboardKeys.responsesFull(scopeKey),
+    queryFn: ({ signal }) => fetchResponsesRemaining(
+      scopeCompanyIds,
+      queryClient.getQueryData<FirstPages>(dashboardKeys.responsesFirst(scopeKey)),
+      signal
+    ),
+    enabled: scopeReady && firstPagesQuery.data !== undefined,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+  // ---- Values derived from the cached families. Same names and shapes the
+  // rest of the hook (and its consumers) always used. ----
+  const activePrompts = promptsQuery.data ?? EMPTY_ARRAY;
+  // True only while a scope loads with NOTHING cached — a switch back to an
+  // already-seen scope paints instantly while revalidation runs silently.
+  const loading = scopeReady && promptsQuery.isLoading;
+  const competitorLoading = loading;
+  // Downstream memos gate on this while a NEW scope's first load is in
+  // flight; cached switch-backs never raise it, so they compute immediately.
+  const isSwitchingCompany = loading;
+  const companyMetricsLoading = scopeReady && rollupsQuery.isLoading;
+  // Same signal: visibility rows arrive with the rollups call.
+  const visibilityMvLoading = scopeReady && rollupsQuery.isLoading;
+
+  const rollups: ScopeRollups | undefined = rollupsQuery.data;
+  const sentimentMvRows = rollups?.sentiment ?? EMPTY_ARRAY;
+  const relevanceMvRows = rollups?.relevance ?? EMPTY_ARRAY;
+  const visibilityMvRows = rollups?.visibility ?? EMPTY_ARRAY;
+  const mvLocationBuckets = useMemo(
+    () => (rollups?.location_buckets ?? []).map(b => b ?? ''),
+    [rollups]
+  );
+  const attributeThemes = useMemo(
+    () => aggregateAttributeThemeRows(rollups?.attribute_themes ?? []),
+    [rollups]
+  );
+  // Per-response sentiment rides along on the streamed rows (RPC join) — no
+  // separate fetch family. Old shape preserved for every consumer.
+  const responseSentimentRows = useMemo(() => {
+    const rows = (fullStreamQuery.data ?? firstPagesQuery.data)?.rows;
+    return rows && rows.length > 0 ? sentimentRowsFromStream(rows) : EMPTY_ARRAY;
+  }, [fullStreamQuery.data, firstPagesQuery.data]);
+
+  const companyMetricsAgg = useMemo(() => ({
+    sentiment: aggregateSentimentRows(sentimentMvRows),
+    relevance: aggregateRelevanceRows(relevanceMvRows),
+  }), [sentimentMvRows, relevanceMvRows]);
+  const companySentimentMetrics = companyMetricsAgg.sentiment.metrics;
+  const companyRelevanceMetrics = companyMetricsAgg.relevance.metrics;
+  const companySentimentByMonth = companyMetricsAgg.sentiment.byMonth;
+  const companyRelevanceByMonth = companyMetricsAgg.relevance.byMonth;
+
+  const mvTopCitations: CitationCount[] = useMemo(() =>
+    Object.entries(sumRowsBy(rollups?.top_sources ?? [], 'domain', 'citation_count'))
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 30),
+    [rollups]
+  );
+  const mvTopCompetitors = useMemo(() =>
+    Object.entries(sumRowsBy(rollups?.competitors ?? [], 'competitor_name', 'mention_count'))
+      .map(([company, count]) => ({ company, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 30),
+    [rollups]
+  );
+  const mvLlmRankings: LLMMentionRanking[] = useMemo(() =>
+    Object.entries(sumRowsBy(rollups?.llm_rankings ?? [], 'ai_model', 'mentions'))
+      .map(([model, mentions]) => ({
+        model,
+        displayName: getLLMDisplayName(model),
+        mentions,
+        logoUrl: getLLMLogo(model),
+      }))
+      .sort((a, b) => b.mentions - a.mentions),
+    [rollups]
+  );
+
+  // Public location setter. Location loading is derived from the location
+  // query below, so a cached location renders on the same tick — no eager
+  // flag needed.
+  const setSelectedLocation = setSelectedLocationState;
   // Track if metrics are still being calculated (for UX - show all metrics together)
   // Start as true, will be set to false when all metrics are ready
   const [metricsCalculating, setMetricsCalculating] = useState(true);
@@ -423,32 +552,6 @@ export const useDashboardData = () => {
   const pollingRef = useRef<NodeJS.Timeout | null>(null);   // Track polling interval
   const recencyDataCacheRef = useRef<{ responseIdsHash: string; data: any[] } | null>(null); // Cache recency data
   const previousResponseIdsRef = useRef<string>(''); // Track previous response IDs to detect changes
-  // Cache company dashboard data for instant restore when switching back.
-  // The MV/metrics snapshots are written by their fetches on
-  // completion (never from mid-load state), so when an entry is fresh and
-  // complete a switch-back restores everything and skips the network.
-  const COMPANY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-  const companyDataCacheRef = useRef<Record<string, {
-    responses: PromptResponse[];
-    attributeThemes?: any[];
-    responseSentimentRows?: any[];
-    activePrompts?: any[];
-    lastUpdated?: Date;
-    timestamp: number;
-    mvData?: {
-      topCitations: CitationCount[];
-      topCompetitors: { company: string; count: number }[];
-      llmRankings: LLMMentionRanking[];
-    };
-    companyMetrics?: {
-      sentiment: any | null;
-      relevance: any | null;
-      sentimentByMonth: Record<string, number>;
-      relevanceByMonth: Record<string, number>;
-      sentimentMvRows: any[];
-      relevanceMvRows: any[];
-    };
-  }>>({});
   // Tracks which company the user is currently looking at. Each fetch captures
   // the id at call time and compares against this ref before committing state,
   // so a slow response for a previously-selected company can't overwrite the
@@ -471,11 +574,9 @@ export const useDashboardData = () => {
         // 1. We have user and company
         // 2. We were actually offline before (not just tab visibility change)
         // 3. Tab is currently visible
-        if (user?.id && currentCompany?.id && wasOffline && !document.hidden) {
-          // Only refetch if we don't have data yet or if this is a real network reconnect
-          if (!fetchedCompanyUserKeyRef.current || responses.length === 0) {
-            setShouldRefetch(true); // Force refetch only if needed
-          }
+        if (user?.id && currentCompany?.id && wasOffline && !document.hidden && responses.length === 0) {
+          // Data never arrived while offline — refetch the scope fresh.
+          queryClient.invalidateQueries({ queryKey: dashboardKeys.all });
         }
       } else {
         setConnectionError('No internet connection. Please check your network.');
@@ -485,374 +586,56 @@ export const useDashboardData = () => {
     return removeListener;
   }, [user?.id, currentCompany?.id, responses.length]); // Only IDs and responses length
 
-  const fetchResponses = useCallback(async () => {
-    if (!user || !currentCompany) {
+  // ---- Response stream → state sync ----
+  // `responses` stays as state (loadAllHistoricalResponses appends to it);
+  // it is synced from the cached stream queries: first pages commit eagerly,
+  // the full keyset walk replaces them, and a scope with nothing cached yet
+  // clears so the previous company's rows never render under the new header.
+  const streamData = fullStreamQuery.data ?? firstPagesQuery.data;
+  useEffect(() => {
+    if (!scopeReady) return;
+    const prompts = promptsQuery.data;
+    if (prompts === undefined || streamData === undefined) {
+      setResponses([]);
+      setResponsesLoadedCompanyId(null);
+      setLastUpdated(undefined);
       return;
     }
-
-    // Check network status first
-    if (!isOnline) {
-      setConnectionError('No internet connection. Please check your network.');
-      return;
+    const stitched = stitchResponses(streamData.rows, prompts);
+    setResponses(stitched);
+    if (stitched.length > 0) {
+      const newest = stitched[0];
+      setLastUpdated(new Date(newest.tested_at || newest.updated_at || newest.created_at));
+    } else {
+      setLastUpdated(undefined);
     }
-
-    // Capture the company at request time. Any state writes after an await
-    // must check this against currentCompanyIdRef so a slow fetch for the
-    // previously-selected company can't overwrite the active company's data.
-    const requestedCompanyId = currentCompany.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
-    // Whole brand scope (current + same-name siblings) — aggregated view.
-    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
-
-    try {
-      setLoading(true);
-      setCompetitorLoading(true);
-      setConnectionError(null);
-
-      // Recent prompt_responses are bounded by 180 days to keep the eager
-      // query under the 8s statement timeout for accounts with a lot of
-      // history. Older rows are fetched on demand by tabs that need
-      // historical drilldowns.
-      const PAGE_SIZE = 1000;
-      const eagerCutoffIso = new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000).toISOString();
-
-      // Use the canonicalized view so detected_competitors arrives with
-      // alias mapping already applied — no client-side normalization
-      // needed (and no race condition between alias-map load and render).
-      //
-      // PER-COMPANY pages, one pagination per scope profile, merged
-      // client-side. A single merged .in(scopeIds) query cannot be served by
-      // the (company_id, tested_at) index — Postgres must merge/sort across
-      // companies and re-walk rows for every OFFSET page, which blew the
-      // statement timeout (500s) on brands with much history. Per-company
-      // queries are exactly the shape the single-profile dashboard has always
-      // run.
-      //
-      // No secondary ORDER BY tiebreaker: the (company_id, tested_at) index
-      // satisfies this ordering directly, and a tiebreaker would force a
-      // multi-MB sort node per page. Pages are deduped by id after fetch.
-      const fetchResponsePage = (companyId: string, from: number, to: number, withCount: boolean) =>
-        // bulk: response pages hydrate in the background — they must never
-        // delay the critical-path fetches (prompts, rollup MVs) in the gate.
-        withDbSlot(() => retrySupabaseQuery(() =>
-          supabase
-            .from('prompt_responses_canonical')
-            .select(`
-              id,
-              confirmed_prompt_id,
-              company_id,
-              ai_model,
-              tested_at,
-              created_at,
-              updated_at,
-              response_month,
-              company_mentioned,
-              detected_competitors,
-              citations,
-              for_index,
-              index_period,
-              confirmed_prompts!inner(
-                id,
-                company_id,
-                prompt_text,
-                prompt_category,
-                prompt_type,
-                prompt_theme,
-                job_function_context,
-                location_context,
-                industry_context,
-                attribute_id
-              )
-            `, withCount ? { count: 'exact' } : undefined)
-            .eq('company_id', companyId)
-            // Methodology v2: excluded models never reach client-facing
-            // surfaces (rows stay in the DB as the audit trail).
-            .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
-            .gte('tested_at', eagerCutoffIso)
-            .order('tested_at', { ascending: false })
-            .range(from, to)
-        ) as Promise<{ data: any[] | null; error: any; count: number | null }>, { bulk: true });
-
-      const byTestedAtDesc = (a: any, b: any) =>
-        new Date(b.tested_at || b.created_at || 0).getTime() - new Date(a.tested_at || a.created_at || 0).getTime();
-
-      // PostgREST clamps unpaginated requests to max_rows (1000); a
-      // multi-profile brand can exceed that in prompts alone, silently losing
-      // rows. Stable order + range pages fetch the complete set.
-      const fetchAllPrompts = async (): Promise<{ data: any[] | null; error: any }> => {
-        let all: any[] = [];
-        for (let page = 0; page < 30; page += 1) {
-          const result = await withDbSlot(() => retrySupabaseQuery(() =>
-            supabase
-              .from('confirmed_prompts')
-              .select('id, user_id, prompt_text, company_id, prompt_category, prompt_theme, prompt_type, industry_context, job_function_context, location_context, attribute_id')
-              .in('company_id', requestedScopeIds)
-              .order('id', { ascending: true })
-              .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
-          ) as Promise<{ data: any[] | null; error: any }>);
-          if (result.error) return result;
-          const chunk = result.data ?? [];
-          all = all.concat(chunk);
-          if (chunk.length < PAGE_SIZE) break;
-        }
-        return { data: all, error: null };
-      };
-
-      // CRITICAL PATH: prompts only. Raw response rows are heavy (citations
-      // jsonb, thousands of rows per profile) and everything the first paint
-      // shows is rollup-first — so the response pages stream in the
-      // BACKGROUND below, hydrating tables/drilldowns as they arrive. The
-      // prompt list stays eager: it's small, and the Prompts table shell and
-      // the "analysis in progress" detection need it.
-      const promptsResult = await fetchAllPrompts();
-
-      if (isStale()) return;
-
-      const { data: userPrompts, error: promptsError } = promptsResult;
-
-      if (promptsError) {
-        console.error('🔍 Error fetching prompts:', promptsError);
-        if (promptsError.message?.includes('permission') || promptsError.message?.includes('policy')) {
-          throw new Error('You don\'t have permission to view prompts for this company. Please contact support if you believe this is an error.');
-        }
-        throw new Error('Unable to load prompts. Please refresh the page or try again later.');
-      }
-
-      if (!userPrompts || userPrompts.length === 0) {
-        if (isStale()) return;
-        setActivePrompts([]);
-        setResponses([]);
-        setResponsesLoadedCompanyId(requestedCompanyId); // loaded (empty) — final
-        setLoading(false);
-        setCompetitorLoading(false);
-        return;
-      }
-
-      if (isStale()) return;
-      setActivePrompts(userPrompts);
-      setHasDataIssues(false);
-      setHasMoreResponses(false);
-
-      // FIRST PAINT HAPPENS HERE. The rollup fetches running in parallel
-      // (fetchMVData / fetchCompanyMetrics / the visibility-MV effect) own
-      // every headline number; nothing below this line gates the render.
-      // Consumers key raw-dependent sections on responsesLoadedCompanyId to
-      // show skeletons (not "No data") while the stream is still arriving.
-      setLoading(false);
-      setCompetitorLoading(false);
-
-      // BACKGROUND: newest page of every profile's responses, in parallel
-      // (per-company .eq pagination — the merged .in() ordered shape is the
-      // statement-timeout incident, see §8 of the audit doc).
-      const firstPageResults = await Promise.all(
-        requestedScopeIds.map(id => fetchResponsePage(id, 0, PAGE_SIZE - 1, true))
-      );
-
-      if (isStale()) return;
-
-      const responsesError = firstPageResults.find(r => r.error)?.error;
-      if (responsesError) {
-        throw responsesError;
-      }
-
-      const perCompanyFirstPages = firstPageResults.map(r => ({
-        rows: r.data ?? [],
-        total: r.count ?? (r.data?.length ?? 0),
-      }));
-      const firstPage = perCompanyFirstPages.flatMap(p => p.rows).sort(byTestedAtDesc);
-
-      // Progressive hydration: commit the newest pages immediately instead of
-      // holding the tables until every page (and attributes) arrives. State is
-      // set again below with the full set once the background fetches land.
-      setResponses(firstPage);
-      if (firstPage.length > 0) {
-        setLastUpdated(new Date(firstPage[0].tested_at || firstPage[0].updated_at || firstPage[0].created_at));
-      }
-
-      const fetchRemainingPages = async (): Promise<any[]> => {
-        const jobs: Promise<{ data: any[] | null; error: any; count: number | null }>[] = [];
-        requestedScopeIds.forEach((id, idx) => {
-          const totalPages = Math.ceil(perCompanyFirstPages[idx].total / PAGE_SIZE);
-          for (let p = 1; p < totalPages; p += 1) {
-            jobs.push(fetchResponsePage(id, p * PAGE_SIZE, (p + 1) * PAGE_SIZE - 1, false));
-          }
-        });
-        let all = perCompanyFirstPages.flatMap(p => p.rows);
-        if (jobs.length > 0) {
-          const rest = await Promise.all(jobs);
-          for (const result of rest) {
-            if (result.error) throw result.error;
-            all = all.concat(result.data ?? []);
-          }
-        }
-        // Offset pages can skid if rows land mid-fetch — dedupe by id.
-        const seen = new Set<string>();
-        return all
-          .filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)))
-          .sort(byTestedAtDesc);
-      };
-
-      const data = await fetchRemainingPages();
-      if (isStale()) return;
-
-      let allResponses = data || [];
-
-      // Attribute rows feed the Thematic tab and Overview's attribute cards.
-      // They are a STRICT SUBSET of the stream just fetched (same table, same
-      // company predicate, same 180-day window — just the attribute-tagged
-      // prompts), so derive them client-side instead of re-downloading them.
-      // The old second fetch family filtered on the embedded
-      // confirmed_prompts.attribute_id, which forces the planner to drive
-      // through confirmed_prompts (one index probe per attribute prompt,
-      // measured ~50x slower per page than the (company_id, tested_at) path,
-      // ~2.5s uncontended) plus an equally slow count: 'exact' — it kept
-      // crossing the ~8s statement timeout (HTTP 500) during the initial
-      // fan-out and, because its errors were swallowed, silently dropped all
-      // attribute data when it did. The embedded prompt-company filter is
-      // mirrored below (prompt must belong to the same profile as the row).
-      const attributeRaw = allResponses.filter(r =>
-        r.confirmed_prompts?.attribute_id != null &&
-        (r.confirmed_prompts?.company_id == null || r.confirmed_prompts.company_id === r.company_id)
-      );
-
-      {
-        try {
-            // Filter to get only latest attribute responses per prompt+model
-            const attributeLatestMap = new Map<string, any>();
-            attributeRaw.forEach(response => {
-              const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
-              if (!attributeLatestMap.has(key)) {
-                attributeLatestMap.set(key, response);
-              }
-            });
-            const attributeResponses = Array.from(attributeLatestMap.values());
-
-            if (attributeResponses && attributeResponses.length > 0) {
-              // Convert attribute responses to PromptResponse format
-              const attributeResponsesFormatted: PromptResponse[] = attributeResponses.map(response => {
-                const promptType = response.confirmed_prompts.prompt_type;
-                const attributeId = response.confirmed_prompts.attribute_id || promptType;
-
-                // Get prompt text from the confirmed_prompts join
-                const promptText = response.confirmed_prompts?.prompt_text || `${promptType} analysis for ${attributeId}`;
-
-                return {
-                  id: response.id,
-                  confirmed_prompt_id: response.confirmed_prompt_id,
-                  company_id: response.confirmed_prompts.company_id,
-                  ai_model: response.ai_model,
-                  response_text: response.response_text,
-                  citations: response.citations,
-                  tested_at: response.tested_at || response.updated_at || response.created_at,
-                  response_month: response.response_month,
-                  company_mentioned: response.company_mentioned,
-                  detected_competitors: response.detected_competitors,
-
-                  confirmed_prompts: {
-                    prompt_text: promptText,
-                    prompt_category: attributeId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()),
-                    prompt_type: promptType,
-                    industry_context: response.confirmed_prompts.industry_context,
-                    job_function_context: response.confirmed_prompts.job_function_context,
-                    location_context: response.confirmed_prompts.location_context
-                  }
-                };
-              });
-
-              // Combine regular responses with attribute responses
-              allResponses = [...allResponses, ...attributeResponsesFormatted];
-            }
-        } catch (error) {
-          console.error('Error processing attribute responses:', error);
-          // Continue with regular responses even if the attribute processing fails
-        }
-      }
-      
-      // Yield to the browser before the big state set so pending interactions
-      // (clicks, scrolls) can be processed before the useMemo cascade fires.
-      await new Promise(resolve => setTimeout(resolve, 0));
-
-      if (isStale()) return;
-      setResponses(allResponses);
-      // Full set committed — location options / raw-value sets are now final
-      // for this company, so selection validity may be judged (see the
-      // reconcile effect). Deliberately NOT set after the first page: a
-      // location present only in later pages would be wrongly reconciled away.
-      setResponsesLoadedCompanyId(requestedCompanyId);
-
-      // Set lastUpdated to the most recent response collection time
-      let lastUpdatedDate: Date | undefined;
-      if (allResponses.length > 0) {
-        const mostRecentResponse = allResponses[0]; // Already sorted by updated_at desc
-        lastUpdatedDate = new Date(mostRecentResponse.tested_at || mostRecentResponse.updated_at || mostRecentResponse.created_at);
-        setLastUpdated(lastUpdatedDate);
-      } else {
-        setLastUpdated(undefined);
-      }
-
-      // Cache by the captured id (not currentCompany?.id, which could be a
-      // different company by now if the user switched mid-fetch). Merge over
-      // the existing entry so snapshots written by the other fetches (MV
-      // data, metrics, themes) aren't wiped by a responses refetch.
-      if (allResponses.length > 0) {
-        companyDataCacheRef.current[requestedCompanyId] = {
-          ...companyDataCacheRef.current[requestedCompanyId],
-          responses: allResponses,
-          activePrompts: userPrompts,
-          lastUpdated: lastUpdatedDate,
-          timestamp: Date.now()
-        };
-      }
-
-      setLoading(false);
-      setCompetitorLoading(false);
-    } catch (error) {
-      // If the user has switched away, swallow the error silently — the new
-      // fetch owns the UI state now and shouldn't see error toasts from us.
-      if (isStale()) return;
-      console.error('Error in fetchResponses:', error);
-
-      // Handle authentication errors specifically
-      if (error?.message?.includes('Invalid login credentials') ||
-          error?.message?.includes('Invalid Refresh Token') ||
-          error?.message?.includes('JWT') ||
-          error?.status === 401) {
-        setConnectionError('Authentication expired. Please sign in again.');
-        clearSession(); // Clear the invalid session
-
-        // Clear any stored auth data and reload to reset the app state
-        try {
-          localStorage.removeItem('sb-ofyjvfmcgtntwamkubui-auth-token');
-          sessionStorage.clear();
-          // Reload the page to reset the app state
-          setTimeout(() => {
-            window.location.reload();
-          }, 2000);
-        } catch (e) {
-          console.error('Error clearing auth data:', e);
-        }
-
-        // Don't retry on auth errors
-        setLoading(false);
-        setCompetitorLoading(false);
-        return;
-      }
-
-      // Provide more specific error messages
-      if (error?.message?.includes('network') || error?.message?.includes('fetch')) {
-        setConnectionError('Network error. Please check your internet connection and try again.');
-      } else if (error?.message?.includes('timeout')) {
-        setConnectionError('Request timed out. The server may be busy. Please try again in a moment.');
-      } else if (error?.message?.includes('permission') || error?.message?.includes('policy')) {
-        setConnectionError('Permission denied. Please ensure you have access to this company\'s data.');
-      } else {
-        setConnectionError('Unable to load data. Please refresh the page or try again later.');
-      }
-      setLoading(false);
-      setCompetitorLoading(false);
-    }
+    // Final only when every profile streamed to its last page — the location
+    // reconcile effect must not judge selection validity before that.
+    setResponsesLoadedCompanyId(
+      streamData.complete && currentCompany?.id ? currentCompany.id : null
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany, isOnline, scopeKey]);
+  }, [scopeReady, promptsQuery.data, streamData, scopeKey, currentCompany?.id]);
+
+  // Surface stream/prompts failures the way the old fetch path did.
+  const streamError: any = promptsQuery.error || firstPagesQuery.error || fullStreamQuery.error || rollupsQuery.error;
+  useEffect(() => {
+    if (!streamError) {
+      setConnectionError(null);
+      return;
+    }
+    console.error('Error loading dashboard data:', streamError);
+    const msg = String(streamError?.message ?? '');
+    if (msg.includes('permission') || msg.includes('policy')) {
+      setConnectionError("Permission denied. Please ensure you have access to this company's data.");
+    } else if (msg.includes('timeout')) {
+      setConnectionError('Request timed out. The server may be busy. Please try again in a moment.');
+    } else if (msg.includes('network') || msg.includes('fetch')) {
+      setConnectionError('Network error. Please check your internet connection and try again.');
+    } else {
+      setConnectionError('Unable to load data. Please refresh the page or try again later.');
+    }
+  }, [streamError]);
 
   const fetchResponseTexts = useCallback(async (ids: string[]) => {
     if (!ids.length) return {};
@@ -892,306 +675,13 @@ export const useDashboardData = () => {
 
   // Fetch company metrics from materialized views (backend-calculated),
   // aggregated across the whole brand scope (current + same-name siblings).
-  const fetchCompanyMetrics = useCallback(async () => {
-    if (!user || !currentCompany?.id) return;
 
-    const requestedCompanyId = currentCompany.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
-    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
-
-    try {
-      setCompanyMetricsLoading(true);
-
-      // Fetch sentiment and relevance metrics from materialized views.
-      // PER-COMPANY PAGINATED: PostgREST clamps every request to max_rows
-      // (1000 in supabase/config.toml) regardless of .limit(), and ordering by
-      // month desc means truncation silently drops the OLDEST months — the
-      // per-month maps lose history and every prior-month delta collapses to
-      // "no data". One .range() pagination per scope profile with a stable
-      // ORDER BY (the MV's unique-index columns) fetches the complete set.
-      const MV_PAGE = 1000;
-      const MV_MAX_PAGES = 20; // safety valve, far above real per-company MV sizes
-      const fetchMvAllRows = async (
-        table: 'company_sentiment_scores_mv' | 'company_relevance_scores_mv'
-      ): Promise<{ data: any[]; error: any }> => {
-        try {
-          const perCompany = await Promise.all(requestedScopeIds.map(async (companyId) => {
-            let all: any[] = [];
-            for (let page = 0; page < MV_MAX_PAGES; page += 1) {
-              const { data, error } = await withDbSlot<{ data: any[] | null; error: any }>(() => (supabase as any)
-                .from(table)
-                .select('*')
-                .eq('company_id', companyId)
-                .order('response_month', { ascending: false })
-                .order('prompt_type')
-                .order('prompt_category')
-                .order('prompt_theme')
-                .order('industry_context')
-                .order('job_function_context')
-                .range(page * MV_PAGE, (page + 1) * MV_PAGE - 1));
-              if (error) throw error;
-              const chunk = data ?? [];
-              all = all.concat(chunk);
-              if (chunk.length < MV_PAGE) break;
-            }
-            return all;
-          }));
-          return { data: perCompany.flat(), error: null };
-        } catch (error) {
-          return { data: [], error };
-        }
-      };
-      const [sentimentResult, relevanceResult] = await Promise.all([
-        fetchMvAllRows('company_sentiment_scores_mv'),
-        fetchMvAllRows('company_relevance_scores_mv'),
-      ]);
-
-      // Drop the result if the user already moved on to a different company.
-      if (isStale()) return;
-
-      // Keep the raw rows so the Overview tab can re-aggregate per job function.
-      setSentimentMvRows(sentimentResult.data || []);
-      setRelevanceMvRows(relevanceResult.data || []);
-
-      // Mirrors of what the setters below receive, captured so the completed
-      // fetch can be snapshotted into the per-company cache at the end.
-      let sentimentMetricsSnapshot: any | null = null;
-      const sentimentByMonthSnapshot: Record<string, number> = {};
-      let relevanceMetricsSnapshot: any | null = null;
-      const relevanceByMonthSnapshot: Record<string, number> = {};
-
-      if (sentimentResult.error && sentimentResult.error.code !== 'PGRST116') {
-        console.warn('Error fetching sentiment metrics from materialized view:', sentimentResult.error);
-        // Don't throw - fallback to frontend calculation
-      } else if (sentimentResult.data && sentimentResult.data.length > 0) {
-        // Aggregate sentiment metrics across all prompt types/themes and months
-        // Use the most recent month's data primarily, but aggregate all available months
-        const aggregated = sentimentResult.data.reduce((acc, row) => {
-          acc.totalThemes += row.total_themes || 0;
-          acc.positiveThemes += row.positive_themes || 0;
-          acc.negativeThemes += row.negative_themes || 0;
-          acc.neutralThemes += row.neutral_themes || 0;
-          acc.totalSentimentScore += (row.avg_sentiment_score || 0) * (row.total_themes || 0);
-          acc.totalWeight += row.total_themes || 0;
-          return acc;
-        }, {
-          totalThemes: 0,
-          positiveThemes: 0,
-          negativeThemes: 0,
-          neutralThemes: 0,
-          totalSentimentScore: 0,
-          totalWeight: 0
-        });
-
-        // Methodology v2: headline ratio = positive/(positive+negative),
-        // pooled over the scope. Neutrals count toward composition only.
-        const sentimentRatio = sentimentRatioV2(aggregated.positiveThemes, aggregated.negativeThemes);
-
-        const avgSentimentScore = aggregated.totalWeight > 0
-          ? aggregated.totalSentimentScore / aggregated.totalWeight
-          : 0; // internal only — never published
-
-        if (aggregated.totalThemes > 0) {
-          sentimentMetricsSnapshot = {
-            sentiment_ratio: sentimentRatio,
-            avg_sentiment_score: avgSentimentScore,
-            total_themes: aggregated.totalThemes,
-            positive_themes: aggregated.positiveThemes,
-            negative_themes: aggregated.negativeThemes,
-            neutral_themes: aggregated.neutralThemes
-          };
-        }
-        // Data with no themes stays null - fallback to frontend
-        setCompanySentimentMetrics(sentimentMetricsSnapshot);
-
-        // Per-period sentiment map: positive/(positive+negative) per quarter
-        // (month-grain MV rows pooled by quarter key); periods with no
-        // polarized themes are omitted ("no signal").
-        const sentByMonth: Record<string, { positive: number; negative: number }> = {};
-        sentimentResult.data.forEach(row => {
-          if (!row.response_month) return;
-          const monthKey = quarterKeyOfMonthStr(String(row.response_month)); // "YYYY-Qn"
-          if (!monthKey) return;
-          if (!sentByMonth[monthKey]) sentByMonth[monthKey] = { positive: 0, negative: 0 };
-          sentByMonth[monthKey].positive += row.positive_themes || 0;
-          sentByMonth[monthKey].negative += row.negative_themes || 0;
-        });
-        for (const [key, val] of Object.entries(sentByMonth)) {
-          const ratio = sentimentRatioV2(val.positive, val.negative);
-          if (ratio !== null) sentimentByMonthSnapshot[key] = ratio;
-        }
-        setCompanySentimentByMonth(sentimentByMonthSnapshot);
-      } else {
-        // No data in materialized view - will use frontend calculation
-        setCompanySentimentMetrics(null);
-        setCompanySentimentByMonth({});
-      }
-
-      if (relevanceResult.error && relevanceResult.error.code !== 'PGRST116') {
-        console.warn('Error fetching relevance metrics from materialized view:', relevanceResult.error);
-        // Don't throw - fallback to frontend calculation
-      } else if (relevanceResult.data && relevanceResult.data.length > 0) {
-        // Aggregate relevance metrics across all prompt types/themes and months
-        // Use the most recent month's data primarily, but aggregate all available months
-        const aggregated = relevanceResult.data.reduce((acc, row) => {
-          acc.totalCitations += row.total_citations || 0;
-          acc.validCitations += row.valid_citations || 0;
-          acc.totalRelevanceScore += (row.relevance_score || 0) * (row.valid_citations || 0);
-          acc.totalWeight += row.valid_citations || 0;
-          return acc;
-        }, { 
-          totalCitations: 0, 
-          validCitations: 0, 
-          totalRelevanceScore: 0, 
-          totalWeight: 0
-        });
-
-        const avgRelevanceScore = aggregated.totalWeight > 0
-          ? aggregated.totalRelevanceScore / aggregated.totalWeight
-          : 0;
-
-        if (aggregated.validCitations > 0) {
-          relevanceMetricsSnapshot = {
-            relevance_score: avgRelevanceScore,
-            total_citations: aggregated.totalCitations,
-            valid_citations: aggregated.validCitations
-          };
-        }
-        // Data with no valid citations stays null - fallback to frontend
-        setCompanyRelevanceMetrics(relevanceMetricsSnapshot);
-
-        // Build per-period relevance map (weighted avg relevance_score per
-        // quarter, month-grain MV rows pooled by quarter key)
-        const relByMonth: Record<string, { scoreSum: number; weight: number }> = {};
-        relevanceResult.data.forEach(row => {
-          if (!row.response_month) return;
-          const monthKey = quarterKeyOfMonthStr(String(row.response_month)); // "YYYY-Qn"
-          if (!monthKey) return;
-          if (!relByMonth[monthKey]) relByMonth[monthKey] = { scoreSum: 0, weight: 0 };
-          const w = row.valid_citations || 0;
-          relByMonth[monthKey].scoreSum += (row.relevance_score || 0) * w;
-          relByMonth[monthKey].weight += w;
-        });
-        for (const [key, val] of Object.entries(relByMonth)) {
-          relevanceByMonthSnapshot[key] = val.weight > 0 ? val.scoreSum / val.weight : 0;
-        }
-        setCompanyRelevanceByMonth(relevanceByMonthSnapshot);
-      } else {
-        // No data in materialized view - will use frontend calculation
-        setCompanyRelevanceMetrics(null);
-        setCompanyRelevanceByMonth({});
-      }
-
-      // Snapshot into the per-company cache so a fresh switch-back can skip
-      // this fetch. Written only when the fetch completed, so switching away
-      // mid-load can't poison the cache with empty data.
-      companyDataCacheRef.current[requestedCompanyId] = {
-        responses: [],
-        timestamp: Date.now(),
-        ...companyDataCacheRef.current[requestedCompanyId],
-        companyMetrics: {
-          sentiment: sentimentMetricsSnapshot,
-          relevance: relevanceMetricsSnapshot,
-          sentimentByMonth: sentimentByMonthSnapshot,
-          relevanceByMonth: relevanceByMonthSnapshot,
-          sentimentMvRows: sentimentResult.data || [],
-          relevanceMvRows: relevanceResult.data || [],
-        },
-      };
-
-    } catch (error: any) {
-      if (isStale()) return;
-      console.warn('Error fetching company metrics from materialized views:', error);
-      // Don't set error state - fallback to frontend calculation
-      setCompanySentimentMetrics(null);
-      setCompanyRelevanceMetrics(null);
-      setCompanySentimentByMonth({});
-      setCompanyRelevanceByMonth({});
-    } finally {
-      if (!isStale()) {
-        setCompanyMetricsLoading(false);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany?.id, scopeKey]);
-
+  // Kept API: consumers call this to refresh MV-backed data after
+  // admin-side changes. Invalidation revalidates in the background — content
+  // stays on screen.
   const fetchMVData = useCallback(async () => {
-    if (!user || !currentCompany?.id) return;
-
-    const requestedCompanyId = currentCompany.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
-    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
-
-    try {
-      // Per-company top-N, merged and re-summed client-side. A single shared
-      // .limit() slice across the scope is ordered by per-row count, so a key
-      // that ranks modestly in EVERY profile can be cut from all of them yet
-      // belong in the merged top-30; a per-company cap keeps each profile's
-      // full head. Also preserves the (company_id, count DESC) index path.
-      const fetchTopRows = async (
-        table: string,
-        select: string,
-        orderCol: string,
-        perCompanyLimit: number | null
-      ): Promise<{ data: any[] | null; error: any }> => {
-        const results = await Promise.all(requestedScopeIds.map(id =>
-          withDbSlot<{ data: any[] | null; error: any }>(() => {
-            let q: any = (supabase as any)
-              .from(table)
-              .select(select)
-              .eq('company_id', id)
-              .order(orderCol, { ascending: false });
-            if (perCompanyLimit) q = q.limit(perCompanyLimit);
-            return q as PromiseLike<{ data: any[] | null; error: any }>;
-          })
-        ));
-        const err = results.find(r => r.error)?.error ?? null;
-        return { data: err ? null : results.flatMap(r => r.data ?? []), error: err };
-      };
-
-      const [sourcesResult, competitorsResult, llmResult] = await Promise.all([
-        fetchTopRows('company_top_sources_mv', 'domain, citation_count', 'citation_count', 200),
-        fetchTopRows('company_competitors_mv', 'competitor_name, mention_count', 'mention_count', 200),
-        fetchTopRows('company_llm_rankings_mv', 'ai_model, mentions', 'mentions', null),
-      ]);
-
-      if (isStale()) return;
-
-      const topCitations = Object.entries(sumRowsBy(sourcesResult.data ?? [], 'domain', 'citation_count'))
-        .map(([domain, count]) => ({ domain, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 30);
-      const topCompetitors = Object.entries(sumRowsBy(competitorsResult.data ?? [], 'competitor_name', 'mention_count'))
-        .map(([company, count]) => ({ company, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 30);
-      const llmRankings = Object.entries(sumRowsBy(llmResult.data ?? [], 'ai_model', 'mentions'))
-        .map(([model, mentions]) => ({
-          model,
-          displayName: getLLMDisplayName(model),
-          mentions,
-          logoUrl: getLLMLogo(model),
-        }))
-        .sort((a, b) => b.mentions - a.mentions);
-
-      if (sourcesResult.data) setMvTopCitations(topCitations);
-      if (competitorsResult.data) setMvTopCompetitors(topCompetitors);
-      if (llmResult.data) setMvLlmRankings(llmRankings);
-
-      // Snapshot into the per-company cache so a fresh switch-back can skip
-      // this fetch (see companyDataCacheRef).
-      companyDataCacheRef.current[requestedCompanyId] = {
-        responses: [],
-        timestamp: Date.now(),
-        ...companyDataCacheRef.current[requestedCompanyId],
-        mvData: { topCitations, topCompetitors, llmRankings },
-      };
-    } catch (err) {
-      if (isStale()) return;
-      console.warn('[fetchMVData] error — will fall back to frontend calculation:', err);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany?.id, scopeKey]);
+    await queryClient.invalidateQueries({ queryKey: dashboardKeys.rollups(scopeKey) });
+  }, [queryClient, scopeKey]);
 
   const fetchRecencyData = useCallback(async () => {
     if (!user) return;
@@ -1455,105 +945,10 @@ export const useDashboardData = () => {
   // Pre-aggregated attribute scores from company_attribute_themes_mv. A few
   // hundred rows per company (16 attributes x months x job functions) instead
   // of the tens of thousands of raw theme rows the dashboard used to pull.
-  const fetchAttributeThemes = useCallback(async () => {
-    if (!user || !currentCompany?.id) {
-      setAttributeThemes([]);
-      return;
-    }
-    const requestedCompanyId = currentCompany.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
-    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
-    try {
-      const PAGE_SIZE = 1000;
-      // One pagination per scope company (index-friendly), merged after.
-      const fetchForCompany = async (companyId: string): Promise<any[]> => {
-        let all: any[] = [];
-        let page = 0;
-        let chunk: any[] | null;
-        do {
-          const from = page * PAGE_SIZE;
-          const result = await withDbSlot(() => retrySupabaseQuery(() =>
-            supabase
-              .from('company_attribute_themes_mv')
-              .select('attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count')
-              .eq('company_id', companyId)
-              // Stable order (unique-index columns): these are plain tables
-              // rebuilt by DELETE+INSERT since 20260706120000 — unordered
-              // OFFSET pages can duplicate/skip rows across a mid-fetch
-              // rebuild, and duplicates get double-summed downstream.
-              .order('response_month')
-              .order('job_function_context')
-              .order('attribute_id')
-              .range(from, from + PAGE_SIZE - 1)
-          ) as Promise<{ data: any[] | null; error: any }>);
-          if (isStale()) return all;
-          if (result.error) throw result.error;
-          chunk = result.data ?? [];
-          all = all.concat(chunk);
-          page += 1;
-        } while (chunk && chunk.length === PAGE_SIZE);
-        return all;
-      };
-      const perCompany = await Promise.all(requestedScopeIds.map(fetchForCompany));
-      if (isStale()) return;
-      // Rows from several sibling companies repeat (attribute, month, job
-      // function) — collapse them to the single-company shape consumers expect.
-      setAttributeThemes(aggregateAttributeThemeRows(perCompany.flat()));
-    } catch (err: any) {
-      if (!isStale()) console.error('Error in fetchAttributeThemes:', err?.message);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany?.id, scopeKey]);
 
   // Per-response sentiment ratios from company_response_sentiment_mv. Feeds the
   // sentiment cache (trend chart, trend arrows, per-prompt sentiment) without
   // shipping raw theme rows.
-  const fetchResponseSentiment = useCallback(async () => {
-    if (!user || !currentCompany?.id) {
-      setResponseSentimentRows([]);
-      return;
-    }
-    const requestedCompanyId = currentCompany.id;
-    const isStale = () => currentCompanyIdRef.current !== requestedCompanyId;
-    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [requestedCompanyId];
-    try {
-      const PAGE_SIZE = 1000;
-      // One pagination per scope company (index-friendly), merged after.
-      // response_id is globally unique, so a plain concat is safe.
-      const fetchForCompany = async (companyId: string): Promise<any[]> => {
-        let all: any[] = [];
-        let page = 0;
-        let chunk: any[] | null;
-        do {
-          const from = page * PAGE_SIZE;
-          const result = await withDbSlot(() => retrySupabaseQuery(() =>
-            supabase
-              .from('company_response_sentiment_mv')
-              .select('response_id, total_themes, positive_themes, negative_themes, sentiment_ratio')
-              .eq('company_id', companyId)
-              // Stable order — see the attribute-themes fetch above.
-              .order('response_id')
-              .range(from, from + PAGE_SIZE - 1)
-          ) as Promise<{ data: any[] | null; error: any }>);
-          if (isStale()) return all;
-          if (result.error) throw result.error;
-          chunk = result.data ?? [];
-          all = all.concat(chunk);
-          page += 1;
-          if (chunk.length === PAGE_SIZE) {
-            await new Promise(resolve => setTimeout(resolve, 0));
-          }
-        } while (chunk && chunk.length === PAGE_SIZE);
-        return all;
-      };
-      const perCompany = await Promise.all(requestedScopeIds.map(fetchForCompany));
-      if (isStale()) return;
-      setResponseSentimentRows(perCompany.flat());
-    } catch (err: any) {
-      if (!isStale()) console.error('Error in fetchResponseSentiment:', err?.message);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany?.id, scopeKey]);
 
   // Memoized cache of sentiment calculations per response ID
   // OPTIMIZED: Only recalculates when themes change, not on every render
@@ -1625,14 +1020,6 @@ export const useDashboardData = () => {
     return map;
   }, [aiThemes]);
 
-  const fetchCompanyName = useCallback(async () => {
-    if (!currentCompany) {
-      setCompanyName('');
-      return;
-    }
-    
-    setCompanyName(currentCompany.name);
-  }, [currentCompany]);
 
   // Cache for search results to prevent duplicate requests
   const searchResultsCache = useRef<{
@@ -1827,162 +1214,28 @@ export const useDashboardData = () => {
   // Add refs to track initial loading state
   const hasInitiallyLoadedRef = useRef(false);
   // currentCompanyIdRef is declared near the top of the hook so the fetch
-  // callbacks above can use it for stale-response checks.
-  // Track if we've fetched for this specific company/user combination
-  const fetchedCompanyUserKeyRef = useRef<string | null>(null);
-  const [shouldRefetch, setShouldRefetch] = useState(false);
-  const [isSwitchingCompany, setIsSwitchingCompany] = useState(false);
-
-  // Update the ref when company changes
+  // On company switch, reset only the NON-query state (drilldown caches,
+  // search, recency). Query-backed families switch by key: cached scopes
+  // restore instantly, uncached ones load fresh — no manual snapshot/restore.
   useEffect(() => {
     if (currentCompany?.id !== currentCompanyIdRef.current && currentCompany?.id !== undefined) {
-      const previousCompanyId = currentCompanyIdRef.current;
-      // Save current company's data to cache before clearing (for instant
-      // restore when switching back) — but ONLY when the outgoing company's
-      // load actually completed. Switching away mid-stream would otherwise
-      // cache the first page(s), and the restore path re-declares cached
-      // responses FINAL (setResponsesLoadedCompanyId), which would let the
-      // reconcile effect wipe a valid location that only exists in the pages
-      // that never landed.
-      if (previousCompanyId && responses.length > 0 && responsesLoadedCompanyId === previousCompanyId) {
-        companyDataCacheRef.current[previousCompanyId] = {
-          // Merge over the existing entry so the MV/metrics snapshots
-          // written by the fetches survive — they're what lets a switch-back
-          // skip the network entirely.
-          ...companyDataCacheRef.current[previousCompanyId],
-          responses,
-          // Raw themes deliberately NOT cached: they accumulate per drilled
-          // attribute and are scope-dependent — a restore could resurrect a
-          // stale-scoped partial set. Drilldowns refetch cheaply via the RPC.
-          attributeThemes, // pre-aggregated attribute scores (MV-backed)
-          responseSentimentRows, // per-response sentiment ratios (MV-backed)
-          lastUpdated: lastUpdated,
-          timestamp: Date.now()
-        };
-      }
-      // Set switching flag to prevent stale data from being used
-      setIsSwitchingCompany(true);
       currentCompanyIdRef.current = currentCompany?.id;
-
-      // Clear all data immediately when switching companies
-      setResponses([]);
-      setResponsesLoadedCompanyId(null);
-      setMvLocationBuckets([]);
-      setVisibilityMvRows([]);
       setResponseTexts({});
       setAiThemes([]);
       setAiThemeAttrsLoaded([]);
       aiThemeAttrsLoadedRef.current = new Set();
       setAiThemesLoading(false);
-      setAttributeThemes([]);
-      setResponseSentimentRows([]);
       setSearchResults([]);
       setSearchTermsData([]);
       setRecencyData([]);
-      setLastUpdated(undefined);
-      setMvTopCitations([]);
-      setMvTopCompetitors([]);
-      setMvLlmRankings([]);
-
-      // Clear search results cache when switching companies
       searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
-      // Clear recency data cache when switching companies
       recencyDataCacheRef.current = null;
-
-      // Reset the fetched key so new data will be loaded
-      fetchedCompanyUserKeyRef.current = null;
     }
-  }, [currentCompany?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally omit responses/aiThemes/lastUpdated to avoid saving on every data change
-  
-  // Initial data fetch - only run when user or company ID actually changes, or when shouldRefetch is true
-  // CRITICAL: Prevent refetch when returning to tab by tracking what we've already loaded
+  }, [currentCompany?.id]);
+
   useEffect(() => {
-    if (user?.id && currentCompany?.id) {
-      const currentKey = `${user.id}-${currentCompany.id}`;
-      const companyId = currentCompany.id;
-
-      // Only fetch if:
-      // 1. This is a new company/user combination, OR
-      // 2. shouldRefetch is explicitly set to true (user clicked Refresh)
-      const isExplicitRefresh = shouldRefetch;
-      if (fetchedCompanyUserKeyRef.current !== currentKey || isExplicitRefresh) {
-        fetchedCompanyUserKeyRef.current = currentKey;
-        hasInitiallyLoadedRef.current = true;
-        setShouldRefetch(false); // Reset the refetch flag
-
-        // On explicit refresh: skip cache and clear caches so we get fresh data.
-        // Raw themes are dropped rather than refetched — the Thematic
-        // drilldown effect refetches its open attribute when the loaded set
-        // empties (see fetchAIThemesForAttribute).
-        if (isExplicitRefresh) {
-          delete companyDataCacheRef.current[companyId];
-          recencyDataCacheRef.current = null;
-          previousResponseIdsRef.current = '';
-          setAiThemes([]);
-          setAiThemeAttrsLoaded([]);
-          aiThemeAttrsLoadedRef.current = new Set();
-        } else {
-          // Restore from cache if available (instant UI when switching back to recently viewed company)
-          const cached = companyDataCacheRef.current[companyId];
-          const cacheFresh = !!cached && (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL && cached.responses.length > 0;
-          if (cacheFresh) {
-            setResponses(cached.responses);
-            setResponsesLoadedCompanyId(companyId); // restored full set — final
-            setLastUpdated(cached.lastUpdated);
-            setLoading(false);
-            setCompetitorLoading(false);
-            setIsSwitchingCompany(false);
-          }
-          // Fully-cached switch-back: restore the MV-backed data too and skip
-          // the refetch entirely. Dashboard data is collection-driven
-          // (monthly), so a sub-5-minute stale window is invisible — and the
-          // explicit Refresh button still bypasses the cache above.
-          if (cacheFresh && cached.mvData && cached.companyMetrics && cached.activePrompts) {
-            setActivePrompts(cached.activePrompts);
-            setMvTopCitations(cached.mvData.topCitations);
-            setMvTopCompetitors(cached.mvData.topCompetitors);
-            setMvLlmRankings(cached.mvData.llmRankings);
-            setCompanySentimentMetrics(cached.companyMetrics.sentiment);
-            setCompanyRelevanceMetrics(cached.companyMetrics.relevance);
-            setCompanySentimentByMonth(cached.companyMetrics.sentimentByMonth);
-            setCompanyRelevanceByMonth(cached.companyMetrics.relevanceByMonth);
-            setSentimentMvRows(cached.companyMetrics.sentimentMvRows);
-            setRelevanceMvRows(cached.companyMetrics.relevanceMvRows);
-            setCompanyName(currentCompany.name || '');
-            return;
-          }
-        }
-
-        // Fetch fresh data (in background if partially restored from cache)
-        setCompanyName(currentCompany.name || '');
-        Promise.all([
-          fetchMVData(),
-          fetchCompanyMetrics(),
-          fetchResponses(),
-        ]);
-        if (isExplicitRefresh) {
-          searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
-        }
-      }
-    } else {
-      // Reset when user/company becomes null
-      fetchedCompanyUserKeyRef.current = null;
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, currentCompany?.id, shouldRefetch]);
-
-  // Clear switching flag when the new company's data has loaded — including a
-  // load that completed EMPTY. (It used to clear only on responses.length > 0,
-  // which left the flag stuck true for zero-response companies and kept
-  // topCitations/topCompetitors permanently empty even when MV data existed.)
-  useEffect(() => {
-    if (
-      isSwitchingCompany &&
-      (responses.length > 0 || responsesLoadedCompanyId === currentCompany?.id)
-    ) {
-      setIsSwitchingCompany(false);
-    }
-  }, [isSwitchingCompany, responses.length, responsesLoadedCompanyId, currentCompany?.id]);
+    setCompanyName(currentCompany?.name ?? '');
+  }, [currentCompany?.id, currentCompany?.name]);
 
   // Reset pagination when company changes
   useEffect(() => {
@@ -1990,13 +1243,6 @@ export const useDashboardData = () => {
     setHasMoreResponses(false);
   }, [currentCompany?.id]);
 
-  // Clear company metrics when company becomes null
-  useEffect(() => {
-    if (!currentCompany?.id || !user?.id) {
-      setCompanySentimentMetrics(null);
-      setCompanyRelevanceMetrics(null);
-    }
-  }, [currentCompany?.id, user?.id]);
 
   // Fetch recency data when responses change (with caching to avoid unnecessary refetches)
   useEffect(() => {
@@ -2025,30 +1271,11 @@ export const useDashboardData = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [responses.length]); // Only depend on responses length - fetch immediately
 
-  // On company change, load the pre-aggregated theme MVs (attribute scores +
-  // per-response sentiment) instead of the old eager raw-themes pull. These are
-  // small/fast and serve everything the Overview renders. Raw ai_themes are now
-  // fetched lazily — one attribute at a time when its drilldown opens (see
-  // fetchAIThemesForAttribute, wired through ThematicAnalysisTab).
+  // Raw-theme drilldown state only exists per company — clear when signed
+  // out / no company. (Attribute scores + per-response sentiment are
+  // query-backed now.)
   useEffect(() => {
-    if (user && currentCompany?.id) {
-      // Restore from the per-company cache on quick switch-back.
-      const cached = companyDataCacheRef.current[currentCompany.id];
-      if (
-        cached &&
-        (Date.now() - cached.timestamp) < COMPANY_CACHE_TTL &&
-        cached.attributeThemes &&
-        cached.responseSentimentRows
-      ) {
-        setAttributeThemes(cached.attributeThemes);
-        setResponseSentimentRows(cached.responseSentimentRows);
-        return;
-      }
-      fetchAttributeThemes();
-      fetchResponseSentiment();
-    } else {
-      setAttributeThemes([]);
-      setResponseSentimentRows([]);
+    if (!user || !currentCompany?.id) {
       setAiThemes([]);
       setAiThemeAttrsLoaded([]);
       aiThemeAttrsLoadedRef.current = new Set();
@@ -2057,86 +1284,7 @@ export const useDashboardData = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, currentCompany?.id]);
 
-  // Fetch the company's distinct location_context buckets from a by-location
-  // MV (all-time), so location entries built from the 180-day response window
-  // can be widened with historical spellings — without this, MV queries with
-  // `.in('location_context', ...)` silently skip months whose spelling of a
-  // location no longer occurs in recent data. The LLM-rankings MV is the
-  // smallest per-location view (≈ locations × models rows). Failure is benign:
-  // no widening, behavior identical to before.
-  useEffect(() => {
-    const companyId = currentCompany?.id;
-    if (!user?.id || !companyId) {
-      setMvLocationBuckets([]);
-      return;
-    }
-    const requestedScopeIds = scopeCompanyIds.length > 0 ? scopeCompanyIds : [companyId];
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data, error } = await withDbSlot(() => supabase
-          .from('company_llm_rankings_by_location_mv')
-          .select('location_context')
-          .in('company_id', requestedScopeIds));
-        if (cancelled || error) return;
-        const distinct = Array.from(
-          new Set((data ?? []).map(r => (r.location_context ?? '') as string))
-        );
-        setMvLocationBuckets(distinct);
-      } catch {
-        /* extend-only: missing buckets just mean no widening */
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, currentCompany?.id, scopeKey]);
 
-  // Load the visibility rollup for the whole brand scope. Deliberately its own
-  // effect (not part of the kick effect's Promise.all) so it also runs on the
-  // fully-cached switch-back path, and per-company + paginated + stably
-  // ordered like every other fetch (PostgREST clamps responses to max_rows).
-  useEffect(() => {
-    const companyId = currentCompany?.id;
-    if (!user?.id || !companyId) {
-      setVisibilityMvRows([]);
-      setVisibilityMvLoading(false);
-      return;
-    }
-    const ids = scopeCompanyIds.length > 0 ? scopeCompanyIds : [companyId];
-    let cancelled = false;
-    setVisibilityMvLoading(true);
-    (async () => {
-      try {
-        const PAGE = 1000;
-        const perCompany = await Promise.all(ids.map(async (id) => {
-          let all: any[] = [];
-          for (let page = 0; page < 10; page += 1) {
-            const { data, error } = await withDbSlot<{ data: any[] | null; error: any }>(() => (supabase as any)
-              .from('company_visibility_by_location_mv')
-              .select('company_id, location_context, response_month, job_function_context, total_responses, mentioned_responses')
-              .eq('company_id', id)
-              .order('response_month', { ascending: false })
-              .order('location_context')
-              .order('job_function_context')
-              .range(page * PAGE, (page + 1) * PAGE - 1));
-            if (error) throw error;
-            const chunk = data ?? [];
-            all = all.concat(chunk);
-            if (chunk.length < PAGE) break;
-          }
-          return all;
-        }));
-        if (!cancelled) setVisibilityMvRows(perCompany.flat());
-      } catch {
-        // MV missing / not yet refreshed — raw-response fallback takes over.
-        if (!cancelled) setVisibilityMvRows([]);
-      } finally {
-        if (!cancelled) setVisibilityMvLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, currentCompany?.id, scopeKey]);
 
   // Track when metrics are ready
   // Backend metrics (from materialized views) are available immediately
@@ -2171,15 +1319,19 @@ export const useDashboardData = () => {
 
   const refreshData = useCallback(async () => {
     searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
-    setShouldRefetch(true);
-  }, []);
+    recencyDataCacheRef.current = null;
+    previousResponseIdsRef.current = '';
+    setAiThemes([]);
+    setAiThemeAttrsLoaded([]);
+    aiThemeAttrsLoadedRef.current = new Set();
+    await queryClient.invalidateQueries({ queryKey: dashboardKeys.all });
+  }, [queryClient]);
 
   // Function to load all historical responses (for complete trend analysis)
   const loadAllHistoricalResponses = useCallback(async () => {
     setLoadAllResponses(true);
-    // Trigger refetch - fetchResponses will check loadAllResponses flag
-    setShouldRefetch(true);
-  }, []);
+    await queryClient.invalidateQueries({ queryKey: dashboardKeys.responsesFull(scopeKey) });
+  }, [queryClient, scopeKey]);
 
   const parseCitations = useCallback((citations: any): Citation[] => {
     if (!citations) return [];
@@ -2255,7 +1407,6 @@ export const useDashboardData = () => {
         }
       }
     }
-    if (next && currentCompany?.id) setLocationMetricsLoading(true);
     setSelectedLocationState(next ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCompany?.id, user?.id]);
@@ -2409,174 +1560,218 @@ export const useDashboardData = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLocation, selectedRawKey, selectedOwnedKey]);
 
-  // Release the loading flag for a selection that stays unresolvable after
-  // this company's responses finished loading (the reconcile effect will also
-  // clear the selection itself). Deliberately separate from the fetch effect:
-  // having responsesLoadedCompanyId in ITS deps made the full-set commit
-  // re-fire all location queries and flash content → skeleton → content.
-  useEffect(() => {
-    if (
-      selectedLocation &&
-      !locSelectionFetchable &&
-      responsesLoadedCompanyId === currentCompany?.id
-    ) {
-      setLocationMetricsLoading(false);
-    }
-  }, [selectedLocation, locSelectionFetchable, responsesLoadedCompanyId, currentCompany?.id]);
-
-  useEffect(() => {
-    const companyId = currentCompany?.id;
-    const isGeneral = selectedLocation === GENERAL_KEY;
-    if (!user || !companyId || !selectedLocation || !locSelectionFetchable) {
-      // Only drop the loading flag when the selection is actually cleared. A
-      // pending/starred location applied mid-switch has no entry yet — keeping
-      // the flag up holds the skeleton instead of flashing company-wide
-      // numbers until the fetch below takes over; the release effect above
-      // handles selections that stay unresolvable after the load completes.
-      if (!selectedLocation) {
-        setLocationMetricsLoading(false);
-      }
-      setLocSentimentMetrics(null);
-      setLocRelevanceMetrics(null);
-      setLocSentimentByMonth({});
-      setLocRelevanceByMonth({});
-      setLocSentimentMvRows([]);
-      setLocRelevanceMvRows([]);
-      setLocMvTopCitations([]);
-      setLocMvTopCompetitors([]);
-      setLocMvLlmRankings([]);
-      setLocAttributeThemes([]);
-      return;
-    }
-
-    const ownedIds = selectedOwnedCompanyIds;
-    const ownedSet = new Set(ownedIds);
-    const otherIds = scopeCompanyIds.filter(id => !ownedSet.has(id));
-    // Bucket-level mirror of resolveResponseLocationKey for owned companies:
-    // an untagged bucket belongs to the selection; one tagged with another
-    // location does not.
-    const ownedBucketMatches = (bucket: string | null | undefined) => {
-      const key = canonicalizeLocationContext(bucket);
-      return isGeneral ? key === null : (key === null || key === selectedLocation);
-    };
-    // Server-side bucket narrowing for owned profiles: the buckets that can
-    // possibly match are the untagged ones ('' + GLOBAL-like sentinels) plus
-    // the selection's spellings — fetching every bucket of a heavy profile
-    // pulled thousands of rows that PostgREST's max_rows clamp then truncated
-    // arbitrarily. ownedBucketMatches stays as the semantic filter on top.
-    const ownedBucketList = isGeneral
+  // Location rollups: ONE cached RPC per (scope, location) replaces the
+  // 6-family × N-company × pages fan-out that ran on every country switch
+  // (measured: 119 REST round-trips, re-paid on every revisit). Cached
+  // locations render on the same tick; uncached ones fetch once per scope.
+  const isGeneralSelection = selectedLocation === GENERAL_KEY;
+  // Server-side bucket narrowing for owned profiles: the buckets that can
+  // possibly match are the untagged ones ('' + GLOBAL-like sentinels) plus
+  // the selection's spellings.
+  const ownedBucketList = useMemo(() => (
+    isGeneralSelection
       ? ['', ...GLOBAL_LIKE]
-      : Array.from(new Set(['', ...GLOBAL_LIKE, ...selectedRawValues]));
-
-    let cancelled = false;
-    setLocationMetricsLoading(true);
-    (async () => {
-      try {
-        // PER-COMPANY, PAGINATED, STABLY ORDERED. PostgREST clamps every
-        // request to max_rows (1000) regardless of .limit(); a single capped
-        // fetch silently dropped the oldest months (month-ordered arms) or an
-        // arbitrary row subset (unordered arms), skewing sums with no error.
-        const PAGE = 1000;
-        const MAX_PAGES = 20; // safety valve per (table, company)
-        type OrderSpec = { col: string; asc?: boolean };
-        const fetchScoped = async (
-          table: string,
-          select: string,
-          orders: OrderSpec[]
-        ): Promise<any[]> => {
-          const jobs: { owned: boolean; companyId: string; buckets: string[] }[] = [];
-          if (!isGeneral && selectedRawValues.length > 0) {
-            otherIds.forEach(id => jobs.push({ owned: false, companyId: id, buckets: selectedRawValues }));
-          }
-          ownedIds.forEach(id => jobs.push({ owned: true, companyId: id, buckets: ownedBucketList }));
-
-          const perJob = await Promise.all(jobs.map(async (job) => {
-            let all: any[] = [];
-            for (let page = 0; page < MAX_PAGES; page += 1) {
-              const { data, error } = await withDbSlot<{ data: any[] | null; error: any }>(() => {
-                let q: any = (supabase as any).from(table).select(select)
-                  .eq('company_id', job.companyId)
-                  .in('location_context', job.buckets);
-                for (const o of orders) q = q.order(o.col, { ascending: o.asc ?? true });
-                return q.range(page * PAGE, (page + 1) * PAGE - 1);
-              });
-              if (error) throw error;
-              const chunk = data ?? [];
-              all = all.concat(chunk);
-              if (chunk.length < PAGE) break;
-            }
-            return job.owned ? all.filter((row: any) => ownedBucketMatches(row.location_context)) : all;
-          }));
-          return perJob.flat();
-        };
-
-        const MONTH_ORDERS: OrderSpec[] = [
-          { col: 'response_month', asc: false },
-          { col: 'prompt_type' }, { col: 'prompt_category' }, { col: 'prompt_theme' },
-          { col: 'industry_context' }, { col: 'job_function_context' }, { col: 'location_context' },
-        ];
-        const [sentimentRows, relevanceRows, sourcesRows, competitorsRows, llmRows, attributeThemeRows] = await Promise.all([
-          fetchScoped('company_sentiment_scores_by_location_mv', '*', MONTH_ORDERS),
-          fetchScoped('company_relevance_scores_by_location_mv', '*', MONTH_ORDERS),
-          fetchScoped('company_top_sources_by_location_mv', 'domain, citation_count, location_context',
-            [{ col: 'citation_count', asc: false }, { col: 'domain' }, { col: 'location_context' }]),
-          fetchScoped('company_competitors_by_location_mv', 'competitor_name, mention_count, location_context',
-            [{ col: 'mention_count', asc: false }, { col: 'competitor_name' }, { col: 'location_context' }]),
-          fetchScoped('company_llm_rankings_by_location_mv', 'ai_model, mentions, location_context',
-            [{ col: 'mentions', asc: false }, { col: 'ai_model' }, { col: 'location_context' }]),
-          fetchScoped('company_attribute_themes_by_location_mv', 'attribute_id, response_month, job_function_context, total_themes, positive_themes, negative_themes, neutral_themes, avg_sentiment_score, response_count, location_context',
-            [{ col: 'response_month', asc: false }, { col: 'job_function_context' }, { col: 'attribute_id' }, { col: 'location_context' }]),
-        ]);
-        if (cancelled) return;
-
-        const sentiment = aggregateSentimentRows(sentimentRows);
-        const relevance = aggregateRelevanceRows(relevanceRows);
-
-        setLocSentimentMvRows(sentimentRows);
-        setLocRelevanceMvRows(relevanceRows);
-        setLocSentimentMetrics(sentiment.metrics);
-        setLocSentimentByMonth(sentiment.byMonth);
-        setLocRelevanceMetrics(relevance.metrics);
-        setLocRelevanceByMonth(relevance.byMonth);
-
-        // A location can span several raw spellings and several companies, so
-        // sum each domain/competitor/model across all returned buckets, then
-        // sort — mirroring the company-wide shaping.
-        setLocMvTopCitations(
-          Object.entries(sumRowsBy(sourcesRows, 'domain', 'citation_count'))
-            .map(([domain, count]) => ({ domain, count }))
-            .sort((a, b) => b.count - a.count).slice(0, 30)
-        );
-        setLocMvTopCompetitors(
-          Object.entries(sumRowsBy(competitorsRows, 'competitor_name', 'mention_count'))
-            .map(([company, count]) => ({ company, count }))
-            .sort((a, b) => b.count - a.count).slice(0, 30)
-        );
-        setLocMvLlmRankings(
-          Object.entries(sumRowsBy(llmRows, 'ai_model', 'mentions'))
-            .map(([model, mentions]) => ({
-              model,
-              displayName: getLLMDisplayName(model),
-              mentions,
-              logoUrl: getLLMLogo(model),
-            })).sort((a, b) => b.mentions - a.mentions)
-        );
-
-        setLocAttributeThemes(aggregateAttributeThemeRows(attributeThemeRows));
-      } catch (error) {
-        if (!cancelled) console.warn('Error fetching location-scoped metrics:', error);
-      } finally {
-        if (!cancelled) setLocationMetricsLoading(false);
-      }
-    })();
-
-    return () => { cancelled = true; };
-    // selectedRawKey/selectedOwnedKey capture the selection's spellings and
-    // owned profiles; scopeKey the sibling group. responsesLoadedCompanyId is
-    // deliberately NOT a dep — the full-set commit must not re-fire an
-    // identical fetch (the flag-release effect above covers that transition).
+      : Array.from(new Set(['', ...GLOBAL_LIKE, ...selectedRawValues]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany?.id, selectedLocation, locSelectionFetchable, selectedRawKey, selectedOwnedKey, scopeKey]);
+  ), [isGeneralSelection, selectedRawKey]);
+  const otherCompanyIds = useMemo(() => {
+    const ownedSet = new Set(selectedOwnedCompanyIds);
+    return scopeCompanyIds.filter(id => !ownedSet.has(id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOwnedKey, scopeKey]);
+
+  const locationQueryEnabled = scopeReady && !!selectedLocation && locSelectionFetchable;
+  const locRollupsQuery = useQuery({
+    queryKey: dashboardKeys.locationRollups(scopeKey, selectedLocation ?? ''),
+    queryFn: ({ signal }) => fetchLocationRollups({
+      ownedIds: selectedOwnedCompanyIds,
+      ownedBuckets: ownedBucketList,
+      otherIds: isGeneralSelection ? [] : otherCompanyIds,
+      otherBuckets: isGeneralSelection ? [] : selectedRawValues,
+    }, signal),
+    enabled: locationQueryEnabled,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+
+  // Raw spellings can widen while the response stream lands. The query key
+  // deliberately excludes them (identical selections must share the cache);
+  // widening invalidates instead — a background revalidation, not the old
+  // content → skeleton → content flash.
+  // Signatures are tracked PER (scope, location) key: comparing across
+  // different locations would read a location change itself as a widening and
+  // spuriously invalidate a warm cache entry on every revisit.
+  const locInputsSigRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!locationQueryEnabled || !selectedLocation) return;
+    const mapKey = `${scopeKey}::${selectedLocation}`;
+    const sig = `${selectedRawKey}::${selectedOwnedKey}`;
+    const prev = locInputsSigRef.current.get(mapKey);
+    if (prev !== undefined && prev !== sig) {
+      queryClient.invalidateQueries({
+        queryKey: dashboardKeys.locationRollups(scopeKey, selectedLocation),
+      });
+    }
+    locInputsSigRef.current.set(mapKey, sig);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationQueryEnabled, selectedLocation, selectedRawKey, selectedOwnedKey, scopeKey]);
+
+  // Bucket-level mirror of resolveResponseLocationKey. The other-arm rows'
+  // buckets are the selection's spellings (they canonicalize to the selection
+  // by construction), so one filter serves the merged owned+other rows with
+  // the same outcome as the old per-arm filtering.
+  const locRollupsFiltered: LocationRollups | null = useMemo(() => {
+    const data = locRollupsQuery.data;
+    if (!data || !selectedLocation) return null;
+    const matches = (bucket: string | null | undefined) => {
+      const key = canonicalizeLocationContext(bucket);
+      return isGeneralSelection ? key === null : (key === null || key === selectedLocation);
+    };
+    return {
+      sentiment: data.sentiment.filter(r => matches(r.location_context)),
+      relevance: data.relevance.filter(r => matches(r.location_context)),
+      top_sources: data.top_sources.filter(r => matches(r.location_context)),
+      competitors: data.competitors.filter(r => matches(r.location_context)),
+      llm_rankings: data.llm_rankings.filter(r => matches(r.location_context)),
+      attribute_themes: data.attribute_themes.filter(r => matches(r.location_context)),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locRollupsQuery.data, selectedLocation, isGeneralSelection]);
+
+  const locAgg = useMemo(() => ({
+    sentiment: aggregateSentimentRows(locRollupsFiltered?.sentiment ?? []),
+    relevance: aggregateRelevanceRows(locRollupsFiltered?.relevance ?? []),
+  }), [locRollupsFiltered]);
+  const locSentimentMetrics = locRollupsFiltered ? locAgg.sentiment.metrics : null;
+  const locRelevanceMetrics = locRollupsFiltered ? locAgg.relevance.metrics : null;
+  const locSentimentByMonth = locRollupsFiltered ? locAgg.sentiment.byMonth : (EMPTY_OBJECT as Record<string, number>);
+  const locRelevanceByMonth = locRollupsFiltered ? locAgg.relevance.byMonth : (EMPTY_OBJECT as Record<string, number>);
+  const locSentimentMvRows = locRollupsFiltered?.sentiment ?? EMPTY_ARRAY;
+  const locRelevanceMvRows = locRollupsFiltered?.relevance ?? EMPTY_ARRAY;
+  // A location can span several raw spellings and several companies — sum
+  // each domain/competitor/model across the returned buckets, then sort,
+  // mirroring the company-wide shaping.
+  const locMvTopCitations: CitationCount[] = useMemo(() =>
+    Object.entries(sumRowsBy(locRollupsFiltered?.top_sources ?? [], 'domain', 'citation_count'))
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 30),
+    [locRollupsFiltered]
+  );
+  const locMvTopCompetitors = useMemo(() =>
+    Object.entries(sumRowsBy(locRollupsFiltered?.competitors ?? [], 'competitor_name', 'mention_count'))
+      .map(([company, count]) => ({ company, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 30),
+    [locRollupsFiltered]
+  );
+  const locMvLlmRankings: LLMMentionRanking[] = useMemo(() =>
+    Object.entries(sumRowsBy(locRollupsFiltered?.llm_rankings ?? [], 'ai_model', 'mentions'))
+      .map(([model, mentions]) => ({
+        model,
+        displayName: getLLMDisplayName(model),
+        mentions,
+        logoUrl: getLLMLogo(model),
+      }))
+      .sort((a, b) => b.mentions - a.mentions),
+    [locRollupsFiltered]
+  );
+  const locAttributeThemes = useMemo(
+    () => aggregateAttributeThemeRows(locRollupsFiltered?.attribute_themes ?? []),
+    [locRollupsFiltered]
+  );
+
+  // Location loading, derived: a resolvable selection is loading only while
+  // its query has no data yet (cache hits never show a skeleton); a
+  // not-yet-resolvable selection (pending/starred mid-switch) holds its
+  // skeleton until this scope's stream is final — release-effect parity.
+  const locationMetricsLoading = !!selectedLocation && (
+    locationQueryEnabled
+      ? locRollupsQuery.isPending
+      : responsesLoadedCompanyId !== currentCompany?.id
+  );
+
+  // Intent prefetch: called on dropdown open/hover so a target's rollups are
+  // already cached before the click. prefetchQuery respects staleTime — an
+  // already-fresh key is a no-op.
+  const prefetchLocationRollups = useCallback((locKey: string | null) => {
+    if (!locKey || !scopeReady || locKey === selectedLocation) return;
+    const isGeneral = locKey === GENERAL_KEY;
+    const rawValues = isGeneral ? [] : (locationRawValues[locKey] || []);
+    const entry = locationOptions.find(o => o.canonicalKey === locKey);
+    const ownedIds = isGeneral
+      ? scopeCompanies.filter(c => companyCountryKey(c.country) === null).map(c => c.id)
+      : (entry?.companyIds ?? []);
+    if (rawValues.length === 0 && ownedIds.length === 0) return;
+    const ownedSet = new Set(ownedIds);
+    const otherIds = isGeneral ? [] : scopeCompanyIds.filter(id => !ownedSet.has(id));
+    const ownedBuckets = isGeneral ? ['', ...GLOBAL_LIKE] : Array.from(new Set(['', ...GLOBAL_LIKE, ...rawValues]));
+    queryClient.prefetchQuery({
+      queryKey: dashboardKeys.locationRollups(scopeKey, locKey),
+      queryFn: ({ signal }) => fetchLocationRollups(
+        { ownedIds, ownedBuckets, otherIds, otherBuckets: isGeneral ? [] : rawValues },
+        signal
+      ),
+      staleTime: FRESH_MS,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeReady, selectedLocation, locationRawValues, locationOptions, scopeCompanies, scopeKey, queryClient]);
+
+  // Prefetch another company's scope rollups + prompts on hover/open, so the
+  // headline numbers are cached before the switch lands.
+  const prefetchCompanyRollups = useCallback((companyId: string) => {
+    const target = userCompanies.find(c => c.id === companyId);
+    if (!target || companyId === currentCompany?.id) return;
+    const nameLower = target.name.toLowerCase();
+    const orgId = target.organization_id ?? null;
+    const ids = userCompanies
+      .filter(c => c.name.toLowerCase() === nameLower && (c.organization_id ?? null) === orgId)
+      .map(c => c.id);
+    const scope = ids.length > 0 ? ids : [companyId];
+    const key = [...scope].sort().join(',');
+    queryClient.prefetchQuery({
+      queryKey: dashboardKeys.rollups(key),
+      queryFn: ({ signal }) => fetchScopeRollups(scope, signal),
+      staleTime: FRESH_MS,
+    });
+    queryClient.prefetchQuery({
+      queryKey: dashboardKeys.prompts(key),
+      queryFn: ({ signal }) => fetchScopePrompts(scope, signal),
+      staleTime: FRESH_MS,
+    });
+  }, [userCompanies, currentCompany?.id, queryClient]);
+
+  // Hydration stages for the branded first-load screen: which fetch families
+  // have landed, derived synchronously from query data so cached scopes read
+  // complete on their very first render (no loader flash on switch-back).
+  // A fetch error counts as complete so the loader can hand off to the
+  // connection-error state instead of hanging.
+  const hydration = useMemo(() => {
+    const errored = !!(promptsQuery.error || rollupsQuery.error || firstPagesQuery.error || fullStreamQuery.error);
+    const prompts = !scopeReady || errored || promptsQuery.data !== undefined;
+    const rollupsDone = !scopeReady || errored || rollupsQuery.data !== undefined;
+    const responsesFirst = !scopeReady || errored || firstPagesQuery.data !== undefined;
+    const responsesFull = !scopeReady || errored || fullStreamQuery.data !== undefined;
+    return {
+      prompts,
+      rollups: rollupsDone,
+      responsesFirst,
+      responsesFull,
+      complete: prompts && rollupsDone && responsesFirst && responsesFull,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeReady, promptsQuery.data, rollupsQuery.data, firstPagesQuery.data, fullStreamQuery.data,
+      promptsQuery.error, rollupsQuery.error, firstPagesQuery.error, fullStreamQuery.error]);
+
+  // True while any dashboard family revalidates in the background with data
+  // already on screen — consumers show a subtle indicator, never a skeleton.
+  const isRefreshing = (
+    (promptsQuery.isFetching && promptsQuery.data !== undefined) ||
+    (rollupsQuery.isFetching && rollupsQuery.data !== undefined) ||
+    (fullStreamQuery.isFetching && fullStreamQuery.data !== undefined) ||
+    (locRollupsQuery.isFetching && locRollupsQuery.data !== undefined)
+  );
 
   // Effective MV state: location-scoped when a location is active, else the
   // company-wide values. Used by every metrics memo below so the headline,
@@ -3539,12 +2734,12 @@ export const useDashboardData = () => {
           .update({ user_id: user.id })
           .eq('onboarding_id', onboardingId)
           .is('user_id', null);
-        if (!updateError) fetchResponses();
+        if (!updateError) refreshData();
       }
     } catch (error) {
       console.error('Error in fixMissingUserIds:', error);
     }
-  }, [user, fetchResponses]);
+  }, [user, refreshData]);
 
   // Function to fetch historical responses for a specific time range
   // Enables time period comparison features in the dashboard
@@ -3728,5 +2923,9 @@ export const useDashboardData = () => {
     // scope to this, not the single current company or all userCompanies.
     scopeCompanyIds,
     responsesLoadedCompanyId, // company whose responses are FINAL (loaded/empty/cached)
+    isRefreshing, // background revalidation with content on screen — subtle indicator, never a skeleton
+    hydration, // per-family first-load progress for the branded loading screen
+    prefetchLocationRollups, // intent prefetch for the location dropdown
+    prefetchCompanyRollups, // intent prefetch for the company switcher
   };
 };

@@ -20,6 +20,9 @@ interface LocationFilterProps {
   // Filter entries across the merged brand scope (location_context values +
   // each sibling profile's country), built in useDashboardData.
   options?: LocationEntry[];
+  // Intent prefetch: fired on hover/focus of an entry so its rollups are
+  // cached before the click lands (no-op for already-fresh locations).
+  onIntentPrefetch?: (locationKey: string) => void;
   className?: string;
 }
 
@@ -33,7 +36,7 @@ const EntryIcon = ({ icon, flagCode }: { icon: LocationEntry['icon']; flagCode: 
   return <Globe className="h-4 w-4" />;
 };
 
-export const LocationFilter = ({ selectedLocation, onLocationChange, options = [], className }: LocationFilterProps) => {
+export const LocationFilter = ({ selectedLocation, onLocationChange, options = [], onIntentPrefetch, className }: LocationFilterProps) => {
   const [isOpen, setIsOpen] = useState(false);
 
   // Nothing to filter — hide the control entirely.
@@ -114,6 +117,8 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, options = [
             <DropdownMenuItem
               key={entry.canonicalKey}
               onClick={() => handleSelect(entry)}
+              onMouseEnter={() => onIntentPrefetch?.(entry.canonicalKey)}
+              onFocus={() => onIntentPrefetch?.(entry.canonicalKey)}
               className="cursor-pointer flex items-center justify-between"
             >
               <div className="flex items-center gap-2">

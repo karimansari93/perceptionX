@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -60,7 +60,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => subscription.unsubscribe();
   }, []);
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error('Error signing out:', error);
@@ -68,20 +68,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Clear local state even if signOut fails
     setSession(null);
     setUser(null);
-  };
+  }, []);
 
-  const clearSession = () => {
+  const clearSession = useCallback(() => {
     setSession(null);
     setUser(null);
-  };
+  }, []);
 
-  const value = {
+  // Memoized (with stable callbacks above) so a provider render doesn't hand
+  // every useAuth consumer a fresh object — and a re-render — when nothing
+  // auth-related changed.
+  const value = useMemo<AuthContextType>(() => ({
     user,
     session,
     loading,
     signOut,
     clearSession
-  };
+  }), [user, session, loading, signOut, clearSession]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

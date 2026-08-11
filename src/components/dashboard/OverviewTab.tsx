@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo } from "react";
+import { useState, useEffect, useMemo, useRef, memo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { MetricCard } from "./MetricCard";
 import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dashboard";
@@ -299,7 +299,7 @@ export const OverviewTab = memo(({
 
 
   // Helper for mini-cards — use the same rounded values that feed the EPS formula
-  const breakdowns = [
+  const breakdowns = useMemo(() => [
     {
       title: 'Sentiment',
       value: metrics.sentimentScore,
@@ -314,7 +314,7 @@ export const OverviewTab = memo(({
       color: 'blue',
       description: 'How prominently your brand is mentioned.'
     }
-  ];
+  ], [metrics.sentimentScore, metrics.sentimentTrendComparison, metrics.visibilityScore, metrics.visibilityTrendComparison]);
 
   // Current vs previous PERIOD (snapshot month), not latest calendar day.
   // `responses` is already scoped to the effective snapshot month by the hook,
@@ -662,18 +662,20 @@ export const OverviewTab = memo(({
   };
 
   // Normalize and merge topCompetitors by case-insensitive name
-  const normalizedCompetitorsMap = new Map<string, { company: string; count: number }>();
-  topCompetitors.forEach(({ company, count }) => {
-    const normalized = company.trim().toLowerCase();
-    if (normalizedCompetitorsMap.has(normalized)) {
-      normalizedCompetitorsMap.get(normalized)!.count += count;
-    } else {
-      // Capitalize first letter, rest lowercase for display
-      const displayName = normalized.charAt(0).toUpperCase() + normalized.slice(1);
-      normalizedCompetitorsMap.set(normalized, { company: displayName, count });
-    }
-  });
-  const normalizedTopCompetitors = Array.from(normalizedCompetitorsMap.values()).sort((a, b) => b.count - a.count);
+  const normalizedTopCompetitors = useMemo(() => {
+    const normalizedCompetitorsMap = new Map<string, { company: string; count: number }>();
+    topCompetitors.forEach(({ company, count }) => {
+      const normalized = company.trim().toLowerCase();
+      if (normalizedCompetitorsMap.has(normalized)) {
+        normalizedCompetitorsMap.get(normalized)!.count += count;
+      } else {
+        // Capitalize first letter, rest lowercase for display
+        const displayName = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+        normalizedCompetitorsMap.set(normalized, { company: displayName, count });
+      }
+    });
+    return Array.from(normalizedCompetitorsMap.values()).sort((a, b) => b.count - a.count);
+  }, [topCompetitors]);
 
   // Helper to get all full responses mentioning a competitor
   const getFullResponsesForCompetitor = (competitor: string) => {
@@ -1093,23 +1095,23 @@ CRITICAL: When you reference information from a source, add an inline citation l
       }
     });
     
-    // Step 1: Get all unique tested_at dates (collection periods)
-    const uniqueDates = new Set<string>();
+    // Step 1: Group responses by tested_at date (collection period) in a
+    // single pass — avoids re-filtering the full responses array per date.
+    const responsesByDate = new Map<string, any[]>();
     responses.forEach(r => {
       const date = new Date(r.tested_at).toISOString().split('T')[0];
-      uniqueDates.add(date);
+      const bucket = responsesByDate.get(date);
+      if (bucket) {
+        bucket.push(r);
+      } else {
+        responsesByDate.set(date, [r]);
+      }
     });
-    
-    
+
+
     // Step 2: For each collection period, get the latest response per prompt+model combination
-    const collectionPeriods = Array.from(uniqueDates).map(date => {
-      // Get all responses from this date
-      const dateResponses = responses.filter(r => {
-        const responseDate = new Date(r.tested_at).toISOString().split('T')[0];
-        return responseDate === date;
-      });
-      
-      
+    const collectionPeriods = Array.from(responsesByDate.entries()).map(([date, dateResponses]) => {
+
       // For this collection period, get unique prompt+model combinations
       // This ensures we're comparing the same set of prompts across periods
       const promptModelMap = new Map<string, any>();
@@ -1210,7 +1212,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
     );
 
     return sorted;
-  }, [responses, responseSentimentMap, recencyData, companyRelevanceByMonth, calculateAIBasedSentiment]);
+  }, [responses, responseSentimentMap, recencyData, companyRelevanceByMonth]);
 
   // Active per-month EPS trend + delta: the function-scoped series when a
   // function filter is active, otherwise the global series. Both come from the
@@ -1235,6 +1237,11 @@ CRITICAL: When you reference information from a source, add an inline citation l
     ];
   }, [activeEpsTrend, scorecardMetrics.perceptionScore, responses.length]);
 
+  // Recharts replays its entry animation whenever the chart data identity
+  // changes (filter switches, refetches); only the true first mount should
+  // animate, so flip this ref once the first animation completes.
+  const hasEpsChartAnimatedRef = useRef(false);
+
   // Period-over-period EPS delta for the active scope.
   const epsDelta = typeof activeEpsChange === 'number' ? activeEpsChange : null;
 
@@ -1246,6 +1253,26 @@ CRITICAL: When you reference information from a source, add an inline citation l
       color: `hsl(${index * 60}, 70%, 50%)` // Generate different colors
     }));
   }, [llmMentionRankings]);
+
+  // EpsDrilldownSheet props — memoized so every re-render doesn't rescan
+  // responses and hand the sheet fresh object identities.
+  const discoveryStats = useMemo(
+    () => computeDiscoveryStats(responses, companyName),
+    [responses, companyName]
+  );
+
+  const topJobFunctions = useMemo(() => {
+    const counts = new Map<string, number>();
+    responses.forEach((r: any) => {
+      const jf = r.confirmed_prompts?.job_function_context;
+      if (jf) counts.set(jf, (counts.get(jf) ?? 0) + 1);
+    });
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([j, c]) => `${j} (${c})`)
+      .join(", ");
+  }, [responses]);
 
   return (
     <div className="flex flex-col gap-8 w-full">
@@ -1382,8 +1409,9 @@ CRITICAL: When you reference information from a source, add an inline citation l
                      );
                    }}
                    activeDot={{ r: 4, fill: '#0DBCBA', stroke: '#ffffff', strokeWidth: 2 }}
-                   isAnimationActive={true}
+                   isAnimationActive={!hasEpsChartAnimatedRef.current}
                    animationDuration={900}
+                   onAnimationEnd={() => { hasEpsChartAnimatedRef.current = true; }}
                  />
                  </AreaChart>
                </ChartContainer>
@@ -1772,6 +1800,9 @@ CRITICAL: When you reference information from a source, add an inline citation l
       </Dialog>
 
 
+      {/* Kept mounted while closed: conditionally mounting on `open` would
+          unmount the radix Sheet mid-close and skip its slide-out animation.
+          Gating the sheet's data hooks on `open` lives in the sheet itself. */}
       <EpsDrilldownSheet
         open={isEpsDrilldownOpen}
         onOpenChange={setIsEpsDrilldownOpen}
@@ -1781,19 +1812,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
         market={market}
         liveSentiment={metrics.sentimentScore}
         liveVisibility={metrics.visibilityScore}
-        discoveryStats={computeDiscoveryStats(responses, companyName)}
-        topJobFunctions={(() => {
-          const counts = new Map<string, number>();
-          responses.forEach((r: any) => {
-            const jf = r.confirmed_prompts?.job_function_context;
-            if (jf) counts.set(jf, (counts.get(jf) ?? 0) + 1);
-          });
-          return [...counts.entries()]
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 4)
-            .map(([j, c]) => `${j} (${c})`)
-            .join(", ");
-        })()}
+        discoveryStats={discoveryStats}
+        topJobFunctions={topJobFunctions}
       />
     </div>
   );

@@ -78,7 +78,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const [activeTab, setActiveTab] = useState<'terms' | 'results'>('results');
   const [chartView, setChartView] = useState<'bubble' | 'bar'>('bubble');
   const [isLoading, setIsLoading] = useState(true);
-  // Track which lazy tabs have been visited so they stay mounted after first visit
+  // Track which lazy tabs have been visited so they stay mounted after first
+  // visit. Deliberately NOT reset on company switch: every tab's company-
+  // scoped data arrives via props or effects keyed on currentCompanyId
+  // (AnswerGaps is user-scoped), so mounted tabs re-render with the new
+  // scope's data — a reset would cold-remount all of them on every switch.
   const [hasVisited, setHasVisited] = useState({
     sources: false,
     competitors: false,
@@ -87,14 +91,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     search: false,
     answerGaps: false,
   });
-  // Reset lazy tabs on company switch so they unmount stale data and re-initialize
-  const prevCompanyIdRef = useRef(currentCompany?.id);
-  useEffect(() => {
-    if (currentCompany?.id && currentCompany.id !== prevCompanyIdRef.current) {
-      prevCompanyIdRef.current = currentCompany.id;
-      setHasVisited({ sources: false, competitors: false, thematic: false, prompts: false, search: false, answerGaps: false });
-    }
-  }, [currentCompany?.id]);
   const { isRefreshing, progress: refreshProgress, refreshAllPrompts } = useRefreshPrompts();
   const { 
     isCollecting: isCollectingData, 
@@ -116,6 +112,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
 
+  const dashboardData = useDashboardData();
   const {
     responses,
     loading,
@@ -165,7 +162,18 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     scopeCompanyIds,
     allResponses,
     responsesLoadedCompanyId,
-  } = useDashboardData();
+    prefetchLocationRollups,
+    prefetchCompanyRollups,
+    hydration,
+  } = dashboardData;
+
+  // `isRefreshing` ships with the TanStack rewrite of useDashboardData (true
+  // while a scope's queries revalidate in the background with data already
+  // present). Read defensively — not destructured — so this file compiles
+  // against both hook versions; named apart from useRefreshPrompts's
+  // isRefreshing above, which tracks the prompt-refresh pipeline instead.
+  const isDataRefreshing =
+    (dashboardData as unknown as { isRefreshing?: boolean }).isRefreshing === true;
 
   // -----------------------------------------------------------------------
   // GLOBAL JOB-FUNCTION FILTER
@@ -178,6 +186,22 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   // sibling, and each tab used its own storage key. Persisted so it survives
   // reloads; defaults to 'all' (All functions) until the user picks one.
   const [selectedJobFunction, setSelectedJobFunction] = usePersistedState<string>('dashboard.selectedJobFunction', 'all');
+
+  // Selection changes fan out into every mounted tab at once (all visited
+  // tabs stay alive under display:none), so an urgent setState would block
+  // the click until the whole tree re-renders. Transition-wrapped setters
+  // keep the control responsive; signatures are unchanged for consumers.
+  // setPendingLocation is NOT wrapped: it stashes into a ref that the hook's
+  // company-entry effect must see on the very next switch — nothing to defer.
+  const handleJobFunctionChange = useCallback((value: string) => {
+    startTransition(() => setSelectedJobFunction(value));
+  }, [setSelectedJobFunction]);
+  const handleLocationChange = useCallback((loc: string | null) => {
+    startTransition(() => setSelectedLocation(loc));
+  }, [setSelectedLocation]);
+  const handlePeriodChange = useCallback((period: string | null) => {
+    startTransition(() => setSelectedPeriod(period));
+  }, [setSelectedPeriod]);
 
   // The set of job functions that exist ANYWHERE in the brand's data — judged
   // against the unfiltered `allResponses`, not the location/period-filtered
@@ -337,7 +361,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     // !competitorLoading, which always settles (even for empty/setup
     // accounts), so this can't hang.
     if (!sessionFirstLoadDoneRef.current) {
-      return companyLoading || isLoading || !isFullyLoaded;
+      // Hold until the FULL data set has hydrated (hydration.complete), not
+      // just the headline rollups — so the reveal never hands off to
+      // still-loading Sources/Competitors cards. hydration treats fetch
+      // errors and no-company accounts as complete, so this can't hang.
+      return companyLoading || isLoading || !isFullyLoaded || !hydration.complete;
     }
     // After the first full load this session, fall back to the original
     // persisted-state behavior so in-app tab returns / company switches don't
@@ -345,8 +373,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (hasInitiallyLoaded) {
       return companyLoading && currentCompany === null;
     }
-    return companyLoading || isLoading || !isFullyLoaded;
-  }, [companyLoading, isLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany]);
+    return companyLoading || isLoading || !isFullyLoaded || !hydration.complete;
+  }, [companyLoading, isLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany, hydration.complete]);
 
   // Keep the loading screen mounted long enough to play its completion
   // (bar snaps to 100% + fade) before the dashboard is revealed.
@@ -480,6 +508,13 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     });
   }, [activeSection]);
 
+  // Stable identity: passed to memoized tabs (CompetitorsTab), where an inline
+  // arrow would defeat their React.memo on every Dashboard render.
+  const handleNavigateToSources = useCallback(() => {
+    handleSectionChange('sources');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeGroup]);
+
   const handleSectionChange = (section: string) => {
     // Wrap in startTransition so the UI stays responsive during tab switch
     startTransition(() => {
@@ -512,57 +547,16 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     }
   };
 
-  const renderSetupBlurredOverview = () => {
-    return (
-      <div className="relative min-h-[600px]">
-        {/* Overlay for users who haven't set up prompts */}
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm" style={{ pointerEvents: 'all' }}>
-          <div className="text-center p-8 max-w-lg mx-auto">
-            <h2 className="text-2xl font-bold mb-4 text-gray-800">Welcome to PerceptionX</h2>
-            <p className="text-gray-600 mb-6 leading-relaxed">
-              To get started, you'll need to set up your first prompts to begin monitoring your AI perception.
-            </p>
-            <Button 
-              onClick={() => navigate('/dashboard')}
-              className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
-            >
-              Get Started
-            </Button>
-          </div>
-        </div>
-        {/* Blurred/disabled content underneath */}
-        <div className="blur-sm pointer-events-none select-none opacity-60">
-          <OverviewTab 
-            responses={responses}
-            metrics={metrics}
-            metricsByJobFunction={metricsByJobFunction}
-            topCitations={topCitations}
-            topCompetitors={topCompetitors}
-            competitorLoading={competitorLoading}
-            companyName={companyName}
-            llmMentionRankings={llmMentionRankings}
-            searchResults={searchResults}
-            aiThemes={aiThemes}
-            attributeThemes={attributeThemes}
-            responseSentimentRows={responseSentimentRows}
-            recencyData={recencyData}
-            recencyDataLoading={recencyDataLoading}
-            aiThemesLoading={aiThemesLoading}
-            responsesLoading={responsesStreaming}
-            market={selectedMarketName}
-            selectedJobFunction={selectedJobFunction}
-            onJobFunctionChange={setSelectedJobFunction}
-          />
-        </div>
-      </div>
-    );
-  };
-
   const renderDashboardContent = () => {
-    // Show the full section skeleton while a location swap is fetching its
-    // metrics, so the page reads as "loading" instead of painting half-swapped
-    // content (stale scorecards next to skeleton cards).
-    if (!isFullyLoaded || locationMetricsLoading) {
+    // Full section skeleton ONLY when there is genuinely nothing to paint —
+    // the first uncached load of a scope (no responses, metrics still at
+    // their 'No Data' placeholder; the computed path never yields that
+    // label). Cached scopes and background revalidation keep real data in
+    // `responses`/`metrics`, and swapping the tree for a skeleton would
+    // unmount every visited tab — the header refresh chip covers the
+    // stale-while-revalidating window instead.
+    const hasRenderableData = responses.length > 0 || metrics.perceptionLabel !== 'No Data';
+    if ((!isFullyLoaded || locationMetricsLoading) && !hasRenderableData) {
       switch (activeSection) {
         case "overview": return <OverviewSkeleton />;
         case "prompts": return <PromptsSkeleton />;
@@ -574,23 +568,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         case "search": return <SearchSkeleton />;
         default: return <OverviewSkeleton />;
       }
-    }
-
-    if (!isFullyLoaded && !companyName) {
-      return renderSetupBlurredOverview();
-    }
-
-    if (!isFullyLoaded && responses.length === 0 && promptsData && promptsData.length > 0) {
-      return (
-        <div className="min-h-[600px] flex items-center justify-center">
-          <div className="text-center p-8 max-w-lg mx-auto">
-            <img alt="Perception Logo" className="object-contain h-16 w-16 mx-auto mb-4 animate-pulse" src="/logos/PinkBadge.png" />
-            <h2 className="text-2xl font-bold mb-4 text-gray-800">Analysis in Progress</h2>
-            <p className="text-gray-600 mb-2 leading-relaxed">We're currently analyzing {companyName} across multiple AI platforms.</p>
-            <p className="text-sm text-gray-500">This process takes 2-3 minutes. You can check back shortly or refresh the page.</p>
-          </div>
-        </div>
-      );
     }
 
     const reportsContent = activeSection === 'reports' ? (
@@ -630,7 +607,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             epsChangeByJobFunction={epsChangeByJobFunction}
             market={selectedMarketName}
             selectedJobFunction={selectedJobFunction}
-            onJobFunctionChange={setSelectedJobFunction}
+            onJobFunctionChange={handleJobFunctionChange}
           />
         </div>
 
@@ -650,7 +627,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 previousPeriodResponses={previousPeriodResponses}
                 responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
-                onJobFunctionChange={setSelectedJobFunction}
+                onJobFunctionChange={handleJobFunctionChange}
                 responseSentimentRows={responseSentimentRows}
               />
             </Suspense>
@@ -669,10 +646,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 previousPeriodResponses={previousPeriodResponses}
                 responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
-                onJobFunctionChange={setSelectedJobFunction}
+                onJobFunctionChange={handleJobFunctionChange}
                 responseSentimentRows={responseSentimentRows}
                 recencyData={recencyData}
-                onNavigateToSources={() => handleSectionChange('sources')}
+                onNavigateToSources={handleNavigateToSources}
               />
             </Suspense>
           </div>
@@ -695,7 +672,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 previousPeriodResponses={previousPeriodResponses}
                 responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
-                onJobFunctionChange={setSelectedJobFunction}
+                onJobFunctionChange={handleJobFunctionChange}
               />
             </Suspense>
           </div>
@@ -716,7 +693,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 scopeCompanyIds={scopeCompanyIds}
                 responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
-                onJobFunctionChange={setSelectedJobFunction}
+                onJobFunctionChange={handleJobFunctionChange}
               />
             </Suspense>
           </div>
@@ -739,7 +716,20 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
 
   // Show full loading screen during initial load (and through its completion).
   if (loadingHandoff.show) {
-    return <LoadingScreen completing={loadingHandoff.completing} />;
+    // Narrate the real load: each line maps to an actual fetch family in
+    // useDashboardData, so the checklist reflects genuine progress rather
+    // than a timer.
+    return (
+      <LoadingScreen
+        completing={loadingHandoff.completing}
+        stages={[
+          { label: 'Loading your prompt library', done: hydration.prompts },
+          { label: 'Collecting the latest AI responses', done: hydration.responsesFirst },
+          { label: 'Analysing sources, competitors & sentiment', done: hydration.rollups },
+          { label: 'Finalising the full response set', done: hydration.responsesFull },
+        ]}
+      />
+    );
   }
 
   // Always render the sidebar and main layout, only show loading in content area
@@ -758,8 +748,18 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         onSectionChange={setActiveSection}
         onOpenSearch={() => setCommandOpen(true)}
       />
-      <SidebarInset className="flex-1 flex flex-col">
-        <DashboardHeader 
+      <SidebarInset className="relative flex-1 flex flex-col">
+        {/* Background revalidation indicator — content stays mounted and
+            interactive while a cached scope refetches, so this must never
+            block clicks or shift layout: a pinned, pointer-transparent chip
+            in the header's own surface treatment. */}
+        {isDataRefreshing && (
+          <div className="pointer-events-none absolute right-6 top-20 z-20 flex items-center gap-1.5 rounded-full border border-gray-200/50 bg-white/80 px-2.5 py-1 text-xs text-gray-500 shadow-sm backdrop-blur-sm">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            <span>Refreshing</span>
+          </div>
+        )}
+        <DashboardHeader
           companyName={companyName || ''}
           responsesCount={responses.length}
           breadcrumbs={[
@@ -770,14 +770,16 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           hasDataIssues={hasDataIssues}
           alwaysMounted={true}
           selectedLocation={activeSection === 'reports' ? undefined : selectedLocation}
-          onLocationChange={activeSection === 'reports' ? undefined : setSelectedLocation}
+          onLocationChange={activeSection === 'reports' ? undefined : handleLocationChange}
           onPendingLocationChange={activeSection === 'reports' ? undefined : setPendingLocation}
           locationOptions={activeSection === 'reports' ? undefined : locationOptions}
           availablePeriods={activeSection === 'reports' ? undefined : availablePeriods}
           selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}
-          onPeriodChange={activeSection === 'reports' ? undefined : setSelectedPeriod}
+          onPeriodChange={activeSection === 'reports' ? undefined : handlePeriodChange}
           userId={user?.id ?? null}
           companyId={currentCompany?.id ?? null}
+          onLocationPrefetch={activeSection === 'reports' ? undefined : prefetchLocationRollups}
+          onCompanyPrefetch={prefetchCompanyRollups}
         />
         <div className="flex-1 overflow-auto">
           {isLoading ? (

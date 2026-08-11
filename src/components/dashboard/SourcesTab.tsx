@@ -81,6 +81,12 @@ const INITIAL_DOMAIN_LIMIT = 50;
 // Cited-pages table: rows per page (classic numbered pagination).
 const PAGES_TABLE_PAGE_SIZE = 10;
 
+// Stable fallbacks for the optional array/object props. Inline `= []` / `= {}`
+// defaults mint a fresh identity on every render whenever a prop arrives
+// undefined, which would churn every useMemo keyed on them below.
+const EMPTY_ARRAY: any[] = [];
+const EMPTY_OBJECT: Record<string, string> = {};
+
 // Filter vocabularies, in the order they read best in a dropdown.
 const SOURCE_TYPE_ORDER = ['owned', 'influenced', 'organic', 'competitive', 'irrelevant'];
 const SENTIMENT_ORDER = ['positive', 'neutral', 'negative'];
@@ -215,7 +221,7 @@ const startOfMonthTs = (ts: number): number => {
   return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
 };
 
-export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = [], currentCompanyId, responseTexts = {}, fetchResponseTexts, previousPeriodResponses = [], responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, responseSentimentRows = [] }: SourcesTabProps) => {
+export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = EMPTY_ARRAY, currentCompanyId, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, responseSentimentRows = EMPTY_ARRAY }: SourcesTabProps) => {
 
   // Responses arrive already scoped by useDashboardData (brand scope — the
   // current company plus same-name sibling profiles — with the location and

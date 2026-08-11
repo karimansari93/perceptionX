@@ -26,6 +26,9 @@ interface DashboardHeaderProps {
   onPeriodChange?: (period: string | null) => void;
   userId?: string | null;
   companyId?: string | null;
+  // Intent prefetch for the two switchers (see useDashboardData).
+  onLocationPrefetch?: (locationKey: string) => void;
+  onCompanyPrefetch?: (companyId: string) => void;
 }
 
 export const DashboardHeader = React.memo(({
@@ -44,6 +47,8 @@ export const DashboardHeader = React.memo(({
   onPeriodChange,
   userId,
   companyId,
+  onLocationPrefetch,
+  onCompanyPrefetch,
 }: DashboardHeaderProps) => {
   const isMobile = useIsMobile();
 
@@ -89,6 +94,7 @@ export const DashboardHeader = React.memo(({
                 selectedLocation={selectedLocation || null}
                 onLocationChange={onLocationChange}
                 options={locationOptions}
+                onIntentPrefetch={onLocationPrefetch}
                 className={isMobile ? "min-w-[120px]" : ""}
               />
             </div>
@@ -108,6 +114,7 @@ export const DashboardHeader = React.memo(({
               variant="outline"
               alwaysMounted={alwaysMounted}
               onPendingLocationChange={onPendingLocationChange}
+              onIntentPrefetch={onCompanyPrefetch}
               className={isMobile ? "min-w-[120px] text-xs" : ""}
             />
           </div>

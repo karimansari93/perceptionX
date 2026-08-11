@@ -1,10 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
+export interface LoadingStage {
+  label: string;
+  done: boolean;
+}
+
 interface LoadingScreenProps {
   className?: string;
   /** When true, the bar snaps to 100% and the screen fades out. */
   completing?: boolean;
+  /**
+   * Optional narration of what the load is actually doing. Rendered under the
+   * bar as a checklist: finished stages get a check, the first unfinished one
+   * pulses as "in progress", later ones stay muted.
+   */
+  stages?: LoadingStage[];
 }
 
 /**
@@ -37,7 +48,7 @@ export function resetLoadingBar() {
   barLastTick = 0;
 }
 
-export function LoadingScreen({ className, completing = false }: LoadingScreenProps) {
+export function LoadingScreen({ className, completing = false, stages }: LoadingScreenProps) {
   const [progress, setProgress] = useState(() => readProgress());
   const rafRef = useRef<number | null>(null);
 
@@ -85,6 +96,45 @@ export function LoadingScreen({ className, completing = false }: LoadingScreenPr
             }}
           />
         </div>
+        {stages && stages.length > 0 && (
+          <div className="mt-6 space-y-2 min-h-[6.5rem]" aria-live="polite">
+            {stages.map((stage, i) => {
+              const activeIdx = stages.findIndex((s) => !s.done);
+              const isActive = !completing && i === activeIdx;
+              const isDone = completing || stage.done;
+              return (
+                <div
+                  key={stage.label}
+                  className={cn(
+                    "flex items-center gap-2 text-sm transition-colors duration-300",
+                    isDone ? "text-nightsky/70" : isActive ? "text-nightsky animate-pulse" : "text-nightsky/30"
+                  )}
+                >
+                  {isDone ? (
+                    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+                      <path
+                        d="M3.5 8.5l3 3 6-7"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  ) : (
+                    <span
+                      className={cn(
+                        "h-3.5 w-3.5 shrink-0 rounded-full border-2",
+                        isActive ? "border-nightsky/60 border-t-transparent animate-spin" : "border-nightsky/20"
+                      )}
+                    />
+                  )}
+                  <span>{stage.label}{isActive ? '…' : ''}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

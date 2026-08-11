@@ -27,6 +27,9 @@ interface CompanySwitcherProps {
   // Stash a location to apply right after the company switch lands, so the
   // location trigger reflects the picked country (see useDashboardData).
   onPendingLocationChange?: (location: string | null) => void;
+  // Intent prefetch: fired on hover/focus of a company entry so its scope's
+  // rollups are cached before the switch lands (no-op for fresh scopes).
+  onIntentPrefetch?: (companyId: string) => void;
 }
 
 // A selectable location for a company name: a country variant (its own company
@@ -34,7 +37,7 @@ interface CompanySwitcherProps {
 // records grouped under one submenu.
 type LocationOption = { kind: 'country'; company: Company; location: string | null };
 
-export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = false, onPendingLocationChange }: CompanySwitcherProps) => {
+export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = false, onPendingLocationChange, onIntentPrefetch }: CompanySwitcherProps) => {
   const { currentCompany, userCompanies, switchCompany, loading } = useCompany();
   const [isOpen, setIsOpen] = useState(false);
 
@@ -133,6 +136,8 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
         key={key}
         // Explicit country pick from the submenu: land on that country's view.
         onClick={() => selectOption(opt, canonicalizeLocationContext(opt.location))}
+        onMouseEnter={() => onIntentPrefetch?.(opt.company.id)}
+        onFocus={() => onIntentPrefetch?.(opt.company.id)}
         className="cursor-pointer flex items-center gap-2"
       >
         {isCurrent ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}
@@ -196,6 +201,8 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
                   // Brand click (no country submenu shown): land on "All
                   // locations" — the user didn't pick a country.
                   onClick={() => selectOption(opt, null)}
+                  onMouseEnter={() => onIntentPrefetch?.(opt.company.id)}
+                  onFocus={() => onIntentPrefetch?.(opt.company.id)}
                   className="cursor-pointer flex items-center gap-2"
                 >
                   {isCurrent ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}
@@ -214,7 +221,12 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
             const isCurrentGroup = group.companies.some((c) => c.id === currentCompany?.id);
             return (
               <DropdownMenuSub key={group.key}>
-                <DropdownMenuSubTrigger className="cursor-pointer">
+                <DropdownMenuSubTrigger
+                  className="cursor-pointer"
+                  // Hovering a brand submenu is switch intent for that scope —
+                  // any member id resolves to the same scope-wide prefetch.
+                  onMouseEnter={() => onIntentPrefetch?.(group.companies[0].id)}
+                >
                   <div className="flex items-center gap-2 flex-1">
                     {isCurrentGroup ? <Check className="h-4 w-4 text-[#13274F]" /> : <div className="h-4 w-4" />}
                     <Favicon domain={getCompanyDomain(group.name)} size="sm" />

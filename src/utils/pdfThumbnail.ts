@@ -13,7 +13,6 @@ const TARGET_WIDTH = 800; // device-pixel width; cards display at ~300px so this
 export async function generatePdfThumbnail(file: File): Promise<ThumbnailResult> {
   const pdfjs = await import('pdfjs-dist');
   // Use the worker bundled by Vite. The `?url` query gives us a runtime URL.
-  // @ts-expect-error virtual ?url import
   const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 

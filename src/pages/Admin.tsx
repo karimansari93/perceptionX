@@ -1,5 +1,6 @@
 import { useSearchParams } from 'react-router-dom';
 import { AdminLayout } from '@/components/admin/AdminLayout';
+import { AnalysisReadinessTab } from '@/components/admin/AnalysisReadinessTab';
 import { OrganizationManagementTab } from '@/components/admin/OrganizationManagementTab';
 import { UsersTab } from '@/components/admin/UsersTab';
 import { VisibilityRankingsTab } from '@/components/admin/VisibilityRankingsTab';
@@ -22,6 +23,8 @@ export default function Admin() {
     switch (activeTab) {
       case 'organizations':
         return <OrganizationManagementTab />;
+      case 'analysis-readiness':
+        return <AnalysisReadinessTab />;
       case 'data-health':
         return <DataHealthTab />;
       case 'users':
