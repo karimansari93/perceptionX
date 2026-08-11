@@ -103,8 +103,8 @@ serve(async (req) => {
       skipResponses = false,
       batchOffset = 0,
       batchSize = null,
-      // Optional subset of models to collect — defaults to all 3.
-      // Valid values: 'openai', 'perplexity', 'google-ai-overviews'
+      // Optional subset of models to collect — defaults to all 4.
+      // Valid values: 'openai', 'perplexity', 'gemini', 'google-ai-overviews'
       models = null,
     } = body;
     const modelsFilter: string[] | null = Array.isArray(models) && models.length > 0 ? models : null;
@@ -608,7 +608,7 @@ serve(async (req) => {
       `Starting PHASE 2: Response collection for batch ${startIndex + 1}-${endIndex} of ${totalPrompts} prompts (size: ${batch.length}).`,
     );
     console.log(
-      `⚠️ WARNING: This may timeout if processing too many prompts × 3 models = ${batch.length * 3} API calls`,
+      `⚠️ WARNING: This may timeout if processing too many prompts × 4 models = ${batch.length * 4} API calls`,
     );
 
     // PHASE 2: Collect responses for the batch
@@ -649,6 +649,16 @@ serve(async (req) => {
           .eq("ai_model", "google-ai-overviews")
           .maybeSingle();
 
+        const {
+          data: existingResponseGemini,
+          error: responseCheckErrorGemini,
+        } = await supabase
+          .from("prompt_responses")
+          .select("id, ai_model, tested_at")
+          .eq("confirmed_prompt_id", promptId)
+          .eq("ai_model", "gemini")
+          .maybeSingle();
+
         // Collect responses for each model that doesn't exist yet
         // TODO [12.6]: Confirm whether gpt-5.2-chat-latest should be updated to a newer model.
         const modelsToCollect = [
@@ -661,6 +671,11 @@ serve(async (req) => {
             name: "perplexity",
             exists: !!existingResponsePerplexity,
             type: "perplexity",
+          },
+          {
+            name: "gemini",
+            exists: !!existingResponseGemini,
+            type: "gemini",
           },
           {
             name: "google-ai-overviews",
@@ -747,6 +762,31 @@ serve(async (req) => {
               const perplexityData = await perplexityResponse.json();
               responseText = perplexityData.response || "";
               citations = perplexityData.citations || [];
+            } else if (model.type === "gemini") {
+              // Gemini edge function
+              const geminiResponse = await fetch(
+                `${supabaseUrl}/functions/v1/test-prompt-gemini`,
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${supabaseKey}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({ prompt: promptData.text }),
+                },
+              );
+
+              if (!geminiResponse.ok) {
+                const errorData = await geminiResponse.json();
+                throw new Error(
+                  `Gemini error: ${errorData.error || "Unknown error"}`,
+                );
+              }
+
+              const geminiData = await geminiResponse.json();
+              responseText = geminiData.response || "";
+              // test-prompt-gemini returns no citation list; extract URLs from the text
+              citations = extractCitationsFromResponse(responseText);
             } else if (model.type === "google") {
               // Google AI Overviews edge function
               const googleResponse = await fetch(
@@ -789,14 +829,7 @@ serve(async (req) => {
                   confirmed_prompt_id: promptId,
                   ai_model: model.name,
                   response_text: responseText,
-                  citations:
-                    model.type === "openai"
-                      ? unwrapCitations(citations)
-                      : model.type === "perplexity"
-                        ? unwrapCitations(citations)
-                        : model.type === "google"
-                          ? unwrapCitations(citations)
-                          : [],
+                  citations: unwrapCitations(citations),
                   company_id: null, // Industry-wide response
                   company_mentioned: false,
                   detected_competitors: "",
