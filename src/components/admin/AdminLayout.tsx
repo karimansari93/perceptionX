@@ -12,7 +12,8 @@ import {
   LayoutDashboard,
   Send,
   HeartPulse,
-  ClipboardCheck
+  ClipboardCheck,
+  Megaphone
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -40,7 +41,8 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
     { id: 'company-batch', label: 'Company Batch', icon: Layers },
     { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock },
     { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags },
-    { id: 'onboarding-forms', label: 'Onboarding Forms', icon: Send }
+    { id: 'onboarding-forms', label: 'Onboarding Forms', icon: Send },
+    { id: 'activate', label: 'Activate', icon: Megaphone }
   ];
 
   return (
