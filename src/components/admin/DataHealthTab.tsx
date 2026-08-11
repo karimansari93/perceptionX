@@ -59,6 +59,31 @@ interface ComboHealthRow {
   issues: string[];
 }
 
+// Payload of get_analysis_health(): the post-collection readiness check —
+// "is this cycle's analysis done?" in one call.
+interface AnalysisHealth {
+  generated_at: string;
+  collection: {
+    active: boolean;
+    latest_cycle: string | null;
+    responses_in_latest_cycle: number;
+    last_response_at: string | null;
+  };
+  themes: {
+    latest_cycle_missing_for_mentioned: number;
+    last_theme_created_at: string | null;
+    edge_invocation_failures_24h: number;
+  };
+  entity_suggestions: { pending: number; approved: number };
+  rollups: {
+    companies_awaiting_refresh: number;
+    company_rollups_refreshed_at: string | null;
+    by_location_oldest_refresh: string | null;
+    by_location_views_stale_6h: number;
+    last_refresh_errors: { mv: string; error: string | null }[];
+  };
+}
+
 // Rows returned by admin_mv_refresh_status(): one per rollup materialized view.
 interface MvStatusRow {
   mv_name: string;
@@ -119,6 +144,7 @@ const IssueBadge = ({ kind, count }: { kind: string; count?: number }) => {
 export const DataHealthTab = () => {
   const [orgs, setOrgs] = useState<OrgHealthRow[]>([]);
   const [mvStatus, setMvStatus] = useState<MvStatusRow[]>([]);
+  const [analysisHealth, setAnalysisHealth] = useState<AnalysisHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [mvExpanded, setMvExpanded] = useState(false);
   const [requestingRefresh, setRequestingRefresh] = useState(false);
@@ -132,14 +158,22 @@ export const DataHealthTab = () => {
   const load = async () => {
     setLoading(true);
     try {
-      const [overviewRes, mvRes] = await Promise.all([
+      const [overviewRes, mvRes, healthRes] = await Promise.all([
         supabase.rpc('admin_data_health_overview' as never),
         supabase.rpc('admin_mv_refresh_status' as never),
+        supabase.rpc('get_analysis_health' as never),
       ]);
       if (overviewRes.error) throw overviewRes.error;
       if (mvRes.error) throw mvRes.error;
       setOrgs((overviewRes.data as unknown as OrgHealthRow[]) || []);
       setMvStatus((mvRes.data as unknown as MvStatusRow[]) || []);
+      // Readiness check is additive — a failure here shouldn't blank the tab.
+      if (healthRes.error) {
+        console.warn('get_analysis_health failed:', healthRes.error);
+        setAnalysisHealth(null);
+      } else {
+        setAnalysisHealth(healthRes.data as unknown as AnalysisHealth);
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`Failed to load data health: ${msg}`);
@@ -371,6 +405,98 @@ export const DataHealthTab = () => {
           Reload
         </Button>
       </div>
+
+      {/* Post-collection readiness: the "is this cycle's analysis done?" strip.
+          Data changes quarterly — after a collection, every item here should
+          go green before the quarter is presented to a client. */}
+      {analysisHealth && (
+        <Card className="border-slate-200">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base text-slate-800 flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-slate-500" />
+              Analysis readiness
+              <span className="text-sm font-normal text-slate-500">
+                cycle {analysisHealth.collection.latest_cycle ?? '—'} ·{' '}
+                {analysisHealth.collection.responses_in_latest_cycle.toLocaleString()} responses ·
+                last collected {fmtDate(analysisHealth.collection.last_response_at)}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="rounded-md border border-slate-200 p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Collection</div>
+                {analysisHealth.collection.active ? (
+                  <div className="flex items-center gap-1.5 text-amber-600 font-medium text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Collecting…
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-emerald-600 font-medium text-sm">
+                    <CheckCircle2 className="h-4 w-4" /> Complete
+                  </div>
+                )}
+              </div>
+              <div className="rounded-md border border-slate-200 p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Themes (this cycle)</div>
+                {analysisHealth.themes.latest_cycle_missing_for_mentioned === 0 ? (
+                  <div className="flex items-center gap-1.5 text-emerald-600 font-medium text-sm">
+                    <CheckCircle2 className="h-4 w-4" /> Complete
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-amber-600 font-medium text-sm">
+                    <AlertTriangle className="h-4 w-4" />
+                    {analysisHealth.themes.latest_cycle_missing_for_mentioned.toLocaleString()} responses pending
+                  </div>
+                )}
+                {analysisHealth.themes.edge_invocation_failures_24h > 0 && (
+                  <div className="flex items-center gap-1.5 text-red-600 text-xs mt-1">
+                    <XCircle className="h-3.5 w-3.5" />
+                    {analysisHealth.themes.edge_invocation_failures_24h} pipeline call failures (24h)
+                  </div>
+                )}
+              </div>
+              <div className="rounded-md border border-slate-200 p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Entity suggestions</div>
+                {analysisHealth.entity_suggestions.pending === 0 ? (
+                  <div className="flex items-center gap-1.5 text-emerald-600 font-medium text-sm">
+                    <CheckCircle2 className="h-4 w-4" /> Reviewed
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-amber-600 font-medium text-sm">
+                    <AlertTriangle className="h-4 w-4" />
+                    {analysisHealth.entity_suggestions.pending} awaiting review
+                  </div>
+                )}
+                <div className="text-xs text-slate-500 mt-1">Entity Canonicalization tab</div>
+              </div>
+              <div className="rounded-md border border-slate-200 p-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Metric rollups</div>
+                {analysisHealth.rollups.last_refresh_errors.length > 0 ? (
+                  <div className="flex items-center gap-1.5 text-red-600 font-medium text-sm">
+                    <XCircle className="h-4 w-4" />
+                    {analysisHealth.rollups.last_refresh_errors.length} failing
+                  </div>
+                ) : analysisHealth.rollups.companies_awaiting_refresh > 0 ||
+                  analysisHealth.rollups.by_location_views_stale_6h > 0 ? (
+                  <div className="flex items-center gap-1.5 text-amber-600 font-medium text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {analysisHealth.rollups.companies_awaiting_refresh > 0
+                      ? `${analysisHealth.rollups.companies_awaiting_refresh} companies refreshing`
+                      : `${analysisHealth.rollups.by_location_views_stale_6h} location views stale`}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-emerald-600 font-medium text-sm">
+                    <CheckCircle2 className="h-4 w-4" /> Fresh
+                  </div>
+                )}
+                <div className="text-xs text-slate-500 mt-1">
+                  locations {fmtAgo(analysisHealth.rollups.by_location_oldest_refresh)}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Rollup MV freshness — the machinery behind every dashboard metric */}
       <Card className="border-slate-200">
