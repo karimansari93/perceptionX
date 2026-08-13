@@ -340,6 +340,60 @@ Admin → Activate also gained a per-org **branding editor** (display name,
 tagline, blurb, logo domain, both color tokens) — the page's entire design
 surface, live on every open link at save.
 
+## Second client: Ford Motor Company (2026-08-13)
+
+Seeded from the 2026-07-01 cycle (24,990 responses, 18 markets). 47 tier-1
+review routes + 2 tier-3 global review fallbacks + 5 social routes, and
+per-market theme weights for all 18 markets.
+
+**Ford broke an assumption in the entity model.** CSL has one `companies` row
+per division, measured across many markets. Ford has 18 rows literally named
+"Ford" (one per country) plus real divisions (Ford Credit ×9, Ford Business
+Solutions, Ford Design, Ford Energy, Lincoln ×2) — a raw entity list rendered
+"Ford" eighteen times. `activate_get_by_token` now dedupes entities by **name**
+and attaches a `{market_code: company_id}` map, so the picker shows six named
+entities and only those present in the declared market (Germany → Ford, Ford
+Credit; India → Ford, Ford Business Solutions; unmapped market → all, as a
+fallback). Route matching and events use the market-specific company id, so
+single-id route resolution is unchanged for both orgs.
+
+That map is derived from `confirmed_prompts.location_context` through
+`activate_market_map` — **never from `companies.country`**, which holds
+`'Switzerland'` for all four CSL rows (HQ, not market, and not an ISO code).
+
+**Regional routing is the headline.** Market determines the platform mix far
+more sharply than for CSL:
+
+| Market | Top people-influenced sources |
+|---|---|
+| Germany | **kununu 50.0%** · Glassdoor 21.9 · Indeed 15.1 |
+| India | Glassdoor 36.9 · **AmbitionBox 34.4%** · Indeed 20.3 |
+| Romania | Glassdoor 24.8 · **undelucram.ro 21.9%** · Indeed 16.4 |
+| Australia | Glassdoor 29.4 · Indeed 29.0 · **Seek 25.1%** |
+| Hungary | Glassdoor 26.4 · Indeed 18.7 · **profession.hu 9.8%** |
+| Brazil | Glassdoor 31.2 · Indeed 18.6 · **InfoJobs 9.9%** |
+| United States | Glassdoor 31.3 · Indeed 29.6 · Comparably 13.4 |
+| United Kingdom | Glassdoor 42.5 · Indeed 29.0 |
+
+Destination URLs come from URLs that actually appear in the citation data,
+which surfaced **market-specific Glassdoor employer ids** worth preserving:
+Ford Motor Company `E263` (global), Ford Motor Co of Canada `E8205`, Ford Motor
+Company UK `E152869`, Ford India `E152871`, Ford Argentina `E3123922`, and Ford
+Credit `E7223` — the last driving four genuine entity-specific routes (DE, ES,
+FR, GB), so a Ford Credit recipient lands on their own reviews rather than the
+parent's. A few locale URLs are pattern-derived from a verified employer id on
+a verified domain; spot-check before real distribution.
+
+Deliberate exclusions, per the no-auto-generation rule:
+- **Computrabajo** (LatAm, 1.6–6.6%) — cited pages are dealer listings and job
+  ads, not Ford review pages.
+- **AmbitionBox outside India** (1–4% in AR/BE/FR/ES/VE) and Comparably below
+  ~13% — cross-market citation noise, not real local platforms.
+
+Unlike CSL, Ford's German kununu presence is **consolidated** on a single
+profile (`kununu.com/de/ford-werke`), so DE ships active rather than gated on
+profile consolidation. Consent is seeded **pending** — no link is mintable.
+
 ## Related infrastructure
 
 `url_recency_cache` feeds the Relevance measurement Activate will be judged on;

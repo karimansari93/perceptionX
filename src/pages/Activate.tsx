@@ -29,6 +29,9 @@ import {
   COUNTRY_CODES,
   countryInSentence,
   countryName,
+  entitiesForMarket,
+  entityCompanyIdFor,
+  entityOwningCompanyId,
   getActivateByToken,
   JOB_FUNCTIONS,
   logActivateEvent,
@@ -60,8 +63,14 @@ const PLATFORM_NAMES: Record<string, string> = {
   glassdoor: 'Glassdoor',
   indeed: 'Indeed',
   seek: 'Seek',
+  ambitionbox: 'AmbitionBox',
+  undelucram: 'Undelucram.ro',
+  profession: 'Profession.hu',
+  infojobs: 'InfoJobs',
+  comparably: 'Comparably',
   linkedin: 'LinkedIn',
   reddit: 'Reddit',
+  blind: 'Blind',
   instagram: 'Instagram',
   tiktok: 'TikTok',
 };
@@ -71,8 +80,14 @@ const PLATFORM_DOMAINS: Record<string, string> = {
   glassdoor: 'glassdoor.com',
   indeed: 'indeed.com',
   seek: 'seek.com.au',
+  ambitionbox: 'ambitionbox.com',
+  undelucram: 'undelucram.ro',
+  profession: 'profession.hu',
+  infojobs: 'infojobs.com.br',
+  comparably: 'comparably.com',
   linkedin: 'linkedin.com',
   reddit: 'reddit.com',
+  blind: 'teamblind.com',
   instagram: 'instagram.com',
   tiktok: 'tiktok.com',
 };
@@ -106,7 +121,9 @@ export default function Activate() {
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
   const [step, setStep] = useState<Step>('country');
   const [market, setMarket] = useState<string | null>(null);
-  const [entityId, setEntityId] = useState<string | null>(null); // company id or UNSURE
+  // Entity NAME (entities are deduped by name) or UNSURE; the market-specific
+  // company id is derived from it, so brand × market orgs resolve correctly.
+  const [entityKey, setEntityKey] = useState<string | null>(null);
   const [functionId, setFunctionId] = useState<string | null>(null);
   const [seniorityId, setSeniorityId] = useState<string | null>(null);
   const [prefilled, setPrefilled] = useState(false);
@@ -138,19 +155,17 @@ export default function Activate() {
       // Sender prefills are declarations too (they're what routes), but the
       // recipient can always override from the routes screen.
       const preMarket = cfg.prefill_market_code;
-      const preEntity =
-        cfg.prefill_entity_company_id &&
-        cfg.entities.some((e) => e.id === cfg.prefill_entity_company_id)
-          ? cfg.prefill_entity_company_id
-          : null;
+      const preEntity = cfg.prefill_entity_company_id
+        ? entityOwningCompanyId(cfg.entities, cfg.prefill_entity_company_id)
+        : undefined;
       if (preMarket) {
         setMarket(preMarket);
         logActivateEvent(token, sessionId, 'market_declared', { marketCode: preMarket });
         if (preEntity || cfg.entities.length === 0) {
-          setEntityId(preEntity ?? UNSURE);
+          setEntityKey(preEntity?.name ?? UNSURE);
           logActivateEvent(token, sessionId, 'entity_declared', {
             marketCode: preMarket,
-            entityCompanyId: preEntity,
+            entityCompanyId: preEntity ? entityCompanyIdFor(preEntity, preMarket) : null,
           });
           setStep('routes');
           setPrefilled(true);
@@ -192,23 +207,35 @@ export default function Activate() {
   const { config } = load;
   const { org } = config;
 
+  // Entities are name-deduped; only those present in the declared market show.
+  const marketEntities = market ? entitiesForMarket(config.entities, market) : config.entities;
+  const selectedEntity =
+    entityKey && entityKey !== UNSURE
+      ? config.entities.find((e) => e.name === entityKey)
+      : undefined;
+  // The company row representing that entity in this market — what routes and
+  // events key on.
+  const entityCompanyId =
+    selectedEntity && market ? entityCompanyIdFor(selectedEntity, market) : null;
+
   const declareMarket = (code: string) => {
     setMarket(code);
     logActivateEvent(token!, sessionId, 'market_declared', { marketCode: code });
-    if (config.entities.length === 0) {
-      setEntityId(UNSURE);
+    if (entitiesForMarket(config.entities, code).length === 0) {
+      setEntityKey(UNSURE);
       logActivateEvent(token!, sessionId, 'entity_declared', { marketCode: code });
-      setStep('routes');
+      setStep('profile');
     } else {
       setStep('entity');
     }
   };
 
-  const declareEntity = (id: string) => {
-    setEntityId(id);
+  const declareEntity = (name: string) => {
+    setEntityKey(name);
+    const picked = name === UNSURE ? undefined : config.entities.find((e) => e.name === name);
     logActivateEvent(token!, sessionId, 'entity_declared', {
       marketCode: market,
-      entityCompanyId: id === UNSURE ? null : id,
+      entityCompanyId: picked && market ? entityCompanyIdFor(picked, market) : null,
     });
     setStep('profile');
   };
@@ -244,7 +271,7 @@ export default function Activate() {
           {step === 'entity' && (
             <EntityStep
               org={org}
-              entities={config.entities}
+              entities={marketEntities}
               onPick={declareEntity}
               onBack={() => setStep('country')}
               headingRef={headingRef}
@@ -266,16 +293,11 @@ export default function Activate() {
               org={org}
               audience={config.audience}
               market={market}
-              entityName={
-                entityId && entityId !== UNSURE
-                  ? config.entities.find((e) => e.id === entityId)?.name ?? null
-                  : null
-              }
-              entityId={entityId === UNSURE ? null : entityId}
-              resolved={resolveRoutes(config.routes, market, entityId === UNSURE ? null : entityId)}
+              entityName={selectedEntity?.name ?? null}
+              entityId={entityCompanyId}
+              resolved={resolveRoutes(config.routes, market, entityCompanyId)}
               social={rankSocialRoutes(
-                resolveRoutes(config.routes, market, entityId === UNSURE ? null : entityId, 'social')
-                  .routes,
+                resolveRoutes(config.routes, market, entityCompanyId, 'social').routes,
                 functionId,
                 seniorityId,
               )}
@@ -283,7 +305,7 @@ export default function Activate() {
               prefilled={prefilled}
               onChange={() => {
                 setPrefilled(false);
-                setEntityId(null);
+                setEntityKey(null);
                 setStep('country');
               }}
               headingRef={headingRef}
@@ -517,7 +539,7 @@ function EntityStep({
 }: {
   org: ActivateConfig['org'];
   entities: ActivateConfig['entities'];
-  onPick: (id: string) => void;
+  onPick: (name: string) => void;
   onBack: () => void;
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
@@ -544,7 +566,7 @@ function EntityStep({
       </p>
       <div className="flex w-full flex-col" style={{ gap: 11 }}>
         {entities.map((e) => (
-          <button key={e.id} onClick={() => onPick(e.id)} className="act-entity">
+          <button key={e.name} onClick={() => onPick(e.name)} className="act-entity">
             <span className="flex-1 text-left">{e.name}</span>
             <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-primary)' }} />
           </button>

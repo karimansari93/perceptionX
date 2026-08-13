@@ -27,8 +27,42 @@ export interface ActivateOrgBranding {
 }
 
 export interface ActivateEntity {
+  /** Representative company id; used when no market-specific row applies. */
   id: string;
   name: string;
+  /**
+   * market_code -> company_id. Orgs whose companies are keyed by brand × market
+   * (Ford: 18 rows named "Ford", one per country) collapse to one named entity
+   * carrying this map; orgs keyed by division (CSL) map many markets to the
+   * same id. Empty means "no measured markets mapped" -> show everywhere.
+   */
+  markets?: Record<string, string>;
+}
+
+/** Entities present in the declared market; falls back to all if none match. */
+export function entitiesForMarket(
+  entities: ActivateEntity[],
+  marketCode: string,
+): ActivateEntity[] {
+  const inMarket = entities.filter(
+    (e) => !e.markets || Object.keys(e.markets).length === 0 || marketCode in e.markets,
+  );
+  return inMarket.length > 0 ? inMarket : entities;
+}
+
+/** The company row that represents this entity in the declared market. */
+export function entityCompanyIdFor(entity: ActivateEntity, marketCode: string): string {
+  return entity.markets?.[marketCode] ?? entity.id;
+}
+
+/** Find the named entity that owns a given company id (any market). */
+export function entityOwningCompanyId(
+  entities: ActivateEntity[],
+  companyId: string,
+): ActivateEntity | undefined {
+  return entities.find(
+    (e) => e.id === companyId || Object.values(e.markets ?? {}).includes(companyId),
+  );
 }
 
 export interface ActivateRoute {
