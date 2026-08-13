@@ -22,6 +22,8 @@ export interface ActivateOrgBranding {
   logo_url: string | null;
   /** Company domain for the logo.dev lookup; initials fallback when absent. */
   logo_domain: string | null;
+  /** Optional campaign banner above the avatar on the welcome screen. */
+  banner_url: string | null;
   primary_color: string;
   accent_color: string;
 }
@@ -448,13 +450,16 @@ export interface ActivateBrandingRow {
   blurb: string | null;
   logo_url: string | null;
   logo_domain: string | null;
+  banner_url: string | null;
   primary_color: string;
   accent_color: string;
 }
 
 export async function getActivateBranding(orgId: string): Promise<ActivateBrandingRow | null> {
   const { data, error } = await table('activate_branding')
-    .select('org_id, display_name, tagline, blurb, logo_url, logo_domain, primary_color, accent_color')
+    .select(
+      'org_id, display_name, tagline, blurb, logo_url, logo_domain, banner_url, primary_color, accent_color',
+    )
     .eq('org_id', orgId)
     .maybeSingle();
   if (error) throw error;
@@ -468,6 +473,7 @@ export async function saveActivateBranding(row: ActivateBrandingRow): Promise<vo
     blurb: row.blurb || null,
     logo_url: row.logo_url || null,
     logo_domain: row.logo_domain || null,
+    banner_url: row.banner_url || null,
   });
   if (error) throw error;
 }

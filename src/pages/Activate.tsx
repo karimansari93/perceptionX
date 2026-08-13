@@ -413,6 +413,20 @@ function CompanyAvatar({
 
 // Three steps now (the profile step is skippable) — a deliberate deviation
 // from the two-step handoff, driven by the function/seniority gathering ask.
+/** Client campaign artwork; hides itself if the URL fails to load. */
+function Banner({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return (
+    <img
+      src={url}
+      alt=""
+      className="act-banner act-avatar-entry"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function StepDots({ step }: { step: 1 | 2 | 3 }) {
   return (
     <div className="flex flex-col items-center gap-1.5">
@@ -464,6 +478,9 @@ function CountryStep({
 
   return (
     <>
+      {/* Optional campaign banner. Decorative: the company name is the h1
+          immediately below, so it carries no alt text of its own. */}
+      {org.banner_url && <Banner url={org.banner_url} />}
       <CompanyAvatar org={org} size={88} markSize={58} className="act-avatar-entry" />
       <h1 className="act-display">{org.display_name}</h1>
       {org.tagline && <p className="act-tagline">{org.tagline}</p>}
@@ -1323,6 +1340,15 @@ const activateCss = `
   font-size: 14px; font-weight: 600;
   color: color-mix(in srgb, var(--activate-on) 62%, transparent);
   text-decoration: underline; text-underline-offset: 3px;
+}
+
+/* Campaign banner. Rounded card so client artwork with its own background
+   colour sits cleanly on the brand canvas, whatever its aspect ratio. */
+.act-banner {
+  width: 100%; max-height: 96px; object-fit: contain;
+  border-radius: 18px; overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  margin-bottom: 2px;
 }
 
 /* Section headings */

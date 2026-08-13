@@ -305,6 +305,7 @@ function BrandingCard({
     blurb: null,
     logo_url: null,
     logo_domain: null,
+    banner_url: null,
     primary_color: '#13274F',
     accent_color: '#DB5E89',
   };
@@ -399,6 +400,30 @@ function BrandingCard({
               onChange={(e) => set({ tagline: e.target.value || null })}
               placeholder="e.g. Global biotech · 32,000 people · 35 countries"
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="b-banner">Banner image URL (optional)</Label>
+            <Input
+              id="b-banner"
+              value={form.banner_url ?? ''}
+              onChange={(e) => set({ banner_url: e.target.value.trim() || null })}
+              placeholder="https://… — campaign artwork shown above the logo"
+            />
+            {form.banner_url && (
+              <div className="rounded-lg border bg-muted/30 p-2">
+                <img
+                  src={form.banner_url}
+                  alt=""
+                  className="mx-auto max-h-20 w-full rounded object-contain"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+                <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
+                  Preview — any aspect ratio; wide strips (roughly 6:1) sit best.
+                </p>
+              </div>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="b-blurb">Blurb (one sentence on the welcome screen)</Label>
