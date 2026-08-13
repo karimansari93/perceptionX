@@ -376,9 +376,9 @@ function CompanyAvatar({
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  const src = org.logo_domain
-    ? logoSrc(org.logo_domain, 160)
-    : org.logo_url ?? null;
+  // An uploaded logo always wins: logo.dev is only a convenience fallback for
+  // orgs whose mark hasn't been supplied yet.
+  const src = org.logo_url ?? (org.logo_domain ? logoSrc(org.logo_domain, 160) : null);
   const initials = org.display_name
     .split(/\s+/)
     .map((w) => w.charAt(0))

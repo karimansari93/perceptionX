@@ -455,6 +455,37 @@ export interface ActivateBrandingRow {
   accent_color: string;
 }
 
+export const ACTIVATE_ASSET_BUCKET = 'activate-branding';
+const MAX_ASSET_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Upload a branding asset and return its public URL. Files are namespaced by
+ * org and stamped, so replacing an asset never collides with a cached copy of
+ * the old one. Admin-only by storage policy.
+ */
+export async function uploadActivateAsset(
+  orgId: string,
+  kind: 'logo' | 'banner',
+  file: File,
+): Promise<string> {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Please choose an image file (PNG, JPG, SVG, WebP or GIF).');
+  }
+  if (file.size > MAX_ASSET_BYTES) {
+    throw new Error('Image must be 2 MB or smaller.');
+  }
+  const ext = (file.name.split('.').pop() || 'png').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const path = `${orgId}/${kind}-${Date.now()}.${ext}`;
+
+  const { error } = await supabase.storage
+    .from(ACTIVATE_ASSET_BUCKET)
+    .upload(path, file, { cacheControl: '31536000', upsert: false, contentType: file.type });
+  if (error) throw error;
+
+  const { data } = supabase.storage.from(ACTIVATE_ASSET_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
 export async function getActivateBranding(orgId: string): Promise<ActivateBrandingRow | null> {
   const { data, error } = await table('activate_branding')
     .select(

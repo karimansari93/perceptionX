@@ -7,7 +7,7 @@
 //  - read-only routes overview; route curation stays manual (SQL), on purpose
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Ban, Check, Copy, Link2, ShieldCheck } from 'lucide-react';
+import { Ban, Check, Copy, Link2, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +46,7 @@ import {
   listActivateRoutes,
   revokeActivateLink,
   saveActivateBranding,
+  uploadActivateAsset,
 } from '@/lib/activate/api';
 
 interface OrgOption {
@@ -311,6 +312,7 @@ function BrandingCard({
   };
   const [form, setForm] = useState<ActivateBrandingRow>(branding ?? empty);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState<'logo' | 'banner' | null>(null);
   const [open, setOpen] = useState(false);
 
   // Re-sync when the org (or freshly loaded branding) changes.
@@ -321,6 +323,21 @@ function BrandingCard({
 
   const set = (patch: Partial<ActivateBrandingRow>) => setForm((f) => ({ ...f, ...patch }));
   const validHex = (v: string) => /^#[0-9a-fA-F]{6}$/.test(v);
+
+  /** Upload straight to storage and drop the public URL into the form. */
+  const upload = async (kind: 'logo' | 'banner', file: File | undefined) => {
+    if (!file) return;
+    setUploading(kind);
+    try {
+      const url = await uploadActivateAsset(orgId, kind, file);
+      set(kind === 'logo' ? { logo_url: url } : { banner_url: url });
+      toast.success(`${kind === 'logo' ? 'Logo' : 'Banner'} uploaded — remember to save`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setUploading(null);
+    }
+  };
 
   const save = async () => {
     if (!form.display_name.trim()) {
@@ -383,13 +400,43 @@ function BrandingCard({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="b-domain">Logo domain (logo.dev)</Label>
-              <Input
-                id="b-domain"
-                value={form.logo_domain ?? ''}
-                onChange={(e) => set({ logo_domain: e.target.value.trim() || null })}
-                placeholder="e.g. csl.com — blank shows initials"
-              />
+              <Label htmlFor="b-logo">Company logo</Label>
+              <div className="flex items-center gap-2">
+                {form.logo_url && (
+                  <img
+                    src={form.logo_url}
+                    alt=""
+                    className="h-9 w-9 shrink-0 rounded-md border bg-white object-contain p-0.5"
+                  />
+                )}
+                <Input
+                  id="b-logo"
+                  type="file"
+                  accept="image/*"
+                  disabled={uploading === 'logo'}
+                  onChange={(e) => upload('logo', e.target.files?.[0])}
+                  className="cursor-pointer file:mr-2 file:cursor-pointer file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
+                />
+                {form.logo_url && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => set({ logo_url: null })}
+                    title="Remove logo"
+                  >
+                    <Trash2 className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {uploading === 'logo'
+                  ? 'Uploading…'
+                  : form.logo_url
+                    ? 'Uploaded logo is used on the page.'
+                    : form.logo_domain
+                      ? `No upload yet — falling back to the logo.dev lookup for ${form.logo_domain}.`
+                      : 'No logo — the page shows the company initials.'}
+              </p>
             </div>
           </div>
           <div className="space-y-1.5">
@@ -402,13 +449,30 @@ function BrandingCard({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="b-banner">Banner image URL (optional)</Label>
-            <Input
-              id="b-banner"
-              value={form.banner_url ?? ''}
-              onChange={(e) => set({ banner_url: e.target.value.trim() || null })}
-              placeholder="https://… — campaign artwork shown above the logo"
-            />
+            <Label htmlFor="b-banner">Campaign banner (optional)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="b-banner"
+                type="file"
+                accept="image/*"
+                disabled={uploading === 'banner'}
+                onChange={(e) => upload('banner', e.target.files?.[0])}
+                className="cursor-pointer file:mr-2 file:cursor-pointer file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
+              />
+              {form.banner_url && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => set({ banner_url: null })}
+                  title="Remove banner"
+                >
+                  <Trash2 className="h-4 w-4 text-muted-foreground" />
+                </Button>
+              )}
+            </div>
+            {uploading === 'banner' && (
+              <p className="text-[11px] text-muted-foreground">Uploading…</p>
+            )}
             {form.banner_url && (
               <div className="rounded-lg border bg-muted/30 p-2">
                 <img
