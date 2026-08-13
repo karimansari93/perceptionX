@@ -65,23 +65,43 @@ export function entityOwningCompanyId(
   );
 }
 
+/**
+ * Three different acts, so three sections on the page:
+ *  review — write about your own experience where candidates check first
+ *  forum  — join a conversation already happening
+ *  social — post to your own audience
+ */
+export type ActivateChannel = 'review' | 'forum' | 'social';
+
 export interface ActivateRoute {
   market_code: string | null;
   tier: 1 | 2 | 3;
   /** 'review' = the measured tiered mechanic; 'social' = public conversation. */
-  channel: 'review' | 'social';
+  channel: ActivateChannel;
   platform: string;
   destination_url: string;
   write_url: string | null;
   rationale_stat: string | null;
   /** Card sub-line for social rows (never a market statistic). */
   fit_note: string | null;
+  /** This market's own platform (kununu in DE, undelucram.ro in RO...). */
+  is_local: boolean;
   /** Affinity for ranking the social section; null = everyone. */
   audience_functions: string[] | null;
   audience_seniority: string[] | null;
   rank: number;
   use_direct_link: boolean;
   entity_company_id: string | null;
+}
+
+/** The specific page AI cites most for a platform in a market. */
+export interface ActivateHighlight {
+  market_code: string | null;
+  platform: string;
+  url: string;
+  label: string;
+  citations: number | null;
+  rank: number;
 }
 
 export interface ActivateTheme {
@@ -98,7 +118,17 @@ export interface ActivateConfig {
   prefill_entity_company_id: string | null;
   entities: ActivateEntity[];
   routes: ActivateRoute[];
+  highlights: ActivateHighlight[];
   themes: ActivateTheme[];
+}
+
+/** Most-cited page for a platform in this market, if we have one. */
+export function highlightFor(
+  highlights: ActivateHighlight[],
+  marketCode: string,
+  platform: string,
+): ActivateHighlight | undefined {
+  return highlights.find((h) => h.platform === platform && h.market_code === marketCode);
 }
 
 export type ActivateTokenError = 'not_found' | 'expired' | 'revoked' | string;
@@ -187,7 +217,7 @@ export function resolveRoutes(
   all: ActivateRoute[],
   marketCode: string,
   entityCompanyId: string | null,
-  channel: 'review' | 'social' = 'review',
+  channel: ActivateChannel = 'review',
 ): ResolvedRoutes {
   const inChannel = all.filter((r) => r.channel === channel);
   const pool = inChannel.filter((r) => r.market_code === marketCode);
@@ -261,21 +291,28 @@ export const SENIORITIES: ProfileOption[] = [
 ];
 
 /**
- * Order social routes for a declared profile: affinity matches float up
- * (ranking, never filtering — everyone sees every social route), ties keep
- * curated rank. Returns [routes, matchedPlatforms].
+ * Flag which routes match the declared profile, without reordering them.
+ *
+ * Order is a curation decision made upstream — the market's own platform
+ * first, then the rest by measured coverage — so affinity only badges a row
+ * ("your world"); it never promotes one platform over a louder one, and it
+ * never hides anything. Everyone sees every route.
  */
 export function rankSocialRoutes(
   routes: ActivateRoute[],
   functionId: string | null,
   seniorityId: string | null,
 ): { routes: ActivateRoute[]; matched: Set<string> } {
-  const score = (r: ActivateRoute) =>
-    (functionId && r.audience_functions?.includes(functionId) ? 1 : 0) +
-    (seniorityId && r.audience_seniority?.includes(seniorityId) ? 1 : 0);
-  const matched = new Set(routes.filter((r) => score(r) > 0).map((r) => r.platform));
-  const ordered = [...routes].sort((a, b) => score(b) - score(a) || a.rank - b.rank);
-  return { routes: ordered, matched };
+  const matched = new Set(
+    routes
+      .filter(
+        (r) =>
+          (functionId && r.audience_functions?.includes(functionId)) ||
+          (seniorityId && r.audience_seniority?.includes(seniorityId)),
+      )
+      .map((r) => r.platform),
+  );
+  return { routes: [...routes].sort((a, b) => a.rank - b.rank), matched };
 }
 
 // ---------------------------------------------------------------------------

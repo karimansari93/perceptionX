@@ -25,6 +25,7 @@ import { AlertCircle, ArrowRight, ChevronLeft, ExternalLink, Search } from 'luci
 import { useMetaTags } from '@/hooks/useMetaTags';
 import {
   ActivateConfig,
+  ActivateHighlight,
   ActivateRoute,
   COUNTRY_CODES,
   countryInSentence,
@@ -33,6 +34,7 @@ import {
   entityCompanyIdFor,
   entityOwningCompanyId,
   getActivateByToken,
+  highlightFor,
   JOB_FUNCTIONS,
   logActivateEvent,
   measuredMarketCodes,
@@ -71,8 +73,11 @@ const PLATFORM_NAMES: Record<string, string> = {
   linkedin: 'LinkedIn',
   reddit: 'Reddit',
   blind: 'Blind',
+  quora: 'Quora',
   instagram: 'Instagram',
   tiktok: 'TikTok',
+  youtube: 'YouTube',
+  facebook: 'Facebook',
 };
 
 const PLATFORM_DOMAINS: Record<string, string> = {
@@ -88,8 +93,11 @@ const PLATFORM_DOMAINS: Record<string, string> = {
   linkedin: 'linkedin.com',
   reddit: 'reddit.com',
   blind: 'teamblind.com',
+  quora: 'quora.com',
   instagram: 'instagram.com',
   tiktok: 'tiktok.com',
+  youtube: 'youtube.com',
+  facebook: 'facebook.com',
 };
 
 function platformName(key: string): string {
@@ -296,12 +304,18 @@ export default function Activate() {
               entityName={selectedEntity?.name ?? null}
               entityId={entityCompanyId}
               resolved={resolveRoutes(config.routes, market, entityCompanyId)}
+              forum={rankSocialRoutes(
+                resolveRoutes(config.routes, market, entityCompanyId, 'forum').routes,
+                functionId,
+                seniorityId,
+              )}
               social={rankSocialRoutes(
                 resolveRoutes(config.routes, market, entityCompanyId, 'social').routes,
                 functionId,
                 seniorityId,
               )}
               themes={config.themes}
+              highlights={config.highlights}
               prefilled={prefilled}
               onChange={() => {
                 setPrefilled(false);
@@ -679,8 +693,10 @@ function RoutesStep({
   entityName,
   entityId,
   resolved,
+  forum,
   social,
   themes,
+  highlights,
   prefilled,
   onChange,
   headingRef,
@@ -693,8 +709,10 @@ function RoutesStep({
   entityName: string | null;
   entityId: string | null;
   resolved: ReturnType<typeof resolveRoutes>;
+  forum: ReturnType<typeof rankSocialRoutes>;
   social: ReturnType<typeof rankSocialRoutes>;
   themes: ActivateConfig['themes'];
+  highlights: ActivateConfig['highlights'];
   prefilled: boolean;
   onChange: () => void;
   headingRef: React.RefObject<HTMLHeadingElement>;
@@ -705,6 +723,19 @@ function RoutesStep({
     ? marketThemes
     : themes.filter((t) => t.market_code === null)
   ).slice(0, 5);
+
+  // Shared by all three channel sections.
+  const sectionProps = {
+    market,
+    highlights,
+    onOpen: (route: ActivateRoute) =>
+      logActivateEvent(token, sessionId, 'platform_click', {
+        marketCode: market,
+        entityCompanyId: entityId,
+        platform: route.platform,
+        tier: route.tier,
+      }),
+  };
   const { tier, routes } = resolved;
   const top = routes[0];
   const statPct = tier === 1 ? parseStatPct(top?.rationale_stat ?? null) : null;
@@ -734,21 +765,26 @@ function RoutesStep({
         </div>
       </div>
 
+      {/* The number is proof, but the recipient is not the EB team — lead with
+          what it means for them: the answer someone gets about their workplace
+          is assembled from these pages. */}
       {tier === 1 && statPct !== null ? (
         <StatBlock
           pct={statPct}
+          eyebrow={`Ask AI what it's like to work here`}
           sentence={
             <>
-              of AI answers about working at {org.display_name} in {countryInSentence(market)}{' '}
-              cite <strong className="font-bold">{platformName(top.platform)}</strong>.
+              of the answer for {countryInSentence(market)} is built from{' '}
+              <strong className="font-bold">{platformName(top.platform)}</strong>.
             </>
           }
           headingRef={headingRef}
         />
       ) : (
         <div className="act-rise flex flex-col items-center gap-2 text-center">
+          <p className="act-eyebrow">Ask AI what it's like to work here</p>
           <h2 ref={headingRef} tabIndex={-1} className="act-generic-heading outline-none">
-            These are the platforms AI leans on most for employer answers worldwide.
+            The answer gets built from pages like these.
           </h2>
           <p className="act-generic-sub">
             We don't measure {countryInSentence(market)} yet, so there's no local number to show
@@ -758,73 +794,56 @@ function RoutesStep({
       )}
 
       <p className="act-intro">
-        Here's where {who}. If you'd like to share your experience — that's entirely up to you.
+        {audience === 'candidate'
+          ? `It's the same picture you'd get asking about ${org.display_name} — assembled from what people wrote on these pages.`
+          : `Whoever asks next — a friend, a candidate, someone's kid deciding where to apply — gets a picture assembled from these pages. Whether your experience is part of it is entirely up to you.`}
       </p>
 
-      <div className="act-cards flex w-full flex-col gap-3">
-        {routes.map((route, i) => (
-          <PlatformCard
-            key={route.platform}
-            route={route}
-            // The stat block already tells the top platform's story — repeating
-            // the same sentence on its card reads as a glitch.
-            hideRationale={i === 0 && tier === 1 && statPct !== null}
-            onOpen={() =>
-              logActivateEvent(token, sessionId, 'platform_click', {
-                marketCode: market,
-                entityCompanyId: entityId,
-                platform: route.platform,
-                tier: route.tier,
-              })
-            }
-          />
-        ))}
-      </div>
+      {/* Three sections, three different acts. Each leads with what the
+          recipient would actually be doing, not with our channel taxonomy. */}
+      <ChannelSection
+        eyebrow="Review sites"
+        heading="Tell candidates what it's actually like"
+        sub="This is where they check first. Whether you write anything, and what you say, is yours."
+        routes={routes}
+        hideFirstRationale={tier === 1 && statPct !== null}
+        {...sectionProps}
+      />
 
-      {social.routes.length > 0 && (
-        <section className="act-rise-late mt-3 flex w-full flex-col items-center gap-3">
-          <p className="act-eyebrow">Beyond reviews</p>
-          <h3 className="act-question" style={{ fontSize: 19 }}>
-            AI reads the public conversation too
-          </h3>
-          {shownThemes.length > 0 && (
-            <>
-              <p className="act-intro" style={{ maxWidth: 320 }}>
-                Right now, these themes carry the most weight in how AI describes working at{' '}
-                {org.display_name}:
-              </p>
-              <div className="flex flex-wrap justify-center gap-2">
-                {shownThemes.map((t) => (
-                  <span key={t.theme} className="act-theme-chip">
-                    {t.theme}
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
+      {shownThemes.length > 0 && (
+        <section className="act-rise-late flex w-full flex-col items-center gap-2.5">
+          <p className="act-eyebrow">What AI keeps bringing up</p>
           <p className="act-intro" style={{ maxWidth: 320 }}>
-            If you ever post about your work life, these are the places AI listens. What you make
-            of any of it is yours.
+            These themes carry the most weight in how AI describes working at {org.display_name} in{' '}
+            {countryInSentence(market)}.
           </p>
-          <div className="flex w-full flex-col gap-3">
-            {social.routes.map((route) => (
-              <PlatformCard
-                key={route.platform}
-                route={route}
-                matched={social.matched.has(route.platform)}
-                onOpen={() =>
-                  logActivateEvent(token, sessionId, 'platform_click', {
-                    marketCode: market,
-                    entityCompanyId: entityId,
-                    platform: route.platform,
-                    tier: route.tier,
-                  })
-                }
-              />
+          <div className="flex flex-wrap justify-center gap-2">
+            {shownThemes.map((t) => (
+              <span key={t.theme} className="act-theme-chip">
+                {t.theme}
+              </span>
             ))}
           </div>
         </section>
       )}
+
+      <ChannelSection
+        eyebrow="Forums"
+        heading="Join the conversation"
+        sub="People are already asking what it's like to work here. These are the threads AI reads."
+        routes={forum.routes}
+        matched={forum.matched}
+        {...sectionProps}
+      />
+
+      <ChannelSection
+        eyebrow="Social"
+        heading="Show what the work actually looks like"
+        sub="Posts from the people who do the job shape how AI describes it."
+        routes={social.routes}
+        matched={social.matched}
+        {...sectionProps}
+      />
 
       <footer className="mt-2 flex flex-col items-center gap-2.5 text-center">
         <p className="act-honesty">We don't see what you write — or whether you write at all.</p>
@@ -837,12 +856,62 @@ function RoutesStep({
   );
 }
 
+function ChannelSection({
+  eyebrow,
+  heading,
+  sub,
+  routes,
+  matched,
+  hideFirstRationale = false,
+  market,
+  highlights,
+  onOpen,
+}: {
+  eyebrow: string;
+  heading: string;
+  sub: string;
+  routes: ActivateRoute[];
+  matched?: Set<string>;
+  hideFirstRationale?: boolean;
+  market: string;
+  highlights: ActivateConfig['highlights'];
+  onOpen: (route: ActivateRoute) => void;
+}) {
+  if (routes.length === 0) return null;
+  return (
+    <section className="act-rise-late flex w-full flex-col items-center gap-2.5">
+      <p className="act-eyebrow">{eyebrow}</p>
+      <h3 className="act-section-heading">{heading}</h3>
+      <p className="act-intro" style={{ maxWidth: 320 }}>
+        {sub}
+      </p>
+      <div className="flex w-full flex-col gap-3">
+        {routes.map((route, i) => (
+          <PlatformCard
+            key={route.platform}
+            route={route}
+            matched={matched?.has(route.platform)}
+            // The stat block already told the top platform's story — repeating
+            // the same sentence on its card reads as a glitch.
+            hideRationale={i === 0 && hideFirstRationale}
+            highlight={highlightFor(highlights, market, route.platform)}
+            localLabel={`${countryName(market)}'s own`}
+            onOpen={() => onOpen(route)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function StatBlock({
   pct,
+  eyebrow,
   sentence,
   headingRef,
 }: {
   pct: number;
+  eyebrow: string;
   sentence: ReactNode;
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
@@ -865,6 +934,7 @@ function StatBlock({
 
   return (
     <div className="act-rise flex flex-col items-center gap-2 text-center">
+      <p className="act-eyebrow">{eyebrow}</p>
       <div className="relative flex items-center justify-center">
         <span className="act-ring" aria-hidden />
         <h2 ref={headingRef} tabIndex={-1} className="act-stat outline-none" aria-label={`${pct}%`}>
@@ -881,12 +951,18 @@ function PlatformCard({
   onOpen,
   hideRationale = false,
   matched = false,
+  highlight,
+  localLabel = 'Local',
 }: {
   route: ActivateRoute;
   onOpen: () => void;
   hideRationale?: boolean;
+  /** e.g. "Romania's own" — every market with a local platform reads well. */
+  localLabel?: string;
   /** Social affinity match for the declared profile — floats up + gets a chip. */
   matched?: boolean;
+  /** The single page AI cites most here, shown as a second row. */
+  highlight?: ActivateHighlight;
 }) {
   const [logoFailed, setLogoFailed] = useState(false);
   const domain = PLATFORM_DOMAINS[route.platform];
@@ -896,7 +972,10 @@ function PlatformCard({
   // this page to the platform unless the anchor is noreferrer.
   const rel = route.use_direct_link ? 'noopener noreferrer' : 'noopener';
   return (
-    <div className="act-card act-rise-late overflow-hidden bg-white">
+    <div
+      className="act-card act-rise-late overflow-hidden bg-white"
+      data-local={route.is_local || undefined}
+    >
       <a
         href={route.destination_url}
         target="_blank"
@@ -926,10 +1005,11 @@ function PlatformCard({
           )}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-headline font-semibold" style={{ fontSize: 16.5, letterSpacing: '-.01em', color: '#13274F' }}>
               {name}
             </span>
+            {route.is_local && <span className="act-local-chip">{localLabel}</span>}
             {matched && <span className="act-measured-chip">Your world</span>}
           </span>
           {subLine && !hideRationale && (
@@ -940,6 +1020,22 @@ function PlatformCard({
         </span>
         <ExternalLink size={16} aria-hidden style={{ color: 'rgba(19,39,79,.4)' }} />
       </a>
+      {/* The page AI actually cites most here — the conversation itself,
+          rather than a bare platform link. */}
+      {highlight && (
+        <a
+          href={highlight.url}
+          target="_blank"
+          rel={rel}
+          onClick={onOpen}
+          className="act-highlight-row"
+          aria-label={`${highlight.label} — opens in a new tab`}
+        >
+          <span className="act-highlight-label">Most cited</span>
+          <span className="min-w-0 flex-1 truncate">{highlight.label}</span>
+          <ArrowRight size={13} aria-hidden className="shrink-0" />
+        </a>
+      )}
       {route.write_url && (
         <a
           href={route.write_url}
@@ -1227,6 +1323,38 @@ const activateCss = `
   font-size: 14px; font-weight: 600;
   color: color-mix(in srgb, var(--activate-on) 62%, transparent);
   text-decoration: underline; text-underline-offset: 3px;
+}
+
+/* Section headings */
+.act-section-heading {
+  font-family: 'Geologica', sans-serif; font-weight: 600;
+  font-size: 19px; line-height: 1.2; letter-spacing: -.015em; text-align: center;
+}
+
+/* Local platform: badged and visually lifted above the global ones */
+.act-card[data-local] {
+  box-shadow: 0 10px 26px -6px color-mix(in srgb, var(--activate-accent) 55%, transparent),
+              0 8px 20px rgba(0,0,0,.16);
+  outline: 2px solid color-mix(in oklab, var(--activate-accent) 65%, #fff);
+}
+.act-local-chip {
+  font-size: 9.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  padding: 5px 8px; border-radius: 999px; white-space: nowrap;
+  background: color-mix(in oklab, var(--activate-accent) 22%, #fff);
+  color: color-mix(in oklab, var(--activate-accent) 82%, #13274F);
+}
+
+/* Most-cited page row */
+.act-highlight-row {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 46px; padding: 0 18px;
+  border-top: 1px solid rgba(19,39,79,.08);
+  font-size: 12.5px; color: rgba(19,39,79,.72);
+}
+.act-highlight-row:hover { background: #F4F6F7; }
+.act-highlight-label {
+  font-size: 9.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  color: rgba(19,39,79,.45); white-space: nowrap;
 }
 
 /* Theme chips — topic visibility, never sentiment */

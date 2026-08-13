@@ -394,6 +394,62 @@ Unlike CSL, Ford's German kununu presence is **consolidated** on a single
 profile (`kununu.com/de/ford-werke`), so DE ships active rather than gated on
 profile consolidation. Consent is seeded **pending** — no link is mintable.
 
+## Page structure: three sections, three acts (2026-08-13)
+
+The recipient page splits routes into three channels, each led by what the
+person would actually be doing rather than by our taxonomy:
+
+| Channel | Section | Platforms |
+|---|---|---|
+| `review` | "Tell candidates what it's actually like" | Glassdoor, Indeed, kununu, AmbitionBox, undelucram.ro, profession.hu, InfoJobs, Seek, Comparably |
+| `forum` | "Join the conversation" | Reddit, Quora, Blind |
+| `social` | "Show what the work actually looks like" | LinkedIn, YouTube, Instagram, Facebook, TikTok |
+
+**Every measured platform is shown, not a top three** — "go where you're
+comfortable". Rows are generated from measured coverage above a 3% floor, with
+curation encoded as rules (home-market restriction, Computrabajo exclusion)
+rather than applied as a ranking.
+
+**Ordering: the market's own platform first, then by measured coverage.**
+`is_local` marks it, badges it ("Romania's own") and sorts it to the top. The
+rationale is that a review on the local platform is read by people actually
+looking at this employer in that country and is not diluted across every
+market the way a Glassdoor review is. This is a curation decision — in Hungary
+and Brazil it puts a ~10% platform above a ~30% one, which is the intended
+trade-off, but worth revisiting per market.
+
+**Affinity badges, never reorders.** A declared function/seniority marks
+matching rows "your world"; it does not promote them over a louder platform
+and never hides anything.
+
+**`activate_route_highlights`** carries the specific pages AI cites most, shown
+as a "Most cited" row on the card — the conversation itself rather than a bare
+platform link. Labels are hand-written from descriptive URL slugs; pages whose
+content can't be verified from the URL are not seeded. Notably, one r/Ford
+thread ("What's it like working at Ford") is the top-cited social page in the
+US, UK *and* India.
+
+**Social was previously hardcoded and identical for every client — that was
+wrong.** Ford's measured data shows YouTube is the loudest social source in 10
+of 18 markets (Brazil 44.0%, Peru 37.1%, Colombia 33.2%) and it was absent
+entirely, while TikTok and Blind, which shipped globally, never clear 12.4%
+and 2.3%. CSL still has the old global social list and needs the same
+measured treatment.
+
+### Copy: written for the recipient, not the buyer
+
+"24.8% of AI answers cite Glassdoor" is a stat for the EB team; an employee has
+no reason to care. The stat block now leads with the consequence —
+*"Ask AI what it's like to work here → 21.9% → of the answer for Romania is
+built from Undelucram.ro"* — and the intro names who is actually asking:
+"Whoever asks next — a friend, a candidate, someone's kid deciding where to
+apply — gets a picture assembled from these pages."
+
+Section headings stay action-led but **never steer sentiment**: "Show what the
+work actually looks like", not "showcase what you're most proud of". The
+non-directive constraint is about what someone writes, and positive framing
+crosses it.
+
 ## Related infrastructure
 
 `url_recency_cache` feeds the Relevance measurement Activate will be judged on;
