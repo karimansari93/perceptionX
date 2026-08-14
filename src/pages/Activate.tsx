@@ -24,6 +24,7 @@ import ReactCountryFlag from 'react-country-flag';
 import {
   AlertCircle,
   ArrowRight,
+  Check,
   ChevronDown,
   ChevronLeft,
   ExternalLink,
