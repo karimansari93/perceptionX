@@ -21,7 +21,14 @@ import {
 } from 'react';
 import { useParams } from 'react-router-dom';
 import ReactCountryFlag from 'react-country-flag';
-import { AlertCircle, ArrowRight, ChevronLeft, ExternalLink, Search } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowRight,
+  ChevronDown,
+  ChevronLeft,
+  ExternalLink,
+  Search,
+} from 'lucide-react';
 import { useMetaTags } from '@/hooks/useMetaTags';
 import {
   ActivateConfig,
@@ -49,7 +56,7 @@ type LoadState =
   | { kind: 'invalid' }
   | { kind: 'ready'; config: ActivateConfig };
 
-type Step = 'country' | 'entity' | 'profile' | 'routes';
+type Step = 'intro' | 'country' | 'entity' | 'profile' | 'routes';
 
 const UNSURE = 'unsure';
 
@@ -120,6 +127,65 @@ const PLATFORM_DOMAINS: Record<string, string> = {
   fourprogrammers: '4programmers.net',
 };
 
+/**
+ * How to actually leave something, per platform. Procedural only — these say
+ * where to tap, never what to say.
+ */
+const PLATFORM_HOWTO: Record<string, string[]> = {
+  glassdoor: [
+    'Open the company profile',
+    'Sign in or create a free account',
+    'Choose “Reviews”, then “Add a review”',
+    'Pick your job title, location and dates',
+    'Write in your own words and submit',
+  ],
+  indeed: [
+    'Open the company profile',
+    'Choose “Review this company”',
+    'Rate the areas you want to — skip the rest',
+    'Write in your own words and submit',
+  ],
+  kununu: [
+    'Open the company profile',
+    'Choose “Bewertung schreiben”',
+    'Pick your role and location',
+    'Write in your own words and submit',
+  ],
+  ambitionbox: [
+    'Open the company page',
+    'Choose “Write a review”',
+    'Sign in with any email address',
+    'Write in your own words and submit',
+  ],
+  reddit: [
+    'Open the thread',
+    'Sign in or create an account',
+    'Reply with whatever you think is worth knowing',
+  ],
+  quora: ['Open the question', 'Sign in or create an account', 'Choose “Answer” and write'],
+  blind: [
+    'Open the company page',
+    'Verify with your work email — Blind hides who you are',
+    'Post or reply',
+  ],
+  linkedin: ['Open LinkedIn and start a post', 'Say what you want about your work', 'Post it'],
+};
+
+const HOWTO_BY_CHANNEL: Record<string, string[]> = {
+  review: [
+    'Open the company profile',
+    'Sign in or create a free account',
+    'Find the option to write a review',
+    'Write in your own words and submit',
+  ],
+  forum: ['Open the page', 'Sign in or create an account', 'Reply in your own words'],
+  social: ['Open the app', 'Post about your work', 'Mention the company if you want to'],
+};
+
+function howToFor(route: ActivateRoute): string[] {
+  return PLATFORM_HOWTO[route.platform] ?? HOWTO_BY_CHANNEL[route.channel] ?? [];
+}
+
 function platformName(key: string): string {
   return PLATFORM_NAMES[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
 }
@@ -147,7 +213,7 @@ export default function Activate() {
   const sessionId = useMemo(() => crypto.randomUUID(), []);
 
   const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
-  const [step, setStep] = useState<Step>('country');
+  const [step, setStep] = useState<Step>('intro');
   const [market, setMarket] = useState<string | null>(null);
   // Entity NAME (entities are deduped by name) or UNSURE; the market-specific
   // company id is derived from it, so brand × market orgs resolve correctly.
@@ -288,6 +354,9 @@ export default function Activate() {
         className="relative z-[1] mx-auto flex min-h-screen w-full max-w-[460px] flex-col items-center gap-4 px-[22px] pb-11 pt-16 md:px-8"
       >
         <div key={step} className="act-step flex w-full flex-col items-center gap-4">
+          {step === 'intro' && (
+            <IntroStep org={org} onDone={() => setStep('country')} headingRef={headingRef} />
+          )}
           {step === 'country' && (
             <CountryStep
               org={org}
@@ -307,6 +376,7 @@ export default function Activate() {
           )}
           {step === 'profile' && (
             <ProfileStep
+              org={org}
               onDone={declareProfile}
               onBack={() => setStep('entity')}
               initialFunction={functionId}
@@ -336,6 +406,7 @@ export default function Activate() {
               )}
               themes={config.themes}
               highlights={config.highlights}
+              coverage={config.coverage ?? {}}
               prefilled={prefilled}
               onChange={() => {
                 setPrefilled(false);
@@ -518,6 +589,88 @@ function Banner({ url }: { url: string }) {
   );
 }
 
+/**
+ * A short welcome before the questions. Lines arrive one at a time; tapping
+ * anywhere skips ahead, and reduced-motion shows the whole thing at once.
+ */
+function IntroStep({
+  org,
+  onDone,
+  headingRef,
+}: {
+  org: ActivateConfig['org'];
+  onDone: () => void;
+  headingRef: React.RefObject<HTMLHeadingElement>;
+}) {
+  const lines = [
+    'Hey there 👋',
+    `Thanks for joining the conversation about ${org.display_name}.`,
+    'Before we start, just a couple of quick details.',
+  ];
+  const reduced = prefersReducedMotion();
+  const [shown, setShown] = useState(reduced ? lines.length : 0);
+
+  useEffect(() => {
+    if (reduced || shown >= lines.length) return;
+    const t = setTimeout(() => setShown((n) => n + 1), shown === 0 ? 350 : 1100);
+    return () => clearTimeout(t);
+  }, [shown, reduced, lines.length]);
+
+  const ready = shown >= lines.length;
+
+  return (
+    <button className="act-intro-screen" onClick={ready ? onDone : () => setShown(lines.length)}>
+      {org.banner_url && <Banner url={org.banner_url} />}
+      <CompanyAvatar org={org} size={72} markSize={46} className="act-avatar-entry" />
+      <div className="flex flex-col items-center gap-3">
+        {lines.map((line, i) =>
+          i < shown ? (
+            <h1
+              key={line}
+              ref={i === 0 ? headingRef : undefined}
+              tabIndex={i === 0 ? -1 : undefined}
+              className={`act-intro-line outline-none ${i === 0 ? 'act-intro-lead' : ''}`}
+            >
+              {line}
+            </h1>
+          ) : null,
+        )}
+      </div>
+      <span className="act-intro-cta" data-ready={ready}>
+        {ready ? 'Let’s go' : 'Tap to skip'}
+        <ArrowRight size={16} aria-hidden />
+      </span>
+    </button>
+  );
+}
+
+/** Same top-of-step furniture everywhere: back, progress, mark. */
+function StepHeader({
+  org,
+  step,
+  onBack,
+}: {
+  org: ActivateConfig['org'];
+  step: 1 | 2 | 3;
+  onBack?: () => void;
+}) {
+  return (
+    <>
+      <div className="flex w-full items-center justify-between">
+        {onBack ? (
+          <button onClick={onBack} className="act-back">
+            <ChevronLeft size={15} aria-hidden /> Back
+          </button>
+        ) : (
+          <span aria-hidden />
+        )}
+        <StepDots step={step} />
+      </div>
+      <CompanyAvatar org={org} size={64} markSize={42} className="act-avatar-entry" />
+    </>
+  );
+}
+
 function StepDots({ step }: { step: 1 | 2 | 3 }) {
   return (
     <div className="flex flex-col items-center gap-1.5">
@@ -572,11 +725,7 @@ function CountryStep({
       {/* Optional campaign banner. Decorative: the company name is the h1
           immediately below, so it carries no alt text of its own. */}
       {org.banner_url && <Banner url={org.banner_url} />}
-      <CompanyAvatar org={org} size={88} markSize={58} className="act-avatar-entry" />
-      <h1 className="act-display">{org.display_name}</h1>
-      {org.tagline && <p className="act-tagline">{org.tagline}</p>}
-      {org.blurb && <p className="act-blurb">{org.blurb}</p>}
-      <StepDots step={1} />
+      <StepHeader org={org} step={1} />
       <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
         Where are you based?
       </h2>
@@ -665,20 +814,8 @@ function EntityStep({
 }) {
   return (
     <>
-      <div className="flex w-full items-center justify-between">
-        <button onClick={onBack} className="act-back">
-          <ChevronLeft size={15} aria-hidden />
-          Back
-        </button>
-        <StepDots step={2} />
-      </div>
-      <CompanyAvatar org={org} size={64} markSize={42} />
-      <h2
-        ref={headingRef}
-        tabIndex={-1}
-        className="act-question outline-none"
-        style={{ fontSize: 22 }}
-      >
+      <StepHeader org={org} step={2} onBack={onBack} />
+      <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
         Which part of {org.display_name}?
       </h2>
       <p className="act-hint">
@@ -708,12 +845,14 @@ function EntityStep({
 // ---------------------------------------------------------------------------
 
 function ProfileStep({
+  org,
   onDone,
   onBack,
   initialFunction,
   initialSeniority,
   headingRef,
 }: {
+  org: ActivateConfig['org'];
   onDone: (functionId: string | null, seniorityId: string | null) => void;
   onBack: () => void;
   initialFunction: string | null;
@@ -722,38 +861,63 @@ function ProfileStep({
 }) {
   const [fn, setFn] = useState<string | null>(initialFunction);
   const [sen, setSen] = useState<string | null>(initialSeniority);
+  const [query, setQuery] = useState('');
+
+  const q = query.trim().toLowerCase();
+  const matches = q
+    ? JOB_FUNCTIONS.filter((o) => o.label.toLowerCase().includes(q))
+    : JOB_FUNCTIONS;
+  // Nobody's job fits a fixed list, so whatever they type is offered back as
+  // its own option. Capped to the length the event RPC accepts.
+  const custom = query.trim().slice(0, 60);
+  const canUseCustom =
+    custom.length > 1 && !JOB_FUNCTIONS.some((o) => o.label.toLowerCase() === q);
+  const selectedLabel =
+    JOB_FUNCTIONS.find((o) => o.id === fn)?.label ?? (fn && fn !== '' ? fn : null);
+
   return (
     <>
-      <div className="flex w-full items-center justify-between">
-        <button onClick={onBack} className="act-back">
-          <ChevronLeft size={15} aria-hidden />
-          Back
-        </button>
-        <StepDots step={3} />
-      </div>
-      <h2
-        ref={headingRef}
-        tabIndex={-1}
-        className="act-question outline-none"
-        style={{ fontSize: 22 }}
-      >
-        Last one — what kind of work do you do?
+      <StepHeader org={org} step={3} onBack={onBack} />
+      <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
+        What kind of work do you do?
       </h2>
-      <p className="act-hint">
-        Optional. It helps us point at the places where people like you actually get heard.
-      </p>
 
-      <p className="act-eyebrow self-start">Your kind of work</p>
-      <div className="flex w-full flex-wrap gap-2">
-        {JOB_FUNCTIONS.map((o) => (
+      <label className="act-search w-full">
+        <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search or type your own"
+          aria-label="Search roles, or type your own"
+        />
+      </label>
+
+      <div
+        className="act-scroll flex w-full flex-col gap-2 overflow-y-auto"
+        role="listbox"
+        aria-label="Kinds of work"
+      >
+        {canUseCustom && (
+          <button
+            onClick={() => setFn(custom)}
+            className={fn === custom ? 'act-pill-solid' : 'act-pill-ghost'}
+            role="option"
+            aria-selected={fn === custom}
+          >
+            <span className="flex-1 text-left">Use “{custom}”</span>
+            {fn === custom && <Check className="h-4 w-4 shrink-0" />}
+          </button>
+        )}
+        {matches.map((o) => (
           <button
             key={o.id}
             onClick={() => setFn(fn === o.id ? null : o.id)}
-            className="act-select-chip"
-            data-on={fn === o.id}
-            aria-pressed={fn === o.id}
+            className={fn === o.id ? 'act-pill-solid' : 'act-pill-ghost'}
+            role="option"
+            aria-selected={fn === o.id}
           >
-            {o.label}
+            <span className="flex-1 text-left">{o.label}</span>
+            {fn === o.id && <Check className="h-4 w-4 shrink-0" />}
           </button>
         ))}
       </div>
@@ -776,11 +940,8 @@ function ProfileStep({
       </div>
 
       <button onClick={() => onDone(fn, sen)} className="act-primary-btn mt-2">
-        Show my places
+        {selectedLabel ? 'Show my places' : 'Skip and show my places'}
         <ArrowRight size={16} aria-hidden />
-      </button>
-      <button onClick={() => onDone(null, null)} className="act-skip">
-        Skip
       </button>
     </>
   );
@@ -803,6 +964,7 @@ function RoutesStep({
   social,
   themes,
   highlights,
+  coverage,
   prefilled,
   onChange,
   headingRef,
@@ -819,6 +981,7 @@ function RoutesStep({
   social: ReturnType<typeof rankSocialRoutes>;
   themes: ActivateConfig['themes'];
   highlights: ActivateConfig['highlights'];
+  coverage: ActivateConfig['coverage'];
   prefilled: boolean;
   onChange: () => void;
   headingRef: React.RefObject<HTMLHeadingElement>;
@@ -842,20 +1005,13 @@ function RoutesStep({
         tier: route.tier,
       }),
   };
-  const { tier, routes } = resolved;
-  const top = routes[0];
-  const statPct = tier === 1 ? parseStatPct(top?.rationale_stat ?? null) : null;
-
-  const who =
-    audience === 'candidate'
-      ? `candidates hear about life at ${org.display_name}`
-      : audience === 'alumni'
-        ? `people hear about working at ${org.display_name}`
-        : `people hear about life at ${org.display_name}`;
+  const { routes } = resolved;
+  // Share of this market's answers that come from the platforms listed below.
+  const coveragePct = coverage[market] ?? null;
 
   return (
     <>
-      <div className="flex w-full items-center justify-between gap-3">
+      <div className="act-topbar flex w-full items-center justify-between gap-3">
         <CompanyAvatar org={org} size={46} markSize={30} />
         <div className="flex flex-col items-end gap-1">
           <button onClick={onChange} className="act-context" data-prefilled={prefilled}>
@@ -871,17 +1027,15 @@ function RoutesStep({
         </div>
       </div>
 
-      {/* The number is proof, but the recipient is not the EB team — lead with
-          what it means for them: the answer someone gets about their workplace
-          is assembled from these pages. */}
-      {tier === 1 && statPct !== null ? (
+      {/* One number, then the places. Per-platform percentages turned this
+          into a dashboard; the recipient needs the fact and the list. */}
+      {coveragePct !== null ? (
         <StatBlock
-          pct={statPct}
+          pct={coveragePct}
           eyebrow={`Ask AI what it's like to work here`}
           sentence={
             <>
-              of the answer for {countryInSentence(market)} is built from{' '}
-              <strong className="font-bold">{platformName(top.platform)}</strong>.
+              of the answer for {countryInSentence(market)} is built from these places.
             </>
           }
           headingRef={headingRef}
@@ -890,66 +1044,31 @@ function RoutesStep({
         <div className="act-rise flex flex-col items-center gap-2 text-center">
           <p className="act-eyebrow">Ask AI what it's like to work here</p>
           <h2 ref={headingRef} tabIndex={-1} className="act-generic-heading outline-none">
-            The answer gets built from pages like these.
+            The answer gets built from these places.
           </h2>
-          <p className="act-generic-sub">
-            We don't measure {countryInSentence(market)} yet, so there's no local number to show
-            you.
-          </p>
         </div>
       )}
 
       <p className="act-intro">
-        {audience === 'candidate'
-          ? `It's the same picture you'd get asking about ${org.display_name} — assembled from what people wrote on these pages.`
-          : `Whoever asks next — a friend, a candidate, someone's kid deciding where to apply — gets a picture assembled from these pages. Whether your experience is part of it is entirely up to you.`}
+        Share your honest thoughts on any of them you're comfortable with — or none at all.
+        Whether you say anything, and what you say, is entirely yours.
       </p>
 
-      {/* Three sections, three different acts. Each leads with what the
-          recipient would actually be doing, not with our channel taxonomy. */}
-      <ChannelSection
-        eyebrow="Review sites"
-        heading="Tell candidates what it's actually like"
-        sub="This is where they check first. Whether you write anything, and what you say, is yours."
-        routes={routes}
-        hideFirstRationale={tier === 1 && statPct !== null}
-        {...sectionProps}
-      />
+      <ChannelSection eyebrow="Review sites" routes={routes} {...sectionProps} />
 
       {shownThemes.length > 0 && (
-        <section className="act-rise-late flex w-full flex-col items-center gap-2.5">
-          <p className="act-eyebrow">What AI keeps bringing up</p>
-          <p className="act-intro" style={{ maxWidth: 320 }}>
-            These themes carry the most weight in how AI describes working at {org.display_name} in{' '}
-            {countryInSentence(market)}.
-          </p>
-          <div className="flex flex-wrap justify-center gap-2">
-            {shownThemes.map((t) => (
-              <span key={t.theme} className="act-theme-chip">
-                {t.theme}
-              </span>
-            ))}
-          </div>
-        </section>
+        <p className="act-themes-line">
+          What AI keeps coming back to here:{' '}
+          <strong className="font-semibold">
+            {shownThemes.slice(0, 3).map((t) => t.theme).join(', ')}
+          </strong>
+          .
+        </p>
       )}
 
-      <ChannelSection
-        eyebrow="Forums"
-        heading="Join the conversation"
-        sub="People are already asking what it's like to work here. These are the threads AI reads."
-        routes={forum.routes}
-        matched={forum.matched}
-        {...sectionProps}
-      />
+      <ChannelSection eyebrow="Forums" routes={forum.routes} matched={forum.matched} {...sectionProps} />
 
-      <ChannelSection
-        eyebrow="Social"
-        heading="Show what the work actually looks like"
-        sub="Posts from the people who do the job shape how AI describes it."
-        routes={social.routes}
-        matched={social.matched}
-        {...sectionProps}
-      />
+      <ChannelSection eyebrow="Social" routes={social.routes} matched={social.matched} {...sectionProps} />
 
       <footer className="mt-2 flex flex-col items-center gap-2.5 text-center">
         <p className="act-honesty">We don't see what you write — or whether you write at all.</p>
@@ -964,8 +1083,6 @@ function RoutesStep({
 
 function ChannelSection({
   eyebrow,
-  heading,
-  sub,
   routes,
   matched,
   hideFirstRationale = false,
@@ -974,8 +1091,6 @@ function ChannelSection({
   onOpen,
 }: {
   eyebrow: string;
-  heading: string;
-  sub: string;
   routes: ActivateRoute[];
   matched?: Set<string>;
   hideFirstRationale?: boolean;
@@ -984,15 +1099,15 @@ function ChannelSection({
   onOpen: (route: ActivateRoute) => void;
 }) {
   if (routes.length === 0) return null;
+  // Listen-only sources are counted in the headline percentage but never
+  // listed: there is nothing for a recipient to do on them.
+  const actionable = routes.filter((r) => !r.is_listen_only);
+  if (actionable.length === 0) return null;
   return (
     <section className="act-rise-late flex w-full flex-col items-center gap-2.5">
       <p className="act-eyebrow">{eyebrow}</p>
-      <h3 className="act-section-heading">{heading}</h3>
-      <p className="act-intro" style={{ maxWidth: 320 }}>
-        {sub}
-      </p>
-      <div className="flex w-full flex-col gap-3">
-        {routes.map((route, i) => (
+      <div className="flex w-full flex-col gap-2.5">
+        {actionable.map((route, i) => (
           <PlatformCard
             key={route.platform}
             route={route}
@@ -1071,6 +1186,7 @@ function PlatformCard({
   highlight?: ActivateHighlight;
 }) {
   const [logoFailed, setLogoFailed] = useState(false);
+  const [open, setOpen] = useState(false);
   const domain = PLATFORM_DOMAINS[route.platform];
   const name = platformName(route.platform);
   const subLine = route.rationale_stat ?? route.fit_note;
@@ -1082,14 +1198,11 @@ function PlatformCard({
       className="act-card act-rise-late overflow-hidden bg-white"
       data-local={route.is_local || undefined}
     >
-      <a
-        href={route.destination_url}
-        target="_blank"
-        rel={rel}
-        onClick={onOpen}
-        className="flex items-center"
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center text-left"
         style={{ minHeight: 66, padding: '14px 18px', gap: 13 }}
-        aria-label={`${name} — opens in a new tab`}
+        aria-expanded={open}
       >
         <span
           className="flex shrink-0 items-center justify-center"
@@ -1118,14 +1231,52 @@ function PlatformCard({
             {route.is_local && <span className="act-local-chip">{localLabel}</span>}
             {matched && <span className="act-affinity-chip">Your world</span>}
           </span>
+          {/* What you'd actually do here leads; the coverage number is
+              supporting evidence, not the headline. */}
+          {route.action_label && (
+            <span
+              className="block font-semibold"
+              style={{ fontSize: 13, lineHeight: 1.35, color: 'var(--activate-primary)' }}
+            >
+              {route.action_label}
+            </span>
+          )}
           {subLine && !hideRationale && (
-            <span className="block" style={{ fontSize: 12.5, lineHeight: 1.4, color: 'rgba(19,39,79,.6)' }}>
+            <span className="block" style={{ fontSize: 12, lineHeight: 1.4, color: 'rgba(19,39,79,.52)' }}>
               {subLine}
             </span>
           )}
         </span>
-        <ExternalLink size={16} aria-hidden style={{ color: 'rgba(19,39,79,.4)' }} />
-      </a>
+        <ChevronDown
+          size={17}
+          aria-hidden
+          className="shrink-0 transition-transform"
+          style={{ color: 'rgba(19,39,79,.4)', transform: open ? 'rotate(180deg)' : undefined }}
+        />
+      </button>
+
+      {/* Guidance appears on tap: where to go and what to press. Never what
+          to say — the steps stop at "write in your own words". */}
+      {open && (
+        <div className="act-howto">
+          <ol>
+            {howToFor(route).map((stepText) => (
+              <li key={stepText}>{stepText}</li>
+            ))}
+          </ol>
+          <a
+            href={route.write_url ?? route.destination_url}
+            target="_blank"
+            rel={rel}
+            onClick={onOpen}
+            className="act-howto-open"
+            aria-label={`Open ${name} — opens in a new tab`}
+          >
+            Open {name}
+            <ExternalLink size={15} aria-hidden />
+          </a>
+        </div>
+      )}
       {/* The page AI actually cites most here — the conversation itself,
           rather than a bare platform link. */}
       {highlight && (
@@ -1137,7 +1288,9 @@ function PlatformCard({
           className="act-highlight-row"
           aria-label={`${highlight.label} — opens in a new tab`}
         >
-          <span className="act-highlight-label">Most cited</span>
+          <span className="act-highlight-label">
+            {route.channel === 'forum' ? 'Answer this' : 'Most cited'}
+          </span>
           <span className="min-w-0 flex-1 truncate">{highlight.label}</span>
           <ArrowRight size={13} aria-hidden className="shrink-0" />
         </a>
@@ -1284,7 +1437,7 @@ const activateCss = `
 }
 .act-question {
   font-family: var(--activate-font-heading); font-weight: 600;
-  font-size: 20px; line-height: 1.2; letter-spacing: -.015em; text-align: center;
+  font-size: 22px; line-height: 1.2; letter-spacing: -.015em; text-align: center;
 }
 .act-hint {
   font-size: 14px; line-height: 1.55; max-width: 290px; text-align: center;
@@ -1440,6 +1593,37 @@ const activateCss = `
   margin-bottom: 2px;
 }
 
+.act-intro-screen {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 22px; width: 100%; min-height: 62vh; padding: 0 4px;
+  background: transparent; border: none; cursor: pointer; text-align: center;
+}
+.act-intro-line {
+  /* Only the lead line takes the display face — a condensed all-caps brand
+     font shouts when it runs a full sentence. */
+  font-family: var(--activate-font-body); font-weight: 500;
+  font-size: 17px; line-height: 1.45; letter-spacing: 0; max-width: 320px;
+  color: color-mix(in srgb, var(--activate-on) 82%, transparent);
+  animation: act-rise 460ms cubic-bezier(.2,.8,.2,1) both;
+}
+.act-intro-lead {
+  font-family: var(--activate-font-heading);
+  font-weight: 700; font-size: 32px; line-height: 1.15; letter-spacing: -.02em;
+  color: var(--activate-on);
+}
+.act-intro-cta {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 22px;
+  border-radius: 999px; font-weight: 600; font-size: 15px;
+  background: color-mix(in srgb, var(--activate-on) 12%, transparent);
+  color: color-mix(in srgb, var(--activate-on) 62%, transparent);
+  transition: background 220ms, color 220ms, transform 220ms;
+}
+.act-intro-cta[data-ready="true"] {
+  background: #fff; color: #13274F; box-shadow: 0 6px 16px rgba(0,0,0,.14);
+  font-family: var(--activate-font-heading);
+}
+@media (prefers-reduced-motion: reduce) { .act-intro-line { animation: none; } }
+
 /* Section headings */
 .act-section-heading {
   font-family: var(--activate-font-heading); font-weight: 600;
@@ -1459,6 +1643,39 @@ const activateCss = `
   color: color-mix(in oklab, var(--activate-accent) 82%, #13274F);
 }
 
+.act-listen-only {
+  font-size: 12px; line-height: 1.5; max-width: 320px; text-align: center;
+  color: color-mix(in srgb, var(--activate-on) 55%, transparent);
+}
+
+/* How-to panel */
+.act-howto { border-top: 1px solid rgba(19,39,79,.08); padding: 12px 18px 14px; }
+.act-howto ol {
+  counter-reset: step; display: flex; flex-direction: column; gap: 7px; margin-bottom: 12px;
+}
+.act-howto li {
+  counter-increment: step; position: relative; padding-left: 26px;
+  font-size: 12.5px; line-height: 1.45; color: rgba(19,39,79,.72);
+}
+.act-howto li::before {
+  content: counter(step); position: absolute; left: 0; top: 0;
+  width: 18px; height: 18px; border-radius: 999px; background: #F4F6F7;
+  font-size: 10.5px; font-weight: 700; color: rgba(19,39,79,.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.act-howto-open {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 40px;
+  padding: 0 16px; border-radius: 999px; font-size: 13.5px; font-weight: 600;
+  background: var(--activate-primary); color: var(--activate-on);
+}
+
+/* Desktop: identity and context sit in the page corners, not in the column */
+@media (min-width: 768px) {
+  .act-topbar {
+    position: fixed; top: 20px; left: 24px; right: 24px; width: auto; z-index: 5;
+  }
+}
+
 /* Most-cited page row */
 .act-highlight-row {
   display: flex; align-items: center; gap: 8px;
@@ -1473,6 +1690,10 @@ const activateCss = `
 }
 
 /* Theme chips — topic visibility, never sentiment */
+.act-themes-line {
+  font-size: 13px; line-height: 1.5; max-width: 330px; text-align: center;
+  color: color-mix(in srgb, var(--activate-on) 66%, transparent);
+}
 .act-theme-chip {
   display: inline-flex; align-items: center; min-height: 34px;
   padding: 0 14px; border-radius: 999px;

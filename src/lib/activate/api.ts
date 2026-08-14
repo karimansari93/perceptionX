@@ -93,6 +93,10 @@ export interface ActivateRoute {
   fit_note: string | null;
   /** This market's own platform (kununu in DE, undelucram.ro in RO...). */
   is_local: boolean;
+  /** What the recipient would actually do here ("Write a review"). */
+  action_label: string | null;
+  /** Loud, but no appropriate act for an employee — shown as context only. */
+  is_listen_only: boolean;
   /** Affinity for ranking the social section; null = everyone. */
   audience_functions: string[] | null;
   audience_seniority: string[] | null;
@@ -124,6 +128,8 @@ export interface ActivateConfig {
   prefill_market_code: string | null;
   prefill_entity_company_id: string | null;
   entities: ActivateEntity[];
+  /** market_code -> % of that market's answers citing the listed platforms. */
+  coverage: Record<string, number>;
   routes: ActivateRoute[];
   highlights: ActivateHighlight[];
   themes: ActivateTheme[];
@@ -282,12 +288,25 @@ export interface ProfileOption {
   label: string;
 }
 
+// A suggested list, not a taxonomy — the step also accepts whatever the
+// recipient types, so this only needs to cover the common cases quickly.
 export const JOB_FUNCTIONS: ProfileOption[] = [
   { id: 'engineering-tech', label: 'Engineering & Tech' },
+  { id: 'data-analytics', label: 'Data & Analytics' },
+  { id: 'product', label: 'Product' },
+  { id: 'design-creative', label: 'Design & Creative' },
+  { id: 'content-production', label: 'Content & Production' },
   { id: 'science-rd', label: 'Science & R&D' },
   { id: 'manufacturing-ops', label: 'Manufacturing & Operations' },
+  { id: 'supply-chain', label: 'Supply Chain & Logistics' },
+  { id: 'quality-regulatory', label: 'Quality & Regulatory' },
   { id: 'healthcare-medical', label: 'Medical & Healthcare' },
-  { id: 'commercial-sales', label: 'Commercial & Sales' },
+  { id: 'commercial-sales', label: 'Sales & Business Development' },
+  { id: 'marketing-comms', label: 'Marketing & Communications' },
+  { id: 'customer-support', label: 'Customer Support' },
+  { id: 'finance', label: 'Finance' },
+  { id: 'legal', label: 'Legal' },
+  { id: 'people-hr', label: 'People & HR' },
   { id: 'corporate-functions', label: 'Corporate functions' },
 ];
 
