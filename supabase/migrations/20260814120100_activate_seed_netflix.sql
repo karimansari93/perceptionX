@@ -1,0 +1,36 @@
+-- Activate seed for Netflix, curated from the 2026-07-01 cycle (16,407
+-- responses across 14 measured markets).
+--
+-- Netflix is brand x market like Ford: 15 "Netflix" company rows, one per
+-- market, plus Eyeline, Netflix House and Netflix Animation Studios. Entities
+-- dedupe by name (see 20260813090000), so the picker shows four names.
+--
+-- Two data quirks handled here:
+--  * location_context carries article prefixes ("the United States",
+--    "the United Kingdom", "the Netherlands") — the market map uses the exact
+--    strings.
+--  * Burbank / Sydney / Vancouver (Netflix Animation Studios) and
+--    "Global (All Countries)" are deliberately NOT mapped. Their citation mix
+--    is studio-specific, so folding them into US/AU/CA would present studio
+--    data as national data. Netflix Animation Studios therefore has no mapped
+--    markets and shows in every market as the designed fallback.
+--
+-- Regional platforms the data surfaced, none of which were guessable:
+--   Japan   note.com 35.4% (the single loudest source in the market),
+--           OpenWork 17.5%, JobTalk 10.3%
+--   Korea   blog.naver.com 32.5%, brunch.co.kr 16.3%, JobPlanet 10.6%
+--   Poland  GoWork.pl 17.0%, 4programmers.net 12.0%
+--   Thailand Facebook 50.0%, WorkVenture 11.7%
+--   India   AmbitionBox 22.2%
+--
+-- Glassdoor employer id E11891 is global for Netflix (unlike Ford's
+-- per-market ids) and kununu is consolidated on one profile.
+--
+-- Consent seeded pending: no Netflix link is mintable.
+--
+-- Applied to production via MCP on 2026-08-14; recorded here for parity. The
+-- executed statement is the generated-from-coverage insert described in
+-- 20260813100100 (same registry/floor/home-market rules), with the Netflix
+-- registry, plus per-market themes, tier-3 fallbacks, affinity tags and the
+-- most-cited highlights (r/cscareerquestions "How is Netflix work culture" at
+-- 862 citations is the loudest people-page in the corpus).

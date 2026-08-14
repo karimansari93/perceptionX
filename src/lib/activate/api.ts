@@ -24,6 +24,11 @@ export interface ActivateOrgBranding {
   logo_domain: string | null;
   /** Optional campaign banner above the avatar on the welcome screen. */
   banner_url: string | null;
+  /** Client typography. Name + file -> @font-face; name alone -> Google Fonts. */
+  heading_font: string | null;
+  body_font: string | null;
+  heading_font_url: string | null;
+  body_font_url: string | null;
   primary_color: string;
   accent_color: string;
 }
@@ -253,7 +258,8 @@ export function measuredMarketCodes(all: ActivateRoute[]): string[] {
         .filter((r) => r.tier === 1 && r.market_code !== null)
         .map((r) => r.market_code as string),
     ),
-  ].sort();
+    // Sorted by the name the recipient actually reads, not the ISO code.
+  ].sort((a, b) => countryName(a).localeCompare(countryName(b)));
 }
 
 /** First percentage in a rationale sentence, for the count-up stat block. */
@@ -451,6 +457,10 @@ export interface ActivateBrandingRow {
   logo_url: string | null;
   logo_domain: string | null;
   banner_url: string | null;
+  heading_font: string | null;
+  body_font: string | null;
+  heading_font_url: string | null;
+  body_font_url: string | null;
   primary_color: string;
   accent_color: string;
 }
@@ -463,23 +473,39 @@ const MAX_ASSET_BYTES = 2 * 1024 * 1024;
  * org and stamped, so replacing an asset never collides with a cached copy of
  * the old one. Admin-only by storage policy.
  */
+export type ActivateAssetKind = 'logo' | 'banner' | 'heading-font' | 'body-font';
+
+const FONT_EXTENSIONS = ['woff2', 'woff', 'ttf', 'otf'];
+
 export async function uploadActivateAsset(
   orgId: string,
-  kind: 'logo' | 'banner',
+  kind: ActivateAssetKind,
   file: File,
 ): Promise<string> {
-  if (!file.type.startsWith('image/')) {
+  const isFont = kind.endsWith('font');
+  const ext0 = (file.name.split('.').pop() || '').toLowerCase();
+  if (isFont) {
+    if (!FONT_EXTENSIONS.includes(ext0)) {
+      throw new Error('Please choose a font file (WOFF2, WOFF, TTF or OTF).');
+    }
+  } else if (!file.type.startsWith('image/')) {
     throw new Error('Please choose an image file (PNG, JPG, SVG, WebP or GIF).');
   }
   if (file.size > MAX_ASSET_BYTES) {
     throw new Error('Image must be 2 MB or smaller.');
   }
-  const ext = (file.name.split('.').pop() || 'png').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const ext = (ext0 || 'png').replace(/[^a-z0-9]/g, '');
   const path = `${orgId}/${kind}-${Date.now()}.${ext}`;
+  // Browsers often report an empty type for font files; set it explicitly so
+  // the bucket's mime allow-list and the served Content-Type are correct.
+  const contentType = isFont
+    ? { woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf' }[ext] ??
+      'application/octet-stream'
+    : file.type;
 
   const { error } = await supabase.storage
     .from(ACTIVATE_ASSET_BUCKET)
-    .upload(path, file, { cacheControl: '31536000', upsert: false, contentType: file.type });
+    .upload(path, file, { cacheControl: '31536000', upsert: false, contentType });
   if (error) throw error;
 
   const { data } = supabase.storage.from(ACTIVATE_ASSET_BUCKET).getPublicUrl(path);
@@ -489,7 +515,7 @@ export async function uploadActivateAsset(
 export async function getActivateBranding(orgId: string): Promise<ActivateBrandingRow | null> {
   const { data, error } = await table('activate_branding')
     .select(
-      'org_id, display_name, tagline, blurb, logo_url, logo_domain, banner_url, primary_color, accent_color',
+      'org_id, display_name, tagline, blurb, logo_url, logo_domain, banner_url, heading_font, body_font, heading_font_url, body_font_url, primary_color, accent_color',
     )
     .eq('org_id', orgId)
     .maybeSingle();
@@ -505,6 +531,10 @@ export async function saveActivateBranding(row: ActivateBrandingRow): Promise<vo
     logo_url: row.logo_url || null,
     logo_domain: row.logo_domain || null,
     banner_url: row.banner_url || null,
+    heading_font: row.heading_font || null,
+    body_font: row.body_font || null,
+    heading_font_url: row.heading_font_url || null,
+    body_font_url: row.body_font_url || null,
   });
   if (error) throw error;
 }

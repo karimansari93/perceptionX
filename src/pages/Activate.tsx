@@ -78,6 +78,16 @@ const PLATFORM_NAMES: Record<string, string> = {
   tiktok: 'TikTok',
   youtube: 'YouTube',
   facebook: 'Facebook',
+  openwork: 'OpenWork',
+  jobtalk: 'JobTalk',
+  jobplanet: 'JobPlanet',
+  gowork: 'GoWork.pl',
+  workventure: 'WorkVenture',
+  levels: 'Levels.fyi',
+  note: 'note',
+  naver: 'Naver Blog',
+  brunch: 'brunch',
+  fourprogrammers: '4programmers.net',
 };
 
 const PLATFORM_DOMAINS: Record<string, string> = {
@@ -98,6 +108,16 @@ const PLATFORM_DOMAINS: Record<string, string> = {
   tiktok: 'tiktok.com',
   youtube: 'youtube.com',
   facebook: 'facebook.com',
+  openwork: 'openwork.jp',
+  jobtalk: 'jobtalk.jp',
+  jobplanet: 'jobplanet.co.kr',
+  gowork: 'gowork.pl',
+  workventure: 'workventure.com',
+  levels: 'levels.fyi',
+  note: 'note.com',
+  naver: 'naver.com',
+  brunch: 'brunch.co.kr',
+  fourprogrammers: '4programmers.net',
 };
 
 function platformName(key: string): string {
@@ -262,7 +282,7 @@ export default function Activate() {
   };
 
   return (
-    <Canvas primary={org.primary_color} accent={org.accent_color}>
+    <Canvas primary={org.primary_color} accent={org.accent_color} fonts={org}>
       <main
         aria-live="polite"
         className="relative z-[1] mx-auto flex min-h-screen w-full max-w-[460px] flex-col items-center gap-4 px-[22px] pb-11 pt-16 md:px-8"
@@ -335,22 +355,93 @@ export default function Activate() {
 // Canvas: everything derives from the two client tokens + computed on-colour.
 // ---------------------------------------------------------------------------
 
+type ClientFontConfig = Pick<
+  ActivateConfig['org'],
+  'heading_font' | 'body_font' | 'heading_font_url' | 'body_font_url'
+>;
+
+/** Quote a client family name and append the product default as fallback. */
+function fontStack(name: string | null | undefined, fallback: string): string {
+  const trimmed = name?.trim();
+  return trimmed ? `'${trimmed.replace(/'/g, '')}', ${fallback}` : fallback;
+}
+
+const FONT_FORMATS: Record<string, string> = {
+  woff2: 'woff2',
+  woff: 'woff',
+  ttf: 'truetype',
+  otf: 'opentype',
+};
+
+/**
+ * Client typography, resolved per family:
+ *   name + uploaded file -> @font-face under that name
+ *   name only            -> assumed to be a Google Fonts family, linked
+ * Anything missing simply falls through to the product defaults.
+ */
+function ClientFonts({ fonts }: { fonts?: ClientFontConfig }) {
+  if (!fonts) return null;
+  const pairs: Array<[string | null, string | null]> = [
+    [fonts.heading_font, fonts.heading_font_url],
+    [fonts.body_font, fonts.body_font_url],
+  ];
+
+  const faces: string[] = [];
+  const googleFamilies: string[] = [];
+  for (const [name, url] of pairs) {
+    const family = name?.trim();
+    if (!family) continue;
+    if (url) {
+      const ext = url.split('.').pop()?.toLowerCase() ?? '';
+      const format = FONT_FORMATS[ext];
+      faces.push(
+        `@font-face{font-family:'${family.replace(/'/g, '')}';` +
+          `src:url('${url}')${format ? ` format('${format}')` : ''};` +
+          `font-display:swap;}`,
+      );
+    } else if (!googleFamilies.includes(family)) {
+      googleFamilies.push(family);
+    }
+  }
+
+  const googleHref = googleFamilies.length
+    ? `https://fonts.googleapis.com/css2?${googleFamilies
+        .map((f) => `family=${encodeURIComponent(f).replace(/%20/g, '+')}:wght@400;500;600;700`)
+        .join('&')}&display=swap`
+    : null;
+
+  return (
+    <>
+      {googleHref && <link rel="stylesheet" href={googleHref} />}
+      {faces.length > 0 && <style>{faces.join('')}</style>}
+    </>
+  );
+}
+
 function Canvas({
   primary,
   accent,
+  fonts,
   children,
 }: {
   primary: string;
   accent: string;
+  fonts?: ClientFontConfig;
   children: ReactNode;
 }) {
   const vars = {
     '--activate-primary': primary,
     '--activate-accent': accent,
     '--activate-on': onColor(primary),
+    '--activate-font-heading': fontStack(fonts?.heading_font, "'Geologica', sans-serif"),
+    '--activate-font-body': fontStack(
+      fonts?.body_font,
+      "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif",
+    ),
   } as CSSProperties;
   return (
     <div style={vars} className="act-canvas relative min-h-screen overflow-hidden">
+      <ClientFonts fonts={fonts} />
       <style>{activateCss}</style>
       <div className="act-blob act-blob-organic" aria-hidden />
       <div className="act-blob act-blob-ring" aria-hidden />
@@ -1143,7 +1234,7 @@ const activateCss = `
       color-mix(in oklab, var(--activate-primary) 74%, #000), transparent 64%),
     var(--activate-primary);
   color: var(--activate-on);
-  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--activate-font-body);
 }
 
 /* Float shapes */
@@ -1185,7 +1276,7 @@ const activateCss = `
 
 /* Type */
 .act-display {
-  font-family: 'Geologica', sans-serif; font-weight: 700;
+  font-family: var(--activate-font-heading); font-weight: 700;
   font-size: 27px; line-height: 1.1; letter-spacing: -.02em;
 }
 .act-tagline { font-size: 14px; line-height: 1.5; color: color-mix(in srgb, var(--activate-on) 72%, transparent); }
@@ -1194,7 +1285,7 @@ const activateCss = `
   text-wrap: pretty; color: color-mix(in srgb, var(--activate-on) 88%, transparent);
 }
 .act-question {
-  font-family: 'Geologica', sans-serif; font-weight: 600;
+  font-family: var(--activate-font-heading); font-weight: 600;
   font-size: 20px; line-height: 1.2; letter-spacing: -.015em; text-align: center;
 }
 .act-hint {
@@ -1255,7 +1346,7 @@ const activateCss = `
   display: flex; align-items: center; gap: 12px; width: 100%;
   min-height: 60px; padding: 0 20px; border-radius: 999px;
   background: #fff; border: none; box-shadow: 0 6px 16px rgba(0,0,0,.14);
-  font-family: 'Geologica', sans-serif; font-weight: 500;
+  font-family: var(--activate-font-heading); font-weight: 500;
   font-size: 17px; letter-spacing: -.01em; color: #13274F;
   transition: transform 180ms; cursor: pointer;
 }
@@ -1285,7 +1376,7 @@ const activateCss = `
 
 /* Stat block */
 .act-stat {
-  font-family: 'Geologica', sans-serif; font-weight: 700;
+  font-family: var(--activate-font-heading); font-weight: 700;
   font-size: 66px; line-height: 1; letter-spacing: -.04em;
   font-variant-numeric: tabular-nums; position: relative; z-index: 1;
 }
@@ -1301,7 +1392,7 @@ const activateCss = `
   color: color-mix(in srgb, var(--activate-on) 88%, transparent);
 }
 .act-generic-heading {
-  font-family: 'Geologica', sans-serif; font-weight: 600;
+  font-family: var(--activate-font-heading); font-weight: 600;
   font-size: 25px; line-height: 1.2; max-width: 320px;
 }
 .act-generic-sub { font-size: 14px; color: color-mix(in srgb, var(--activate-on) 68%, transparent); }
@@ -1331,7 +1422,7 @@ const activateCss = `
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 56px; padding: 0 26px; border-radius: 999px; border: none; cursor: pointer;
   background: #fff; color: #13274F; box-shadow: 0 6px 16px rgba(0,0,0,.14);
-  font-family: 'Geologica', sans-serif; font-weight: 600; font-size: 16px;
+  font-family: var(--activate-font-heading); font-weight: 600; font-size: 16px;
   transition: transform 180ms;
 }
 .act-primary-btn:hover { transform: translateY(-2px); }
@@ -1353,7 +1444,7 @@ const activateCss = `
 
 /* Section headings */
 .act-section-heading {
-  font-family: 'Geologica', sans-serif; font-weight: 600;
+  font-family: var(--activate-font-heading); font-weight: 600;
   font-size: 19px; line-height: 1.2; letter-spacing: -.015em; text-align: center;
 }
 

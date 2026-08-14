@@ -31,6 +31,7 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   ActivateAdminRoute,
   ActivateAudience,
+  ActivateAssetKind,
   ActivateBrandingRow,
   ActivateLink,
   ActivateLinkStats,
@@ -307,12 +308,16 @@ function BrandingCard({
     logo_url: null,
     logo_domain: null,
     banner_url: null,
+    heading_font: null,
+    body_font: null,
+    heading_font_url: null,
+    body_font_url: null,
     primary_color: '#13274F',
     accent_color: '#DB5E89',
   };
   const [form, setForm] = useState<ActivateBrandingRow>(branding ?? empty);
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState<'logo' | 'banner' | null>(null);
+  const [uploading, setUploading] = useState<ActivateAssetKind | null>(null);
   const [open, setOpen] = useState(false);
 
   // Re-sync when the org (or freshly loaded branding) changes.
@@ -325,13 +330,18 @@ function BrandingCard({
   const validHex = (v: string) => /^#[0-9a-fA-F]{6}$/.test(v);
 
   /** Upload straight to storage and drop the public URL into the form. */
-  const upload = async (kind: 'logo' | 'banner', file: File | undefined) => {
+  const upload = async (kind: ActivateAssetKind, file: File | undefined) => {
     if (!file) return;
     setUploading(kind);
     try {
       const url = await uploadActivateAsset(orgId, kind, file);
-      set(kind === 'logo' ? { logo_url: url } : { banner_url: url });
-      toast.success(`${kind === 'logo' ? 'Logo' : 'Banner'} uploaded — remember to save`);
+      const patch: Partial<ActivateBrandingRow> =
+        kind === 'logo' ? { logo_url: url }
+        : kind === 'banner' ? { banner_url: url }
+        : kind === 'heading-font' ? { heading_font_url: url }
+        : { body_font_url: url };
+      set(patch);
+      toast.success('Uploaded — remember to save');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Upload failed');
     } finally {
@@ -498,6 +508,58 @@ function BrandingCard({
               placeholder="Two questions, and we'll show you…"
             />
           </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {(
+              [
+                ['heading_font', 'heading-font', 'heading_font_url', 'Heading font'],
+                ['body_font', 'body-font', 'body_font_url', 'Body font'],
+              ] as const
+            ).map(([nameKey, kind, urlKey, label]) => (
+              <div key={nameKey} className="space-y-1.5">
+                <Label htmlFor={`b-${nameKey}`}>{label}</Label>
+                <Input
+                  id={`b-${nameKey}`}
+                  value={form[nameKey] ?? ''}
+                  onChange={(e) => set({ [nameKey]: e.target.value || null } as Partial<ActivateBrandingRow>)}
+                  placeholder="e.g. Netflix Sans — blank uses the default"
+                />
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="file"
+                    accept=".woff2,.woff,.ttf,.otf"
+                    disabled={uploading === kind}
+                    onChange={(e) => upload(kind, e.target.files?.[0])}
+                    className="cursor-pointer file:mr-2 file:cursor-pointer file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
+                  />
+                  {form[urlKey] && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => set({ [urlKey]: null } as Partial<ActivateBrandingRow>)}
+                      title="Remove font file"
+                    >
+                      <Trash2 className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  )}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {uploading === kind
+                    ? 'Uploading…'
+                    : form[urlKey]
+                      ? 'Font file uploaded.'
+                      : form[nameKey]
+                        ? 'No file — will be loaded from Google Fonts if it exists there.'
+                        : 'Using the default.'}
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Name the family and optionally upload the font file (WOFF2, WOFF, TTF, OTF). Name
+            alone is looked up on Google Fonts. Uploaded files are served from a public URL —
+            check the client's licence allows that before uploading a proprietary font.
+          </p>
+
           <div className="grid gap-3 md:grid-cols-2">
             {(
               [
