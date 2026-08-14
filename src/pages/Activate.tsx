@@ -598,7 +598,6 @@ function CountryStep({
               <button key={code} onClick={() => onPick(code)} className="act-pill-solid">
                 <Flag code={code} size={20} />
                 <span className="flex-1 text-left">{countryName(code)}</span>
-                <span className="act-measured-chip">Measured</span>
               </button>
             ))}
           </div>
@@ -639,7 +638,6 @@ function CountryStep({
             >
               <Flag code={code} size={18} />
               <span className="flex-1 text-left">{countryName(code)}</span>
-              {measured.includes(code) && <span className="act-measured-chip">Measured</span>}
             </button>
           ))}
         </div>
@@ -1118,7 +1116,7 @@ function PlatformCard({
               {name}
             </span>
             {route.is_local && <span className="act-local-chip">{localLabel}</span>}
-            {matched && <span className="act-measured-chip">Your world</span>}
+            {matched && <span className="act-affinity-chip">Your world</span>}
           </span>
           {subLine && !hideRationale && (
             <span className="block" style={{ fontSize: 12.5, lineHeight: 1.4, color: 'rgba(19,39,79,.6)' }}>
@@ -1323,7 +1321,7 @@ const activateCss = `
   transition: transform 180ms; cursor: pointer;
 }
 .act-pill-solid:hover, .act-pill-solid:active { transform: translateY(-2px); }
-.act-measured-chip {
+.act-affinity-chip {
   font-size: 9.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
   padding: 5px 8px; border-radius: 999px;
   background: color-mix(in oklab, var(--activate-accent) 20%, #fff);
