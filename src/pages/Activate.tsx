@@ -352,8 +352,22 @@ export default function Activate() {
     <Canvas primary={org.primary_color} accent={org.accent_color} fonts={org}>
       <main
         aria-live="polite"
-        className="relative z-[1] mx-auto flex min-h-screen w-full max-w-[460px] flex-col items-center gap-4 px-[22px] pb-11 pt-16 md:px-8"
+        className="relative z-[1] mx-auto flex min-h-screen w-full max-w-[460px] flex-col items-center gap-4 px-[22px] pb-11 pt-16 md:px-8 md:pt-28"
       >
+        {step === 'routes' && market && (
+          <RoutesTopBar
+            org={org}
+            market={market}
+            entityName={selectedEntity?.name ?? null}
+            prefilled={prefilled}
+            onChange={() => {
+              setPrefilled(false);
+              setEntityKey(null);
+              setStep('country');
+            }}
+          />
+        )}
+
         <div key={step} className="act-step flex w-full flex-col items-center gap-4">
           {step === 'intro' && (
             <IntroStep org={org} onDone={() => setStep('country')} headingRef={headingRef} />
@@ -392,7 +406,6 @@ export default function Activate() {
               org={org}
               audience={config.audience}
               market={market}
-              entityName={selectedEntity?.name ?? null}
               entityId={entityCompanyId}
               resolved={resolveRoutes(config.routes, market, entityCompanyId)}
               forum={rankSocialRoutes(
@@ -408,12 +421,6 @@ export default function Activate() {
               themes={config.themes}
               highlights={config.highlights}
               coverage={config.coverage ?? {}}
-              prefilled={prefilled}
-              onChange={() => {
-                setPrefilled(false);
-                setEntityKey(null);
-                setStep('country');
-              }}
               headingRef={headingRef}
             />
           )}
@@ -642,6 +649,43 @@ function IntroStep({
         <ArrowRight size={16} aria-hidden />
       </span>
     </button>
+  );
+}
+
+/**
+ * Rendered outside the animated step wrapper on purpose: that wrapper keeps an
+ * identity transform after its animation, which would make position:fixed
+ * resolve against it instead of the viewport.
+ */
+function RoutesTopBar({
+  org,
+  market,
+  entityName,
+  prefilled,
+  onChange,
+}: {
+  org: ActivateConfig['org'];
+  market: string;
+  entityName: string | null;
+  prefilled: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <div className="act-topbar flex w-full items-center justify-between gap-3">
+      <CompanyAvatar org={org} size={46} markSize={30} />
+      <div className="flex flex-col items-end gap-1">
+        <button onClick={onChange} className="act-context" data-prefilled={prefilled}>
+          <span>
+            Based in {countryName(market)}
+            {entityName ? ` · ${entityName}` : ''}
+          </span>
+          <span className="underline underline-offset-2" style={{ opacity: 0.75 }}>
+            change
+          </span>
+        </button>
+        {prefilled && <span className="act-prefill-caption">prefilled by the sender</span>}
+      </div>
+    </div>
   );
 }
 
@@ -958,7 +1002,6 @@ function RoutesStep({
   org,
   audience,
   market,
-  entityName,
   entityId,
   resolved,
   forum,
@@ -966,8 +1009,6 @@ function RoutesStep({
   themes,
   highlights,
   coverage,
-  prefilled,
-  onChange,
   headingRef,
 }: {
   token: string;
@@ -975,7 +1016,6 @@ function RoutesStep({
   org: ActivateConfig['org'];
   audience: ActivateConfig['audience'];
   market: string;
-  entityName: string | null;
   entityId: string | null;
   resolved: ReturnType<typeof resolveRoutes>;
   forum: ReturnType<typeof rankSocialRoutes>;
@@ -983,8 +1023,6 @@ function RoutesStep({
   themes: ActivateConfig['themes'];
   highlights: ActivateConfig['highlights'];
   coverage: ActivateConfig['coverage'];
-  prefilled: boolean;
-  onChange: () => void;
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
   // Market-specific theme weights win over the portfolio-wide set.
@@ -1012,22 +1050,6 @@ function RoutesStep({
 
   return (
     <>
-      <div className="act-topbar flex w-full items-center justify-between gap-3">
-        <CompanyAvatar org={org} size={46} markSize={30} />
-        <div className="flex flex-col items-end gap-1">
-          <button onClick={onChange} className="act-context" data-prefilled={prefilled}>
-            <span>
-              Based in {countryName(market)}
-              {entityName ? ` · ${entityName}` : ''}
-            </span>
-            <span className="underline underline-offset-2" style={{ opacity: 0.75 }}>
-              change
-            </span>
-          </button>
-          {prefilled && <span className="act-prefill-caption">prefilled by the sender</span>}
-        </div>
-      </div>
-
       {/* One number, then the places. Per-platform percentages turned this
           into a dashboard; the recipient needs the fact and the list. */}
       {coveragePct !== null ? (
