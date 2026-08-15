@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { useMetaTags } from '@/hooks/useMetaTags';
 import {
+  ActivateChannel,
   ActivateConfig,
   ActivateHighlight,
   ActivateRoute,
@@ -57,7 +58,7 @@ type LoadState =
   | { kind: 'invalid' }
   | { kind: 'ready'; config: ActivateConfig };
 
-type Step = 'intro' | 'country' | 'entity' | 'profile' | 'routes';
+type Step = 'intro' | 'country' | 'entity' | 'profile' | 'willing' | 'routes';
 
 const UNSURE = 'unsure';
 
@@ -221,6 +222,8 @@ export default function Activate() {
   const [entityKey, setEntityKey] = useState<string | null>(null);
   const [functionId, setFunctionId] = useState<string | null>(null);
   const [seniorityId, setSeniorityId] = useState<string | null>(null);
+  // What the recipient is open to doing. Empty = they skipped, so show all.
+  const [channels, setChannels] = useState<ActivateChannel[]>([]);
   const [prefilled, setPrefilled] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const mountedOnce = useRef(false);
@@ -345,6 +348,19 @@ export default function Activate() {
         seniorityId: sen,
       });
     }
+    setStep('willing');
+  };
+
+  const declareWilling = (picked: ActivateChannel[]) => {
+    setChannels(picked);
+    if (picked.length > 0) {
+      logActivateEvent(token!, sessionId, 'profile_declared', {
+        marketCode: market,
+        functionId,
+        seniorityId,
+        channels: picked,
+      });
+    }
     setStep('routes');
   };
 
@@ -399,6 +415,15 @@ export default function Activate() {
               headingRef={headingRef}
             />
           )}
+          {step === 'willing' && (
+            <WillingStep
+              org={org}
+              initial={channels}
+              onDone={declareWilling}
+              onBack={() => setStep('profile')}
+              headingRef={headingRef}
+            />
+          )}
           {step === 'routes' && market && (
             <RoutesStep
               token={token!}
@@ -421,6 +446,7 @@ export default function Activate() {
               themes={config.themes}
               highlights={config.highlights}
               coverage={config.coverage ?? {}}
+              channels={channels}
               headingRef={headingRef}
             />
           )}
@@ -689,6 +715,78 @@ function RoutesTopBar({
   );
 }
 
+const WILLING_OPTIONS: Array<{ id: ActivateChannel; label: string; note: string }> = [
+  {
+    id: 'review',
+    label: 'Leave a review about your experience',
+    note: 'Glassdoor, Indeed and the local sites where candidates look first',
+  },
+  {
+    id: 'forum',
+    label: 'Join a conversation on forums',
+    note: 'People are already asking what it’s like to work here',
+  },
+  { id: 'social', label: 'Post on social media', note: 'On your own account, in your own words' },
+];
+
+/**
+ * The last question, and the one that shapes the payoff: only the kinds of
+ * contribution someone is open to get shown. Skipping shows everything —
+ * this narrows the page, it never withholds anything.
+ */
+function WillingStep({
+  org,
+  initial,
+  onDone,
+  onBack,
+  headingRef,
+}: {
+  org: ActivateConfig['org'];
+  initial: ActivateChannel[];
+  onDone: (picked: ActivateChannel[]) => void;
+  onBack: () => void;
+  headingRef: React.RefObject<HTMLHeadingElement>;
+}) {
+  const [picked, setPicked] = useState<ActivateChannel[]>(initial);
+  const toggle = (id: ActivateChannel) =>
+    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+
+  return (
+    <>
+      <StepHeader org={org} step={4} onBack={onBack} />
+      <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
+        What are you up for?
+      </h2>
+      <p className="act-hint">
+        Pick anything you're comfortable with. There's no wrong answer, and you can skip.
+      </p>
+
+      <div className="flex w-full flex-col gap-2.5">
+        {WILLING_OPTIONS.map((o) => (
+          <button
+            key={o.id}
+            onClick={() => toggle(o.id)}
+            className="act-willing"
+            data-on={picked.includes(o.id)}
+            aria-pressed={picked.includes(o.id)}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="act-willing-label">{o.label}</span>
+              <span className="act-willing-note">{o.note}</span>
+            </span>
+            {picked.includes(o.id) && <Check className="h-4 w-4 shrink-0" />}
+          </button>
+        ))}
+      </div>
+
+      <button onClick={() => onDone(picked)} className="act-primary-btn mt-2">
+        {picked.length > 0 ? 'Show my places' : 'Show me everything'}
+        <ArrowRight size={16} aria-hidden />
+      </button>
+    </>
+  );
+}
+
 /** Same top-of-step furniture everywhere: back, progress, mark. */
 function StepHeader({
   org,
@@ -696,7 +794,7 @@ function StepHeader({
   onBack,
 }: {
   org: ActivateConfig['org'];
-  step: 1 | 2 | 3;
+  step: 1 | 2 | 3 | 4;
   onBack?: () => void;
 }) {
   return (
@@ -716,15 +814,19 @@ function StepHeader({
   );
 }
 
-function StepDots({ step }: { step: 1 | 2 | 3 }) {
+const TOTAL_STEPS = 4;
+
+function StepDots({ step }: { step: 1 | 2 | 3 | 4 }) {
   return (
     <div className="flex flex-col items-center gap-1.5">
       <div className="flex gap-1.5">
-        <span className="act-dot" data-filled="true" />
-        <span className="act-dot" data-filled={step >= 2} />
-        <span className="act-dot" data-filled={step === 3} />
+        {Array.from({ length: TOTAL_STEPS }, (_, i) => (
+          <span key={i} className="act-dot" data-filled={step >= i + 1} />
+        ))}
       </div>
-      <span className="act-eyebrow">Step {step} of 3</span>
+      <span className="act-eyebrow">
+        Step {step} of {TOTAL_STEPS}
+      </span>
     </div>
   );
 }
@@ -1009,6 +1111,7 @@ function RoutesStep({
   themes,
   highlights,
   coverage,
+  channels,
   headingRef,
 }: {
   token: string;
@@ -1023,6 +1126,7 @@ function RoutesStep({
   themes: ActivateConfig['themes'];
   highlights: ActivateConfig['highlights'];
   coverage: ActivateConfig['coverage'];
+  channels: ActivateChannel[];
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
   // Market-specific theme weights win over the portfolio-wide set.
@@ -1047,6 +1151,8 @@ function RoutesStep({
   const { routes } = resolved;
   // Share of this market's answers that come from the platforms listed below.
   const coveragePct = coverage[market] ?? null;
+  // No pick means they skipped the question, which shows everything.
+  const wants = (c: ActivateChannel) => channels.length === 0 || channels.includes(c);
 
   return (
     <>
@@ -1077,7 +1183,9 @@ function RoutesStep({
         Whether you say anything, and what you say, is entirely yours.
       </p>
 
-      <ChannelSection eyebrow="Review sites" routes={routes} {...sectionProps} />
+      {wants('review') && (
+        <ChannelSection eyebrow="Review sites" routes={routes} {...sectionProps} />
+      )}
 
       {shownThemes.length > 0 && (
         <p className="act-themes-line">
@@ -1089,9 +1197,13 @@ function RoutesStep({
         </p>
       )}
 
-      <ChannelSection eyebrow="Forums" routes={forum.routes} matched={forum.matched} {...sectionProps} />
+      {wants('forum') && (
+        <ChannelSection eyebrow="Forums" routes={forum.routes} matched={forum.matched} {...sectionProps} />
+      )}
 
-      <ChannelSection eyebrow="Social" routes={social.routes} matched={social.matched} {...sectionProps} />
+      {wants('social') && (
+        <ChannelSection eyebrow="Social" routes={social.routes} matched={social.matched} {...sectionProps} />
+      )}
 
       <footer className="mt-2 flex flex-col items-center gap-2.5 text-center">
         <p className="act-honesty">We don't see what you write — or whether you write at all.</p>
@@ -1577,6 +1689,26 @@ const activateCss = `
 
 /* Route cards */
 .act-card { border-radius: 24px; box-shadow: 0 8px 20px rgba(0,0,0,.16); }
+
+/* Willingness step */
+.act-willing {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  min-height: 64px; padding: 12px 18px; border-radius: 20px; cursor: pointer;
+  background: color-mix(in srgb, var(--activate-on) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--activate-on) 30%, transparent);
+  color: var(--activate-on); text-align: left;
+  transition: background 180ms, transform 180ms;
+}
+.act-willing:hover { background: color-mix(in srgb, var(--activate-on) 20%, transparent); }
+.act-willing[data-on="true"] {
+  background: #fff; border-color: #fff; color: #13274F;
+  box-shadow: 0 6px 16px rgba(0,0,0,.14);
+}
+.act-willing-label {
+  display: block; font-family: var(--activate-font-heading);
+  font-weight: 600; font-size: 15.5px; line-height: 1.25;
+}
+.act-willing-note { display: block; font-size: 12px; line-height: 1.4; opacity: .68; margin-top: 3px; }
 
 /* Profile step */
 .act-select-chip {

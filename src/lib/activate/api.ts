@@ -192,6 +192,7 @@ export function logActivateEvent(
     tier?: number | null;
     functionId?: string | null;
     seniorityId?: string | null;
+    channels?: ActivateChannel[] | null;
   } = {},
 ): void {
   void rpc('activate_log_event', {
@@ -204,6 +205,7 @@ export function logActivateEvent(
     p_tier: fields.tier ?? null,
     p_function: fields.functionId ?? null,
     p_seniority: fields.seniorityId ?? null,
+    p_channels: fields.channels?.length ? fields.channels : null,
   }).then(
     () => undefined,
     () => undefined,
