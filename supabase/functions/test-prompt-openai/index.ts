@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
-import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts"
+import { SOURCES_SECTION_REGEX, unwrapRedirectUrl } from "../_shared/citation-extraction.ts"
 
 // Primary model: rolling `gpt-5.5` so we stay aligned with the model ChatGPT
 // actually serves by default (GPT-5.5 Instant became the ChatGPT default on
@@ -26,7 +26,7 @@ const TRACKING_PARAMS = [
 ]
 
 function normalizeCitationUrl(rawUrl: string): string {
-  const unwrapped = unwrapTranslateUrl(rawUrl)
+  const unwrapped = unwrapRedirectUrl(rawUrl)
   try {
     const u = new URL(unwrapped)
     TRACKING_PARAMS.forEach((p) => u.searchParams.delete(p))
