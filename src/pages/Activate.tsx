@@ -436,7 +436,6 @@ export default function Activate() {
                 functionId,
                 null,
               )}
-              themes={config.themes}
               highlights={config.highlights}
               coverage={config.coverage ?? {}}
               channels={channels}
@@ -541,9 +540,6 @@ function Canvas({
     <div style={vars} className="act-canvas relative min-h-screen overflow-hidden">
       <ClientFonts fonts={fonts} />
       <style>{activateCss}</style>
-      <div className="act-blob act-blob-organic" aria-hidden />
-      <div className="act-blob act-blob-ring" aria-hidden />
-      <div className="act-blob act-blob-accent" aria-hidden />
       {children}
     </div>
   );
@@ -1081,7 +1077,6 @@ function RoutesStep({
   resolved,
   forum,
   social,
-  themes,
   highlights,
   coverage,
   channels,
@@ -1096,19 +1091,11 @@ function RoutesStep({
   resolved: ReturnType<typeof resolveRoutes>;
   forum: ReturnType<typeof rankSocialRoutes>;
   social: ReturnType<typeof rankSocialRoutes>;
-  themes: ActivateConfig['themes'];
   highlights: ActivateConfig['highlights'];
   coverage: ActivateConfig['coverage'];
   channels: ActivateChannel[];
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
-  // Market-specific theme weights win over the portfolio-wide set.
-  const marketThemes = themes.filter((t) => t.market_code === market);
-  const shownThemes = (marketThemes.length > 0
-    ? marketThemes
-    : themes.filter((t) => t.market_code === null)
-  ).slice(0, 5);
-
   // Shared by all three channel sections.
   const sectionProps = {
     market,
@@ -1151,16 +1138,6 @@ function RoutesStep({
 
       {wants('review') && (
         <ChannelSection eyebrow="Review sites" routes={routes} {...sectionProps} />
-      )}
-
-      {shownThemes.length > 0 && (
-        <p className="act-themes-line">
-          What AI keeps coming back to here:{' '}
-          <strong className="font-semibold">
-            {shownThemes.slice(0, 3).map((t) => t.theme).join(', ')}
-          </strong>
-          .
-        </p>
       )}
 
       {wants('forum') && (
@@ -1436,44 +1413,20 @@ function DeadLink() {
 
 const activateCss = `
 .act-canvas {
+  /* Brand colour holds the page and the accent rises from the bottom, so a
+     dark primary reads near-black with a glow at the foot of the screen. The
+     base stays exactly --activate-primary: the ink colour is computed from
+     it, so tinting the base would break the contrast guarantee. */
   background:
-    radial-gradient(115% 85% at 12% -6%,
-      color-mix(in oklab, var(--activate-accent) 62%, var(--activate-primary)), transparent 62%),
-    radial-gradient(95% 70% at 100% 26%,
-      color-mix(in oklab, var(--activate-accent) 30%, var(--activate-primary)), transparent 58%),
-    radial-gradient(110% 80% at 82% 108%,
-      color-mix(in oklab, var(--activate-primary) 74%, #000), transparent 64%),
+    radial-gradient(125% 80% at 50% 114%,
+      color-mix(in oklab, var(--activate-accent) 78%, var(--activate-primary)), transparent 60%),
+    radial-gradient(90% 55% at 12% 104%,
+      color-mix(in oklab, var(--activate-accent) 42%, var(--activate-primary)), transparent 62%),
+    radial-gradient(115% 80% at 50% -18%,
+      color-mix(in oklab, var(--activate-primary) 85%, #000), transparent 70%),
     var(--activate-primary);
   color: var(--activate-on);
   font-family: var(--activate-font-body);
-}
-
-/* Float shapes */
-.act-blob { position: absolute; pointer-events: none; z-index: 0; }
-.act-blob-organic {
-  width: 190px; height: 190px; top: 8%; left: -60px;
-  border-radius: 46% 54% 60% 40% / 50% 44% 56% 50%;
-  background: color-mix(in srgb, var(--activate-on) 10%, transparent);
-  animation: act-drift-a 11s ease-in-out infinite alternate;
-}
-.act-blob-ring {
-  width: 220px; height: 220px; top: 55%; right: -90px;
-  border-radius: 50%;
-  border: 1.5px solid color-mix(in srgb, var(--activate-on) 22%, transparent);
-  animation: act-drift-b 13s ease-in-out infinite alternate;
-}
-.act-blob-accent {
-  width: 96px; height: 96px; bottom: 6%; left: 12%;
-  border-radius: 42% 58% 52% 48% / 55% 45% 55% 45%;
-  background: color-mix(in oklab, var(--activate-accent) 55%, transparent);
-  animation: act-drift-a 9s ease-in-out infinite alternate-reverse;
-}
-@keyframes act-drift-a { from { transform: translate(0,0) rotate(0); } to { transform: translate(14px,18px) rotate(7deg); } }
-@keyframes act-drift-b { from { transform: translate(0,0) rotate(0); } to { transform: translate(-16px,12px) rotate(-6deg); } }
-@media (min-width: 768px) {
-  .act-blob-organic { left: 4%; transform: scale(1.6); }
-  .act-blob-ring { right: 6%; transform: scale(1.6); }
-  .act-blob-accent { left: 8%; }
 }
 
 /* Step transition + rises */
@@ -1761,17 +1714,8 @@ const activateCss = `
 }
 
 /* Theme chips — topic visibility, never sentiment */
-.act-themes-line {
-  font-size: 13px; line-height: 1.5; max-width: 330px; text-align: center;
-  color: color-mix(in srgb, var(--activate-on) 66%, transparent);
-}
-.act-theme-chip {
-  display: inline-flex; align-items: center; min-height: 34px;
-  padding: 0 14px; border-radius: 999px;
-  background: color-mix(in srgb, var(--activate-on) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--activate-on) 32%, transparent);
-  font-size: 13px; font-weight: 600; color: var(--activate-on);
-}
+
+
 
 /* Footer */
 .act-honesty {
@@ -1798,7 +1742,7 @@ const activateCss = `
 @keyframes act-spin { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .act-blob, .act-step, .act-avatar-entry, .act-rise, .act-rise-late { animation: none; }
+  .act-step, .act-avatar-entry, .act-rise, .act-rise-late { animation: none; }
   .act-pill-solid:hover, .act-pill-solid:active,
   .act-entity:hover, .act-entity:active { transform: none; }
 }
