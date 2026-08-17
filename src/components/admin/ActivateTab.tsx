@@ -37,7 +37,9 @@ import {
   ActivateLinkStats,
   ActivateOrgSettings,
   activateLinkFor,
-  confirmActivateConsent,
+  ACTIVATE_TERMS_VERSION,
+  consentIsCurrent,
+  recordActivateConsent,
   countryName,
   createActivateLink,
   getActivateBranding,
@@ -122,7 +124,10 @@ export const ActivateTab = () => {
     refresh();
   }, [refresh]);
 
-  const consented = Boolean(settings?.consent_confirmed_at);
+  // Consent only counts against the terms currently in force: an org that
+  // accepted an earlier version is back behind the gate until it re-accepts.
+  const consented = consentIsCurrent(settings);
+  const staleConsent = Boolean(settings?.consent_confirmed_at) && !consented;
   const entityName = useMemo(
     () => Object.fromEntries(entities.map((e) => [e.id, e.name])),
     [entities],
@@ -185,18 +190,21 @@ export const ActivateTab = () => {
               <div>
                 <p className="text-sm font-medium">
                   {consented
-                    ? `Client consent recorded ${new Date(settings!.consent_confirmed_at!).toLocaleDateString()}`
-                    : 'Client consent not recorded — links cannot be created yet'}
+                    ? `Terms ${settings!.terms_version} accepted by ${settings!.client_contact_name} on ${new Date(settings!.consent_confirmed_at!).toLocaleDateString()}`
+                    : staleConsent
+                      ? `Acceptable-use terms have changed since this client accepted — links are paused until ${ACTIVATE_TERMS_VERSION} is accepted`
+                      : 'No acceptable-use acceptance on record — links cannot be created yet'}
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {settings?.consent_note ??
-                    'Activate reaches the client’s employees directly. Record consent once the client has explicitly agreed.'}
+                  {consented
+                    ? (settings?.consent_note ?? 'Recorded against the terms in force.')
+                    : 'Activate reaches the client’s employees directly. Walk a named contact through the terms, then record their acceptance.'}
                 </p>
               </div>
             </div>
             {!consented && (
               <Button size="sm" variant="outline" onClick={() => setConsentOpen(true)}>
-                Record consent
+                {staleConsent ? 'Re-record acceptance' : 'Record acceptance'}
               </Button>
             )}
           </div>
@@ -253,14 +261,14 @@ export const ActivateTab = () => {
         open={consentOpen}
         onOpenChange={setConsentOpen}
         orgName={orgs.find((o) => o.id === orgId)?.name ?? ''}
-        onConfirm={async (note) => {
+        onConfirm={async (contact) => {
           try {
-            await confirmActivateConsent(orgId, note);
-            toast.success('Consent recorded — links can now be created');
+            await recordActivateConsent(orgId, contact);
+            toast.success('Acceptance recorded — links can now be created');
             setConsentOpen(false);
             refresh();
           } catch {
-            toast.error('Could not record consent');
+            toast.error('Could not record acceptance');
           }
         }}
       />
@@ -771,6 +779,18 @@ function RoutesOverview({
   );
 }
 
+/**
+ * The four obligations, condensed for the person running the call. The full
+ * text is docs/ACTIVATE_ACCEPTABLE_USE.md — this is what you read aloud, not a
+ * substitute for sending it.
+ */
+const CONSENT_TERMS: string[] = [
+  'No reward conditional on posting — the test is whether someone gets something they otherwise wouldn’t.',
+  'No scripting: no suggested wording, talking points, or approval before posting.',
+  'No selecting recipients by engagement score, performance rating or expected sentiment.',
+  'No asking anyone to change or remove a review they’ve already written.',
+];
+
 function ConsentDialog({
   open,
   onOpenChange,
@@ -780,46 +800,95 @@ function ConsentDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orgName: string;
-  onConfirm: (note: string) => Promise<void>;
+  onConfirm: (contact: { name: string; email?: string; note?: string }) => Promise<void>;
 }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [note, setNote] = useState('');
+  const [shown, setShown] = useState(false);
   const [saving, setSaving] = useState(false);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Record client consent</DialogTitle>
+          <DialogTitle>Record acceptable-use acceptance</DialogTitle>
           <DialogDescription>
-            Confirm that {orgName} has explicitly agreed to Activate reaching their employees and
-            candidates. This unlocks link creation for the org.
+            Activate reaches {orgName}’s employees directly. Record the named person who accepted
+            the terms — not who forwarded the email. This unlocks link creation.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-2">
-          <Label htmlFor="consent-note">Who agreed, and when? (kept on record)</Label>
-          <Input
-            id="consent-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="e.g. Elise confirmed via email 2026-08-14"
-          />
+
+        <div className="rounded-md border bg-muted/40 p-3 space-y-2">
+          <p className="text-xs font-medium">
+            Terms {ACTIVATE_TERMS_VERSION} — what {orgName} is agreeing to
+          </p>
+          <ul className="text-xs text-muted-foreground space-y-1.5 list-disc pl-4">
+            {CONSENT_TERMS.map((t) => (
+              <li key={t}>{t}</li>
+            ))}
+          </ul>
         </div>
+
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="consent-name">Who at {orgName} accepted? *</Label>
+            <Input
+              id="consent-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Elise Vandermeer, Head of Talent"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="consent-email">Their email (optional)</Label>
+            <Input
+              id="consent-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="elise@example.com"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="consent-note">How and when did they accept? (optional)</Label>
+            <Input
+              id="consent-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. confirmed on the kickoff call, 14 Aug 2026"
+            />
+          </div>
+          <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={shown}
+              onChange={(e) => setShown(e.target.checked)}
+              className="mt-0.5 shrink-0"
+            />
+            <span>
+              I showed this person the terms above and they accepted them. This is recorded
+              permanently against {orgName} and cannot be edited afterwards.
+            </span>
+          </label>
+        </div>
+
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
-            disabled={saving || note.trim().length === 0}
+            disabled={saving || !shown || name.trim().length === 0}
             onClick={async () => {
               setSaving(true);
               try {
-                await onConfirm(note.trim());
+                await onConfirm({ name: name.trim(), email: email.trim(), note: note.trim() });
               } finally {
                 setSaving(false);
               }
             }}
           >
             <Check className="h-4 w-4 mr-1.5" />
-            Record consent
+            Record acceptance
           </Button>
         </div>
       </DialogContent>

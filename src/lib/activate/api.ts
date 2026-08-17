@@ -438,9 +438,22 @@ export interface ActivateLink {
 export interface ActivateOrgSettings {
   org_id: string;
   consent_confirmed_at: string | null;
+  /** The PerceptionX admin who recorded it — not the person who agreed. */
   consent_confirmed_by: string | null;
   consent_note: string | null;
+  /**
+   * Version of docs/ACTIVATE_ACCEPTABLE_USE.md the client was shown. Null means
+   * consent predates the terms, which the mint gate treats as unconsented —
+   * agreement to words nobody saw isn't agreement.
+   */
+  terms_version: string | null;
+  /** The named person at the client who actually agreed. */
+  client_contact_name: string | null;
+  client_contact_email: string | null;
 }
+
+/** Terms currently in force; orgs on an older version are behind the gate. */
+export const ACTIVATE_TERMS_VERSION = '2026-08-v1';
 
 export interface ActivateAdminRoute extends ActivateRoute {
   id: string;
@@ -589,22 +602,43 @@ export async function saveActivateBranding(row: ActivateBrandingRow): Promise<vo
 
 export async function getActivateOrgSettings(orgId: string): Promise<ActivateOrgSettings | null> {
   const { data, error } = await table('activate_org_settings')
-    .select('org_id, consent_confirmed_at, consent_confirmed_by, consent_note')
+    .select(
+      'org_id, consent_confirmed_at, consent_confirmed_by, consent_note, ' +
+        'terms_version, client_contact_name, client_contact_email',
+    )
     .eq('org_id', orgId)
     .maybeSingle();
   if (error) throw error;
   return (data as ActivateOrgSettings) ?? null;
 }
 
-export async function confirmActivateConsent(orgId: string, note: string): Promise<void> {
-  const { data: userData } = await supabase.auth.getUser();
-  const { error } = await table('activate_org_settings').upsert({
-    org_id: orgId,
-    consent_confirmed_at: new Date().toISOString(),
-    consent_confirmed_by: userData?.user?.id ?? null,
-    consent_note: note || null,
+/**
+ * Records a named person at the client accepting a specific version of the
+ * acceptable-use terms. Goes through the RPC rather than a table upsert so the
+ * append-only history row and the current-state row are written together — the
+ * history is the point, and a client-side upsert could only ever write one.
+ */
+export async function recordActivateConsent(
+  orgId: string,
+  contact: { name: string; email?: string; note?: string },
+): Promise<void> {
+  const { data, error } = await rpc('admin_record_activate_consent', {
+    p_org_id: orgId,
+    p_client_contact_name: contact.name,
+    p_client_contact_email: contact.email?.trim() || null,
+    p_note: contact.note?.trim() || null,
+    p_terms_version: ACTIVATE_TERMS_VERSION,
   });
   if (error) throw error;
+  if (!data) throw new Error('consent not recorded');
+}
+
+/** True when the org's recorded acceptance is against the terms in force. */
+export function consentIsCurrent(settings: ActivateOrgSettings | null): boolean {
+  return (
+    Boolean(settings?.consent_confirmed_at) &&
+    settings?.terms_version === ACTIVATE_TERMS_VERSION
+  );
 }
 
 export async function listActivateRoutes(orgId: string): Promise<ActivateAdminRoute[]> {
