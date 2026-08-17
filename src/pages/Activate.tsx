@@ -47,7 +47,6 @@ import {
   JOB_FUNCTIONS,
   logActivateEvent,
   measuredMarketCodes,
-  parseStatPct,
   rankSocialRoutes,
   resolveRoutes,
 } from '@/lib/activate/api';
@@ -1130,27 +1129,20 @@ function RoutesStep({
 
   return (
     <>
-      {/* One number, then the places. Per-platform percentages turned this
-          into a dashboard; the recipient needs the fact and the list. */}
-      {coveragePct !== null ? (
-        <StatBlock
-          pct={coveragePct}
-          eyebrow={`Ask AI what it's like to work here`}
-          sentence={
-            <>
-              of the answer for {countryInSentence(market)} is built from these places.
-            </>
-          }
-          headingRef={headingRef}
-        />
-      ) : (
-        <div className="act-rise flex flex-col items-center gap-2 text-center">
-          <p className="act-eyebrow">Ask AI what it's like to work here</p>
-          <h2 ref={headingRef} tabIndex={-1} className="act-generic-heading outline-none">
-            The answer gets built from these places.
-          </h2>
-        </div>
-      )}
+      {/* A general heading — "what are my options" is the question a
+          recipient actually arrives with. The measurement is evidence for
+          the list, so it sits under it in plain text rather than as a
+          dashboard number. */}
+      <div className="act-rise flex flex-col items-center gap-2 text-center">
+        <h2 ref={headingRef} tabIndex={-1} className="act-generic-heading outline-none">
+          Your options in {countryInSentence(market)}
+        </h2>
+        <p className="act-intro">
+          These are the places AI pulls from when someone asks what it's like to work at{' '}
+          {org.display_name} here
+          {coveragePct !== null ? ` — in ${coveragePct}% of answers` : ''}.
+        </p>
+      </div>
 
       <p className="act-intro">
         Share your honest thoughts on any of them you're comfortable with — or none at all.
@@ -1228,48 +1220,6 @@ function ChannelSection({
         ))}
       </div>
     </section>
-  );
-}
-
-function StatBlock({
-  pct,
-  eyebrow,
-  sentence,
-  headingRef,
-}: {
-  pct: number;
-  eyebrow: string;
-  sentence: ReactNode;
-  headingRef: React.RefObject<HTMLHeadingElement>;
-}) {
-  const [value, setValue] = useState(prefersReducedMotion() ? pct : 0);
-  useEffect(() => {
-    if (prefersReducedMotion()) {
-      setValue(pct);
-      return;
-    }
-    let raf = 0;
-    const t0 = performance.now();
-    const tick = (t: number) => {
-      const k = Math.min(1, (t - t0) / 900);
-      setValue(pct * (1 - Math.pow(1 - k, 3)));
-      if (k < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [pct]);
-
-  return (
-    <div className="act-rise flex flex-col items-center gap-2 text-center">
-      <p className="act-eyebrow">{eyebrow}</p>
-      <div className="relative flex items-center justify-center">
-        <span className="act-ring" aria-hidden />
-        <h2 ref={headingRef} tabIndex={-1} className="act-stat outline-none" aria-label={`${pct}%`}>
-          {value.toFixed(1)}%
-        </h2>
-      </div>
-      <p className="act-stat-sentence">{sentence}</p>
-    </div>
   );
 }
 
@@ -1640,22 +1590,9 @@ const activateCss = `
 .act-prefill-caption { font-size: 11px; color: color-mix(in srgb, var(--activate-on) 58%, transparent); }
 
 /* Stat block */
-.act-stat {
-  font-family: var(--activate-font-heading); font-weight: 700;
-  font-size: 66px; line-height: 1; letter-spacing: -.04em;
-  font-variant-numeric: tabular-nums; position: relative; z-index: 1;
-}
-@media (min-width: 768px) { .act-stat { font-size: 88px; } }
-.act-ring {
-  position: absolute; width: 96px; height: 96px; border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--activate-on) 45%, transparent);
-  animation: act-pulse 1.5s ease-out 500ms both;
-}
-@keyframes act-pulse { from { transform: scale(.55); opacity: 1; } to { transform: scale(2); opacity: 0; } }
-.act-stat-sentence {
-  font-size: 16px; line-height: 1.45; max-width: 300px;
-  color: color-mix(in srgb, var(--activate-on) 88%, transparent);
-}
+
+
+
 .act-generic-heading {
   font-family: var(--activate-font-heading); font-weight: 600;
   font-size: 25px; line-height: 1.2; max-width: 320px;
@@ -1861,8 +1798,7 @@ const activateCss = `
 @keyframes act-spin { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .act-blob, .act-step, .act-avatar-entry, .act-rise, .act-rise-late, .act-ring { animation: none; }
-  .act-ring { opacity: 0; }
+  .act-blob, .act-step, .act-avatar-entry, .act-rise, .act-rise-late { animation: none; }
   .act-pill-solid:hover, .act-pill-solid:active,
   .act-entity:hover, .act-entity:active { transform: none; }
 }
