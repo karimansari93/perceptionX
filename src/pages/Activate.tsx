@@ -1418,12 +1418,8 @@ const activateCss = `
      base stays exactly --activate-primary: the ink colour is computed from
      it, so tinting the base would break the contrast guarantee. */
   background:
-    radial-gradient(125% 78% at 50% 114%,
-      color-mix(in oklab, var(--activate-accent) 78%, var(--activate-primary)), transparent 60%),
-    radial-gradient(120% 68% at 50% -16%,
-      color-mix(in oklab, var(--activate-accent) 66%, var(--activate-primary)), transparent 62%),
-    radial-gradient(90% 55% at 12% 106%,
-      color-mix(in oklab, var(--activate-accent) 38%, var(--activate-primary)), transparent 62%),
+    radial-gradient(125% 75% at 50% -14%,
+      color-mix(in oklab, var(--activate-accent) 72%, var(--activate-primary)), transparent 62%),
     var(--activate-primary);
   color: var(--activate-on);
   font-family: var(--activate-font-body);
