@@ -1,3 +1,20 @@
+# Activate links are unlisted-by-possession: the token in the URL is the only
+# credential, and the page names the client. An indexed activate page would put
+# both into public search results and make the client list discoverable with a
+# site: query. The meta tag set in Activate.tsx only reaches crawlers that run
+# our JS, and the main search crawlers do not — this header is what actually
+# excludes them.
+#
+# Deliberately NOT a Disallow in robots.txt: a disallowed URL is never fetched,
+# so the crawler never sees "noindex", and Google may still list the bare URL
+# when it finds a link elsewhere. Allowing the fetch is what gets the page
+# dropped from the index outright. Social unfurlers ignore X-Robots-Tag, so
+# Slack/Teams link previews are unaffected.
+[[headers]]
+  for = "/activate/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow, noarchive"
+
 [[headers]]
   for = "/*"
   [headers.values]

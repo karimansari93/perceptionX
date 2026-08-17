@@ -233,6 +233,12 @@ export default function Activate() {
         ? `${load.config.org.display_name} — where AI listens`
         : 'Activate — PerceptionX',
     description: 'See which platforms shape AI answers about your employer in your market.',
+    // The URL is the credential, and the title names the client. Indexed, this
+    // page would make the client list searchable. Set on every load state, not
+    // just 'ready' — a crawler that arrives mid-fetch must not see index,follow.
+    // Belt-and-braces with the X-Robots-Tag header in netlify.toml, which is
+    // what actually covers crawlers that never run our JS.
+    robots: 'noindex, nofollow',
   });
 
   useEffect(() => {

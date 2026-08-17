@@ -13,6 +13,12 @@ Allow: /
 User-agent: *
 Allow: /
 
+# Do NOT add "Disallow: /activate" here. Those pages are excluded from search
+# by an X-Robots-Tag: noindex header (see netlify.toml), which only works if
+# crawlers are allowed to fetch them and read it. Disallowing instead would
+# leave Google free to list the bare URL — token and client name included —
+# whenever it finds a link to one.
+
 # Block access to authenticated pages
 Disallow: /dashboard
 Disallow: /monitor

@@ -5,6 +5,17 @@ interface MetaTagsOptions {
   description: string;
   ogTitle?: string;
   ogDescription?: string;
+  /**
+   * Overrides the site-wide "index, follow" from index.html. Pass
+   * "noindex, nofollow" on any page whose URL is a shared secret — an indexed
+   * activate page would put the client's name (and the token) in public search
+   * results. Sets `googlebot` alongside `robots`: index.html carries both, and
+   * the more specific tag wins for Google, so overriding one alone is a no-op.
+   *
+   * Search crawlers honour this; the social unfurlers (Slack, Teams, LinkedIn)
+   * ignore it, so link previews still work.
+   */
+  robots?: string;
 }
 
 function setMetaContent(selector: string, content: string): string | null {
@@ -15,7 +26,13 @@ function setMetaContent(selector: string, content: string): string | null {
   return previous;
 }
 
-export function useMetaTags({ title, description, ogTitle, ogDescription }: MetaTagsOptions) {
+export function useMetaTags({
+  title,
+  description,
+  ogTitle,
+  ogDescription,
+  robots,
+}: MetaTagsOptions) {
   useEffect(() => {
     const previousTitle = document.title;
     document.title = title;
@@ -26,6 +43,8 @@ export function useMetaTags({ title, description, ogTitle, ogDescription }: Meta
       'meta[property="og:description"]',
       ogDescription ?? description,
     );
+    const previousRobots = robots ? setMetaContent('meta[name="robots"]', robots) : null;
+    const previousGooglebot = robots ? setMetaContent('meta[name="googlebot"]', robots) : null;
 
     return () => {
       document.title = previousTitle;
@@ -33,6 +52,8 @@ export function useMetaTags({ title, description, ogTitle, ogDescription }: Meta
       if (previousOgTitle !== null) setMetaContent('meta[property="og:title"]', previousOgTitle);
       if (previousOgDescription !== null)
         setMetaContent('meta[property="og:description"]', previousOgDescription);
+      if (previousRobots !== null) setMetaContent('meta[name="robots"]', previousRobots);
+      if (previousGooglebot !== null) setMetaContent('meta[name="googlebot"]', previousGooglebot);
     };
-  }, [title, description, ogTitle, ogDescription]);
+  }, [title, description, ogTitle, ogDescription, robots]);
 }

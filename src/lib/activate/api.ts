@@ -146,7 +146,13 @@ export function highlightFor(
   return highlights.find((h) => h.platform === platform && h.market_code === marketCode);
 }
 
-export type ActivateTokenError = 'not_found' | 'expired' | 'revoked' | string;
+/**
+ * Every bad token — unknown, revoked, or expired — comes back as 'not_found'.
+ * The RPC used to tell those apart, which let anyone holding a candidate token
+ * confirm it had once been real. Don't reintroduce a distinction here: the
+ * dead-link screen is the same either way, so there's nothing to gain from it.
+ */
+export type ActivateTokenError = 'not_found' | string;
 
 const rpc = (name: string, args: Record<string, unknown>) =>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
