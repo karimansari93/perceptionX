@@ -17,6 +17,8 @@ import { Badge } from '@/components/ui/badge';
 import { useNavigate } from 'react-router-dom';
 import { useWalkthrough } from '@/contexts/WalkthroughContext';
 import { useSuperAdminOrgs } from '@/hooks/useIsSuperAdmin';
+import { useCompany } from '@/contexts/CompanyContext';
+import { useOpenActionCount } from '@/hooks/useOpenActionCount';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
 import { useState } from 'react';
 
@@ -66,8 +68,19 @@ const navigationGroups: NavigationGroup[] = [
   // }
 ];
 
-// Flatten all items for the collapsed sidebar
-const allNavigationItems = navigationGroups.flatMap(group => group.items);
+// Actions sits above the groups rather than inside one: it's a work surface,
+// not an analysis surface, and it's the landing target for the "you have N new
+// actions" email — so it stays at eye level and carries the open count.
+const ACTIONS_ITEM: NavigationItem = {
+  title: "Actions",
+  icon: CheckCircle2,
+  section: "actions",
+  group: "dashboard",
+  route: "/actions",
+};
+
+// Flatten all items for the collapsed sidebar, Actions first.
+const allNavigationItems = [ACTIONS_ITEM, ...navigationGroups.flatMap(group => group.items)];
 
 interface AppSidebarProps {
   activeSection: string;
@@ -86,6 +99,8 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
   const navigate = useNavigate();
   const { start: startWalkthrough } = useWalkthrough();
   const { orgs: superAdminOrgs } = useSuperAdminOrgs();
+  const { currentCompany } = useCompany();
+  const openActionCount = useOpenActionCount(currentCompany?.organization_id);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
 
   const handleSectionClick = (item: NavigationItem) => {
@@ -138,6 +153,12 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
                 {item.comingSoon && (
                   <span className="absolute top-1 right-1 block w-2 h-2 rounded-full bg-gray-400" title="Coming Soon"></span>
                 )}
+                {item.section === "actions" && openActionCount > 0 && (
+                  <span
+                    className="absolute top-1 right-1 block w-2 h-2 rounded-full bg-pink"
+                    title={`${openActionCount} open actions`}
+                  ></span>
+                )}
               </SidebarMenuButton>
             ))}
                   </nav>
@@ -176,6 +197,28 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
               </button>
             </div>
           )}
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={activeSection === ACTIONS_ITEM.section}
+                    onClick={() => handleSectionClick(ACTIONS_ITEM)}
+                    className="w-full justify-start"
+                  >
+                    <ACTIONS_ITEM.icon className="h-4 w-4" />
+                    <span className="text-sm">{ACTIONS_ITEM.title}</span>
+                    {openActionCount > 0 && (
+                      <Badge className="ml-auto bg-pink/10 text-pink hover:bg-pink/10 px-1.5 py-0 text-[11px] font-semibold tabular-nums">
+                        {openActionCount}
+                      </Badge>
+                    )}
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
           {navigationGroups.map((group, groupIndex) => (
             <SidebarGroup key={group.title} className={group.title === "Monitoring" ? "hidden sm:block" : ""}>
               <SidebarGroupContent>

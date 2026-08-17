@@ -36,6 +36,7 @@ const CompetitorsTab = lazyWithRetry(() => import("@/components/dashboard/Compet
 const ThematicAnalysisTab = lazyWithRetry(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
 const PromptsTab = lazyWithRetry(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
 const AnswerGapsTab = lazyWithRetry(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
+const ActionsTab = lazyWithRetry(() => import("@/components/dashboard/ActionsTab").then(module => ({ default: module.ActionsTab })));
 import LLMLogo from "@/components/LLMLogo";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen";
@@ -44,6 +45,7 @@ import { usePersistedState } from "@/hooks/usePersistedState";
 import { GENERAL_KEY } from "@/utils/locationContext";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { useSuperAdminOrgs } from "@/hooks/useIsSuperAdmin";
 
 const SECTION_TITLES: Record<string, string> = {
   overview: "Overview",
@@ -53,7 +55,12 @@ const SECTION_TITLES: Record<string, string> = {
   prompts: "Prompts",
   reports: "Reports",
   "answer-gaps": "Answer Gaps",
+  actions: "Actions",
 };
+
+// Keep in sync with is_admin() in the DB and ADMIN_EMAILS elsewhere in the app.
+// Only affects what the UI offers — RLS is the actual gate on draft actions.
+const PLATFORM_ADMIN_EMAILS = ['karim@perceptionx.ai'];
 
 interface DatabaseOnboardingData {
   company_name: string;
@@ -73,6 +80,16 @@ interface PromptsModalOnboardingData {
 const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {}) => {
   const { user } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
+
+  // Owner/admin of the company's org — the only role that can assign an action
+  // to someone else. Enforced server-side too; this just shapes the controls.
+  const { orgs: superAdminOrgs } = useSuperAdminOrgs();
+  const isOrgSuperAdmin = useMemo(
+    () =>
+      !!currentCompany?.organization_id &&
+      superAdminOrgs.some((o) => o.organization_id === currentCompany.organization_id),
+    [superAdminOrgs, currentCompany?.organization_id],
+  );
   // Persist initial load state so we don't show loading screen on every navigation
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = usePersistedState<boolean>('dashboard.hasInitiallyLoaded', false);
   const [activeTab, setActiveTab] = useState<'terms' | 'results'>('results');
@@ -478,6 +495,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       } else if (path === '/dashboard/themes') {
         setActiveSection('thematic');
       }
+    } else if (path.startsWith('/actions')) {
+      // Own top-level route, but it lives in the Dashboard sidebar group.
+      setActiveGroup('dashboard');
+      setActiveSection('actions');
     } else if (path.startsWith('/monitor')) {
       setActiveGroup('monitor');
       if (path === '/monitor') {
@@ -531,6 +552,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         navigate('/dashboard/competitors');
       } else if (section === 'thematic') {
         navigate('/dashboard/themes');
+      } else if (section === 'actions') {
+        navigate('/actions');
       }
     } else if (activeGroup === 'monitor') {
       if (section === 'prompts') {
@@ -548,6 +571,22 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   };
 
   const renderDashboardContent = () => {
+    // Actions don't come from the metrics pipeline, so they render ahead of the
+    // loading gate below. Someone arriving from the "you have new actions"
+    // email should land on their list, not on the dashboard's loading state.
+    if (activeSection === 'actions') {
+      return (
+        <Suspense fallback={<OverviewSkeleton />}>
+          <ActionsTab
+            organizationId={currentCompany?.organization_id}
+            companyName={currentCompany?.name}
+            isSuperAdmin={isOrgSuperAdmin}
+            isPlatformAdmin={PLATFORM_ADMIN_EMAILS.includes(user?.email?.toLowerCase() ?? '')}
+          />
+        </Suspense>
+      );
+    }
+
     // Full section skeleton ONLY when there is genuinely nothing to paint —
     // the first uncached load of a scope (no responses, metrics still at
     // their 'No Data' placeholder; the computed path never yields that
@@ -715,7 +754,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   };
 
   // Show full loading screen during initial load (and through its completion).
-  if (loadingHandoff.show) {
+  // Actions are exempt: they come from their own table, not the metrics
+  // pipeline, so there is nothing for them to wait on. Without this, someone
+  // following the "you have 3 new actions" email sits through Netflix's full
+  // ~38K-response load before their list appears.
+  if (loadingHandoff.show && activeSection !== 'actions') {
     // Narrate the real load: each line maps to an actual fetch family in
     // useDashboardData, so the checklist reflects genuine progress rather
     // than a timer.
@@ -731,6 +774,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       />
     );
   }
+
+  // Sections that aren't driven by the metrics pipeline: showing a location or
+  // period selector above them implies a filter that does nothing.
+  const hideDataFilters = activeSection === 'reports' || activeSection === 'actions';
 
   // Always render the sidebar and main layout, only show loading in content area
   return (
@@ -769,16 +816,16 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           onFixData={fixExistingPrompts}
           hasDataIssues={hasDataIssues}
           alwaysMounted={true}
-          selectedLocation={activeSection === 'reports' ? undefined : selectedLocation}
-          onLocationChange={activeSection === 'reports' ? undefined : handleLocationChange}
-          onPendingLocationChange={activeSection === 'reports' ? undefined : setPendingLocation}
-          locationOptions={activeSection === 'reports' ? undefined : locationOptions}
-          availablePeriods={activeSection === 'reports' ? undefined : availablePeriods}
-          selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}
-          onPeriodChange={activeSection === 'reports' ? undefined : handlePeriodChange}
+          selectedLocation={hideDataFilters ? undefined : selectedLocation}
+          onLocationChange={hideDataFilters ? undefined : handleLocationChange}
+          onPendingLocationChange={hideDataFilters ? undefined : setPendingLocation}
+          locationOptions={hideDataFilters ? undefined : locationOptions}
+          availablePeriods={hideDataFilters ? undefined : availablePeriods}
+          selectedPeriod={hideDataFilters ? undefined : selectedPeriod}
+          onPeriodChange={hideDataFilters ? undefined : handlePeriodChange}
           userId={user?.id ?? null}
           companyId={currentCompany?.id ?? null}
-          onLocationPrefetch={activeSection === 'reports' ? undefined : prefetchLocationRollups}
+          onLocationPrefetch={hideDataFilters ? undefined : prefetchLocationRollups}
           onCompanyPrefetch={prefetchCompanyRollups}
         />
         <div className="flex-1 overflow-auto">
