@@ -609,6 +609,28 @@ function CompanyAvatar({
 
 // Three steps now (the profile step is skippable) — a deliberate deviation
 // from the two-step handoff, driven by the function/seniority gathering ask.
+/**
+ * The one PerceptionX mark on the page. The logo carries the wordmark, so the
+ * text is just "Powered by" — repeating the name would say it twice. The
+ * on-dark variant has a white wordmark, so pick by the canvas ink.
+ */
+function PoweredBy({ onDark }: { onDark: boolean }) {
+  return (
+    <span className="act-powered" data-on-dark={onDark}>
+      Powered by
+      <img
+        src={
+          onDark
+            ? '/logos/PerceptionX-PrimaryLogo-ForOnDark-large.png'
+            : '/logos/PerceptionX-PrimaryLogo.png'
+        }
+        alt="PerceptionX"
+        className="act-powered-logo"
+      />
+    </span>
+  );
+}
+
 /** Client campaign artwork; hides itself if the URL fails to load. */
 function Banner({ url }: { url: string }) {
   const [failed, setFailed] = useState(false);
@@ -1207,10 +1229,7 @@ function RoutesStep({
 
       <footer className="mt-2 flex flex-col items-center gap-2.5 text-center">
         <p className="act-honesty">We don't see what you write — or whether you write at all.</p>
-        <span className="act-px-pill">
-          <span className="act-px-dot" aria-hidden />
-          Routed by PerceptionX
-        </span>
+        <PoweredBy onDark={onColor(org.primary_color) === '#FFFFFF'} />
       </footer>
     </>
   );
@@ -1483,21 +1502,25 @@ function DeadLink() {
           It may have expired or been withdrawn. If you were sent it by a colleague, ask them for
           a fresh one.
         </p>
+        {/* Rendered outside <Canvas>, so the act-* stylesheet isn't mounted
+            here — these styles have to be inline. */}
         <span
-          className="mt-1 inline-flex items-center gap-1.5 rounded-full font-medium"
+          className="mt-1 inline-flex items-center gap-2 rounded-full"
           style={{
-            padding: '7px 12px',
+            padding: '7px 13px',
             background: '#F4F6F7',
-            fontSize: 11,
+            fontSize: 10.5,
+            fontWeight: 500,
             letterSpacing: '.06em',
-            color: 'rgba(19,39,79,.76)',
+            color: 'rgba(19,39,79,.7)',
           }}
         >
-          <span
-            aria-hidden
-            style={{ width: 6, height: 6, borderRadius: 999, background: '#DB5E89' }}
+          Powered by
+          <img
+            src="/logos/PerceptionX-PrimaryLogo.png"
+            alt="PerceptionX"
+            style={{ height: 13, width: 'auto', display: 'block' }}
           />
-          Routed by PerceptionX
         </span>
       </div>
     </div>
@@ -1862,14 +1885,15 @@ const activateCss = `
   font-size: 12.5px; line-height: 1.5; max-width: 300px;
   color: color-mix(in srgb, var(--activate-on) 66%, transparent);
 }
-.act-px-pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 7px 12px; border-radius: 999px;
+.act-powered {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 13px; border-radius: 999px;
   background: color-mix(in srgb, var(--activate-on) 12%, transparent);
-  font-size: 11px; font-weight: 500; letter-spacing: .06em;
-  color: color-mix(in srgb, var(--activate-on) 76%, transparent);
+  font-size: 10.5px; font-weight: 500; letter-spacing: .06em;
+  color: color-mix(in srgb, var(--activate-on) 70%, transparent);
 }
-.act-px-dot { width: 6px; height: 6px; border-radius: 999px; background: #DB5E89; }
+.act-powered[data-on-dark="false"] { background: #F4F6F7; color: rgba(19,39,79,.7); }
+.act-powered-logo { height: 13px; width: auto; display: block; }
 
 /* Spinner */
 .act-spinner {
