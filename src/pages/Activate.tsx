@@ -1058,8 +1058,10 @@ function ProfileStep({
         ))}
       </div>
 
+      {/* Not the last step — the willingness question follows, so this can't
+          promise the payoff. */}
       <button onClick={() => onDone(fn)} className="act-primary-btn mt-2">
-        {selectedLabel ? 'Show my places' : 'Skip and show my places'}
+        {selectedLabel ? 'Next' : 'Skip'}
         <ArrowRight size={16} aria-hidden />
       </button>
     </>
