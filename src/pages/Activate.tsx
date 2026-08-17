@@ -50,7 +50,6 @@ import {
   parseStatPct,
   rankSocialRoutes,
   resolveRoutes,
-  SENIORITIES,
 } from '@/lib/activate/api';
 
 type LoadState =
@@ -221,7 +220,6 @@ export default function Activate() {
   // company id is derived from it, so brand × market orgs resolve correctly.
   const [entityKey, setEntityKey] = useState<string | null>(null);
   const [functionId, setFunctionId] = useState<string | null>(null);
-  const [seniorityId, setSeniorityId] = useState<string | null>(null);
   // What the recipient is open to doing. Empty = they skipped, so show all.
   const [channels, setChannels] = useState<ActivateChannel[]>([]);
   const [prefilled, setPrefilled] = useState(false);
@@ -338,14 +336,12 @@ export default function Activate() {
     setStep('profile');
   };
 
-  const declareProfile = (fn: string | null, sen: string | null) => {
+  const declareProfile = (fn: string | null) => {
     setFunctionId(fn);
-    setSeniorityId(sen);
-    if (fn || sen) {
+    if (fn) {
       logActivateEvent(token!, sessionId, 'profile_declared', {
         marketCode: market,
         functionId: fn,
-        seniorityId: sen,
       });
     }
     setStep('willing');
@@ -357,7 +353,6 @@ export default function Activate() {
       logActivateEvent(token!, sessionId, 'profile_declared', {
         marketCode: market,
         functionId,
-        seniorityId,
         channels: picked,
       });
     }
@@ -411,7 +406,6 @@ export default function Activate() {
               onDone={declareProfile}
               onBack={() => setStep('entity')}
               initialFunction={functionId}
-              initialSeniority={seniorityId}
               headingRef={headingRef}
             />
           )}
@@ -436,12 +430,12 @@ export default function Activate() {
               forum={rankSocialRoutes(
                 resolveRoutes(config.routes, market, entityCompanyId, 'forum').routes,
                 functionId,
-                seniorityId,
+                null,
               )}
               social={rankSocialRoutes(
                 resolveRoutes(config.routes, market, entityCompanyId, 'social').routes,
                 functionId,
-                seniorityId,
+                null,
               )}
               themes={config.themes}
               highlights={config.highlights}
@@ -909,38 +903,15 @@ function CountryStep({
         />
       </label>
 
+      {/* Nothing listed until they type — the full country list under the
+          field was more to scroll past than to choose from. Measured markets
+          still sort first among matches. */}
       {q === '' ? (
-        <>
-          <div className="flex w-full flex-col gap-2.5">
-            {measured.map((code) => (
-              <button key={code} onClick={() => onPick(code)} className="act-pill-solid">
-                <Flag code={code} size={20} />
-                <span className="flex-1 text-left">{countryName(code)}</span>
-              </button>
-            ))}
-          </div>
-          <p className="act-eyebrow mt-2 self-start" style={{ opacity: 0.9 }}>
-            Everywhere else
-          </p>
-          <div
-            className="act-scroll flex w-full flex-col gap-2 overflow-y-auto"
-            role="listbox"
-            aria-label="All countries"
-          >
-            {others.map((code) => (
-              <button key={code} onClick={() => onPick(code)} className="act-pill-ghost" role="option" aria-selected="false">
-                <Flag code={code} size={18} />
-                <span className="flex-1 text-left">{countryName(code)}</span>
-              </button>
-            ))}
-          </div>
-        </>
+        <p className="act-search-hint">Start typing to find your country.</p>
       ) : (
         <div className="flex w-full flex-col gap-2" role="listbox" aria-label="Search results">
           {matches.length === 0 && (
-            <p className="py-2 text-center text-sm" style={{ color: 'color-mix(in srgb, var(--activate-on) 70%, transparent)' }}>
-              No matches — try another spelling
-            </p>
+            <p className="act-search-hint">No matches — try another spelling.</p>
           )}
           {matches.slice(0, 30).map((code) => (
             <button
@@ -949,12 +920,11 @@ function CountryStep({
                 setQuery('');
                 onPick(code);
               }}
-              className="act-pill-ghost"
-              style={{ minHeight: 52 }}
+              className="act-pill-solid"
               role="option"
               aria-selected="false"
             >
-              <Flag code={code} size={18} />
+              <Flag code={code} size={20} />
               <span className="flex-1 text-left">{countryName(code)}</span>
             </button>
           ))}
@@ -1018,18 +988,15 @@ function ProfileStep({
   onDone,
   onBack,
   initialFunction,
-  initialSeniority,
   headingRef,
 }: {
   org: ActivateConfig['org'];
-  onDone: (functionId: string | null, seniorityId: string | null) => void;
+  onDone: (functionId: string | null) => void;
   onBack: () => void;
   initialFunction: string | null;
-  initialSeniority: string | null;
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
   const [fn, setFn] = useState<string | null>(initialFunction);
-  const [sen, setSen] = useState<string | null>(initialSeniority);
   const [query, setQuery] = useState('');
 
   const q = query.trim().toLowerCase();
@@ -1091,24 +1058,7 @@ function ProfileStep({
         ))}
       </div>
 
-      <p className="act-eyebrow self-start" style={{ marginTop: 4 }}>
-        Seniority
-      </p>
-      <div className="flex w-full flex-wrap gap-2">
-        {SENIORITIES.map((o) => (
-          <button
-            key={o.id}
-            onClick={() => setSen(sen === o.id ? null : o.id)}
-            className="act-select-chip"
-            data-on={sen === o.id}
-            aria-pressed={sen === o.id}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-
-      <button onClick={() => onDone(fn, sen)} className="act-primary-btn mt-2">
+      <button onClick={() => onDone(fn)} className="act-primary-btn mt-2">
         {selectedLabel ? 'Show my places' : 'Skip and show my places'}
         <ArrowRight size={16} aria-hidden />
       </button>
@@ -1648,6 +1598,10 @@ const activateCss = `
 }
 .act-pill-ghost:hover { background: color-mix(in srgb, var(--activate-on) 22%, transparent); }
 .act-scroll { max-height: 184px; }
+.act-search-hint {
+  font-size: 13px; text-align: center; padding: 6px 0;
+  color: color-mix(in srgb, var(--activate-on) 55%, transparent);
+}
 @media (min-width: 768px) { .act-scroll { max-height: 320px; } }
 
 /* Entity chips */
