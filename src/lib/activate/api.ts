@@ -128,6 +128,8 @@ export interface ActivateConfig {
   prefill_market_code: string | null;
   prefill_entity_company_id: string | null;
   entities: ActivateEntity[];
+  /** The client's own job functions, commonest first. */
+  job_functions: string[];
   /** market_code -> % of that market's answers citing the listed platforms. */
   coverage: Record<string, number>;
   routes: ActivateRoute[];
@@ -290,8 +292,12 @@ export interface ProfileOption {
   label: string;
 }
 
-// A suggested list, not a taxonomy — the step also accepts whatever the
-// recipient types, so this only needs to cover the common cases quickly.
+/**
+ * Fallback only. The step prefers the client's own functions (from
+ * confirmed_prompts.job_function_context, returned by the token RPC) so a
+ * Netflix recipient sees "Content & Production" and "Pipeline Engineering"
+ * rather than a generic taxonomy. This list covers orgs that have none.
+ */
 export const JOB_FUNCTIONS: ProfileOption[] = [
   { id: 'engineering-tech', label: 'Engineering & Tech' },
   { id: 'data-analytics', label: 'Data & Analytics' },
@@ -327,6 +333,21 @@ export const SENIORITIES: ProfileOption[] = [
  * ("your world"); it never promotes one platform over a louder one, and it
  * never hides anything. Everyone sees every route.
  */
+/**
+ * Client function labels are free-form, so map them onto the coarse tags the
+ * routes carry. Keeps the "your world" badge working without seeding an
+ * affinity list per client.
+ */
+export function affinityTagFor(label: string | null): string | null {
+  if (!label) return null;
+  const l = label.toLowerCase();
+  if (/engineer|technolog|software|technical|pipeline|developer|data|analytic|product/.test(l)) {
+    return 'engineering-tech';
+  }
+  if (/manufactur|plant|operation|supply|production|quality/.test(l)) return 'manufacturing-ops';
+  return null;
+}
+
 export function rankSocialRoutes(
   routes: ActivateRoute[],
   functionId: string | null,

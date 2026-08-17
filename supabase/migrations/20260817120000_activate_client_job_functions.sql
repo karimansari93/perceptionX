@@ -1,0 +1,16 @@
+-- The work step now offers the client's own job functions rather than a
+-- generic taxonomy: a Netflix recipient sees "Content & Production" and
+-- "Pipeline Engineering", a Ford one sees "Product Development" and
+-- "Enterprise Technology".
+--
+-- Source is confirmed_prompts.job_function_context for the org, commonest
+-- first, capped at 24. The step still accepts free text, so this is a
+-- shortcut list rather than a taxonomy — nobody's job fits a fixed list.
+--
+-- Because those labels are free-form per client, they can't match the coarse
+-- audience_functions tags on routes. The page maps a declared label onto
+-- those tags by keyword (affinityTagFor) so the "your world" badge keeps
+-- working without seeding an affinity list per client.
+--
+-- Applied to production via MCP on 2026-08-17: activate_get_by_token gains a
+-- job_functions array on the payload; body otherwise unchanged.

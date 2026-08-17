@@ -34,6 +34,7 @@ import { useMetaTags } from '@/hooks/useMetaTags';
 import {
   ActivateChannel,
   ActivateConfig,
+  affinityTagFor,
   ActivateHighlight,
   ActivateRoute,
   COUNTRY_CODES,
@@ -46,6 +47,7 @@ import {
   highlightFor,
   JOB_FUNCTIONS,
   logActivateEvent,
+  ProfileOption,
   measuredMarketCodes,
   rankSocialRoutes,
   resolveRoutes,
@@ -302,6 +304,12 @@ export default function Activate() {
   const { config } = load;
   const { org } = config;
 
+  // The client's own functions when we have them — a Netflix recipient should
+  // see "Content & Production", not a generic taxonomy.
+  const clientFunctions: ProfileOption[] = config.job_functions?.length
+    ? config.job_functions.map((label) => ({ id: label, label }))
+    : JOB_FUNCTIONS;
+
   // Entities are name-deduped; only those present in the declared market show.
   const marketEntities = market ? entitiesForMarket(config.entities, market) : config.entities;
   const selectedEntity =
@@ -402,6 +410,7 @@ export default function Activate() {
           {step === 'profile' && (
             <ProfileStep
               org={org}
+              functions={clientFunctions}
               onDone={declareProfile}
               onBack={() => setStep('entity')}
               initialFunction={functionId}
@@ -428,12 +437,12 @@ export default function Activate() {
               resolved={resolveRoutes(config.routes, market, entityCompanyId)}
               forum={rankSocialRoutes(
                 resolveRoutes(config.routes, market, entityCompanyId, 'forum').routes,
-                functionId,
+                affinityTagFor(functionId),
                 null,
               )}
               social={rankSocialRoutes(
                 resolveRoutes(config.routes, market, entityCompanyId, 'social').routes,
-                functionId,
+                affinityTagFor(functionId),
                 null,
               )}
               highlights={config.highlights}
@@ -980,12 +989,14 @@ function EntityStep({
 
 function ProfileStep({
   org,
+  functions,
   onDone,
   onBack,
   initialFunction,
   headingRef,
 }: {
   org: ActivateConfig['org'];
+  functions: ProfileOption[];
   onDone: (functionId: string | null) => void;
   onBack: () => void;
   initialFunction: string | null;
@@ -995,16 +1006,12 @@ function ProfileStep({
   const [query, setQuery] = useState('');
 
   const q = query.trim().toLowerCase();
-  const matches = q
-    ? JOB_FUNCTIONS.filter((o) => o.label.toLowerCase().includes(q))
-    : JOB_FUNCTIONS;
+  const matches = q ? functions.filter((o) => o.label.toLowerCase().includes(q)) : functions;
   // Nobody's job fits a fixed list, so whatever they type is offered back as
   // its own option. Capped to the length the event RPC accepts.
   const custom = query.trim().slice(0, 60);
-  const canUseCustom =
-    custom.length > 1 && !JOB_FUNCTIONS.some((o) => o.label.toLowerCase() === q);
-  const selectedLabel =
-    JOB_FUNCTIONS.find((o) => o.id === fn)?.label ?? (fn && fn !== '' ? fn : null);
+  const canUseCustom = custom.length > 1 && !functions.some((o) => o.label.toLowerCase() === q);
+  const selectedLabel = functions.find((o) => o.id === fn)?.label ?? (fn || null);
 
   return (
     <>
