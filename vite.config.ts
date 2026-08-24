@@ -20,6 +20,8 @@ interface MetaVariant {
   image?: string;
   imageAlt?: string;
   robots?: string;
+  /** Drop og:url and canonical, for a variant whose real URL is per-token. */
+  dropUrl?: boolean;
 }
 
 const META_VARIANTS: MetaVariant[] = [
@@ -44,6 +46,13 @@ const META_VARIANTS: MetaVariant[] = [
     // Activate URLs carry a link token. They are meant to be shared, never
     // indexed — a token in a search result is a link nobody chose to hand out.
     robots: "noindex, nofollow",
+    // index.html's og:url points at the site root, and inheriting it here sent
+    // people who tapped the preview card to https://app.perceptionx.ai — which
+    // is the sign-in route, and bounces anyone with a session to the dashboard
+    // instead of to the link they were sent. Absent is correct: a client with
+    // no og:url uses the URL it actually fetched. activate-meta.ts puts the
+    // real per-token URL back.
+    dropUrl: true,
   },
 ];
 
@@ -67,6 +76,10 @@ function applyMeta(html: string, variant: MetaVariant): string {
   if (variant.robots) {
     out = set(out, /(<meta name="robots" content=")[^"]*(")/, variant.robots);
     out = set(out, /(<meta name="googlebot" content=")[^"]*(")/, variant.robots);
+  }
+  if (variant.dropUrl) {
+    out = out.replace(/\s*<meta property="og:url" content="[^"]*" \/>/, "");
+    out = out.replace(/\s*<link rel="canonical" href="[^"]*" \/>/, "");
   }
   return out;
 }
