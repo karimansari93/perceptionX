@@ -24,6 +24,7 @@ import {
   GEOLOGICA_700_BASE64,
   PLUS_JAKARTA_600_BASE64,
 } from "../lib/activate-fonts.js";
+import { PERCEPTIONX_MARK } from "../lib/activate-mark.js";
 import { activatePreview, logoAsset, tokenFromPath } from "../lib/activate-preview.js";
 
 const RESVG_WASM_URL = "https://esm.sh/@resvg/resvg-wasm@2.6.2/index_bg.wasm";
@@ -64,8 +65,10 @@ export default async (request: Request) => {
   const origin = new URL(request.url).origin;
 
   try {
-    const branding = await activatePreview(tokenFromPath(request.url));
-    const logo = branding ? await logoAsset(branding) : null;
+    const { branding, reason } = await activatePreview(tokenFromPath(request.url));
+    // No client means no logo and no name to take initials from, so the plate
+    // carries our own mark rather than rendering as an empty white disc.
+    const logo = (branding ? await logoAsset(branding) : null) ?? (branding ? null : PERCEPTIONX_MARK);
 
     await ensureWasm();
 
@@ -95,6 +98,8 @@ export default async (request: Request) => {
         "content-type": "image/png",
         "cache-control": CACHE_CONTROL,
         "netlify-cdn-cache-control": CACHE_CONTROL,
+        // Why this card is branded or not, without leaking any value.
+        "x-activate-preview": reason,
       },
     });
   } catch {
