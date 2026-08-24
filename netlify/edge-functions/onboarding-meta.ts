@@ -10,6 +10,8 @@
 // Any failure (missing env, RPC error, unknown token, slow network) falls
 // back to the generic onboarding.html untouched.
 
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from "../lib/supabase-public.js";
+
 const RPC_TIMEOUT_MS = 3000;
 
 const escapeHtml = (s: string) =>
@@ -27,8 +29,13 @@ const env = (key: string): string | undefined =>
   (globalThis as any).Deno?.env?.get(key);
 
 async function lookupCompanyName(token: string): Promise<string | null> {
-  const supabaseUrl = env("VITE_SUPABASE_URL");
-  const anonKey = env("VITE_SUPABASE_PUBLISHABLE_KEY");
+  // Env vars win when the edge runtime can see them; the committed publishable
+  // credentials are the floor (see netlify/lib/supabase-public.js). Production
+  // reported no-env here for as long as this function has existed, which is why
+  // invite previews were shipping without the company name.
+  const supabaseUrl = env("VITE_SUPABASE_URL") ?? SUPABASE_URL;
+  const anonKey =
+    env("VITE_SUPABASE_ANON_KEY") ?? env("VITE_SUPABASE_PUBLISHABLE_KEY") ?? SUPABASE_ANON_KEY;
   if (!supabaseUrl || !anonKey) return null;
 
   const res = await fetch(`${supabaseUrl}/rest/v1/rpc/intake_preview_by_token`, {
