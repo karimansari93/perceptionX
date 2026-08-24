@@ -8,6 +8,11 @@
 // The canvas is the client's primary colour and the highlights are their
 // accent, exactly as the live page reads them — a recipient who taps through
 // from the preview should land somewhere that looks like the card they tapped.
+//
+// Nothing on the card is ours. No mark, no wordmark, no eyebrow: an employee is
+// being sent this by their own employer, and the unfurl already prints
+// app.perceptionx.ai under it, so the provenance is there without borrowing
+// space on somebody else's card for it.
 
 export const CARD_WIDTH = 1200;
 export const CARD_HEIGHT = 630;
@@ -180,9 +185,8 @@ export function buildActivateCard({ displayName, tagline, primary, accent, logo 
           props: {
             style: { display: 'flex', flexDirection: 'column' },
             children: [
-              // The client's own line, when they have one. Ours used to sit
-              // here; between this and the footer, only one of us should be
-              // introducing a page that belongs to them.
+              // The client's own line, when they have one — the slot our own
+              // eyebrow used to occupy.
               ...(eyebrow
                 ? [
                     {
@@ -215,40 +219,6 @@ export function buildActivateCard({ displayName, tagline, primary, accent, logo 
                     maxWidth: 900,
                   },
                   children: headline,
-                },
-              },
-            ],
-          },
-        },
-        {
-          type: 'div',
-          props: {
-            style: { display: 'flex', alignItems: 'center' },
-            children: [
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    width: 48,
-                    height: 6,
-                    borderRadius: 3,
-                    backgroundColor: highlight,
-                    marginRight: 20,
-                    display: 'flex',
-                  },
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    display: 'flex',
-                    fontFamily: 'Plus Jakarta Sans',
-                    fontWeight: 600,
-                    fontSize: 26,
-                    color: tint(ink, 0.82),
-                  },
-                  children: 'perceptionx.ai',
                 },
               },
             ],

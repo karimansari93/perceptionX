@@ -291,9 +291,11 @@ is, never that the recipient should join it or what to say if they do.
 white disc the welcome screen uses, and the line above the headline is their own
 `tagline`. Taglines that won't sit on one line (CSL's is a 130-character mission
 statement) are dropped rather than truncated — the card is fine without one, and
-no truncation of a sentence that long reads as anything but broken. Provenance is
-one line, `perceptionx.ai` in the footer; a card introducing someone else's page
-should not say our name twice.
+no truncation of a sentence that long reads as anything but broken.
+
+Nothing on the card is ours: no mark, no wordmark, no eyebrow. The unfurl prints
+`app.perceptionx.ai` under it either way, so provenance costs nothing, and an
+employee opening a link from their own employer should see their employer.
 
 Two constraints that are easy to get wrong:
 
