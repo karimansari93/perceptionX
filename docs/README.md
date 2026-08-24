@@ -32,8 +32,12 @@ This directory contains all project documentation. Keep markdown and doc-related
 ### `/docs/archive/`
 **Historical** – past fixes, summaries, and debug notes. Kept for reference, not actively maintained.
 
+### Top-level docs
+- `DATABASE_MIGRATIONS.md` – How migrations are applied, and the drift check that keeps
+  `supabase/migrations/` in step with the database
+
 ## Other Locations
 
-- **Database migrations**: `/supabase/migrations/`
+- **Database migrations**: `/supabase/migrations/` – see `docs/DATABASE_MIGRATIONS.md`
 - **SQL scripts**: `/scripts/` – one-off fixes and utilities
 - **Project overview**: `/README.md`
