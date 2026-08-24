@@ -1,0 +1,485 @@
+{
+  "_comment": [
+    "Known, explained differences between supabase_migrations.schema_migrations and",
+    "supabase/migrations/. scripts/check-migration-drift.mjs treats these as accepted so it can",
+    "still fail loudly on anything NEW.",
+    "",
+    "Adding to this file is not how you make the check pass. An entry here is a permanent",
+    "\"we accept this can never be reconciled\" — write the migration file and apply it with",
+    "apply_migration instead. See docs/DATABASE_MIGRATIONS.md.",
+    "",
+    "Generated 2026-08-24 by the migration back-fill that recovered 307 files from the ledger."
+  ],
+  "prodOnly": [
+    {
+      "name": "rebuild_rankings_historical",
+      "reason": "Ledger row 20260414120000 has a NULL statements array, so the SQL it applied was never recorded and cannot be recovered from the database. Nothing to back-fill."
+    },
+    {
+      "name": "rankings_rpcs",
+      "reason": "Ledger row 20260414120100 has a NULL statements array, so the SQL it applied was never recorded and cannot be recovered from the database. Nothing to back-fill."
+    }
+  ],
+  "repoOnly": [
+    {
+      "name": "create_utility_functions",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_prompt_type_enum",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_subscription_type_enum",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_profiles",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_user_onboarding",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_confirmed_prompts",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_cascade_delete",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_prompts_completed",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_subscription_to_profiles",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "migrate_subscription_data",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_stripe_customer_id",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_talentx_perception_scores",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_citations_competitors_to_talentx",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_visibility_competitive_scores_to_talentx",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "prevent_duplicate_rows",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "apply_duplicate_prevention",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_talentx_constraints",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_search_insights_tables",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_talentx_perception_scores_rls",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "01_add_detected_competitors_to_search_insights",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_competitor_mentions_to_search_insights",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_mention_tracking_to_search_insights",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_ai_themes_table",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_ai_themes_table_fixed",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_admin_company_report_permissions",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "remove_legacy_talentx_tables",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_missing_company_id_to_prompt_responses",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_tested_at_column",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "enable_historical_responses",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_company_search_terms",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_company_mentioned_to_search_insights",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_null_company_id_in_search_insights",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "disable_companies_rls_temp",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_reddit_extraction_methods",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_data_collection_tracking",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_visibility_rankings",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_industry_wide_visibility_prompts",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_unique_index_for_industry_wide_prompts",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "enable_rls_on_tables",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "optimize_rls_performance",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "remove_career_site_tables",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_duplicate_policies_confirmed_prompts",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_rls_auth_function_performance",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_job_function_location_to_unique_index",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "remove_unique_constraint_on_prompts",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_visibility_automation",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_company_id_to_ai_themes",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_prompt_responses",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_workplace_themes",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "drop_workplace_themes",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_talentx_attributes",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_onboarding_location_fields",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_url_recency_cache",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "update_extraction_method_constraint",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_multi_company_structure_clean",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "migrate_existing_data_to_companies",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_organizations_layer",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "auto_create_company_on_onboarding",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_existing_data_company_links",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_data_distribution",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_company_limit_check",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_organization_architecture",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_organization_name_to_onboarding",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_company_industries",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_industry_context_to_confirmed_prompts",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_prompt_context_columns",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "restructure_prompt_categories",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_admin_delete_company_function",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_company_creation_always_create_new",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "fix_duplicate_company_data",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_company_metrics_materialized_views",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_performance_indexes",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "prompt_type_four_intents",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "mv_prompt_types_four_intents",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "mv_unique_indexes_for_concurrent_refresh",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_admin_update_companies",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "add_companies_last_updated",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "rls_company_metrics_mv",
+      "reason": "Predates the first ledger row (version 20260205140000). The supabase_migrations ledger only starts there, so this file has no row to match and never will."
+    },
+    {
+      "name": "create_chat_tables",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "fix_sentiment_and_relevance_mvs",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "add_expand_setup_phase",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "refresh_and_cleanup_company_mvs",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "batch_queue_watchdog_and_alerts",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "monthly_auto_refresh",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "fix_companies_rls_leak",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "create_org_recency_coverage_mvs",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "add_evergreen_recency_method",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "org_url_status_view",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "invalidate_today_dated_cache",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "url_recency_cache_admin_write",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "nuke_legacy_regex_cache_rows",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "drop_company_members",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "drop_user_onboarding",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "recency_rescore_jobs",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "cron_funcs_read_vault_secrets",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "add_youtube_reddit_extraction_methods",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "create_custom_reports",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "org_regions_freeform",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "add_thumbnail_to_custom_reports",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "add_ai_themes_company_created_index",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "create_canonical_entities",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "rebuild_company_competitors_mv",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "schedule_entity_canonicalization_job",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "schedule_company_competitors_mv_refresh",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "resolve_orphan_suggestions_rpc",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "disable_mv_refresh_crons",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "create_prompt_responses_canonical_view",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "create_source_canonicals",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "seed_source_canonicals",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "extend_view_with_source_canonicalization",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "rebuild_company_top_sources_mv",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "auto_alias_canonical_name",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "find_unmapped_competitor_variants",
+      "reason": "Applied to production with execute_sql (or under a different name) rather than apply_migration, so the ledger holds no row under this name. Left in place as the record of the change; do not re-apply it blindly."
+    },
+    {
+      "name": "activate_channels_local_highlights",
+      "reason": "Merged locally from two production migrations that were applied separately: activate_local_priority_and_highlights (version 20260813041950) and activate_forum_channel (version 20260813042235). Both are now back-filled under their own names, so this file is a superset kept for history; it has no ledger row of its own."
+    },
+    {
+      "name": "activate_client_job_functions",
+      "reason": "Applied to production with execute_sql rather than apply_migration, so the ledger holds no row and the original statement text is unrecoverable. The file was rebuilt from the live definition via pg_get_functiondef; see the PROVENANCE comment inside it."
+    }
+  ]
+}

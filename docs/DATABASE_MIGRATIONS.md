@@ -6,9 +6,11 @@ nobody finds out until they try.
 
 That is exactly what happened once already: 307 migrations were applied through the
 Supabase MCP `apply_migration` tool without the matching file ever being committed, and
-three more went in through `execute_sql`, which leaves no record at all. Recovering it
-took a full pass over `supabase_migrations.schema_migrations`. The rules below exist so
-that does not happen again.
+another 35 went in through `execute_sql` or under a name the file does not carry, which
+leaves nothing to match against. Recovering the 307 took a full pass over
+`supabase_migrations.schema_migrations`; two more rows could not be recovered at all
+because their `statements` array is NULL. The rules below exist so that does not happen
+again.
 
 ## The three rules
 
@@ -82,10 +84,14 @@ It covers three things:
 - **Files older than the ledger.** `supabase_migrations.schema_migrations` only goes back
   to `20260205140000`. Migration files with earlier timestamps have no row and never will.
   This is not drift.
-- **Ledger rows with no recoverable SQL.** A handful of rows have `statements` NULL, so
-  there is nothing to write into a file.
+- **Ledger rows with no recoverable SQL.** Five rows have `statements` NULL, so there is
+  nothing to write into a file. Three of those names happen to match a file anyway; the
+  other two (`rebuild_rankings_historical`, `rankings_rpcs`) are gone for good.
 - **Files applied via `execute_sql`.** No ledger row exists under that name. These are the
-  rule-2 violations that predate the rule.
+  rule-2 violations that predate the rule. One entry,
+  `activate_channels_local_highlights`, is a different case: it merges two migrations that
+  production applied separately, and both of those are now back-filled under their own
+  names.
 
 **Adding to the baseline is not how you make the check pass.** An entry there is a
 permanent statement that the gap is understood and accepted. New drift means one of the
