@@ -275,11 +275,17 @@ export default function Activate() {
       if (preMarket) {
         setMarket(preMarket);
         logActivateEvent(token, sessionId, 'market_declared', { marketCode: preMarket });
-        if (preEntity || cfg.entities.length === 0) {
-          setEntityKey(preEntity?.name ?? UNSURE);
+        // A single-entity org (GoFundMe, Cloudera) has no real entity
+        // question — declare the only possible answer instead of asking it.
+        const resolvedEntity =
+          preEntity ?? (cfg.entities.length === 1 ? cfg.entities[0] : undefined);
+        if (resolvedEntity || cfg.entities.length === 0) {
+          setEntityKey(resolvedEntity?.name ?? UNSURE);
           logActivateEvent(token, sessionId, 'entity_declared', {
             marketCode: preMarket,
-            entityCompanyId: preEntity ? entityCompanyIdFor(preEntity, preMarket) : null,
+            entityCompanyId: resolvedEntity
+              ? entityCompanyIdFor(resolvedEntity, preMarket)
+              : null,
           });
           setStep('routes');
           setPrefilled(true);
@@ -341,9 +347,14 @@ export default function Activate() {
   const declareMarket = (code: string) => {
     setMarket(code);
     logActivateEvent(token!, sessionId, 'market_declared', { marketCode: code });
-    if (entitiesForMarket(config.entities, code).length === 0) {
-      setEntityKey(UNSURE);
-      logActivateEvent(token!, sessionId, 'entity_declared', { marketCode: code });
+    // One named entity = nothing to ask; declare it and move on.
+    const onlyEntity = config.entities.length === 1 ? config.entities[0] : undefined;
+    if (onlyEntity || entitiesForMarket(config.entities, code).length === 0) {
+      setEntityKey(onlyEntity?.name ?? UNSURE);
+      logActivateEvent(token!, sessionId, 'entity_declared', {
+        marketCode: code,
+        entityCompanyId: onlyEntity ? entityCompanyIdFor(onlyEntity, code) : null,
+      });
       setStep('profile');
     } else {
       setStep('entity');
@@ -393,7 +404,12 @@ export default function Activate() {
           <RoutesTopBar
             org={org}
             market={market}
-            entityName={selectedEntity?.name ?? null}
+            entityName={
+              // A single-brand org's only entity repeats the org name — omit it.
+              selectedEntity && selectedEntity.name !== org.display_name
+                ? selectedEntity.name
+                : null
+            }
             prefilled={prefilled}
             onChange={() => {
               setPrefilled(false);
@@ -429,7 +445,9 @@ export default function Activate() {
               org={org}
               functions={clientFunctions}
               onDone={declareProfile}
-              onBack={() => setStep('entity')}
+              // The entity step is skipped when there is at most one entity;
+              // back must skip it in the same cases it was never shown.
+              onBack={() => setStep(config.entities.length <= 1 ? 'country' : 'entity')}
               initialFunction={functionId}
               headingRef={headingRef}
             />
