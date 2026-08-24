@@ -120,7 +120,8 @@ activate_links
   id, org_id, token, label, created_by
   audience null               -- 'employee' | 'candidate' | 'alumni'
   prefill_market_code null, prefill_entity_company_id null
-  expires_at, revoked_at
+  expires_at null             -- optional hard stop; NULL (the default) = never expires
+  revoked_at null             -- the off switch, reversible: cleared = live again
 
 activate_link_events
   id, link_id
@@ -161,8 +162,18 @@ multi-client.)
 
 **Access model.** Same pattern as conversational intake: the `anon` role has no
 table access; recipients go through SECURITY DEFINER RPCs gated on the link
-token. The event-insert RPC checks revoked/expired inside the function and
-rate-caps per session and per link. Admin access via `is_admin()` RLS.
+token. Both token RPCs resolve a link with the same predicate — not revoked,
+and not past an expiry if it has one — so a link switched off goes dead for
+reads and writes together, and the event-insert RPC rate-caps per session and
+per link on top. Admin access via `is_admin()` RLS.
+
+**Links do not expire; they are switched off.** A cohort link goes into an
+onboarding pack, an email footer or a poster, where a 90-day timer nobody is
+tracking kills every copy at once and the only repair is a new token. So a link
+stays live until an admin flips it off — `revoked_at` set — and flipping it back
+on revives every copy already in circulation. `expires_at` survives for a
+genuinely time-boxed campaign (`p_expires_days` on the create RPC) and is NULL
+otherwise.
 
 ## Consent gate
 
@@ -232,6 +243,14 @@ culture — whether and what to share is entirely up to you." No sentiment
 framing, no suggested content, no examples, no rating prompts, no star imagery,
 no urgency mechanics. The page carries one honesty line: *"We don't see what you
 write — or whether you write at all."*
+
+**The tab is the client's too.** Title is the client's display name and the
+favicon is their mark (logo.dev on `logo_domain`, falling back to an uploaded
+`logo_url`) — a recipient who parks the tab for a day should see their employer
+there, not a vendor they've never heard of. `og:title` keeps the fuller
+"<Client> — where AI listens", since a bare company name says nothing in a link
+preview. Both are restored when the page unmounts, so the rest of the app keeps
+its own identity.
 
 ## Tracking and platform risk
 

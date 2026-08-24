@@ -227,12 +227,20 @@ export default function Activate() {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const mountedOnce = useRef(false);
 
+  // The tab belongs to the client, not to us: their name and their mark, so a
+  // recipient who parks the tab for a day still recognises what it is. The
+  // domain mark wins over an uploaded logo_url — logo.dev returns something
+  // square, where a client's own upload is usually a wide wordmark that scales
+  // to mush at 16px. og:title keeps the fuller phrasing; that one is read in a
+  // link preview, where a bare company name says nothing.
+  const branded = load.kind === 'ready' ? load.config.org : null;
   useMetaTags({
-    title:
-      load.kind === 'ready'
-        ? `${load.config.org.display_name} — where AI listens`
-        : 'Activate — PerceptionX',
+    title: branded ? branded.display_name : 'Activate',
+    ogTitle: branded ? `${branded.display_name} — where AI listens` : 'Activate',
     description: 'See which platforms shape AI answers about your employer in your market.',
+    favicon: branded
+      ? (branded.logo_domain ? logoSrc(branded.logo_domain, 64) : branded.logo_url)
+      : null,
   });
 
   useEffect(() => {
@@ -1385,8 +1393,8 @@ function DeadLink() {
           This link isn't active
         </h1>
         <p style={{ fontSize: 14, lineHeight: 1.55, color: 'rgba(19,39,79,.62)' }}>
-          It may have expired or been withdrawn. If you were sent it by a colleague, ask them for
-          a fresh one.
+          It may have been switched off. If you were sent it by a colleague, ask them whether
+          it's still running.
         </p>
         {/* Rendered outside <Canvas>, so the act-* stylesheet isn't mounted
             here — these styles have to be inline. */}

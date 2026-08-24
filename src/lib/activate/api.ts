@@ -425,7 +425,9 @@ export interface ActivateLink {
   prefill_entity_company_id: string | null;
   created_by: string | null;
   created_at: string;
-  expires_at: string;
+  /** Optional hard stop. Null — the default — means the link never expires. */
+  expires_at: string | null;
+  /** Set = the link is switched off. Reversible: clearing it brings it back. */
   revoked_at: string | null;
 }
 
@@ -454,13 +456,19 @@ export interface ActivateLinkStats {
   platforms: Record<string, number> | null;
 }
 
+/**
+ * Mint a link. It stays live until someone switches it off — `expiresDays` is
+ * there for a genuinely time-boxed campaign and is otherwise left unset, since
+ * a link a client has printed or put in an email footer should not die on a
+ * date nobody is tracking.
+ */
 export async function createActivateLink(params: {
   orgId: string;
   label: string;
   audience?: ActivateAudience | null;
   prefillMarketCode?: string | null;
   prefillEntityCompanyId?: string | null;
-  expiresDays?: number;
+  expiresDays?: number | null;
 }): Promise<ActivateLink> {
   const { data, error } = await rpc('admin_create_activate_link', {
     p_org_id: params.orgId,
@@ -468,7 +476,7 @@ export async function createActivateLink(params: {
     p_audience: params.audience ?? null,
     p_prefill_market_code: params.prefillMarketCode ?? null,
     p_prefill_entity_company_id: params.prefillEntityCompanyId ?? null,
-    p_expires_days: params.expiresDays ?? 90,
+    p_expires_days: params.expiresDays ?? null,
   });
   if (error) throw error;
   return data as ActivateLink;
@@ -483,11 +491,16 @@ export async function listActivateLinks(orgId: string): Promise<ActivateLink[]> 
   return (data ?? []) as ActivateLink[];
 }
 
-export async function revokeActivateLink(linkId: string): Promise<void> {
+/**
+ * Switch a link off or back on. Off is `revoked_at` set: the recipient page
+ * answers with the friendly dead-end and the event RPC stops accepting the
+ * token, both by the same predicate. Turning it back on clears the stamp, so
+ * every copy of the link already in circulation starts working again.
+ */
+export async function setActivateLinkEnabled(linkId: string, enabled: boolean): Promise<void> {
   const { error } = await table('activate_links')
-    .update({ revoked_at: new Date().toISOString() })
-    .eq('id', linkId)
-    .is('revoked_at', null);
+    .update({ revoked_at: enabled ? null : new Date().toISOString() })
+    .eq('id', linkId);
   if (error) throw error;
 }
 

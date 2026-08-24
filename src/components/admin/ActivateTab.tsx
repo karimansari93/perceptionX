@@ -1,18 +1,22 @@
 // Admin surface for Activate (link router) — spec: docs/ACTIVATE_LINK_ROUTER.md
 //  - consent gate: links are not mintable until client consent is recorded here
-//  - mint tokenized links (label + audience + optional prefills)
+//  - mint tokenized links (label + audience + optional prefills). Links do not
+//    expire — each one has an on/off switch instead, so a link already printed
+//    or sitting in an email footer can be paused and brought back on the same
+//    token rather than reminted
 //  - per-link funnel (declaration is the top; opens are bot-soft) with the
 //    k-anonymity floor enforced server-side — below 5 declared sessions the
 //    breakdowns arrive suppressed
 //  - read-only routes overview; route curation stays manual (SQL), on purpose
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Ban, Check, Copy, Link2, ShieldCheck, Trash2 } from 'lucide-react';
+import { Check, Copy, Link2, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -45,8 +49,8 @@ import {
   getActivateOrgSettings,
   listActivateLinks,
   listActivateRoutes,
-  revokeActivateLink,
   saveActivateBranding,
+  setActivateLinkEnabled,
   uploadActivateAsset,
 } from '@/lib/activate/api';
 
@@ -133,13 +137,25 @@ export const ActivateTab = () => {
     toast.success('Activate link copied');
   };
 
-  const revoke = async (link: ActivateLink) => {
+  const setEnabled = async (link: ActivateLink, enabled: boolean) => {
+    // Optimistic: the switch is the control, so it has to move on the click and
+    // not a round-trip later. refresh() reconciles, and a throw puts it back.
+    setLinks((prev) =>
+      prev.map((l) =>
+        l.id === link.id ? { ...l, revoked_at: enabled ? null : new Date().toISOString() } : l,
+      ),
+    );
     try {
-      await revokeActivateLink(link.id);
-      toast.success(`"${link.label}" revoked — the page now shows a friendly dead-end`);
-      refresh();
+      await setActivateLinkEnabled(link.id, enabled);
+      toast.success(
+        enabled
+          ? `"${link.label}" is live again — every copy of it works`
+          : `"${link.label}" is off — the page now shows a friendly dead-end`,
+      );
     } catch {
-      toast.error('Could not revoke the link');
+      toast.error(enabled ? 'Could not turn the link on' : 'Could not turn the link off');
+    } finally {
+      refresh();
     }
   };
 
@@ -233,14 +249,16 @@ export const ActivateTab = () => {
                     stats={stats[link.id]}
                     entityName={entityName}
                     onCopy={() => copyLink(link)}
-                    onRevoke={() => revoke(link)}
+                    onSetEnabled={(enabled) => setEnabled(link, enabled)}
                   />
                 ))}
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              Funnel starts at declarations — opens include email-scanner bots. Below 5 declared
-              sessions a link shows totals only (k-anonymity floor, enforced server-side).
+              Links don't expire — the switch turns one off and back on, on the same token, so a
+              link already in an email footer or an onboarding pack can be paused without
+              reminting. Funnel starts at declarations — opens include email-scanner bots. Below 5
+              declared sessions a link shows totals only (k-anonymity floor, enforced server-side).
             </p>
           </div>
 
@@ -607,16 +625,19 @@ function LinkRow({
   stats,
   entityName,
   onCopy,
-  onRevoke,
+  onSetEnabled,
 }: {
   link: ActivateLink;
   stats: ActivateLinkStats | undefined;
   entityName: Record<string, string>;
   onCopy: () => void;
-  onRevoke: () => void;
+  onSetEnabled: (enabled: boolean) => void;
 }) {
-  const expired = new Date(link.expires_at) < new Date();
-  const status = link.revoked_at ? 'revoked' : expired ? 'expired' : 'live';
+  // Links minted since the switch landed carry no expiry at all; the expired
+  // state survives only for anything minted with an explicit end date.
+  const expired = link.expires_at !== null && new Date(link.expires_at) < new Date();
+  const on = !link.revoked_at;
+  const status = !on ? 'off' : expired ? 'expired' : 'live';
   return (
     <div className="p-3.5 flex flex-wrap items-center gap-3">
       <div className="min-w-0 flex-1">
@@ -633,7 +654,7 @@ function LinkRow({
                 ? 'bg-emerald-100 text-emerald-700'
                 : status === 'expired'
                   ? 'bg-slate-100 text-slate-600'
-                  : 'bg-red-100 text-red-700'
+                  : 'bg-slate-200 text-slate-700'
             }
           >
             {status}
@@ -644,7 +665,9 @@ function LinkRow({
           {link.prefill_entity_company_id
             ? ` · ${entityName[link.prefill_entity_company_id] ?? 'entity'}`
             : ''}
-          {' · '}expires {new Date(link.expires_at).toLocaleDateString()}
+          {link.expires_at
+            ? ` · expires ${new Date(link.expires_at).toLocaleDateString()}`
+            : ' · no expiry'}
         </p>
         {stats && (
           <p className="text-xs mt-1">
@@ -682,15 +705,16 @@ function LinkRow({
           </p>
         )}
       </div>
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-2.5">
         <Button variant="ghost" size="sm" onClick={onCopy} title="Copy link">
           <Copy className="h-4 w-4" />
         </Button>
-        {status === 'live' && (
-          <Button variant="ghost" size="sm" onClick={onRevoke} title="Revoke link">
-            <Ban className="h-4 w-4 text-red-500" />
-          </Button>
-        )}
+        <Switch
+          checked={on}
+          onCheckedChange={onSetEnabled}
+          aria-label={on ? `Turn "${link.label}" off` : `Turn "${link.label}" on`}
+          title={on ? 'Turn the link off' : 'Turn the link back on'}
+        />
       </div>
     </div>
   );
@@ -846,7 +870,6 @@ function CreateLinkDialog({
   const [audience, setAudience] = useState<string>('none');
   const [prefillMarket, setPrefillMarket] = useState<string>('none');
   const [prefillEntity, setPrefillEntity] = useState<string>('none');
-  const [expiresDays, setExpiresDays] = useState('90');
   const [saving, setSaving] = useState(false);
 
   const create = async () => {
@@ -858,7 +881,6 @@ function CreateLinkDialog({
         audience: audience === 'none' ? null : (audience as ActivateAudience),
         prefillMarketCode: prefillMarket === 'none' ? null : prefillMarket,
         prefillEntityCompanyId: prefillEntity === 'none' ? null : prefillEntity,
-        expiresDays: Math.max(1, parseInt(expiresDays, 10) || 90),
       });
       setLabel('');
       setAudience('none');
@@ -897,32 +919,21 @@ function CreateLinkDialog({
               placeholder="e.g. AU commercial team"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Audience (optional)</Label>
-              <Select value={audience} onValueChange={setAudience}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Not set</SelectItem>
-                  {AUDIENCES.map((a) => (
-                    <SelectItem key={a} value={a} className="capitalize">
-                      {a}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Expires in (days)</Label>
-              <Input
-                type="number"
-                min={1}
-                value={expiresDays}
-                onChange={(e) => setExpiresDays(e.target.value)}
-              />
-            </div>
+          <div className="space-y-1.5">
+            <Label>Audience (optional)</Label>
+            <Select value={audience} onValueChange={setAudience}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Not set</SelectItem>
+                {AUDIENCES.map((a) => (
+                  <SelectItem key={a} value={a} className="capitalize">
+                    {a}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
