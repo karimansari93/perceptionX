@@ -1019,69 +1019,36 @@ function ProfileStep({
   initialFunction: string | null;
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
-  const [fn, setFn] = useState<string | null>(initialFunction);
-  const [query, setQuery] = useState('');
-
-  const q = query.trim().toLowerCase();
-  const matches = q ? functions.filter((o) => o.label.toLowerCase().includes(q)) : functions;
-  // Nobody's job fits a fixed list, so whatever they type is offered back as
-  // its own option. Capped to the length the event RPC accepts.
-  const custom = query.trim().slice(0, 60);
-  const canUseCustom = custom.length > 1 && !functions.some((o) => o.label.toLowerCase() === q);
-  const selectedLabel = functions.find((o) => o.id === fn)?.label ?? (fn || null);
-
+  // One tap answers and moves on, like the entity step — this is the only
+  // optional question in the flow, and asking someone to pick and then confirm
+  // is a toll on an answer we said they could skip. Coming back from the next
+  // step, their previous answer is still marked.
   return (
     <>
       <StepHeader org={org} step={3} onBack={onBack} />
       <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
         What kind of work do you do?
       </h2>
+      <p className="act-hint">It only changes the order things appear in.</p>
 
-      <label className="act-search w-full">
-        <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search or type your own"
-          aria-label="Search roles, or type your own"
-        />
-      </label>
-
-      <div
-        className="act-scroll flex w-full flex-col gap-2 overflow-y-auto"
-        role="listbox"
-        aria-label="Kinds of work"
-      >
-        {canUseCustom && (
-          <button
-            onClick={() => setFn(custom)}
-            className={fn === custom ? 'act-pill-solid' : 'act-pill-ghost'}
-            role="option"
-            aria-selected={fn === custom}
-          >
-            <span className="flex-1 text-left">Use “{custom}”</span>
-            {fn === custom && <Check className="h-4 w-4 shrink-0" />}
-          </button>
-        )}
-        {matches.map((o) => (
+      {/* Chips size to their label and wrap where they land: five short ones on
+          a row, one long one on its own. Even rows would mean padding every
+          label out to the longest, which reads as a form. */}
+      <div className="act-chips" role="group" aria-label="Kinds of work">
+        {functions.map((o) => (
           <button
             key={o.id}
-            onClick={() => setFn(fn === o.id ? null : o.id)}
-            className={fn === o.id ? 'act-pill-solid' : 'act-pill-ghost'}
-            role="option"
-            aria-selected={fn === o.id}
+            onClick={() => onDone(o.id)}
+            className="act-chip"
+            aria-current={o.id === initialFunction || undefined}
           >
-            <span className="flex-1 text-left">{o.label}</span>
-            {fn === o.id && <Check className="h-4 w-4 shrink-0" />}
+            {o.label}
           </button>
         ))}
       </div>
 
-      {/* Not the last step — the willingness question follows, so this can't
-          promise the payoff. */}
-      <button onClick={() => onDone(fn)} className="act-primary-btn mt-2">
-        {selectedLabel ? 'Next' : 'Skip'}
-        <ArrowRight size={16} aria-hidden />
+      <button onClick={() => onDone(null)} className="act-skip">
+        Skip this
       </button>
     </>
   );
@@ -1522,6 +1489,34 @@ const activateCss = `
   transition: background 180ms; cursor: pointer;
 }
 .act-pill-ghost:hover { background: color-mix(in srgb, var(--activate-on) 22%, transparent); }
+
+/* Function chips — one tap answers, so they are sized to their label and wrap
+   where they land rather than filling a column. */
+.act-chips {
+  display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 7px; width: 100%;
+}
+.act-chip {
+  display: inline-flex; align-items: center; min-height: 36px;
+  padding: 0 13px; border-radius: 999px; text-align: center;
+  background: color-mix(in srgb, var(--activate-on) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--activate-on) 30%, transparent);
+  font-size: 13px; font-weight: 500; line-height: 1.25; color: var(--activate-on);
+  transition: background 180ms; cursor: pointer;
+}
+.act-chip:hover { background: color-mix(in srgb, var(--activate-on) 22%, transparent); }
+/* Their answer from last time, if they stepped back to change it. */
+.act-chip[aria-current] {
+  background: #fff; border-color: transparent; color: #13274F; font-weight: 600;
+  box-shadow: 0 6px 16px rgba(0,0,0,.14);
+}
+.act-skip {
+  padding: 4px; font-size: 14px; font-weight: 500; cursor: pointer;
+  color: color-mix(in srgb, var(--activate-on) 68%, transparent);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.act-skip:hover { color: var(--activate-on); }
+
 .act-scroll { max-height: 184px; }
 .act-search-hint {
   font-size: 13px; text-align: center; padding: 6px 0;
