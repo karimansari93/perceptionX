@@ -19,14 +19,31 @@
     <meta name="googlebot" content="index, follow" />
     <link rel="canonical" href="https://app.perceptionx.ai" />
 
+    <!--
+      Every tag below is an anchor as well as a default: the /onboarding and
+      /activate variants are built from this file by string replacement (see
+      onboardingHtml/activateHtml in vite.config.ts) and rewritten again per
+      token at the edge. A tag that isn't here can't be personalized, which is
+      why og:url, the twitter title/description pair and the image dimensions
+      are spelled out rather than left to the crawler to infer.
+    -->
     <meta property="og:title" content="PerceptionX Dashboard — Enterprise AI Employer Reputation Management" />
     <meta property="og:description" content="The PerceptionX dashboard for enterprise talent teams. Sign in to see how AI is answering questions about your employer brand." />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="/logos/perceptionx-og.png" />
+    <meta property="og:site_name" content="PerceptionX" />
+    <meta property="og:url" content="https://app.perceptionx.ai" />
+    <!-- Absolute: WhatsApp and LinkedIn resolve og:image inconsistently when
+         it's a root-relative path, and drop the card entirely when they fail. -->
+    <meta property="og:image" content="https://app.perceptionx.ai/logos/perceptionx-og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="PerceptionX" />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@tryperceptionx" />
-    <meta name="twitter:image" content="/logos/perceptionx-og.png" />
+    <meta name="twitter:title" content="PerceptionX Dashboard — Enterprise AI Employer Reputation Management" />
+    <meta name="twitter:description" content="The PerceptionX dashboard for enterprise talent teams. Sign in to see how AI is answering questions about your employer brand." />
+    <meta name="twitter:image" content="https://app.perceptionx.ai/logos/perceptionx-og.png" />
 
     <!-- Geologica and Plus Jakarta Sans Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">

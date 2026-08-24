@@ -247,10 +247,71 @@ write — or whether you write at all."*
 **The tab is the client's too.** Title is the client's display name and the
 favicon is their mark (logo.dev on `logo_domain`, falling back to an uploaded
 `logo_url`) — a recipient who parks the tab for a day should see their employer
-there, not a vendor they've never heard of. `og:title` keeps the fuller
-"<Client> — where AI listens", since a bare company name says nothing in a link
-preview. Both are restored when the page unmounts, so the rest of the app keeps
-its own identity.
+there, not a vendor they've never heard of. Both are restored when the page
+unmounts, so the rest of the app keeps its own identity.
+
+## The link preview is the first screen
+
+Nobody arrives at an Activate link by typing it. It gets forwarded into a
+WhatsApp thread, pasted into a Teams channel, dropped in an email footer — and
+the unfurled card is what a recipient judges before deciding whether to tap. It
+is part of the page, not metadata about it.
+
+Until 2026-08-24 that card was the dashboard's: `/activate/*` fell through the
+SPA rewrite to `index.html`, so crawlers were served *"PerceptionX Dashboard —
+Enterprise AI Employer Reputation Management. Sign in to see how AI is answering
+questions about your employer brand"* over a screenshot of our product. An
+employee got an unfamiliar vendor's login page from their own HR team. The
+client-branded `useMetaTags` call on the page never helped: WhatsApp, Slack,
+LinkedIn and iMessage do not execute JavaScript.
+
+Three layers, each a fallback for the one above:
+
+| Layer | What it does | When it's what you see |
+|---|---|---|
+| `netlify/edge-functions/activate-og.ts` + `activate-meta.ts` | Per-token copy and a card drawn in the client's colours with their mark | Normal case |
+| `dist/activate.html` (built in `vite.config.ts`, routed in `public/_redirects`) | Unbranded Activate copy + the baked card in `public/logos/activate-og.png` | Unknown or switched-off token, Supabase unreachable, no edge functions |
+| `useMetaTags` in `src/pages/Activate.tsx` | Same copy again, client-side | Browsers and JS-executing crawlers |
+
+**The conversation is the subject, not the mechanism.** *"Join the online
+conversation about <Client>"* / *"See where people are already talking about
+working at <Client>, and where your experience would count."* The conversation
+is happening with or without the recipient — that is both true and the only
+honest reason to tap. Naming AI in the headline puts our machinery at the centre
+of a page that belongs to the client; it earns its place in the description, as
+the payoff. This is also the register the clients write in themselves: Netflix's
+own `blurb` reads *"Join the conversation online and help us build our employer
+brand."*
+
+The preview stays as non-directive as the page: it says where the conversation
+is, never that the recipient should join it or what to say if they do.
+
+**The card is the client's, down to the eyebrow.** Canvas is their
+`primary_color`, highlight their `accent_color`, mark their logo in the same
+white disc the welcome screen uses, and the line above the headline is their own
+`tagline`. Taglines that won't sit on one line (CSL's is a 130-character mission
+statement) are dropped rather than truncated — the card is fine without one, and
+no truncation of a sentence that long reads as anything but broken.
+
+Nothing on the card is ours: no mark, no wordmark, no eyebrow. The unfurl prints
+`app.perceptionx.ai` under it either way, so provenance costs nothing, and an
+employee opening a link from their own employer should see their employer.
+
+Two constraints that are easy to get wrong:
+
+- **Previews read through `activate_preview_by_token`, never
+  `activate_get_by_token`.** The latter stamps an `open` event. An unfurl is not
+  somebody opening a link, and every WhatsApp forward would otherwise land at
+  the top of the funnel as a phantom open — the same trap `intake_preview_by_token`
+  exists to avoid on the onboarding side.
+- **Activate URLs are `noindex, nofollow`.** They carry a link token; a token in
+  a search result is a link nobody chose to hand out. `robots.txt` still allows
+  the preview crawlers, which respect a `Disallow` and would otherwise render
+  nothing at all.
+
+Regenerate the baked fallback card with
+`node scripts/build-activate-og-fallback.mjs` (see the header for its two
+ad-hoc deps).
 
 ## Tracking and platform risk
 

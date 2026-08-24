@@ -11,5 +11,15 @@
 # when the crawler never executes JS. Generated at build time in vite.config.ts.
 /onboarding/*  /onboarding.html  200
 
+# Activate links get activate.html for the same reason — the static floor under
+# netlify/edge-functions/activate-meta.ts, which personalizes it per token.
+/activate/*  /activate.html  200
+
+# The per-token share card is drawn by netlify/edge-functions/activate-og.ts,
+# which never calls next(); this rule only matters if edge functions aren't
+# running at all, and exists so that case degrades to the baked card instead of
+# serving index.html under an image/* expectation and unfurling as a blank box.
+/activate-og/*  /logos/activate-og.png  200
+
 # SPA fallback for client-side routes.
 /*    /index.html   200
