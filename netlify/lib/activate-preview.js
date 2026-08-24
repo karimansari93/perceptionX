@@ -6,6 +6,8 @@
 // link — letting crawlers write to activate_link_events would put phantom
 // opens at the top of every funnel in the admin.
 
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from './supabase-public.js';
+
 const RPC_TIMEOUT_MS = 2500;
 const LOGO_TIMEOUT_MS = 2500;
 
@@ -56,8 +58,11 @@ export function escapeHtml(s) {
  * failure, never a value — 'no-env' says a variable is missing, not what it is.
  */
 export async function activatePreview(token) {
-  const supabaseUrl = env('VITE_SUPABASE_URL');
-  const key = anonKey();
+  // The committed publishable credentials are the floor; env vars win when the
+  // runtime can actually see them. 'no-env' is kept as a guard but should now
+  // be unreachable.
+  const supabaseUrl = env('VITE_SUPABASE_URL') ?? SUPABASE_URL;
+  const key = anonKey() ?? SUPABASE_ANON_KEY;
   if (!token) return { branding: null, reason: 'no-token' };
   // The trap this caught in production: .env is a committed file, which Vite
   // reads at build time, so the app works while the edge runtime — which only
