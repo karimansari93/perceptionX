@@ -3,36 +3,85 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import fs from "fs";
 
-// Emits dist/onboarding.html — index.html with onboarding-specific meta tags.
-// Netlify serves it for /onboarding/* (see public/_redirects) so link-preview
-// crawlers that never execute JS still get project-setup copy instead of the
-// sign-in copy. Keep the strings in sync with the generic fallback in
-// src/pages/Onboarding.tsx; the company-name personalization there still
-// applies on top for crawlers (and browsers) that run JS.
-function onboardingHtml(): Plugin {
-  const title = "Project Setup — PerceptionX";
-  const description =
-    "You've been invited to set up your company's PerceptionX project. Complete your brief to see how AI describes your employer brand.";
+// Emits the static per-route HTML variants: index.html with different meta
+// tags, served by Netlify for /onboarding/* and /activate/* (see
+// public/_redirects) so a link-preview crawler that never executes JS gets copy
+// about the page it was actually sent, rather than the dashboard sign-in copy.
+//
+// These are the floor, not the finished preview. The edge functions in
+// netlify/edge-functions personalize them per token on top — the client's name
+// on an Activate link, the company name on an onboarding invite — and fall back
+// to exactly these strings whenever that lookup can't run. Keep them in sync
+// with the generic fallbacks in src/pages/Onboarding.tsx and src/pages/Activate.tsx.
+interface MetaVariant {
+  file: string;
+  title: string;
+  description: string;
+  image?: string;
+  imageAlt?: string;
+  robots?: string;
+}
+
+const META_VARIANTS: MetaVariant[] = [
+  {
+    file: "onboarding.html",
+    title: "Project Setup — PerceptionX",
+    description:
+      "You've been invited to set up your company's PerceptionX project. Complete your brief to see how AI describes your employer brand.",
+  },
+  {
+    file: "activate.html",
+    // Invitation framing: this preview is read in a WhatsApp thread or an email
+    // forwarded by the recipient's own employer, and has to answer "why am I
+    // being sent this" before anyone taps. The page beyond it stays
+    // non-directive — the preview just says who is asking.
+    title: "Add your voice to what AI says about your employer",
+    description:
+      "Your talent team asked us to show you where AI is getting its answers about working here.",
+    image: "https://app.perceptionx.ai/logos/activate-og.png",
+    imageAlt: "PerceptionX Activate",
+    // Activate URLs carry a link token. They are meant to be shared, never
+    // indexed — a token in a search result is a link nobody chose to hand out.
+    robots: "noindex, nofollow",
+  },
+];
+
+function applyMeta(html: string, variant: MetaVariant): string {
+  const set = (source: string, pattern: RegExp, value: string) =>
+    source.replace(pattern, `$1${value}$2`);
+
+  let out = html.replace(/<title>[^<]*<\/title>/, `<title>${variant.title}</title>`);
+  out = set(out, /(<meta name="description" content=")[^"]*(")/, variant.description);
+  out = set(out, /(<meta property="og:title" content=")[^"]*(")/, variant.title);
+  out = set(out, /(<meta property="og:description" content=")[^"]*(")/, variant.description);
+  out = set(out, /(<meta name="twitter:title" content=")[^"]*(")/, variant.title);
+  out = set(out, /(<meta name="twitter:description" content=")[^"]*(")/, variant.description);
+  if (variant.image) {
+    out = set(out, /(<meta property="og:image" content=")[^"]*(")/, variant.image);
+    out = set(out, /(<meta name="twitter:image" content=")[^"]*(")/, variant.image);
+  }
+  if (variant.imageAlt) {
+    out = set(out, /(<meta property="og:image:alt" content=")[^"]*(")/, variant.imageAlt);
+  }
+  if (variant.robots) {
+    out = set(out, /(<meta name="robots" content=")[^"]*(")/, variant.robots);
+    out = set(out, /(<meta name="googlebot" content=")[^"]*(")/, variant.robots);
+  }
+  return out;
+}
+
+function metaVariantHtml(): Plugin {
   return {
-    name: "onboarding-html",
+    name: "meta-variant-html",
     apply: "build",
     closeBundle() {
       const distDir = path.resolve(__dirname, "dist");
       const indexPath = path.join(distDir, "index.html");
       if (!fs.existsSync(indexPath)) return;
-      const html = fs
-        .readFileSync(indexPath, "utf8")
-        .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
-        .replace(
-          /(<meta name="description" content=")[^"]*(")/,
-          `$1${description}$2`,
-        )
-        .replace(/(<meta property="og:title" content=")[^"]*(")/, `$1${title}$2`)
-        .replace(
-          /(<meta property="og:description" content=")[^"]*(")/,
-          `$1${description}$2`,
-        );
-      fs.writeFileSync(path.join(distDir, "onboarding.html"), html);
+      const index = fs.readFileSync(indexPath, "utf8");
+      for (const variant of META_VARIANTS) {
+        fs.writeFileSync(path.join(distDir, variant.file), applyMeta(index, variant));
+      }
     },
   };
 }
@@ -48,7 +97,7 @@ export default defineConfig(({ mode }) => ({
     // the default for local dev.
     port: process.env.PORT ? Number(process.env.PORT) : 8080,
   },
-  plugins: [react(), onboardingHtml()],
+  plugins: [react(), metaVariantHtml()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

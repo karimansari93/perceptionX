@@ -231,13 +231,22 @@ export default function Activate() {
   // recipient who parks the tab for a day still recognises what it is. The
   // domain mark wins over an uploaded logo_url — logo.dev returns something
   // square, where a client's own upload is usually a wide wordmark that scales
-  // to mush at 16px. og:title keeps the fuller phrasing; that one is read in a
-  // link preview, where a bare company name says nothing.
+  // to mush at 16px.
+  //
+  // og:title and og:description are a different job from the tab, and are set
+  // here only for the crawlers that execute JavaScript. The ones that matter —
+  // WhatsApp, Slack, LinkedIn, iMessage — never do, and are served the same
+  // copy by netlify/edge-functions/activate-meta.ts. Keep the two in sync;
+  // previewCopy() in netlify/lib/activate-card.js is the canonical wording.
   const branded = load.kind === 'ready' ? load.config.org : null;
   useMetaTags({
     title: branded ? branded.display_name : 'Activate',
-    ogTitle: branded ? `${branded.display_name} — where AI listens` : 'Activate',
-    description: 'See which platforms shape AI answers about your employer in your market.',
+    ogTitle: branded
+      ? `${branded.display_name} — add your voice to what AI says about us`
+      : 'Add your voice to what AI says about your employer',
+    description: branded
+      ? `The ${branded.display_name} talent team asked us to show you where AI is getting its answers about working here.`
+      : 'Your talent team asked us to show you where AI is getting its answers about working here.',
     favicon: branded
       ? (branded.logo_domain ? logoSrc(branded.logo_domain, 64) : branded.logo_url)
       : null,

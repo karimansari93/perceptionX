@@ -247,10 +247,54 @@ write — or whether you write at all."*
 **The tab is the client's too.** Title is the client's display name and the
 favicon is their mark (logo.dev on `logo_domain`, falling back to an uploaded
 `logo_url`) — a recipient who parks the tab for a day should see their employer
-there, not a vendor they've never heard of. `og:title` keeps the fuller
-"<Client> — where AI listens", since a bare company name says nothing in a link
-preview. Both are restored when the page unmounts, so the rest of the app keeps
-its own identity.
+there, not a vendor they've never heard of. Both are restored when the page
+unmounts, so the rest of the app keeps its own identity.
+
+## The link preview is the first screen
+
+Nobody arrives at an Activate link by typing it. It gets forwarded into a
+WhatsApp thread, pasted into a Teams channel, dropped in an email footer — and
+the unfurled card is what a recipient judges before deciding whether to tap. It
+is part of the page, not metadata about it.
+
+Until 2026-08-24 that card was the dashboard's: `/activate/*` fell through the
+SPA rewrite to `index.html`, so crawlers were served *"PerceptionX Dashboard —
+Enterprise AI Employer Reputation Management. Sign in to see how AI is answering
+questions about your employer brand"* over a screenshot of our product. An
+employee got an unfamiliar vendor's login page from their own HR team. The
+client-branded `useMetaTags` call on the page never helped: WhatsApp, Slack,
+LinkedIn and iMessage do not execute JavaScript.
+
+Three layers, each a fallback for the one above:
+
+| Layer | What it does | When it's what you see |
+|---|---|---|
+| `netlify/edge-functions/activate-og.ts` + `activate-meta.ts` | Per-token copy and a card drawn in the client's colours with their mark | Normal case |
+| `dist/activate.html` (built in `vite.config.ts`, routed in `public/_redirects`) | Unbranded Activate copy + the baked card in `public/logos/activate-og.png` | Unknown or switched-off token, Supabase unreachable, no edge functions |
+| `useMetaTags` in `src/pages/Activate.tsx` | Same copy again, client-side | Browsers and JS-executing crawlers |
+
+**Copy is invitation-framed**, which is the one place Activate names the sender:
+*"<Client> — add your voice to what AI says about us"* / *"The <Client> talent
+team asked us to show you where AI is getting its answers about working here."*
+The preview has to answer "why am I being sent this" before anyone taps, and the
+honest answer is that their employer asked. Everything past the tap stays
+non-directive — the preview says who is asking, never what to write.
+
+Two constraints that are easy to get wrong:
+
+- **Previews read through `activate_preview_by_token`, never
+  `activate_get_by_token`.** The latter stamps an `open` event. An unfurl is not
+  somebody opening a link, and every WhatsApp forward would otherwise land at
+  the top of the funnel as a phantom open — the same trap `intake_preview_by_token`
+  exists to avoid on the onboarding side.
+- **Activate URLs are `noindex, nofollow`.** They carry a link token; a token in
+  a search result is a link nobody chose to hand out. `robots.txt` still allows
+  the preview crawlers, which respect a `Disallow` and would otherwise render
+  nothing at all.
+
+Regenerate the baked fallback card with
+`node scripts/build-activate-og-fallback.mjs` (see the header for its two
+ad-hoc deps).
 
 ## Tracking and platform risk
 

@@ -29,3 +29,10 @@
   for = "/onboarding.html"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
+
+# activate.html is the same story: index.html with Activate meta tags, rewritten
+# per token at the edge. Same hashed chunks, same no-cache rule.
+[[headers]]
+  for = "/activate.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
