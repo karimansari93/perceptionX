@@ -43,16 +43,26 @@ export function escapeHtml(s) {
 }
 
 /**
- * Branding for a live link, or null. Null covers every dead end there is —
+ * `{ branding, reason }`. Branding is null for every dead end there is —
  * unknown token, link switched off, Supabase unreachable, no env — and every
- * caller treats it the same way: fall back to the unbranded preview. A revoked
- * link deliberately gets no branding: the page behind it is a dead end, and its
+ * caller falls back to the unbranded preview the same way. A revoked link
+ * deliberately gets no branding: the page behind it is a dead end, and its
  * preview should not still be advertising the client.
+ *
+ * `reason` exists because those dead ends are indistinguishable from outside:
+ * a preview that quietly degrades looks identical whether the token is wrong or
+ * the deploy has no credentials. Both edge functions echo it as the
+ * x-activate-preview header, so `curl -I` says which one it is. It names the
+ * failure, never a value — 'no-env' says a variable is missing, not what it is.
  */
 export async function activatePreview(token) {
   const supabaseUrl = env('VITE_SUPABASE_URL');
   const key = anonKey();
-  if (!supabaseUrl || !key || !token) return null;
+  if (!token) return { branding: null, reason: 'no-token' };
+  // The trap this caught in production: .env is a committed file, which Vite
+  // reads at build time, so the app works while the edge runtime — which only
+  // sees real environment variables — has nothing to authenticate with.
+  if (!supabaseUrl || !key) return { branding: null, reason: 'no-env' };
 
   try {
     const res = await fetch(`${supabaseUrl}/rest/v1/rpc/activate_preview_by_token`, {
@@ -65,24 +75,27 @@ export async function activatePreview(token) {
       body: JSON.stringify({ p_token: token }),
       signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { branding: null, reason: `http-${res.status}` };
     const data = await res.json();
-    if (!data || data.error) return null;
+    if (!data || data.error) return { branding: null, reason: 'not-found' };
     const displayName =
       typeof data.display_name === 'string' && data.display_name.trim()
         ? data.display_name.trim()
         : null;
-    if (!displayName) return null;
+    if (!displayName) return { branding: null, reason: 'not-found' };
     return {
+      reason: 'ok',
+      branding: {
       display_name: displayName,
       tagline: typeof data.tagline === 'string' ? data.tagline : null,
       logo_url: data.logo_url ?? null,
       logo_domain: data.logo_domain ?? null,
       primary_color: data.primary_color || '#13274F',
       accent_color: data.accent_color || '#F59E0B',
+      },
     };
   } catch {
-    return null;
+    return { branding: null, reason: 'fetch-failed' };
   }
 }
 

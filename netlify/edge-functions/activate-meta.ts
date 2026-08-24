@@ -19,6 +19,17 @@ import { activatePreview, escapeHtml, tokenFromPath } from "../lib/activate-prev
 const set = (html: string, pattern: RegExp, value: string) =>
   html.replace(pattern, `$1${value}$2`);
 
+/**
+ * Tag the generic response with why it stayed generic. A degraded preview is
+ * indistinguishable from a correct one from outside — this is what makes
+ * `curl -I` able to tell an unknown token from a deploy with no credentials.
+ */
+function withReason(response: Response, reason: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set("x-activate-preview", reason);
+  return new Response(response.body, { status: response.status, headers });
+}
+
 export default async (request: Request, context: { next: () => Promise<Response> }) => {
   const response = await context.next();
 
@@ -29,13 +40,14 @@ export default async (request: Request, context: { next: () => Promise<Response>
   const token = tokenFromPath(request.url);
   if (!token) return response;
 
-  let branding: Awaited<ReturnType<typeof activatePreview>> = null;
+  let branding: Awaited<ReturnType<typeof activatePreview>>["branding"] = null;
+  let reason = "error";
   try {
-    branding = await activatePreview(token);
+    ({ branding, reason } = await activatePreview(token));
   } catch {
-    return response;
+    return withReason(response, "error");
   }
-  if (!branding) return response;
+  if (!branding) return withReason(response, reason);
 
   const name = escapeHtml(branding.display_name);
   const { title, description } = previewCopy(name);
@@ -70,6 +82,7 @@ export default async (request: Request, context: { next: () => Promise<Response>
   // shared cache can't cross links, but the document still points at hashed
   // chunks and must never go stale.
   headers.set("cache-control", "public, max-age=0, must-revalidate");
+  headers.set("x-activate-preview", "ok");
   return new Response(html, { status: response.status, headers });
 };
 
