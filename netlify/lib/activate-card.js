@@ -42,32 +42,52 @@ export function initialsFor(displayName) {
     .toUpperCase();
 }
 
-/** The line on the card itself. Names the employer, states what the page is. */
+/** The line on the card itself. */
 export function cardHeadline(displayName) {
   return displayName
-    ? `Where AI learns about working at ${displayName}`
-    : 'Where AI learns about working here';
+    ? `Join the online conversation about ${displayName}`
+    : 'Join the online conversation about where you work';
+}
+
+/**
+ * The client's own tagline, above the headline — but only when it is a line.
+ *
+ * Taglines in activate_branding range from "A culture evolving together." to a
+ * 130-character mission statement, and there is no truncation of the second
+ * kind that doesn't read as broken. Anything that won't sit on one line is
+ * dropped, and the card is fine without it.
+ */
+const EYEBROW_MAX = 60;
+export function cardEyebrow(tagline) {
+  const text = String(tagline ?? '').trim();
+  return text && text.length <= EYEBROW_MAX ? text : null;
 }
 
 /**
  * Title and description for the link preview.
  *
- * Invitation framing: the recipient is getting this from their own employer's
- * talent team, forwarded into a WhatsApp thread or an email, and the preview
- * has to answer "why am I being sent this" before they will tap. Naming the
- * team who sent it does that; the page beyond it stays non-directive.
+ * The conversation is the subject, and it is already happening with or without
+ * the recipient — which is both true and the only honest reason to tap. That
+ * framing keeps the employer, not us, at the centre of the sentence: the
+ * mechanism (AI reading review sites) is the payoff in the description, never
+ * the headline. It is also the register the clients write in themselves —
+ * Netflix's own blurb in activate_branding reads "Join the conversation online
+ * and help us build our employer brand."
+ *
+ * Non-directive throughout, like the page: it says where the conversation is,
+ * never that the recipient should join it or what to say if they do.
  */
 export function previewCopy(displayName) {
   if (!displayName) {
     return {
-      title: 'Add your voice to what AI says about your employer',
+      title: 'Join the online conversation about where you work',
       description:
-        'Your talent team asked us to show you where AI is getting its answers about working here.',
+        'See where people are already talking about working there, and where your experience would count.',
     };
   }
   return {
-    title: `${displayName} — add your voice to what AI says about us`,
-    description: `The ${displayName} talent team asked us to show you where AI is getting its answers about working here.`,
+    title: `Join the online conversation about ${displayName}`,
+    description: `See where people are already talking about working at ${displayName}, and where your experience would count.`,
   };
 }
 
@@ -85,11 +105,12 @@ function headlineSize(text) {
  * keeps satori off the network, so a slow or dead logo host costs nothing at
  * crawl time and simply falls through to initials.
  */
-export function buildActivateCard({ displayName, primary, accent, logo }) {
+export function buildActivateCard({ displayName, tagline, primary, accent, logo }) {
   const bg = primary || '#13274F';
   const ink = onColor(bg);
   const highlight = accent || ink;
   const headline = cardHeadline(displayName);
+  const eyebrow = cardEyebrow(tagline);
   const initials = initialsFor(displayName);
 
   const mark = logo
@@ -159,21 +180,27 @@ export function buildActivateCard({ displayName, primary, accent, logo }) {
           props: {
             style: { display: 'flex', flexDirection: 'column' },
             children: [
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    display: 'flex',
-                    fontFamily: 'Plus Jakarta Sans',
-                    fontWeight: 600,
-                    fontSize: 22,
-                    letterSpacing: 3,
-                    color: tint(ink, 0.66),
-                    marginBottom: 18,
-                  },
-                  children: 'PERCEPTIONX ACTIVATE',
-                },
-              },
+              // The client's own line, when they have one. Ours used to sit
+              // here; between this and the footer, only one of us should be
+              // introducing a page that belongs to them.
+              ...(eyebrow
+                ? [
+                    {
+                      type: 'div',
+                      props: {
+                        style: {
+                          display: 'flex',
+                          fontFamily: 'Plus Jakarta Sans',
+                          fontWeight: 600,
+                          fontSize: 26,
+                          color: tint(ink, 0.66),
+                          marginBottom: 20,
+                        },
+                        children: eyebrow,
+                      },
+                    },
+                  ]
+                : []),
               {
                 type: 'div',
                 props: {

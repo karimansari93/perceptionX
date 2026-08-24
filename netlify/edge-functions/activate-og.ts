@@ -71,6 +71,7 @@ export default async (request: Request) => {
 
     const card = buildActivateCard({
       displayName: branding?.display_name ?? null,
+      tagline: branding?.tagline ?? null,
       primary: branding?.primary_color ?? "#13274F",
       accent: branding?.accent_color ?? "#DB5E89",
       logo,

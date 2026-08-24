@@ -242,11 +242,11 @@ export default function Activate() {
   useMetaTags({
     title: branded ? branded.display_name : 'Activate',
     ogTitle: branded
-      ? `${branded.display_name} — add your voice to what AI says about us`
-      : 'Add your voice to what AI says about your employer',
+      ? `Join the online conversation about ${branded.display_name}`
+      : 'Join the online conversation about where you work',
     description: branded
-      ? `The ${branded.display_name} talent team asked us to show you where AI is getting its answers about working here.`
-      : 'Your talent team asked us to show you where AI is getting its answers about working here.',
+      ? `See where people are already talking about working at ${branded.display_name}, and where your experience would count.`
+      : 'See where people are already talking about working there, and where your experience would count.',
     favicon: branded
       ? (branded.logo_domain ? logoSrc(branded.logo_domain, 64) : branded.logo_url)
       : null,

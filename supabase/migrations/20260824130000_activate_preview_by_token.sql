@@ -26,6 +26,8 @@ as $$
     (
       select jsonb_build_object(
         'display_name', coalesce(b.display_name, o.name),
+        -- The client's own line, for the share card's eyebrow.
+        'tagline', b.tagline,
         'logo_url', coalesce(b.logo_url, o.logo_url),
         'logo_domain', b.logo_domain,
         'primary_color', coalesce(b.primary_color, '#13274F'),

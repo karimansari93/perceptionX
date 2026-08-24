@@ -75,6 +75,7 @@ export async function activatePreview(token) {
     if (!displayName) return null;
     return {
       display_name: displayName,
+      tagline: typeof data.tagline === 'string' ? data.tagline : null,
       logo_url: data.logo_url ?? null,
       logo_domain: data.logo_domain ?? null,
       primary_color: data.primary_color || '#13274F',

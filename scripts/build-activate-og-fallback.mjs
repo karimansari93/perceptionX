@@ -100,6 +100,7 @@ async function main() {
   const svg = await satori(
     buildActivateCard({
       displayName: null,
+      tagline: null,
       // PerceptionX nightsky/pink, so an unbranded fallback still reads as ours.
       primary: '#13274F',
       accent: '#DB5E89',

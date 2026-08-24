@@ -31,13 +31,14 @@ const META_VARIANTS: MetaVariant[] = [
   },
   {
     file: "activate.html",
-    // Invitation framing: this preview is read in a WhatsApp thread or an email
-    // forwarded by the recipient's own employer, and has to answer "why am I
-    // being sent this" before anyone taps. The page beyond it stays
-    // non-directive — the preview just says who is asking.
-    title: "Add your voice to what AI says about your employer",
+    // The conversation is the subject, and it is already happening — which is
+    // both true and the only honest reason to tap a link forwarded into a
+    // WhatsApp thread. Non-directive like the page: it says where the
+    // conversation is, never that you should join it. Canonical wording lives
+    // in previewCopy() in netlify/lib/activate-card.js.
+    title: "Join the online conversation about where you work",
     description:
-      "Your talent team asked us to show you where AI is getting its answers about working here.",
+      "See where people are already talking about working there, and where your experience would count.",
     image: "https://app.perceptionx.ai/logos/activate-og.png",
     imageAlt: "PerceptionX Activate",
     // Activate URLs carry a link token. They are meant to be shared, never

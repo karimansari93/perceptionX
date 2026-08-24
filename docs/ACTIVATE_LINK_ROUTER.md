@@ -273,12 +273,27 @@ Three layers, each a fallback for the one above:
 | `dist/activate.html` (built in `vite.config.ts`, routed in `public/_redirects`) | Unbranded Activate copy + the baked card in `public/logos/activate-og.png` | Unknown or switched-off token, Supabase unreachable, no edge functions |
 | `useMetaTags` in `src/pages/Activate.tsx` | Same copy again, client-side | Browsers and JS-executing crawlers |
 
-**Copy is invitation-framed**, which is the one place Activate names the sender:
-*"<Client> — add your voice to what AI says about us"* / *"The <Client> talent
-team asked us to show you where AI is getting its answers about working here."*
-The preview has to answer "why am I being sent this" before anyone taps, and the
-honest answer is that their employer asked. Everything past the tap stays
-non-directive — the preview says who is asking, never what to write.
+**The conversation is the subject, not the mechanism.** *"Join the online
+conversation about <Client>"* / *"See where people are already talking about
+working at <Client>, and where your experience would count."* The conversation
+is happening with or without the recipient — that is both true and the only
+honest reason to tap. Naming AI in the headline puts our machinery at the centre
+of a page that belongs to the client; it earns its place in the description, as
+the payoff. This is also the register the clients write in themselves: Netflix's
+own `blurb` reads *"Join the conversation online and help us build our employer
+brand."*
+
+The preview stays as non-directive as the page: it says where the conversation
+is, never that the recipient should join it or what to say if they do.
+
+**The card is the client's, down to the eyebrow.** Canvas is their
+`primary_color`, highlight their `accent_color`, mark their logo in the same
+white disc the welcome screen uses, and the line above the headline is their own
+`tagline`. Taglines that won't sit on one line (CSL's is a 130-character mission
+statement) are dropped rather than truncated — the card is fine without one, and
+no truncation of a sentence that long reads as anything but broken. Provenance is
+one line, `perceptionx.ai` in the footer; a card introducing someone else's page
+should not say our name twice.
 
 Two constraints that are easy to get wrong:
 
