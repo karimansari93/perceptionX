@@ -97,6 +97,7 @@ async function main() {
   // No employer name means no initials to fall back on, so the disc carries
   // our own mark rather than sitting empty.
   const mark = readFileSync(path.join(root, 'public/logos/P-Icon-Dark-medium.png'));
+  const markAspect = mark.readUInt32BE(16) / mark.readUInt32BE(20);
   const svg = await satori(
     buildActivateCard({
       displayName: null,
@@ -104,7 +105,7 @@ async function main() {
       // PerceptionX nightsky/pink, so an unbranded fallback still reads as ours.
       primary: '#13274F',
       accent: '#DB5E89',
-      logo: `data:image/png;base64,${mark.toString('base64')}`,
+      logo: { uri: `data:image/png;base64,${mark.toString('base64')}`, aspect: markAspect },
     }),
     {
       width: CARD_WIDTH,

@@ -24,7 +24,7 @@ import {
   GEOLOGICA_700_BASE64,
   PLUS_JAKARTA_600_BASE64,
 } from "../lib/activate-fonts.js";
-import { activatePreview, logoDataUri, tokenFromPath } from "../lib/activate-preview.js";
+import { activatePreview, logoAsset, tokenFromPath } from "../lib/activate-preview.js";
 
 const RESVG_WASM_URL = "https://esm.sh/@resvg/resvg-wasm@2.6.2/index_bg.wasm";
 const WASM_TIMEOUT_MS = 6000;
@@ -65,7 +65,7 @@ export default async (request: Request) => {
 
   try {
     const branding = await activatePreview(tokenFromPath(request.url));
-    const logo = branding ? await logoDataUri(branding) : null;
+    const logo = branding ? await logoAsset(branding) : null;
 
     await ensureWasm();
 

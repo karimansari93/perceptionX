@@ -96,6 +96,27 @@ export function previewCopy(displayName) {
   };
 }
 
+// The mark sits on a white plate whose width follows the mark, so one rule
+// covers a tall symbol (Netflix's N), a wide wordmark (Ford's oval) and a
+// square icon: at the stadium radius a square plate simply reads as a disc.
+const PLATE_HEIGHT = 140;
+const MARK_HEIGHT = 92;
+const MARK_MAX_WIDTH = 260;
+const PLATE_PADDING = 48;
+
+function markBox(aspect) {
+  const ratio = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  let width = MARK_HEIGHT * ratio;
+  let height = MARK_HEIGHT;
+  if (width > MARK_MAX_WIDTH) {
+    // A very wide wordmark fits by width instead, and the plate keeps its
+    // height — better a little air above and below than a shrunken mark.
+    width = MARK_MAX_WIDTH;
+    height = width / ratio;
+  }
+  return { width: Math.round(width), height: Math.round(height) };
+}
+
 /** Long employer names still have to fit on one card. */
 function headlineSize(text) {
   if (text.length > 62) return 46;
@@ -118,10 +139,16 @@ export function buildActivateCard({ displayName, tagline, primary, accent, logo 
   const eyebrow = cardEyebrow(tagline);
   const initials = initialsFor(displayName);
 
+  const box = markBox(logo?.aspect);
   const mark = logo
     ? {
         type: 'img',
-        props: { src: logo, width: 92, height: 92, style: { objectFit: 'contain' } },
+        props: {
+          src: logo.uri,
+          width: box.width,
+          height: box.height,
+          style: { objectFit: 'contain' },
+        },
       }
     : {
         type: 'div',
@@ -130,6 +157,7 @@ export function buildActivateCard({ displayName, tagline, primary, accent, logo 
           children: initials,
         },
       };
+  const plateWidth = logo ? Math.max(PLATE_HEIGHT, box.width + PLATE_PADDING) : PLATE_HEIGHT;
 
   return {
     type: 'div',
@@ -162,19 +190,20 @@ export function buildActivateCard({ displayName, tagline, primary, accent, logo 
             },
           },
         },
-        // The client's mark, in the white disc the welcome screen uses.
+        // The client's mark, on the white plate the welcome screen's disc grows into.
         {
           type: 'div',
           props: {
             style: {
-              width: 140,
-              height: 140,
-              borderRadius: 70,
+              width: plateWidth,
+              height: PLATE_HEIGHT,
+              borderRadius: PLATE_HEIGHT / 2,
               backgroundColor: '#FFFFFF',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              // A near-white brand canvas would otherwise lose the disc edge.
+              flexShrink: 0,
+              // A near-white brand canvas would otherwise lose the plate edge.
               border: `1px solid ${tint(ink, 0.12)}`,
             },
             children: [mark],

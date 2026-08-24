@@ -100,34 +100,80 @@ export function logoDevUrl(domain, size = 256) {
   return `https://img.logo.dev/${encodeURIComponent(domain)}?token=${key}&size=${size}&format=png`;
 }
 
+/** An oversized upload would balloon the data URI and stall the render. */
+const MAX_LOGO_BYTES = 512 * 1024;
+
 /**
- * The client's mark as a data URI, or null.
- *
- * logo.dev by domain wins over the org's own upload for the same reason the tab
- * icon prefers it: logo.dev returns something square and raster, where a
- * client's upload is usually a wide SVG wordmark that neither centres in a disc
- * nor rasterises reliably. Inlining it keeps satori off the network entirely,
- * so a slow logo host costs one bounded fetch here instead of stalling a render.
+ * Natural aspect ratio (w/h) of a mark, so the card can size its plate to fit.
+ * 1 is the safe default — a square plate crops nothing, it just leaves air.
  */
-export async function logoDataUri(branding) {
-  const candidates = [];
-  if (branding?.logo_domain) candidates.push(logoDevUrl(branding.logo_domain));
-  // Raster uploads only: satori cannot rasterise a remote SVG.
-  if (branding?.logo_url && /\.(png|jpe?g)(\?|$)/i.test(branding.logo_url)) {
-    candidates.push(branding.logo_url);
+function imageAspect(bytes, type) {
+  try {
+    if (type === 'image/svg+xml') {
+      const head = new TextDecoder().decode(bytes.subarray(0, 4096));
+      const attr = (name) => {
+        const m = new RegExp(`\\b${name}\\s*=\\s*["']([\\d.]+)`, 'i').exec(head);
+        return m ? Number(m[1]) : NaN;
+      };
+      const w = attr('width');
+      const h = attr('height');
+      if (w > 0 && h > 0) return w / h;
+      // Percentage or unit-suffixed width/height fall through to the viewBox,
+      // which is the only dimension an SVG is guaranteed to carry.
+      const box = /\bviewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(head);
+      if (box && Number(box[2]) > 0) return Number(box[1]) / Number(box[2]);
+      return 1;
+    }
+    // PNG: IHDR width/height are the two big-endian u32s at byte 16.
+    if (type === 'image/png' && bytes.length > 24) {
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const w = view.getUint32(16);
+      const h = view.getUint32(20);
+      if (w > 0 && h > 0) return w / h;
+    }
+  } catch {
+    // fall through
   }
+  return 1;
+}
+
+function toDataUri(bytes, type) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return `data:${type};base64,${btoa(bin)}`;
+}
+
+/**
+ * The client's mark for the share card: `{ uri, aspect }`, or null.
+ *
+ * The logo an admin uploaded wins. It is the asset the client actually handed
+ * over — Netflix's is the real gradient symbol where logo.dev returns a flat
+ * icon on a black square, and Ford's is the oval wordmark rather than a crop of
+ * it — so logo.dev is the fallback for orgs that haven't uploaded one, not the
+ * default. (The tab favicon in src/pages/Activate.tsx still prefers logo.dev,
+ * and should: a wide wordmark at 16px is mush, where a card has room for it.)
+ *
+ * SVG is inlined as a data URI and nested inside the card satori emits; resvg
+ * rasterises it in place. It neither runs scripts nor fetches anything, so an
+ * upload can only draw itself.
+ *
+ * Inlining also keeps satori off the network: a slow or dead logo host costs
+ * one bounded fetch here rather than stalling a render at crawl time.
+ */
+export async function logoAsset(branding) {
+  const candidates = [];
+  if (branding?.logo_url) candidates.push(branding.logo_url);
+  if (branding?.logo_domain) candidates.push(logoDevUrl(branding.logo_domain));
 
   for (const url of candidates) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(LOGO_TIMEOUT_MS) });
       if (!res.ok) continue;
-      const type = res.headers.get('content-type') ?? '';
-      if (!/^image\/(png|jpeg)/i.test(type)) continue;
+      const type = (res.headers.get('content-type') ?? '').split(';')[0].toLowerCase();
+      if (!['image/png', 'image/jpeg', 'image/svg+xml'].includes(type)) continue;
       const bytes = new Uint8Array(await res.arrayBuffer());
-      if (bytes.length === 0) continue;
-      let bin = '';
-      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-      return `data:${type.split(';')[0]};base64,${btoa(bin)}`;
+      if (bytes.length === 0 || bytes.length > MAX_LOGO_BYTES) continue;
+      return { uri: toDataUri(bytes, type), aspect: imageAspect(bytes, type) };
     } catch {
       // try the next candidate
     }
