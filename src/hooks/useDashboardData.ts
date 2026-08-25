@@ -15,6 +15,13 @@ import {
   type ScopeStats,
   type LocationRollups,
 } from "@/hooks/dashboard/dashboardQueries";
+import {
+  selectDailyBuckets,
+  selectScopeRows,
+  sumScopeRows,
+  type StatsSelection,
+} from "@/hooks/dashboard/scopeStatsSelect";
+import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
 import { PromptResponse, DashboardMetrics, CitationCount, PromptData, Citation, CompetitorMention, LLMMentionRanking } from "@/types/dashboard";
@@ -295,12 +302,7 @@ export const quarterKeyOfDate = (d: Date): string =>
 // "2026-05-01" → "2026-Q2"). String math on purpose: date-only strings parse
 // as UTC midnight, which shifts into the prior month (and possibly quarter)
 // in negative-offset timezones.
-export const quarterKeyOfMonthStr = (s: string): string | null => {
-  const y = Number(s.slice(0, 4));
-  const m = Number(s.slice(5, 7));
-  if (!y || !m) return null;
-  return `${y}-Q${Math.floor((m - 1) / 3) + 1}`;
-};
+export { quarterKeyOfMonthStr };
 
 // Canonical period bucket for a response: the quarter containing its snapshot
 // month (response_month = collection_cycle, falling back to the write month),
@@ -2166,6 +2168,36 @@ export const useDashboardData = () => {
     const effectivePeriodKey = effectivePeriod?.key;
     const mvVisibility = visibilityFromMvRows(visibilityRowsForSelection, effectivePeriodKey ?? null, null);
 
+    // Phase-3 scope-stats cube for the active selection. Additive measures
+    // (citation totals, day-grain trend inputs) come from here when the cube
+    // has landed; the raw-row math below stays as the fallback for scopes
+    // awaiting their first stats refresh. The cube covers all time (not just
+    // the eager stream window) and counts each response once (the raw path
+    // double-counts stitched attribute rows) — both deliberate corrections.
+    const statsSel: StatsSelection = {
+      locationKey: selectedLocation && selectedLocationEntry ? selectedLocation : null,
+      countryKeyByCompanyId,
+      // Mirror periodFilteredResponses' single-period bypass exactly: with one
+      // (or zero) available periods the raw path returns ALL visible rows, so
+      // the cube must not quarter-filter either.
+      quarterKey: (effectivePeriod && availablePeriods.length > 1) ? (effectivePeriodKey ?? null) : null,
+    };
+    const cubeScopeSelected = scopeStats ? selectScopeRows(scopeStats.scope, statsSel) : [];
+    const cubeTotals = sumScopeRows(cubeScopeSelected);
+    // The cube is trustworthy only when every company contributing raw rows
+    // has cube rows too — a freshly added sibling profile streams responses
+    // before its first stats refresh, and a scope-global gate would silently
+    // compute mixed-scope numbers from the other profiles' cube rows.
+    const cubeCompanyIds = new Set((scopeStats?.scope ?? []).map(r => r.company_id));
+    const rawCompaniesCovered = responses.every(r => r.company_id == null || cubeCompanyIds.has(r.company_id));
+    const scopeCubeReady = !!scopeStats && scopeStats.scope.length > 0 && rawCompaniesCovered;
+    const dailySelection = scopeStats ? selectDailyBuckets(scopeStats.daily, statsSel) : null;
+    // Period filtering over day rows needs the response_month column; until a
+    // company's daily rows carry it (post-migration refresh), period-scoped
+    // day math is unsound — fall back to raw rows.
+    const dailyCubeReady = scopeCubeReady && dailySelection !== null &&
+      !(statsSel.quarterKey && dailySelection.hasUnrefreshedRows);
+
     // Don't calculate if still loading AND no rollup source (sentiment/
     // relevance MV metrics or the visibility rollup) has anything. If any
     // rollup has data, compute from it even before responses arrive.
@@ -2227,9 +2259,50 @@ export const useDashboardData = () => {
     let visibilityTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     let citationsTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     
-    if (responses.length > 1) {
+    if (dailyCubeReady && dailySelection!.buckets.length > 1) {
+      // Cube path: latest collection day vs all earlier days, same formulas
+      // and thresholds as the raw path below. Day identity is the UTC date of
+      // tested_at (the raw path used the viewer's local date — near-midnight
+      // runs can shift a day, an accepted normalization).
+      const buckets = dailySelection!.buckets;
+      const latest = buckets[buckets.length - 1];
+      const previous = buckets.slice(0, -1);
+      const prevAgg = previous.reduce(
+        (a, b) => ({
+          pos: a.pos + b.positiveThemes,
+          neg: a.neg + b.negativeThemes,
+          total: a.total + b.totalResponses,
+          mentioned: a.mentioned + b.mentionedResponses,
+          citations: a.citations + b.totalCitations,
+        }),
+        { pos: 0, neg: 0, total: 0, mentioned: 0, citations: 0 }
+      );
+
+      const currentSentiment = sentimentRatioV2(latest.positiveThemes, latest.negativeThemes) ?? 0;
+      const previousSentiment = sentimentRatioV2(prevAgg.pos, prevAgg.neg) ?? 0;
+      const sentimentChange = currentSentiment - previousSentiment;
+      sentimentTrendComparison = {
+        value: Math.abs(Math.round(sentimentChange * 100)),
+        direction: sentimentChange > 0.05 ? 'up' : sentimentChange < -0.05 ? 'down' : 'neutral'
+      };
+
+      const currentVisibility = latest.totalResponses > 0 ? (latest.mentionedResponses / latest.totalResponses) * 100 : 0;
+      const previousVisibility = prevAgg.total > 0 ? (prevAgg.mentioned / prevAgg.total) * 100 : 0;
+      const visibilityChange = currentVisibility - previousVisibility;
+      visibilityTrendComparison = {
+        value: Math.abs(visibilityChange),
+        direction: visibilityChange > 1 ? 'up' : visibilityChange < -1 ? 'down' : 'neutral'
+      };
+
+      const previousCitationsAvg = prevAgg.citations / Math.max(1, previous.length);
+      const citationsChange = latest.totalCitations - previousCitationsAvg;
+      citationsTrendComparison = {
+        value: Math.abs(Math.round(citationsChange)),
+        direction: citationsChange > 0.1 ? 'up' : citationsChange < -0.1 ? 'down' : 'neutral'
+      };
+    } else if (responses.length > 1) {
       const sorted = [...responses].sort((a, b) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
-      
+
       const latestDate = new Date(sorted[0].tested_at).toDateString();
       
       const currentResponses = sorted.filter(r => new Date(r.tested_at).toDateString() === latestDate);
@@ -2294,7 +2367,16 @@ export const useDashboardData = () => {
       }
     }
 
-    const totalCitations = responses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
+    // Citation total from the cube ONLY when a quarter is active — the other
+    // card numbers (totalResponses, uniqueDomains) still come from the raw
+    // window, and an all-time cube figure next to window-limited counts reads
+    // as inconsistent on one card. The quarter-scoped read agrees with the
+    // quarter-scoped raw numbers (modulo the documented dedup fix).
+    // uniqueDomains stays raw — the cube's per-key distinct counts can't be
+    // unioned across months; it waits for the domain-grain cube (slice 2).
+    const totalCitations = (scopeCubeReady && statsSel.quarterKey)
+      ? cubeTotals.totalCitations
+      : responses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
     const uniqueDomains = new Set(
       responses.flatMap(r => getCitations(r.id).map((c: Citation) => c.domain).filter(Boolean))
     ).size;
@@ -2368,7 +2450,7 @@ export const useDashboardData = () => {
     };
     
     return metricsResult;
-  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations, visibilityRowsForSelection]);
+  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations, visibilityRowsForSelection, scopeStats, selectedLocation, selectedLocationEntry, countryKeyByCompanyId, availablePeriods]);
 
   // Per-quarter EPS trend powering the Overview headline sparkline. One point
   // per available quarter (oldest → selected period), each computed with the

@@ -69,6 +69,10 @@ export interface ScopeStatsRow {
 export interface ScopeDailyStatsRow {
   company_id: string;
   tested_day: string;
+  // Collection-cycle month of the rows pooled into this day (a tested day can
+  // span two cycles → two rows). NULL only while a company awaits its first
+  // refresh after the 20260825140000 migration — treat as not-yet-refreshed.
+  response_month: string | null;
   job_function_context: string;
   location_context: string;
   total_responses: number;
