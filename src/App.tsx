@@ -261,12 +261,6 @@ const App = () => (
                       <Dashboard defaultGroup="analyze" defaultSection="thematic" />
                     </SidebarProvider>                </ProtectedRoute>
               } />
-              <Route path="/analyze/answer-gaps" element={
-                <ProtectedRoute>
-                    <SidebarProvider>
-                      <Dashboard defaultGroup="analyze" defaultSection="answer-gaps" />
-                    </SidebarProvider>                </ProtectedRoute>
-              } />
               <Route path="/analyze/reports" element={
                 <ProtectedRoute>
                     <SidebarProvider>

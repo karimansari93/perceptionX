@@ -2762,117 +2762,6 @@ export const useDashboardData = () => {
     }
   }, [user, refreshData]);
 
-  // Function to fetch historical responses for a specific time range
-  // Enables time period comparison features in the dashboard
-  const fetchHistoricalResponses = useCallback(async (startDate: Date, endDate: Date) => {
-    if (!user || !currentCompany) {
-      return [];
-    }
-
-    try {
-      // Per-company queries (indexed (company_id, tested_at) path, bounded)
-      // merged client-side — the merged .in() + ORDER BY tested_at shape is
-      // the one that hit statement timeouts in the incident, and PostgREST's
-      // max_rows clamp would silently truncate a single merged result anyway.
-      const ids = scopeCompanyIds.length > 0 ? scopeCompanyIds : [currentCompany.id];
-      const results = await Promise.all(ids.map(id =>
-        withDbSlot(() => supabase
-          // Canonicalized view — historical fetch should also see merged names.
-          .from('prompt_responses_canonical')
-          .select(`
-            id,
-            confirmed_prompt_id,
-            company_id,
-            ai_model,
-            tested_at,
-            created_at,
-            updated_at,
-            company_mentioned,
-            detected_competitors,
-            citations,
-            for_index,
-            index_period,
-            confirmed_prompts(
-              prompt_text,
-              prompt_category,
-              prompt_type
-            )
-          `)
-          .eq('company_id', id)
-          .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
-          .gte('tested_at', startDate.toISOString())
-          .lte('tested_at', endDate.toISOString())
-          .order('tested_at', { ascending: false })
-          .limit(1000))
-      ));
-      const err = results.find(r => r.error)?.error;
-      if (err) throw err;
-      const data = results
-        .flatMap(r => r.data ?? [])
-        .sort((a: any, b: any) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
-
-      // Filter to get only the latest response for each prompt+model in this time range
-      const latestInRangeMap = new Map<string, any>();
-      data.forEach(response => {
-        const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
-        if (!latestInRangeMap.has(key)) {
-          latestInRangeMap.set(key, response);
-        }
-      });
-
-      return Array.from(latestInRangeMap.values());
-    } catch (error) {
-      console.error('Error fetching historical responses:', error);
-      return [];
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany, scopeKey]);
-
-  // Function to get all unique collection dates for this company
-  // Useful for showing a timeline or date selector for comparisons
-  const fetchCollectionDates = useCallback(async () => {
-    if (!user || !currentCompany) {
-      return [];
-    }
-
-    try {
-      // Per-company (indexed path; avoids the merged-.in ordered scan) and
-      // paginated — a single unbounded select is clamped to max_rows by
-      // PostgREST, which would silently drop the oldest collection dates.
-      const ids = scopeCompanyIds.length > 0 ? scopeCompanyIds : [currentCompany.id];
-      const PAGE = 1000;
-      const perCompany = await Promise.all(ids.map(async (id) => {
-        const rows: any[] = [];
-        for (let page = 0; page < 60; page += 1) {
-          const { data, error } = await withDbSlot(() => supabase
-            .from('prompt_responses')
-            .select('tested_at')
-            .eq('company_id', id)
-            .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
-            .order('tested_at', { ascending: false })
-            .range(page * PAGE, (page + 1) * PAGE - 1));
-          if (error) throw error;
-          const chunk = data ?? [];
-          rows.push(...chunk);
-          if (chunk.length < PAGE) break;
-        }
-        return rows;
-      }));
-
-      // Get unique dates (just the date part, not time)
-      const uniqueDates = new Set<string>();
-      perCompany.flat().forEach(response => {
-        const date = new Date(response.tested_at).toISOString().split('T')[0];
-        uniqueDates.add(date);
-      });
-
-      return Array.from(uniqueDates).sort().reverse();
-    } catch (error) {
-      console.error('Error fetching collection dates:', error);
-      return [];
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, currentCompany, scopeKey]);
 
   return {
     responses: periodFilteredResponses, // period-filtered when multi-month
@@ -2907,8 +2796,6 @@ export const useDashboardData = () => {
     aiThemeAttrsLoaded, // v2 attribute ids whose raw themes are loaded for the current scope
     attributeThemes: effAttributeThemes, // Pre-aggregated attribute scores — location-scoped when a location is active
     responseSentimentRows, // Per-response sentiment ratios (company_response_sentiment_mv)
-    fetchHistoricalResponses, // Fetch responses for a specific time range
-    fetchCollectionDates, // Get all collection dates for timeline/comparison
     isOnline, // Network status
     connectionError, // Connection error message
     recencyDataError, // Recency data specific error message

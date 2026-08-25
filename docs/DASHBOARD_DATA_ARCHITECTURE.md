@@ -118,6 +118,17 @@ shape changed, so no client code changed):
   `job_function_context`, + `location_context` for the location variant).
   Ford scope: those two families went 9.7 MB → 3.9 MB.
 
+## Details-on-demand cleanup (2026-08-25, phase 2 start)
+
+- `fetchHistoricalResponses` and `fetchCollectionDates` were dead exports —
+  no caller anywhere in src — whose query shapes (per-company canonical
+  selects with embedded prompts; a 60-page tested_at walk per company) were
+  among the incident's slowest statements, issued by the stale pre-refactor
+  bundle production was still serving. Deleted.
+- `AnswerGapsTab` selected `*` (response_text included) for the user's entire
+  response history unbounded; now a typed column list, newest-first,
+  capped at 500.
+
 ## Known follow-ups (deliberate scope cuts)
 
 - Citations still dominate the stream payload (~1.7 MB/1000 rows after the

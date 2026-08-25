@@ -60,7 +60,6 @@ const navigationGroups: NavigationGroup[] = [
   // {
   //   title: "Analyze",
   //   items: [
-  //     { title: "Answer Gaps", icon: Search, section: "answer-gaps", group: "analyze", route: "/analyze/answer-gaps" },
   //     { title: "Career Site", icon: Globe, section: "career-site", group: "analyze", route: "/analyze/career-site" },
   //   ]
   // }
