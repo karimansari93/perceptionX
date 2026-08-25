@@ -157,9 +157,19 @@ Deliberate number changes at client switch time (both are corrections):
   `totalResponses` double-counts them today; the stats tables count each
   response once.
 
-**Remaining slices:** domain stats (Sources tab / drill-downs; the
-domain×month×job-function cube is ~350K rows — stays server-side behind a
-filtered top-N RPC, not shipped whole), competitor stats (+prompt_type,
+**Slice 2 (server side shipped, `20260825160000_domain_stats_rollup.sql`):**
+`company_domain_stats_mv` — (company, domain, response_month, job_function,
+location) grain, measures responses_citing / mentioned_responses_citing
+(deduped per response) and citation_count (occurrences). Too large to ship
+whole (~14K rows per large company), so `get_domain_stats` collapses
+job-function/location per request and returns month-grain rows for the
+top-N domains (measured: Ford scope, top 300 → 568 rows / 79 KB / 248 ms
+authenticated). Motivating measurement: job-function pill switches on the
+Ford scope block the main thread 0.4–12.4 s (worst: back to "All
+functions") because Sources/Competitors/Themes cards aggregate raw rows;
+the cube read replaces that with a ~250 ms fetch. Client switch pending.
+
+**Remaining slices:** competitor stats (+prompt_type,
 +domain, +attribute companions), page-grain stats, prompt-grain stats. Then
 the client switch per tab, verified by computing old-vs-new values on real
 scopes before each flip. Row-level surfaces (response lists, quote
