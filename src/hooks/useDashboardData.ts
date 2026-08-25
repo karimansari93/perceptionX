@@ -1055,17 +1055,6 @@ export const useDashboardData = () => {
     };
   }, [sentimentCacheState]);
 
-  const aiThemeByResponseId = useMemo(() => {
-    const map = new Map<string, any>();
-    aiThemes.forEach(theme => {
-      if (!map.has(theme.response_id)) {
-        map.set(theme.response_id, theme);
-      }
-    });
-    return map;
-  }, [aiThemes]);
-
-
   // Cache for search results to prevent duplicate requests
   const searchResultsCache = useRef<{
     companyId: string | null;

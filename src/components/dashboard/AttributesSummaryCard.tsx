@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { ATTRIBUTES, normalizeAttributeId } from "@/config/attributes";
 import { sentimentRatioV2 } from "@/lib/sentimentV2";
+import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 
 interface AttributesSummaryCardProps {
   aiThemes?: any[];
@@ -17,6 +18,15 @@ interface AttributesSummaryCardProps {
   previousPeriodResponses?: any[];
   responses?: any[];
   aiThemesLoading?: boolean;
+  // Explicit period/function scoping for the MV rows. When provided
+  // (undefined = not wired, fall back to the response key-set scoping), the
+  // card filters MV rows by the quarter of their response_month directly —
+  // no dependency on the raw response stream having loaded, so it paints
+  // final numbers immediately on warm starts and never over-includes rows
+  // pre-hydration.
+  cubeQuarterKey?: string | null;     // null = single period → no filter
+  cubePrevQuarterKey?: string | null; // null = no previous period → no deltas
+  selectedJobFunction?: string;       // 'all' = no filter
 }
 
 // Attribute icon mapping (methodology v2 ids — legacy v1 ids are folded into
@@ -44,7 +54,10 @@ export const AttributesSummaryCard = ({
   perceptionScoreTrend = [],
   previousPeriodResponses = [],
   responses = [],
-  aiThemesLoading = false
+  aiThemesLoading = false,
+  cubeQuarterKey,
+  cubePrevQuarterKey,
+  selectedJobFunction = 'all'
 }: AttributesSummaryCardProps) => {
   const navigate = useNavigate();
 
@@ -69,9 +82,23 @@ export const AttributesSummaryCard = ({
     const respKey = (r: any) => `${monthOf(r)}|${(r.confirmed_prompts?.job_function_context || '').trim()}`;
     const rowKey = (row: any) => `${String(row.response_month).slice(0, 7)}|${(row.job_function_context || '').trim()}`;
 
+    // Explicit cube scoping (quarter of the row's response_month + the
+    // function pill) when wired; otherwise the legacy response key-sets.
+    const cubeMode = cubeQuarterKey !== undefined;
+    const fnOf = (row: any) => (row.job_function_context || '').trim();
+    const rowQuarter = (row: any) => row.response_month ? quarterKeyOfMonthStr(String(row.response_month)) : null;
+    const fnMatches = (row: any) => selectedJobFunction === 'all' || fnOf(row) === selectedJobFunction;
+
     const currentKeys = new Set(responses.map(respKey));
     const prevKeys = new Set(previousPeriodResponses.map(respKey));
     const scopeCurrent = currentKeys.size > 0; // before responses load, include all MV rows
+
+    const inCurrent = (row: any, k: string) => cubeMode
+      ? fnMatches(row) && (!cubeQuarterKey || rowQuarter(row) === cubeQuarterKey)
+      : (!scopeCurrent || currentKeys.has(k));
+    const inPrev = (row: any, k: string) => cubeMode
+      ? fnMatches(row) && cubePrevQuarterKey != null && rowQuarter(row) === cubePrevQuarterKey
+      : prevKeys.has(k);
 
     const agg: Record<string, { count: number; positive: number; negative: number; neutral: number; scoreSum: number }> = {};
     const prevCounts: Record<string, number> = {};
@@ -85,7 +112,7 @@ export const AttributesSummaryCard = ({
       if (!attrId) return;
       const k = rowKey(row);
       const total = Number(row.total_themes) || 0;
-      if (!scopeCurrent || currentKeys.has(k)) {
+      if (inCurrent(row, k)) {
         if (!agg[attrId]) agg[attrId] = { count: 0, positive: 0, negative: 0, neutral: 0, scoreSum: 0 };
         const a = agg[attrId];
         a.count += total;
@@ -95,7 +122,7 @@ export const AttributesSummaryCard = ({
         a.scoreSum += (Number(row.avg_sentiment_score) || 0) * total;
         currTotal += total;
       }
-      if (prevKeys.has(k)) {
+      if (inPrev(row, k)) {
         prevCounts[attrId] = (prevCounts[attrId] || 0) + total;
         prevTotal += total;
       }
@@ -115,13 +142,17 @@ export const AttributesSummaryCard = ({
           negativeCount: a.negative,
           neutralCount: a.neutral,
           avgSentimentScore: a.count > 0 ? a.scoreSum / a.count : 0,
-          trendChange: previousPeriodResponses.length > 0 ? Math.round(currPct - prevPct) : 0,
+          // Delta chips: in cube mode they exist iff there is a previous
+          // quarter to compare; legacy mode gates on the raw prev stream.
+          trendChange: (cubeMode ? cubePrevQuarterKey != null : previousPeriodResponses.length > 0)
+            ? Math.round(currPct - prevPct)
+            : 0,
         };
       })
       .filter(a => a.count > 0)
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
-  }, [attributeThemes, responses, previousPeriodResponses]);
+  }, [attributeThemes, responses, previousPeriodResponses, cubeQuarterKey, cubePrevQuarterKey, selectedJobFunction]);
 
   // Calculate theme trends: share of mentions % (current period) - share of mentions % (previous period)
   const themeTrends = useMemo(() => {

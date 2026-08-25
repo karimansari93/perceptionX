@@ -271,69 +271,6 @@ export const OverviewTab = memo(({
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Helper function to calculate AI-based sentiment for a response (similar to useDashboardData)
-  // Only counts themes from responses that belong to the current company
-  const calculateAIBasedSentiment = useMemo(() => {
-    // Build a cache of sentiment calculations per response ID
-    const cache = new Map<string, { sentiment_score: number; sentiment_label: string }>();
-    
-    // Create a Set of response IDs from the current company's responses
-    // This ensures we only count themes from responses belonging to the current company
-    const companyResponseIds = new Set(responses.map(r => r.id));
-    
-    if (aiThemes.length === 0) {
-      // Return a function that always returns neutral if no themes
-      return (responseId: string) => {
-        return { sentiment_score: 0, sentiment_label: 'neutral' };
-      };
-    }
-    
-    // Filter themes to only include those from the current company's responses
-    const companyThemes = aiThemes.filter(theme => companyResponseIds.has(theme.response_id));
-    
-    // Group themes by response_id for efficient processing
-    const themesByResponseId = new Map<string, AITheme[]>();
-    companyThemes.forEach(theme => {
-      if (!themesByResponseId.has(theme.response_id)) {
-        themesByResponseId.set(theme.response_id, []);
-      }
-      themesByResponseId.get(theme.response_id)!.push(theme);
-    });
-    
-    // Calculate sentiment for each response ID once.
-    // Methodology v2: positive/(positive+negative) from the text labels;
-    // neutral-only responses carry no signal and read as neutral.
-    themesByResponseId.forEach((responseThemes, responseId) => {
-      const positiveThemes = responseThemes.filter(theme => theme.sentiment === 'positive').length;
-      const negativeThemes = responseThemes.filter(theme => theme.sentiment === 'negative').length;
-      const sentimentRatio = sentimentRatioV2(positiveThemes, negativeThemes);
-
-      if (sentimentRatio === null) {
-        cache.set(responseId, { sentiment_score: 0, sentiment_label: 'neutral' });
-        return;
-      }
-
-      const sentimentLabel = sentimentRatio > 0.6 ? 'positive' : sentimentRatio < 0.4 ? 'negative' : 'neutral';
-
-      cache.set(responseId, {
-        sentiment_score: sentimentRatio,
-        sentiment_label: sentimentLabel
-      });
-    });
-    
-    // Return a function that looks up from cache
-    return (responseId: string) => {
-      const cached = cache.get(responseId);
-      if (cached) {
-        return cached;
-      }
-      // No AI themes available for this response - return neutral sentiment
-      return { sentiment_score: 0, sentiment_label: 'neutral' };
-    };
-  }, [aiThemes, responses]);
-
-
-
 
   // Helper for mini-cards — use the same rounded values that feed the EPS formula
   const breakdowns = useMemo(() => [
@@ -858,90 +795,6 @@ CRITICAL: When you reference information from a source, add an inline citation l
     clean = clean.replace(regex, '<span class="bg-yellow-200 font-bold">$1</span>');
     return clean;
   }
-
-  // Aggregate themes by sentiment (including AI themes)
-  const themesBySentiment = useMemo(() => {
-    const allThemes = { positive: [], neutral: [], negative: [] as string[] };
-    
-    // Add traditional themes from responses
-    responses.forEach(r => {
-      if (Array.isArray(r.themes)) {
-        r.themes.forEach((t: any) => {
-          if (t && t.theme && t.sentiment) {
-            if (allThemes[t.sentiment]) {
-              allThemes[t.sentiment].push(t.theme);
-            }
-          }
-        });
-      }
-    });
-
-    // Add AI themes
-    aiThemes.forEach(theme => {
-      if (allThemes[theme.sentiment]) {
-        allThemes[theme.sentiment].push(theme.theme_name);
-      }
-    });
-
-    // Deduplicate and take top 3 for each
-    return {
-      positive: Array.from(new Set(allThemes.positive)).slice(0, 3),
-      neutral: Array.from(new Set(allThemes.neutral)).slice(0, 3),
-      negative: Array.from(new Set(allThemes.negative)).slice(0, 3),
-    };
-  }, [responses, aiThemes]);
-
-  // Calculate overwhelmingly positive/negative attributes from AI themes
-  const attributeInsights = useMemo(() => {
-    if (aiThemes.length === 0) return { positive: [], negative: [] };
-
-    // Group themes by attribute
-    const attributeGroups: { [key: string]: { positive: AITheme[], negative: AITheme[], neutral: AITheme[] } } = {};
-
-    aiThemes.forEach(theme => {
-      if (!attributeGroups[theme.attribute_id]) {
-        attributeGroups[theme.attribute_id] = { positive: [], negative: [], neutral: [] };
-      }
-      attributeGroups[theme.attribute_id][theme.sentiment].push(theme);
-    });
-
-    const positiveAttributes: { attribute: string; name: string; themes: AITheme[]; avgScore: number }[] = [];
-    const negativeAttributes: { attribute: string; name: string; themes: AITheme[]; avgScore: number }[] = [];
-
-    // Analyze each attribute.
-    // Methodology v2: label-based only — an attribute is "overwhelmingly"
-    // positive/negative when it has at least 2 polarized themes and at least
-    // 70% of the polarized themes lean one way. avgScore carries the v2 ratio
-    // (0..1) for sorting; the numeric sentiment_score is not used.
-    Object.entries(attributeGroups).forEach(([attributeId, themes]) => {
-      const polarized = themes.positive.length + themes.negative.length;
-      const ratio = sentimentRatioV2(themes.positive.length, themes.negative.length);
-
-      if (polarized >= 2 && ratio !== null) {
-        if (ratio >= 0.7) {
-          positiveAttributes.push({
-            attribute: attributeId,
-            name: themes.positive[0]?.attribute_name || attributeId,
-            themes: themes.positive,
-            avgScore: ratio
-          });
-        } else if (ratio <= 0.3) {
-          negativeAttributes.push({
-            attribute: attributeId,
-            name: themes.negative[0]?.attribute_name || attributeId,
-            themes: themes.negative,
-            avgScore: ratio
-          });
-        }
-      }
-    });
-
-    // Sort by v2 ratio (most positive first / most negative first), take top 2
-    return {
-      positive: positiveAttributes.sort((a, b) => b.avgScore - a.avgScore).slice(0, 2),
-      negative: negativeAttributes.sort((a, b) => a.avgScore - b.avgScore).slice(0, 2)
-    };
-  }, [aiThemes]);
 
   // Helper to render a simple comparison bar
   const renderComparisonBar = (data: TimeBasedData, maxCurrent: number, isCompetitor: boolean = false) => {
@@ -1603,6 +1456,9 @@ CRITICAL: When you reference information from a source, add an inline citation l
               previousPeriodResponses={fnPreviousResponses}
               responses={fnResponses}
               aiThemesLoading={aiThemesLoading}
+              cubeQuarterKey={cubeQuarterKey}
+              cubePrevQuarterKey={cubePrevQuarterKey}
+              selectedJobFunction={selectedJobFunctionFilter}
             />
           </div>
         </div>

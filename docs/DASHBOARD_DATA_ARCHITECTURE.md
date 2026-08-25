@@ -199,10 +199,28 @@ against 0.4–12.4 s before. The pre-cube visibility/sentiment day-trend
 memos turned out to be dead code (no JSX consumer) and were deleted
 rather than switched.
 
-**Remaining slices:** theme/attribute stats (the last per-function raw
-scans on Overview), page-grain stats, prompt-grain stats. Row-level
-surfaces (response lists, quote extraction, text search) stay raw and get
-server pagination in phase 4.
+**Theme slice (shipped, 2026-08-25, client-only):** the attribute cube
+already existed server-side (`company_attribute_themes_mv` + its
+by-location variant); what remained was that ThematicAnalysisTab and
+AttributesSummaryCard scoped those MV rows by intersecting with the
+(month|function) key-set of the loaded response stream — a raw-stream
+dependency that skeletoned the tab until the stream landed and
+over-included rows pre-hydration. Both now filter MV rows directly by the
+quarter of `response_month` + the function pill (key-set path kept as
+fallback when the quarter key isn't wired); the Themes tab's pills and
+"No Experience Data" gate read the scope/prompt-type cubes. Verified: the
+full SWOT quadrant paints with final values while the stream is still
+loading, pill switches register zero longtasks, and the Overview themes
+card shows identical values under the new scoping. Four more dead
+theme memos deleted (OverviewTab's calculateAIBasedSentiment /
+themesBySentiment / attributeInsights, the hook's aiThemeByResponseId).
+
+**Remaining slices:** competitor-theme stats (CompetitorsTab's compThemes
+still page-walks `competitor_themes` whole-company; a per-competitor
+attribute×sentiment cube plus a lazy modal fetch would retire it),
+page-grain stats, prompt-grain stats. Row-level surfaces (response lists,
+quote extraction, text search, theme drilldown subthemes) stay raw and
+get server pagination in phase 4.
 
 ## UX layer (2026-08-25)
 

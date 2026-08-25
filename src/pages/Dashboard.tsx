@@ -691,6 +691,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={handleJobFunctionChange}
+                cubeQuarterKey={cubeQuarterKey}
+                cubeScopeRows={cubeScopeRows}
+                cubePromptTypeRows={cubePromptTypeRows}
               />
             </Suspense>
           </div>
