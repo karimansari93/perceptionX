@@ -64,9 +64,14 @@ It ships with the cohort-measurement phase.
 
 Self-declared, two taps, no inference:
 
-1. **Where are you based?** Country selector (searchable, full ISO list, the
-   client's measured markets pinned on top).
-2. **Which part of {company}?** The org's entities plus "Not sure".
+1. **Where are you based?** Country selector listing only the markets the org
+   has routes for (measured first, then known-platform fallbacks; a filter box
+   appears once the list is long enough to scroll — since 2026-08-24 the full
+   ISO list is no longer offered, because a country without routes had nothing
+   to show).
+2. **Which part of {company}?** The org's entities plus "Not sure". Skipped
+   entirely — auto-declared — when the org has a single named entity
+   (GoFundMe, Cloudera).
 
 No IP geolocation, no fingerprinting, no silent profiling. The sender may
 pre-fill either field when generating the link; the recipient can always

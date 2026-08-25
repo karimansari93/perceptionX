@@ -37,7 +37,6 @@ import {
   affinityTagFor,
   ActivateHighlight,
   ActivateRoute,
-  COUNTRY_CODES,
   countryInSentence,
   countryName,
   entitiesForMarket,
@@ -48,6 +47,7 @@ import {
   JOB_FUNCTIONS,
   logActivateEvent,
   ProfileOption,
+  marketsWithRoutes,
   measuredMarketCodes,
   rankSocialRoutes,
   resolveRoutes,
@@ -426,6 +426,7 @@ export default function Activate() {
           {step === 'country' && (
             <CountryStep
               org={org}
+              markets={marketsWithRoutes(config.routes)}
               measured={measuredMarketCodes(config.routes)}
               onPick={declareMarket}
               headingRef={headingRef}
@@ -903,11 +904,13 @@ function Flag({ code, size }: { code: string; size: number }) {
 
 function CountryStep({
   org,
+  markets,
   measured,
   onPick,
   headingRef,
 }: {
   org: ActivateConfig['org'];
+  markets: string[];
   measured: string[];
   onPick: (code: string) => void;
   headingRef: React.RefObject<HTMLHeadingElement>;
@@ -915,12 +918,19 @@ function CountryStep({
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
   const byName = (a: string, b: string) => countryName(a).localeCompare(countryName(b));
-  const others = COUNTRY_CODES.filter((c) => !measured.includes(c)).sort(byName);
-  const matches = q
-    ? [...measured, ...others].filter(
-        (c) => countryName(c).toLowerCase().includes(q) || c.toLowerCase() === q,
-      )
-    : [];
+  // Only countries the org actually has routes for are offered — a country
+  // outside the client's footprint has nothing to show. Measured markets
+  // first, then the known-platform fallbacks, each alphabetical.
+  const ordered = [
+    ...markets.filter((c) => measured.includes(c)).sort(byName),
+    ...markets.filter((c) => !measured.includes(c)).sort(byName),
+  ];
+  const shown = q
+    ? ordered.filter((c) => countryName(c).toLowerCase().includes(q) || c.toLowerCase() === q)
+    : ordered;
+  // A handful of markets reads faster as a plain list; the filter box only
+  // earns its place once the list is long enough to scroll.
+  const searchable = ordered.length > 8;
 
   return (
     <>
@@ -932,43 +942,38 @@ function CountryStep({
         Where are you based?
       </h2>
 
-      <label className="act-search w-full">
-        <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search countries"
-          aria-label="Search countries"
-        />
-      </label>
-
-      {/* Nothing listed until they type — the full country list under the
-          field was more to scroll past than to choose from. Measured markets
-          still sort first among matches. */}
-      {q === '' ? (
-        <p className="act-search-hint">Start typing to find your country.</p>
-      ) : (
-        <div className="flex w-full flex-col gap-2" role="listbox" aria-label="Search results">
-          {matches.length === 0 && (
-            <p className="act-search-hint">No matches — try another spelling.</p>
-          )}
-          {matches.slice(0, 30).map((code) => (
-            <button
-              key={code}
-              onClick={() => {
-                setQuery('');
-                onPick(code);
-              }}
-              className="act-pill-solid"
-              role="option"
-              aria-selected="false"
-            >
-              <Flag code={code} size={20} />
-              <span className="flex-1 text-left">{countryName(code)}</span>
-            </button>
-          ))}
-        </div>
+      {searchable && (
+        <label className="act-search w-full">
+          <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter countries"
+            aria-label="Filter countries"
+          />
+        </label>
       )}
+
+      <div className="flex w-full flex-col gap-2" role="listbox" aria-label="Countries">
+        {shown.length === 0 && (
+          <p className="act-search-hint">No matches — try another spelling.</p>
+        )}
+        {shown.map((code) => (
+          <button
+            key={code}
+            onClick={() => {
+              setQuery('');
+              onPick(code);
+            }}
+            className="act-pill-solid"
+            role="option"
+            aria-selected="false"
+          >
+            <Flag code={code} size={20} />
+            <span className="flex-1 text-left">{countryName(code)}</span>
+          </button>
+        ))}
+      </div>
     </>
   );
 }
