@@ -2112,13 +2112,21 @@ export const useDashboardData = () => {
       const visibilityScore = typeof response.company_mentioned === 'boolean' ? (response.company_mentioned ? 100 : 0) : undefined;
       
       if (existing) {
-        existing.responses += 1;
-        // Methodology v2: pool positive/negative counts across the prompt's
-        // responses, then take positive/(positive+negative).
-        (existing as any)._pos = ((existing as any)._pos || 0) + aiSentiment.positive;
-        (existing as any)._neg = ((existing as any)._neg || 0) + aiSentiment.negative;
-        existing.avgSentiment = sentimentRatioV2((existing as any)._pos, (existing as any)._neg) ?? 0;
-        existing.sentimentLabel = existing.avgSentiment > 0.6 ? 'positive' : ((existing as any)._pos + (existing as any)._neg) > 0 && existing.avgSentiment < 0.4 ? 'negative' : 'neutral';
+        // stitchResponses appends a reformatted duplicate row (same response
+        // id, same prompt) for attribute-tagged responses — count each
+        // RESPONSE once, but let the metadata backfills below still run.
+        const seenIds = (existing as any)._seenIds as Set<string>;
+        const isDuplicateRow = seenIds.has(response.id);
+        if (!isDuplicateRow) {
+          seenIds.add(response.id);
+          existing.responses += 1;
+          // Methodology v2: pool positive/negative counts across the prompt's
+          // responses, then take positive/(positive+negative).
+          (existing as any)._pos = ((existing as any)._pos || 0) + aiSentiment.positive;
+          (existing as any)._neg = ((existing as any)._neg || 0) + aiSentiment.negative;
+          existing.avgSentiment = sentimentRatioV2((existing as any)._pos, (existing as any)._neg) ?? 0;
+          existing.sentimentLabel = existing.avgSentiment > 0.6 ? 'positive' : ((existing as any)._pos + (existing as any)._neg) > 0 && existing.avgSentiment < 0.4 ? 'negative' : 'neutral';
+        }
         if (!existing.industryContext && response.confirmed_prompts?.industry_context) {
           existing.industryContext = response.confirmed_prompts.industry_context;
         }
@@ -2143,13 +2151,13 @@ export const useDashboardData = () => {
         if (!existing.attributeId && attrId) {
           existing.attributeId = attrId;
         }
-        // Add visibility score to array
-        if (visibilityScore !== undefined) {
+        // Add visibility score to array (once per response — see seenIds)
+        if (!isDuplicateRow && visibilityScore !== undefined) {
           existing.visibilityScores = existing.visibilityScores || [];
           existing.visibilityScores.push(visibilityScore);
         }
         // Update visibility metrics
-        if (response.confirmed_prompts?.prompt_type === 'discovery') {
+        if (!isDuplicateRow && response.confirmed_prompts?.prompt_type === 'discovery') {
           if (typeof existing.averageVisibility === 'number') {
             existing.averageVisibility = (existing.averageVisibility * (existing.responses - 1) + (response.company_mentioned ? 100 : 0)) / existing.responses;
           } else {
@@ -2179,7 +2187,7 @@ export const useDashboardData = () => {
           responses: 1,
           avgSentiment: aiSentiment.sentiment_score ?? 0,
           sentimentLabel: aiSentiment.sentiment_label,
-          ...({ _pos: aiSentiment.positive, _neg: aiSentiment.negative } as any),
+          ...({ _pos: aiSentiment.positive, _neg: aiSentiment.negative, _seenIds: new Set([response.id]) } as any),
           mentionRanking: undefined,
           competitivePosition: undefined,
           detectedCompetitors: response.detected_competitors || undefined,

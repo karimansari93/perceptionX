@@ -215,12 +215,37 @@ card shows identical values under the new scoping. Four more dead
 theme memos deleted (OverviewTab's calculateAIBasedSentiment /
 themesBySentiment / attributeInsights, the hook's aiThemeByResponseId).
 
-**Remaining slices:** competitor-theme stats (CompetitorsTab's compThemes
-still page-walks `competitor_themes` whole-company; a per-competitor
-attribute×sentiment cube plus a lazy modal fetch would retire it),
-page-grain stats, prompt-grain stats. Row-level surfaces (response lists,
-quote extraction, text search, theme drilldown subthemes) stay raw and
-get server pagination in phase 4.
+**Hardening round (2026-08-25):** an adversarial re-review (3 lenses,
+every finding independently verified against the code) confirmed five
+defects in the switch; all fixed and E2E-verified:
+- Cube counts paint before the raw stream, so CompetitorsTab's raw-fed
+  extras (Models/Markets/Sources cells, the competitor modal, the
+  week-grain trend fallback) now show explicit pending states instead of
+  empty dashes/charts while the stream loads.
+- The cubes hold LIFETIME history while the stream holds 180 days: in the
+  single-period bypass (no quarter filter) the hook now clamps every cube
+  row set — scope, prompt-type, daily, domain, competitor, and the
+  attribute MV in the theme components (`cubeMonthFloor`) — to the
+  stream's window, so a dormant-resumed company can't show lifetime
+  counts beside windowed drill-downs. Standing contract: any cube
+  consumer pooling with a null quarter key must respect the floor.
+- SourcesSummaryCard excludes the literal `unknown` citation bucket on
+  the cube path, and suppresses delta chips when the previous quarter has
+  no mentioned responses for the selected function.
+- The Dashboard loader latch survives warm remounts (the deleted
+  always-true isLoading had been masking a missing first-render latch).
+
+Also fixed while closing out: promptsData counts each response once
+(stitchResponses' attribute duplicates double-counted per-prompt
+responses and pooled sentiment), and Account's user_onboarding read uses
+maybeSingle (.single() 406'd for users with no onboarding row).
+
+**Remaining slices:** competitor-theme stats — currently moot: the
+`competitor_themes` table holds 7 rows total, the extraction pipeline
+behind it is dormant (product decision pending). Page-grain stats,
+prompt-grain stats. Row-level surfaces (response lists, quote extraction,
+text search, theme drilldown subthemes) stay raw and get server
+pagination in phase 4.
 
 ## UX layer (2026-08-25)
 
