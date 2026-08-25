@@ -46,6 +46,7 @@ export interface ResponseStream {
 }
 
 const PAGE_SIZE = 1000;
+const RETRY_PAGE_SIZE = 250;
 const EAGER_DAYS = 180;
 
 const rpc = async <T,>(fn: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<T> => {
@@ -85,26 +86,39 @@ const dedupeById = (rows: any[]): any[] => {
 
 // Pages retry individually so one transient failure under a parallel burst
 // doesn't force React Query to re-run the whole multi-page stream fetch.
+//
+// The dominant page failure is Postgres cancelling the statement at the
+// 8s `authenticated` role timeout (PostgREST surfaces it as a 500) when a
+// wide scope's parallel pages saturate the database. Page cost scales with
+// row count, so retries shrink the page to a size that completes under the
+// timeout, and back off long enough (with jitter) that the retry wave
+// doesn't re-form the same herd that caused the cancellations.
 const fetchResponsePage = async (
   companyId: string,
   cursor: { tested_at: string; id: string } | null,
   signal?: AbortSignal
-): Promise<any[]> => {
-  const attempt = () => rpc<any[]>('get_company_responses_page', {
+): Promise<{ rows: any[]; limit: number }> => {
+  const attempt = (limit: number) => rpc<any[]>('get_company_responses_page', {
     p_company_id: companyId,
     p_excluded_models: EXCLUDED_AI_MODELS,
     p_since: eagerCutoffIso(),
     p_before_tested_at: cursor?.tested_at ?? null,
     p_before_id: cursor?.id ?? null,
-    p_limit: PAGE_SIZE,
+    p_limit: limit,
   }, signal);
-  const backoffs = [400, 1500];
+  const plan = [
+    { backoff: 0, limit: PAGE_SIZE },
+    { backoff: 2500, limit: RETRY_PAGE_SIZE },
+    { backoff: 6000, limit: RETRY_PAGE_SIZE },
+  ];
   for (let i = 0; ; i += 1) {
     try {
-      return await attempt();
+      const rows = await attempt(plan[i].limit);
+      return { rows, limit: plan[i].limit };
     } catch (err) {
-      if (signal?.aborted || i >= backoffs.length) throw err;
-      await new Promise(r => setTimeout(r, backoffs[i]));
+      if (signal?.aborted || i + 1 >= plan.length) throw err;
+      await new Promise(r => setTimeout(r, plan[i + 1].backoff + Math.random() * 1000));
+      if (signal?.aborted) throw err;
     }
   }
 };
@@ -138,13 +152,15 @@ export const fetchResponsesFirstPages = async (scopeIds: string[], signal?: Abor
   const pages = await boundedMap(scopeIds, 4, id => fetchResponsePage(id, null, signal));
   const cursorByCompany: FirstPages['cursorByCompany'] = {};
   let complete = true;
-  pages.forEach((rows, i) => {
+  pages.forEach(({ rows, limit }, i) => {
     const last = rows[rows.length - 1];
-    const companyComplete = rows.length < PAGE_SIZE;
+    // A short page relative to the limit actually requested means the walk
+    // reached the end — the retry path may have fetched fewer than PAGE_SIZE.
+    const companyComplete = rows.length < limit;
     cursorByCompany[scopeIds[i]] = companyComplete || !last ? null : { tested_at: last.tested_at, id: last.id };
     if (!companyComplete) complete = false;
   });
-  return { rows: dedupeById(pages.flat()).sort(byTestedAtDesc), complete, cursorByCompany };
+  return { rows: dedupeById(pages.flatMap(p => p.rows)).sort(byTestedAtDesc), complete, cursorByCompany };
 };
 
 // The rest of the stream: keyset-walk each profile from the first page's
@@ -155,15 +171,19 @@ export const fetchResponsesRemaining = async (
   first: FirstPages | undefined,
   signal?: AbortSignal
 ): Promise<ResponseStream> => {
-  const perCompany = await boundedMap(scopeIds, 4, async (id) => {
+  // Concurrency 2 (first pages run at 4): this walk is background hydration
+  // with no paint waiting on it, and on wide scopes (Netflix: 16 profiles,
+  // ~86 pages) a 4-wide walk saturated Postgres into 8s statement timeouts
+  // that 500'd the rollup calls sharing the database.
+  const perCompany = await boundedMap(scopeIds, 2, async (id) => {
     const firstRows = first?.rows?.filter(r => r.company_id === id) ?? [];
     let cursor = first ? first.cursorByCompany[id] ?? null : null;
     const all: any[] = first ? [...firstRows] : [];
     if (first && cursor === null) return all; // this profile finished in page 1
     for (;;) {
-      const rows = await fetchResponsePage(id, cursor, signal);
+      const { rows, limit } = await fetchResponsePage(id, cursor, signal);
       all.push(...rows);
-      if (rows.length < PAGE_SIZE) break;
+      if (rows.length < limit) break;
       const last = rows[rows.length - 1];
       cursor = { tested_at: last.tested_at, id: last.id };
     }

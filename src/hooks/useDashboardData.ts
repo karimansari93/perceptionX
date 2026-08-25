@@ -444,6 +444,11 @@ export const useDashboardData = () => {
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,
+    // Each page already retries 3 attempts internally (with shrunken retry
+    // pages); the default query-level retry (3) on top of that multiplied a
+    // failing wide-scope walk into dozens of extra 8-second statement-timeout
+    // requests against an already saturated database.
+    retry: 1,
   });
   const fullStreamQuery = useQuery({
     queryKey: dashboardKeys.responsesFull(scopeKey),
@@ -456,6 +461,7 @@ export const useDashboardData = () => {
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,
+    retry: 1,
   });
   // ---- Values derived from the cached families. Same names and shapes the
   // rest of the hook (and its consumers) always used. ----
@@ -617,15 +623,30 @@ export const useDashboardData = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeReady, promptsQuery.data, streamData, scopeKey, currentCompany?.id]);
 
-  // Surface stream/prompts failures the way the old fetch path did.
-  const streamError: any = promptsQuery.error || firstPagesQuery.error || fullStreamQuery.error || rollupsQuery.error;
+  // The full-screen "Connection Issue" swap is reserved for the critical
+  // path failing with nothing cached to render (contract #3: never blank
+  // rendered content). The response stream is background hydration
+  // (contract #4): its failures log and leave the rollup-rendered dashboard
+  // on screen — during the 2026-08-25 statement-timeout incident, a single
+  // background page 500 was replacing an otherwise-loaded Overview tab with
+  // the error screen.
+  const criticalError: any =
+    (promptsQuery.data === undefined && promptsQuery.error) ||
+    (rollupsQuery.data === undefined && rollupsQuery.error) ||
+    null;
+  const backgroundError: any = firstPagesQuery.error || fullStreamQuery.error;
   useEffect(() => {
-    if (!streamError) {
+    if (backgroundError) {
+      console.error('Error loading dashboard response stream (background):', backgroundError);
+    }
+  }, [backgroundError]);
+  useEffect(() => {
+    if (!criticalError) {
       setConnectionError(null);
       return;
     }
-    console.error('Error loading dashboard data:', streamError);
-    const msg = String(streamError?.message ?? '');
+    console.error('Error loading dashboard data:', criticalError);
+    const msg = String(criticalError?.message ?? '');
     if (msg.includes('permission') || msg.includes('policy')) {
       setConnectionError("Permission denied. Please ensure you have access to this company's data.");
     } else if (msg.includes('timeout')) {
@@ -635,7 +656,7 @@ export const useDashboardData = () => {
     } else {
       setConnectionError('Unable to load data. Please refresh the page or try again later.');
     }
-  }, [streamError]);
+  }, [criticalError]);
 
   const fetchResponseTexts = useCallback(async (ids: string[]) => {
     if (!ids.length) return {};

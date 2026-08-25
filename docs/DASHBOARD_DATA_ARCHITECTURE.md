@@ -84,6 +84,25 @@ data is memoized; charts animate only on first mount.
 4. **The response stream is background hydration.** First paint is
    rollup-first; nothing on the critical path may await the stream.
 
+## Incident 2026-08-25: statement-timeout 500s on Overview load
+
+Wide-scope loads (Netflix: 16 profiles, ~86 stream pages of ~3.4 MB) pushed
+enough concurrent `get_company_responses_page` calls (observed 74/min with
+retries) that Postgres began cancelling statements at the `authenticated`
+role's 8s `statement_timeout` — PostgREST surfaces those as 500s, which also
+took down `get_dashboard_rollups` calls sharing the database. Two client bugs
+amplified it: page retries at 400 ms/1500 ms re-formed the herd against a
+still-saturated database, and a single *background* stream failure set
+`connectionError`, replacing an already-rendered dashboard with the
+full-screen "Connection Issue" state (violating contracts #3/#4).
+
+Mitigations now in place: stream-walk concurrency 2 (first pages stay 4),
+page retries back off 2.5 s/6 s with jitter and shrink to 250-row pages
+(cost scales with rows, so the retry fits under the timeout), query-level
+retry capped at 1 for the stream families, and the full-screen error is
+reserved for the critical path (rollups/prompts) failing with nothing cached
+to render — stream failures log and leave content on screen.
+
 ## Known follow-ups (deliberate scope cuts)
 
 - Citations dominate the remaining stream payload (~2.5 MB/1000 rows). Split
