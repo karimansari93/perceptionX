@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, memo } from "react";
+import type { DomainStats } from '@/hooks/dashboard/dashboardQueries';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CitationCount } from "@/types/dashboard";
 import {
@@ -36,6 +37,10 @@ import { TablePagination } from "./TablePagination";
 import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
 
 interface SourcesTabProps {
+  // Phase-3 domain cube: replaces raw-row domain aggregation when present.
+  domainStats?: DomainStats;
+  cubeQuarterKey?: string | null;
+  cubePrevQuarterKey?: string | null;
   topCitations: CitationCount[];
   responses: any[];
   parseCitations: (citations: any) => any[];

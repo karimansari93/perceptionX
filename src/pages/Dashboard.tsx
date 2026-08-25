@@ -161,6 +161,14 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     prefetchLocationRollups,
     prefetchCompanyRollups,
     hydration,
+    domainStats,
+    competitorStats,
+    cubeScopeRows,
+    cubePromptTypeRows,
+    cubeDailyRows,
+    cubeDailyUnsound,
+    cubeQuarterKey,
+    cubePrevQuarterKey,
   } = dashboardData;
 
   // `isRefreshing` ships with the TanStack rewrite of useDashboardData (true
@@ -602,6 +610,14 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             market={selectedMarketName}
             selectedJobFunction={selectedJobFunction}
             onJobFunctionChange={handleJobFunctionChange}
+            domainStats={domainStats}
+            competitorStats={competitorStats}
+            cubeScopeRows={cubeScopeRows}
+            cubePromptTypeRows={cubePromptTypeRows}
+            cubeDailyRows={cubeDailyRows}
+            cubeDailyUnsound={cubeDailyUnsound}
+            cubeQuarterKey={cubeQuarterKey}
+            cubePrevQuarterKey={cubePrevQuarterKey}
           />
         </div>
 
@@ -623,6 +639,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={handleJobFunctionChange}
                 responseSentimentRows={responseSentimentRows}
+                domainStats={domainStats}
+                cubeQuarterKey={cubeQuarterKey}
+                cubePrevQuarterKey={cubePrevQuarterKey}
               />
             </Suspense>
           </div>
@@ -644,6 +663,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responseSentimentRows={responseSentimentRows}
                 recencyData={recencyData}
                 onNavigateToSources={handleNavigateToSources}
+                competitorStats={competitorStats}
+                cubeQuarterKey={cubeQuarterKey}
+                cubePrevQuarterKey={cubePrevQuarterKey}
               />
             </Suspense>
           </div>

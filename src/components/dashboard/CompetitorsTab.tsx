@@ -1,4 +1,5 @@
 import { Fragment, useState, useMemo, useEffect, useCallback, memo } from "react";
+import type { CompetitorStats } from '@/hooks/dashboard/dashboardQueries';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Users, TrendingUp, TrendingDown, Info, ChartLine, BarChartHorizontal,
@@ -129,6 +130,10 @@ type CompetitorAgg = {
 };
 
 interface CompetitorsTabProps {
+  // Phase-3 competitor cube: replaces raw-row competitor aggregation when present.
+  competitorStats?: CompetitorStats;
+  cubeQuarterKey?: string | null;
+  cubePrevQuarterKey?: string | null;
   responses: any[];
   companyName: string;
   currentCompanyId?: string;

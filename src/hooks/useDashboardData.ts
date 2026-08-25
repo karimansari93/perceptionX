@@ -10,6 +10,11 @@ import {
   fetchResponsesFirstPages,
   fetchResponsesRemaining,
   sentimentRowsFromStream,
+  fetchDomainStats,
+  fetchCompetitorStats,
+  type CubeLocationParams,
+  type DomainStats,
+  type CompetitorStats,
   type FirstPages,
   type ScopeRollups,
   type ScopeStats,
@@ -17,7 +22,10 @@ import {
 } from "@/hooks/dashboard/dashboardQueries";
 import {
   selectDailyBuckets,
+  selectDailyRowsForLocation,
+  selectPromptTypeRowsForLocation,
   selectScopeRows,
+  selectScopeRowsForLocation,
   sumScopeRows,
   type StatsSelection,
 } from "@/hooks/dashboard/scopeStatsSelect";
@@ -1632,6 +1640,66 @@ export const useDashboardData = () => {
     refetchOnMount: true,
   });
 
+  // Interactive cubes (domain + competitor stats): ONE fetch per
+  // (scope, location selection), month × job-function (× prompt_type) kept
+  // in the payload, so job-function and period toggles pool client-side
+  // over a few thousand rows — no fetch, no 40K-row raw scan. Location
+  // params mirror locRollupsQuery; '' key = all locations (no predicate).
+  const cubeLocationActive = !!selectedLocation && locSelectionFetchable;
+  const cubeLocationKey = cubeLocationActive ? (selectedLocation as string) : '';
+  const cubeParams: CubeLocationParams = cubeLocationActive
+    ? {
+        ownedIds: selectedOwnedCompanyIds,
+        ownedBuckets: ownedBucketList,
+        otherIds: isGeneralSelection ? [] : otherCompanyIds,
+        otherBuckets: isGeneralSelection ? [] : selectedRawValues,
+      }
+    : { ownedIds: scopeCompanyIds, ownedBuckets: null, otherIds: [], otherBuckets: [] };
+  const domainStatsQuery = useQuery({
+    queryKey: dashboardKeys.domainStats(scopeKey, cubeLocationKey),
+    queryFn: ({ signal }) => fetchDomainStats(cubeParams, signal),
+    enabled: scopeReady,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+  const competitorStatsQuery = useQuery({
+    queryKey: dashboardKeys.competitorStats(scopeKey, cubeLocationKey),
+    queryFn: ({ signal }) => fetchCompetitorStats(cubeParams, signal),
+    enabled: scopeReady,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+  const domainStats: DomainStats | undefined = domainStatsQuery.data;
+  const competitorStats: CompetitorStats | undefined = competitorStatsQuery.data;
+
+  // Scope-cube rows for the active LOCATION only (job function and month
+  // kept) — components pool those dimensions themselves for instant pill
+  // toggles. Location attribution needs countryKeyByCompanyId, which only
+  // this hook has, so it is applied once here.
+  const cubeLocationSel = useMemo(() => ({
+    locationKey: selectedLocation && selectedLocationEntry ? selectedLocation : null,
+    countryKeyByCompanyId,
+    quarterKey: null,
+  }), [selectedLocation, selectedLocationEntry, countryKeyByCompanyId]);
+  const cubeScopeRows = useMemo(
+    () => (scopeStats ? selectScopeRowsForLocation(scopeStats.scope, cubeLocationSel) : undefined),
+    [scopeStats, cubeLocationSel]
+  );
+  const cubePromptTypeRows = useMemo(
+    () => (scopeStats ? selectPromptTypeRowsForLocation(scopeStats.prompt_types, cubeLocationSel) : undefined),
+    [scopeStats, cubeLocationSel]
+  );
+  const cubeDailySelection = useMemo(
+    () => (scopeStats ? selectDailyRowsForLocation(scopeStats.daily, cubeLocationSel) : undefined),
+    [scopeStats, cubeLocationSel]
+  );
+  const cubeDailyRows = cubeDailySelection?.rows;
+  // Daily rows predating the response_month migration make period-scoped day
+  // math unsound — consumers fall back to raw rows while any remain.
+  const cubeDailyUnsound = cubeDailySelection?.hasUnrefreshedRows ?? false;
+
   // Raw spellings can widen while the response stream lands. The query key
   // deliberately excludes them (identical selections must share the cache);
   // widening invalidates instead — a background revalidation, not the old
@@ -1649,6 +1717,10 @@ export const useDashboardData = () => {
       queryClient.invalidateQueries({
         queryKey: dashboardKeys.locationRollups(scopeKey, selectedLocation),
       });
+      // The interactive cubes share the same location inputs — a widened
+      // spelling list must revalidate them too.
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.domainStats(scopeKey, selectedLocation) });
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.competitorStats(scopeKey, selectedLocation) });
     }
     locInputsSigRef.current.set(mapKey, sig);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1879,6 +1951,12 @@ export const useDashboardData = () => {
     const idx = availablePeriods.findIndex(p => p.key === effectivePeriod.key);
     return idx >= 0 && idx + 1 < availablePeriods.length ? availablePeriods[idx + 1] : null;
   }, [availablePeriods, effectivePeriod]);
+
+  // Quarter keys for cube pooling, mirroring periodFilteredResponses'
+  // single-period bypass: with <=1 available periods the raw path shows ALL
+  // rows, so cube consumers must not quarter-filter either.
+  const cubeQuarterKey = (effectivePeriod && availablePeriods.length > 1) ? effectivePeriod.key : null;
+  const cubePrevQuarterKey = (previousPeriodInfo && availablePeriods.length > 1) ? previousPeriodInfo.key : null;
 
   // Filter responses to the selected period (by snapshot quarter).
   const periodFilteredResponses = useMemo(() => {
@@ -2906,6 +2984,14 @@ export const useDashboardData = () => {
     attributeThemes: effAttributeThemes, // Pre-aggregated attribute scores — location-scoped when a location is active
     responseSentimentRows, // Per-response sentiment ratios (company_response_sentiment_mv)
     scopeStats, // Phase-3 pre-aggregated stats cube (month/day × job fn × location [+ prompt_type / ai_model])
+    domainStats, // Interactive domain cube: top-N domains × month × job fn for the active location
+    competitorStats, // Interactive competitor cube: top-N competitors × month × job fn × prompt_type
+    cubeScopeRows, // Scope cube rows, location-filtered (fn + month kept for client pooling)
+    cubePromptTypeRows, // Prompt-type cube rows, location-filtered
+    cubeDailyRows, // Daily cube rows, location-filtered
+    cubeDailyUnsound, // True while pre-migration daily rows lack response_month (period math falls back to raw)
+    cubeQuarterKey, // Active quarter for cube pooling (null = all periods / single-period bypass)
+    cubePrevQuarterKey, // Prior quarter for cube delta comparisons (null when none)
     isOnline, // Network status
     connectionError, // Connection error message
     recencyDataError, // Recency data specific error message

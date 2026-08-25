@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, memo } from "react";
+import type { DomainStats, CompetitorStats, ScopeStatsRow, ScopeDailyStatsRow, ScopePromptTypeStatsRow } from '@/hooks/dashboard/dashboardQueries';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { MetricCard } from "./MetricCard";
 import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dashboard";
@@ -48,6 +49,19 @@ interface AITheme {
 }
 
 interface OverviewTabProps {
+  // Phase-3 cubes (see docs/DASHBOARD_DATA_ARCHITECTURE.md): pre-aggregated
+  // inputs that replace raw-row scans; undefined while a scope's stats are
+  // still backfilling (consumers keep their raw fallback). The scope/daily/
+  // prompt-type rows arrive LOCATION-FILTERED with job function and month
+  // kept, so pill/period toggles pool client-side.
+  domainStats?: DomainStats;
+  competitorStats?: CompetitorStats;
+  cubeScopeRows?: ScopeStatsRow[];
+  cubePromptTypeRows?: ScopePromptTypeStatsRow[];
+  cubeDailyRows?: ScopeDailyStatsRow[];
+  cubeDailyUnsound?: boolean;
+  cubeQuarterKey?: string | null;
+  cubePrevQuarterKey?: string | null;
   metrics: DashboardMetrics;
   topCitations: CitationCount[];
   topCompetitors: { company: string; count: number }[];

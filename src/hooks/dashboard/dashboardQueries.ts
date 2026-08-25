@@ -19,6 +19,13 @@ export const dashboardKeys = {
   locationRollups: (scopeKey: string, locationKey: string) =>
     ['dashboard', 'scope', scopeKey, 'location', locationKey] as const,
   scopeStats: (scopeKey: string) => ['dashboard', 'scope', scopeKey, 'stats'] as const,
+  // Interactive cubes: one fetch per (scope, location selection); month ×
+  // job-function (× prompt_type) stay in the payload so filter toggles pool
+  // client-side with no fetch. '' = all locations.
+  domainStats: (scopeKey: string, locationKey: string) =>
+    ['dashboard', 'scope', scopeKey, 'domains', locationKey] as const,
+  competitorStats: (scopeKey: string, locationKey: string) =>
+    ['dashboard', 'scope', scopeKey, 'competitors', locationKey] as const,
 };
 
 export interface ScopeRollups {
@@ -107,6 +114,45 @@ export interface ScopeStats {
   llm: ScopeLlmStatsRow[];
 }
 
+// Domain cube (get_domain_stats, p_keep_functions=true): top-N domains for
+// the scope+location, month × job-function grain. responses_citing /
+// mentioned_responses_citing are deduped per response; citation_count counts
+// occurrences (the top_sources measure).
+export interface DomainStatsRow {
+  domain: string;
+  response_month: string;
+  job_function_context: string;
+  responses_citing: number;
+  mentioned_responses_citing: number;
+  citation_count: number;
+}
+export interface DomainStats {
+  rows: DomainStatsRow[];
+  domain_total: number; // distinct domains in the filtered window (pre top-N)
+}
+
+// Competitor cube (get_competitor_stats): top-N canonical competitors,
+// month × job-function × prompt_type grain, deduped per response.
+export interface CompetitorStatsRow {
+  competitor_name: string;
+  response_month: string;
+  job_function_context: string;
+  prompt_type: string;
+  responses_mentioning: number;
+  co_mentions: number;
+}
+export interface CompetitorStats {
+  rows: CompetitorStatsRow[];
+  competitor_total: number;
+}
+
+export interface CubeLocationParams {
+  ownedIds: string[];
+  ownedBuckets: string[] | null; // null = no location predicate (all locations)
+  otherIds: string[];
+  otherBuckets: string[];
+}
+
 const PAGE_SIZE = 1000;
 const RETRY_PAGE_SIZE = 250;
 const EAGER_DAYS = 180;
@@ -127,6 +173,25 @@ export const fetchScopeRollups = (scopeIds: string[], signal?: AbortSignal): Pro
 
 export const fetchScopeStats = (scopeIds: string[], signal?: AbortSignal): Promise<ScopeStats> =>
   rpc<ScopeStats>('get_scope_stats', { p_company_ids: scopeIds }, signal);
+
+export const fetchDomainStats = (params: CubeLocationParams, signal?: AbortSignal): Promise<DomainStats> =>
+  rpc<DomainStats>('get_domain_stats', {
+    p_owned_ids: params.ownedIds,
+    p_owned_buckets: params.ownedBuckets,
+    p_other_ids: params.otherIds,
+    p_other_buckets: params.otherBuckets,
+    p_keep_functions: true,
+    p_limit: 300,
+  }, signal);
+
+export const fetchCompetitorStats = (params: CubeLocationParams, signal?: AbortSignal): Promise<CompetitorStats> =>
+  rpc<CompetitorStats>('get_competitor_stats', {
+    p_owned_ids: params.ownedIds,
+    p_owned_buckets: params.ownedBuckets,
+    p_other_ids: params.otherIds,
+    p_other_buckets: params.otherBuckets,
+    p_limit: 300,
+  }, signal);
 
 export const fetchLocationRollups = (
   params: { ownedIds: string[]; ownedBuckets: string[]; otherIds: string[]; otherBuckets: string[] },
