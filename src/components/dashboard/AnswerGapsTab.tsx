@@ -68,10 +68,15 @@ export const AnswerGapsTab = () => {
 
       const promptIds = userPrompts.map(p => p.id);
 
+      // Only the fields the gap analysis reads, newest first, bounded — the
+      // old select('*') shipped every column (response_text included) for the
+      // user's entire response history in one unbounded request.
       const { data: responses, error: responsesError } = await supabase
         .from('prompt_responses')
-        .select('*')
-        .in('confirmed_prompt_id', promptIds);
+        .select('id, confirmed_prompt_id, ai_model, company_mentioned, citations, response_text, tested_at')
+        .in('confirmed_prompt_id', promptIds)
+        .order('tested_at', { ascending: false })
+        .limit(500);
 
       if (responsesError) throw responsesError;
 
