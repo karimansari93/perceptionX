@@ -1777,6 +1777,14 @@ export const useDashboardData = () => {
       queryFn: ({ signal }) => fetchScopePrompts(scope, signal),
       staleTime: FRESH_MS,
     });
+    // The stats cube is part of the headline paint now — warm it with the
+    // rollups (found via E2E: hover prefetched rollups+prompts but the
+    // switch still had to fetch stats).
+    queryClient.prefetchQuery({
+      queryKey: dashboardKeys.scopeStats(key),
+      queryFn: ({ signal }) => fetchScopeStats(scope, signal),
+      staleTime: FRESH_MS,
+    });
   }, [userCompanies, currentCompany?.id, queryClient]);
 
   // Hydration stages for the branded first-load screen: which fetch families
