@@ -105,6 +105,10 @@ export default {
 			'loadingScreenFadeOut': {
 				'0%': { opacity: '1' },
 				'100%': { opacity: '0' },
+			},
+			'global-fetch': {
+				'0%': { transform: 'translateX(-100%)' },
+				'100%': { transform: 'translateX(400%)' },
 			}
 			},
 			animation: {
@@ -112,6 +116,7 @@ export default {
 				'accordion-up': 'accordion-up 0.2s ease-out',
 				'slideUpGlow': 'slideUpGlow 0.6s ease-out 0.4s both',
 				'loadingScreenFadeOut': 'loadingScreenFadeOut 0.28s ease-out 0.22s forwards',
+					'global-fetch': 'global-fetch 1.1s ease-in-out infinite',
 			}
 		}
 	},

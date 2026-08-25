@@ -356,11 +356,15 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     // !competitorLoading, which always settles (even for empty/setup
     // accounts), so this can't hang.
     if (!sessionFirstLoadDoneRef.current) {
-      // Hold until the FULL data set has hydrated (hydration.complete), not
-      // just the headline rollups — so the reveal never hands off to
-      // still-loading Sources/Competitors cards. hydration treats fetch
-      // errors and no-company accounts as complete, so this can't hang.
-      return companyLoading || isLoading || !isFullyLoaded || !hydration.complete;
+      // Hold until the HEADLINE families (prompts + rollups) are ready —
+      // the Overview is fully rollup-backed, so the reveal is complete for
+      // the tab the user lands on while the response stream keeps hydrating
+      // behind it (per-tab loading states cover late arrivals). With the
+      // persisted cache this releases instantly on a warm reopen instead of
+      // re-holding for the full ~45s stream on large scopes. hydration
+      // treats fetch errors and no-company accounts as ready, so this
+      // can't hang.
+      return companyLoading || isLoading || !isFullyLoaded || !hydration.headlineReady;
     }
     // After the first full load this session, fall back to the original
     // persisted-state behavior so in-app tab returns / company switches don't
@@ -368,8 +372,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (hasInitiallyLoaded) {
       return companyLoading && currentCompany === null;
     }
-    return companyLoading || isLoading || !isFullyLoaded || !hydration.complete;
-  }, [companyLoading, isLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany, hydration.complete]);
+    return companyLoading || isLoading || !isFullyLoaded || !hydration.headlineReady;
+  }, [companyLoading, isLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany, hydration.headlineReady]);
 
   // Keep the loading screen mounted long enough to play its completion
   // (bar snaps to 100% + fade) before the dashboard is revealed.

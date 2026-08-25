@@ -175,6 +175,27 @@ the client switch per tab, verified by computing old-vs-new values on real
 scopes before each flip. Row-level surfaces (response lists, quote
 extraction, text search) stay raw and get server pagination in phase 4.
 
+## UX layer (2026-08-25)
+
+- **Warm starts:** the small dashboard families (prompts, rollups, scope
+  stats, location rollups — never the response stream) persist to IndexedDB
+  via `PersistQueryClientProvider` (`px-dashboard-cache-v1`, 24h maxAge,
+  version-busted). localStorage was tried first and rejected: a large
+  scope's snapshot passes its ~5 MB quota and a failed write silently
+  strands a stale partial.
+- **First-load gate releases on headlineReady (prompts + rollups), not the
+  full stream** — contract #4 applied to the loader. Measured on the Ford
+  scope: reveal went from ~45-55 s (stream-bound) to ~6 s cold, and a warm
+  reopen paints entirely from the persisted cache (verified with data RPCs
+  blocked). The remaining ~6 s is auth/company bootstrap, not data.
+- **GlobalFetchIndicator**: 2px top bar for genuinely-async moments —
+  appears after 150 ms in-flight, stays ≥300 ms; never a skeleton over
+  rendered content.
+- **web-vitals → GA**: INP/LCP/CLS report to the existing gtag property.
+  INP is the "clicked a filter and it froze" metric (measured 0.4-12.4 s
+  main-thread blocks on Ford job-function switches — the number the cube
+  switches must drive under 200 ms).
+
 ## Known follow-ups (deliberate scope cuts)
 
 - Citations still dominate the stream payload (~1.7 MB/1000 rows after the

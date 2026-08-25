@@ -1803,6 +1803,11 @@ export const useDashboardData = () => {
       rollups: rollupsDone,
       responsesFirst,
       responsesFull,
+      // The headline (Overview scorecard + cards) is fully rollup-backed —
+      // contract #4: nothing on the critical path awaits the stream. The
+      // first-load screen releases on this; the stream keeps hydrating
+      // behind the revealed dashboard (instant on warm starts, ~3s cold).
+      headlineReady: prompts && rollupsDone,
       complete: prompts && rollupsDone && responsesFirst && responsesFull,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
