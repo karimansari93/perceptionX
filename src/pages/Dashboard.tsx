@@ -61,12 +61,6 @@ interface DatabaseOnboardingData {
   id?: string;
 }
 
-interface PromptsModalOnboardingData {
-  companyName: string;
-  industry: string;
-  id?: string;
-}
-
 const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {}) => {
   const { user } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
@@ -74,7 +68,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = usePersistedState<boolean>('dashboard.hasInitiallyLoaded', false);
   const [activeTab, setActiveTab] = useState<'terms' | 'results'>('results');
   const [chartView, setChartView] = useState<'bubble' | 'bar'>('bubble');
-  const [isLoading, setIsLoading] = useState(true);
   // Track which lazy tabs have been visited so they stay mounted after first
   // visit. Deliberately NOT reset on company switch: every tab's company-
   // scoped data arrives via props or effects keyed on currentCompanyId,
@@ -312,9 +305,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   }, [navigate]);
 
 
-  const [onboardingData, setOnboardingData] = useState<PromptsModalOnboardingData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [onboardingId, setOnboardingId] = useState<string | null>(null);
   const [isNewUser, setIsNewUser] = useState(false);
   const [hasDismissedPromptsModal, setHasDismissedPromptsModal] = useState(false);
 
@@ -329,7 +320,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     }
     
     // Only mark as loaded once, and don't reset when returning to tab
-    if (!initialLoadCompletedRef.current && !companyLoading && !loading && !isLoading && (currentCompany !== undefined)) {
+    if (!initialLoadCompletedRef.current && !companyLoading && !loading && (currentCompany !== undefined)) {
       // Small delay to ensure everything is settled
       const timer = setTimeout(() => {
         if (!initialLoadCompletedRef.current) {
@@ -339,7 +330,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [companyLoading, loading, isLoading, currentCompany, setHasInitiallyLoaded, hasInitiallyLoaded]);
+  }, [companyLoading, loading, currentCompany, setHasInitiallyLoaded, hasInitiallyLoaded]);
 
   // Session-scoped (in-memory) flag for "the dashboard has fully loaded at
   // least once since this Dashboard component mounted". This is intentionally
@@ -372,7 +363,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       // re-holding for the full ~45s stream on large scopes. hydration
       // treats fetch errors and no-company accounts as ready, so this
       // can't hang.
-      return companyLoading || isLoading || !isFullyLoaded || !hydration.headlineReady;
+      return companyLoading || !isFullyLoaded || !hydration.headlineReady;
     }
     // After the first full load this session, fall back to the original
     // persisted-state behavior so in-app tab returns / company switches don't
@@ -380,8 +371,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (hasInitiallyLoaded) {
       return companyLoading && currentCompany === null;
     }
-    return companyLoading || isLoading || !isFullyLoaded || !hydration.headlineReady;
-  }, [companyLoading, isLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany, hydration.headlineReady]);
+    return companyLoading || !isFullyLoaded || !hydration.headlineReady;
+  }, [companyLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany, hydration.headlineReady]);
 
   // Keep the loading screen mounted long enough to play its completion
   // (bar snaps to 100% + fade) before the dashboard is revealed.
@@ -422,53 +413,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       return () => clearTimeout(timer);
     }
   }, [collectionStatus?.companyId, isCollectingData, currentCompany?.id]);
-
-  // Fetch onboarding data - only once per user ID, not on every user object reference change
-  const onboardingDataFetchedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const fetchOnboardingData = async () => {
-      if (!user?.id) return;
-      
-      // Only fetch if we haven't already fetched for this user ID
-      if (onboardingDataFetchedRef.current.has(user.id)) {
-        return;
-      }
-
-      try {
-        // Only show loading if we don't have onboarding data yet
-        if (!onboardingData) {
-          setIsLoading(true);
-        }
-        const { data, error } = await supabase
-          .from('user_onboarding')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        if (error) throw error;
-
-        if (data && data.length > 0) {
-          const onboarding = data[0];
-          setOnboardingData({
-            companyName: onboarding.company_name,
-            industry: onboarding.industry,
-            id: onboarding.id
-          });
-          setOnboardingId(onboarding.id);
-        }
-        // Mark this user ID as fetched
-        onboardingDataFetchedRef.current.add(user.id);
-      } catch (error) {
-        console.error('Error fetching onboarding data:', error);
-        setError('Failed to load onboarding data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchOnboardingData();
-  }, [user?.id, onboardingData]); // Only depend on user.id, not the whole user object
 
   // Handle URL changes
   useEffect(() => {
@@ -795,18 +739,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           onCompanyPrefetch={prefetchCompanyRollups}
         />
         <div className="flex-1 overflow-auto">
-          {isLoading ? (
-            <div className="flex items-center justify-center min-h-[400px]">
-              <div className="text-center">
-                <img
-                  alt="Perception Logo"
-                  className="object-contain h-16 w-16 mx-auto mb-4 animate-pulse"
-                  src="/logos/PinkBadge.png"
-                />
-                <p className="text-gray-600">Loading...</p>
-              </div>
-            </div>
-          ) : error ? (
+          {error ? (
             <div className="flex items-center justify-center min-h-[400px]">
               <div className="text-center">
                 <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
