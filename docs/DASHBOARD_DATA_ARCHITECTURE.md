@@ -129,6 +129,42 @@ shape changed, so no client code changed):
   response history unbounded; now a typed column list, newest-first,
   capped at 500.
 
+## Phase 3: summaries answer every filter (in progress, 2026-08-25)
+
+Goal: no dashboard chart depends on the raw response stream, so phase 4 can
+delete the bulk download. Built from a full audit of every raw-row consumer
+(chart/card/modal → fields read → filters applied → required aggregate key).
+
+**Slice 1 (shipped, `20260825120000_scope_stats_rollups.sql`):** four small
+per-company stats tables — `company_scope_stats_mv` (month × job-function ×
+location: responses, mentions, citations, distinct domains/models, theme
+counts), `company_scope_daily_stats_mv` (same by `tested_at` day, + distinct
+prompt×model pairs), `company_scope_prompt_type_stats_mv` (+ prompt_type),
+`company_llm_stats_mv` (+ ai_model). Cardinality is tens-to-low-hundreds of
+rows per company, so `get_scope_stats(company_ids)` ships the whole cube
+(~4 KB/company) and client filter toggles stay instant — no fetch per
+toggle. They cover the Overview scorecard, day-grain trends, period list,
+job-function metrics, and the LLM card (audit items A1-A13, A16, B1-B8, C1,
+D1, F4, G3, H1). Refreshed by the existing per-company pipeline
+(`refresh_company_metrics`), registered in `_refresh_cm_dispatch` and
+`mv_refresh_state`; backfill ran through the dirty queue.
+
+Deliberate number changes at client switch time (both are corrections):
+- The LLM card's rollup previously included deprecated "overall candidate
+  experience" prompts that every other view excludes; `company_llm_stats_mv`
+  excludes them (measured: 4,771 → 4,546 mentions on the largest corpus).
+- `stitchResponses` duplicates attribute-tagged rows, so raw-row
+  `totalResponses` double-counts them today; the stats tables count each
+  response once.
+
+**Remaining slices:** domain stats (Sources tab / drill-downs; the
+domain×month×job-function cube is ~350K rows — stays server-side behind a
+filtered top-N RPC, not shipped whole), competitor stats (+prompt_type,
++domain, +attribute companions), page-grain stats, prompt-grain stats. Then
+the client switch per tab, verified by computing old-vs-new values on real
+scopes before each flip. Row-level surfaces (response lists, quote
+extraction, text search) stay raw and get server pagination in phase 4.
+
 ## Known follow-ups (deliberate scope cuts)
 
 - Citations still dominate the stream payload (~1.7 MB/1000 rows after the
