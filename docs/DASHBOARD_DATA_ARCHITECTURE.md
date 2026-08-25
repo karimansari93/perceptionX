@@ -84,11 +84,47 @@ data is memoized; charts animate only on first mount.
 4. **The response stream is background hydration.** First paint is
    rollup-first; nothing on the critical path may await the stream.
 
+## Incident 2026-08-25: statement-timeout 500s on Overview load
+
+Wide-scope loads (Netflix: 16 profiles, ~86 stream pages of ~3.4 MB) pushed
+enough concurrent `get_company_responses_page` calls (observed 74/min with
+retries) that Postgres began cancelling statements at the `authenticated`
+role's 8s `statement_timeout` — PostgREST surfaces those as 500s, which also
+took down `get_dashboard_rollups` calls sharing the database. Two client bugs
+amplified it: page retries at 400 ms/1500 ms re-formed the herd against a
+still-saturated database, and a single *background* stream failure set
+`connectionError`, replacing an already-rendered dashboard with the
+full-screen "Connection Issue" state (violating contracts #3/#4).
+
+Mitigations now in place: stream-walk concurrency 2 (first pages stay 4),
+page retries back off 2.5 s/6 s with jitter and shrink to 250-row pages
+(cost scales with rows, so the retry fits under the timeout), query-level
+retry capped at 1 for the stream families, and the full-screen error is
+reserved for the critical path (rollups/prompts) failing with nothing cached
+to render — stream failures log and leave content on screen.
+
+## Payload diet (2026-08-25, `20260825080000_slim_dashboard_payloads.sql`)
+
+Phase 1 of the post-incident plan, shipped entirely server-side (no client
+shape changed, so no client code changed):
+
+- Citation objects in the stream slim to `url`/`domain` (+`title` only when
+  it differs from `url`) via `slim_citation_list` — the dropped
+  `type`/`confidence`/`canonical_*` keys and url-duplicate titles were read
+  by no client code (audited all consumers). Page wire: 3.2 MB → 2.36 MB.
+- `get_dashboard_rollups` and `get_location_rollups` sentiment/relevance
+  families return typed column lists instead of `to_jsonb` full MV rows —
+  only the aggregator-read fields (metrics + `response_month` +
+  `job_function_context`, + `location_context` for the location variant).
+  Ford scope: those two families went 9.7 MB → 3.9 MB.
+
 ## Known follow-ups (deliberate scope cuts)
 
-- Citations dominate the remaining stream payload (~2.5 MB/1000 rows). Split
-  them into a lazy per-tab fetch (Sources drilldowns) to cut hydration
-  another ~40%.
+- Citations still dominate the stream payload (~1.7 MB/1000 rows after the
+  per-object slim). The full cut — domain-only citations in the stream and
+  lazy fetches for the surfaces that need URLs (source drilldowns, response
+  modals, recency) — needs ~12 consumer components reworked; it belongs with
+  the details-on-demand phase.
 - The stitch + memo cascade over the full row set still blocks the main
   thread for seconds on 40K-row scopes when the full stream commits — chunk
   it or move it to a worker.
@@ -96,8 +132,6 @@ data is memoized; charts animate only on first mount.
   Linear-style warm starts across reloads.
 - A per-job-function rollup MV would let scorecard function switching drop
   its raw-row dependency entirely.
-- `get_dashboard_rollups` returns full `to_jsonb` rows for sentiment/
-  relevance (~12 MB raw, ~1 MB gzipped); typed column lists would halve it.
 - The one-per-minute `refresh_metrics_tick` (mean 12.6 s) is the biggest
   background I/O consumer; batching/off-peak scheduling would reduce read
   contention.
