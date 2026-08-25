@@ -118,8 +118,11 @@ export const SourcesSummaryCard = ({
       // mentioned responses in the selection) yields the same empty list the
       // raw scan would — never a list of 0.0% rows.
       if (mentionedTotal === 0) return [];
+      // 'unknown' is the stored bucket for context-less citations — the raw
+      // path resolves or drops those via enhanceCitations, and SourcesTab's
+      // cube path filters them; exclude here too.
       return Array.from(domainPool.values())
-        .filter(e => e.mentionedResponsesCiting > 0)
+        .filter(e => e.mentionedResponsesCiting > 0 && e.domain && e.domain !== 'unknown')
         .map(e => ({ domain: e.domain, count: e.mentionedResponsesCiting }))
         .sort((a, b) => b.count - a.count);
     }
@@ -179,11 +182,13 @@ export const SourcesSummaryCard = ({
   // mentioned responses) between current and previous periods.
   const sourceTrends = useMemo(() => {
     if (domainPool && domainStatsRows && cubeMentionedTotals) {
-      // Cube path: pool the previous quarter and diff coverage %. Null prev
-      // key = no previous period → no deltas (matches raw with an empty
-      // previousPeriodResponses). Both denominators come from the scope cube,
-      // the same basis as the numerators.
-      if (cubePrevQuarterKey == null) return {};
+      // Cube path: pool the previous quarter and diff coverage %. No previous
+      // quarter, or a previous quarter with zero mentioned responses for the
+      // selected function (e.g. a function first tagged this quarter), means
+      // there is nothing to compare — no deltas, matching the raw path's
+      // empty fnPreviousResponses. Both denominators come from the scope
+      // cube, the same basis as the numerators.
+      if (cubePrevQuarterKey == null || cubeMentionedTotals.previous === 0) return {};
       const prevPool = poolDomainRows(domainStatsRows, { quarterKey: cubePrevQuarterKey, jobFunction: cubeJobFunction });
       const currentTotal = cubeMentionedTotals.current;
       const previousTotal = cubeMentionedTotals.previous;
@@ -265,11 +270,11 @@ export const SourcesSummaryCard = ({
     }));
   }, [mentionedCitations, domainPool, responses, companyName, sourceTrends]);
 
-  // Delta column: on the cube path it exists whenever there is a previous
-  // quarter to pool (independent of the raw stream); raw gates on having
-  // previous-period rows.
-  const hasPreviousPeriod = domainPool
-    ? cubePrevQuarterKey != null
+  // Delta column: on the cube path it exists when the previous quarter has
+  // mentioned responses for the selection to compare against (independent of
+  // the raw stream); raw gates on having previous-period rows.
+  const hasPreviousPeriod = domainPool && cubeMentionedTotals
+    ? cubePrevQuarterKey != null && cubeMentionedTotals.previous > 0
     : previousPeriodResponses.length > 0;
 
   const renderSourceItem = (source: any) => {

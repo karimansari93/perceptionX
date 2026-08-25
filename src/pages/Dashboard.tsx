@@ -162,6 +162,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     cubeDailyUnsound,
     cubeQuarterKey,
     cubePrevQuarterKey,
+    cubeMonthFloor,
   } = dashboardData;
 
   // `isRefreshing` ships with the TanStack rewrite of useDashboardData (true
@@ -374,6 +375,20 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     return companyLoading || !isFullyLoaded || !hydration.headlineReady;
   }, [companyLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany, hydration.headlineReady]);
 
+  // Warm remount (user navigated away within the SPA and came back with the
+  // query cache intact): everything is ready on the very first render, the
+  // loader never shows, and the show→hide transition the latch below waits
+  // for never happens — latch immediately so the next company switch takes
+  // the lenient branch instead of re-showing the full-screen loader. Only
+  // the FIRST render decides this; a mid-load ready flicker can't trigger it.
+  const firstRenderLatchedRef = useRef(false);
+  if (!firstRenderLatchedRef.current) {
+    firstRenderLatchedRef.current = true;
+    if (!isInitialLoading) {
+      sessionFirstLoadDoneRef.current = true;
+    }
+  }
+
   // Keep the loading screen mounted long enough to play its completion
   // (bar snaps to 100% + fade) before the dashboard is revealed.
   const loadingHandoff = useLoadingHandoff(isInitialLoading);
@@ -562,6 +577,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             cubeDailyUnsound={cubeDailyUnsound}
             cubeQuarterKey={cubeQuarterKey}
             cubePrevQuarterKey={cubePrevQuarterKey}
+            cubeMonthFloor={cubeMonthFloor}
           />
         </div>
 
@@ -636,6 +652,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={handleJobFunctionChange}
                 cubeQuarterKey={cubeQuarterKey}
+                cubeMonthFloor={cubeMonthFloor}
                 cubeScopeRows={cubeScopeRows}
                 cubePromptTypeRows={cubePromptTypeRows}
               />

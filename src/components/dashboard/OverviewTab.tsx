@@ -63,6 +63,9 @@ interface OverviewTabProps {
   cubeDailyUnsound?: boolean;
   cubeQuarterKey?: string | null;
   cubePrevQuarterKey?: string | null;
+  // 'YYYY-MM' floor clamping attribute-MV months to the raw stream window
+  // when no quarter filter applies (single-period bypass); null otherwise.
+  cubeMonthFloor?: string | null;
   metrics: DashboardMetrics;
   topCitations: CitationCount[];
   topCompetitors: { company: string; count: number }[];
@@ -142,6 +145,7 @@ export const OverviewTab = memo(({
   cubeDailyRows,
   cubeDailyUnsound = false,
   cubeQuarterKey = null,
+  cubeMonthFloor = null,
   cubePrevQuarterKey = null,
   metrics,
   topCitations,
@@ -1458,6 +1462,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
               aiThemesLoading={aiThemesLoading}
               cubeQuarterKey={cubeQuarterKey}
               cubePrevQuarterKey={cubePrevQuarterKey}
+              cubeMonthFloor={cubeMonthFloor}
               selectedJobFunction={selectedJobFunctionFilter}
             />
           </div>

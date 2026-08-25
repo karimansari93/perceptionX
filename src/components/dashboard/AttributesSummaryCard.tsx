@@ -26,6 +26,10 @@ interface AttributesSummaryCardProps {
   // pre-hydration.
   cubeQuarterKey?: string | null;     // null = single period → no filter
   cubePrevQuarterKey?: string | null; // null = no previous period → no deltas
+  // 'YYYY-MM' floor bounding MV months to the raw stream window when the
+  // quarter filter is bypassed — keeps cube-scoped and raw-derived numbers
+  // describing the same span for dormant-resumed histories.
+  cubeMonthFloor?: string | null;
   selectedJobFunction?: string;       // 'all' = no filter
 }
 
@@ -57,6 +61,7 @@ export const AttributesSummaryCard = ({
   aiThemesLoading = false,
   cubeQuarterKey,
   cubePrevQuarterKey,
+  cubeMonthFloor = null,
   selectedJobFunction = 'all'
 }: AttributesSummaryCardProps) => {
   const navigate = useNavigate();
@@ -93,8 +98,10 @@ export const AttributesSummaryCard = ({
     const prevKeys = new Set(previousPeriodResponses.map(respKey));
     const scopeCurrent = currentKeys.size > 0; // before responses load, include all MV rows
 
+    const inWindow = (row: any) =>
+      !cubeMonthFloor || !row.response_month || String(row.response_month).slice(0, 7) >= cubeMonthFloor;
     const inCurrent = (row: any, k: string) => cubeMode
-      ? fnMatches(row) && (!cubeQuarterKey || rowQuarter(row) === cubeQuarterKey)
+      ? fnMatches(row) && (cubeQuarterKey ? rowQuarter(row) === cubeQuarterKey : inWindow(row))
       : (!scopeCurrent || currentKeys.has(k));
     const inPrev = (row: any, k: string) => cubeMode
       ? fnMatches(row) && cubePrevQuarterKey != null && rowQuarter(row) === cubePrevQuarterKey
@@ -152,7 +159,7 @@ export const AttributesSummaryCard = ({
       .filter(a => a.count > 0)
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
-  }, [attributeThemes, responses, previousPeriodResponses, cubeQuarterKey, cubePrevQuarterKey, selectedJobFunction]);
+  }, [attributeThemes, responses, previousPeriodResponses, cubeQuarterKey, cubePrevQuarterKey, cubeMonthFloor, selectedJobFunction]);
 
   // Calculate theme trends: share of mentions % (current period) - share of mentions % (previous period)
   const themeTrends = useMemo(() => {

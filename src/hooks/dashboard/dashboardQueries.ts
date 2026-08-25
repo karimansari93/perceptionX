@@ -204,7 +204,7 @@ export const fetchLocationRollups = (
     p_other_buckets: params.otherBuckets,
   }, signal);
 
-const eagerCutoffIso = () => new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000).toISOString();
+export const eagerCutoffIso = () => new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
 const byTestedAtDesc = (a: any, b: any) =>
   new Date(b.tested_at || b.created_at || 0).getTime() - new Date(a.tested_at || a.created_at || 0).getTime();

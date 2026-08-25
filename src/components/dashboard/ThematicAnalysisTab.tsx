@@ -70,6 +70,10 @@ interface ThematicAnalysisTabProps {
   // tab's dependency on the raw response stream having loaded. undefined =
   // not wired → legacy response-derived scoping.
   cubeQuarterKey?: string | null; // null = single period → no filter
+  // 'YYYY-MM' floor bounding MV/cube months to the raw stream window when the
+  // quarter filter is bypassed (dormant-resumed histories stay consistent
+  // with the stream-fed drilldowns).
+  cubeMonthFloor?: string | null;
   cubeScopeRows?: ScopeStatsRow[];
   cubePromptTypeRows?: ScopePromptTypeStatsRow[];
 }
@@ -167,7 +171,7 @@ const SMALL_LABEL_CLS = 'text-[11px] font-semibold uppercase tracking-[0.1em]';
 const EMPTY_ARRAY: any[] = [];
 const EMPTY_OBJECT: Record<string, string> = {};
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = EMPTY_ARRAY, fetchAIThemesForAttribute, aiThemeAttrsLoaded = EMPTY_ARRAY, onRefreshThemes, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, cubeQuarterKey, cubeScopeRows, cubePromptTypeRows }: ThematicAnalysisTabProps) => {
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = EMPTY_ARRAY, fetchAIThemesForAttribute, aiThemeAttrsLoaded = EMPTY_ARRAY, onRefreshThemes, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, cubeQuarterKey, cubeMonthFloor = null, cubeScopeRows, cubePromptTypeRows }: ThematicAnalysisTabProps) => {
 
   // Modal state — persisted so a reload restores the open drilldown.
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
@@ -347,7 +351,13 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     const rowInScope = (row: any): boolean => {
       if (cubeMode) {
         if (selectedJobFunctionFilter !== 'all' && (row.job_function_context || '').trim() !== selectedJobFunctionFilter) return false;
-        if (cubeQuarterKey && (!row.response_month || quarterKeyOfMonthStr(String(row.response_month)) !== cubeQuarterKey)) return false;
+        if (cubeQuarterKey) {
+          if (!row.response_month || quarterKeyOfMonthStr(String(row.response_month)) !== cubeQuarterKey) return false;
+        } else if (cubeMonthFloor && row.response_month && String(row.response_month).slice(0, 7) < cubeMonthFloor) {
+          // Quarter bypassed: clamp to the raw stream's window so these
+          // scores match the stream-fed drilldowns.
+          return false;
+        }
         return true;
       }
       return !scope || keys.has(rowKey(row));
@@ -388,7 +398,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       })
       .filter(a => (a.positiveCount + a.negativeCount + a.neutralCount) > 0)
       .sort((a, b) => b.count - a.count);
-  }, [attributeThemes, responses, selectedJobFunctionFilter, cubeQuarterKey]);
+  }, [attributeThemes, responses, selectedJobFunctionFilter, cubeQuarterKey, cubeMonthFloor]);
 
   // Volume bands are relative to this company's own distribution (quintiles of
   // response counts), same as the previous ranking's pills.

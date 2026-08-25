@@ -12,6 +12,7 @@ import {
   sentimentRowsFromStream,
   fetchDomainStats,
   fetchCompetitorStats,
+  eagerCutoffIso,
   type CubeLocationParams,
   type DomainStats,
   type CompetitorStats,
@@ -1660,8 +1661,12 @@ export const useDashboardData = () => {
     gcTime: KEEP_MS,
     refetchOnMount: true,
   });
-  const domainStats: DomainStats | undefined = domainStatsQuery.data;
-  const competitorStats: CompetitorStats | undefined = competitorStatsQuery.data;
+  // Unbounded cube payloads (all months the MVs hold). The floored variants
+  // below — clamped to the raw stream's window whenever the single-period
+  // bypass leaves the quarter unfiltered — are what the hook consumes and
+  // exports, so cube-fed and raw-fed numbers always describe the same span.
+  const domainStatsUnbounded: DomainStats | undefined = domainStatsQuery.data;
+  const competitorStatsUnbounded: CompetitorStats | undefined = competitorStatsQuery.data;
 
   // Scope-cube rows for the active LOCATION only (job function and month
   // kept) — components pool those dimensions themselves for instant pill
@@ -1672,22 +1677,8 @@ export const useDashboardData = () => {
     countryKeyByCompanyId,
     quarterKey: null,
   }), [selectedLocation, selectedLocationEntry, countryKeyByCompanyId]);
-  const cubeScopeRows = useMemo(
-    () => (scopeStats ? selectScopeRowsForLocation(scopeStats.scope, cubeLocationSel) : undefined),
-    [scopeStats, cubeLocationSel]
-  );
-  const cubePromptTypeRows = useMemo(
-    () => (scopeStats ? selectPromptTypeRowsForLocation(scopeStats.prompt_types, cubeLocationSel) : undefined),
-    [scopeStats, cubeLocationSel]
-  );
-  const cubeDailySelection = useMemo(
-    () => (scopeStats ? selectDailyRowsForLocation(scopeStats.daily, cubeLocationSel) : undefined),
-    [scopeStats, cubeLocationSel]
-  );
-  const cubeDailyRows = cubeDailySelection?.rows;
-  // Daily rows predating the response_month migration make period-scoped day
-  // math unsound — consumers fall back to raw rows while any remain.
-  const cubeDailyUnsound = cubeDailySelection?.hasUnrefreshedRows ?? false;
+  // (The location-filtered cube row memos live below, after cubeQuarterKey
+  // is known — they also apply the stream-window floor.)
 
   // Raw spellings can widen while the response stream lands. The query key
   // deliberately excludes them (identical selections must share the cache);
@@ -1946,6 +1937,62 @@ export const useDashboardData = () => {
   // rows, so cube consumers must not quarter-filter either.
   const cubeQuarterKey = (effectivePeriod && availablePeriods.length > 1) ? effectivePeriod.key : null;
   const cubePrevQuarterKey = (previousPeriodInfo && availablePeriods.length > 1) ? previousPeriodInfo.key : null;
+
+  // -------------------------------------------------------------------------
+  // Stream-window floor for the cubes. The cubes hold a company's WHOLE
+  // history while the raw stream is bounded to the eager window; with an
+  // active quarter the pooling predicate bounds both sides, but in the
+  // single-period bypass (cubeQuarterKey null) unfiltered cube pooling would
+  // include months the stream can never contain (a dormant-resumed company),
+  // showing lifetime counts beside windowed raw drill-downs. Clamp every cube
+  // row set to the eager window whenever no quarter filter applies.
+  // -------------------------------------------------------------------------
+  const cubeMonthFloor = cubeQuarterKey == null ? eagerCutoffIso().slice(0, 7) : null;
+  const cubeDayFloor = cubeQuarterKey == null ? eagerCutoffIso().slice(0, 10) : null;
+  const monthInWindow = (month: string | null | undefined): boolean =>
+    !cubeMonthFloor || !month || String(month).slice(0, 7) >= cubeMonthFloor;
+
+  const flooredScopeStats = useMemo(() => {
+    if (!scopeStats || !cubeMonthFloor) return scopeStats;
+    return {
+      ...scopeStats,
+      scope: scopeStats.scope.filter(r => monthInWindow(r.response_month)),
+      prompt_types: scopeStats.prompt_types.filter(r => monthInWindow(r.response_month)),
+      daily: scopeStats.daily.filter(r => String(r.tested_day).slice(0, 10) >= cubeDayFloor!),
+      llm: scopeStats.llm ? scopeStats.llm.filter(r => monthInWindow(r.response_month)) : scopeStats.llm,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeStats, cubeMonthFloor, cubeDayFloor]);
+
+  const domainStats: DomainStats | undefined = useMemo(() => {
+    if (!domainStatsUnbounded || !cubeMonthFloor) return domainStatsUnbounded;
+    return { ...domainStatsUnbounded, rows: domainStatsUnbounded.rows.filter(r => monthInWindow(r.response_month)) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domainStatsUnbounded, cubeMonthFloor]);
+  const competitorStats: CompetitorStats | undefined = useMemo(() => {
+    if (!competitorStatsUnbounded || !cubeMonthFloor) return competitorStatsUnbounded;
+    return { ...competitorStatsUnbounded, rows: competitorStatsUnbounded.rows.filter(r => monthInWindow(r.response_month)) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [competitorStatsUnbounded, cubeMonthFloor]);
+
+  // Location-filtered cube rows for components (fn + month kept for client
+  // pooling), derived from the floored payloads.
+  const cubeScopeRows = useMemo(
+    () => (flooredScopeStats ? selectScopeRowsForLocation(flooredScopeStats.scope, cubeLocationSel) : undefined),
+    [flooredScopeStats, cubeLocationSel]
+  );
+  const cubePromptTypeRows = useMemo(
+    () => (flooredScopeStats ? selectPromptTypeRowsForLocation(flooredScopeStats.prompt_types, cubeLocationSel) : undefined),
+    [flooredScopeStats, cubeLocationSel]
+  );
+  const cubeDailySelection = useMemo(
+    () => (flooredScopeStats ? selectDailyRowsForLocation(flooredScopeStats.daily, cubeLocationSel) : undefined),
+    [flooredScopeStats, cubeLocationSel]
+  );
+  const cubeDailyRows = cubeDailySelection?.rows;
+  // Daily rows predating the response_month migration make period-scoped day
+  // math unsound — consumers fall back to raw rows while any remain.
+  const cubeDailyUnsound = cubeDailySelection?.hasUnrefreshedRows ?? false;
 
   // Filter responses to the selected period (by snapshot quarter).
   const periodFilteredResponses = useMemo(() => {
@@ -2262,16 +2309,16 @@ export const useDashboardData = () => {
       // the cube must not quarter-filter either.
       quarterKey: (effectivePeriod && availablePeriods.length > 1) ? (effectivePeriodKey ?? null) : null,
     };
-    const cubeScopeSelected = scopeStats ? selectScopeRows(scopeStats.scope, statsSel) : [];
+    const cubeScopeSelected = flooredScopeStats ? selectScopeRows(flooredScopeStats.scope, statsSel) : [];
     const cubeTotals = sumScopeRows(cubeScopeSelected);
     // The cube is trustworthy only when every company contributing raw rows
     // has cube rows too — a freshly added sibling profile streams responses
     // before its first stats refresh, and a scope-global gate would silently
     // compute mixed-scope numbers from the other profiles' cube rows.
-    const cubeCompanyIds = new Set((scopeStats?.scope ?? []).map(r => r.company_id));
+    const cubeCompanyIds = new Set((flooredScopeStats?.scope ?? []).map(r => r.company_id));
     const rawCompaniesCovered = responses.every(r => r.company_id == null || cubeCompanyIds.has(r.company_id));
-    const scopeCubeReady = !!scopeStats && scopeStats.scope.length > 0 && rawCompaniesCovered;
-    const dailySelection = scopeStats ? selectDailyBuckets(scopeStats.daily, statsSel) : null;
+    const scopeCubeReady = !!flooredScopeStats && flooredScopeStats.scope.length > 0 && rawCompaniesCovered;
+    const dailySelection = flooredScopeStats ? selectDailyBuckets(flooredScopeStats.daily, statsSel) : null;
     // Period filtering over day rows needs the response_month column; until a
     // company's daily rows carry it (post-migration refresh), period-scoped
     // day math is unsound — fall back to raw rows.
@@ -2530,7 +2577,7 @@ export const useDashboardData = () => {
     };
     
     return metricsResult;
-  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations, visibilityRowsForSelection, scopeStats, selectedLocation, selectedLocationEntry, countryKeyByCompanyId, availablePeriods]);
+  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations, visibilityRowsForSelection, flooredScopeStats, selectedLocation, selectedLocationEntry, countryKeyByCompanyId, availablePeriods]);
 
   // Per-quarter EPS trend powering the Overview headline sparkline. One point
   // per available quarter (oldest → selected period), each computed with the
@@ -2972,7 +3019,7 @@ export const useDashboardData = () => {
     aiThemeAttrsLoaded, // v2 attribute ids whose raw themes are loaded for the current scope
     attributeThemes: effAttributeThemes, // Pre-aggregated attribute scores — location-scoped when a location is active
     responseSentimentRows, // Per-response sentiment ratios (company_response_sentiment_mv)
-    scopeStats, // Phase-3 pre-aggregated stats cube (month/day × job fn × location [+ prompt_type / ai_model])
+    scopeStats: flooredScopeStats, // Phase-3 pre-aggregated stats cube (month/day × job fn × location [+ prompt_type / ai_model]), stream-window floored
     domainStats, // Interactive domain cube: top-N domains × month × job fn for the active location
     competitorStats, // Interactive competitor cube: top-N competitors × month × job fn × prompt_type
     cubeScopeRows, // Scope cube rows, location-filtered (fn + month kept for client pooling)
@@ -2981,6 +3028,7 @@ export const useDashboardData = () => {
     cubeDailyUnsound, // True while pre-migration daily rows lack response_month (period math falls back to raw)
     cubeQuarterKey, // Active quarter for cube pooling (null = all periods / single-period bypass)
     cubePrevQuarterKey, // Prior quarter for cube delta comparisons (null when none)
+    cubeMonthFloor, // 'YYYY-MM' floor clamping cube months to the raw stream window when no quarter filter applies (null otherwise)
     isOnline, // Network status
     connectionError, // Connection error message
     recencyDataError, // Recency data specific error message

@@ -1171,11 +1171,17 @@ export const CompetitorsTab = memo(({
 
   const hasAnyData = analyzed.byName.size > 0 || curatedDirect.size > 0;
   const totalDetected = analyzed.byName.size;
-  // Cube counts can land before the raw stream that supplies every coverage
-  // denominator and table extra — hold the skeletons until the raw rows
-  // arrive (analyzed.total is raw-derived on both paths). On the raw path
-  // total === 0 implies totalDetected === 0, so behavior is unchanged there.
+  // On the cube path counts AND denominators are cube-fed (mergeCubeCounts
+  // overrides the scope totals), so the cards and the table's coverage
+  // numbers are final as soon as the cubes land — render them. Only the
+  // raw-derived EXTRAS (models, markets, sources, per-competitor response
+  // lists) lag behind the stream; those cells/panels show their own pending
+  // state via rawExtrasPending below. Full skeletons only while nothing has
+  // landed at all.
   const showSkeleton = responsesLoading && (totalDetected === 0 || analyzed.total === 0);
+  // True while cube counts are on screen but the raw stream that feeds the
+  // models/markets/sources columns and the modal hasn't finished.
+  const rawExtrasPending = responsesLoading && cubePooled != null;
 
   // Modal data for the selected competitor.
   const modalAgg = modalCompetitor ? analyzed.byName.get(modalCompetitor) : undefined;
@@ -1280,9 +1286,13 @@ export const CompetitorsTab = memo(({
                   <>
                     <div className="flex-1 min-h-[280px]">
                       {trend.data.length === 0 ? (
+                        rawExtrasPending ? (
+                          <div className="h-full min-h-[280px] rounded-md bg-gray-100 animate-pulse" aria-busy="true" />
+                        ) : (
                         <div className="h-full flex items-center justify-center text-sm text-gray-400">
                           No trend data for this period.
                         </div>
+                        )
                       ) : (
                         <ResponsiveContainer width="100%" height="100%">
                           <LineChart data={trend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -1579,7 +1589,9 @@ export const CompetitorsTab = memo(({
                             </TableCell>
                             <TableCell>
                               {row.sources.length === 0 ? (
-                                <span className="text-xs text-gray-400">—</span>
+                                rawExtrasPending
+                                  ? <span className="inline-block h-4 w-14 rounded bg-gray-100 animate-pulse" aria-busy="true" />
+                                  : <span className="text-xs text-gray-400">—</span>
                               ) : (
                                 <TooltipProvider>
                                   {/* Overlapping stack, same as the Sources tab. */}
@@ -1609,6 +1621,9 @@ export const CompetitorsTab = memo(({
                               )}
                             </TableCell>
                             <TableCell>
+                              {rawExtrasPending && row.models.length === 0 ? (
+                                <span className="inline-block h-4 w-14 rounded bg-gray-100 animate-pulse" aria-busy="true" />
+                              ) : (
                               <div className="flex items-center w-fit">
                                 <div className="flex items-center">
                                   {row.models.slice(0, 5).map((m, i) => (
@@ -1626,10 +1641,13 @@ export const CompetitorsTab = memo(({
                                   {row.models.length} of {totalModelCount}
                                 </span>
                               </div>
+                              )}
                             </TableCell>
                             <TableCell>
                               {row.markets.length === 0 ? (
-                                <span className="text-xs text-gray-400">—</span>
+                                rawExtrasPending
+                                  ? <span className="inline-block h-4 w-14 rounded bg-gray-100 animate-pulse" aria-busy="true" />
+                                  : <span className="text-xs text-gray-400">—</span>
                               ) : (
                                 <TooltipProvider>
                                   {/* Overlapping stack, same as the Sources tab. */}
@@ -1712,6 +1730,7 @@ export const CompetitorsTab = memo(({
           hasCompetitorThemeData={hasAnyCompetitorThemes}
           companySentimentById={companySentimentById}
           domainRecencyAvg={domainRecencyAvg}
+          responsesLoading={responsesLoading}
           responseTexts={responseTexts}
           fetchResponseTexts={fetchResponseTexts}
           onOpenSourcesForDomain={onNavigateToSources ? handleOpenSourcesForDomain : undefined}

@@ -61,6 +61,10 @@ interface CompetitorDetailsModalProps {
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   onOpenSourcesForDomain?: (domain: string) => void;
+  /** True while the raw response stream is still arriving. On cube-backed
+   *  scopes the table can open this modal before the rows that feed its
+   *  response lists exist — show a loading panel instead of empty tabs. */
+  responsesLoading?: boolean;
 }
 
 export const CompetitorDetailsModal = ({
@@ -79,6 +83,7 @@ export const CompetitorDetailsModal = ({
   responseTexts = {},
   fetchResponseTexts,
   onOpenSourcesForDomain,
+  responsesLoading = false,
 }: CompetitorDetailsModalProps) => {
   const [activeTab, setActiveTab] = useState("wins");
   const [expandedPromptIdx, setExpandedPromptIdx] = useState<number | null>(null);
@@ -758,6 +763,14 @@ Be direct, specific, professional. No hedging, no preamble, no summary paragraph
           </div>
         </div>
 
+        {responsesLoading && (competitorAgg?.responseIds.length ?? 0) === 0 ? (
+          <div className="flex-1 flex items-center justify-center py-16 text-gray-500">
+            <div className="text-center">
+              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-3 text-gray-400" />
+              <p className="text-sm">Loading this competitor's responses…</p>
+            </div>
+          </div>
+        ) : (
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
           <TabsList className="w-full justify-start gap-6 rounded-none border-b border-gray-200 bg-transparent p-0 px-6 h-auto shrink-0">
             <TabsTrigger value="wins" className={tabTriggerCls}>
@@ -1099,6 +1112,7 @@ Be direct, specific, professional. No hedging, no preamble, no summary paragraph
             </TabsContent>
           </div>
         </Tabs>
+        )}
 
         {/* Floating Ask AI button — bottom right of panel */}
         {!summary && !loadingSummary && !summaryError && (
