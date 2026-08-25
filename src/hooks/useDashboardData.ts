@@ -5,12 +5,14 @@ import {
   dashboardKeys,
   fetchScopePrompts,
   fetchScopeRollups,
+  fetchScopeStats,
   fetchLocationRollups,
   fetchResponsesFirstPages,
   fetchResponsesRemaining,
   sentimentRowsFromStream,
   type FirstPages,
   type ScopeRollups,
+  type ScopeStats,
   type LocationRollups,
 } from "@/hooks/dashboard/dashboardQueries";
 import { useAuth } from "@/contexts/AuthContext";
@@ -434,6 +436,18 @@ export const useDashboardData = () => {
     gcTime: KEEP_MS,
     refetchOnMount: true,
   });
+  // Phase-3 scope-stats cube (~4 KB/company). Fetched alongside the rollups;
+  // consumers switch from raw-row memos to this cube one at a time (each flip
+  // verified old-vs-new), so it rides inert until then.
+  const scopeStatsQuery = useQuery({
+    queryKey: dashboardKeys.scopeStats(scopeKey),
+    queryFn: ({ signal }) => fetchScopeStats(scopeCompanyIds, signal),
+    enabled: scopeReady,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+  const scopeStats: ScopeStats | undefined = scopeStatsQuery.data;
   // Response stream, two stages: the newest page of every profile commits
   // eagerly (tables hydrate fast), then the full keyset walk replaces it.
   // Prompts gate the stream so the critical path gets bandwidth first.
@@ -2796,6 +2810,7 @@ export const useDashboardData = () => {
     aiThemeAttrsLoaded, // v2 attribute ids whose raw themes are loaded for the current scope
     attributeThemes: effAttributeThemes, // Pre-aggregated attribute scores — location-scoped when a location is active
     responseSentimentRows, // Per-response sentiment ratios (company_response_sentiment_mv)
+    scopeStats, // Phase-3 pre-aggregated stats cube (month/day × job fn × location [+ prompt_type / ai_model])
     isOnline, // Network status
     connectionError, // Connection error message
     recencyDataError, // Recency data specific error message

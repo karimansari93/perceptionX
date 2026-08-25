@@ -18,6 +18,7 @@ export const dashboardKeys = {
   // identical fetches 2-3x per switch. Widening instead invalidates the key.
   locationRollups: (scopeKey: string, locationKey: string) =>
     ['dashboard', 'scope', scopeKey, 'location', locationKey] as const,
+  scopeStats: (scopeKey: string) => ['dashboard', 'scope', scopeKey, 'stats'] as const,
 };
 
 export interface ScopeRollups {
@@ -45,6 +46,63 @@ export interface ResponseStream {
   complete: boolean;  // every scope company streamed to its final page
 }
 
+// Phase-3 scope-stats cube (get_scope_stats): pre-aggregated per-company
+// stats at month/day × job-function × location grain, plus prompt-type and
+// ai-model variants. Small enough (~4 KB/company) to ship whole, so filter
+// toggles keep computing client-side with no fetch per toggle. Dimension
+// conventions: '' = untagged job function / location; location_context is the
+// RAW spelling (canonicalize client-side, same as the by-location rollups).
+export interface ScopeStatsRow {
+  company_id: string;
+  response_month: string;
+  job_function_context: string;
+  location_context: string;
+  total_responses: number;
+  mentioned_responses: number;
+  total_citations: number;
+  distinct_domains: number;
+  distinct_models: number;
+  positive_themes: number;
+  negative_themes: number;
+  neutral_themes: number;
+}
+export interface ScopeDailyStatsRow {
+  company_id: string;
+  tested_day: string;
+  job_function_context: string;
+  location_context: string;
+  total_responses: number;
+  mentioned_responses: number;
+  total_citations: number;
+  distinct_prompt_models: number;
+  positive_themes: number;
+  negative_themes: number;
+}
+export interface ScopePromptTypeStatsRow {
+  company_id: string;
+  response_month: string;
+  job_function_context: string;
+  location_context: string;
+  prompt_type: string;
+  total_responses: number;
+  mentioned_responses: number;
+}
+export interface ScopeLlmStatsRow {
+  company_id: string;
+  response_month: string;
+  job_function_context: string;
+  location_context: string;
+  ai_model: string;
+  total_responses: number;
+  mentions: number;
+}
+export interface ScopeStats {
+  scope: ScopeStatsRow[];
+  daily: ScopeDailyStatsRow[];
+  prompt_types: ScopePromptTypeStatsRow[];
+  llm: ScopeLlmStatsRow[];
+}
+
 const PAGE_SIZE = 1000;
 const RETRY_PAGE_SIZE = 250;
 const EAGER_DAYS = 180;
@@ -62,6 +120,9 @@ export const fetchScopePrompts = (scopeIds: string[], signal?: AbortSignal): Pro
 
 export const fetchScopeRollups = (scopeIds: string[], signal?: AbortSignal): Promise<ScopeRollups> =>
   rpc<ScopeRollups>('get_dashboard_rollups', { p_company_ids: scopeIds }, signal);
+
+export const fetchScopeStats = (scopeIds: string[], signal?: AbortSignal): Promise<ScopeStats> =>
+  rpc<ScopeStats>('get_scope_stats', { p_company_ids: scopeIds }, signal);
 
 export const fetchLocationRollups = (
   params: { ownedIds: string[]; ownedBuckets: string[]; otherIds: string[]; otherBuckets: string[] },
