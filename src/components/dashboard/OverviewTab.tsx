@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useRef, memo } from "react";
 import type { DomainStats, CompetitorStats, ScopeStatsRow, ScopeDailyStatsRow, ScopePromptTypeStatsRow } from '@/hooks/dashboard/dashboardQueries';
+import { poolCompetitorRows } from '@/hooks/dashboard/scopeStatsSelect';
+import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { MetricCard } from "./MetricCard";
 import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dashboard";
@@ -31,7 +33,6 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart"
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis, BarChart, Bar, ResponsiveContainer, Cell } from "recharts"
-import { ChartConfig } from "@/components/ui/chart"
 
 interface AITheme {
   id: string;
@@ -133,9 +134,17 @@ const normalizeCompetitorName = (name: string): string => {
   return name.trim().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 };
 
-export const OverviewTab = memo(({ 
-  metrics, 
-  topCitations, 
+export const OverviewTab = memo(({
+  domainStats,
+  competitorStats,
+  cubeScopeRows,
+  cubePromptTypeRows,
+  cubeDailyRows,
+  cubeDailyUnsound = false,
+  cubeQuarterKey = null,
+  cubePrevQuarterKey = null,
+  metrics,
+  topCitations,
   topCompetitors,
   responses,
   competitorLoading = false,
@@ -188,14 +197,28 @@ export const OverviewTab = memo(({
   const selectedJobFunctionFilter = selectedJobFunction;
   const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
 
+  // Cube pooling dimension for the pill filter: null = all functions,
+  // otherwise the job_function_context value verbatim ('' = untagged).
+  const cubeJobFunction = selectedJobFunctionFilter === 'all' ? null : selectedJobFunctionFilter;
+
   const getUniqueJobFunctions = useMemo(() => {
+    // Cube path: distinct non-empty functions in the selected quarter.
+    if (cubeScopeRows) {
+      const fns = new Set<string>();
+      cubeScopeRows.forEach(r => {
+        if (cubeQuarterKey && quarterKeyOfMonthStr(String(r.response_month)) !== cubeQuarterKey) return;
+        if (r.job_function_context) fns.add(r.job_function_context);
+      });
+      return Array.from(fns).sort();
+    }
+    // Raw fallback: scope stats not yet backfilled.
     const fns = new Set<string>();
     responses.forEach(r => {
       const fn = r.confirmed_prompts?.job_function_context?.trim();
       if (fn) fns.add(fn);
     });
     return Array.from(fns).sort();
-  }, [responses]);
+  }, [cubeScopeRows, cubeQuarterKey, responses]);
 
   const fnResponses = useMemo(() => (
     selectedJobFunctionFilter === 'all'
@@ -1005,87 +1028,6 @@ CRITICAL: When you reference information from a source, add an inline citation l
     );
   };
 
-  const visibilityTrendData = useMemo(() => {
-    if (!responses || responses.length === 0) {
-      return [];
-    }
-
-    const dataByDate: Record<string, { totalScore: number; count: number }> = {};
-    
-    responses.forEach(response => {
-      if (typeof response.company_mentioned === 'boolean') {
-        const date = new Date(response.tested_at).toISOString().split('T')[0];
-        if (!dataByDate[date]) {
-          dataByDate[date] = { totalScore: 0, count: 0 };
-        }
-        dataByDate[date].totalScore += response.company_mentioned ? 1 : 0;
-        dataByDate[date].count += 1;
-      }
-    });
-
-    const trendData = Object.entries(dataByDate).map(([date, { totalScore, count }]) => ({
-      date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      "Visibility": Math.round((totalScore / count) * 100),
-    }));
-
-    return trendData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [responses]);
-
-  const aiThemeLookup = useMemo(() => {
-    const map = new Map<string, any>();
-    (aiThemes || []).forEach(theme => {
-      if (!map.has(theme.response_id)) {
-        map.set(theme.response_id, theme);
-      }
-    });
-    return map;
-  }, [aiThemes]);
-
-  // Methodology v2: label-based positive/(positive+negative) pooled per day
-  // from the per-response sentiment rollup (numeric sentiment_score is never
-  // used in published metrics).
-  const sentimentTrendData = useMemo(() => {
-    if (!responses || responses.length === 0) {
-      return [];
-    }
-
-    const dataByDate: Record<string, { positive: number; negative: number }> = {};
-
-    responses.forEach(response => {
-      const counts = responseSentimentMap.get(response.id);
-      if (!counts) return;
-      const date = new Date(response.tested_at).toISOString().split('T')[0];
-      if (!dataByDate[date]) {
-        dataByDate[date] = { positive: 0, negative: 0 };
-      }
-      dataByDate[date].positive += counts.positive;
-      dataByDate[date].negative += counts.negative;
-    });
-
-    const trendData = Object.entries(dataByDate)
-      .map(([date, { positive, negative }]) => {
-        const ratio = sentimentRatioV2(positive, negative);
-        return ratio === null ? null : {
-          date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          "Sentiment": Math.round(ratio * 100),
-        };
-      })
-      .filter((d): d is { date: string; Sentiment: number } => d !== null);
-
-    return trendData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [responses, responseSentimentMap]);
-
-  const chartConfig = {
-    Visibility: {
-      label: "Visibility",
-      color: "hsl(var(--chart-1))",
-    },
-    Sentiment: {
-      label: "Sentiment",
-      color: "hsl(var(--chart-2))",
-    },
-  } satisfies ChartConfig
-
   // Compute perception score trend based on confirmed_prompts and tested_at dates
   // This groups responses by collection period (tested_at) and calculates scores for each period
   const perceptionScoreTrend = useMemo(() => {
@@ -1270,12 +1212,63 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
   // EpsDrilldownSheet props — memoized so every re-render doesn't rescan
   // responses and hand the sheet fresh object identities.
-  const discoveryStats = useMemo(
-    () => computeDiscoveryStats(responses, companyName),
-    [responses, companyName]
-  );
+  const discoveryStats = useMemo(() => {
+    // Cube path: visibility from the prompt-type cube's discovery rows, top
+    // surfaced entities from the competitor cube (both pooled by quarter +
+    // job function; the cube dedupes per response and canonicalizes names).
+    if (cubePromptTypeRows && competitorStats) {
+      let total = 0;
+      let mentioned = 0;
+      for (const r of cubePromptTypeRows) {
+        if (r.prompt_type !== 'discovery') continue;
+        if (cubeQuarterKey && quarterKeyOfMonthStr(String(r.response_month)) !== cubeQuarterKey) continue;
+        if (cubeJobFunction != null && r.job_function_context !== cubeJobFunction) continue;
+        total += r.total_responses || 0;
+        mentioned += r.mentioned_responses || 0;
+      }
+      if (total === 0) return null;
+      const targetKey = companyName.trim().toLowerCase();
+      const pooled = poolCompetitorRows(competitorStats.rows, {
+        quarterKey: cubeQuarterKey,
+        jobFunction: cubeJobFunction,
+        promptType: 'discovery',
+      });
+      const topEntities = [...pooled.values()]
+        .filter(e => e.discoveryMentions > 0 && e.name.trim().toLowerCase() !== targetKey)
+        .sort((a, b) => b.discoveryMentions - a.discoveryMentions)
+        .slice(0, 5)
+        .map(e => ({
+          name: e.name,
+          mentions: e.discoveryMentions,
+          pct: (e.discoveryMentions / total) * 100,
+        }));
+      return {
+        totalResponses: total,
+        targetVisibilityPct: (mentioned / total) * 100,
+        topEntities,
+      };
+    }
+    // Raw fallback: cubes not yet backfilled. Function-filtered to match the
+    // cube path, so the pill has the same effect on both paths.
+    return computeDiscoveryStats(fnResponses, companyName);
+  }, [cubePromptTypeRows, competitorStats, cubeQuarterKey, cubeJobFunction, fnResponses, companyName]);
 
   const topJobFunctions = useMemo(() => {
+    // Cube path: responses per non-empty function in the selected quarter.
+    if (cubeScopeRows) {
+      const counts = new Map<string, number>();
+      for (const r of cubeScopeRows) {
+        if (!r.job_function_context) continue;
+        if (cubeQuarterKey && quarterKeyOfMonthStr(String(r.response_month)) !== cubeQuarterKey) continue;
+        counts.set(r.job_function_context, (counts.get(r.job_function_context) ?? 0) + (r.total_responses || 0));
+      }
+      return [...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4)
+        .map(([j, c]) => `${j} (${c})`)
+        .join(", ");
+    }
+    // Raw fallback: scope stats not yet backfilled.
     const counts = new Map<string, number>();
     responses.forEach((r: any) => {
       const jf = r.confirmed_prompts?.job_function_context;
@@ -1286,7 +1279,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
       .slice(0, 4)
       .map(([j, c]) => `${j} (${c})`)
       .join(", ");
-  }, [responses]);
+  }, [cubeScopeRows, cubeQuarterKey, responses]);
 
   return (
     <div className="flex flex-col gap-8 w-full">
@@ -1576,6 +1569,11 @@ CRITICAL: When you reference information from a source, add an inline citation l
               perceptionScoreTrend={perceptionScoreTrend}
               previousPeriodResponses={fnPreviousResponses}
               responsesLoading={responsesLoading}
+              domainStatsRows={domainStats?.rows}
+              cubeScopeRows={cubeScopeRows}
+              cubeQuarterKey={cubeQuarterKey}
+              cubePrevQuarterKey={cubePrevQuarterKey}
+              selectedJobFunction={selectedJobFunction}
             />
           </div>
 
@@ -1588,6 +1586,11 @@ CRITICAL: When you reference information from a source, add an inline citation l
               perceptionScoreTrend={perceptionScoreTrend}
               previousPeriodResponses={fnPreviousResponses}
               responsesLoading={responsesLoading}
+              competitorStatsRows={competitorStats?.rows}
+              cubePromptTypeRows={cubePromptTypeRows}
+              cubeQuarterKey={cubeQuarterKey}
+              cubePrevQuarterKey={cubePrevQuarterKey}
+              selectedJobFunction={selectedJobFunction}
             />
           </div>
 

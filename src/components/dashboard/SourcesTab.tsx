@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, memo } from "react";
-import type { DomainStats } from '@/hooks/dashboard/dashboardQueries';
+import type { DomainStats, ScopeStatsRow } from '@/hooks/dashboard/dashboardQueries';
+import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CitationCount } from "@/types/dashboard";
 import {
@@ -29,6 +30,7 @@ import { enhanceCitations, normalizePageKey, getFavicon } from "@/utils/citation
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { getAttributeIconByName } from "@/config/attributeIcons";
 import { categorizeSourceByMediaType } from "@/utils/sourceConfig";
+import { poolDomainMonthly, poolDomainRows } from "@/hooks/dashboard/scopeStatsSelect";
 import { sentimentRatioV2 } from "@/lib/sentimentV2";
 import LLMLogo from "@/components/LLMLogo";
 import { ScrollablePills } from "./ScrollablePills";
@@ -39,6 +41,11 @@ import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
 interface SourcesTabProps {
   // Phase-3 domain cube: replaces raw-row domain aggregation when present.
   domainStats?: DomainStats;
+  // Scope-stats cube rows (location-filtered by the hook): supply the
+  // responses-in-selection denominators so cube counts divide by a cube
+  // total, never by the still-streaming raw rows. The cube path activates
+  // only when BOTH cubes are present.
+  cubeScopeRows?: ScopeStatsRow[];
   cubeQuarterKey?: string | null;
   cubePrevQuarterKey?: string | null;
   topCitations: CitationCount[];
@@ -226,7 +233,7 @@ const startOfMonthTs = (ts: number): number => {
   return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
 };
 
-export const SourcesTab = memo(({ topCitations, responses, parseCitations, companyName, searchResults = EMPTY_ARRAY, currentCompanyId, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, responseSentimentRows = EMPTY_ARRAY }: SourcesTabProps) => {
+export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = null, cubePrevQuarterKey = null, topCitations, responses, parseCitations, companyName, searchResults = EMPTY_ARRAY, currentCompanyId, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, responseSentimentRows = EMPTY_ARRAY }: SourcesTabProps) => {
 
   // Responses arrive already scoped by useDashboardData (brand scope — the
   // current company plus same-name sibling profiles — with the location and
@@ -476,6 +483,41 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     return true;
   }, [selectedJobFunctionFilter]);
 
+  // Cube pooling selection for the job-function pill: 'all' → null (no
+  // function predicate); any other pill value passes through verbatim
+  // ('' = untagged).
+  const cubeJobFunction = selectedJobFunctionFilter === 'all' ? null : selectedJobFunctionFilter;
+
+  // Cube pooling needs BOTH cubes: domain rows for the counts and scope rows
+  // for the responses-in-selection denominators. With only one present the
+  // tab stays fully on the raw path — a cube numerator over the partially
+  // streamed raw total would inflate every share until the stream finishes.
+  const cubeActive = Boolean(domainStats && cubeScopeRows);
+
+  // Responses-in-selection totals from the scope cube: current & previous
+  // quarter plus per-cycle-month totals for the trend tooltip. Same basis
+  // (dedup, exclusions) as the domain cube's counts.
+  const cubeScopeTotals = useMemo(() => {
+    if (!cubeActive) return null;
+    let current = 0;
+    let previous = 0;
+    const byMonth = new Map<string, number>();
+    for (const r of cubeScopeRows!) {
+      if (cubeJobFunction != null && r.job_function_context !== cubeJobFunction) continue;
+      const month = r.response_month ? String(r.response_month).slice(0, 7) : null;
+      const rowQuarter = r.response_month ? quarterKeyOfMonthStr(String(r.response_month)) : null;
+      const inCurrent = !cubeQuarterKey || rowQuarter === cubeQuarterKey;
+      if (inCurrent) {
+        current += r.total_responses || 0;
+        if (month) byMonth.set(month, (byMonth.get(month) || 0) + (r.total_responses || 0));
+      }
+      if (cubePrevQuarterKey != null && rowQuarter === cubePrevQuarterKey) {
+        previous += r.total_responses || 0;
+      }
+    }
+    return { current, previous, byMonth };
+  }, [cubeActive, cubeScopeRows, cubeQuarterKey, cubePrevQuarterKey, cubeJobFunction]);
+
   type PageAgg = {
     key: string;
     url: string;
@@ -489,9 +531,14 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     ratioCount: number;
   };
 
-  // ONE pass over the current-period responses producing the domain-level view
-  // (counts + mentioned split) and the matching subset, which the chart and
-  // the page aggregation below both read.
+  // The matching subset (the page aggregation, facet counts and the trend's
+  // week-grain fallback read it) plus the domain-level view (counts +
+  // mentioned split). When the cubes are present the per-domain maps pool
+  // from the domain cube and the coverage denominator (total) comes from the
+  // scope cube — a job-function switch then reduces a few hundred cube rows,
+  // never re-walking every citation, and every share divides cube by cube.
+  // Cube counts are deduped per response and exclude deprecated
+  // prompts/models, so shares shift slightly vs raw (documented corrections).
   const analyzed = useMemo(() => {
     const domainCounts = new Map<string, number>();
     const domainMentioned = new Map<string, number>();
@@ -499,24 +546,50 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
     for (const nr of normalizedResponses) {
       if (!responseMatchesFilters(nr)) continue;
       matching.push(nr);
+      if (cubeActive) continue;
       for (const d of nr.domains) {
         domainCounts.set(d, (domainCounts.get(d) || 0) + 1);
         if (nr.company_mentioned) domainMentioned.set(d, (domainMentioned.get(d) || 0) + 1);
       }
     }
-    return { domainCounts, domainMentioned, matching, total: matching.length };
-  }, [normalizedResponses, responseMatchesFilters]);
+    if (cubeActive) {
+      const pooled = poolDomainRows(domainStats!.rows, { quarterKey: cubeQuarterKey, jobFunction: cubeJobFunction });
+      for (const e of pooled.values()) {
+        // Cube domains run through the same normalization as citation domains
+        // so modal lookups and platform grouping keep matching (variants sum).
+        const d = normalizeDomain(e.domain);
+        if (!d) continue;
+        domainCounts.set(d, (domainCounts.get(d) || 0) + e.responsesCiting);
+        if (e.mentionedResponsesCiting > 0) {
+          domainMentioned.set(d, (domainMentioned.get(d) || 0) + e.mentionedResponsesCiting);
+        }
+      }
+    }
+    return {
+      domainCounts,
+      domainMentioned,
+      matching,
+      total: cubeScopeTotals ? cubeScopeTotals.current : matching.length,
+    };
+  }, [normalizedResponses, responseMatchesFilters, cubeActive, cubeScopeTotals, domainStats, cubeQuarterKey, cubeJobFunction]);
 
   // Previous-period counterpart (counts only — deltas need nothing more).
+  // On the cube path both the domain counts and the denominator come from
+  // the cubes; page counts stay raw (page grain isn't in the cube).
+  // cubePrevQuarterKey === null means no previous period — the pooled map
+  // stays empty so no delta chips render, matching the raw behavior when
+  // previousPeriodResponses is empty.
   const prevAnalyzed = useMemo(() => {
     const domainCounts = new Map<string, number>();
     const pageCounts = new Map<string, number>();
-    let total = 0;
+    let rawTotal = 0;
     for (const nr of normalizedPrevResponses) {
       if (!responseMatchesFilters(nr)) continue;
-      total += 1;
-      for (const d of nr.domains) {
-        domainCounts.set(d, (domainCounts.get(d) || 0) + 1);
+      rawTotal += 1;
+      if (!cubeActive) {
+        for (const d of nr.domains) {
+          domainCounts.set(d, (domainCounts.get(d) || 0) + 1);
+        }
       }
       const seen = new Set<string>();
       for (const p of nr.pages) {
@@ -525,10 +598,25 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
         pageCounts.set(p.key, (pageCounts.get(p.key) || 0) + 1);
       }
     }
-    return { domainCounts, pageCounts, total };
-  }, [normalizedPrevResponses, responseMatchesFilters]);
+    if (cubeActive && cubePrevQuarterKey != null) {
+      const pooled = poolDomainRows(domainStats!.rows, { quarterKey: cubePrevQuarterKey, jobFunction: cubeJobFunction });
+      for (const e of pooled.values()) {
+        const d = normalizeDomain(e.domain);
+        if (!d) continue;
+        domainCounts.set(d, (domainCounts.get(d) || 0) + e.responsesCiting);
+      }
+    }
+    return {
+      domainCounts,
+      pageCounts,
+      total: cubeScopeTotals ? cubeScopeTotals.previous : rawTotal,
+    };
+  }, [normalizedPrevResponses, responseMatchesFilters, cubeActive, cubeScopeTotals, domainStats, cubePrevQuarterKey, cubeJobFunction]);
 
-  const hasPrevPeriod = normalizedPrevResponses.length > 0;
+  // Delta chips exist when there is a previous period to compare against: on
+  // the cube path that's a previous quarter to pool, on the raw path
+  // previous-period rows.
+  const hasPrevPeriod = cubeActive ? cubePrevQuarterKey != null : normalizedPrevResponses.length > 0;
 
   // Ranked domain list with the mentioned/not-mentioned split and
   // previous-period counts for the delta chips.
@@ -564,6 +652,74 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       monthRanking: [] as { name: string; domain: string; count: number }[],
     };
     if (series.length === 0) return empty;
+
+    // Cube path: month-grain series straight from the domain cube. The cube
+    // has no week grain, so short windows (<=2 distinct pooled months) fall
+    // through to the raw path below, which applies the same granularity rule
+    // to raw timestamps. Cube months are collection-cycle months
+    // (response_month), not tested_at calendar months.
+    if (cubeActive) {
+      const monthlyPooled = poolDomainMonthly(domainStats!.rows, { quarterKey: cubeQuarterKey, jobFunction: cubeJobFunction });
+      const byDomain = new Map<string, Map<string, number>>();
+      const monthSet = new Set<string>();
+      for (const [rawDomain, months] of monthlyPooled) {
+        const d = normalizeDomain(rawDomain);
+        if (!d || d === 'unknown') continue;
+        let merged = byDomain.get(d);
+        if (!merged) { merged = new Map(); byDomain.set(d, merged); }
+        for (const [month, v] of months) {
+          merged.set(month, (merged.get(month) || 0) + v);
+          monthSet.add(month);
+        }
+      }
+      if (monthSet.size > 2) {
+        const monthsAsc = Array.from(monthSet).sort();
+        const firstMonth = monthsAsc[0];
+        const lastMonth = monthsAsc[monthsAsc.length - 1];
+        const multiYear = firstMonth.slice(0, 4) !== lastMonth.slice(0, 4);
+        // Contiguous month keys so gaps render as zero, capped at the same
+        // 60 buckets as the raw path.
+        let [y, m] = firstMonth.split('-').map(Number);
+        const [lastY, lastM] = lastMonth.split('-').map(Number);
+        const data: Record<string, any>[] = [];
+        while ((y < lastY || (y === lastY && m <= lastM)) && data.length < 60) {
+          const ts = new Date(y, m - 1, 1).getTime();
+          const key = `${y}-${String(m).padStart(2, '0')}`;
+          const row: Record<string, any> = {
+            ts,
+            label: new Date(ts).toLocaleDateString('en-US', multiYear ? { month: 'short', year: '2-digit' } : { month: 'short' }),
+          };
+          series.forEach((domain, i) => { row[`s${i}`] = byDomain.get(domain)?.get(key) || 0; });
+          data.push(row);
+          m += 1;
+          if (m > 12) { m = 1; y += 1; }
+        }
+
+        // Bar-mode ranking: the latest pooled month, over ALL cube domains.
+        const rankRows: { name: string; domain: string; count: number }[] = [];
+        for (const [domain, months] of byDomain) {
+          const count = months.get(lastMonth) || 0;
+          if (count > 0) rankRows.push({ name: getSourceDisplayName(domain), domain, count });
+        }
+        const monthRanking = rankRows.sort((a, b) => b.count - a.count).slice(0, BAR_RANK_LIMIT);
+
+        // The ranking tooltip's share denominator is "responses in the
+        // month" — from the scope cube, on the same cycle-month grain as the
+        // pooled counts above.
+        const monthStartTs = new Date(lastY, lastM - 1, 1).getTime();
+        const monthTotal = cubeScopeTotals?.byMonth.get(lastMonth) || 0;
+
+        return {
+          data,
+          series,
+          granularity: 'month' as TrendGranularity,
+          monthLabel: new Date(monthStartTs).toLocaleDateString('en-US', { month: 'long' }),
+          monthTotal,
+          monthRanking,
+        };
+      }
+      // <=2 pooled months: week grain, which only the raw rows can serve.
+    }
 
     let minTs = Infinity;
     let maxTs = -Infinity;
@@ -635,7 +791,7 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
       .map(([domain, count]) => ({ name: getSourceDisplayName(domain), domain, count }));
 
     return { data, series, granularity, monthLabel, monthTotal, monthRanking };
-  }, [analyzed, domainList]);
+  }, [analyzed, domainList, cubeActive, cubeScopeTotals, domainStats, cubeQuarterKey, cubeJobFunction]);
 
   // ---------------------------------------------------------------------
   // Source type (media type) per domain. Classified from the domain and the
@@ -1311,7 +1467,9 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                 </div>
               </CardHeader>
               <CardContent className="flex-1 flex flex-col pt-2">
-                {responsesLoading && !hasAnyData ? (
+                {/* Cube-fed chart data can exist before the raw stream lands;
+                    skeleton only while there is genuinely nothing to draw. */}
+                {responsesLoading && trend.data.length === 0 && trend.monthRanking.length === 0 ? (
                   <div className="flex-1 min-h-[280px] rounded-md bg-gray-100 animate-pulse" aria-busy="true" />
                 ) : (
                   <>
@@ -1383,7 +1541,10 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
                 </div>
               </CardHeader>
               <CardContent className="flex-1 min-h-0 pt-0 px-2 sm:px-3 pb-3">
-                {responsesLoading && !hasAnyData ? (
+                {/* The share column divides by the RAW response total, so rows
+                    hold behind the skeleton until the stream provides it —
+                    cube counts alone would render every share as 0.0%. */}
+                {responsesLoading && analyzed.total === 0 ? (
                   <div className="px-2">{loadingSkeleton(8)}</div>
                 ) : (
                   <div className="h-full max-h-[400px] overflow-y-auto pr-1">
@@ -1487,7 +1648,10 @@ export const SourcesTab = memo(({ topCitations, responses, parseCitations, compa
               </div>
             </CardHeader>
             <CardContent className="pt-0 px-0 sm:px-2 pb-3">
-              {responsesLoading && !hasAnyData ? (
+              {/* Pages aggregate from raw rows only — keep the skeleton while
+                  the stream loads even when cube-fed cards above already
+                  render (hasAnyData is true as soon as the cube arrives). */}
+              {responsesLoading && pagesList.length === 0 ? (
                 <div className="px-6">{loadingSkeleton(6)}</div>
               ) : pagesList.length > 0 ? (
                 <>

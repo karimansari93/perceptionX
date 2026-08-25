@@ -169,11 +169,40 @@ Ford scope block the main thread 0.4–12.4 s (worst: back to "All
 functions") because Sources/Competitors/Themes cards aggregate raw rows;
 the cube read replaces that with a ~250 ms fetch. Client switch pending.
 
-**Remaining slices:** competitor stats (+prompt_type,
-+domain, +attribute companions), page-grain stats, prompt-grain stats. Then
-the client switch per tab, verified by computing old-vs-new values on real
-scopes before each flip. Row-level surfaces (response lists, quote
-extraction, text search) stay raw and get server pagination in phase 4.
+**Slice 3 (shipped, `20260825200000_competitor_stats_and_fn_domains.sql`):**
+`company_competitor_stats_mv` — (company, canonical competitor, month,
+job-function, location, prompt_type) grain, responses_mentioning +
+co_mentions deduped per response; `get_competitor_stats` collapses location
+per request and returns top-N; `get_domain_stats` grew `p_keep_functions`
+so domain rows keep the function dimension for client pooling.
+
+**Client switch (shipped, 2026-08-25):** OverviewTab, SourcesTab,
+CompetitorsTab, SourcesSummaryCard and CompetitorsSummaryCard pool the
+cubes when present, with the raw path kept verbatim as fallback for
+un-backfilled scopes. Two rules came out of adversarial review of the
+switch and are now contracts:
+- **One basis per ratio.** A cube numerator must divide by a cube
+  denominator (scope/prompt-type cube totals), never by a raw-stream count
+  — the stream loads late and partial, and mixed-basis coverage inflates
+  to (or past) the 100% clamp until it finishes. Every component activates
+  its cube path only when ALL cubes it reads are present.
+- **One name space per lookup.** The cube's variant-collapse map (built
+  over top-N server-canonical names) and the raw one (built over every
+  parsed name) can pick different anchors for the same competitor; raw
+  extras (models, response ids, domains, locations) are resolved through
+  both maps, and trend series match responses by id, not by name string.
+
+Measured after the switch (same harness, Ford scope): job-function pill
+switches register **zero longtasks** once hydration completes (worst
+observed anywhere: 165 ms returning to "All functions" mid-stream),
+against 0.4–12.4 s before. The pre-cube visibility/sentiment day-trend
+memos turned out to be dead code (no JSX consumer) and were deleted
+rather than switched.
+
+**Remaining slices:** theme/attribute stats (the last per-function raw
+scans on Overview), page-grain stats, prompt-grain stats. Row-level
+surfaces (response lists, quote extraction, text search) stay raw and get
+server pagination in phase 4.
 
 ## UX layer (2026-08-25)
 

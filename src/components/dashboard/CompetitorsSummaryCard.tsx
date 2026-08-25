@@ -5,6 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
+import { poolCompetitorRows } from "@/hooks/dashboard/scopeStatsSelect";
+import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
+import type { CompetitorStatsRow, ScopePromptTypeStatsRow } from "@/hooks/dashboard/dashboardQueries";
 // Canonicalization now happens at the data layer (prompt_responses_canonical
 // view). The card receives detected_competitors with variants already merged
 // into canonical entities, so no client-side alias hook is needed.
@@ -20,6 +23,16 @@ interface CompetitorsSummaryCardProps {
   // first paint). This card derives its list from raw responses, so while
   // streaming it skeletons instead of "No competitor mentions found yet".
   responsesLoading?: boolean;
+  // Phase-3 cubes. Rows arrive already location-filtered; this card pools
+  // them by quarter + job function (+ prompt_type 'competitive'). BOTH cubes
+  // must be present to switch: a cube numerator (each response counted once)
+  // over a raw denominator (stitched rows double-counted) would skew the
+  // coverage %. undefined on either = full raw fallback.
+  competitorStatsRows?: CompetitorStatsRow[];
+  cubePromptTypeRows?: ScopePromptTypeStatsRow[];
+  cubeQuarterKey?: string | null;     // null = single period → no filter
+  cubePrevQuarterKey?: string | null; // null = no previous period → no deltas
+  selectedJobFunction?: string;       // 'all' = no filter; '' = untagged
 }
 
 export const CompetitorsSummaryCard = ({ 
@@ -29,9 +42,16 @@ export const CompetitorsSummaryCard = ({
   searchResults = [],
   perceptionScoreTrend = [],
   previousPeriodResponses = [],
-  responsesLoading = false
+  responsesLoading = false,
+  competitorStatsRows,
+  cubePromptTypeRows,
+  cubeQuarterKey = null,
+  cubePrevQuarterKey = null,
+  selectedJobFunction = 'all'
 }: CompetitorsSummaryCardProps) => {
   const navigate = useNavigate();
+
+  const cubeJobFunction = selectedJobFunction === 'all' ? null : selectedJobFunction;
 
   // Helper to normalize competitor names. Canonicalization happens server-side
   // (prompt_responses_canonical view), so this function only handles noise
@@ -113,9 +133,54 @@ export const CompetitorsSummaryCard = ({
     [previousPeriodResponses]
   );
 
+  // Cube pools for the active quarter + job function, competitive prompts
+  // only (rows are already location-filtered). undefined = fall back to raw
+  // rows. previous stays undefined when there is no previous quarter →
+  // deltas suppressed, matching raw with an empty previousPeriodResponses.
+  const competitorPools = useMemo(() => {
+    if (!competitorStatsRows || !cubePromptTypeRows) return undefined;
+    return {
+      current: poolCompetitorRows(competitorStatsRows, {
+        quarterKey: cubeQuarterKey, jobFunction: cubeJobFunction, promptType: 'competitive'
+      }),
+      previous: cubePrevQuarterKey == null ? undefined : poolCompetitorRows(competitorStatsRows, {
+        quarterKey: cubePrevQuarterKey, jobFunction: cubeJobFunction, promptType: 'competitive'
+      }),
+    };
+  }, [competitorStatsRows, cubePromptTypeRows, cubeQuarterKey, cubePrevQuarterKey, cubeJobFunction]);
+
+  // Coverage denominators (# competitive responses per period). Cube path
+  // sums the prompt-type cube — each response counted once, unlike the raw
+  // stream's stitched duplicates — pooled with the same filters as the
+  // competitor pool so the ratio stays internally consistent.
+  const cubeCompetitiveTotals = useMemo(() => {
+    if (!competitorPools || !cubePromptTypeRows) return undefined;
+    const sumFor = (quarterKey: string | null) =>
+      cubePromptTypeRows.reduce((acc, r) => {
+        if (r.prompt_type !== 'competitive') return acc;
+        if (cubeJobFunction != null && r.job_function_context !== cubeJobFunction) return acc;
+        if (quarterKey && quarterKeyOfMonthStr(String(r.response_month)) !== quarterKey) return acc;
+        return acc + (r.total_responses || 0);
+      }, 0);
+    return {
+      current: sumFor(cubeQuarterKey),
+      previous: cubePrevQuarterKey == null ? 0 : sumFor(cubePrevQuarterKey),
+    };
+  }, [competitorPools, cubePromptTypeRows, cubeJobFunction, cubeQuarterKey, cubePrevQuarterKey]);
+
+  const competitiveTotal = cubeCompetitiveTotals ? cubeCompetitiveTotals.current : competitiveResponses.length;
+  const prevCompetitiveTotal = cubeCompetitiveTotals ? cubeCompetitiveTotals.previous : prevCompetitiveResponses.length;
+
   // Calculate competitor previous counts (responses mentioning each competitor,
   // deduped per response).
   const competitorPreviousCounts = useMemo(() => {
+    if (competitorPools) {
+      if (!competitorPools.previous) return {};
+      const counts: { [key: string]: number } = {};
+      competitorPools.previous.forEach(e => { counts[e.name] = e.mentions; });
+      return counts;
+    }
+
     if (prevCompetitiveResponses.length === 0) return {};
 
     const counts: { [key: string]: number } = {};
@@ -135,7 +200,7 @@ export const CompetitorsSummaryCard = ({
         });
     });
     return counts;
-  }, [prevCompetitiveResponses]);
+  }, [competitorPools, prevCompetitiveResponses]);
 
   // Build the FULL list of direct competitors. Each competitor's count is the
   // number of competitive responses that mention it (deduped per response),
@@ -145,6 +210,23 @@ export const CompetitorsSummaryCard = ({
       'glassdoor', 'indeed', 'ambitionbox', 'workday', 'linkedin', 'monster', 'careerbuilder', 'ziprecruiter',
       'dice', 'angelist', 'wellfound', 'builtin', 'stackoverflow', 'github'
     ]);
+
+    if (competitorPools) {
+      // Cube path: names arrive canonical (variants merged server-side), but
+      // the job boards are legitimate entities the cube keeps, so the
+      // exclusion list and the own-company filter still apply here.
+      return Array.from(competitorPools.current.values())
+        .filter(e => e.mentions > 0
+          && e.name.toLowerCase() !== companyName.toLowerCase()
+          && !excludedCompetitors.has(e.name.toLowerCase()))
+        .sort((a, b) => b.mentions - a.mentions)
+        .map(e => ({
+          company: e.name,
+          count: e.mentions,
+          displayName: e.name,
+          previousCount: competitorPreviousCounts[e.name] || 0
+        }));
+    }
 
     const counts: Record<string, number> = {};
     competitiveResponses.forEach(response => {
@@ -171,7 +253,7 @@ export const CompetitorsSummaryCard = ({
         displayName: name,
         previousCount: competitorPreviousCounts[name] || 0
       }));
-  }, [competitiveResponses, companyName, competitorPreviousCounts]);
+  }, [competitorPools, competitiveResponses, companyName, competitorPreviousCounts]);
 
   const topCompetitorsFiltered = useMemo(
     () => allCompetitorsFiltered.slice(0, 5),
@@ -182,8 +264,8 @@ export const CompetitorsSummaryCard = ({
     const faviconUrl = getCompetitorFavicon(competitor.displayName);
     const initials = competitor.displayName.charAt(0).toUpperCase();
     // Coverage: share of competitive responses that mention this competitor.
-    const mentionPercent = competitiveResponses.length > 0
-      ? Math.min(100, (competitor.count / competitiveResponses.length) * 100)
+    const mentionPercent = competitiveTotal > 0
+      ? Math.min(100, (competitor.count / competitiveTotal) * 100)
       : 0;
     
     return (
@@ -221,11 +303,11 @@ export const CompetitorsSummaryCard = ({
           <span className="text-xs font-semibold text-gray-900 w-10 text-right">
             {mentionPercent.toFixed(1)}%
           </span>
-          {prevCompetitiveResponses.length > 0 && (
+          {prevCompetitiveTotal > 0 && (
             <span className="w-[40px] flex justify-end">
               {(() => {
                 if (!competitor.previousCount) return null;
-                const prevPct = Math.min(100, (competitor.previousCount / prevCompetitiveResponses.length) * 100);
+                const prevPct = Math.min(100, (competitor.previousCount / prevCompetitiveTotal) * 100);
                 const delta = Math.round(mentionPercent - prevPct);
                 if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
 

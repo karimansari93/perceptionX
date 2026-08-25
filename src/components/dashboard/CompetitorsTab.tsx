@@ -1,5 +1,6 @@
 import { Fragment, useState, useMemo, useEffect, useCallback, memo } from "react";
-import type { CompetitorStats } from '@/hooks/dashboard/dashboardQueries';
+import type { CompetitorStats, ScopePromptTypeStatsRow } from '@/hooks/dashboard/dashboardQueries';
+import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Users, TrendingUp, TrendingDown, Info, ChartLine, BarChartHorizontal,
@@ -31,7 +32,13 @@ import { sentimentRatioV2 } from "@/lib/sentimentV2";
 import {
   parseDetectedCompetitors,
   buildVariantCollapseMap,
+  isSelfName,
 } from "@/utils/competitorDetection";
+import {
+  poolCompetitorRows,
+  poolCompetitorMonthly,
+  type CompetitorPoolEntry,
+} from "@/hooks/dashboard/scopeStatsSelect";
 import { normalizeEntityName } from "@/utils/competitorUtils";
 import { locationFlag } from "@/utils/locationContext";
 import LLMLogo from "@/components/LLMLogo";
@@ -132,6 +139,12 @@ type CompetitorAgg = {
 interface CompetitorsTabProps {
   // Phase-3 competitor cube: replaces raw-row competitor aggregation when present.
   competitorStats?: CompetitorStats;
+  // Scope prompt-type cube rows (location-filtered by the hook): supply the
+  // RESPONSE-count denominators (total / discovery / competitive splits) the
+  // competitor cube cannot express. The cube path activates only when BOTH
+  // cubes are present — cube numerators over the partially-streamed raw
+  // totals would inflate every coverage %.
+  cubePromptTypeRows?: ScopePromptTypeStatsRow[];
   cubeQuarterKey?: string | null;
   cubePrevQuarterKey?: string | null;
   responses: any[];
@@ -160,6 +173,10 @@ interface CompetitorsTabProps {
 }
 
 export const CompetitorsTab = memo(({
+  competitorStats,
+  cubePromptTypeRows,
+  cubeQuarterKey = null,
+  cubePrevQuarterKey = null,
   responses,
   companyName,
   currentCompanyId,
@@ -267,7 +284,7 @@ export const CompetitorsTab = memo(({
   // per response. The variant-collapse map is built over the union of both
   // periods so deltas compare like-for-like.
   // -------------------------------------------------------------------------
-  const { normalized, prevNormalized } = useMemo(() => {
+  const { normalized, prevNormalized, rawCollapseMap } = useMemo(() => {
     type PreParsed = Omit<CompetitorNormalizedResponse, "competitors"> & { rawNames: string[] };
     const preParse = (input: any[]): PreParsed[] =>
       input.map((r) => {
@@ -335,7 +352,11 @@ export const CompetitorsTab = memo(({
         return { ...rest, competitors };
       });
 
-    return { normalized: finalize(current), prevNormalized: finalize(previous) };
+    // rawCollapseMap is exposed so the cube merge can translate between the
+    // cube's name space (top-N server-canonical names) and the raw one — the
+    // two collapse maps are built over different universes and can pick
+    // different anchors for the same competitor.
+    return { normalized: finalize(current), prevNormalized: finalize(previous), rawCollapseMap: collapseMap };
   }, [responses, previousPeriodResponses, companyName, canonicalize, curatedDirect, isAliasMapped, aliasMapLoaded]);
 
   // Distinct job functions present on the prompts behind these responses.
@@ -350,6 +371,102 @@ export const CompetitorsTab = memo(({
       selectedJobFunctionFilter === "all" || nr.jobFunction === selectedJobFunctionFilter,
     [selectedJobFunctionFilter],
   );
+
+  // Cube pooling selection for the job-function pill: 'all' → null (no
+  // function predicate); any other pill value passes through verbatim
+  // ('' = untagged).
+  const cubeJobFunction = selectedJobFunctionFilter === "all" ? null : selectedJobFunctionFilter;
+
+  // Response-count denominators from the scope prompt-type cube: totals and
+  // company-mentioned splits per prompt type, for the current and previous
+  // quarter, plus per-cycle-month competitive totals for the trend shares.
+  // Same basis (dedup, exclusions) as the competitor cube's numerators.
+  const cubeScopeTotals = useMemo(() => {
+    if (!cubePromptTypeRows) return null;
+    const mk = () => ({ total: 0, companyMentioned: 0, discoveryTotal: 0, discoveryMentioned: 0, competitiveTotal: 0, competitiveMentioned: 0 });
+    const current = mk();
+    const previous = mk();
+    const competitiveByMonth = new Map<string, number>();
+    const add = (t: ReturnType<typeof mk>, r: ScopePromptTypeStatsRow) => {
+      const n = r.total_responses || 0;
+      const m = r.mentioned_responses || 0;
+      t.total += n;
+      t.companyMentioned += m;
+      if (r.prompt_type === "discovery") { t.discoveryTotal += n; t.discoveryMentioned += m; }
+      if (r.prompt_type === "competitive") { t.competitiveTotal += n; t.competitiveMentioned += m; }
+    };
+    for (const r of cubePromptTypeRows) {
+      if (cubeJobFunction != null && r.job_function_context !== cubeJobFunction) continue;
+      const rowQuarter = r.response_month ? quarterKeyOfMonthStr(String(r.response_month)) : null;
+      if (!cubeQuarterKey || rowQuarter === cubeQuarterKey) {
+        add(current, r);
+        if (r.prompt_type === "competitive" && r.response_month) {
+          const month = String(r.response_month).slice(0, 7);
+          competitiveByMonth.set(month, (competitiveByMonth.get(month) || 0) + (r.total_responses || 0));
+        }
+      }
+      if (cubePrevQuarterKey != null && rowQuarter === cubePrevQuarterKey) add(previous, r);
+    }
+    return { current, previous, competitiveByMonth };
+  }, [cubePromptTypeRows, cubeQuarterKey, cubePrevQuarterKey, cubeJobFunction]);
+
+  // -------------------------------------------------------------------------
+  // Phase-3 cube path: per-competitor counts pooled from the competitor cube
+  // (rows arrive location-filtered; quarter + job function pool client-side).
+  // Cube names are server-canonical, but the tab's variant collapse still
+  // runs over them — built over the union of current + previous pooled
+  // names, exactly like the raw parse — so display names collapse
+  // identically on both paths. null = cube absent (scope not yet
+  // backfilled) or scope totals unavailable: every consumer stays on the
+  // raw rows (numerators and denominators must share one basis).
+  // -------------------------------------------------------------------------
+  const cubePooled = useMemo(() => {
+    if (!competitorStats || !cubeScopeTotals) return null;
+    const current = poolCompetitorRows(competitorStats.rows, {
+      quarterKey: cubeQuarterKey,
+      jobFunction: cubeJobFunction,
+      promptType: null,
+    });
+    // cubePrevQuarterKey === null means no previous period — the pooled map
+    // stays empty so no per-competitor delta renders, matching the raw
+    // behavior when previousPeriodResponses is empty.
+    const previous = cubePrevQuarterKey != null
+      ? poolCompetitorRows(competitorStats.rows, {
+          quarterKey: cubePrevQuarterKey,
+          jobFunction: cubeJobFunction,
+          promptType: null,
+        })
+      : new Map<string, CompetitorPoolEntry>();
+    // Same alias-map gating as the raw parse: no collapse before protection
+    // data is available.
+    const collapseMap = aliasMapLoaded
+      ? buildVariantCollapseMap(
+          new Set([...current.keys(), ...previous.keys()]),
+          { curated: curatedDirect, isAliasMapped },
+        )
+      : new Map<string, string[]>();
+    const collapse = (pooled: Map<string, CompetitorPoolEntry>): Map<string, CompetitorPoolEntry> => {
+      const out = new Map<string, CompetitorPoolEntry>();
+      for (const e of pooled.values()) {
+        // The server owns the canonical exclusion list, but self/placeholder
+        // names must never surface as competitors regardless of source.
+        if (isPlaceholder(e.name) || isSelfName(e.name, companyName)) continue;
+        for (const target of collapseMap.get(e.name) ?? [e.name]) {
+          let t = out.get(target);
+          if (!t) {
+            t = { name: target, mentions: 0, coMentions: 0, discoveryMentions: 0, competitiveMentions: 0 };
+            out.set(target, t);
+          }
+          t.mentions += e.mentions;
+          t.coMentions += e.coMentions;
+          t.discoveryMentions += e.discoveryMentions;
+          t.competitiveMentions += e.competitiveMentions;
+        }
+      }
+      return out;
+    };
+    return { current: collapse(current), previous: collapse(previous), collapseMap };
+  }, [competitorStats, cubeScopeTotals, cubeQuarterKey, cubePrevQuarterKey, cubeJobFunction, aliasMapLoaded, curatedDirect, isAliasMapped, companyName]);
 
   // -------------------------------------------------------------------------
   // Aggregation over the analyzed scope (current + previous period).
@@ -399,8 +516,102 @@ export const CompetitorsTab = memo(({
     return { byName, matching, total, companyMentioned, discoveryTotal, discoveryMentioned, competitiveTotal, competitiveMentioned };
   };
 
-  const analyzed = useMemo(() => buildAgg(normalized, matchesFilters), [normalized, matchesFilters]);
-  const prevAnalyzed = useMemo(() => buildAgg(prevNormalized, matchesFilters), [prevNormalized, matchesFilters]);
+  // Cube counts + raw extras, merged by display name. The per-competitor
+  // counts (deduped per response; deprecated prompts/models excluded —
+  // documented corrections) replace the raw tallies, and the scope totals
+  // (total, companyMentioned, discovery/competitive splits) come from the
+  // scope prompt-type cube — so every ratio divides cube by cube.
+  // models/responseIds/domainCounts/locationCounts have no cube grain, so
+  // they stay raw-derived and may lag while the stream loads, as does
+  // `matching` (it feeds the modal, themes scoping and the trend's raw
+  // fallback).
+  //
+  // Name spaces: the cube's collapse map (built over the top-N cube names)
+  // and the raw one (built over every parsed name) can pick different
+  // anchors for the same competitor — e.g. raw folds "Epic Systems" into a
+  // detected "Epic" the cube never saw, or vice versa. Extras are resolved
+  // through BOTH maps so a display name still finds its raw rows.
+  const mergeCubeCounts = (
+    raw: ReturnType<typeof buildAgg>,
+    pooled: Map<string, CompetitorPoolEntry>,
+    totals: { total: number; companyMentioned: number; discoveryTotal: number; discoveryMentioned: number; competitiveTotal: number; competitiveMentioned: number },
+    cubeCollapseMap: Map<string, string[]>,
+  ): ReturnType<typeof buildAgg> => {
+    // Raw entries indexed by where the CUBE's map would collapse them.
+    const rawByCubeTarget = new Map<string, CompetitorAgg[]>();
+    raw.byName.forEach((agg, key) => {
+      for (const target of cubeCollapseMap.get(key) ?? []) {
+        if (target === key) continue;
+        const list = rawByCubeTarget.get(target) ?? [];
+        list.push(agg);
+        rawByCubeTarget.set(target, list);
+      }
+    });
+    const resolveExtras = (name: string): CompetitorAgg[] => {
+      const direct = raw.byName.get(name);
+      if (direct) return [direct];
+      const viaCubeMap = rawByCubeTarget.get(name);
+      if (viaCubeMap && viaCubeMap.length > 0) return viaCubeMap;
+      // Raw collapsed this cube name into an anchor the cube never saw.
+      const out: CompetitorAgg[] = [];
+      for (const target of rawCollapseMap.get(name) ?? []) {
+        if (target === name) continue;
+        const agg = raw.byName.get(target);
+        if (agg) out.push(agg);
+      }
+      return out;
+    };
+    const byName = new Map<string, CompetitorAgg>();
+    pooled.forEach((e, name) => {
+      const sources = resolveExtras(name);
+      let models: Set<string>;
+      let responseIds: string[];
+      let domainCounts: Map<string, number>;
+      let locationCounts: Map<string, number>;
+      if (sources.length === 1) {
+        ({ models, responseIds, domainCounts, locationCounts } = sources[0]);
+      } else {
+        models = new Set();
+        responseIds = [];
+        domainCounts = new Map();
+        locationCounts = new Map();
+        const seenIds = new Set<string>();
+        for (const agg of sources) {
+          agg.models.forEach((m) => models.add(m));
+          for (const id of agg.responseIds) {
+            if (!seenIds.has(id)) { seenIds.add(id); responseIds.push(id); }
+          }
+          agg.domainCounts.forEach((v, k) => domainCounts.set(k, (domainCounts.get(k) || 0) + v));
+          agg.locationCounts.forEach((v, k) => locationCounts.set(k, (locationCounts.get(k) || 0) + v));
+        }
+      }
+      byName.set(name, {
+        name,
+        count: e.mentions,
+        coMention: e.coMentions,
+        discoveryCount: e.discoveryMentions,
+        competitiveCount: e.competitiveMentions,
+        models,
+        responseIds,
+        domainCounts,
+        locationCounts,
+      });
+    });
+    return { ...raw, ...totals, byName };
+  };
+
+  const analyzed = useMemo(() => {
+    const raw = buildAgg(normalized, matchesFilters);
+    return cubePooled && cubeScopeTotals
+      ? mergeCubeCounts(raw, cubePooled.current, cubeScopeTotals.current, cubePooled.collapseMap)
+      : raw;
+  }, [normalized, matchesFilters, cubePooled, cubeScopeTotals, rawCollapseMap]);
+  const prevAnalyzed = useMemo(() => {
+    const raw = buildAgg(prevNormalized, matchesFilters);
+    return cubePooled && cubeScopeTotals
+      ? mergeCubeCounts(raw, cubePooled.previous, cubeScopeTotals.previous, cubePooled.collapseMap)
+      : raw;
+  }, [prevNormalized, matchesFilters, cubePooled, cubeScopeTotals, rawCollapseMap]);
   const hasPrevPeriod = prevAnalyzed.total > 0;
 
   // Set membership. "Employer of choice" = detected in discovery prompts
@@ -571,6 +782,65 @@ export const CompetitorsTab = memo(({
     const empty = { data: [] as Record<string, any>[], series, granularity: "week" as TrendGranularity };
 
     const scope = analyzed.matching.filter((nr) => nr.promptType === "competitive");
+
+    // Cube path: month-grain numerators straight from the competitor cube
+    // (collection-cycle months, response_month) over denominators from the
+    // scope prompt-type cube — same months, same basis. The cube has no week
+    // grain, so short windows (<=2 pooled months) fall through to the raw
+    // path below.
+    if (cubePooled && competitorStats && cubeScopeTotals) {
+      const monthly = poolCompetitorMonthly(competitorStats.rows, {
+        quarterKey: cubeQuarterKey,
+        jobFunction: cubeJobFunction,
+        promptType: "competitive",
+      });
+      // Collapse cube names through the same map as the pooled counts so the
+      // monthly series line up with the card1Rows-derived series names.
+      const byName = new Map<string, Map<string, number>>();
+      const monthSet = new Set<string>();
+      for (const [rawName, months] of monthly) {
+        for (const target of cubePooled.collapseMap.get(rawName) ?? [rawName]) {
+          let merged = byName.get(target);
+          if (!merged) { merged = new Map(); byName.set(target, merged); }
+          for (const [month, v] of months) {
+            merged.set(month, (merged.get(month) || 0) + v);
+            monthSet.add(month);
+          }
+        }
+      }
+      if (monthSet.size > 2) {
+        const denomByMonth = cubeScopeTotals.competitiveByMonth;
+
+        const monthsAsc = Array.from(monthSet).sort();
+        const firstMonth = monthsAsc[0];
+        const lastMonth = monthsAsc[monthsAsc.length - 1];
+        const multiYear = firstMonth.slice(0, 4) !== lastMonth.slice(0, 4);
+        // Contiguous month keys so gaps render as zero, capped at the same
+        // 60 buckets as the raw path.
+        let [y, m] = firstMonth.split("-").map(Number);
+        const [lastY, lastM] = lastMonth.split("-").map(Number);
+        const data: Record<string, any>[] = [];
+        while ((y < lastY || (y === lastY && m <= lastM)) && data.length < 60) {
+          const key = `${y}-${String(m).padStart(2, "0")}`;
+          const ts = new Date(y, m - 1, 1).getTime();
+          const row: Record<string, any> = {
+            ts,
+            label: new Date(ts).toLocaleDateString("en-US", multiYear ? { month: "short", year: "2-digit" } : { month: "short" }),
+          };
+          const denom = denomByMonth.get(key) || 0;
+          series.forEach((name, i) => {
+            const count = byName.get(name)?.get(key) || 0;
+            row[`s${i}`] = denom > 0 ? Math.min(100, Math.round((count / denom) * 1000) / 10) : 0;
+          });
+          data.push(row);
+          m += 1;
+          if (m > 12) { m = 1; y += 1; }
+        }
+        return { data, series, granularity: "month" as TrendGranularity };
+      }
+      // <=2 pooled months: week grain, which only the raw rows can serve.
+    }
+
     if (scope.length === 0) return empty;
 
     let minTs = Infinity;
@@ -613,13 +883,19 @@ export const CompetitorsTab = memo(({
       return row;
     });
 
+    // Series names can come from the cube's name space (when the fallback
+    // runs for a short window on a cube-backed scope); match responses by
+    // the merged responseIds rather than by name string, so a name-space
+    // mismatch can't flatline a series. On the raw path the ids come from
+    // the same raw scan, so this is equivalent to the name check.
+    const seriesIds = series.map((name) => new Set(analyzed.byName.get(name)?.responseIds ?? []));
     for (const nr of scope) {
       if (nr.testedAt == null) continue;
       const bucket = buckets.get(bucketOf(nr.testedAt));
       if (!bucket) continue;
       bucket.total += 1;
       for (let i = 0; i < series.length; i += 1) {
-        if (nr.competitors.includes(series[i])) bucket.counts[i] += 1;
+        if (seriesIds[i].has(nr.id)) bucket.counts[i] += 1;
       }
     }
     buckets.forEach((bucket) => {
@@ -631,7 +907,7 @@ export const CompetitorsTab = memo(({
     });
 
     return { data, series, granularity };
-  }, [card1Rows, analyzed]);
+  }, [card1Rows, analyzed, cubePooled, competitorStats, cubeScopeTotals, cubeQuarterKey, cubeJobFunction]);
 
   // -------------------------------------------------------------------------
   // Card 2 — employers of choice: the discovery-prompt race. Coverage = % of
@@ -895,6 +1171,11 @@ export const CompetitorsTab = memo(({
 
   const hasAnyData = analyzed.byName.size > 0 || curatedDirect.size > 0;
   const totalDetected = analyzed.byName.size;
+  // Cube counts can land before the raw stream that supplies every coverage
+  // denominator and table extra — hold the skeletons until the raw rows
+  // arrive (analyzed.total is raw-derived on both paths). On the raw path
+  // total === 0 implies totalDetected === 0, so behavior is unchanged there.
+  const showSkeleton = responsesLoading && (totalDetected === 0 || analyzed.total === 0);
 
   // Modal data for the selected competitor.
   const modalAgg = modalCompetitor ? analyzed.byName.get(modalCompetitor) : undefined;
@@ -993,7 +1274,7 @@ export const CompetitorsTab = memo(({
                 </p>
               </CardHeader>
               <CardContent className="flex-1 flex flex-col pt-2">
-                {responsesLoading && totalDetected === 0 ? (
+                {showSkeleton ? (
                   <div className="flex-1 min-h-[280px] rounded-md bg-gray-100 animate-pulse" aria-busy="true" />
                 ) : chartType === "line" ? (
                   <>
@@ -1132,7 +1413,7 @@ export const CompetitorsTab = memo(({
                 <p className="text-xs text-gray-400 pt-1">% of discovery answers surfacing each company</p>
               </CardHeader>
               <CardContent className="flex-1 pt-2 flex flex-col min-h-0">
-                {responsesLoading && totalDetected === 0 ? (
+                {showSkeleton ? (
                   <div className="space-y-3 py-2" aria-busy="true">
                     {Array.from({ length: 8 }).map((_, i) => (
                       <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />
@@ -1249,7 +1530,7 @@ export const CompetitorsTab = memo(({
               </div>
             </CardHeader>
             <CardContent className="pt-0">
-              {responsesLoading && totalDetected === 0 ? (
+              {showSkeleton ? (
                 <div className="space-y-3 py-2" aria-busy="true">
                   {Array.from({ length: 8 }).map((_, i) => (
                     <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />

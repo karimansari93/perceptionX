@@ -640,6 +640,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 onJobFunctionChange={handleJobFunctionChange}
                 responseSentimentRows={responseSentimentRows}
                 domainStats={domainStats}
+                cubeScopeRows={cubeScopeRows}
                 cubeQuarterKey={cubeQuarterKey}
                 cubePrevQuarterKey={cubePrevQuarterKey}
               />
@@ -664,6 +665,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 recencyData={recencyData}
                 onNavigateToSources={handleNavigateToSources}
                 competitorStats={competitorStats}
+                cubePromptTypeRows={cubePromptTypeRows}
                 cubeQuarterKey={cubeQuarterKey}
                 cubePrevQuarterKey={cubePrevQuarterKey}
               />
