@@ -19,7 +19,6 @@ import { NetworkStatus } from "@/components/NetworkStatus";
 import { 
   OverviewSkeleton,
   PromptsSkeleton,
-  AnswerGapsSkeleton,
   ReportsSkeleton,
   SourcesSkeleton,
   CompetitorsSkeleton,
@@ -35,7 +34,6 @@ const SourcesTab = lazyWithRetry(() => import("@/components/dashboard/SourcesTab
 const CompetitorsTab = lazyWithRetry(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
 const ThematicAnalysisTab = lazyWithRetry(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
 const PromptsTab = lazyWithRetry(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
-const AnswerGapsTab = lazyWithRetry(() => import("@/components/dashboard/AnswerGapsTab").then(module => ({ default: module.AnswerGapsTab })));
 import LLMLogo from "@/components/LLMLogo";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen";
@@ -52,7 +50,6 @@ const SECTION_TITLES: Record<string, string> = {
   thematic: "Themes",
   prompts: "Prompts",
   reports: "Reports",
-  "answer-gaps": "Answer Gaps",
 };
 
 interface DatabaseOnboardingData {
@@ -80,8 +77,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const [isLoading, setIsLoading] = useState(true);
   // Track which lazy tabs have been visited so they stay mounted after first
   // visit. Deliberately NOT reset on company switch: every tab's company-
-  // scoped data arrives via props or effects keyed on currentCompanyId
-  // (AnswerGaps is user-scoped), so mounted tabs re-render with the new
+  // scoped data arrives via props or effects keyed on currentCompanyId,
+  // so mounted tabs re-render with the new
   // scope's data — a reset would cold-remount all of them on every switch.
   const [hasVisited, setHasVisited] = useState({
     sources: false,
@@ -89,7 +86,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     thematic: false,
     prompts: false,
     search: false,
-    answerGaps: false,
   });
   const { isRefreshing, progress: refreshProgress, refreshAllPrompts } = useRefreshPrompts();
   const { 
@@ -272,7 +268,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   // Search insights retired — no fetch needed.
 
 
-  const [answerGapsData, setAnswerGapsData] = useState<any>(null);
   const [activeSection, setActiveSection] = useState(defaultSection || "overview");
   const [activeGroup, setActiveGroup] = useState(defaultGroup || "dashboard");
   useDocumentTitle(SECTION_TITLES[activeSection]);
@@ -489,8 +484,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         setActiveSection('thematic');
       } else if (path === '/analyze/thematic') {
         setActiveSection('thematic');
-      } else if (path === '/analyze/answer-gaps') {
-        setActiveSection('answer-gaps');
       } else if (path === '/analyze/reports') {
         setActiveSection('reports');
       }
@@ -500,7 +493,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   // Track lazy tab visits so they stay mounted after first visit
   useEffect(() => {
     setHasVisited(prev => {
-      const key = activeSection === 'answer-gaps' ? 'answerGaps' : activeSection;
+      const key = activeSection;
       if (key in prev && !prev[key as keyof typeof prev]) {
         return { ...prev, [key]: true };
       }
@@ -539,8 +532,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     } else if (activeGroup === 'analyze') {
       if (section === 'thematic') {
         navigate('/analyze/thematic');
-      } else if (section === 'answer-gaps') {
-        navigate('/analyze/answer-gaps');
       } else if (section === 'reports') {
         navigate('/analyze/reports');
       }
@@ -560,7 +551,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       switch (activeSection) {
         case "overview": return <OverviewSkeleton />;
         case "prompts": return <PromptsSkeleton />;
-        case "answer-gaps": return <AnswerGapsSkeleton />;
         case "reports": return <ReportsSkeleton />;
         case "sources": return <SourcesSkeleton />;
         case "competitors": return <CompetitorsSkeleton />;
@@ -695,14 +685,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={handleJobFunctionChange}
               />
-            </Suspense>
-          </div>
-        )}
-
-        {(activeSection === 'answer-gaps' || hasVisited.answerGaps) && (
-          <div style={{ display: activeSection === 'answer-gaps' ? 'block' : 'none' }}>
-            <Suspense fallback={<AnswerGapsSkeleton />}>
-              <AnswerGapsTab />
             </Suspense>
           </div>
         )}

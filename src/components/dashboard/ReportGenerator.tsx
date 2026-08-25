@@ -245,7 +245,6 @@ interface ReportGeneratorProps {
   sentimentTrend?: any[];
   topCitations?: any[];
   promptsData?: any[];
-  answerGapsData?: any;
 }
 
 export const ReportGenerator = ({ companyName }: ReportGeneratorProps) => {
