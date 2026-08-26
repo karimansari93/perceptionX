@@ -154,6 +154,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     prefetchLocationRollups,
     prefetchCompanyRollups,
     hydration,
+    scopeStats,
     domainStats,
     competitorStats,
     cubeScopeRows,
@@ -222,12 +223,49 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     return locationOptions?.find(o => o.canonicalKey === selectedLocation)?.label ?? null;
   }, [selectedLocation, locationOptions]);
 
+  // Job-function vocabularies are company-specific: a function saved on one
+  // company means nothing on another, and because the pill filter is shared
+  // persisted state it used to survive a company switch INVISIBLY — no pill
+  // matched (nothing looked selected) while every function-filtered card
+  // rendered empty. Switching company resets the pill to 'all'. First mount
+  // (prev === null) keeps the persisted selection for the company being
+  // restored — the guards below validate it against real data.
+  const prevPillCompanyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = currentCompany?.id ?? null;
+    if (id && prevPillCompanyRef.current && prevPillCompanyRef.current !== id && selectedJobFunction !== 'all') {
+      setSelectedJobFunction('all');
+    }
+    if (id) prevPillCompanyRef.current = id;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCompany?.id]);
+
+  // Function vocabulary from the scope cube — available in ~250ms, long
+  // before the raw stream, and NOT location-filtered (a location where a
+  // function has no prompts must not wipe a valid saved pill).
+  const cubeJobFunctions = useMemo(() => {
+    const fns = new Set<string>();
+    (scopeStats?.scope ?? []).forEach((r: any) => {
+      const fn = (r.job_function_context || '').trim();
+      if (fn) fns.add(fn);
+    });
+    return fns;
+  }, [scopeStats]);
+
   // GUARANTEE: never strand the dashboard in a no-data state. If the persisted
-  // selection points at a function that isn't in the brand's data (e.g. after
-  // switching company, or stale sessionStorage), fall back to 'all' — but only
-  // once the load is FINAL (responsesLoadedCompanyId), so the streaming first
-  // page or a location-filtered subset can't destroy a valid saved selection
-  // that lives in rows still arriving.
+  // selection points at a function that isn't in the brand's data (stale
+  // sessionStorage, renamed function), fall back to 'all'. The cube guard
+  // fires as soon as the scope cube lands; the stream-final guard remains as
+  // the fallback for scopes whose cube hasn't backfilled yet.
+  useEffect(() => {
+    if (
+      selectedJobFunction !== 'all' &&
+      cubeJobFunctions.size > 0 &&
+      !cubeJobFunctions.has(selectedJobFunction)
+    ) {
+      setSelectedJobFunction('all');
+    }
+  }, [selectedJobFunction, cubeJobFunctions, setSelectedJobFunction]);
   useEffect(() => {
     if (
       selectedJobFunction !== 'all' &&
