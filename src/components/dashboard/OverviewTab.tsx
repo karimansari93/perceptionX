@@ -66,6 +66,9 @@ interface OverviewTabProps {
   // 'YYYY-MM' floor clamping attribute-MV months to the raw stream window
   // when no quarter filter applies (single-period bypass); null otherwise.
   cubeMonthFloor?: string | null;
+  // True while any interactive cube is on its first fetch for this
+  // scope+location — cube-fed cards hold skeletons, never empty states.
+  cubesLoading?: boolean;
   metrics: DashboardMetrics;
   topCitations: CitationCount[];
   topCompetitors: { company: string; count: number }[];
@@ -146,6 +149,7 @@ export const OverviewTab = memo(({
   cubeDailyUnsound = false,
   cubeQuarterKey = null,
   cubeMonthFloor = null,
+  cubesLoading = false,
   cubePrevQuarterKey = null,
   metrics,
   topCitations,
@@ -1426,6 +1430,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
               perceptionScoreTrend={perceptionScoreTrend}
               previousPeriodResponses={fnPreviousResponses}
               responsesLoading={responsesLoading}
+              cubesLoading={cubesLoading}
               domainStatsRows={domainStats?.rows}
               cubeScopeRows={cubeScopeRows}
               cubeQuarterKey={cubeQuarterKey}
@@ -1443,6 +1448,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
               perceptionScoreTrend={perceptionScoreTrend}
               previousPeriodResponses={fnPreviousResponses}
               responsesLoading={responsesLoading}
+              cubesLoading={cubesLoading}
               competitorStatsRows={competitorStats?.rows}
               cubePromptTypeRows={cubePromptTypeRows}
               cubeQuarterKey={cubeQuarterKey}

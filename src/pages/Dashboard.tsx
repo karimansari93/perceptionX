@@ -40,6 +40,7 @@ import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen
 import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { GENERAL_KEY } from "@/utils/locationContext";
+import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
@@ -164,6 +165,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     cubeQuarterKey,
     cubePrevQuarterKey,
     cubeMonthFloor,
+    cubesLoading,
   } = dashboardData;
 
   // `isRefreshing` ships with the TanStack rewrite of useDashboardData (true
@@ -240,27 +242,32 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCompany?.id]);
 
-  // Function vocabulary from the scope cube — available in ~250ms, long
-  // before the raw stream, and NOT location-filtered (a location where a
-  // function has no prompts must not wipe a valid saved pill).
+  // Function vocabulary of the CURRENT VIEW (company + location + period),
+  // from the scope cube — available in ~250ms, long before the raw stream.
+  // This mirrors exactly the pill list the tabs render, so the rule is
+  // simple and visible: if the saved selection matches no pill on screen,
+  // swap to "All functions". (Product decision: a filter that nothing on
+  // screen can express must never silently empty the dashboard.)
   const cubeJobFunctions = useMemo(() => {
+    if (!cubeScopeRows) return null; // cube not landed yet — don't judge
     const fns = new Set<string>();
-    (scopeStats?.scope ?? []).forEach((r: any) => {
+    cubeScopeRows.forEach((r: any) => {
+      if (cubeQuarterKey && (!r.response_month || quarterKeyOfMonthStr(String(r.response_month)) !== cubeQuarterKey)) return;
       const fn = (r.job_function_context || '').trim();
-      if (fn) fns.add(fn);
+      if (fn && (r.total_responses || 0) > 0) fns.add(fn);
     });
     return fns;
-  }, [scopeStats]);
+  }, [cubeScopeRows, cubeQuarterKey]);
 
-  // GUARANTEE: never strand the dashboard in a no-data state. If the persisted
-  // selection points at a function that isn't in the brand's data (stale
-  // sessionStorage, renamed function), fall back to 'all'. The cube guard
-  // fires as soon as the scope cube lands; the stream-final guard remains as
-  // the fallback for scopes whose cube hasn't backfilled yet.
+  // GUARANTEE: never strand the dashboard in a no-data state. Fires as soon
+  // as the scope cube lands (covers company switches, location switches,
+  // period switches, and stale restored sessions alike); the stream-final
+  // guard below remains as the fallback for scopes whose cube hasn't
+  // backfilled yet.
   useEffect(() => {
     if (
       selectedJobFunction !== 'all' &&
-      cubeJobFunctions.size > 0 &&
+      cubeJobFunctions !== null &&
       !cubeJobFunctions.has(selectedJobFunction)
     ) {
       setSelectedJobFunction('all');
@@ -616,6 +623,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             cubeQuarterKey={cubeQuarterKey}
             cubePrevQuarterKey={cubePrevQuarterKey}
             cubeMonthFloor={cubeMonthFloor}
+            cubesLoading={cubesLoading}
           />
         </div>
 
@@ -641,6 +649,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 cubeScopeRows={cubeScopeRows}
                 cubeQuarterKey={cubeQuarterKey}
                 cubePrevQuarterKey={cubePrevQuarterKey}
+                cubesLoading={cubesLoading}
               />
             </Suspense>
           </div>
@@ -666,6 +675,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 cubePromptTypeRows={cubePromptTypeRows}
                 cubeQuarterKey={cubeQuarterKey}
                 cubePrevQuarterKey={cubePrevQuarterKey}
+                cubesLoading={cubesLoading}
               />
             </Suspense>
           </div>

@@ -61,6 +61,9 @@ interface SourcesTabProps {
   // arriving (it loads AFTER first paint). Gates the empty state: skeleton
   // rows, never "No citations found yet", until the stream is final.
   responsesLoading?: boolean;
+  // True while any interactive cube is still on its first fetch — the
+  // stream can finish before the cubes on a company/location switch.
+  cubesLoading?: boolean;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
@@ -233,7 +236,7 @@ const startOfMonthTs = (ts: number): number => {
   return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
 };
 
-export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = null, cubePrevQuarterKey = null, topCitations, responses, parseCitations, companyName, searchResults = EMPTY_ARRAY, currentCompanyId, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, responseSentimentRows = EMPTY_ARRAY }: SourcesTabProps) => {
+export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = null, cubePrevQuarterKey = null, cubesLoading = false, topCitations, responses, parseCitations, companyName, searchResults = EMPTY_ARRAY, currentCompanyId, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, responseSentimentRows = EMPTY_ARRAY }: SourcesTabProps) => {
 
   // Responses arrive already scoped by useDashboardData (brand scope — the
   // current company plus same-name sibling profiles — with the location and
@@ -1384,7 +1387,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
           <p className="text-xs text-gray-500">{opts.subtitle}</p>
         </CardHeader>
         <CardContent className="flex-1 pt-0 px-2 sm:px-3 pb-3">
-          {responsesLoading && !hasAnyData ? (
+          {(responsesLoading || cubesLoading) && !hasAnyData ? (
             <div className="px-2">{loadingSkeleton(4)}</div>
           ) : opts.rows.length === 0 ? (
             <div className="h-full min-h-[120px] flex items-center justify-center px-4 text-center text-sm text-gray-400">
@@ -1469,7 +1472,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
               <CardContent className="flex-1 flex flex-col pt-2">
                 {/* Cube-fed chart data can exist before the raw stream lands;
                     skeleton only while there is genuinely nothing to draw. */}
-                {responsesLoading && trend.data.length === 0 && trend.monthRanking.length === 0 ? (
+                {(responsesLoading || cubesLoading) && trend.data.length === 0 && trend.monthRanking.length === 0 ? (
                   <div className="flex-1 min-h-[280px] rounded-md bg-gray-100 animate-pulse" aria-busy="true" />
                 ) : (
                   <>
@@ -1544,7 +1547,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                 {/* The share column divides by the RAW response total, so rows
                     hold behind the skeleton until the stream provides it —
                     cube counts alone would render every share as 0.0%. */}
-                {responsesLoading && analyzed.total === 0 ? (
+                {(responsesLoading || cubesLoading) && analyzed.total === 0 ? (
                   <div className="px-2">{loadingSkeleton(8)}</div>
                 ) : (
                   <div className="h-full max-h-[400px] overflow-y-auto pr-1">

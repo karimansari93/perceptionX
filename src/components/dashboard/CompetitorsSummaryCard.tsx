@@ -23,6 +23,9 @@ interface CompetitorsSummaryCardProps {
   // first paint). This card derives its list from raw responses, so while
   // streaming it skeletons instead of "No competitor mentions found yet".
   responsesLoading?: boolean;
+  // True while any interactive cube is still on its first fetch — the empty
+  // state must wait for the cubes, not just the stream.
+  cubesLoading?: boolean;
   // Phase-3 cubes. Rows arrive already location-filtered; this card pools
   // them by quarter + job function (+ prompt_type 'competitive'). BOTH cubes
   // must be present to switch: a cube numerator (each response counted once)
@@ -43,6 +46,7 @@ export const CompetitorsSummaryCard = ({
   perceptionScoreTrend = [],
   previousPeriodResponses = [],
   responsesLoading = false,
+  cubesLoading = false,
   competitorStatsRows,
   cubePromptTypeRows,
   cubeQuarterKey = null,
@@ -334,7 +338,7 @@ export const CompetitorsSummaryCard = ({
           <CardTitle className="text-lg font-semibold">Competitors</CardTitle>
         </CardHeader>
         <CardContent className="px-4 sm:px-6">
-          {responsesLoading ? (
+          {responsesLoading || cubesLoading ? (
             <div className="space-y-3 py-2" aria-busy="true">
               {[1, 2, 3, 4, 5].map(i => (
                 <div key={i} className="flex items-center justify-between py-1">

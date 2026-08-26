@@ -1457,9 +1457,23 @@ export const useDashboardData = () => {
   // canonical location (from location_context values AND each profile's own
   // country), plus "General". MV buckets widen the raw-value sets with
   // historical spellings (extend-only).
+  // Distinct location spellings from the scope-stats cube — the fastest
+  // source (lands ~2s after a scope switch, vs ~10s for rollups/stream), so
+  // location entries and the country-scoped cube/rollup fetches gated on
+  // them unblock without waiting for the slow payloads.
+  const cubeLocationValues = useMemo(() => {
+    if (!scopeStats) return EMPTY_ARRAY as string[];
+    const set = new Set<string>();
+    for (const r of scopeStats.scope) {
+      const v = (r.location_context || '').trim();
+      if (v) set.add(v);
+    }
+    return Array.from(set);
+  }, [scopeStats]);
+
   const { options: locationOptions, rawValuesByKey: locationRawValues } = useMemo(
-    () => buildLocationOptions(responses, scopeCompanies, mvLocationBuckets),
-    [responses, scopeCompanies, mvLocationBuckets]
+    () => buildLocationOptions(responses, scopeCompanies, mvLocationBuckets, cubeLocationValues),
+    [responses, scopeCompanies, mvLocationBuckets, cubeLocationValues]
   );
 
   // The active selection's entry (null when the key doesn't resolve in this
@@ -1661,6 +1675,14 @@ export const useDashboardData = () => {
     gcTime: KEEP_MS,
     refetchOnMount: true,
   });
+  // True while any interactive cube for the CURRENT scope+location is still
+  // on its first fetch. The response stream can finish before these land
+  // (they chain behind location rollups on a switch), so cube-fed cards must
+  // treat this as "loading", never as "no data yet".
+  const cubesLoading = scopeReady && (
+    scopeStatsQuery.isPending || domainStatsQuery.isPending || competitorStatsQuery.isPending
+  );
+
   // Unbounded cube payloads (all months the MVs hold). The floored variants
   // below — clamped to the raw stream's window whenever the single-period
   // bypass leaves the quarter unfiltered — are what the hook consumes and
@@ -3037,6 +3059,7 @@ export const useDashboardData = () => {
     cubeQuarterKey, // Active quarter for cube pooling (null = all periods / single-period bypass)
     cubePrevQuarterKey, // Prior quarter for cube delta comparisons (null when none)
     cubeMonthFloor, // 'YYYY-MM' floor clamping cube months to the raw stream window when no quarter filter applies (null otherwise)
+    cubesLoading, // True while any interactive cube is on its first fetch for this scope+location — cards hold skeletons, not empty states
     isOnline, // Network status
     connectionError, // Connection error message
     recencyDataError, // Recency data specific error message

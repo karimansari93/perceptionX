@@ -29,6 +29,11 @@ interface SourcesSummaryCardProps {
   // from raw responses, so while streaming it skeletons instead of "No
   // sources found yet".
   responsesLoading?: boolean;
+  // True while any interactive cube is still on its first fetch for this
+  // scope+location. The stream can finish BEFORE the cubes (they chain
+  // behind location rollups on a switch), so the empty state must wait for
+  // both.
+  cubesLoading?: boolean;
   // Phase-3 domain cube. Rows arrive already location-filtered; this card
   // pools them by quarter + job function. undefined = scope not backfilled
   // yet → every aggregation below falls back to the raw-row scan.
@@ -50,6 +55,7 @@ export const SourcesSummaryCard = ({
   perceptionScoreTrend = [],
   previousPeriodResponses = [],
   responsesLoading = false,
+  cubesLoading = false,
   domainStatsRows,
   cubeScopeRows,
   cubeQuarterKey = null,
@@ -333,7 +339,7 @@ export const SourcesSummaryCard = ({
           <CardTitle className="text-lg font-semibold">Sources</CardTitle>
         </CardHeader>
         <CardContent className="px-4 sm:px-6">
-          {responsesLoading && !domainPool ? (
+          {(responsesLoading || cubesLoading) && !domainPool ? (
             <div className="space-y-3 py-2" aria-busy="true">
               {[1, 2, 3, 4, 5].map(i => (
                 <div key={i} className="flex items-center justify-between py-1">

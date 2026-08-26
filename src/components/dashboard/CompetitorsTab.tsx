@@ -157,6 +157,9 @@ interface CompetitorsTabProps {
   // arriving (it loads AFTER first paint). Gates the empty state: skeleton
   // rows, never "No competitors found yet", until the stream is final.
   responsesLoading?: boolean;
+  // True while any interactive cube is still on its first fetch — the
+  // stream can finish before the cubes on a company/location switch.
+  cubesLoading?: boolean;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
@@ -184,6 +187,7 @@ export const CompetitorsTab = memo(({
   fetchResponseTexts,
   previousPeriodResponses = EMPTY_ARRAY,
   responsesLoading = false,
+  cubesLoading = false,
   selectedJobFunction = "all",
   onJobFunctionChange,
   responseSentimentRows = EMPTY_ARRAY,
@@ -1178,7 +1182,7 @@ export const CompetitorsTab = memo(({
   // lists) lag behind the stream; those cells/panels show their own pending
   // state via rawExtrasPending below. Full skeletons only while nothing has
   // landed at all.
-  const showSkeleton = responsesLoading && (totalDetected === 0 || analyzed.total === 0);
+  const showSkeleton = (responsesLoading || cubesLoading) && (totalDetected === 0 || analyzed.total === 0);
   // True while cube counts are on screen but the raw stream that feeds the
   // models/markets/sources columns and the modal hasn't finished.
   const rawExtrasPending = responsesLoading && cubePooled != null;

@@ -155,7 +155,13 @@ export const resolveResponseLocationKey = (
 export const buildLocationOptions = (
   responses: ResponseLike[],
   scopeCompanies: ScopeCompanyLike[] = [],
-  extraBucketValues: string[] = []
+  extraBucketValues: string[] = [],
+  // location_context spellings from the scope-stats cube: available within
+  // ~2s of a scope switch (long before the response stream or the rollups
+  // payload), so location entries — and everything gated on their raw
+  // spellings — resolve without waiting for the slow fetches. Treated like
+  // response spellings: they can CREATE entries, and count as proof of data.
+  cubeLocationValues: string[] = []
 ): { options: LocationEntry[]; rawValuesByKey: Record<string, string[]> } => {
   type Builder = {
     canonicalKey: string;
@@ -214,6 +220,15 @@ export const buildLocationOptions = (
     const cKey = r.company_id != null ? (countryKeyById.get(r.company_id) ?? null) : null;
     if (cKey === null) {
       generalBuckets.add(raw == null || raw.trim() === '' ? '' : raw.trim());
+    }
+  }
+
+  // Cube spellings: same trust level as response spellings — each row proves
+  // stored data with that location_context, so entries may be created here.
+  for (const raw of cubeLocationValues) {
+    const key = canonicalizeLocationContext(raw);
+    if (key !== null && raw.trim() !== '') {
+      getBuilder(key).rawValues.add(raw.trim());
     }
   }
 
