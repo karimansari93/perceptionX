@@ -129,6 +129,145 @@ shape changed, so no client code changed):
   response history unbounded; now a typed column list, newest-first,
   capped at 500.
 
+## Phase 3: summaries answer every filter (in progress, 2026-08-25)
+
+Goal: no dashboard chart depends on the raw response stream, so phase 4 can
+delete the bulk download. Built from a full audit of every raw-row consumer
+(chart/card/modal → fields read → filters applied → required aggregate key).
+
+**Slice 1 (shipped, `20260825120000_scope_stats_rollups.sql`):** four small
+per-company stats tables — `company_scope_stats_mv` (month × job-function ×
+location: responses, mentions, citations, distinct domains/models, theme
+counts), `company_scope_daily_stats_mv` (same by `tested_at` day, + distinct
+prompt×model pairs), `company_scope_prompt_type_stats_mv` (+ prompt_type),
+`company_llm_stats_mv` (+ ai_model). Cardinality is tens-to-low-hundreds of
+rows per company, so `get_scope_stats(company_ids)` ships the whole cube
+(~4 KB/company) and client filter toggles stay instant — no fetch per
+toggle. They cover the Overview scorecard, day-grain trends, period list,
+job-function metrics, and the LLM card (audit items A1-A13, A16, B1-B8, C1,
+D1, F4, G3, H1). Refreshed by the existing per-company pipeline
+(`refresh_company_metrics`), registered in `_refresh_cm_dispatch` and
+`mv_refresh_state`; backfill ran through the dirty queue.
+
+Deliberate number changes at client switch time (both are corrections):
+- The LLM card's rollup previously included deprecated "overall candidate
+  experience" prompts that every other view excludes; `company_llm_stats_mv`
+  excludes them (measured: 4,771 → 4,546 mentions on the largest corpus).
+- `stitchResponses` duplicates attribute-tagged rows, so raw-row
+  `totalResponses` double-counts them today; the stats tables count each
+  response once.
+
+**Slice 2 (server side shipped, `20260825160000_domain_stats_rollup.sql`):**
+`company_domain_stats_mv` — (company, domain, response_month, job_function,
+location) grain, measures responses_citing / mentioned_responses_citing
+(deduped per response) and citation_count (occurrences). Too large to ship
+whole (~14K rows per large company), so `get_domain_stats` collapses
+job-function/location per request and returns month-grain rows for the
+top-N domains (measured: Ford scope, top 300 → 568 rows / 79 KB / 248 ms
+authenticated). Motivating measurement: job-function pill switches on the
+Ford scope block the main thread 0.4–12.4 s (worst: back to "All
+functions") because Sources/Competitors/Themes cards aggregate raw rows;
+the cube read replaces that with a ~250 ms fetch. Client switch pending.
+
+**Slice 3 (shipped, `20260825200000_competitor_stats_and_fn_domains.sql`):**
+`company_competitor_stats_mv` — (company, canonical competitor, month,
+job-function, location, prompt_type) grain, responses_mentioning +
+co_mentions deduped per response; `get_competitor_stats` collapses location
+per request and returns top-N; `get_domain_stats` grew `p_keep_functions`
+so domain rows keep the function dimension for client pooling.
+
+**Client switch (shipped, 2026-08-25):** OverviewTab, SourcesTab,
+CompetitorsTab, SourcesSummaryCard and CompetitorsSummaryCard pool the
+cubes when present, with the raw path kept verbatim as fallback for
+un-backfilled scopes. Two rules came out of adversarial review of the
+switch and are now contracts:
+- **One basis per ratio.** A cube numerator must divide by a cube
+  denominator (scope/prompt-type cube totals), never by a raw-stream count
+  — the stream loads late and partial, and mixed-basis coverage inflates
+  to (or past) the 100% clamp until it finishes. Every component activates
+  its cube path only when ALL cubes it reads are present.
+- **One name space per lookup.** The cube's variant-collapse map (built
+  over top-N server-canonical names) and the raw one (built over every
+  parsed name) can pick different anchors for the same competitor; raw
+  extras (models, response ids, domains, locations) are resolved through
+  both maps, and trend series match responses by id, not by name string.
+
+Measured after the switch (same harness, Ford scope): job-function pill
+switches register **zero longtasks** once hydration completes (worst
+observed anywhere: 165 ms returning to "All functions" mid-stream),
+against 0.4–12.4 s before. The pre-cube visibility/sentiment day-trend
+memos turned out to be dead code (no JSX consumer) and were deleted
+rather than switched.
+
+**Theme slice (shipped, 2026-08-25, client-only):** the attribute cube
+already existed server-side (`company_attribute_themes_mv` + its
+by-location variant); what remained was that ThematicAnalysisTab and
+AttributesSummaryCard scoped those MV rows by intersecting with the
+(month|function) key-set of the loaded response stream — a raw-stream
+dependency that skeletoned the tab until the stream landed and
+over-included rows pre-hydration. Both now filter MV rows directly by the
+quarter of `response_month` + the function pill (key-set path kept as
+fallback when the quarter key isn't wired); the Themes tab's pills and
+"No Experience Data" gate read the scope/prompt-type cubes. Verified: the
+full SWOT quadrant paints with final values while the stream is still
+loading, pill switches register zero longtasks, and the Overview themes
+card shows identical values under the new scoping. Four more dead
+theme memos deleted (OverviewTab's calculateAIBasedSentiment /
+themesBySentiment / attributeInsights, the hook's aiThemeByResponseId).
+
+**Hardening round (2026-08-25):** an adversarial re-review (3 lenses,
+every finding independently verified against the code) confirmed five
+defects in the switch; all fixed and E2E-verified:
+- Cube counts paint before the raw stream, so CompetitorsTab's raw-fed
+  extras (Models/Markets/Sources cells, the competitor modal, the
+  week-grain trend fallback) now show explicit pending states instead of
+  empty dashes/charts while the stream loads.
+- The cubes hold LIFETIME history while the stream holds 180 days: in the
+  single-period bypass (no quarter filter) the hook now clamps every cube
+  row set — scope, prompt-type, daily, domain, competitor, and the
+  attribute MV in the theme components (`cubeMonthFloor`) — to the
+  stream's window, so a dormant-resumed company can't show lifetime
+  counts beside windowed drill-downs. Standing contract: any cube
+  consumer pooling with a null quarter key must respect the floor.
+- SourcesSummaryCard excludes the literal `unknown` citation bucket on
+  the cube path, and suppresses delta chips when the previous quarter has
+  no mentioned responses for the selected function.
+- The Dashboard loader latch survives warm remounts (the deleted
+  always-true isLoading had been masking a missing first-render latch).
+
+Also fixed while closing out: promptsData counts each response once
+(stitchResponses' attribute duplicates double-counted per-prompt
+responses and pooled sentiment), and Account's user_onboarding read uses
+maybeSingle (.single() 406'd for users with no onboarding row).
+
+**Remaining slices:** competitor-theme stats — currently moot: the
+`competitor_themes` table holds 7 rows total, the extraction pipeline
+behind it is dormant (product decision pending). Page-grain stats,
+prompt-grain stats. Row-level surfaces (response lists, quote extraction,
+text search, theme drilldown subthemes) stay raw and get server
+pagination in phase 4.
+
+## UX layer (2026-08-25)
+
+- **Warm starts:** the small dashboard families (prompts, rollups, scope
+  stats, location rollups — never the response stream) persist to IndexedDB
+  via `PersistQueryClientProvider` (`px-dashboard-cache-v1`, 24h maxAge,
+  version-busted). localStorage was tried first and rejected: a large
+  scope's snapshot passes its ~5 MB quota and a failed write silently
+  strands a stale partial.
+- **First-load gate releases on headlineReady (prompts + rollups), not the
+  full stream** — contract #4 applied to the loader. Measured on the Ford
+  scope: reveal went from ~45-55 s (stream-bound) to ~6 s cold, and a warm
+  reopen paints entirely from the persisted cache (verified with data RPCs
+  blocked). The remaining ~6 s is auth/company bootstrap, not data.
+- **GlobalFetchIndicator**: 2px top bar for genuinely-async moments —
+  appears after 150 ms in-flight, stays ≥300 ms; never a skeleton over
+  rendered content.
+- **web-vitals → GA**: INP/LCP/CLS report to the existing gtag property.
+  INP is the "clicked a filter and it froze" metric (measured 0.4-12.4 s
+  main-thread blocks on Ford job-function switches — the number the cube
+  switches must drive under 200 ms).
+
 ## Known follow-ups (deliberate scope cuts)
 
 - Citations still dominate the stream payload (~1.7 MB/1000 rows after the

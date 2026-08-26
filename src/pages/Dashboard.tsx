@@ -40,6 +40,7 @@ import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen
 import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { GENERAL_KEY } from "@/utils/locationContext";
+import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
@@ -61,12 +62,6 @@ interface DatabaseOnboardingData {
   id?: string;
 }
 
-interface PromptsModalOnboardingData {
-  companyName: string;
-  industry: string;
-  id?: string;
-}
-
 const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {}) => {
   const { user } = useAuth();
   const { currentCompany, loading: companyLoading } = useCompany();
@@ -74,7 +69,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = usePersistedState<boolean>('dashboard.hasInitiallyLoaded', false);
   const [activeTab, setActiveTab] = useState<'terms' | 'results'>('results');
   const [chartView, setChartView] = useState<'bubble' | 'bar'>('bubble');
-  const [isLoading, setIsLoading] = useState(true);
   // Track which lazy tabs have been visited so they stay mounted after first
   // visit. Deliberately NOT reset on company switch: every tab's company-
   // scoped data arrives via props or effects keyed on currentCompanyId,
@@ -161,6 +155,17 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     prefetchLocationRollups,
     prefetchCompanyRollups,
     hydration,
+    scopeStats,
+    domainStats,
+    competitorStats,
+    cubeScopeRows,
+    cubePromptTypeRows,
+    cubeDailyRows,
+    cubeDailyUnsound,
+    cubeQuarterKey,
+    cubePrevQuarterKey,
+    cubeMonthFloor,
+    cubesLoading,
   } = dashboardData;
 
   // `isRefreshing` ships with the TanStack rewrite of useDashboardData (true
@@ -220,12 +225,54 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     return locationOptions?.find(o => o.canonicalKey === selectedLocation)?.label ?? null;
   }, [selectedLocation, locationOptions]);
 
-  // GUARANTEE: never strand the dashboard in a no-data state. If the persisted
-  // selection points at a function that isn't in the brand's data (e.g. after
-  // switching company, or stale sessionStorage), fall back to 'all' — but only
-  // once the load is FINAL (responsesLoadedCompanyId), so the streaming first
-  // page or a location-filtered subset can't destroy a valid saved selection
-  // that lives in rows still arriving.
+  // Job-function vocabularies are company-specific: a function saved on one
+  // company means nothing on another, and because the pill filter is shared
+  // persisted state it used to survive a company switch INVISIBLY — no pill
+  // matched (nothing looked selected) while every function-filtered card
+  // rendered empty. Switching company resets the pill to 'all'. First mount
+  // (prev === null) keeps the persisted selection for the company being
+  // restored — the guards below validate it against real data.
+  const prevPillCompanyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = currentCompany?.id ?? null;
+    if (id && prevPillCompanyRef.current && prevPillCompanyRef.current !== id && selectedJobFunction !== 'all') {
+      setSelectedJobFunction('all');
+    }
+    if (id) prevPillCompanyRef.current = id;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCompany?.id]);
+
+  // Function vocabulary of the CURRENT VIEW (company + location + period),
+  // from the scope cube — available in ~250ms, long before the raw stream.
+  // This mirrors exactly the pill list the tabs render, so the rule is
+  // simple and visible: if the saved selection matches no pill on screen,
+  // swap to "All functions". (Product decision: a filter that nothing on
+  // screen can express must never silently empty the dashboard.)
+  const cubeJobFunctions = useMemo(() => {
+    if (!cubeScopeRows) return null; // cube not landed yet — don't judge
+    const fns = new Set<string>();
+    cubeScopeRows.forEach((r: any) => {
+      if (cubeQuarterKey && (!r.response_month || quarterKeyOfMonthStr(String(r.response_month)) !== cubeQuarterKey)) return;
+      const fn = (r.job_function_context || '').trim();
+      if (fn && (r.total_responses || 0) > 0) fns.add(fn);
+    });
+    return fns;
+  }, [cubeScopeRows, cubeQuarterKey]);
+
+  // GUARANTEE: never strand the dashboard in a no-data state. Fires as soon
+  // as the scope cube lands (covers company switches, location switches,
+  // period switches, and stale restored sessions alike); the stream-final
+  // guard below remains as the fallback for scopes whose cube hasn't
+  // backfilled yet.
+  useEffect(() => {
+    if (
+      selectedJobFunction !== 'all' &&
+      cubeJobFunctions !== null &&
+      !cubeJobFunctions.has(selectedJobFunction)
+    ) {
+      setSelectedJobFunction('all');
+    }
+  }, [selectedJobFunction, cubeJobFunctions, setSelectedJobFunction]);
   useEffect(() => {
     if (
       selectedJobFunction !== 'all' &&
@@ -304,9 +351,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   }, [navigate]);
 
 
-  const [onboardingData, setOnboardingData] = useState<PromptsModalOnboardingData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [onboardingId, setOnboardingId] = useState<string | null>(null);
   const [isNewUser, setIsNewUser] = useState(false);
   const [hasDismissedPromptsModal, setHasDismissedPromptsModal] = useState(false);
 
@@ -321,7 +366,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     }
     
     // Only mark as loaded once, and don't reset when returning to tab
-    if (!initialLoadCompletedRef.current && !companyLoading && !loading && !isLoading && (currentCompany !== undefined)) {
+    if (!initialLoadCompletedRef.current && !companyLoading && !loading && (currentCompany !== undefined)) {
       // Small delay to ensure everything is settled
       const timer = setTimeout(() => {
         if (!initialLoadCompletedRef.current) {
@@ -331,7 +376,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [companyLoading, loading, isLoading, currentCompany, setHasInitiallyLoaded, hasInitiallyLoaded]);
+  }, [companyLoading, loading, currentCompany, setHasInitiallyLoaded, hasInitiallyLoaded]);
 
   // Session-scoped (in-memory) flag for "the dashboard has fully loaded at
   // least once since this Dashboard component mounted". This is intentionally
@@ -356,11 +401,15 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     // !competitorLoading, which always settles (even for empty/setup
     // accounts), so this can't hang.
     if (!sessionFirstLoadDoneRef.current) {
-      // Hold until the FULL data set has hydrated (hydration.complete), not
-      // just the headline rollups — so the reveal never hands off to
-      // still-loading Sources/Competitors cards. hydration treats fetch
-      // errors and no-company accounts as complete, so this can't hang.
-      return companyLoading || isLoading || !isFullyLoaded || !hydration.complete;
+      // Hold until the HEADLINE families (prompts + rollups) are ready —
+      // the Overview is fully rollup-backed, so the reveal is complete for
+      // the tab the user lands on while the response stream keeps hydrating
+      // behind it (per-tab loading states cover late arrivals). With the
+      // persisted cache this releases instantly on a warm reopen instead of
+      // re-holding for the full ~45s stream on large scopes. hydration
+      // treats fetch errors and no-company accounts as ready, so this
+      // can't hang.
+      return companyLoading || !isFullyLoaded || !hydration.headlineReady;
     }
     // After the first full load this session, fall back to the original
     // persisted-state behavior so in-app tab returns / company switches don't
@@ -368,8 +417,22 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (hasInitiallyLoaded) {
       return companyLoading && currentCompany === null;
     }
-    return companyLoading || isLoading || !isFullyLoaded || !hydration.complete;
-  }, [companyLoading, isLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany, hydration.complete]);
+    return companyLoading || !isFullyLoaded || !hydration.headlineReady;
+  }, [companyLoading, isFullyLoaded, hasInitiallyLoaded, currentCompany, hydration.headlineReady]);
+
+  // Warm remount (user navigated away within the SPA and came back with the
+  // query cache intact): everything is ready on the very first render, the
+  // loader never shows, and the show→hide transition the latch below waits
+  // for never happens — latch immediately so the next company switch takes
+  // the lenient branch instead of re-showing the full-screen loader. Only
+  // the FIRST render decides this; a mid-load ready flicker can't trigger it.
+  const firstRenderLatchedRef = useRef(false);
+  if (!firstRenderLatchedRef.current) {
+    firstRenderLatchedRef.current = true;
+    if (!isInitialLoading) {
+      sessionFirstLoadDoneRef.current = true;
+    }
+  }
 
   // Keep the loading screen mounted long enough to play its completion
   // (bar snaps to 100% + fade) before the dashboard is revealed.
@@ -410,53 +473,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       return () => clearTimeout(timer);
     }
   }, [collectionStatus?.companyId, isCollectingData, currentCompany?.id]);
-
-  // Fetch onboarding data - only once per user ID, not on every user object reference change
-  const onboardingDataFetchedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    const fetchOnboardingData = async () => {
-      if (!user?.id) return;
-      
-      // Only fetch if we haven't already fetched for this user ID
-      if (onboardingDataFetchedRef.current.has(user.id)) {
-        return;
-      }
-
-      try {
-        // Only show loading if we don't have onboarding data yet
-        if (!onboardingData) {
-          setIsLoading(true);
-        }
-        const { data, error } = await supabase
-          .from('user_onboarding')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        if (error) throw error;
-
-        if (data && data.length > 0) {
-          const onboarding = data[0];
-          setOnboardingData({
-            companyName: onboarding.company_name,
-            industry: onboarding.industry,
-            id: onboarding.id
-          });
-          setOnboardingId(onboarding.id);
-        }
-        // Mark this user ID as fetched
-        onboardingDataFetchedRef.current.add(user.id);
-      } catch (error) {
-        console.error('Error fetching onboarding data:', error);
-        setError('Failed to load onboarding data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchOnboardingData();
-  }, [user?.id, onboardingData]); // Only depend on user.id, not the whole user object
 
   // Handle URL changes
   useEffect(() => {
@@ -598,6 +614,16 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             market={selectedMarketName}
             selectedJobFunction={selectedJobFunction}
             onJobFunctionChange={handleJobFunctionChange}
+            domainStats={domainStats}
+            competitorStats={competitorStats}
+            cubeScopeRows={cubeScopeRows}
+            cubePromptTypeRows={cubePromptTypeRows}
+            cubeDailyRows={cubeDailyRows}
+            cubeDailyUnsound={cubeDailyUnsound}
+            cubeQuarterKey={cubeQuarterKey}
+            cubePrevQuarterKey={cubePrevQuarterKey}
+            cubeMonthFloor={cubeMonthFloor}
+            cubesLoading={cubesLoading}
           />
         </div>
 
@@ -619,6 +645,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={handleJobFunctionChange}
                 responseSentimentRows={responseSentimentRows}
+                domainStats={domainStats}
+                cubeScopeRows={cubeScopeRows}
+                cubeQuarterKey={cubeQuarterKey}
+                cubePrevQuarterKey={cubePrevQuarterKey}
+                cubesLoading={cubesLoading}
               />
             </Suspense>
           </div>
@@ -640,6 +671,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responseSentimentRows={responseSentimentRows}
                 recencyData={recencyData}
                 onNavigateToSources={handleNavigateToSources}
+                competitorStats={competitorStats}
+                cubePromptTypeRows={cubePromptTypeRows}
+                cubeQuarterKey={cubeQuarterKey}
+                cubePrevQuarterKey={cubePrevQuarterKey}
+                cubesLoading={cubesLoading}
               />
             </Suspense>
           </div>
@@ -663,6 +699,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 responsesLoading={responsesStreaming}
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={handleJobFunctionChange}
+                cubeQuarterKey={cubeQuarterKey}
+                cubeMonthFloor={cubeMonthFloor}
+                cubeScopeRows={cubeScopeRows}
+                cubePromptTypeRows={cubePromptTypeRows}
               />
             </Suspense>
           </div>
@@ -764,18 +804,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           onCompanyPrefetch={prefetchCompanyRollups}
         />
         <div className="flex-1 overflow-auto">
-          {isLoading ? (
-            <div className="flex items-center justify-center min-h-[400px]">
-              <div className="text-center">
-                <img
-                  alt="Perception Logo"
-                  className="object-contain h-16 w-16 mx-auto mb-4 animate-pulse"
-                  src="/logos/PinkBadge.png"
-                />
-                <p className="text-gray-600">Loading...</p>
-              </div>
-            </div>
-          ) : error ? (
+          {error ? (
             <div className="flex items-center justify-center min-h-[400px]">
               <div className="text-center">
                 <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />

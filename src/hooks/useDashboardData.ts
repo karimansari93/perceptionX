@@ -5,14 +5,32 @@ import {
   dashboardKeys,
   fetchScopePrompts,
   fetchScopeRollups,
+  fetchScopeStats,
   fetchLocationRollups,
   fetchResponsesFirstPages,
   fetchResponsesRemaining,
   sentimentRowsFromStream,
+  fetchDomainStats,
+  fetchCompetitorStats,
+  eagerCutoffIso,
+  type CubeLocationParams,
+  type DomainStats,
+  type CompetitorStats,
   type FirstPages,
   type ScopeRollups,
+  type ScopeStats,
   type LocationRollups,
 } from "@/hooks/dashboard/dashboardQueries";
+import {
+  selectDailyBuckets,
+  selectDailyRowsForLocation,
+  selectPromptTypeRowsForLocation,
+  selectScopeRows,
+  selectScopeRowsForLocation,
+  sumScopeRows,
+  type StatsSelection,
+} from "@/hooks/dashboard/scopeStatsSelect";
+import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
 import { PromptResponse, DashboardMetrics, CitationCount, PromptData, Citation, CompetitorMention, LLMMentionRanking } from "@/types/dashboard";
@@ -293,12 +311,7 @@ export const quarterKeyOfDate = (d: Date): string =>
 // "2026-05-01" → "2026-Q2"). String math on purpose: date-only strings parse
 // as UTC midnight, which shifts into the prior month (and possibly quarter)
 // in negative-offset timezones.
-export const quarterKeyOfMonthStr = (s: string): string | null => {
-  const y = Number(s.slice(0, 4));
-  const m = Number(s.slice(5, 7));
-  if (!y || !m) return null;
-  return `${y}-Q${Math.floor((m - 1) / 3) + 1}`;
-};
+export { quarterKeyOfMonthStr };
 
 // Canonical period bucket for a response: the quarter containing its snapshot
 // month (response_month = collection_cycle, falling back to the write month),
@@ -434,6 +447,18 @@ export const useDashboardData = () => {
     gcTime: KEEP_MS,
     refetchOnMount: true,
   });
+  // Phase-3 scope-stats cube (~4 KB/company). Fetched alongside the rollups;
+  // consumers switch from raw-row memos to this cube one at a time (each flip
+  // verified old-vs-new), so it rides inert until then.
+  const scopeStatsQuery = useQuery({
+    queryKey: dashboardKeys.scopeStats(scopeKey),
+    queryFn: ({ signal }) => fetchScopeStats(scopeCompanyIds, signal),
+    enabled: scopeReady,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+  const scopeStats: ScopeStats | undefined = scopeStatsQuery.data;
   // Response stream, two stages: the newest page of every profile commits
   // eagerly (tables hydrate fast), then the full keyset walk replaces it.
   // Prompts gate the stream so the critical path gets bandwidth first.
@@ -1031,17 +1056,6 @@ export const useDashboardData = () => {
     };
   }, [sentimentCacheState]);
 
-  const aiThemeByResponseId = useMemo(() => {
-    const map = new Map<string, any>();
-    aiThemes.forEach(theme => {
-      if (!map.has(theme.response_id)) {
-        map.set(theme.response_id, theme);
-      }
-    });
-    return map;
-  }, [aiThemes]);
-
-
   // Cache for search results to prevent duplicate requests
   const searchResultsCache = useRef<{
     companyId: string | null;
@@ -1443,9 +1457,23 @@ export const useDashboardData = () => {
   // canonical location (from location_context values AND each profile's own
   // country), plus "General". MV buckets widen the raw-value sets with
   // historical spellings (extend-only).
+  // Distinct location spellings from the scope-stats cube — the fastest
+  // source (lands ~2s after a scope switch, vs ~10s for rollups/stream), so
+  // location entries and the country-scoped cube/rollup fetches gated on
+  // them unblock without waiting for the slow payloads.
+  const cubeLocationValues = useMemo(() => {
+    if (!scopeStats) return EMPTY_ARRAY as string[];
+    const set = new Set<string>();
+    for (const r of scopeStats.scope) {
+      const v = (r.location_context || '').trim();
+      if (v) set.add(v);
+    }
+    return Array.from(set);
+  }, [scopeStats]);
+
   const { options: locationOptions, rawValuesByKey: locationRawValues } = useMemo(
-    () => buildLocationOptions(responses, scopeCompanies, mvLocationBuckets),
-    [responses, scopeCompanies, mvLocationBuckets]
+    () => buildLocationOptions(responses, scopeCompanies, mvLocationBuckets, cubeLocationValues),
+    [responses, scopeCompanies, mvLocationBuckets, cubeLocationValues]
   );
 
   // The active selection's entry (null when the key doesn't resolve in this
@@ -1616,6 +1644,64 @@ export const useDashboardData = () => {
     refetchOnMount: true,
   });
 
+  // Interactive cubes (domain + competitor stats): ONE fetch per
+  // (scope, location selection), month × job-function (× prompt_type) kept
+  // in the payload, so job-function and period toggles pool client-side
+  // over a few thousand rows — no fetch, no 40K-row raw scan. Location
+  // params mirror locRollupsQuery; '' key = all locations (no predicate).
+  const cubeLocationActive = !!selectedLocation && locSelectionFetchable;
+  const cubeLocationKey = cubeLocationActive ? (selectedLocation as string) : '';
+  const cubeParams: CubeLocationParams = cubeLocationActive
+    ? {
+        ownedIds: selectedOwnedCompanyIds,
+        ownedBuckets: ownedBucketList,
+        otherIds: isGeneralSelection ? [] : otherCompanyIds,
+        otherBuckets: isGeneralSelection ? [] : selectedRawValues,
+      }
+    : { ownedIds: scopeCompanyIds, ownedBuckets: null, otherIds: [], otherBuckets: [] };
+  const domainStatsQuery = useQuery({
+    queryKey: dashboardKeys.domainStats(scopeKey, cubeLocationKey),
+    queryFn: ({ signal }) => fetchDomainStats(cubeParams, signal),
+    enabled: scopeReady,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+  const competitorStatsQuery = useQuery({
+    queryKey: dashboardKeys.competitorStats(scopeKey, cubeLocationKey),
+    queryFn: ({ signal }) => fetchCompetitorStats(cubeParams, signal),
+    enabled: scopeReady,
+    staleTime: FRESH_MS,
+    gcTime: KEEP_MS,
+    refetchOnMount: true,
+  });
+  // True while any interactive cube for the CURRENT scope+location is still
+  // on its first fetch. The response stream can finish before these land
+  // (they chain behind location rollups on a switch), so cube-fed cards must
+  // treat this as "loading", never as "no data yet".
+  const cubesLoading = scopeReady && (
+    scopeStatsQuery.isPending || domainStatsQuery.isPending || competitorStatsQuery.isPending
+  );
+
+  // Unbounded cube payloads (all months the MVs hold). The floored variants
+  // below — clamped to the raw stream's window whenever the single-period
+  // bypass leaves the quarter unfiltered — are what the hook consumes and
+  // exports, so cube-fed and raw-fed numbers always describe the same span.
+  const domainStatsUnbounded: DomainStats | undefined = domainStatsQuery.data;
+  const competitorStatsUnbounded: CompetitorStats | undefined = competitorStatsQuery.data;
+
+  // Scope-cube rows for the active LOCATION only (job function and month
+  // kept) — components pool those dimensions themselves for instant pill
+  // toggles. Location attribution needs countryKeyByCompanyId, which only
+  // this hook has, so it is applied once here.
+  const cubeLocationSel = useMemo(() => ({
+    locationKey: selectedLocation && selectedLocationEntry ? selectedLocation : null,
+    countryKeyByCompanyId,
+    quarterKey: null,
+  }), [selectedLocation, selectedLocationEntry, countryKeyByCompanyId]);
+  // (The location-filtered cube row memos live below, after cubeQuarterKey
+  // is known — they also apply the stream-window floor.)
+
   // Raw spellings can widen while the response stream lands. The query key
   // deliberately excludes them (identical selections must share the cache);
   // widening invalidates instead — a background revalidation, not the old
@@ -1633,6 +1719,10 @@ export const useDashboardData = () => {
       queryClient.invalidateQueries({
         queryKey: dashboardKeys.locationRollups(scopeKey, selectedLocation),
       });
+      // The interactive cubes share the same location inputs — a widened
+      // spelling list must revalidate them too.
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.domainStats(scopeKey, selectedLocation) });
+      queryClient.invalidateQueries({ queryKey: dashboardKeys.competitorStats(scopeKey, selectedLocation) });
     }
     locInputsSigRef.current.set(mapKey, sig);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1761,6 +1851,14 @@ export const useDashboardData = () => {
       queryFn: ({ signal }) => fetchScopePrompts(scope, signal),
       staleTime: FRESH_MS,
     });
+    // The stats cube is part of the headline paint now — warm it with the
+    // rollups (found via E2E: hover prefetched rollups+prompts but the
+    // switch still had to fetch stats).
+    queryClient.prefetchQuery({
+      queryKey: dashboardKeys.scopeStats(key),
+      queryFn: ({ signal }) => fetchScopeStats(scope, signal),
+      staleTime: FRESH_MS,
+    });
   }, [userCompanies, currentCompany?.id, queryClient]);
 
   // Hydration stages for the branded first-load screen: which fetch families
@@ -1779,6 +1877,11 @@ export const useDashboardData = () => {
       rollups: rollupsDone,
       responsesFirst,
       responsesFull,
+      // The headline (Overview scorecard + cards) is fully rollup-backed —
+      // contract #4: nothing on the critical path awaits the stream. The
+      // first-load screen releases on this; the stream keeps hydrating
+      // behind the revealed dashboard (instant on warm starts, ~3s cold).
+      headlineReady: prompts && rollupsDone,
       complete: prompts && rollupsDone && responsesFirst && responsesFull,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1850,6 +1953,68 @@ export const useDashboardData = () => {
     const idx = availablePeriods.findIndex(p => p.key === effectivePeriod.key);
     return idx >= 0 && idx + 1 < availablePeriods.length ? availablePeriods[idx + 1] : null;
   }, [availablePeriods, effectivePeriod]);
+
+  // Quarter keys for cube pooling, mirroring periodFilteredResponses'
+  // single-period bypass: with <=1 available periods the raw path shows ALL
+  // rows, so cube consumers must not quarter-filter either.
+  const cubeQuarterKey = (effectivePeriod && availablePeriods.length > 1) ? effectivePeriod.key : null;
+  const cubePrevQuarterKey = (previousPeriodInfo && availablePeriods.length > 1) ? previousPeriodInfo.key : null;
+
+  // -------------------------------------------------------------------------
+  // Stream-window floor for the cubes. The cubes hold a company's WHOLE
+  // history while the raw stream is bounded to the eager window; with an
+  // active quarter the pooling predicate bounds both sides, but in the
+  // single-period bypass (cubeQuarterKey null) unfiltered cube pooling would
+  // include months the stream can never contain (a dormant-resumed company),
+  // showing lifetime counts beside windowed raw drill-downs. Clamp every cube
+  // row set to the eager window whenever no quarter filter applies.
+  // -------------------------------------------------------------------------
+  const cubeMonthFloor = cubeQuarterKey == null ? eagerCutoffIso().slice(0, 7) : null;
+  const cubeDayFloor = cubeQuarterKey == null ? eagerCutoffIso().slice(0, 10) : null;
+  const monthInWindow = (month: string | null | undefined): boolean =>
+    !cubeMonthFloor || !month || String(month).slice(0, 7) >= cubeMonthFloor;
+
+  const flooredScopeStats = useMemo(() => {
+    if (!scopeStats || !cubeMonthFloor) return scopeStats;
+    return {
+      ...scopeStats,
+      scope: scopeStats.scope.filter(r => monthInWindow(r.response_month)),
+      prompt_types: scopeStats.prompt_types.filter(r => monthInWindow(r.response_month)),
+      daily: scopeStats.daily.filter(r => String(r.tested_day).slice(0, 10) >= cubeDayFloor!),
+      llm: scopeStats.llm ? scopeStats.llm.filter(r => monthInWindow(r.response_month)) : scopeStats.llm,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeStats, cubeMonthFloor, cubeDayFloor]);
+
+  const domainStats: DomainStats | undefined = useMemo(() => {
+    if (!domainStatsUnbounded || !cubeMonthFloor) return domainStatsUnbounded;
+    return { ...domainStatsUnbounded, rows: domainStatsUnbounded.rows.filter(r => monthInWindow(r.response_month)) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domainStatsUnbounded, cubeMonthFloor]);
+  const competitorStats: CompetitorStats | undefined = useMemo(() => {
+    if (!competitorStatsUnbounded || !cubeMonthFloor) return competitorStatsUnbounded;
+    return { ...competitorStatsUnbounded, rows: competitorStatsUnbounded.rows.filter(r => monthInWindow(r.response_month)) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [competitorStatsUnbounded, cubeMonthFloor]);
+
+  // Location-filtered cube rows for components (fn + month kept for client
+  // pooling), derived from the floored payloads.
+  const cubeScopeRows = useMemo(
+    () => (flooredScopeStats ? selectScopeRowsForLocation(flooredScopeStats.scope, cubeLocationSel) : undefined),
+    [flooredScopeStats, cubeLocationSel]
+  );
+  const cubePromptTypeRows = useMemo(
+    () => (flooredScopeStats ? selectPromptTypeRowsForLocation(flooredScopeStats.prompt_types, cubeLocationSel) : undefined),
+    [flooredScopeStats, cubeLocationSel]
+  );
+  const cubeDailySelection = useMemo(
+    () => (flooredScopeStats ? selectDailyRowsForLocation(flooredScopeStats.daily, cubeLocationSel) : undefined),
+    [flooredScopeStats, cubeLocationSel]
+  );
+  const cubeDailyRows = cubeDailySelection?.rows;
+  // Daily rows predating the response_month migration make period-scoped day
+  // math unsound — consumers fall back to raw rows while any remain.
+  const cubeDailyUnsound = cubeDailySelection?.hasUnrefreshedRows ?? false;
 
   // Filter responses to the selected period (by snapshot quarter).
   const periodFilteredResponses = useMemo(() => {
@@ -1969,13 +2134,21 @@ export const useDashboardData = () => {
       const visibilityScore = typeof response.company_mentioned === 'boolean' ? (response.company_mentioned ? 100 : 0) : undefined;
       
       if (existing) {
-        existing.responses += 1;
-        // Methodology v2: pool positive/negative counts across the prompt's
-        // responses, then take positive/(positive+negative).
-        (existing as any)._pos = ((existing as any)._pos || 0) + aiSentiment.positive;
-        (existing as any)._neg = ((existing as any)._neg || 0) + aiSentiment.negative;
-        existing.avgSentiment = sentimentRatioV2((existing as any)._pos, (existing as any)._neg) ?? 0;
-        existing.sentimentLabel = existing.avgSentiment > 0.6 ? 'positive' : ((existing as any)._pos + (existing as any)._neg) > 0 && existing.avgSentiment < 0.4 ? 'negative' : 'neutral';
+        // stitchResponses appends a reformatted duplicate row (same response
+        // id, same prompt) for attribute-tagged responses — count each
+        // RESPONSE once, but let the metadata backfills below still run.
+        const seenIds = (existing as any)._seenIds as Set<string>;
+        const isDuplicateRow = seenIds.has(response.id);
+        if (!isDuplicateRow) {
+          seenIds.add(response.id);
+          existing.responses += 1;
+          // Methodology v2: pool positive/negative counts across the prompt's
+          // responses, then take positive/(positive+negative).
+          (existing as any)._pos = ((existing as any)._pos || 0) + aiSentiment.positive;
+          (existing as any)._neg = ((existing as any)._neg || 0) + aiSentiment.negative;
+          existing.avgSentiment = sentimentRatioV2((existing as any)._pos, (existing as any)._neg) ?? 0;
+          existing.sentimentLabel = existing.avgSentiment > 0.6 ? 'positive' : ((existing as any)._pos + (existing as any)._neg) > 0 && existing.avgSentiment < 0.4 ? 'negative' : 'neutral';
+        }
         if (!existing.industryContext && response.confirmed_prompts?.industry_context) {
           existing.industryContext = response.confirmed_prompts.industry_context;
         }
@@ -2000,13 +2173,13 @@ export const useDashboardData = () => {
         if (!existing.attributeId && attrId) {
           existing.attributeId = attrId;
         }
-        // Add visibility score to array
-        if (visibilityScore !== undefined) {
+        // Add visibility score to array (once per response — see seenIds)
+        if (!isDuplicateRow && visibilityScore !== undefined) {
           existing.visibilityScores = existing.visibilityScores || [];
           existing.visibilityScores.push(visibilityScore);
         }
         // Update visibility metrics
-        if (response.confirmed_prompts?.prompt_type === 'discovery') {
+        if (!isDuplicateRow && response.confirmed_prompts?.prompt_type === 'discovery') {
           if (typeof existing.averageVisibility === 'number') {
             existing.averageVisibility = (existing.averageVisibility * (existing.responses - 1) + (response.company_mentioned ? 100 : 0)) / existing.responses;
           } else {
@@ -2036,7 +2209,7 @@ export const useDashboardData = () => {
           responses: 1,
           avgSentiment: aiSentiment.sentiment_score ?? 0,
           sentimentLabel: aiSentiment.sentiment_label,
-          ...({ _pos: aiSentiment.positive, _neg: aiSentiment.negative } as any),
+          ...({ _pos: aiSentiment.positive, _neg: aiSentiment.negative, _seenIds: new Set([response.id]) } as any),
           mentionRanking: undefined,
           competitivePosition: undefined,
           detectedCompetitors: response.detected_competitors || undefined,
@@ -2152,6 +2325,36 @@ export const useDashboardData = () => {
     const effectivePeriodKey = effectivePeriod?.key;
     const mvVisibility = visibilityFromMvRows(visibilityRowsForSelection, effectivePeriodKey ?? null, null);
 
+    // Phase-3 scope-stats cube for the active selection. Additive measures
+    // (citation totals, day-grain trend inputs) come from here when the cube
+    // has landed; the raw-row math below stays as the fallback for scopes
+    // awaiting their first stats refresh. The cube covers all time (not just
+    // the eager stream window) and counts each response once (the raw path
+    // double-counts stitched attribute rows) — both deliberate corrections.
+    const statsSel: StatsSelection = {
+      locationKey: selectedLocation && selectedLocationEntry ? selectedLocation : null,
+      countryKeyByCompanyId,
+      // Mirror periodFilteredResponses' single-period bypass exactly: with one
+      // (or zero) available periods the raw path returns ALL visible rows, so
+      // the cube must not quarter-filter either.
+      quarterKey: (effectivePeriod && availablePeriods.length > 1) ? (effectivePeriodKey ?? null) : null,
+    };
+    const cubeScopeSelected = flooredScopeStats ? selectScopeRows(flooredScopeStats.scope, statsSel) : [];
+    const cubeTotals = sumScopeRows(cubeScopeSelected);
+    // The cube is trustworthy only when every company contributing raw rows
+    // has cube rows too — a freshly added sibling profile streams responses
+    // before its first stats refresh, and a scope-global gate would silently
+    // compute mixed-scope numbers from the other profiles' cube rows.
+    const cubeCompanyIds = new Set((flooredScopeStats?.scope ?? []).map(r => r.company_id));
+    const rawCompaniesCovered = responses.every(r => r.company_id == null || cubeCompanyIds.has(r.company_id));
+    const scopeCubeReady = !!flooredScopeStats && flooredScopeStats.scope.length > 0 && rawCompaniesCovered;
+    const dailySelection = flooredScopeStats ? selectDailyBuckets(flooredScopeStats.daily, statsSel) : null;
+    // Period filtering over day rows needs the response_month column; until a
+    // company's daily rows carry it (post-migration refresh), period-scoped
+    // day math is unsound — fall back to raw rows.
+    const dailyCubeReady = scopeCubeReady && dailySelection !== null &&
+      !(statsSel.quarterKey && dailySelection.hasUnrefreshedRows);
+
     // Don't calculate if still loading AND no rollup source (sentiment/
     // relevance MV metrics or the visibility rollup) has anything. If any
     // rollup has data, compute from it even before responses arrive.
@@ -2213,9 +2416,50 @@ export const useDashboardData = () => {
     let visibilityTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     let citationsTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     
-    if (responses.length > 1) {
+    if (dailyCubeReady && dailySelection!.buckets.length > 1) {
+      // Cube path: latest collection day vs all earlier days, same formulas
+      // and thresholds as the raw path below. Day identity is the UTC date of
+      // tested_at (the raw path used the viewer's local date — near-midnight
+      // runs can shift a day, an accepted normalization).
+      const buckets = dailySelection!.buckets;
+      const latest = buckets[buckets.length - 1];
+      const previous = buckets.slice(0, -1);
+      const prevAgg = previous.reduce(
+        (a, b) => ({
+          pos: a.pos + b.positiveThemes,
+          neg: a.neg + b.negativeThemes,
+          total: a.total + b.totalResponses,
+          mentioned: a.mentioned + b.mentionedResponses,
+          citations: a.citations + b.totalCitations,
+        }),
+        { pos: 0, neg: 0, total: 0, mentioned: 0, citations: 0 }
+      );
+
+      const currentSentiment = sentimentRatioV2(latest.positiveThemes, latest.negativeThemes) ?? 0;
+      const previousSentiment = sentimentRatioV2(prevAgg.pos, prevAgg.neg) ?? 0;
+      const sentimentChange = currentSentiment - previousSentiment;
+      sentimentTrendComparison = {
+        value: Math.abs(Math.round(sentimentChange * 100)),
+        direction: sentimentChange > 0.05 ? 'up' : sentimentChange < -0.05 ? 'down' : 'neutral'
+      };
+
+      const currentVisibility = latest.totalResponses > 0 ? (latest.mentionedResponses / latest.totalResponses) * 100 : 0;
+      const previousVisibility = prevAgg.total > 0 ? (prevAgg.mentioned / prevAgg.total) * 100 : 0;
+      const visibilityChange = currentVisibility - previousVisibility;
+      visibilityTrendComparison = {
+        value: Math.abs(visibilityChange),
+        direction: visibilityChange > 1 ? 'up' : visibilityChange < -1 ? 'down' : 'neutral'
+      };
+
+      const previousCitationsAvg = prevAgg.citations / Math.max(1, previous.length);
+      const citationsChange = latest.totalCitations - previousCitationsAvg;
+      citationsTrendComparison = {
+        value: Math.abs(Math.round(citationsChange)),
+        direction: citationsChange > 0.1 ? 'up' : citationsChange < -0.1 ? 'down' : 'neutral'
+      };
+    } else if (responses.length > 1) {
       const sorted = [...responses].sort((a, b) => new Date(b.tested_at).getTime() - new Date(a.tested_at).getTime());
-      
+
       const latestDate = new Date(sorted[0].tested_at).toDateString();
       
       const currentResponses = sorted.filter(r => new Date(r.tested_at).toDateString() === latestDate);
@@ -2280,7 +2524,16 @@ export const useDashboardData = () => {
       }
     }
 
-    const totalCitations = responses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
+    // Citation total from the cube ONLY when a quarter is active — the other
+    // card numbers (totalResponses, uniqueDomains) still come from the raw
+    // window, and an all-time cube figure next to window-limited counts reads
+    // as inconsistent on one card. The quarter-scoped read agrees with the
+    // quarter-scoped raw numbers (modulo the documented dedup fix).
+    // uniqueDomains stays raw — the cube's per-key distinct counts can't be
+    // unioned across months; it waits for the domain-grain cube (slice 2).
+    const totalCitations = (scopeCubeReady && statsSel.quarterKey)
+      ? cubeTotals.totalCitations
+      : responses.reduce((sum, r) => sum + getCitations(r.id).length, 0);
     const uniqueDomains = new Set(
       responses.flatMap(r => getCitations(r.id).map((c: Citation) => c.domain).filter(Boolean))
     ).size;
@@ -2354,7 +2607,7 @@ export const useDashboardData = () => {
     };
     
     return metricsResult;
-  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations, visibilityRowsForSelection]);
+  }, [periodFilteredResponses, promptsData, aiThemes, calculateAIBasedSentiment, effSentimentMetrics, effSentimentByMonth, effRelevanceMetrics, effRelevanceByMonth, effectivePeriod, getCitations, visibilityRowsForSelection, flooredScopeStats, selectedLocation, selectedLocationEntry, countryKeyByCompanyId, availablePeriods]);
 
   // Per-quarter EPS trend powering the Overview headline sparkline. One point
   // per available quarter (oldest → selected period), each computed with the
@@ -2796,6 +3049,17 @@ export const useDashboardData = () => {
     aiThemeAttrsLoaded, // v2 attribute ids whose raw themes are loaded for the current scope
     attributeThemes: effAttributeThemes, // Pre-aggregated attribute scores — location-scoped when a location is active
     responseSentimentRows, // Per-response sentiment ratios (company_response_sentiment_mv)
+    scopeStats: flooredScopeStats, // Phase-3 pre-aggregated stats cube (month/day × job fn × location [+ prompt_type / ai_model]), stream-window floored
+    domainStats, // Interactive domain cube: top-N domains × month × job fn for the active location
+    competitorStats, // Interactive competitor cube: top-N competitors × month × job fn × prompt_type
+    cubeScopeRows, // Scope cube rows, location-filtered (fn + month kept for client pooling)
+    cubePromptTypeRows, // Prompt-type cube rows, location-filtered
+    cubeDailyRows, // Daily cube rows, location-filtered
+    cubeDailyUnsound, // True while pre-migration daily rows lack response_month (period math falls back to raw)
+    cubeQuarterKey, // Active quarter for cube pooling (null = all periods / single-period bypass)
+    cubePrevQuarterKey, // Prior quarter for cube delta comparisons (null when none)
+    cubeMonthFloor, // 'YYYY-MM' floor clamping cube months to the raw stream window when no quarter filter applies (null otherwise)
+    cubesLoading, // True while any interactive cube is on its first fetch for this scope+location — cards hold skeletons, not empty states
     isOnline, // Network status
     connectionError, // Connection error message
     recencyDataError, // Recency data specific error message

@@ -1,7 +1,11 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
+import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
+import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
+import { GlobalFetchIndicator } from "@/components/GlobalFetchIndicator";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { CompanyProvider } from "@/contexts/CompanyContext";
@@ -48,6 +52,37 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Warm starts: persist the SMALL dashboard fetch families (rollups, prompts,
+// scope stats, location rollups) so reopening the app paints the last-seen
+// numbers instantly while revalidation runs behind them. The response stream
+// is deliberately excluded — it is tens of MB on large scopes, far past the
+// ~5 MB localStorage budget, and it re-hydrates in the background anyway.
+// PersistQueryClientProvider (below) delays query subscriptions until the
+// restore completes, so restored data is present on the first render.
+// IndexedDB, not localStorage: a large scope's rollups snapshot alone can
+// pass localStorage's ~5 MB quota, and a failed setItem silently strands a
+// stale partial snapshot.
+const cachePersister = createAsyncStoragePersister({
+  key: 'px-dashboard-cache-v1',
+  storage: {
+    getItem: (k: string) => idbGet(k).then(v => (v == null ? null : (v as string))),
+    setItem: (k: string, v: string) => idbSet(k, v),
+    removeItem: (k: string) => idbDel(k),
+  },
+});
+const persistOptions = {
+  persister: cachePersister,
+  maxAge: 24 * 60 * 60 * 1000,
+  buster: 'v1',
+  dehydrateOptions: {
+    shouldDehydrateQuery: (q: { state: { status: string }; queryKey: readonly unknown[] }) =>
+      q.state.status === 'success' &&
+      Array.isArray(q.queryKey) &&
+      q.queryKey[0] === 'dashboard' &&
+      !q.queryKey.includes('responses'),
+  },
+};
 
 // Error logging handler for ErrorBoundary
 const logError = (error: Error, errorInfo: { componentStack: string }) => {
@@ -160,7 +195,8 @@ const App = () => (
       window.location.href = window.location.pathname;
     }}
   >
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+      <GlobalFetchIndicator />
       <TooltipProvider>
         <BrowserRouter>
           <HotjarInitializer />
@@ -287,7 +323,7 @@ const App = () => (
           </AuthProvider>
         </BrowserRouter>
       </TooltipProvider>
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   </ErrorBoundary>
 );
 

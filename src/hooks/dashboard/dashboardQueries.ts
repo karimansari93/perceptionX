@@ -18,6 +18,14 @@ export const dashboardKeys = {
   // identical fetches 2-3x per switch. Widening instead invalidates the key.
   locationRollups: (scopeKey: string, locationKey: string) =>
     ['dashboard', 'scope', scopeKey, 'location', locationKey] as const,
+  scopeStats: (scopeKey: string) => ['dashboard', 'scope', scopeKey, 'stats'] as const,
+  // Interactive cubes: one fetch per (scope, location selection); month ×
+  // job-function (× prompt_type) stay in the payload so filter toggles pool
+  // client-side with no fetch. '' = all locations.
+  domainStats: (scopeKey: string, locationKey: string) =>
+    ['dashboard', 'scope', scopeKey, 'domains', locationKey] as const,
+  competitorStats: (scopeKey: string, locationKey: string) =>
+    ['dashboard', 'scope', scopeKey, 'competitors', locationKey] as const,
 };
 
 export interface ScopeRollups {
@@ -45,6 +53,106 @@ export interface ResponseStream {
   complete: boolean;  // every scope company streamed to its final page
 }
 
+// Phase-3 scope-stats cube (get_scope_stats): pre-aggregated per-company
+// stats at month/day × job-function × location grain, plus prompt-type and
+// ai-model variants. Small enough (~4 KB/company) to ship whole, so filter
+// toggles keep computing client-side with no fetch per toggle. Dimension
+// conventions: '' = untagged job function / location; location_context is the
+// RAW spelling (canonicalize client-side, same as the by-location rollups).
+export interface ScopeStatsRow {
+  company_id: string;
+  response_month: string;
+  job_function_context: string;
+  location_context: string;
+  total_responses: number;
+  mentioned_responses: number;
+  total_citations: number;
+  distinct_domains: number;
+  distinct_models: number;
+  positive_themes: number;
+  negative_themes: number;
+  neutral_themes: number;
+}
+export interface ScopeDailyStatsRow {
+  company_id: string;
+  tested_day: string;
+  // Collection-cycle month of the rows pooled into this day (a tested day can
+  // span two cycles → two rows). NULL only while a company awaits its first
+  // refresh after the 20260825140000 migration — treat as not-yet-refreshed.
+  response_month: string | null;
+  job_function_context: string;
+  location_context: string;
+  total_responses: number;
+  mentioned_responses: number;
+  total_citations: number;
+  distinct_prompt_models: number;
+  positive_themes: number;
+  negative_themes: number;
+}
+export interface ScopePromptTypeStatsRow {
+  company_id: string;
+  response_month: string;
+  job_function_context: string;
+  location_context: string;
+  prompt_type: string;
+  total_responses: number;
+  mentioned_responses: number;
+}
+export interface ScopeLlmStatsRow {
+  company_id: string;
+  response_month: string;
+  job_function_context: string;
+  location_context: string;
+  ai_model: string;
+  total_responses: number;
+  mentions: number;
+}
+export interface ScopeStats {
+  scope: ScopeStatsRow[];
+  daily: ScopeDailyStatsRow[];
+  prompt_types: ScopePromptTypeStatsRow[];
+  llm: ScopeLlmStatsRow[];
+}
+
+// Domain cube (get_domain_stats, p_keep_functions=true): top-N domains for
+// the scope+location, month × job-function grain. responses_citing /
+// mentioned_responses_citing are deduped per response; citation_count counts
+// occurrences (the top_sources measure).
+export interface DomainStatsRow {
+  domain: string;
+  response_month: string;
+  job_function_context: string;
+  responses_citing: number;
+  mentioned_responses_citing: number;
+  citation_count: number;
+}
+export interface DomainStats {
+  rows: DomainStatsRow[];
+  domain_total: number; // distinct domains in the filtered window (pre top-N)
+}
+
+// Competitor cube (get_competitor_stats): top-N canonical competitors,
+// month × job-function × prompt_type grain, deduped per response.
+export interface CompetitorStatsRow {
+  competitor_name: string;
+  response_month: string;
+  job_function_context: string;
+  prompt_type: string;
+  responses_mentioning: number;
+  co_mentions: number;
+}
+export interface CompetitorStats {
+  rows: CompetitorStatsRow[];
+  competitor_total: number;
+}
+
+export interface CubeLocationParams {
+  ownedIds: string[];
+  ownedBuckets: string[] | null; // null = no location predicate (all locations)
+  otherIds: string[];
+  otherBuckets: string[];
+}
+
 const PAGE_SIZE = 1000;
 const RETRY_PAGE_SIZE = 250;
 const EAGER_DAYS = 180;
@@ -63,6 +171,28 @@ export const fetchScopePrompts = (scopeIds: string[], signal?: AbortSignal): Pro
 export const fetchScopeRollups = (scopeIds: string[], signal?: AbortSignal): Promise<ScopeRollups> =>
   rpc<ScopeRollups>('get_dashboard_rollups', { p_company_ids: scopeIds }, signal);
 
+export const fetchScopeStats = (scopeIds: string[], signal?: AbortSignal): Promise<ScopeStats> =>
+  rpc<ScopeStats>('get_scope_stats', { p_company_ids: scopeIds }, signal);
+
+export const fetchDomainStats = (params: CubeLocationParams, signal?: AbortSignal): Promise<DomainStats> =>
+  rpc<DomainStats>('get_domain_stats', {
+    p_owned_ids: params.ownedIds,
+    p_owned_buckets: params.ownedBuckets,
+    p_other_ids: params.otherIds,
+    p_other_buckets: params.otherBuckets,
+    p_keep_functions: true,
+    p_limit: 300,
+  }, signal);
+
+export const fetchCompetitorStats = (params: CubeLocationParams, signal?: AbortSignal): Promise<CompetitorStats> =>
+  rpc<CompetitorStats>('get_competitor_stats', {
+    p_owned_ids: params.ownedIds,
+    p_owned_buckets: params.ownedBuckets,
+    p_other_ids: params.otherIds,
+    p_other_buckets: params.otherBuckets,
+    p_limit: 300,
+  }, signal);
+
 export const fetchLocationRollups = (
   params: { ownedIds: string[]; ownedBuckets: string[]; otherIds: string[]; otherBuckets: string[] },
   signal?: AbortSignal
@@ -74,7 +204,7 @@ export const fetchLocationRollups = (
     p_other_buckets: params.otherBuckets,
   }, signal);
 
-const eagerCutoffIso = () => new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000).toISOString();
+export const eagerCutoffIso = () => new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
 const byTestedAtDesc = (a: any, b: any) =>
   new Date(b.tested_at || b.created_at || 0).getTime() - new Date(a.tested_at || a.created_at || 0).getTime();

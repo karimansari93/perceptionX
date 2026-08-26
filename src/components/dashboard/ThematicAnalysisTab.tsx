@@ -4,6 +4,8 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { sentimentRatioV2 } from '@/lib/sentimentV2';
+import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
+import type { ScopeStatsRow, ScopePromptTypeStatsRow } from '@/hooks/dashboard/dashboardQueries';
 import {
   Loader2,
   BarChart3,
@@ -63,6 +65,17 @@ interface ThematicAnalysisTabProps {
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
   onJobFunctionChange?: (value: string) => void;
+  // Explicit period scoping for the MV rows (quarter of response_month) plus
+  // scope-cube rows for the pills and the empty-state gate — removes this
+  // tab's dependency on the raw response stream having loaded. undefined =
+  // not wired → legacy response-derived scoping.
+  cubeQuarterKey?: string | null; // null = single period → no filter
+  // 'YYYY-MM' floor bounding MV/cube months to the raw stream window when the
+  // quarter filter is bypassed (dormant-resumed histories stay consistent
+  // with the stream-fed drilldowns).
+  cubeMonthFloor?: string | null;
+  cubeScopeRows?: ScopeStatsRow[];
+  cubePromptTypeRows?: ScopePromptTypeStatsRow[];
 }
 
 interface AITheme {
@@ -158,7 +171,7 @@ const SMALL_LABEL_CLS = 'text-[11px] font-semibold uppercase tracking-[0.1em]';
 const EMPTY_ARRAY: any[] = [];
 const EMPTY_OBJECT: Record<string, string> = {};
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = EMPTY_ARRAY, fetchAIThemesForAttribute, aiThemeAttrsLoaded = EMPTY_ARRAY, onRefreshThemes, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange }: ThematicAnalysisTabProps) => {
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = EMPTY_ARRAY, fetchAIThemesForAttribute, aiThemeAttrsLoaded = EMPTY_ARRAY, onRefreshThemes, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, cubeQuarterKey, cubeMonthFloor = null, cubeScopeRows, cubePromptTypeRows }: ThematicAnalysisTabProps) => {
 
   // Modal state — persisted so a reload restores the open drilldown.
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
@@ -212,14 +225,24 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   const setSelectedJobFunctionFilter = onJobFunctionChange ?? (() => {});
 
   // Distinct job functions present on the prompts behind these responses.
+  // Cube path: from the scope cube (quarter-filtered), so pills appear
+  // before the raw stream lands. Raw fallback scans the responses.
   const getUniqueJobFunctions = useMemo(() => {
     const fns = new Set<string>();
+    if (cubeScopeRows) {
+      for (const r of cubeScopeRows) {
+        if (cubeQuarterKey && (!r.response_month || quarterKeyOfMonthStr(String(r.response_month)) !== cubeQuarterKey)) continue;
+        const fn = (r.job_function_context || '').trim();
+        if (fn && (r.total_responses || 0) > 0) fns.add(fn);
+      }
+      return Array.from(fns).sort();
+    }
     responses.forEach(response => {
       const fn = response.confirmed_prompts?.job_function_context?.trim();
       if (fn) fns.add(fn);
     });
     return Array.from(fns).sort();
-  }, [responses]);
+  }, [cubeScopeRows, cubeQuarterKey, responses]);
 
   // Filter responses by prompt type (experience by default, excludes discovery)
   // and by the selected job function.
@@ -248,6 +271,23 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       return true;
     });
   }, [responses, selectedPromptType, selectedJobFunctionFilter]);
+
+  // Does the selection have any analyzable (experience/competitive) responses?
+  // Gates the "No Experience Data" empty state. Cube path answers from the
+  // prompt-type cube immediately; raw fallback needs the stream.
+  const hasScopedData = useMemo(() => {
+    if (cubePromptTypeRows) {
+      for (const r of cubePromptTypeRows) {
+        if (r.prompt_type !== 'experience' && r.prompt_type !== 'competitive') continue;
+        if (selectedPromptType !== 'all' && r.prompt_type !== selectedPromptType) continue;
+        if (selectedJobFunctionFilter !== 'all' && (r.job_function_context || '').trim() !== selectedJobFunctionFilter) continue;
+        if (cubeQuarterKey && (!r.response_month || quarterKeyOfMonthStr(String(r.response_month)) !== cubeQuarterKey)) continue;
+        if ((r.total_responses || 0) > 0) return true;
+      }
+      return false;
+    }
+    return filteredResponses.length > 0;
+  }, [cubePromptTypeRows, cubeQuarterKey, selectedPromptType, selectedJobFunctionFilter, filteredResponses]);
 
   // Normalize every theme's attribute id to the live v2 taxonomy at ingestion:
   // legacy v1 ids (existing clients' historical + still-collecting data) fold
@@ -285,15 +325,20 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   const themeData = useMemo(() => {
     if (!attributeThemes || attributeThemes.length === 0) return [] as any[];
 
-    const scopedResponses = selectedJobFunctionFilter === 'all'
-      ? responses
-      : responses.filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter);
+    // Explicit cube scoping when wired (cubeQuarterKey !== undefined): keep
+    // MV rows whose response_month falls in the active quarter (null = all
+    // periods) and whose function matches the pill. No raw-stream
+    // dependency, so the tab paints final numbers before the stream lands.
+    const cubeMode = cubeQuarterKey !== undefined;
 
-    // Scope keys stay at the MV's month grain — a quarterly period simply
-    // contributes every month key it contains. Responses key on their own
-    // response_month (the collection-cycle month) so they match the MV's
-    // bucketing exactly: a row tested Aug 3 but tagged to the July cycle
-    // must match the MV's July rows. tested_at is only a legacy fallback.
+    const scopedResponses = cubeMode ? [] : (selectedJobFunctionFilter === 'all'
+      ? responses
+      : responses.filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter));
+
+    // Legacy scoping: keys stay at the MV's month grain — a quarterly period
+    // simply contributes every month key it contains. Responses key on their
+    // own response_month (the collection-cycle month) so they match the MV's
+    // bucketing exactly. tested_at is only a legacy fallback.
     const monthOf = (r: any): string => {
       if (r.response_month) return String(r.response_month).slice(0, 7);
       const d = new Date(r.tested_at);
@@ -303,9 +348,24 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     const rowKey = (row: any) => `${String(row.response_month).slice(0, 7)}|${(row.job_function_context || '').trim()}`;
     const scope = keys.size > 0;
 
+    const rowInScope = (row: any): boolean => {
+      if (cubeMode) {
+        if (selectedJobFunctionFilter !== 'all' && (row.job_function_context || '').trim() !== selectedJobFunctionFilter) return false;
+        if (cubeQuarterKey) {
+          if (!row.response_month || quarterKeyOfMonthStr(String(row.response_month)) !== cubeQuarterKey) return false;
+        } else if (cubeMonthFloor && row.response_month && String(row.response_month).slice(0, 7) < cubeMonthFloor) {
+          // Quarter bypassed: clamp to the raw stream's window so these
+          // scores match the stream-fed drilldowns.
+          return false;
+        }
+        return true;
+      }
+      return !scope || keys.has(rowKey(row));
+    };
+
     const agg: Record<string, { positive: number; negative: number; neutral: number; responses: number }> = {};
     attributeThemes.forEach(row => {
-      if (scope && !keys.has(rowKey(row))) return;
+      if (!rowInScope(row)) return;
       // The MV deliberately carries legacy v1 attribute rows for existing
       // clients; fold them into their v2 successor so one attribute never
       // appears as two rows (and retired ids don't render as raw slugs).
@@ -338,7 +398,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       })
       .filter(a => (a.positiveCount + a.negativeCount + a.neutralCount) > 0)
       .sort((a, b) => b.count - a.count);
-  }, [attributeThemes, responses, selectedJobFunctionFilter]);
+  }, [attributeThemes, responses, selectedJobFunctionFilter, cubeQuarterKey, cubeMonthFloor]);
 
   // Volume bands are relative to this company's own distribution (quintiles of
   // response counts), same as the previous ranking's pills.
@@ -712,7 +772,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       </div>
 
       {/* No Data Message — skeleton while the raw stream is still arriving */}
-      {filteredResponses.length === 0 && (
+      {!hasScopedData && (
         responsesLoading ? (
           <Card>
             <CardContent className="p-6" aria-busy="true">
@@ -742,7 +802,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       )}
 
       {/* Empty State — only show after loading completes */}
-      {!aiThemesLoading && themeData.length === 0 && filteredResponses.length > 0 && (
+      {!aiThemesLoading && themeData.length === 0 && hasScopedData && (
         <Card>
           <CardContent className="p-6">
             <div className="text-center">

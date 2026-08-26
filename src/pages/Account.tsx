@@ -88,7 +88,7 @@ export default function Account() {
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle(); // .single() 406s for users with no onboarding row
       
       const formData = {
         company: data?.company_name || '',
