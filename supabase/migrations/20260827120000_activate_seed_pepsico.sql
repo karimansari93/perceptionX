@@ -62,9 +62,11 @@ begin
   insert into public.activate_branding
     (org_id, display_name, tagline, blurb, logo_domain, primary_color, accent_color)
   values
+    -- Colors verified against pepsicojobs.com CSS: #02355A is the careers
+    -- brand's dominant deep navy, #78BD20 its "pep+" green accent.
     (v_org, 'PepsiCo', 'PepsiCo · Winning with Purpose',
      'Two questions, and we''ll show you the platforms AI systems actually read about working here.',
-     'pepsico.com', '#003087', '#009DDC')
+     'pepsico.com', '#02355A', '#78BD20')
   on conflict (org_id) do nothing;
 
   insert into public.activate_market_map (org_id, market_code, location_context)
