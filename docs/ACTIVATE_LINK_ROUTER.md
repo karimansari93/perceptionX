@@ -587,6 +587,27 @@ single-platform number in either org). AmbitionBox is India's own platform
 r/programmingHungary's "Cloudera fizu" salary thread and Quora's "pros and
 cons of working at Cloudera instead of Google".
 
+## Fifth client: PepsiCo (2026-08-27)
+
+Seeded from the 2026-07 collection: one company row measured across three
+location_contexts (Brazil, India, United States — the CSL shape), 676
+responses. The corpus is **function-targeted** (Merchandising, Data Science &
+Analytics, Early Careers) and the cited pages show it: US citations are
+dominated by Merchandiser-filtered Glassdoor/Indeed pages and r/Pepsi
+merchandiser threads; India's by data-science interview pages. Stats are
+honest per market but weighted toward those cohorts — re-measure before
+selling them as whole-company numbers.
+
+People-influenced coverage is the highest of any seeded org (US 93.8%,
+IN 91.3%, BR 73.5%). **Instagram leads Brazil outright (49.6%)** — the
+sharpest social finding across all five orgs — and the US Reddit number
+(54.8%) is carried by r/Pepsi's merchandiser threads, seeded as highlights.
+Local platforms sort first: InfoJobs in Brazil, AmbitionBox in India. India
+routes to the India-filtered Glassdoor profile (cited directly, like
+Cloudera's Budapest page). Glassdoor is consolidated on E522. Brazil's
+loudest pages are individual Instagram posts whose content can't be verified
+from the URL, so no BR highlights are seeded. Consent pending, as always.
+
 ## Related infrastructure
 
 `url_recency_cache` feeds the Relevance measurement Activate will be judged on;
