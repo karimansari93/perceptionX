@@ -529,6 +529,7 @@ function ClientFonts({ fonts }: { fonts?: ClientFontConfig }) {
   ];
 
   const faces: string[] = [];
+  const uploadedUrls: string[] = [];
   const googleFamilies: string[] = [];
   for (const [name, url] of pairs) {
     const family = name?.trim();
@@ -536,10 +537,13 @@ function ClientFonts({ fonts }: { fonts?: ClientFontConfig }) {
     if (url) {
       const ext = url.split('.').pop()?.toLowerCase() ?? '';
       const format = FONT_FORMATS[ext];
+      uploadedUrls.push(url);
+      // block, not swap: this page is the client's brand, and a beat of
+      // held-back text reads better than visibly changing typeface mid-load.
       faces.push(
         `@font-face{font-family:'${family.replace(/'/g, '')}';` +
           `src:url('${url}')${format ? ` format('${format}')` : ''};` +
-          `font-display:swap;}`,
+          `font-display:block;}`,
       );
     } else if (!googleFamilies.includes(family)) {
       googleFamilies.push(family);
@@ -554,6 +558,10 @@ function ClientFonts({ fonts }: { fonts?: ClientFontConfig }) {
 
   return (
     <>
+      {/* Font fetches are CORS-mode, so the preload must be too or it's wasted. */}
+      {uploadedUrls.map((url) => (
+        <link key={url} rel="preload" as="font" href={url} crossOrigin="anonymous" />
+      ))}
       {googleHref && <link rel="stylesheet" href={googleHref} />}
       {faces.length > 0 && <style>{faces.join('')}</style>}
     </>
