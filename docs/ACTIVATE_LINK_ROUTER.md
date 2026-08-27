@@ -64,9 +64,14 @@ It ships with the cohort-measurement phase.
 
 Self-declared, two taps, no inference:
 
-1. **Where are you based?** Country selector (searchable, full ISO list, the
-   client's measured markets pinned on top).
-2. **Which part of {company}?** The org's entities plus "Not sure".
+1. **Where are you based?** Country selector listing only the markets the org
+   has routes for (measured first, then known-platform fallbacks; a filter box
+   appears once the list is long enough to scroll — since 2026-08-24 the full
+   ISO list is no longer offered, because a country without routes had nothing
+   to show).
+2. **Which part of {company}?** The org's entities plus "Not sure". Skipped
+   entirely — auto-declared — when the org has a single named entity
+   (GoFundMe, Cloudera).
 
 No IP geolocation, no fingerprinting, no silent profiling. The sender may
 pre-fill either field when generating the link; the recipient can always
@@ -529,6 +534,79 @@ Section headings stay action-led but **never steer sentiment**: "Show what the
 work actually looks like", not "showcase what you're most proud of". The
 non-directive constraint is about what someone writes, and positive framing
 crosses it.
+
+## Third and fourth clients: GoFundMe and Cloudera (2026-08-24)
+
+Both seeded from their full measured corpus (2025-11 → 2026-03;
+`collection_cycle` is NULL for these orgs, so the window is the baseline).
+GoFundMe: five market-keyed company rows (AR, GB, IE, MX + a GLOBAL row),
+3,458 responses. Cloudera: CZ, ES, HU, IN and two duplicate US rows aggregated
+as one market, 2,655 responses. Consent seeded pending for both — no real link
+is mintable until it's recorded in Admin → Activate.
+
+**They broke the entity model's second assumption** (Ford broke the first):
+their `organization_companies` include the benchmark companies their
+dashboards compare against — Google, HubSpot, Kickstarter, Salesforce under
+GoFundMe; Databricks, Snowflake under Cloudera. Nothing structural separates
+"the client's brand" from "a company we benchmark", so the picker would have
+asked "Which part of GoFundMe?" with Google as an answer. The fix is an
+explicit register: `activate_org_settings.entity_names` lists the company
+names that are entities; NULL (CSL, Ford, Netflix) keeps the old
+all-org-companies behaviour. The same filter keeps benchmark companies' job
+functions out of the profile step.
+
+**Market lives on `companies.country` as an ISO code for these orgs** —
+`confirmed_prompts.location_context` is (almost) all NULL, so coverage was
+computed by grouping on the company row, and the market map is seeded mostly
+for future cohort joins. With one entity name each, the recipient page now
+skips the entity step entirely (auto-declaring the only answer), so the flow
+is genuinely two taps plus the optional profile.
+
+**GoFundMe's GLOBAL row is seeded as the US market.** It is the org's largest
+row (942 location-less responses), GoFundMe is US-headquartered, and
+location-less "what's it like to work at GoFundMe" answers are what a US
+recipient's AI returns. The honesty line holds in the wording: US rationale
+stats deliberately drop the market clause ("…of AI answers about working at
+GoFundMe.", never "…in the US"). The row's small India discovery batch is not
+folded anywhere. Glassdoor is consolidated on E796048 (localized profiles
+verified on .ie/.co.uk/.com.ar); the loudest people-page in the corpus is an
+r/empleos_AR thread — "does anyone here work for GoFundMe in Argentina?" (80
+citations). Mission & Purpose and Social Impact carry real theme weight in
+every GoFundMe market; Social Impact leads Mexico outright, where YouTube is
+the loudest people source (15.3%).
+
+**Cloudera's sharpest curation call is an exclusion:** Atmoskop shows 6.8%
+coverage in CZ, but the only cited profile is "The Cloud Provider s.r.o." — a
+different Czech company AI conflates with Cloudera. Routing people onto
+another employer's review page would be worse than routing them nowhere (same
+shape as Ford's Computrabajo exclusion). Glassdoor is consolidated on E360671,
+and Budapest — the engineering hub — has its own heavily-cited city-filtered
+profile, which is the HU destination (33.8% market coverage, the highest
+single-platform number in either org). AmbitionBox is India's own platform
+(21.7%, badged and sorted first); the loudest forum pages are
+r/programmingHungary's "Cloudera fizu" salary thread and Quora's "pros and
+cons of working at Cloudera instead of Google".
+
+## Fifth client: PepsiCo (2026-08-27)
+
+Seeded from the 2026-07 collection: one company row measured across three
+location_contexts (Brazil, India, United States — the CSL shape), 676
+responses. The corpus is **function-targeted** (Merchandising, Data Science &
+Analytics, Early Careers) and the cited pages show it: US citations are
+dominated by Merchandiser-filtered Glassdoor/Indeed pages and r/Pepsi
+merchandiser threads; India's by data-science interview pages. Stats are
+honest per market but weighted toward those cohorts — re-measure before
+selling them as whole-company numbers.
+
+People-influenced coverage is the highest of any seeded org (US 93.8%,
+IN 91.3%, BR 73.5%). **Instagram leads Brazil outright (49.6%)** — the
+sharpest social finding across all five orgs — and the US Reddit number
+(54.8%) is carried by r/Pepsi's merchandiser threads, seeded as highlights.
+Local platforms sort first: InfoJobs in Brazil, AmbitionBox in India. India
+routes to the India-filtered Glassdoor profile (cited directly, like
+Cloudera's Budapest page). Glassdoor is consolidated on E522. Brazil's
+loudest pages are individual Instagram posts whose content can't be verified
+from the URL, so no BR highlights are seeded. Consent pending, as always.
 
 ## Related infrastructure
 

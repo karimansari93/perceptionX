@@ -37,7 +37,6 @@ import {
   affinityTagFor,
   ActivateHighlight,
   ActivateRoute,
-  COUNTRY_CODES,
   countryInSentence,
   countryName,
   entitiesForMarket,
@@ -48,6 +47,7 @@ import {
   JOB_FUNCTIONS,
   logActivateEvent,
   ProfileOption,
+  marketsWithRoutes,
   measuredMarketCodes,
   rankSocialRoutes,
   resolveRoutes,
@@ -275,11 +275,17 @@ export default function Activate() {
       if (preMarket) {
         setMarket(preMarket);
         logActivateEvent(token, sessionId, 'market_declared', { marketCode: preMarket });
-        if (preEntity || cfg.entities.length === 0) {
-          setEntityKey(preEntity?.name ?? UNSURE);
+        // A single-entity org (GoFundMe, Cloudera) has no real entity
+        // question — declare the only possible answer instead of asking it.
+        const resolvedEntity =
+          preEntity ?? (cfg.entities.length === 1 ? cfg.entities[0] : undefined);
+        if (resolvedEntity || cfg.entities.length === 0) {
+          setEntityKey(resolvedEntity?.name ?? UNSURE);
           logActivateEvent(token, sessionId, 'entity_declared', {
             marketCode: preMarket,
-            entityCompanyId: preEntity ? entityCompanyIdFor(preEntity, preMarket) : null,
+            entityCompanyId: resolvedEntity
+              ? entityCompanyIdFor(resolvedEntity, preMarket)
+              : null,
           });
           setStep('routes');
           setPrefilled(true);
@@ -341,9 +347,14 @@ export default function Activate() {
   const declareMarket = (code: string) => {
     setMarket(code);
     logActivateEvent(token!, sessionId, 'market_declared', { marketCode: code });
-    if (entitiesForMarket(config.entities, code).length === 0) {
-      setEntityKey(UNSURE);
-      logActivateEvent(token!, sessionId, 'entity_declared', { marketCode: code });
+    // One named entity = nothing to ask; declare it and move on.
+    const onlyEntity = config.entities.length === 1 ? config.entities[0] : undefined;
+    if (onlyEntity || entitiesForMarket(config.entities, code).length === 0) {
+      setEntityKey(onlyEntity?.name ?? UNSURE);
+      logActivateEvent(token!, sessionId, 'entity_declared', {
+        marketCode: code,
+        entityCompanyId: onlyEntity ? entityCompanyIdFor(onlyEntity, code) : null,
+      });
       setStep('profile');
     } else {
       setStep('entity');
@@ -393,7 +404,12 @@ export default function Activate() {
           <RoutesTopBar
             org={org}
             market={market}
-            entityName={selectedEntity?.name ?? null}
+            entityName={
+              // A single-brand org's only entity repeats the org name — omit it.
+              selectedEntity && selectedEntity.name !== org.display_name
+                ? selectedEntity.name
+                : null
+            }
             prefilled={prefilled}
             onChange={() => {
               setPrefilled(false);
@@ -410,6 +426,7 @@ export default function Activate() {
           {step === 'country' && (
             <CountryStep
               org={org}
+              markets={marketsWithRoutes(config.routes)}
               measured={measuredMarketCodes(config.routes)}
               onPick={declareMarket}
               headingRef={headingRef}
@@ -429,7 +446,9 @@ export default function Activate() {
               org={org}
               functions={clientFunctions}
               onDone={declareProfile}
-              onBack={() => setStep('entity')}
+              // The entity step is skipped when there is at most one entity;
+              // back must skip it in the same cases it was never shown.
+              onBack={() => setStep(config.entities.length <= 1 ? 'country' : 'entity')}
               initialFunction={functionId}
               headingRef={headingRef}
             />
@@ -885,11 +904,13 @@ function Flag({ code, size }: { code: string; size: number }) {
 
 function CountryStep({
   org,
+  markets,
   measured,
   onPick,
   headingRef,
 }: {
   org: ActivateConfig['org'];
+  markets: string[];
   measured: string[];
   onPick: (code: string) => void;
   headingRef: React.RefObject<HTMLHeadingElement>;
@@ -897,12 +918,19 @@ function CountryStep({
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
   const byName = (a: string, b: string) => countryName(a).localeCompare(countryName(b));
-  const others = COUNTRY_CODES.filter((c) => !measured.includes(c)).sort(byName);
-  const matches = q
-    ? [...measured, ...others].filter(
-        (c) => countryName(c).toLowerCase().includes(q) || c.toLowerCase() === q,
-      )
-    : [];
+  // Only countries the org actually has routes for are offered — a country
+  // outside the client's footprint has nothing to show. Measured markets
+  // first, then the known-platform fallbacks, each alphabetical.
+  const ordered = [
+    ...markets.filter((c) => measured.includes(c)).sort(byName),
+    ...markets.filter((c) => !measured.includes(c)).sort(byName),
+  ];
+  const shown = q
+    ? ordered.filter((c) => countryName(c).toLowerCase().includes(q) || c.toLowerCase() === q)
+    : ordered;
+  // A handful of markets reads faster as a plain list; the filter box only
+  // earns its place once the list is long enough to scroll.
+  const searchable = ordered.length > 8;
 
   return (
     <>
@@ -914,43 +942,38 @@ function CountryStep({
         Where are you based?
       </h2>
 
-      <label className="act-search w-full">
-        <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search countries"
-          aria-label="Search countries"
-        />
-      </label>
-
-      {/* Nothing listed until they type — the full country list under the
-          field was more to scroll past than to choose from. Measured markets
-          still sort first among matches. */}
-      {q === '' ? (
-        <p className="act-search-hint">Start typing to find your country.</p>
-      ) : (
-        <div className="flex w-full flex-col gap-2" role="listbox" aria-label="Search results">
-          {matches.length === 0 && (
-            <p className="act-search-hint">No matches — try another spelling.</p>
-          )}
-          {matches.slice(0, 30).map((code) => (
-            <button
-              key={code}
-              onClick={() => {
-                setQuery('');
-                onPick(code);
-              }}
-              className="act-pill-solid"
-              role="option"
-              aria-selected="false"
-            >
-              <Flag code={code} size={20} />
-              <span className="flex-1 text-left">{countryName(code)}</span>
-            </button>
-          ))}
-        </div>
+      {searchable && (
+        <label className="act-search w-full">
+          <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter countries"
+            aria-label="Filter countries"
+          />
+        </label>
       )}
+
+      <div className="flex w-full flex-col gap-2" role="listbox" aria-label="Countries">
+        {shown.length === 0 && (
+          <p className="act-search-hint">No matches — try another spelling.</p>
+        )}
+        {shown.map((code) => (
+          <button
+            key={code}
+            onClick={() => {
+              setQuery('');
+              onPick(code);
+            }}
+            className="act-pill-solid"
+            role="option"
+            aria-selected="false"
+          >
+            <Flag code={code} size={20} />
+            <span className="flex-1 text-left">{countryName(code)}</span>
+          </button>
+        ))}
+      </div>
     </>
   );
 }
