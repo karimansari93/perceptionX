@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { X, ArrowRight, Sparkles, BarChart3, Target, Users, Mail, Medal, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { consumeReturnTo } from '@/lib/returnTo';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingModal } from '@/components/prompts/LoadingModal';
@@ -101,6 +102,13 @@ const Auth = () => {
         return;
       }
 
+      // A stashed destination (e.g. MCP OAuth consent) wins over defaults.
+      const returnTo = consumeReturnTo();
+      if (returnTo) {
+        navigate(returnTo);
+        return;
+      }
+
       // If admin, go straight to admin panel
       const adminEmails = ['karim@perceptionx.ai'];
       if (adminEmails.includes(user.email?.toLowerCase() || '')) {
@@ -168,6 +176,13 @@ const Auth = () => {
           await linkOnboardingToUser(data.user.id);
         }
         
+        // A stashed destination (e.g. MCP OAuth consent) wins over defaults.
+        const returnToAfterSignIn = consumeReturnTo();
+        if (returnToAfterSignIn) {
+          navigate(returnToAfterSignIn);
+          return;
+        }
+
         // If admin, go straight to admin
         const adminEmails = ['karim@perceptionx.ai'];
         if (adminEmails.includes((data.user.email || '').toLowerCase())) {
