@@ -21,5 +21,17 @@
 # serving index.html under an image/* expectation and unfurling as a blank box.
 /activate-og/*  /logos/activate-og.png  200
 
+# MCP server (Streamable HTTP + OAuth 2.1) — proxied to the mcp-server edge
+# function so clients get a stable, root-domain URL (https://app.perceptionx.ai/mcp)
+# and the OAuth discovery documents can live at the domain root, where
+# RFC 8414/9728 clients look for them. 200 = reverse proxy, not a redirect:
+# POST bodies and Authorization headers pass through.
+/.well-known/oauth-authorization-server        https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/mcp-server/.well-known/oauth-authorization-server  200
+/.well-known/oauth-authorization-server/*      https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/mcp-server/.well-known/oauth-authorization-server  200
+/.well-known/oauth-protected-resource          https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/mcp-server/.well-known/oauth-protected-resource   200
+/.well-known/oauth-protected-resource/*        https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/mcp-server/.well-known/oauth-protected-resource   200
+/mcp     https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/mcp-server         200!
+/mcp/*   https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/mcp-server/:splat  200!
+
 # SPA fallback for client-side routes.
 /*    /index.html   200
