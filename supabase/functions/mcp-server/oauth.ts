@@ -43,6 +43,9 @@ export function authorizationServerMetadata(cfg: OAuthConfig): Response {
     grant_types_supported: ['authorization_code', 'refresh_token'],
     token_endpoint_auth_methods_supported: ['none'],
     code_challenge_methods_supported: ['S256'],
+    // Clients may present an https client-metadata URL as their client_id
+    // (CIMD) instead of registering — Claude's "hosted client metadata".
+    client_id_metadata_document_supported: true,
   });
 }
 
@@ -89,6 +92,70 @@ export async function handleRegister(req: Request, admin: any): Promise<Response
   }, 201);
 }
 
+// ── Client resolution: registered row, or CIMD ──────────────────────────────
+// CIMD (client-ID metadata documents): the client_id IS an https URL to a
+// metadata JSON the client's vendor hosts (Anthropic does this for Claude —
+// their "hosted client metadata" option). We fetch it once, validate the
+// redirect_uris, and cache it as a client row keyed by the URL. Avoids one
+// DCR registration per user on busy hosts.
+function isBlockedCimdHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal') ||
+    /^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(h) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(h) || h === '::1';
+}
+
+async function resolveClient(
+  admin: any,
+  clientId: string
+): Promise<{ client_id: string; client_name: string | null; redirect_uris: string[] } | null> {
+  const { data: row } = await admin
+    .from('mcp_oauth_clients').select('client_id, client_name, redirect_uris')
+    .eq('client_id', clientId).maybeSingle();
+  if (row) {
+    return {
+      client_id: row.client_id,
+      client_name: row.client_name,
+      redirect_uris: Array.isArray(row.redirect_uris) ? row.redirect_uris : [],
+    };
+  }
+
+  // CIMD path: client_id must be a plausible public https URL.
+  let url: URL;
+  try { url = new URL(clientId); } catch { return null; }
+  if (url.protocol !== 'https:' || isBlockedCimdHost(url.hostname)) return null;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(clientId, {
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' },
+      redirect: 'error',
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const text = (await res.text()).slice(0, 64_000);
+    const meta = JSON.parse(text);
+    const uris: unknown = meta?.redirect_uris;
+    if (!Array.isArray(uris) || uris.length === 0 ||
+        !uris.every((u: unknown) => typeof u === 'string' && isAcceptableRedirectUri(u))) {
+      return null;
+    }
+    const clientName = typeof meta?.client_name === 'string' ? meta.client_name.slice(0, 200) : null;
+    await admin.from('mcp_oauth_clients').upsert({
+      client_id: clientId,
+      client_name: clientName,
+      redirect_uris: uris,
+      token_endpoint_auth_method: 'none',
+      registration_meta: { source: 'cimd' },
+    }, { onConflict: 'client_id' });
+    return { client_id: clientId, client_name: clientName, redirect_uris: uris as string[] };
+  } catch {
+    return null;
+  }
+}
+
 // ── GET /authorize → park request, bounce to the app consent page ───────────
 export async function handleAuthorize(req: Request, admin: any, cfg: OAuthConfig): Promise<Response> {
   const url = new URL(req.url);
@@ -105,11 +172,9 @@ export async function handleAuthorize(req: Request, admin: any, cfg: OAuthConfig
 
   // Client + redirect_uri must validate BEFORE any redirect is issued —
   // never bounce a user agent to an unverified URI.
-  const { data: client } = await admin
-    .from('mcp_oauth_clients').select('client_id, client_name, redirect_uris')
-    .eq('client_id', clientId).maybeSingle();
-  if (!client) return oauthError('invalid_client', 'Unknown client_id. Register first via /register.');
-  const registered: string[] = Array.isArray(client.redirect_uris) ? client.redirect_uris : [];
+  const client = await resolveClient(admin, clientId);
+  if (!client) return oauthError('invalid_client', 'Unknown client_id. Register via /register, or supply an https client-metadata URL (CIMD).');
+  const registered: string[] = client.redirect_uris;
   if (!redirectUri || !registered.includes(redirectUri)) {
     return oauthError('invalid_request', 'redirect_uri does not match a registered URI.');
   }
@@ -153,6 +218,16 @@ async function requireSupabaseUser(req: Request, admin: any): Promise<{ userId: 
   return { userId: user.id };
 }
 
+// Platform admins (user_roles.role = 'admin') may connect ANY MCP-enabled
+// org — the support/testing path, so PerceptionX staff can demo a client's
+// connector without being added to the client's member list.
+async function isPlatformAdmin(admin: any, userId: string): Promise<boolean> {
+  const { data } = await admin
+    .from('user_roles').select('user_id')
+    .eq('user_id', userId).eq('role', 'admin').maybeSingle();
+  return !!data;
+}
+
 export async function handleAuthorizeInfo(req: Request, admin: any): Promise<Response> {
   const who = await requireSupabaseUser(req, admin);
   if (who instanceof Response) return who;
@@ -170,22 +245,34 @@ export async function handleAuthorizeInfo(req: Request, admin: any): Promise<Res
     .from('mcp_oauth_clients').select('client_name')
     .eq('client_id', request.client_id).maybeSingle();
 
-  // Orgs the user belongs to AND that have MCP enabled (explicit allowlist).
-  const { data: memberships } = await admin
-    .from('organization_members')
-    .select('organization_id, organizations!inner(id, name)')
-    .eq('user_id', who.userId);
-  const orgIds = (memberships || []).map((m: any) => m.organization_id);
-  let enabled = new Set<string>();
-  if (orgIds.length) {
-    const { data: settings } = await admin
-      .from('mcp_org_settings').select('organization_id')
-      .in('organization_id', orgIds).eq('enabled', true);
-    enabled = new Set((settings || []).map((s: any) => s.organization_id));
+  let organizations: { id: string; name: string }[];
+  if (await isPlatformAdmin(admin, who.userId)) {
+    // Admins see every enabled org.
+    const { data: enabledOrgs } = await admin
+      .from('mcp_org_settings')
+      .select('organization_id, organizations!inner(id, name)')
+      .eq('enabled', true);
+    organizations = (enabledOrgs || [])
+      .map((s: any) => ({ id: s.organization_id, name: s.organizations?.name || 'Organization' }))
+      .sort((a: any, b: any) => a.name.localeCompare(b.name));
+  } else {
+    // Orgs the user belongs to AND that have MCP enabled (explicit allowlist).
+    const { data: memberships } = await admin
+      .from('organization_members')
+      .select('organization_id, organizations!inner(id, name)')
+      .eq('user_id', who.userId);
+    const orgIds = (memberships || []).map((m: any) => m.organization_id);
+    let enabled = new Set<string>();
+    if (orgIds.length) {
+      const { data: settings } = await admin
+        .from('mcp_org_settings').select('organization_id')
+        .in('organization_id', orgIds).eq('enabled', true);
+      enabled = new Set((settings || []).map((s: any) => s.organization_id));
+    }
+    organizations = (memberships || [])
+      .filter((m: any) => enabled.has(m.organization_id))
+      .map((m: any) => ({ id: m.organization_id, name: m.organizations?.name || 'Organization' }));
   }
-  const organizations = (memberships || [])
-    .filter((m: any) => enabled.has(m.organization_id))
-    .map((m: any) => ({ id: m.organization_id, name: m.organizations?.name || 'Organization' }));
 
   return json({
     client_name: client?.client_name || 'An MCP client',
@@ -215,14 +302,16 @@ export async function handleAuthorizeApprove(req: Request, admin: any): Promise<
   }
 
   // Membership + org enablement re-checked server-side — the consent page's
-  // org list is a convenience, never the boundary.
-  const [{ data: membership }, { data: settings }] = await Promise.all([
+  // org list is a convenience, never the boundary. Platform admins bypass
+  // the membership arm only (enablement always applies).
+  const [{ data: membership }, { data: settings }, isAdmin] = await Promise.all([
     admin.from('organization_members').select('id')
       .eq('organization_id', organizationId).eq('user_id', who.userId).maybeSingle(),
     admin.from('mcp_org_settings').select('enabled')
       .eq('organization_id', organizationId).maybeSingle(),
+    isPlatformAdmin(admin, who.userId),
   ]);
-  if (!membership) return json({ error: 'You are not a member of this organization.' }, 403);
+  if (!membership && !isAdmin) return json({ error: 'You are not a member of this organization.' }, 403);
   if (!settings?.enabled) return json({ error: 'MCP access is not enabled for this organization.' }, 403);
 
   const rawCode = randomToken('pxac_', 32);
