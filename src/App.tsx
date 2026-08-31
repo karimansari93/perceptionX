@@ -40,6 +40,11 @@ const AdminBriefReview = lazyWithRetry(() => import("./pages/AdminBriefReview"))
 const GoogleOneTapCallback = lazyWithRetry(() => import("@/components/GoogleOneTapCallback"));
 const Onboarding = lazyWithRetry(() => import("./pages/Onboarding"));
 const Activate = lazyWithRetry(() => import("./pages/Activate"));
+// Chat is the internal eval harness for the shared px-tools layer (the same
+// tools the MCP server exposes) — platform-admin only until it graduates.
+const Chat = lazyWithRetry(() => import("./pages/Chat"));
+// OAuth consent for the MCP server (ChatGPT/Claude connectors land here).
+const McpConsent = lazyWithRetry(() => import("./pages/McpConsent"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -315,6 +320,21 @@ const App = () => (
                     <SidebarProvider>
                       <Account />
                     </SidebarProvider>                </ProtectedRoute>
+              } />
+              {/* Internal eval harness for the shared data-tool layer. */}
+              <Route path="/chat" element={
+                <ProtectedRoute>
+                  <AdminRoute>
+                    <Chat />
+                  </AdminRoute>
+                </ProtectedRoute>
+              } />
+              {/* MCP OAuth consent — reached from the mcp-server /authorize
+                  redirect; ProtectedRoute bounces through login first. */}
+              <Route path="/connect/consent" element={
+                <ProtectedRoute>
+                  <McpConsent />
+                </ProtectedRoute>
               } />
               <Route path="*" element={<NotFound />} />
             </Routes>

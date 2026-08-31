@@ -1,0 +1,25 @@
+{
+  "description": "Golden question set for the px-tools layer. Each entry: a real client-shaped question and the tool(s) a well-behaved host model should reach for. Used by run.ts phase B (tool-selection eval) and as the manual QA script for chat + ChatGPT connector testing.",
+  "questions": [
+    { "q": "What's our culture like in India?", "expect_any": ["get_attribute_themes"] },
+    { "q": "How is our compensation perceived in Germany?", "expect_any": ["get_attribute_themes"] },
+    { "q": "How visible are we in Japan?", "expect_any": ["get_visibility"] },
+    { "q": "Which AI platform mentions us least?", "expect_any": ["get_visibility", "get_model_breakdown"] },
+    { "q": "Is our sentiment in Germany improving?", "expect_any": ["get_trends", "get_attribute_themes"] },
+    { "q": "Which sources matter most in Germany?", "expect_any": ["get_sources"] },
+    { "q": "Where should we be mentioned but aren't?", "expect_any": ["get_sources"] },
+    { "q": "Who is our top competitor for pay?", "expect_any": ["get_competitor_landscape"] },
+    { "q": "Which competitors come up most in France?", "expect_any": ["get_competitor_landscape"] },
+    { "q": "How are we doing overall?", "expect_any": ["get_company_overview", "list_companies"] },
+    { "q": "What do AI models actually say about our work-life balance?", "expect_any": ["get_attribute_themes", "search_responses", "get_responses"] },
+    { "q": "What's our visibility trend this year?", "expect_any": ["get_trends", "get_visibility"] },
+    { "q": "How does ChatGPT describe our leadership?", "expect_any": ["get_responses", "get_attribute_themes", "search_responses"] },
+    { "q": "How does Glassdoor appear in answers about us?", "expect_any": ["get_citations", "get_sources"] },
+    { "q": "Compare our US and UK profiles.", "expect_any": ["compare_companies", "list_companies"] },
+    { "q": "What are the biggest negatives people hear about us?", "expect_any": ["get_responses", "get_themes", "get_attribute_themes"] },
+    { "q": "Which job boards cite us the most?", "expect_any": ["get_sources", "get_citations"] },
+    { "q": "What themes dominate our employer brand right now?", "expect_any": ["get_themes", "get_attribute_themes"] },
+    { "q": "Are we mentioned when people ask about the best employers in tech?", "expect_any": ["get_visibility", "search_responses", "get_responses"] },
+    { "q": "What's our EPS score and what's dragging it down?", "expect_any": ["get_company_metrics", "get_company_overview"] }
+  ]
+}
