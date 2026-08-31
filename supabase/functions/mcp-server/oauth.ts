@@ -156,6 +156,28 @@ async function resolveClient(
   }
 }
 
+// RFC 8252 §7.3: native apps use loopback redirects with EPHEMERAL ports, so
+// registered loopback URIs (http://127.0.0.1/…, http://localhost/…) match a
+// presented URI on scheme + hostname + path with ANY port. Everything else
+// stays exact-match.
+function isLoopbackHost(h: string): boolean {
+  return h === '127.0.0.1' || h === 'localhost' || h === '[::1]';
+}
+
+export function redirectUriMatches(registered: string[], presented: string): boolean {
+  if (registered.includes(presented)) return true;
+  try {
+    const p = new URL(presented);
+    if (p.protocol !== 'http:' || !isLoopbackHost(p.hostname)) return false;
+    return registered.some((r) => {
+      try {
+        const u = new URL(r);
+        return u.protocol === 'http:' && u.hostname === p.hostname && u.pathname === p.pathname;
+      } catch { return false; }
+    });
+  } catch { return false; }
+}
+
 // ── GET /authorize → park request, bounce to the app consent page ───────────
 export async function handleAuthorize(req: Request, admin: any, cfg: OAuthConfig): Promise<Response> {
   const url = new URL(req.url);
@@ -175,7 +197,7 @@ export async function handleAuthorize(req: Request, admin: any, cfg: OAuthConfig
   const client = await resolveClient(admin, clientId);
   if (!client) return oauthError('invalid_client', 'Unknown client_id. Register via /register, or supply an https client-metadata URL (CIMD).');
   const registered: string[] = client.redirect_uris;
-  if (!redirectUri || !registered.includes(redirectUri)) {
+  if (!redirectUri || !redirectUriMatches(registered, redirectUri)) {
     return oauthError('invalid_request', 'redirect_uri does not match a registered URI.');
   }
 
