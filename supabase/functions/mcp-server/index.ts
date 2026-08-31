@@ -47,7 +47,7 @@ Rules for using these tools:
 1. Answer ONLY from tool results. Never fill gaps with general knowledge about the company — if a tool didn't return it, say the data isn't tracked yet.
 2. Every result has a _coverage field (found / partial / no_data). Honor it: on no_data, say so plainly; on partial, name what's missing.
 3. Periods are quarters ("Q3 2026"); the running quarter is marked "(in progress)" — a lighter latest point is normal, never call it a decline. Quote _meta.period_range and the matched market spellings when precision matters.
-4. Sentiment and visibility are percentages ("81%") — present them that way, never as decimals.
+4. Sentiment and visibility are percentages ("81%") — present them that way, never as decimals. Lead with shares ("cited by 31% of answers"), not raw counts; counts are sample-size context only.
 5. Data is scoped to this user's organization only. There is no cross-customer data.
 6. Competitor "share of voice on an attribute" means who gets NAMED when the topic comes up — it is not a claim that the competitor is rated better.
 7. Start with list_companies if you don't know company IDs. For market questions ("culture in India") use get_attribute_themes / get_visibility / get_sources / get_competitor_landscape / get_trends.`;

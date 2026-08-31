@@ -180,7 +180,7 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_sources',
     progressLabel: 'Searching your sources',
-    description: "Which websites AI platforms cite when answering about the company, filtered by market — with the ANSWER GAP measure: answers that cited the domain while the company was NOT mentioned. Set gap_only=true to rank by that gap — the outreach-opportunity list ('sources answering candidate questions in your space without you'). Domains are canonicalized (glassdoor.de/.ie/.com collapse to one). Use for 'which sources matter in Germany?', 'where should we be mentioned but aren't?'.",
+    description: "Which websites AI platforms cite when answering about the company, filtered by market — led by the share of answers citing each domain, with the ANSWER GAP measure: answers that cited the domain while the company was NOT mentioned. Set gap_only=true to rank by that gap — the outreach-opportunity list ('sources answering candidate questions in your space without you'). Domains are canonicalized (glassdoor.de/.ie/.com collapse to one). Use for 'which sources matter in Germany?', 'where should we be mentioned but aren't?'.",
     input_schema: {
       type: 'object',
       properties: {

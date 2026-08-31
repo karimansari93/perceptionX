@@ -132,6 +132,7 @@ if (busiest) {
   check('get_sources has _coverage + _meta', !!sources._coverage && !!sources._meta);
   if (sources._coverage?.status === 'found') {
     check('sources have answer_gap fields', (sources.sources || []).every((s: any) => typeof s.answer_gap === 'number'));
+    check('sources lead with share of answers', (sources.sources || []).every((s: any) => 'cited_in_pct_of_answers' in s));
     checkPresentation('get_sources', sources);
   }
 

@@ -214,14 +214,16 @@ export async function getAttributeThemes(
   }
 
   const nameOf = (id: string) => ATTRIBUTES_V2.find(a => a.id === id)?.name || id;
+  const allThemes = Array.from(byAttr.values()).reduce((sum, a) => sum + a.total, 0);
   const attributes = Array.from(byAttr.entries()).map(([id, a]) => ({
     attribute_id: id,
     attribute: nameOf(id),
+    positive_sentiment_pct: sentimentPct(a.pos, a.neg),
+    share_of_themes_pct: pct(a.total, allThemes),
     total_themes: a.total,
     positive_themes: a.pos,
     negative_themes: a.neg,
     neutral_themes: a.neu,
-    positive_sentiment_pct: sentimentPct(a.pos, a.neg),
     quarterly: toQuarterly(a.rows, (row) => ({
       total_themes: row.total_themes || 0,
       _pos: row.positive_themes || 0,
@@ -359,13 +361,23 @@ export async function getSources(
   const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
   if (typeof r === 'string') return r;
 
-  const { data, error } = await ctx.admin.rpc('mcp_get_domain_stats', {
-    p_company_ids: r.scope.companyIds,
-    p_buckets: r.buckets,
-    p_months: r.months,
-    p_limit: Math.max(limit * 3, 100), // headroom before gap filtering
-  });
+  const [domainRes, rollupsRes] = await Promise.all([
+    ctx.admin.rpc('mcp_get_domain_stats', {
+      p_company_ids: r.scope.companyIds,
+      p_buckets: r.buckets,
+      p_months: r.months,
+      p_limit: Math.max(limit * 3, 100), // headroom before gap filtering
+    }),
+    ctx.admin.rpc('mcp_get_rollups', {
+      p_company_ids: r.scope.companyIds,
+      p_buckets: r.buckets,
+      p_months: r.months,
+    }),
+  ]);
+  const { data, error } = domainRes;
   if (error) return JSON.stringify({ error: `Domain stats read failed: ${error.message}` });
+  const totalResponses = ((rollupsRes.data?.scope_stats || []) as any[])
+    .reduce((sum, row) => sum + (row.total_responses || 0), 0);
 
   const rows: any[] = data?.rows || [];
   if (!rows.length) {
@@ -388,14 +400,17 @@ export async function getSources(
     e.citations += row.citation_count || 0;
   }
 
+  // Shares lead, raw counts trail (presentation rule: "cited by 31% of
+  // answers" is the useful stat; counts stay only as sample-size context).
   let sources = Array.from(byDomain.entries()).map(([domain, v]) => {
     const gap = Math.max(0, v.citing - v.mentionedCiting);
     return {
       domain,
+      cited_in_pct_of_answers: pct(v.citing, totalResponses),
+      gap_rate_pct: pct(gap, v.citing),      // of its citing answers, % where company absent
+      answer_gap: gap,                       // cited while the company was absent
       responses_citing: v.citing,
       cited_and_company_mentioned: v.mentionedCiting,
-      answer_gap: gap,                       // cited while the company was absent
-      gap_rate_pct: pct(gap, v.citing),
       citation_count: v.citations,
     };
   });
@@ -407,6 +422,7 @@ export async function getSources(
 
   return JSON.stringify({
     sources,
+    total_answers_in_window: totalResponses,
     distinct_domains_in_window: data?.domain_total ?? byDomain.size,
     _coverage: coverageFound({ returned: sources.length, gap_only: gapOnly }),
     _meta: metaFor(r, [
@@ -467,8 +483,8 @@ export async function getCompetitorLandscape(
 
   const competitors = Array.from(byName.entries()).map(([name, v]) => ({
     name,
+    named_in_pct_of_answers: pct(v.responses, totalResponses),
     responses_mentioning: v.responses,
-    named_in_pct_of_responses: pct(v.responses, totalResponses),
     co_mentioned_with_company: v.coMentions,
     by_prompt_type: Object.fromEntries(v.byType),
   })).sort((a, b) => b.responses_mentioning - a.responses_mentioning).slice(0, limit);
@@ -508,10 +524,15 @@ export async function getCompetitorLandscape(
       if (!e.snippet && t.context_snippet) e.snippet = String(t.context_snippet).slice(0, 200);
     }
 
+    const sovTotal = sov.attribute_responses ?? 0;
     attributeBlock = {
       attribute_id: attributeId,
-      share_of_voice: sov.rows || [],
-      attribute_responses_analyzed: sov.attribute_responses ?? 0,
+      share_of_voice: (sov.rows || []).map((row: any) => ({
+        competitor_name: row.competitor_name,
+        named_in_pct_of_attribute_answers: pct(row.responses_naming, sovTotal),
+        responses_naming: row.responses_naming,
+      })),
+      attribute_responses_analyzed: sovTotal,
       note: 'share_of_voice = competitors NAMED on prompts about this attribute. It is not competitor sentiment.',
       competitor_sentiment_themes: Array.from(tripleAgg.entries()).map(([name, v]) => ({
         competitor: name, positive: v.pos, negative: v.neg, neutral: v.neu, example_snippet: v.snippet,
