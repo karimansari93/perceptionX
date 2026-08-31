@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { logger } from '@/lib/utils';
+import { consumeReturnTo } from '@/lib/returnTo';
 
 const AuthCallback = () => {
   const navigate = useNavigate();
@@ -17,6 +18,13 @@ const AuthCallback = () => {
         }
 
         if (session) {
+          // A stashed destination (e.g. MCP OAuth consent) wins over defaults.
+          const returnTo = consumeReturnTo();
+          if (returnTo) {
+            navigate(returnTo);
+            return;
+          }
+
           const adminEmails = ['karim@perceptionx.ai'];
           if (adminEmails.includes(session.user.email?.toLowerCase() || '')) {
             setTimeout(() => navigate('/admin'), 0);
