@@ -209,7 +209,8 @@ async function handleRpcMessage(
 async function handleMcpEndpoint(req: Request, admin: any): Promise<Response> {
   if (req.method === 'GET' || req.method === 'DELETE') {
     // No server-initiated stream and no session state — stateless JSON mode.
-    return new Response(null, { status: 405, headers: MCP_CORS_HEADERS });
+    // 405 with Allow is the spec-correct answer to a GET/SSE probe.
+    return new Response(null, { status: 405, headers: { ...MCP_CORS_HEADERS, 'Allow': 'POST, OPTIONS' } });
   }
 
   const principal = await authenticateBearer(req, admin);
@@ -253,7 +254,16 @@ async function handleMcpEndpoint(req: Request, admin: any): Promise<Response> {
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: MCP_CORS_HEADERS });
+    // Reflect whatever headers the preflight asks for — the wildcard in
+    // Access-Control-Allow-Headers deliberately never covers Authorization,
+    // so browser-based MCP clients break on static lists.
+    const requested = req.headers.get('access-control-request-headers');
+    return new Response('ok', {
+      headers: {
+        ...MCP_CORS_HEADERS,
+        ...(requested ? { 'Access-Control-Allow-Headers': requested } : {}),
+      },
+    });
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');

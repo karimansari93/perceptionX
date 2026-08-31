@@ -97,7 +97,9 @@ export default function McpConsent() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+    // Body copy in Plus Jakarta Sans; only the header keeps the Geologica
+    // display face (pinned explicitly rather than relying on element tags).
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4 font-sans">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <img
@@ -105,7 +107,7 @@ export default function McpConsent() {
             className="w-12 h-12 object-contain rounded-full mx-auto mb-2"
             src="/logos/PinkBadge.png"
           />
-          <CardTitle>Connect to PerceptionX</CardTitle>
+          <CardTitle className="font-headline">Connect to PerceptionX</CardTitle>
           {phase !== 'error' && (
             <CardDescription>
               {info ? (
