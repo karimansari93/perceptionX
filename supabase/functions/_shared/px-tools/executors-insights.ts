@@ -4,14 +4,23 @@
 // reads (via service-role twin RPCs), so chat/MCP numbers match the app —
 // never re-derived from raw tables.
 //
-// Every result is self-caveating: `_coverage` plus `_meta` carrying
-// data_as_of, date_range, matched location spellings, scope size, and
-// methodology notes. Over MCP the host model never sees our system prompt,
-// so the payload is the only place honesty can live.
+// Presentation rules (client feedback + ChatGPT plugin guidelines):
+//   * Periods are QUARTERS. Internal storage is monthly, but payloads never
+//     expose raw dates or timestamps — the running quarter is labeled
+//     "(in progress)" so a light last data point isn't misread as a decline.
+//   * Percentages, not decimals — "81", never "0.81".
+//   * Say what's INCLUDED (tracked platforms), never what's excluded.
+//   * Response minimization: no internal ids, timestamps, or diagnostics.
+//
+// Every result is self-caveating: `_coverage` plus `_meta` carrying the
+// period range, matched market spellings, scope size, and methodology notes.
+// Over MCP the host model never sees our system prompt, so the payload is
+// the only place honesty can live.
 
 import {
-  buildMeta, coverageFound, coverageNoData, coveragePartial,
-  EXCLUDED_AI_MODELS_FILTER, lastMonths, METHODOLOGY_NOTES, pct, sentimentRatio,
+  buildMeta, coverageFound, coverageNoData, coveragePartial, currentQuarter,
+  EXCLUDED_AI_MODELS_FILTER, lastQuarterMonths, METHODOLOGY_NOTES,
+  monthToQuarter, pct, quarterLabel, quarterSortKey, sentimentPct,
 } from './helpers.ts';
 import {
   resolveBrandScope, resolveLocationBuckets,
@@ -79,16 +88,17 @@ interface ResolvedScope {
   scope: BrandScope;
   buckets: string[] | null;      // null = no location filter
   available: string[];
-  months: string[];
+  months: string[];              // internal cube filter (never emitted)
+  quartersBack: number;
 }
 
 // Common preamble for every insight tool: brand scope + optional location
-// match + month window. Returns an error string (already JSON) on failure.
+// match + quarter window. Returns an error string (already JSON) on failure.
 async function resolveScopeAndLocation(
   ctx: ToolContext,
   companyId: string,
   location: string | undefined,
-  monthsBack: number,
+  quartersBack: number,
   includeSiblings: boolean
 ): Promise<ResolvedScope | string> {
   const scope = await resolveBrandScope(ctx, companyId, includeSiblings);
@@ -109,30 +119,54 @@ async function resolveScopeAndLocation(
     }
     buckets = match.buckets;
   }
-  return { scope, buckets, available, months: lastMonths(monthsBack) };
+  return { scope, buckets, available, months: lastQuarterMonths(quartersBack), quartersBack };
 }
 
-function metaFor(r: ResolvedScope, dataAsOf: string | null, extraNotes: string[] = []) {
+function metaFor(r: ResolvedScope, extraNotes: string[] = []) {
   return buildMeta({
-    data_as_of: dataAsOf,
-    date_range: { from: r.months[0], to: r.months[r.months.length - 1] },
+    period_range: {
+      from: monthToQuarter(r.months[0]),
+      to: quarterLabel(monthToQuarter(r.months[r.months.length - 1])),
+    },
     scope_companies: r.scope.companyIds.length,
     scope_brand: r.scope.brandName,
     locations_matched: r.buckets ?? undefined,
-    methodology: [METHODOLOGY_NOTES.model_exclusions, ...extraNotes],
+    methodology: [METHODOLOGY_NOTES.platform_coverage, ...extraNotes],
   });
 }
 
+// Roll monthly cube rows into an ordered quarterly series. `pick` extracts
+// the numeric fields to sum from each row.
+function toQuarterly<T extends Record<string, number>>(
+  rows: any[],
+  pick: (row: any) => T
+): Array<{ quarter: string } & T> {
+  const byQuarter = new Map<string, T>();
+  for (const row of rows) {
+    const q = monthToQuarter(String(row.response_month));
+    const vals = pick(row);
+    if (!byQuarter.has(q)) {
+      byQuarter.set(q, { ...vals });
+    } else {
+      const agg = byQuarter.get(q)!;
+      for (const k of Object.keys(vals)) (agg as any)[k] += vals[k];
+    }
+  }
+  return Array.from(byQuarter.entries())
+    .sort(([a], [b]) => quarterSortKey(a).localeCompare(quarterSortKey(b)))
+    .map(([quarter, vals]) => ({ quarter: quarterLabel(quarter), ...vals }));
+}
+
 // ─── get_attribute_themes ───────────────────────────────────────────────────
-// "What's our culture like in India?" — attribute × location × month
-// sentiment from the dashboard cube, plus real theme quotes when a single
+// "What's our culture like in India?" — attribute × market sentiment from
+// the dashboard cube, quarterly, plus real theme quotes when a single
 // attribute is in focus.
 export async function getAttributeThemes(
   ctx: ToolContext,
   companyId: string,
   attributeInput: string | undefined,
   location: string | undefined,
-  monthsBack: number,
+  quartersBack: number,
   includeSiblings: boolean
 ): Promise<string> {
   const attributeId = attributeInput ? resolveAttributeId(attributeInput) : null;
@@ -142,7 +176,7 @@ export async function getAttributeThemes(
     });
   }
 
-  const r = await resolveScopeAndLocation(ctx, companyId, location, monthsBack, includeSiblings);
+  const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
   if (typeof r === 'string') return r;
 
   const { data: rollups, error } = await ctx.admin.rpc('mcp_get_rollups', {
@@ -159,29 +193,24 @@ export async function getAttributeThemes(
   if (!rows.length) {
     return JSON.stringify({
       _coverage: coverageNoData(
-        `No theme data for ${attributeId ?? 'any attribute'}${r.buckets ? ` in ${r.buckets.join('/')}` : ''} in the last ${monthsBack} months.`,
+        `No theme data for ${attributeId ?? 'any attribute'}${r.buckets ? ` in ${r.buckets.join('/')}` : ''} in the last ${r.quartersBack} quarters.`,
         r.available.length ? { available_markets: r.available } : {}
       ),
-      _meta: metaFor(r, rollups?.data_as_of ?? null, [METHODOLOGY_NOTES.sentiment]),
+      _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment]),
     });
   }
 
-  // Aggregate: per attribute totals + per-month series.
-  const byAttr = new Map<string, { total: number; pos: number; neg: number; neu: number; months: Map<string, { total: number; pos: number; neg: number }> }>();
+  // Aggregate: per attribute totals + quarterly series.
+  const byAttr = new Map<string, { total: number; pos: number; neg: number; neu: number; rows: any[] }>();
   for (const row of rows) {
     const id = row.attribute_id || 'unknown';
-    if (!byAttr.has(id)) byAttr.set(id, { total: 0, pos: 0, neg: 0, neu: 0, months: new Map() });
+    if (!byAttr.has(id)) byAttr.set(id, { total: 0, pos: 0, neg: 0, neu: 0, rows: [] });
     const a = byAttr.get(id)!;
     a.total += row.total_themes || 0;
     a.pos += row.positive_themes || 0;
     a.neg += row.negative_themes || 0;
     a.neu += row.neutral_themes || 0;
-    const m = String(row.response_month).slice(0, 10);
-    if (!a.months.has(m)) a.months.set(m, { total: 0, pos: 0, neg: 0 });
-    const mm = a.months.get(m)!;
-    mm.total += row.total_themes || 0;
-    mm.pos += row.positive_themes || 0;
-    mm.neg += row.negative_themes || 0;
+    a.rows.push(row);
   }
 
   const nameOf = (id: string) => ATTRIBUTES_V2.find(a => a.id === id)?.name || id;
@@ -192,15 +221,19 @@ export async function getAttributeThemes(
     positive_themes: a.pos,
     negative_themes: a.neg,
     neutral_themes: a.neu,
-    sentiment_ratio: sentimentRatio(a.pos, a.neg),
-    monthly: Array.from(a.months.entries())
-      .sort(([m1], [m2]) => m1.localeCompare(m2))
-      .map(([month, v]) => ({ month, total_themes: v.total, sentiment_ratio: sentimentRatio(v.pos, v.neg) })),
+    positive_sentiment_pct: sentimentPct(a.pos, a.neg),
+    quarterly: toQuarterly(a.rows, (row) => ({
+      total_themes: row.total_themes || 0,
+      _pos: row.positive_themes || 0,
+      _neg: row.negative_themes || 0,
+    })).map(({ quarter, total_themes, _pos, _neg }) => ({
+      quarter, total_themes, positive_sentiment_pct: sentimentPct(_pos, _neg),
+    })),
   })).sort((x, y) => y.total_themes - x.total_themes);
 
   // Real quotes when a single attribute is in focus — the "what are people
   // actually saying" half of the answer. Bounded, newest first, location-
-  // filtered through the prompt join.
+  // filtered through the prompt join. No ids or dates in the payload.
   let quotes: any[] = [];
   if (attributeId) {
     let q = ctx.admin
@@ -224,7 +257,7 @@ export async function getAttributeThemes(
         sentiment: t.sentiment,
         snippet: snippet ? String(snippet).slice(0, 260) : null,
         keywords: (t.keywords || []).slice(0, 4),
-        ai_model: t.prompt_responses?.ai_model ?? null,
+        ai_platform: t.prompt_responses?.ai_model ?? null,
       });
       if (quotes.length >= 14) break;
     }
@@ -237,7 +270,7 @@ export async function getAttributeThemes(
       attribute_count: attributes.length,
       total_themes: attributes.reduce((s, a) => s + a.total_themes, 0),
     }),
-    _meta: metaFor(r, rollups?.data_as_of ?? null, [METHODOLOGY_NOTES.sentiment]),
+    _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment]),
   });
 }
 
@@ -246,11 +279,11 @@ export async function getVisibility(
   ctx: ToolContext,
   companyId: string,
   location: string | undefined,
-  monthsBack: number,
+  quartersBack: number,
   byModel: boolean,
   includeSiblings: boolean
 ): Promise<string> {
-  const r = await resolveScopeAndLocation(ctx, companyId, location, monthsBack, includeSiblings);
+  const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
   if (typeof r === 'string') return r;
 
   const { data: rollups, error } = await ctx.admin.rpc('mcp_get_rollups', {
@@ -264,30 +297,27 @@ export async function getVisibility(
   if (!stats.length) {
     return JSON.stringify({
       _coverage: coverageNoData(
-        `No response data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${monthsBack} months.`,
+        `No response data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${r.quartersBack} quarters.`,
         r.available.length ? { available_markets: r.available } : {}
       ),
-      _meta: metaFor(r, rollups?.data_as_of ?? null, [METHODOLOGY_NOTES.visibility]),
+      _meta: metaFor(r, [METHODOLOGY_NOTES.visibility]),
     });
   }
 
   let total = 0, mentioned = 0;
-  const byMonth = new Map<string, { total: number; mentioned: number }>();
   for (const row of stats) {
     total += row.total_responses || 0;
     mentioned += row.mentioned_responses || 0;
-    const m = String(row.response_month).slice(0, 10);
-    if (!byMonth.has(m)) byMonth.set(m, { total: 0, mentioned: 0 });
-    const mm = byMonth.get(m)!;
-    mm.total += row.total_responses || 0;
-    mm.mentioned += row.mentioned_responses || 0;
   }
 
-  const monthly = Array.from(byMonth.entries())
-    .sort(([m1], [m2]) => m1.localeCompare(m2))
-    .map(([month, v]) => ({ month, total_responses: v.total, mentioned: v.mentioned, visibility_pct: pct(v.mentioned, v.total) }));
+  const quarterly = toQuarterly(stats, (row) => ({
+    _total: row.total_responses || 0,
+    _mentioned: row.mentioned_responses || 0,
+  })).map(({ quarter, _total, _mentioned }) => ({
+    quarter, total_responses: _total, mentioned: _mentioned, visibility_pct: pct(_mentioned, _total),
+  }));
 
-  let models: any[] | undefined;
+  let platforms: any[] | undefined;
   if (byModel) {
     const byModelMap = new Map<string, { total: number; mentioned: number }>();
     for (const row of (rollups?.llm_stats || [])) {
@@ -297,8 +327,8 @@ export async function getVisibility(
       mm.total += row.total_responses || 0;
       mm.mentioned += row.mentions || 0;
     }
-    models = Array.from(byModelMap.entries())
-      .map(([model, v]) => ({ model, total_responses: v.total, mentioned: v.mentioned, visibility_pct: pct(v.mentioned, v.total) }))
+    platforms = Array.from(byModelMap.entries())
+      .map(([platform, v]) => ({ platform, total_responses: v.total, mentioned: v.mentioned, visibility_pct: pct(v.mentioned, v.total) }))
       .sort((a, b) => (b.total_responses - a.total_responses));
   }
 
@@ -306,10 +336,10 @@ export async function getVisibility(
     visibility_pct: pct(mentioned, total),
     total_responses: total,
     mentioned_responses: mentioned,
-    monthly,
-    ...(models ? { by_model: models } : {}),
-    _coverage: coverageFound({ months_with_data: monthly.length }),
-    _meta: metaFor(r, rollups?.data_as_of ?? null, [METHODOLOGY_NOTES.visibility]),
+    quarterly,
+    ...(platforms ? { by_platform: platforms } : {}),
+    _coverage: coverageFound({ quarters_with_data: quarterly.length }),
+    _meta: metaFor(r, [METHODOLOGY_NOTES.visibility]),
   });
 }
 
@@ -321,12 +351,12 @@ export async function getSources(
   ctx: ToolContext,
   companyId: string,
   location: string | undefined,
-  monthsBack: number,
+  quartersBack: number,
   gapOnly: boolean,
   limit: number,
   includeSiblings: boolean
 ): Promise<string> {
-  const r = await resolveScopeAndLocation(ctx, companyId, location, monthsBack, includeSiblings);
+  const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
   if (typeof r === 'string') return r;
 
   const { data, error } = await ctx.admin.rpc('mcp_get_domain_stats', {
@@ -341,10 +371,10 @@ export async function getSources(
   if (!rows.length) {
     return JSON.stringify({
       _coverage: coverageNoData(
-        `No citation data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${monthsBack} months.`,
+        `No citation data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${r.quartersBack} quarters.`,
         r.available.length ? { available_markets: r.available } : {}
       ),
-      _meta: metaFor(r, data?.data_as_of ?? null),
+      _meta: metaFor(r),
     });
   }
 
@@ -379,7 +409,7 @@ export async function getSources(
     sources,
     distinct_domains_in_window: data?.domain_total ?? byDomain.size,
     _coverage: coverageFound({ returned: sources.length, gap_only: gapOnly }),
-    _meta: metaFor(r, data?.data_as_of ?? null, [
+    _meta: metaFor(r, [
       'Domains are canonicalized (regional variants collapse to one root).',
       '"answer_gap" = responses citing this domain where the company was NOT mentioned — the outreach opportunity surface.',
     ]),
@@ -392,7 +422,7 @@ export async function getCompetitorLandscape(
   companyId: string,
   location: string | undefined,
   attributeInput: string | undefined,
-  monthsBack: number,
+  quartersBack: number,
   limit: number,
   includeSiblings: boolean
 ): Promise<string> {
@@ -403,7 +433,7 @@ export async function getCompetitorLandscape(
     });
   }
 
-  const r = await resolveScopeAndLocation(ctx, companyId, location, monthsBack, includeSiblings);
+  const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
   if (typeof r === 'string') return r;
 
   const [statsRes, rollupsRes] = await Promise.all([
@@ -444,9 +474,9 @@ export async function getCompetitorLandscape(
   })).sort((a, b) => b.responses_mentioning - a.responses_mentioning).slice(0, limit);
 
   // Attribute lens: share-of-voice on prompts carrying the attribute, plus
-  // whatever competitor_themes triples exist (forward-accruing since
-  // 2026-08-10). Both blocks self-describe their limits — SOV is "who gets
-  // named when <attribute> comes up", NOT competitor sentiment.
+  // whatever competitor sentiment themes exist (a newer signal, accruing
+  // forward from Q3 2026). Both blocks self-describe their limits — SOV is
+  // "who gets named when <attribute> comes up", NOT competitor sentiment.
   let attributeBlock: Record<string, unknown> | undefined;
   if (attributeId) {
     const [sovRes, triplesRes] = await Promise.all([
@@ -482,18 +512,18 @@ export async function getCompetitorLandscape(
       attribute_id: attributeId,
       share_of_voice: sov.rows || [],
       attribute_responses_analyzed: sov.attribute_responses ?? 0,
-      note: 'share_of_voice = competitors NAMED on prompts about this attribute (methodology-v2 prompts only). It is not competitor sentiment.',
+      note: 'share_of_voice = competitors NAMED on prompts about this attribute. It is not competitor sentiment.',
       competitor_sentiment_themes: Array.from(tripleAgg.entries()).map(([name, v]) => ({
         competitor: name, positive: v.pos, negative: v.neg, neutral: v.neu, example_snippet: v.snippet,
       })),
       competitor_sentiment_note: triples.length
-        ? 'Competitor sentiment triples accrue from Aug 2026 forward — treat as an early signal, not a trend.'
-        : 'No competitor sentiment data yet — competitor↔attribute sentiment extraction started Aug 2026 and accrues forward from new collection runs.',
+        ? 'Competitor sentiment is a newer signal accruing from Q3 2026 forward — treat as an early read, not a trend.'
+        : 'Competitor sentiment is a newer signal accruing from Q3 2026 forward — no data for this attribute yet.',
     };
   }
 
   const coverage = competitors.length === 0 && !attributeBlock
-    ? coverageNoData(`No competitor mentions${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${monthsBack} months.`)
+    ? coverageNoData(`No competitor mentions${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${r.quartersBack} quarters.`)
     : competitors.length === 0 && attributeBlock
       ? coveragePartial('No overall competitor stats in this window; only the attribute lens returned data.')
       : coverageFound({ competitor_count: competitors.length });
@@ -503,8 +533,8 @@ export async function getCompetitorLandscape(
     ...(attributeBlock ? { attribute_lens: attributeBlock } : {}),
     total_responses_in_window: totalResponses,
     _coverage: coverage,
-    _meta: metaFor(r, statsRes.data?.data_as_of ?? null, [
-      'Competitor names are canonicalized; job boards/platforms and the company itself are excluded.',
+    _meta: metaFor(r, [
+      'Competitor names are canonicalized; job boards/platforms and the company itself are excluded from competitor lists.',
     ]),
   });
 }
@@ -515,7 +545,7 @@ export async function getTrends(
   companyId: string,
   metric: string,
   location: string | undefined,
-  monthsBack: number,
+  quartersBack: number,
   includeSiblings: boolean
 ): Promise<string> {
   const valid = ['visibility', 'sentiment', 'citations'];
@@ -524,7 +554,7 @@ export async function getTrends(
     return JSON.stringify({ error: `Unknown metric "${metric}". Valid: ${valid.join(', ')}.` });
   }
 
-  const r = await resolveScopeAndLocation(ctx, companyId, location, monthsBack, includeSiblings);
+  const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
   if (typeof r === 'string') return r;
 
   const { data: rollups, error } = await ctx.admin.rpc('mcp_get_rollups', {
@@ -537,33 +567,27 @@ export async function getTrends(
   const stats: any[] = rollups?.scope_stats || [];
   if (!stats.length) {
     return JSON.stringify({
-      _coverage: coverageNoData(`No data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${monthsBack} months.`),
-      _meta: metaFor(r, rollups?.data_as_of ?? null),
+      _coverage: coverageNoData(`No data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${r.quartersBack} quarters.`),
+      _meta: metaFor(r),
     });
   }
 
-  const byMonth = new Map<string, { total: number; mentioned: number; pos: number; neg: number; citations: number; domains: number }>();
-  for (const row of stats) {
-    const key = String(row.response_month).slice(0, 10);
-    if (!byMonth.has(key)) byMonth.set(key, { total: 0, mentioned: 0, pos: 0, neg: 0, citations: 0, domains: 0 });
-    const e = byMonth.get(key)!;
-    e.total += row.total_responses || 0;
-    e.mentioned += row.mentioned_responses || 0;
-    e.pos += row.positive_themes || 0;
-    e.neg += row.negative_themes || 0;
-    e.citations += row.total_citations || 0;
-    e.domains = Math.max(e.domains, row.distinct_domains || 0);
-  }
+  const quarterlyAgg = toQuarterly(stats, (row) => ({
+    _total: row.total_responses || 0,
+    _mentioned: row.mentioned_responses || 0,
+    _pos: row.positive_themes || 0,
+    _neg: row.negative_themes || 0,
+    _citations: row.total_citations || 0,
+  }));
 
-  const series = Array.from(byMonth.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([month, v]) => {
-      if (m === 'visibility') return { month, value: pct(v.mentioned, v.total), total_responses: v.total };
-      if (m === 'sentiment') return { month, value: sentimentRatio(v.pos, v.neg), positive_themes: v.pos, negative_themes: v.neg };
-      return { month, value: v.citations, total_citations: v.citations };
-    });
+  const series = quarterlyAgg.map(({ quarter, _total, _mentioned, _pos, _neg, _citations }) => {
+    if (m === 'visibility') return { quarter, visibility_pct: pct(_mentioned, _total), total_responses: _total };
+    if (m === 'sentiment') return { quarter, positive_sentiment_pct: sentimentPct(_pos, _neg), opinionated_themes: _pos + _neg };
+    return { quarter, total_citations: _citations };
+  });
 
-  const values = series.map(s => s.value).filter((v): v is number => v !== null && v !== undefined);
+  const valueOf = (s: any) => m === 'visibility' ? s.visibility_pct : m === 'sentiment' ? s.positive_sentiment_pct : s.total_citations;
+  const values = series.map(valueOf).filter((v): v is number => v !== null && v !== undefined);
   const first = values[0] ?? null;
   const last = values[values.length - 1] ?? null;
 
@@ -573,8 +597,10 @@ export async function getTrends(
   return JSON.stringify({
     metric: m,
     series,
-    change: first !== null && last !== null ? { first, last, delta: Math.round((last - first) * 100) / 100 } : null,
-    _coverage: coverageFound({ months_with_data: series.length }),
-    _meta: metaFor(r, rollups?.data_as_of ?? null, methodologyNote),
+    change: first !== null && last !== null
+      ? { first, latest: last, delta: last - first, note: `The latest quarter (${quarterLabel(currentQuarter())}) may still be filling in.` }
+      : null,
+    _coverage: coverageFound({ quarters_with_data: series.length }),
+    _meta: metaFor(r, methodologyNote),
   });
 }

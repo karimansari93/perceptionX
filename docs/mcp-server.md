@@ -24,7 +24,13 @@ mcp_get_domain_stats, mcp_get_competitor_stats, mcp_get_attribute_competitors)
 
 **One tool layer, two transports.** `chat-with-data` (the in-app analyst, admin-only at `/chat`) and `mcp-server` execute the identical `px-tools` registry — same numbers, same `_coverage`/`_meta` caveats. The in-app chat is the development/eval harness for what external hosts consume.
 
-**Self-caveating payloads.** Over MCP our system prompt does not travel — only `initialize.instructions`, tool descriptions, and result payloads reach the host model. So every result embeds `_coverage` (found/partial/no_data), `_meta.data_as_of`, the matched market spellings, scope size, and methodology notes (sentiment formula, model exclusions, "SOV ≠ sentiment").
+**Self-caveating payloads.** Over MCP our system prompt does not travel — only `initialize.instructions`, tool descriptions, and result payloads reach the host model. So every result embeds `_coverage` (found/partial/no_data), `_meta.period_range`, the matched market spellings, scope size, and methodology notes (sentiment formula, platform coverage, "SOV ≠ sentiment").
+
+**Presentation rules (client feedback, Aug 2026 — enforced by the eval):**
+- **Quarters, never raw dates.** Internal storage is monthly; payloads roll up to quarters at read time, with the running quarter labeled "(in progress)" so a light latest point is never misread as a decline. No timestamps or ISO dates anywhere in a payload.
+- **Percentages, never decimals.** `positive_sentiment_pct: 81`, not `sentiment_ratio: 0.81`.
+- **Say what's included, never what's excluded.** Coverage is framed as the tracked platforms (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode); no payload or description mentions excluded models.
+- **Response minimization** (ChatGPT plugin guidelines): no internal ids, request ids, or diagnostics in tool responses; company UUIDs remain only because tool chaining requires them.
 
 ## Security model
 
@@ -85,7 +91,7 @@ MCP_TOKEN=pxk_... \
 deno run --allow-net --allow-env --allow-read scripts/mcp-eval/run.ts
 ```
 
-Phase A: protocol + tool-shape invariants against the live server (coverage signals, freshness stamps, range checks, tenant-rejection). Phase B (with `ANTHROPIC_API_KEY`): tool-selection eval over `questions.json` — the regression net for tool descriptions. Run it after ANY change to tool descriptions or the shared layer.
+Phase A: 37 protocol + tool-shape invariants against the live server (coverage signals, quarter labels, integer-percentage checks, no-raw-dates lint, read-only annotations, tenant-rejection). Phase B (with `ANTHROPIC_API_KEY`): tool-selection eval over `questions.json` — the regression net for tool descriptions. Run it after ANY change to tool descriptions or the shared layer.
 
 ## Netflix pilot checklist
 
@@ -95,6 +101,10 @@ Phase A: protocol + tool-shape invariants against the live server (coverage sign
 4. Their workspace admin enables Developer Mode and adds `https://app.perceptionx.ai/mcp` (steps above); or we demo via Claude Code + PAT first.
 5. Watch `mcp_request_log` during the first sessions; tune tool descriptions where the host model picks the wrong tool.
 6. Revoke pilot PATs when OAuth is confirmed working.
+
+## ChatGPT directory submission (when we go beyond Developer Mode)
+
+Per OpenAI's plugin guidelines, already satisfied in code: unique verb-style tool names; descriptions that match behavior with no comparative/manipulative language; `readOnlyHint`/`idempotentHint` true and `destructiveHint`/`openWorldHint` false on every tool (all are side-effect-free reads of the caller's own org data — state this justification in the submission form); minimal inputs (no conversation context, no location beyond the explicit market filter); response minimization (no timestamps, internal ids, or diagnostics); transparent OAuth with a narrow read-only scope. Still needed at submission time: verified OpenAI org (platform dashboard), published privacy policy URL, support contact, and a fully-featured **demo account with sample data** (use a demo org, e.g. "Demo Account", with `mcp_enable_org` + a dedicated login — reviewers must not need 2FA or sign-up).
 
 ## Known limits / later
 

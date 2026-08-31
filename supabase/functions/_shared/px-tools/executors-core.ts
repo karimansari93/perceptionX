@@ -8,6 +8,7 @@
 import {
   coverageFound, coverageNoData, coveragePartial,
   EXCLUDED_AI_MODELS_FILTER, extractSnippet,
+  monthToQuarter, quarterLabel, sentimentPct,
 } from './helpers.ts';
 import type { ToolContext } from './scope.ts';
 
@@ -124,14 +125,14 @@ export async function computeMetrics(admin: any, companyId: string) {
   const negativeThemes = themes.filter((t: any) => t.sentiment === 'negative').length;
   const polarized = positiveThemes + negativeThemes;
   const sentimentScore = polarized > 0 ? positiveThemes / polarized : 0.5;
-  const sentimentPct = Math.round(sentimentScore * 100);
+  const sentimentPctValue = Math.round(sentimentScore * 100);
   const sentimentLabel = sentimentScore > 0.6 ? 'Positive' : sentimentScore < 0.4 ? 'Negative' : 'Neutral';
 
   const mentioned = responses.filter((r: any) => r.company_mentioned).length;
   const visibilityPct = Math.round((mentioned / totalResponses) * 100);
   const relevancePct = Math.round(relevanceResult.data?.relevance_score || 0);
 
-  const eps = Math.round(sentimentPct * 0.5 + visibilityPct * 0.3 + relevancePct * 0.2);
+  const eps = Math.round(sentimentPctValue * 0.5 + visibilityPct * 0.3 + relevancePct * 0.2);
   const epsLabel = eps >= 80 ? 'Excellent' : eps >= 65 ? 'Good' : eps >= 50 ? 'Fair' : 'Poor';
 
   return {
@@ -139,7 +140,7 @@ export async function computeMetrics(admin: any, companyId: string) {
     companyId,
     eps,
     eps_label: epsLabel,
-    sentiment: { score: sentimentPct, label: sentimentLabel, positive_themes: positiveThemes, negative_themes: negativeThemes, total_themes: themes.length },
+    sentiment: { score: sentimentPctValue, label: sentimentLabel, positive_themes: positiveThemes, negative_themes: negativeThemes, total_themes: themes.length },
     visibility: visibilityPct,
     relevance: relevancePct,
     total_responses: totalResponses,
@@ -245,8 +246,9 @@ export async function getResponses(
 
   const responses = filtered.map((r: any) => {
     const s = sentimentMap.get(r.id);
+    // Response minimization (plugin guidelines): no internal ids or raw
+    // timestamps in the payload — the client-facing period grain is quarters.
     return {
-      id: r.id,
       ai_model: r.ai_model,
       prompt: r.confirmed_prompts?.prompt_text,
       prompt_type: r.confirmed_prompts?.prompt_type,
@@ -254,10 +256,9 @@ export async function getResponses(
         ? r.response_text.substring(0, 1000) + '... [truncated]'
         : r.response_text,
       sentiment: s?.label || null,
-      sentiment_score: s?.score ?? null,
       company_mentioned: r.company_mentioned,
       competitors_mentioned: r.detected_competitors,
-      date: r.tested_at,
+      period: r.tested_at ? quarterLabel(monthToQuarter(String(r.tested_at))) : null,
     };
   });
 
@@ -317,15 +318,12 @@ export async function getThemes(ctx: ToolContext, companyId: string): Promise<st
 
   const themes = Array.from(themeMap.entries())
     .map(([theme_name, stats]) => {
-      // Methodology v2: positive/(positive+negative); null = no polarized signal
-      const polarized = stats.sentiment_counts.positive + stats.sentiment_counts.negative;
-      const positiveRatio = polarized > 0
-        ? Math.round((stats.sentiment_counts.positive / polarized) * 100) / 100
-        : null;
+      // Methodology v2: share of opinionated themes that are positive, as a
+      // whole percentage ("81", never "0.81"); null = no opinionated signal.
       return {
         theme: theme_name,
         mentions: stats.occurrences,
-        positive_ratio: positiveRatio,
+        positive_sentiment_pct: sentimentPct(stats.sentiment_counts.positive, stats.sentiment_counts.negative),
         sentiment_label: stats.sentiment_counts.positive > stats.sentiment_counts.negative ? 'Positive' :
           stats.sentiment_counts.negative > stats.sentiment_counts.positive ? 'Negative' : 'Mixed/Neutral',
         sentiment_breakdown: stats.sentiment_counts,
@@ -639,13 +637,14 @@ export async function getModelBreakdown(ctx: ToolContext, companyId: string): Pr
     }
   }
 
-  // Methodology v2: per-model sentiment pools positive/(positive+negative)
-  // theme counts across the model's responses; null = no polarized signal.
+  // Methodology v2: per-platform sentiment pools positive/negative theme
+  // counts across the platform's responses; percentage, null = no
+  // opinionated signal.
   const breakdown = Array.from(modelMap.entries()).map(([model, stats]) => ({
-    model,
+    platform: model,
     total_responses: stats.total,
     visibility_rate: `${Math.round((stats.mentioned / stats.total) * 100)}%`,
-    avg_sentiment: (stats.pos + stats.neg) > 0 ? Math.round((stats.pos / (stats.pos + stats.neg)) * 100) / 100 : null,
+    positive_sentiment_pct: sentimentPct(stats.pos, stats.neg),
     sentiment_breakdown: { positive: stats.positive, negative: stats.negative, neutral: stats.neutral },
     dominant_sentiment: stats.positive > stats.negative ? 'Positive' : stats.negative > stats.positive ? 'Negative' : 'Neutral',
   })).sort((a, b) => b.total_responses - a.total_responses);
@@ -683,7 +682,7 @@ export async function searchResponses(ctx: ToolContext, companyId: string, keywo
     prompt_type: r.confirmed_prompts?.prompt_type,
     sentiment: sentimentMap.get(r.id)?.label || null,
     snippet: extractSnippet(r.response_text || '', keyword, 300),
-    date: r.tested_at,
+    period: r.tested_at ? quarterLabel(monthToQuarter(String(r.tested_at))) : null,
   }));
 
   const coverage = results.length === 0

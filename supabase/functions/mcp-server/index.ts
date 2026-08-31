@@ -41,15 +41,16 @@ const SERVER_VERSION = '1.0.0';
 // The host model (ChatGPT/Claude) includes these instructions in its context.
 // This is the only prompt-level surface we get over MCP — everything else
 // must live in tool descriptions and result payloads.
-const SERVER_INSTRUCTIONS = `PerceptionX tracks how AI models (ChatGPT, Perplexity, Google AI Overviews, …) describe this organization as an employer — visibility, sentiment, themes, cited sources, and competitors, by market.
+const SERVER_INSTRUCTIONS = `PerceptionX tracks how consumer AI platforms (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode) describe this organization as an employer — visibility, sentiment, themes, cited sources, and competitors, by market.
 
 Rules for using these tools:
 1. Answer ONLY from tool results. Never fill gaps with general knowledge about the company — if a tool didn't return it, say the data isn't tracked yet.
 2. Every result has a _coverage field (found / partial / no_data). Honor it: on no_data, say so plainly; on partial, name what's missing.
-3. Results carry _meta.data_as_of (when rollups were last calculated) and the exact market spellings matched — mention these when precision matters.
-4. Data is scoped to this user's organization only. There is no cross-customer data.
-5. Competitor "share of voice on an attribute" means who gets NAMED when the topic comes up — it is not a claim that the competitor is rated better.
-6. Start with list_companies if you don't know company IDs. For market questions ("culture in India") use get_attribute_themes / get_visibility / get_sources / get_competitor_landscape / get_trends.`;
+3. Periods are quarters ("Q3 2026"); the running quarter is marked "(in progress)" — a lighter latest point is normal, never call it a decline. Quote _meta.period_range and the matched market spellings when precision matters.
+4. Sentiment and visibility are percentages ("81%") — present them that way, never as decimals.
+5. Data is scoped to this user's organization only. There is no cross-customer data.
+6. Competitor "share of voice on an attribute" means who gets NAMED when the topic comes up — it is not a claim that the competitor is rated better.
+7. Start with list_companies if you don't know company IDs. For market questions ("culture in India") use get_attribute_themes / get_visibility / get_sources / get_competitor_landscape / get_trends.`;
 
 // ─── Token auth ─────────────────────────────────────────────────────────────
 

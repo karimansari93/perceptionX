@@ -119,33 +119,33 @@ export async function executeTool(
       case 'get_attribute_themes':
         result = await getAttributeThemes(
           ctx, toolInput.company_id, toolInput.attribute_id, toolInput.location,
-          clampInt(toolInput.months_back, 1, 24, 6), includeSiblings
+          clampInt(toolInput.quarters_back, 1, 8, 4), includeSiblings
         );
         break;
       case 'get_visibility':
         result = await getVisibility(
           ctx, toolInput.company_id, toolInput.location,
-          clampInt(toolInput.months_back, 1, 24, 6), !!toolInput.by_model, includeSiblings
+          clampInt(toolInput.quarters_back, 1, 8, 4), !!toolInput.by_model, includeSiblings
         );
         break;
       case 'get_sources':
         result = await getSources(
           ctx, toolInput.company_id, toolInput.location,
-          clampInt(toolInput.months_back, 1, 24, 6), !!toolInput.gap_only,
+          clampInt(toolInput.quarters_back, 1, 8, 4), !!toolInput.gap_only,
           clampInt(toolInput.limit, 1, 100, 25), includeSiblings
         );
         break;
       case 'get_competitor_landscape':
         result = await getCompetitorLandscape(
           ctx, toolInput.company_id, toolInput.location, toolInput.attribute_id,
-          clampInt(toolInput.months_back, 1, 24, 6),
+          clampInt(toolInput.quarters_back, 1, 8, 4),
           clampInt(toolInput.limit, 1, 50, 15), includeSiblings
         );
         break;
       case 'get_trends':
         result = await getTrends(
           ctx, toolInput.company_id, toolInput.metric || 'visibility', toolInput.location,
-          clampInt(toolInput.months_back, 1, 24, 12), includeSiblings
+          clampInt(toolInput.quarters_back, 1, 8, 4), includeSiblings
         );
         break;
       default:

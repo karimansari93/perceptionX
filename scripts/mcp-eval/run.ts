@@ -74,6 +74,17 @@ check('tools/list returns 16 tools', toolNames.length === 16, `got ${toolNames.l
 for (const required of ['list_companies', 'get_attribute_themes', 'get_visibility', 'get_sources', 'get_competitor_landscape', 'get_trends']) {
   check(`tool present: ${required}`, toolNames.includes(required));
 }
+// ChatGPT plugin guidelines: read-only annotations on every tool.
+check('all tools annotated read-only + closed-world', (toolsList.tools || []).every((t: any) =>
+  t.annotations?.readOnlyHint === true && t.annotations?.openWorldHint === false));
+
+// Presentation contract: quarters + percentages, no raw dates or decimals in
+// numeric payloads (free-text quote payloads are exempt).
+const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
+function checkPresentation(name: string, payload: unknown) {
+  const text = JSON.stringify(payload);
+  check(`${name}: no raw ISO dates in payload`, !ISO_DATE.test(text));
+}
 
 const { parsed: companies } = await callTool('list_companies', {});
 check('list_companies has _coverage', !!companies._coverage);
@@ -84,23 +95,29 @@ check('org has at least one company with data', !!busiest && busiest.total_respo
 if (busiest) {
   const cid = busiest.id;
 
-  const { parsed: vis } = await callTool('get_visibility', { company_id: cid, months_back: 6 });
+  const { parsed: vis } = await callTool('get_visibility', { company_id: cid, quarters_back: 4 });
   check('get_visibility has _coverage + _meta', !!vis._coverage && !!vis._meta);
   if (vis._coverage?.status === 'found') {
     check('visibility_pct in [0,100]', vis.visibility_pct >= 0 && vis.visibility_pct <= 100, String(vis.visibility_pct));
-    check('visibility monthly series non-empty', Array.isArray(vis.monthly) && vis.monthly.length > 0);
-    check('data_as_of present', !!vis._meta?.data_as_of);
+    check('visibility quarterly series non-empty', Array.isArray(vis.quarterly) && vis.quarterly.length > 0);
+    check('quarter labels look like "Qn YYYY"', (vis.quarterly || []).every((q: any) => /^Q[1-4] \d{4}/.test(q.quarter)));
+    check('period_range present (quarters)', /^Q[1-4] \d{4}/.test(vis._meta?.period_range?.from || ''));
+    checkPresentation('get_visibility', vis);
   }
 
-  const { parsed: attrs } = await callTool('get_attribute_themes', { company_id: cid, months_back: 6 });
+  const { parsed: attrs } = await callTool('get_attribute_themes', { company_id: cid, quarters_back: 4 });
   check('get_attribute_themes has _coverage + _meta', !!attrs._coverage && !!attrs._meta);
   if (attrs._coverage?.status === 'found') {
     check('attributes ranked non-empty', Array.isArray(attrs.attributes) && attrs.attributes.length > 0);
-    const ratios = (attrs.attributes || []).map((a: any) => a.sentiment_ratio).filter((x: any) => x !== null);
-    check('sentiment ratios in [0,1]', ratios.every((x: number) => x >= 0 && x <= 1));
+    const pcts = (attrs.attributes || []).map((a: any) => a.positive_sentiment_pct).filter((x: any) => x !== null);
+    check('sentiment values are integer percentages [0,100]',
+      pcts.every((x: number) => Number.isInteger(x) && x >= 0 && x <= 100));
+    checkPresentation('get_attribute_themes', attrs);
   }
 
-  const { parsed: focus } = await callTool('get_attribute_themes', { company_id: cid, attribute_id: 'company-culture', months_back: 6 });
+  const { parsed: focus } = await callTool('get_attribute_themes', { company_id: cid, attribute_id: 'pay', quarters_back: 4 });
+  check("alias 'pay' resolves to compensation", focus.focus_attribute === 'compensation' || focus._coverage?.status === 'no_data');
+
   if (focus._coverage?.status === 'found') {
     check('focused attribute returns example_themes', Array.isArray(focus.example_themes));
   }
@@ -111,21 +128,27 @@ if (busiest) {
   const { parsed: badLoc } = await callTool('get_visibility', { company_id: cid, location: 'Atlantis' });
   check('unknown market → no_data with available_markets', badLoc._coverage?.status === 'no_data' && Array.isArray(badLoc._coverage?.available_markets));
 
-  const { parsed: sources } = await callTool('get_sources', { company_id: cid, months_back: 6, limit: 10 });
+  const { parsed: sources } = await callTool('get_sources', { company_id: cid, quarters_back: 4, limit: 10 });
   check('get_sources has _coverage + _meta', !!sources._coverage && !!sources._meta);
   if (sources._coverage?.status === 'found') {
     check('sources have answer_gap fields', (sources.sources || []).every((s: any) => typeof s.answer_gap === 'number'));
+    checkPresentation('get_sources', sources);
   }
 
-  const { parsed: comp } = await callTool('get_competitor_landscape', { company_id: cid, attribute_id: 'compensation', months_back: 6 });
+  const { parsed: comp } = await callTool('get_competitor_landscape', { company_id: cid, attribute_id: 'compensation', quarters_back: 4 });
   check('get_competitor_landscape has _coverage', !!comp._coverage);
   if (comp.attribute_lens) {
     check('attribute lens carries SOV-not-sentiment note', String(comp.attribute_lens.note || '').includes('not competitor sentiment'));
     check('attribute lens carries sentiment-accrual note', String(comp.attribute_lens.competitor_sentiment_note || '').length > 0);
   }
 
-  const { parsed: trend } = await callTool('get_trends', { company_id: cid, metric: 'sentiment', months_back: 12 });
-  check('get_trends has series', Array.isArray(trend.series) || trend._coverage?.status === 'no_data');
+  const { parsed: trend } = await callTool('get_trends', { company_id: cid, metric: 'sentiment', quarters_back: 6 });
+  check('get_trends has quarterly series', Array.isArray(trend.series) || trend._coverage?.status === 'no_data');
+  if (Array.isArray(trend.series) && trend.series.length) {
+    check('trend values are integer percentages',
+      trend.series.every((s: any) => s.positive_sentiment_pct === null || Number.isInteger(s.positive_sentiment_pct)));
+    checkPresentation('get_trends', trend);
+  }
 
   // Tenant isolation: a foreign UUID must be rejected, never resolved.
   const { parsed: foreign } = await callTool('get_visibility', { company_id: '00000000-0000-4000-8000-000000000000' });
