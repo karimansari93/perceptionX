@@ -157,7 +157,7 @@ const ProfileSetupScreen = ({
               {brands.length > 1 && (
                 <div className="space-y-1.5">
                   <label htmlFor="setup-company" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                    Subsidiary
+                    Company
                   </label>
                   <CompanyBrandSelect
                     id="setup-company"

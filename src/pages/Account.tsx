@@ -318,7 +318,7 @@ export default function Account() {
                   </div>
                   {brands.length > 1 && (
                     <div>
-                      <label htmlFor="default-company" className="block text-sm font-medium mb-1">Dashboard focus: subsidiary</label>
+                      <label htmlFor="default-company" className="block text-sm font-medium mb-1">Dashboard focus: company</label>
                       <CompanyBrandSelect
                         id="default-company"
                         brands={brands}
