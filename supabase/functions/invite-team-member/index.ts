@@ -23,12 +23,19 @@ const corsHeaders = {
  *     "organizationId": "<uuid>",
  *     "emails"?: string[],        // invite
  *     "role"?: "member"|"admin",  // invite (default "member")
- *     "inviteId"?: "<uuid>"       // resend / revoke
+ *     "inviteId"?: "<uuid>",      // resend / revoke
+ *     "onBehalfOfUserId"?: "<uuid>" // invite: platform admins only — attribute
+ *                                 // the invites to this org Super Admin (the
+ *                                 // email reads "<their name> invited you",
+ *                                 // invited_by records them, invitees must be
+ *                                 // on THEIR domain)
  *   }
  *
  * Rules enforced server-side:
  *   - Caller must be a Super Admin of the org (or a platform admin).
- *   - Invitee email domain must match the caller's email domain.
+ *   - Invitee email domain must match the inviter's email domain (the caller,
+ *     or the admin the invites are sent on behalf of).
+ *   - Resends are attributed to the invite's original inviter.
  *   - Email delivery: Resend when RESEND_API_KEY is set (branded
  *     "X invited you" email), otherwise Supabase's built-in invite email.
  */
@@ -57,7 +64,11 @@ type InviteBody = {
   emails?: string[];
   role?: "member" | "admin";
   inviteId?: string;
+  onBehalfOfUserId?: string;
 };
+
+// The person an invite is attributed to.
+type Inviter = { id: string; email: string; name: string; firstName: string };
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -112,13 +123,8 @@ serve(async (req) => {
       .single();
     if (!org) return json({ error: "Organization not found" }, 404);
 
-    // Inviter display name for the email copy: profile name → auth metadata
-    // (SSO signups) → prettified email local part ("kerry.noone" → "Kerry Noone").
-    const { data: callerProfile } = await admin
-      .from("profiles")
-      .select("full_name")
-      .eq("id", caller.id)
-      .maybeSingle();
+    // Display name for the email copy: profile name → auth metadata (SSO
+    // signups) → prettified email local part ("kerry.noone" → "Kerry Noone").
     const prettifyLocalPart = (email: string) =>
       email
         .split("@")[0]
@@ -126,12 +132,56 @@ serve(async (req) => {
         .filter(Boolean)
         .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
         .join(" ");
-    const inviterName =
-      callerProfile?.full_name?.trim() ||
-      (caller.user_metadata?.full_name as string | undefined)?.trim() ||
-      (caller.user_metadata?.name as string | undefined)?.trim() ||
-      prettifyLocalPart(caller.email);
-    const inviterFirstName = inviterName.split(/\s+/)[0];
+    const describeUser = async (
+      userId: string,
+      known?: { email: string; metadata: Record<string, unknown> },
+    ): Promise<Inviter | null> => {
+      const { data: profile } = await admin
+        .from("profiles")
+        .select("full_name, email")
+        .eq("id", userId)
+        .maybeSingle();
+      let email: string | null = known?.email ?? profile?.email ?? null;
+      let metadata: Record<string, unknown> = known?.metadata ?? {};
+      if (!known) {
+        const { data: authUser } = await admin.auth.admin.getUserById(userId);
+        email = email ?? authUser?.user?.email ?? null;
+        metadata = authUser?.user?.user_metadata ?? {};
+      }
+      if (!email) return null;
+      const name =
+        profile?.full_name?.trim() ||
+        (metadata.full_name as string | undefined)?.trim() ||
+        (metadata.name as string | undefined)?.trim() ||
+        prettifyLocalPart(email);
+      return { id: userId, email: email.toLowerCase(), name, firstName: name.split(/\s+/)[0] };
+    };
+
+    // --- Inviter: the caller, or (platform admins only) an org Super Admin
+    // the invites are sent on behalf of. Everything downstream — email copy,
+    // invited_by, the domain rule, the Slack alert — uses the inviter.
+    let inviter = (await describeUser(caller.id, {
+      email: caller.email,
+      metadata: caller.user_metadata ?? {},
+    })) as Inviter;
+    const onBehalf = !!body.onBehalfOfUserId && body.onBehalfOfUserId !== caller.id;
+    if (onBehalf) {
+      if (!isPlatformAdmin) {
+        return json({ error: "Only PerceptionX admins can send invites on someone's behalf" }, 403);
+      }
+      const { data: behalfMembership } = await admin
+        .from("organization_members")
+        .select("role")
+        .eq("organization_id", organizationId)
+        .eq("user_id", body.onBehalfOfUserId)
+        .maybeSingle();
+      if (behalfMembership?.role !== "owner" && behalfMembership?.role !== "admin") {
+        return json({ error: "Invites can only be sent on behalf of an organization Super Admin" }, 400);
+      }
+      const behalfInviter = await describeUser(body.onBehalfOfUserId as string);
+      if (!behalfInviter) return json({ error: "That admin's account was not found" }, 404);
+      inviter = behalfInviter;
+    }
 
     const siteUrl =
       Deno.env.get("PUBLIC_SITE_URL") || req.headers.get("origin") || supabaseUrl;
@@ -157,7 +207,7 @@ serve(async (req) => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            text: `${inviterName} invited ${count} teammate(s) to ${org.name}`,
+            text: `${inviter.name} invited ${count} teammate(s) to ${org.name}`,
             blocks: [
               {
                 type: "header",
@@ -167,7 +217,9 @@ serve(async (req) => {
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: `*${inviterName}* (${caller.email}) invited teammate(s) to *${org.name}*:`,
+                  text:
+                    `*${inviter.name}* (${inviter.email}) invited teammate(s) to *${org.name}*:` +
+                    (onBehalf ? ` _(sent by ${caller.email} on their behalf)_` : ""),
                 },
               },
               { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
@@ -179,13 +231,13 @@ serve(async (req) => {
       }
     };
 
-    const sendInviteEmail = async (toEmail: string, actionLink: string) => {
+    const sendInviteEmail = async (toEmail: string, actionLink: string, as: Inviter) => {
       const fromAddress =
         Deno.env.get("INVITE_FROM_EMAIL") || "PerceptionX <team@perceptionx.ai>";
-      const subject = `${inviterFirstName} invited you to join them on PerceptionX!`;
+      const subject = `${as.firstName} invited you to join them on PerceptionX!`;
       const html = `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#1b2a4e;">
-          <h2 style="margin:0 0 16px;">${inviterFirstName} invited you to join them on PerceptionX!</h2>
+          <h2 style="margin:0 0 16px;">${as.firstName} invited you to join them on PerceptionX!</h2>
           <p style="font-size:15px;line-height:1.6;margin:0 0 24px;">
             Click this link to create your password and join them instantly.
           </p>
@@ -196,7 +248,7 @@ serve(async (req) => {
             </a>
           </p>
           <p style="font-size:13px;color:#6b7280;line-height:1.5;margin:0;">
-            This link is valid for 30 days — ask ${inviterFirstName} to resend
+            This link is valid for 30 days — ask ${as.firstName} to resend
             the invite if it has expired. If you weren't expecting this email,
             you can safely ignore it.
           </p>
@@ -216,10 +268,10 @@ serve(async (req) => {
       }
     };
 
-    const inviteMetadata = (email: string) => ({
+    const inviteMetadata = (email: string, as: Inviter) => ({
       invited_org_id: org.id,
       invited_org_name: org.name,
-      inviter_name: inviterName,
+      inviter_name: as.name,
       invited_email: email,
     });
 
@@ -227,11 +279,12 @@ serve(async (req) => {
     // Returns the new user's id. `token` is the durable invite token: when
     // Resend is configured we email our own /welcome?invite=<token> link (good
     // for 30 days, refreshed on resend) instead of Supabase's short-lived auth
-    // action link.
+    // action link. `as` is who the email is from (defaults to the inviter).
     const createAndInvite = async (
       email: string,
       role: string,
       token: string,
+      as: Inviter = inviter,
     ): Promise<string> => {
       let userId: string;
       let inviteLink: string | null = null;
@@ -242,7 +295,7 @@ serve(async (req) => {
         const { data, error } = await admin.auth.admin.generateLink({
           type: "invite",
           email,
-          options: { data: inviteMetadata(email), redirectTo },
+          options: { data: inviteMetadata(email, as), redirectTo },
         });
         if (error) throw error;
         userId = data.user.id;
@@ -251,7 +304,7 @@ serve(async (req) => {
         // No Resend transport: fall back to Supabase's built-in invite email.
         // That link still carries the platform's 24h expiry (see config.toml).
         const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
-          data: inviteMetadata(email),
+          data: inviteMetadata(email, as),
           redirectTo,
         });
         if (error) throw error;
@@ -259,7 +312,7 @@ serve(async (req) => {
       }
 
       try {
-        if (inviteLink) await sendInviteEmail(email, inviteLink);
+        if (inviteLink) await sendInviteEmail(email, inviteLink, as);
 
         // No DB trigger creates profiles rows — the app's user lists read from
         // profiles, so create it here.
@@ -352,7 +405,7 @@ serve(async (req) => {
 
     if (action === "invite") {
       const role = body.role === "admin" ? "admin" : "member";
-      const callerDomain = callerEmail.split("@")[1];
+      const inviterDomain = inviter.email.split("@")[1];
       const rawEmails = (body.emails ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean);
       if (!rawEmails.length) return json({ error: "At least one email is required" }, 400);
 
@@ -364,11 +417,11 @@ serve(async (req) => {
             results.push({ email, status: "error", message: "Invalid email address" });
             continue;
           }
-          if (email.split("@")[1] !== callerDomain) {
+          if (email.split("@")[1] !== inviterDomain) {
             results.push({
               email,
               status: "error",
-              message: `Email must be on your domain (@${callerDomain})`,
+              message: `Email must be on ${onBehalf ? "their" : "your"} domain (@${inviterDomain})`,
             });
             continue;
           }
@@ -417,7 +470,7 @@ serve(async (req) => {
               email,
               role,
               status: "accepted",
-              invited_by: caller.id,
+              invited_by: inviter.id,
               invited_user_id: existingProfile.id,
               accepted_at: new Date().toISOString(),
             });
@@ -434,7 +487,7 @@ serve(async (req) => {
             email,
             role,
             status: "pending",
-            invited_by: caller.id,
+            invited_by: inviter.id,
             invited_user_id: userId,
             token,
             expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -511,12 +564,22 @@ serve(async (req) => {
       }
 
       // resend: recreate the placeholder user, issue a fresh durable token and
-      // restart the 30-day window.
+      // restart the 30-day window. The email stays attributed to whoever sent
+      // the original invite (falls back to the caller if they're gone).
       if (invite.invited_user_id) {
         await admin.auth.admin.deleteUser(invite.invited_user_id);
       }
+      const originalInviter =
+        invite.invited_by && invite.invited_by !== inviter.id
+          ? await describeUser(invite.invited_by)
+          : null;
       const token = newInviteToken();
-      const userId = await createAndInvite(invite.email, invite.role, token);
+      const userId = await createAndInvite(
+        invite.email,
+        invite.role,
+        token,
+        originalInviter ?? inviter,
+      );
       await admin
         .from("organization_invites")
         .update({

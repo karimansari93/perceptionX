@@ -7,6 +7,13 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import type { SuperAdminOrg } from '@/hooks/useIsSuperAdmin';
@@ -39,19 +46,44 @@ interface PendingInvite {
   sent_at: string;
 }
 
+// Org member row from the function's "list" action.
+interface OrgAdmin {
+  user_id: string;
+  email: string | null;
+  full_name: string | null;
+  role: string;
+}
+
 interface InviteTeammatesModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orgs: SuperAdminOrg[];
+  // pX admin panel: send the invites attributed to one of the org's Super
+  // Admins — the email reads "<their name> invited you", they show as the
+  // inviter, and invitees must be on their domain. Platform admins only
+  // (the function enforces it).
+  allowSendOnBehalf?: boolean;
 }
 
 // Invite dialog launched from the sidebar "Invite teammates" card.
 // One input per email, "+" adds another row. Everyone joins as a member;
 // Super Admins are granted from the pX admin panel. Sends through the
 // invite-team-member edge function and shows per-email results.
-const InviteTeammatesModal = ({ open, onOpenChange, orgs }: InviteTeammatesModalProps) => {
+const InviteTeammatesModal = ({
+  open,
+  onOpenChange,
+  orgs,
+  allowSendOnBehalf = false,
+}: InviteTeammatesModalProps) => {
   const { user } = useAuth();
-  const userDomain = user?.email?.toLowerCase().split('@')[1] ?? '';
+  const [orgAdmins, setOrgAdmins] = useState<OrgAdmin[]>([]);
+  const [sendAsUserId, setSendAsUserId] = useState<string | null>(null);
+  const sendAs = allowSendOnBehalf
+    ? orgAdmins.find((a) => a.user_id === sendAsUserId) ?? null
+    : null;
+  // Invitees must share the inviter's domain — the caller, unless the invites
+  // are sent on an org admin's behalf.
+  const userDomain = (sendAs?.email ?? user?.email ?? '').toLowerCase().split('@')[1] ?? '';
 
   const [emails, setEmails] = useState<string[]>(['']);
   const [sending, setSending] = useState(false);
@@ -117,6 +149,15 @@ const InviteTeammatesModal = ({ open, onOpenChange, orgs }: InviteTeammatesModal
           setPendingInvites(
             (data.invites ?? []).filter((i: PendingInvite) => i.status === 'pending'),
           );
+          if (allowSendOnBehalf) {
+            const admins: OrgAdmin[] = (data.members ?? []).filter(
+              (m: OrgAdmin) => m.role === 'owner' || m.role === 'admin',
+            );
+            setOrgAdmins(admins);
+            setSendAsUserId((prev) =>
+              prev && admins.some((a) => a.user_id === prev) ? prev : admins[0]?.user_id ?? null,
+            );
+          }
         }
       } catch (err) {
         console.error('Error loading pending invites:', err);
@@ -190,13 +231,14 @@ const InviteTeammatesModal = ({ open, onOpenChange, orgs }: InviteTeammatesModal
   };
 
   const handleSend = async () => {
-    if (!validEmails.length || !selectedOrg) return;
+    if (!validEmails.length || !selectedOrg || (allowSendOnBehalf && !sendAs)) return;
     setSending(true);
     try {
       const data = await callTeamFunction({
         action: 'invite',
         emails: validEmails,
         role: 'member',
+        ...(sendAs ? { onBehalfOfUserId: sendAs.user_id } : {}),
       });
       setResults(data.results ?? []);
       setEmails(['']);
@@ -308,6 +350,37 @@ const InviteTeammatesModal = ({ open, onOpenChange, orgs }: InviteTeammatesModal
           ) : (
             /* ---- Compose view ---- */
             <>
+              {allowSendOnBehalf && (
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Send as
+                  </label>
+                  {orgAdmins.length === 0 ? (
+                    <p className="text-[13px] text-amber-700">
+                      This organization has no Super Admin to send on behalf of.
+                    </p>
+                  ) : (
+                    <Select value={sendAsUserId ?? undefined} onValueChange={setSendAsUserId}>
+                      <SelectTrigger className="h-10 rounded-xl border-gray-200">
+                        <SelectValue placeholder="Choose an admin" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {orgAdmins.map((a) => (
+                          <SelectItem key={a.user_id} value={a.user_id}>
+                            {a.full_name?.trim() || a.email || 'Unknown'}
+                            {a.full_name?.trim() && a.email ? ` · ${a.email}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <p className="text-[11px] text-gray-400">
+                    The email will read &ldquo;{sendAs?.full_name?.trim().split(/\s+/)[0] ?? 'They'} invited
+                    you&rdquo; and they will show as the inviter.
+                  </p>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Email addresses
@@ -409,7 +482,7 @@ const InviteTeammatesModal = ({ open, onOpenChange, orgs }: InviteTeammatesModal
               <div className="flex items-center justify-end pt-2">
                 <Button
                   onClick={handleSend}
-                  disabled={sending || validEmails.length === 0}
+                  disabled={sending || validEmails.length === 0 || (allowSendOnBehalf && !sendAs)}
                   className="bg-pink hover:bg-pink/90 text-white rounded-full px-6 font-bold disabled:opacity-50"
                 >
                   {sending ? (
