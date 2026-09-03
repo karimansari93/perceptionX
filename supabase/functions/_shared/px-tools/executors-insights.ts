@@ -286,7 +286,7 @@ export async function getAttributeThemes(
       if (quotes.length >= 14) break;
     }
 
-    // Percentages are of a random sample (up to 2,000) of the answers that
+    // Percentages are of a random sample (up to 1,500) of the answers that
     // discuss the attribute in the latest period — the payload says so.
     const answersSampled = Number(sourcesRes.data?.answers_sampled) || 0;
     const periodLabel = labelQuarter(latestQuarter, r.inProgressQuarter);

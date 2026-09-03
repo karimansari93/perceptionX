@@ -305,9 +305,12 @@ export async function getCompanyOverview(ctx: ToolContext, companyId: string, in
     .sort((x: any, y: any) => (y.mentioned_in_pct_of_answers ?? -1) - (x.mentioned_in_pct_of_answers ?? -1))
     .slice(0, 6);
 
+  // Theme stats come from a random sample of the period's answers (see
+  // mcp_get_theme_stats) — the share is of the sampled answers.
+  const themesSampled = Number(themeRes.data?.answers_sampled) || 0;
   const topThemes = ((themeRes.data?.themes as any[]) || []).map((t: any) => ({
     theme: t.theme_name,
-    mentioned_in_pct_of_answers: pct(t.responses || 0, answers),
+    mentioned_in_pct_of_answers: pct(t.responses || 0, themesSampled),
     positive_sentiment_pct: sentimentPct(t.positive || 0, t.negative || 0),
     attributes: (t.attribute_ids || []).map(attributeName),
     sample_size: { answers: t.responses || 0 },
@@ -345,6 +348,7 @@ export async function getCompanyOverview(ctx: ToolContext, companyId: string, in
     top_themes: topThemes,
     top_competitors: topCompetitors,
     top_sources: topSources,
+    sample_size: { answers, answers_sampled_for_themes: themesSampled },
     _coverage: coverageFound({
       period: latest.label,
       has_previous_period: scored.length > 1,
@@ -352,8 +356,9 @@ export async function getCompanyOverview(ctx: ToolContext, companyId: string, in
       has_themes: topThemes.length > 0,
       has_competitors: topCompetitors.length > 0,
       has_sources: topSources.length > 0,
+      ...(themeRes.error ? { themes_note: 'Theme breakdown unavailable for this scope right now.' } : {}),
     }),
-    _meta: metaFor(r, [...SCORECARD_NOTES, METHODOLOGY_NOTES.attribute_share]),
+    _meta: metaFor(r, [...SCORECARD_NOTES, METHODOLOGY_NOTES.attribute_share, METHODOLOGY_NOTES.theme_sample]),
   });
 }
 
@@ -418,6 +423,9 @@ export async function getThemes(ctx: ToolContext, companyId: string, quartersBac
   const rollups = rollupsRes.data;
   const built = buildAttributeRows(rollups, r, { withQuarterly: false });
   const answers = built.totalAnswers;
+  // Theme shares are of the sampled answers (mcp_get_theme_stats samples up
+  // to 1,500 answers before joining their themes).
+  const themesSampled = Number(themeRes.data?.answers_sampled) || 0;
   const rows: any[] = themeRes.data?.themes || [];
   if (!rows.length) {
     return JSON.stringify({
@@ -431,7 +439,7 @@ export async function getThemes(ctx: ToolContext, companyId: string, quartersBac
     const pos = t.positive || 0, neg = t.negative || 0, neu = t.neutral || 0;
     return {
       theme: t.theme_name,
-      mentioned_in_pct_of_answers: pct(t.responses || 0, answers),
+      mentioned_in_pct_of_answers: pct(t.responses || 0, themesSampled),
       positive_sentiment_pct: sentimentPct(pos, neg),
       sentiment_label: pos > neg ? 'Positive' : neg > pos ? 'Negative' : 'Mixed/Neutral',
       attributes: (t.attribute_ids || []).map(attributeName),
@@ -447,11 +455,12 @@ export async function getThemes(ctx: ToolContext, companyId: string, quartersBac
     attribute_summary: built.attributes,
     sample_size: {
       answers,
-      answers_with_themes: themeRes.data?.responses_with_themes || 0,
-      distinct_themes: themeRes.data?.theme_total || 0,
+      answers_sampled_for_themes: themesSampled,
+      sampled_answers_with_themes: themeRes.data?.responses_with_themes || 0,
+      distinct_themes_in_sample: themeRes.data?.theme_total || 0,
     },
     _coverage: coverageFound({ theme_count: themes.length, attribute_count: built.attributes.length }),
-    _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment, METHODOLOGY_NOTES.attribute_share]),
+    _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment, METHODOLOGY_NOTES.attribute_share, METHODOLOGY_NOTES.theme_sample]),
   });
 }
 
@@ -661,8 +670,12 @@ export async function getModelBreakdown(ctx: ToolContext, companyId: string, qua
 
   return JSON.stringify({
     model_breakdown: breakdown,
-    _coverage: coverageFound({ platform_count: breakdown.length }),
-    _meta: metaFor(r, [METHODOLOGY_NOTES.visibility, METHODOLOGY_NOTES.sentiment]),
+    sample_size: { answers_sampled_for_sentiment: Number(themeRes.data?.answers_sampled) || 0 },
+    _coverage: coverageFound({
+      platform_count: breakdown.length,
+      ...(themeRes.error ? { sentiment_note: 'Per-platform sentiment unavailable for this scope right now; visibility is complete.' } : {}),
+    }),
+    _meta: metaFor(r, [METHODOLOGY_NOTES.visibility, METHODOLOGY_NOTES.sentiment, METHODOLOGY_NOTES.theme_sample]),
   });
 }
 

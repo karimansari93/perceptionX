@@ -232,16 +232,30 @@ if (busiest) {
     checkPresentation('get_company_overview', overview);
   }
 
+  // The three tools that read theme rows: they must come back complete
+  // within the statement budget on a brand-wide scope (a timeout used to
+  // surface as a tool error here and as silently empty themes elsewhere).
+  check('overview carries top themes (theme read did not time out)',
+    !overview.error && (overview.top_themes || []).length > 0 && !overview._coverage?.themes_note,
+    String(overview._coverage?.themes_note || overview.error || ''));
+
   const { parsed: themes } = await callTool('get_themes', { company_id: cid });
+  check('get_themes returns without error', !themes.error, String(themes.error || ''));
   if (themes._coverage?.status === 'found') {
+    check('themes non-empty', (themes.themes || []).length > 0);
     check('themes lead with % of answers', (themes.themes || []).every((t: any) => Object.keys(t)[1] === 'mentioned_in_pct_of_answers'));
+    check('themes state their sample', (themes.sample_size?.answers_sampled_for_themes ?? 0) > 0);
     checkPresentation('get_themes', themes);
   }
 
   const { parsed: models } = await callTool('get_model_breakdown', { company_id: cid });
+  check('get_model_breakdown returns without error', !models.error, String(models.error || ''));
   if (models._coverage?.status === 'found') {
     check('platform rows carry visibility_pct + positive_sentiment_pct',
       (models.model_breakdown || []).every((m: any) => 'visibility_pct' in m && 'positive_sentiment_pct' in m));
+    check('per-platform sentiment is populated (theme read did not time out)',
+      (models.model_breakdown || []).some((m: any) => Number.isInteger(m.positive_sentiment_pct)) && !models._coverage?.sentiment_note,
+      String(models._coverage?.sentiment_note || ''));
     checkPresentation('get_model_breakdown', models);
   }
 

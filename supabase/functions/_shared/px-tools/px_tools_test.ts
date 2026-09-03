@@ -131,6 +131,8 @@ function rpc(name: string, params: any): { data: any; error: any } {
             { ai_model: 'perplexity', responses_with_themes: 350, positive: 170, negative: 80, neutral: 20 },
           ],
           attribute_top_themes: { 'wellbeing-balance': ['Hybrid Work Flexibility'] },
+          answers_sampled: 1500,
+          pool_answers: 2600,
           responses_with_themes: 750,
           theme_total: 1200,
         },
@@ -349,7 +351,9 @@ Deno.test('core tools default to the latest measured quarter, brand scope', asyn
   const th = await call('get_themes', { company_id: FORD_US, quarters_back: 2 });
   lint('get_themes', th);
   assertEquals(th._meta.periods, ['Q2 2026', 'Q3 2026']);
-  assertEquals(th.themes[0].mentioned_in_pct_of_answers, 10);
+  assertEquals(th.themes[0].mentioned_in_pct_of_answers, 20);   // 300 of the 1,500 sampled answers
+  assertEquals(th.sample_size.answers_sampled_for_themes, 1500);
+  assertStringIncludes(th._meta.methodology.join(' '), 'random sample');
   const ab = await call('get_attribute_breakdown', { company_id: FORD_US });
   lint('get_attribute_breakdown', ab);
   assertEquals(ab.attributes[1].top_themes, ['Hybrid Work Flexibility']);

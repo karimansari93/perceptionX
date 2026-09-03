@@ -71,6 +71,8 @@ export const METHODOLOGY_NOTES = {
     'EPS = 50% sentiment + 30% visibility + 20% relevance.',
   attribute_share:
     'mentioned_in_pct_of_answers = % of AI answers in the period that discuss the attribute; share_of_themes_pct = the attribute\'s share of all themes (the dashboard\'s attribute mix).',
+  theme_sample:
+    'Theme-level figures (individual themes, per-platform sentiment) are computed from a random sample of the period\'s answers; sample_size states how many. Visibility, attribute and source figures are complete.',
 } as const;
 
 // Standard result envelope metadata. Client-facing periods are QUARTERS
