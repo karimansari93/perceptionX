@@ -11,15 +11,18 @@ import { toast } from 'sonner';
 import { updatePromptText, isValidPromptUpdate } from '@/utils/promptUtils';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useQueryClient } from '@tanstack/react-query';
-import { LocationPreferenceField } from '@/components/onboarding/LocationPreferenceField';
+import { LocationFocusPicker } from '@/components/onboarding/LocationFocusPicker';
 import {
-  locationEntryRawValue,
+  focusSelectionFromRaw,
+  focusSelectionToRaw,
   profileSetupMetadata,
   profileSetupQueryKey,
+  pruneFocusSelection,
+  saveFocusLocations,
   useOrgLocationOptions,
   useProfileSetupStatus,
+  type FocusSelection,
 } from '@/hooks/useProfileSetup';
-import { canonicalizeLocationContext } from '@/utils/locationContext';
 
 function AccountSidebar({ activeSection, onSectionChange }) {
   const { state } = useSidebar();
@@ -87,16 +90,18 @@ export default function Account() {
   const [form, setForm] = useState({ company: '', industry: '', email: '' });
   const [originalForm, setOriginalForm] = useState({ company: '', industry: '', email: '' });
 
-  // Default dashboard location — chosen at first login, editable here. Kept
-  // as "saved value unless the user touched the picker" so no effect has to
-  // copy query data into state.
+  // Focus locations (priority + pinned) — chosen at first login, editable
+  // here. Kept as "saved value unless the user touched the picker" so no
+  // effect has to copy query data into state.
   const queryClient = useQueryClient();
   const setupStatus = useProfileSetupStatus(user?.id);
   const { data: locationOptions = [], isLoading: locationsLoading } = useOrgLocationOptions(user?.id);
-  const savedLocation = canonicalizeLocationContext(setupStatus.data?.defaultLocationContext);
-  const [pickedLocation, setPickedLocation] = useState<string | null>(null);
-  const [locationTouched, setLocationTouched] = useState(false);
-  const currentLocation = locationTouched ? pickedLocation : savedLocation;
+  const savedFocus = focusSelectionFromRaw(
+    setupStatus.data?.defaultLocationContext,
+    setupStatus.data?.focusLocationContexts,
+  );
+  const [pickedFocus, setPickedFocus] = useState<FocusSelection | null>(null);
+  const currentFocus = pickedFocus ?? savedFocus;
 
   useEffect(() => {
     async function fetchData() {
@@ -181,25 +186,22 @@ export default function Account() {
     setSaving(true);
     setSuccess(false);
     try {
-      // Default dashboard location: session copy (what the dashboard reads on
-      // load) plus the durable profile column.
-      if (user && locationTouched && currentLocation !== savedLocation) {
-        const entry = locationOptions.find((o) => o.canonicalKey === currentLocation) ?? null;
+      // Focus locations: session copy (what the dashboard reads on load) plus
+      // the durable profile columns, via the RPC that normalizes them.
+      if (user && pickedFocus && !locationsLoading) {
+        const selection = pruneFocusSelection(pickedFocus, locationOptions);
         const { error: metaError } = await supabase.auth.updateUser({
-          data: profileSetupMetadata(entry),
+          data: profileSetupMetadata(selection, locationOptions),
         });
         if (metaError) throw metaError;
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .update({ default_location_context: locationEntryRawValue(entry) } as never)
-          .eq('id', user.id);
-        if (profileError) throw profileError;
+        await saveFocusLocations({ selection, options: locationOptions });
+        const raw = focusSelectionToRaw(selection, locationOptions);
         queryClient.setQueryData(profileSetupQueryKey(user.id), (prev: unknown) =>
           prev && typeof prev === 'object'
-            ? { ...(prev as object), defaultLocationContext: locationEntryRawValue(entry) }
+            ? { ...(prev as object), defaultLocationContext: raw.primary, focusLocationContexts: raw.focus }
             : prev,
         );
-        setLocationTouched(false);
+        setPickedFocus(null);
       }
 
       // Editing company info from the user-facing Account page has been
@@ -294,17 +296,16 @@ export default function Account() {
                   </div>
                   {(locationsLoading || locationOptions.length > 0) && (
                     <div>
-                      <label htmlFor="default-location" className="block text-sm font-medium mb-1">Default dashboard location</label>
-                      <LocationPreferenceField
-                        id="default-location"
+                      <span className="block text-sm font-medium mb-1">Dashboard locations</span>
+                      <LocationFocusPicker
                         options={locationOptions}
-                        value={currentLocation}
-                        onChange={(key) => { setPickedLocation(key); setLocationTouched(true); }}
+                        value={currentFocus}
+                        onChange={setPickedFocus}
                         loading={locationsLoading || setupStatus.isPending}
                         disabled={loading || saving}
                       />
                       <p className="text-sm text-gray-500 mt-1">
-                        The location your dashboard opens on when you sign in. Starring a view on the dashboard overrides this in that browser.
+                        Your priority location is where the dashboard opens when you sign in; the others are pinned at the top of the location menu. Starring a view on the dashboard overrides the priority in that browser.
                       </p>
                     </div>
                   )}

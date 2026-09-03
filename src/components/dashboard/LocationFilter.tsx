@@ -23,6 +23,9 @@ interface LocationFilterProps {
   // Intent prefetch: fired on hover/focus of an entry so its rollups are
   // cached before the click lands (no-op for already-fresh locations).
   onIntentPrefetch?: (locationKey: string) => void;
+  // Canonical keys of the user's focus locations (profile setup), listed
+  // first under their own heading. Keys with no matching option are ignored.
+  pinnedKeys?: string[];
   className?: string;
 }
 
@@ -36,7 +39,7 @@ const EntryIcon = ({ icon, flagCode }: { icon: LocationEntry['icon']; flagCode: 
   return <Globe className="h-4 w-4" />;
 };
 
-export const LocationFilter = ({ selectedLocation, onLocationChange, options = [], onIntentPrefetch, className }: LocationFilterProps) => {
+export const LocationFilter = ({ selectedLocation, onLocationChange, options = [], onIntentPrefetch, pinnedKeys = [], className }: LocationFilterProps) => {
   const [isOpen, setIsOpen] = useState(false);
 
   // Nothing to filter — hide the control entirely.
@@ -53,6 +56,38 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, options = [
   const handleSelect = (entry: LocationEntry) => {
     setIsOpen(false);
     onLocationChange(entry.canonicalKey);
+  };
+
+  // The user's focus locations float to the top under their own heading, in
+  // the order they were picked; everything else keeps its usual order below.
+  const pinned = pinnedKeys
+    .map((key) => options.find((o) => o.canonicalKey === key))
+    .filter((o): o is LocationEntry => !!o);
+  const rest = pinned.length > 0 ? options.filter((o) => !pinned.includes(o)) : options;
+
+  const renderEntry = (entry: LocationEntry) => {
+    const isSelected = selectedLocation === entry.canonicalKey;
+    return (
+      <DropdownMenuItem
+        key={entry.canonicalKey}
+        onClick={() => handleSelect(entry)}
+        onMouseEnter={() => onIntentPrefetch?.(entry.canonicalKey)}
+        onFocus={() => onIntentPrefetch?.(entry.canonicalKey)}
+        className="cursor-pointer flex items-center justify-between"
+      >
+        <div className="flex items-center gap-2">
+          {isSelected ? (
+            <Check className="h-4 w-4 text-[#13274F]" />
+          ) : (
+            <div className="h-4 w-4" />
+          )}
+          <EntryIcon icon={entry.icon} flagCode={entry.flagCode} />
+          <span className={cn('text-sm', isSelected && 'font-semibold text-[#13274F]')}>
+            {entry.label}
+          </span>
+        </div>
+      </DropdownMenuItem>
+    );
   };
 
   // The trigger reflects the active focus: a chosen city/country, or "All
@@ -111,30 +146,16 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, options = [
             </span>
           </div>
         </DropdownMenuItem>
-        {options.map(entry => {
-          const isSelected = selectedLocation === entry.canonicalKey;
-          return (
-            <DropdownMenuItem
-              key={entry.canonicalKey}
-              onClick={() => handleSelect(entry)}
-              onMouseEnter={() => onIntentPrefetch?.(entry.canonicalKey)}
-              onFocus={() => onIntentPrefetch?.(entry.canonicalKey)}
-              className="cursor-pointer flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2">
-                {isSelected ? (
-                  <Check className="h-4 w-4 text-[#13274F]" />
-                ) : (
-                  <div className="h-4 w-4" />
-                )}
-                <EntryIcon icon={entry.icon} flagCode={entry.flagCode} />
-                <span className={cn('text-sm', isSelected && 'font-semibold text-[#13274F]')}>
-                  {entry.label}
-                </span>
-              </div>
-            </DropdownMenuItem>
-          );
-        })}
+        {pinned.length > 0 && (
+          <>
+            <DropdownMenuLabel className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+              Your locations
+            </DropdownMenuLabel>
+            {pinned.map(renderEntry)}
+            <DropdownMenuSeparator />
+          </>
+        )}
+        {rest.map(renderEntry)}
       </DropdownMenuContent>
     </DropdownMenu>
   );

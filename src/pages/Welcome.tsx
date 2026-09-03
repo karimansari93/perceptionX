@@ -7,8 +7,15 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { Check, Loader2, ArrowRight, Eye, EyeOff } from 'lucide-react';
-import { LocationPreferenceField } from '@/components/onboarding/LocationPreferenceField';
-import { completeProfileSetup, profileSetupMetadata, useOrgLocationOptions } from '@/hooks/useProfileSetup';
+import { LocationFocusPicker } from '@/components/onboarding/LocationFocusPicker';
+import {
+  EMPTY_FOCUS,
+  completeProfileSetup,
+  profileSetupMetadata,
+  pruneFocusSelection,
+  useOrgLocationOptions,
+  type FocusSelection,
+} from '@/hooks/useProfileSetup';
 
 const PASSWORD_MIN_LENGTH = 8;
 
@@ -56,10 +63,11 @@ const Welcome = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'valid' | 'expired'>('checking');
   const [expiredReason, setExpiredReason] = useState<'used' | 'invalid' | 'expired' | null>(null);
-  // Canonical key of the location the invitee wants the dashboard to open on;
-  // null = "All locations". Options span the organization the invite created
-  // the membership in, so they match the dashboard's location filter.
-  const [location, setLocation] = useState<string | null>(null);
+  // Locations the invitee focuses on (canonical keys); the priority is what
+  // the dashboard opens on, the rest get pinned in the location menu. Options
+  // span the organization the invite created the membership in, so they match
+  // the dashboard's location filter.
+  const [focus, setFocus] = useState<FocusSelection>(EMPTY_FOCUS);
   const { data: locationOptions = [], isLoading: locationsLoading } = useOrgLocationOptions(user?.id);
 
   // New flow: exchange a durable invite token (?invite=…) for a fresh session.
@@ -147,21 +155,21 @@ const Welcome = () => {
       return;
     }
 
-    const locationEntry = locationOptions.find((o) => o.canonicalKey === location) ?? null;
+    const selection = pruneFocusSelection(focus, locationOptions);
 
     setLoading(true);
     try {
-      // Password plus session metadata (name, default location) in one call.
+      // Password plus session metadata (name, focus locations) in one call.
       const { error } = await supabase.auth.updateUser({
         password,
-        data: { full_name: name, ...profileSetupMetadata(locationEntry) },
+        data: { full_name: name, ...profileSetupMetadata(selection, locationOptions) },
       });
       if (error) throw error;
 
       // Keep the app-facing profile in sync — the name is what teammates see
       // in invite emails when this user invites others later — and stamp
       // first-login setup complete so the dashboard gate never shows it.
-      await completeProfileSetup({ fullName: name, location: locationEntry });
+      await completeProfileSetup({ fullName: name, selection, options: locationOptions });
 
       toast.success("You're all set — welcome to PerceptionX!");
       navigate('/dashboard');
@@ -219,7 +227,8 @@ const Welcome = () => {
     { ok: /[0-9]/.test(password), label: 'One number' },
   ];
   const passwordValid = !validatePassword(password);
-  const canSubmit = !!fullName.trim() && passwordValid;
+  // Wait for the location list so a submit can't silently drop the picks.
+  const canSubmit = !!fullName.trim() && passwordValid && !locationsLoading;
 
   const inputClass =
     'h-11 rounded-xl border-gray-200 bg-white placeholder:text-gray-300 placeholder:font-light focus-visible:ring-2 focus-visible:ring-pink/25 focus-visible:border-pink transition';
@@ -270,21 +279,16 @@ const Welcome = () => {
 
           {(locationsLoading || locationOptions.length > 0) && (
             <div className="space-y-1.5">
-              <label htmlFor="location" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                Which location do you focus on?
-              </label>
-              <LocationPreferenceField
-                id="location"
+              <span className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                Which locations do you focus on?
+              </span>
+              <LocationFocusPicker
                 options={locationOptions}
-                value={location}
-                onChange={setLocation}
+                value={focus}
+                onChange={setFocus}
                 loading={locationsLoading}
                 disabled={loading}
-                className={inputClass}
               />
-              <p className="text-[11px] text-gray-400 leading-relaxed">
-                Your dashboard will open on this location. Change it any time from your account.
-              </p>
             </div>
           )}
 

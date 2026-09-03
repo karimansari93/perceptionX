@@ -9,6 +9,8 @@ import { PeriodSelector } from "./PeriodSelector";
 import { PeriodInfo } from "@/hooks/useDashboardData";
 import { StarSavedView } from "./StarSavedView";
 import { LocationEntry } from "@/utils/locationContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { focusLocationsFromUser } from "@/hooks/useProfileSetup";
 
 interface DashboardHeaderProps {
   companyName: string;
@@ -51,6 +53,10 @@ export const DashboardHeader = React.memo(({
   onCompanyPrefetch,
 }: DashboardHeaderProps) => {
   const isMobile = useIsMobile();
+  // The user's focus locations (profile setup) pin to the top of the
+  // location menu. Read off the session so it updates right after a save.
+  const { user } = useAuth();
+  const pinnedLocationKeys = React.useMemo(() => focusLocationsFromUser(user), [user]);
 
   return (
     <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/50">
@@ -95,6 +101,7 @@ export const DashboardHeader = React.memo(({
                 onLocationChange={onLocationChange}
                 options={locationOptions}
                 onIntentPrefetch={onLocationPrefetch}
+                pinnedKeys={pinnedLocationKeys}
                 className={isMobile ? "min-w-[120px]" : ""}
               />
             </div>

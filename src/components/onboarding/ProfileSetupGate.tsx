@@ -8,17 +8,19 @@ import { Input } from '@/components/ui/input';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { canonicalizeLocationContext } from '@/utils/locationContext';
 import {
   completeProfileSetup,
-  locationEntryRawValue,
+  focusSelectionFromRaw,
+  focusSelectionToRaw,
   profileSetupMetadata,
   profileSetupQueryKey,
+  pruneFocusSelection,
   useOrgLocationOptions,
   useProfileSetupStatus,
+  type FocusSelection,
   type ProfileSetupStatus,
 } from '@/hooks/useProfileSetup';
-import { LocationPreferenceField } from './LocationPreferenceField';
+import { LocationFocusPicker } from './LocationFocusPicker';
 
 const PAGE_BG = 'linear-gradient(135deg, #f7dee7 0%, #fbeaf0 45%, #eef1f8 100%)';
 const sans = { fontFamily: 'Plus Jakarta Sans, sans-serif' };
@@ -55,8 +57,8 @@ const ProfileSetupScreen = ({
   const [fullName, setFullName] = useState(
     initial?.fullName || (user.user_metadata?.full_name as string | undefined) || '',
   );
-  const [location, setLocation] = useState<string | null>(
-    canonicalizeLocationContext(initial?.defaultLocationContext),
+  const [focus, setFocus] = useState<FocusSelection>(() =>
+    focusSelectionFromRaw(initial?.defaultLocationContext, initial?.focusLocationContexts),
   );
   const [saving, setSaving] = useState(false);
 
@@ -67,19 +69,21 @@ const ProfileSetupScreen = ({
       toast.error('Please enter your name');
       return;
     }
-    const entry = locationOptions.find((o) => o.canonicalKey === location) ?? null;
+    const selection = pruneFocusSelection(focus, locationOptions);
     setSaving(true);
     try {
       // Session copy first (drives the dashboard default on this device), then
       // the durable profile columns + completion stamp.
       const { error: metaError } = await supabase.auth.updateUser({
-        data: { full_name: name, ...profileSetupMetadata(entry) },
+        data: { full_name: name, ...profileSetupMetadata(selection, locationOptions) },
       });
       if (metaError) throw metaError;
-      await completeProfileSetup({ fullName: name, location: entry });
+      await completeProfileSetup({ fullName: name, selection, options: locationOptions });
+      const raw = focusSelectionToRaw(selection, locationOptions);
       queryClient.setQueryData<ProfileSetupStatus>(profileSetupQueryKey(user.id), {
         fullName: name,
-        defaultLocationContext: locationEntryRawValue(entry),
+        defaultLocationContext: raw.primary,
+        focusLocationContexts: raw.focus,
         onboardingCompletedAt: new Date().toISOString(),
       });
     } catch (error: unknown) {
@@ -90,7 +94,7 @@ const ProfileSetupScreen = ({
     }
   };
 
-  const showLocation = locationsLoading || locationOptions.length > 0;
+  const showLocations = locationsLoading || locationOptions.length > 0;
 
   return (
     <div className="min-h-screen w-screen flex items-center justify-center p-6" style={{ background: PAGE_BG }}>
@@ -123,29 +127,24 @@ const ProfileSetupScreen = ({
             />
           </div>
 
-          {showLocation && (
+          {showLocations && (
             <div className="space-y-1.5">
-              <label htmlFor="setup-location" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                Which location do you focus on?
-              </label>
-              <LocationPreferenceField
-                id="setup-location"
+              <span className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                Which locations do you focus on?
+              </span>
+              <LocationFocusPicker
                 options={locationOptions}
-                value={location}
-                onChange={setLocation}
+                value={focus}
+                onChange={setFocus}
                 loading={locationsLoading}
                 disabled={saving}
-                className={inputClass}
               />
-              <p className="text-[11px] text-gray-400 leading-relaxed">
-                Your dashboard will open on this location. Change it any time from your account.
-              </p>
             </div>
           )}
 
           <Button
             type="submit"
-            disabled={saving || !fullName.trim()}
+            disabled={saving || locationsLoading || !fullName.trim()}
             className="w-full h-11 bg-pink hover:bg-pink/90 text-white rounded-full font-bold text-[15px] disabled:opacity-50 group"
           >
             {saving ? (
