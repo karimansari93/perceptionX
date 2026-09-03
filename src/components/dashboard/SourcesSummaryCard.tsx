@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { categorizeSourceByMediaType, getMediaTypeInfo } from "@/utils/sourceConfig";
 import { enhanceCitations } from "@/utils/citationUtils";
+import { dedupeResponsesById } from "@/utils/responseUtils";
 import { poolDomainRows } from "@/hooks/dashboard/scopeStatsSelect";
 import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 import type { DomainStatsRow, ScopeStatsRow } from "@/hooks/dashboard/dashboardQueries";
@@ -71,9 +72,12 @@ export const SourcesSummaryCard = ({
   // Responses where the company was mentioned — the analyzed set, matching the
   // Sources tab's default "Mentioned" view. Stays raw on BOTH paths: it is
   // the coverage denominator, and the domain cube cannot supply it (summing
-  // per-domain rows overcounts responses citing several sources).
+  // per-domain rows overcounts responses citing several sources). Deduped by
+  // response id first: the stream repeats attribute-tagged responses in the
+  // latest period, which would inflate this denominator (see
+  // dedupeResponsesById).
   const mentionedResponses = useMemo(
-    () => responses.filter(r => r.company_mentioned === true),
+    () => dedupeResponsesById(responses).filter(r => r.company_mentioned === true),
     [responses]
   );
 
@@ -212,7 +216,7 @@ export const SourcesSummaryCard = ({
 
     const getCoverage = (responseList: any[]) => {
       const counts: Record<string, number> = {};
-      const mentioned = responseList.filter(r => r.company_mentioned === true);
+      const mentioned = dedupeResponsesById(responseList).filter(r => r.company_mentioned === true);
       mentioned.forEach(response => {
         try {
           const raw = typeof response.citations === 'string'

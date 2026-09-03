@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { enhanceCitations, normalizePageKey, getFavicon } from "@/utils/citationUtils";
+import { dedupeResponsesById } from "@/utils/responseUtils";
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { getAttributeIconByName } from "@/config/attributeIcons";
 import { categorizeSourceByMediaType } from "@/utils/sourceConfig";
@@ -282,7 +283,10 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
   };
 
   const normalizeResponsesOnce = (input: any[]): NormalizedResponse[] => {
-    return input.map((r) => {
+    // Count each response once: the stream repeats attribute-tagged responses
+    // (same id) in the latest period, which would double every page/domain
+    // count here and skew the period deltas (see dedupeResponsesById).
+    return dedupeResponsesById(input).map((r) => {
       let parsed: any = r.citations;
       if (typeof parsed === 'string') {
         try { parsed = JSON.parse(parsed); } catch { parsed = null; }

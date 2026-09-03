@@ -26,6 +26,7 @@ import { useEntityCanonicalizer } from "@/hooks/useEntityCanonicalizer";
 import { useCompany } from "@/contexts/CompanyContext";
 import { supabase } from "@/integrations/supabase/client";
 import { enhanceCitations, getCompetitorFavicon } from "@/utils/citationUtils";
+import { dedupeResponsesById } from "@/utils/responseUtils";
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { getAttributeIconByName } from "@/config/attributeIcons";
 import { sentimentRatioV2 } from "@/lib/sentimentV2";
@@ -290,8 +291,10 @@ export const CompetitorsTab = memo(({
   // -------------------------------------------------------------------------
   const { normalized, prevNormalized, rawCollapseMap } = useMemo(() => {
     type PreParsed = Omit<CompetitorNormalizedResponse, "competitors"> & { rawNames: string[] };
+    // Count each response once: the stream repeats attribute-tagged responses
+    // (same id) in the latest period (see dedupeResponsesById).
     const preParse = (input: any[]): PreParsed[] =>
-      input.map((r) => {
+      dedupeResponsesById(input).map((r) => {
         let parsed: any = r.citations;
         if (typeof parsed === "string") {
           try { parsed = JSON.parse(parsed); } catch { parsed = null; }
