@@ -105,7 +105,7 @@ export async function executeTool(
         break;
       case 'get_citations':
         result = await getCitations(
-          ctx, toolInput.company_id, !!toolInput.include_snippets, toolInput.domain_filter,
+          ctx, toolInput.company_id, toolInput.domain_filter,
           latestPeriods, includeSiblings
         );
         break;

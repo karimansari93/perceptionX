@@ -27,7 +27,7 @@
 import {
   changeBlock, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER,
   labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta, rate1, sentimentPct,
-  sortQuarters, toQuarterly,
+  sortQuarters, toQuarterly, topPagesByDomain, pageEntry, PAGES_UNAVAILABLE_NOTE,
 } from './helpers.ts';
 import { answersByQuarter, metaFor, resolveScope } from './scope.ts';
 import type { ResolvedScope, ToolContext } from './scope.ts';
@@ -298,10 +298,13 @@ export async function getAttributeThemes(
         }
       : {
           period: periodLabel,
-          note: `Domains cited in the ${periodLabel} answers that discuss ${attributeName(attributeId)} (a random sample of ${answersSampled} answers) — where this topic is being sourced from. Association, not cause.`,
+          note: `Domains cited in the ${periodLabel} answers that discuss ${attributeName(attributeId)} (a random sample of ${answersSampled} answers) — where this topic is being sourced from, with the most-cited pages on each (top_pages — link these). Association, not cause.`,
           sources: ((sourcesRes.data?.rows as any[]) || []).map((row: any) => ({
             domain: row.domain,
             cited_in_pct_of_attribute_answers: pct(row.answers_citing || 0, answersSampled),
+            top_pages: ((row.top_pages as any[]) || [])
+              .map((p: any) => pageEntry(p, answersSampled, 'cited_in_pct_of_attribute_answers'))
+              .filter(Boolean),
             sample_size: { answers_citing: row.answers_citing || 0 },
           })),
           sample_size: { answers_sampled: answersSampled },
@@ -317,7 +320,10 @@ export async function getAttributeThemes(
     } : {}),
     sample_size: { answers: built.totalAnswers, themes: built.allThemes },
     _coverage: coverageFound({ attribute_count: built.attributes.length, periods: r.quarters.length }),
-    _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment, METHODOLOGY_NOTES.attribute_share]),
+    _meta: metaFor(r, [
+      METHODOLOGY_NOTES.sentiment, METHODOLOGY_NOTES.attribute_share,
+      ...(attributeId ? [METHODOLOGY_NOTES.pages] : []),
+    ]),
   });
 }
 
@@ -409,7 +415,7 @@ export async function getSources(
   const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
-  const [domainRes, rollupsRes] = await Promise.all([
+  const [domainRes, rollupsRes, pagesRes] = await Promise.all([
     ctx.admin.rpc('mcp_get_domain_stats', {
       p_company_ids: r.scope.companyIds,
       p_buckets: r.buckets,
@@ -420,6 +426,16 @@ export async function getSources(
       p_company_ids: r.scope.companyIds,
       p_buckets: r.buckets,
       p_months: r.months,
+    }),
+    // Most-cited pages per domain (url + title) from the page cube — the
+    // links a host needs to cite a source properly. Same denominator as the
+    // domain shares.
+    ctx.admin.rpc('mcp_get_cited_pages', {
+      p_company_ids: r.scope.companyIds,
+      p_buckets: r.buckets,
+      p_months: r.months,
+      p_limit: Math.max(limit * 3, 90),
+      p_per_domain: 3,
     }),
   ]);
   const { data, error } = domainRes;
@@ -469,18 +485,30 @@ export async function getSources(
   sources = gapOnly
     ? sources.filter(s => s.sample_size.answer_gap > 0).sort((a, b) => b.sample_size.answer_gap - a.sample_size.answer_gap)
     : sources.sort((a, b) => b.sample_size.answers_citing - a.sample_size.answers_citing);
-  sources = sources.slice(0, limit);
+  const pagesByDomain = pagesRes.error
+    ? new Map<string, Record<string, unknown>[]>()
+    : topPagesByDomain(pagesRes.data?.rows || [], totalResponses, 'cited_in_pct_of_answers');
+  const sourcesWithPages = sources.slice(0, limit).map(({ sample_size, ...s }) => ({
+    ...s,
+    top_pages: pagesByDomain.get(s.domain) || [],
+    sample_size,
+  }));
 
   return JSON.stringify({
-    sources,
+    sources: sourcesWithPages,
     sample_size: {
       answers: totalResponses,
       distinct_domains: data?.domain_total ?? byDomain.size,
     },
-    _coverage: coverageFound({ returned: sources.length, gap_only: gapOnly }),
+    _coverage: coverageFound({
+      returned: sourcesWithPages.length,
+      gap_only: gapOnly,
+      ...(pagesRes.error ? { pages_note: PAGES_UNAVAILABLE_NOTE } : {}),
+    }),
     _meta: metaFor(r, [
       'Domains are canonicalized (regional variants collapse to one root).',
       '"answer_gap" = answers citing this domain where the company was NOT mentioned — the outreach opportunity surface.',
+      METHODOLOGY_NOTES.pages,
     ]),
   });
 }

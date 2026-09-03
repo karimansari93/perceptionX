@@ -94,7 +94,7 @@ const QUARTER = /^Q[1-4] \d{4}( \(in progress\))?$/;
 // "..._per_answer", and the EPS composite. Anything else numeric inside a
 // list entry is a raw count and must live under sample_size.
 const SHARE_KEY = /(_pct(_|$)|_points$|_per_answer$|^eps$)/;
-const SERIES_KEYS = new Set(['quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison']);
+const SERIES_KEYS = new Set(['top_pages', 'quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison']);
 
 function rawCountLeaks(payload: any, path = '$', out: string[] = []): string[] {
   if (Array.isArray(payload)) { payload.forEach((v, i) => rawCountLeaks(v, `${path}[${i}]`, out)); return out; }
@@ -117,7 +117,8 @@ function rawCountLeaks(payload: any, path = '$', out: string[] = []): string[] {
 function checkPresentation(name: string, payload: unknown) {
   const p: any = payload;
   const text = JSON.stringify(payload);
-  check(`${name}: no raw ISO dates in payload`, !ISO_DATE.test(text), text.match(ISO_DATE)?.[0] ?? '');
+  const sansUrls = JSON.stringify(payload, (k, v) => (k === 'url' ? undefined : v));   // page URLs may legitimately carry dates
+  check(`${name}: no raw ISO dates in payload`, !ISO_DATE.test(sansUrls), sansUrls.match(ISO_DATE)?.[0] ?? '');
   const leaks = rawCountLeaks(payload);
   check(`${name}: raw counts nest under sample_size`, leaks.length === 0, leaks.slice(0, 3).join(', '));
   if (p?._meta?.collection_in_progress !== true) {
@@ -176,6 +177,9 @@ if (busiest) {
     check('source breakdown is populated (not a silent timeout)',
       (focus.sources_in_attribute_answers?.sources || []).length > 0 || (focus.sources_in_attribute_answers?.sample_size?.answers_sampled ?? 0) === 0,
       String(focus.sources_in_attribute_answers?.note || ''));
+    const attrSources = focus.sources_in_attribute_answers?.sources || [];
+    check('attribute sources carry top_pages to link',
+      attrSources.every((s: any) => Array.isArray(s.top_pages)) && (attrSources.length === 0 || attrSources.some((s: any) => s.top_pages.length > 0)));
     checkPresentation('get_attribute_themes/focus', focus);
   }
 
@@ -190,7 +194,25 @@ if (busiest) {
   if (sources._coverage?.status === 'found') {
     check('sources lead with share of answers', (sources.sources || []).every((s: any) => Object.keys(s)[1] === 'cited_in_pct_of_answers'));
     check('sources carry the answer gap as a share', (sources.sources || []).every((s: any) => 'answer_gap_pct_of_answers' in s));
+    const pages = (sources.sources || []).flatMap((s: any) => s.top_pages || []);
+    check('every source carries top_pages', (sources.sources || []).every((s: any) => Array.isArray(s.top_pages)));
+    check('top pages are real links, share-first (page read did not fail)',
+      pages.length > 0 && pages.every((p: any) => /^https?:\/\//.test(p.url) && Object.keys(p)[2] === 'cited_in_pct_of_answers'),
+      String(sources._coverage?.pages_note || pages.length));
+    check('page titles are clean', pages.every((p: any) => !String(p.title || '').includes('Opens in new tab') && !/^https?:/.test(String(p.title || ''))));
+    check('page shares never exceed their domain share (one denominator)',
+      (sources.sources || []).every((s: any) => (s.top_pages || []).every((p: any) => p.cited_in_pct_of_answers <= s.cited_in_pct_of_answers)));
     checkPresentation('get_sources', sources);
+  }
+
+  const topDomain = sources.sources?.[0]?.domain;
+  if (topDomain) {
+    const { parsed: cit } = await callTool('get_citations', { company_id: cid, domain_filter: topDomain });
+    check('get_citations(domain_filter) returns that domain with its pages',
+      Array.isArray(cit.citations) && cit.citations.length > 0 && (cit.citations[0].top_pages || []).length > 0,
+      String(cit.error || cit._coverage?.pages_note || ''));
+    check('citation rows lead with share of answers', (cit.citations || []).every((c: any) => Object.keys(c)[1] === 'cited_in_pct_of_answers'));
+    checkPresentation('get_citations', cit);
   }
 
   const { parsed: comp } = await callTool('get_competitor_landscape', { company_id: cid, attribute_id: 'compensation', quarters_back: 4 });

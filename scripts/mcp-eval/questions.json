@@ -22,6 +22,8 @@
     { "q": "Are we mentioned when people ask about the best employers in tech?", "expect_any": ["get_visibility", "search_responses", "get_responses"] },
     { "q": "What's our EPS score and what's dragging it down?", "expect_any": ["get_company_metrics", "get_company_overview"] },
     { "q": "Why did wellbeing drop last quarter, and which sources are behind it?", "expect_any": ["get_attribute_themes"] },
-    { "q": "How did our compensation perception change versus the previous period?", "expect_any": ["get_attribute_themes", "get_attribute_breakdown", "get_trends"] }
+    { "q": "How did our compensation perception change versus the previous period?", "expect_any": ["get_attribute_themes", "get_attribute_breakdown", "get_trends"] },
+    { "q": "Give me links to the pages AI cites about our pay.", "expect_any": ["get_attribute_themes", "get_citations", "get_sources"] },
+    { "q": "Which Glassdoor pages come up, with links?", "expect_any": ["get_citations", "get_sources"] }
   ]
 }

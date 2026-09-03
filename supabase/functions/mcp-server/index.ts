@@ -52,7 +52,8 @@ Rules for using these tools:
 6. Numbers match the PerceptionX dashboard: brand scope (all same-name market profiles) and the latest measured period by default. Quote _meta.period_range and the matched market spellings when precision matters.
 7. Data is scoped to this user's organization only. There is no cross-customer data.
 8. Competitor "share of voice on an attribute" means who gets NAMED when the topic comes up — it is not a claim that the competitor is rated better.
-9. Start with list_companies if you don't know company IDs. "How are we doing?" → get_company_overview. Market questions ("culture in India") → get_attribute_themes / get_visibility / get_sources / get_competitor_landscape / get_trends. "Why did X change?" → get_attribute_themes with attribute_id: it returns the example themes and the sources cited in those answers.`;
+9. Start with list_companies if you don't know company IDs. "How are we doing?" → get_company_overview. Market questions ("culture in India") → get_attribute_themes / get_visibility / get_sources / get_competitor_landscape / get_trends. "Why did X change?" → get_attribute_themes with attribute_id: it returns the example themes and the sources cited in those answers.
+10. Link sources. Source and citation rows carry top_pages (url + title) — the only URLs you may show. When you name a source, link its top page as a markdown link using the returned title and the exact url. Never construct, shorten or guess a URL, never link a bare domain, and never link anything a tool did not return. If the user wants links and the rows in hand carry none, call get_sources or get_citations (with domain_filter) rather than saying links are unavailable.`;
 
 // ─── Token auth ─────────────────────────────────────────────────────────────
 

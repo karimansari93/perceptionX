@@ -73,6 +73,8 @@ export const METHODOLOGY_NOTES = {
     'mentioned_in_pct_of_answers = % of AI answers in the period that discuss the attribute; share_of_themes_pct = the attribute\'s share of all themes (the dashboard\'s attribute mix).',
   theme_sample:
     'Theme-level figures (individual themes, per-platform sentiment) are computed from a random sample of the period\'s answers; sample_size states how many. Visibility, attribute and source figures are complete.',
+  pages:
+    'top_pages = the most-cited page URLs (with titles) on each source; a page\'s cited_in_pct_of_answers is the % of all answers in the window, the same denominator as its domain. Link a source with the exact url returned; never construct or guess a URL.',
 } as const;
 
 // Standard result envelope metadata. Client-facing periods are QUARTERS
@@ -245,4 +247,40 @@ export function extractSnippet(text: string, keyword: string, maxLength: number)
   const start = Math.max(0, idx - 100);
   const end = Math.min(text.length, idx + maxLength - 100);
   return (start > 0 ? '...' : '') + text.substring(start, end) + (end < text.length ? '...' : '');
+}
+
+// ─── Page-level links ───────────────────────────────────────────────────────
+// The most-cited page URLs for a domain (mcp_get_cited_pages rows, or the
+// top_pages nested in mcp_get_attribute_sources rows), shares-first, so a
+// host model can link a source instead of naming a bare domain.
+// `denominator` is the answer count the share is of (the window's answers
+// for cube-backed reads, the sampled answers for the attribute read);
+// `shareKey` names what the percentage is of. Rows without an http(s) url
+// are dropped — a link the host can't open is worse than none.
+export const PAGES_UNAVAILABLE_NOTE =
+  'Page-level links could not be computed for this scope right now; the domain figures are unaffected.';
+
+export function pageEntry(row: any, denominator: number, shareKey: string): Record<string, unknown> | null {
+  const url = String(row?.url || '');
+  if (!/^https?:\/\//i.test(url)) return null;
+  const answersCiting = Number(row?.answers_citing) || 0;
+  return {
+    url,
+    title: row?.title ? String(row.title) : null,
+    [shareKey]: pct(answersCiting, denominator),
+    sample_size: { answers_citing: answersCiting },
+  };
+}
+
+export function topPagesByDomain(rows: any[], denominator: number, shareKey: string): Map<string, Record<string, unknown>[]> {
+  const byDomain = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows || []) {
+    const domain = String(row?.domain || '');
+    const entry = pageEntry(row, denominator, shareKey);
+    if (!domain || !entry) continue;
+    const list = byDomain.get(domain) || [];
+    list.push(entry);
+    byDomain.set(domain, list);
+  }
+  return byDomain;
 }

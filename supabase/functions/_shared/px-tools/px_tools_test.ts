@@ -121,7 +121,33 @@ function rpc(name: string, params: any): { data: any; error: any } {
         error: null,
       };
     case 'mcp_get_attribute_sources':
-      return { data: { answers_sampled: 345, attribute_answers_pool: 645, rows: [{ domain: 'glassdoor.com', answers_citing: 138 }, { domain: 'careers.ford.com', answers_citing: 100 }] }, error: null };
+      return {
+        data: {
+          answers_sampled: 345, attribute_answers_pool: 645,
+          rows: [
+            { domain: 'glassdoor.com', answers_citing: 138, top_pages: [
+              { url: 'https://www.glassdoor.com/Reviews/Ford-Motor-Company-Reviews-E263.htm', title: 'Ford Motor Company Reviews | Glassdoor', answers_citing: 90 },
+            ] },
+            { domain: 'careers.ford.com', answers_citing: 100, top_pages: [
+              { url: 'https://www.careers.ford.com/benefits', title: null, answers_citing: 60 },
+              { url: 'not-a-link', title: 'junk', answers_citing: 5 },
+            ] },
+          ],
+        },
+        error: null,
+      };
+    case 'mcp_get_cited_pages':
+      return {
+        data: {
+          distinct_pages: 3, data_as_of: '2026-09-03T00:00:00Z',
+          rows: [
+            { domain: 'careers.ford.com', url: 'https://www.careers.ford.com/benefits', title: 'Employee Benefits at Ford', answers_citing: 200 },
+            { domain: 'glassdoor.com', url: 'https://www.glassdoor.com/Reviews/Ford-Motor-Company-Reviews-E263.htm', title: 'Ford Motor Company Reviews | Glassdoor', answers_citing: 120 },
+            { domain: 'glassdoor.com', url: 'https://www.glassdoor.com/Salary/Ford-Motor-Company-Salaries-E263.htm', title: null, answers_citing: 40 },
+          ].filter(r => !params.p_domain || r.domain === params.p_domain),
+        },
+        error: null,
+      };
     case 'mcp_get_theme_stats':
       return {
         data: {
@@ -197,7 +223,7 @@ const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
 // "..._per_answer", and the EPS composite. Anything else numeric inside a
 // list entry is a raw count and must live under sample_size.
 const SHARE_KEY = /(_pct(_|$)|_points$|_per_answer$|^eps$)/;
-const SERIES_KEYS = new Set(['quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison']);
+const SERIES_KEYS = new Set(['top_pages', 'quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison']);
 
 function assertNoRawCountsLead(payload: any, path = '$') {
   if (Array.isArray(payload)) { payload.forEach((v, i) => assertNoRawCountsLead(v, `${path}[${i}]`)); return; }
@@ -220,7 +246,9 @@ function assertNoRawCountsLead(payload: any, path = '$') {
 
 function lint(name: string, payload: any) {
   const text = JSON.stringify(payload);
-  assert(!ISO_DATE.test(text), `${name}: ISO date leaked: ${text.match(ISO_DATE)?.[0]}`);
+  // Page URLs are the one place a date-shaped string is legitimate.
+  const sansUrls = JSON.stringify(payload, (k, v) => (k === 'url' ? undefined : v));
+  assert(!ISO_DATE.test(sansUrls), `${name}: ISO date leaked: ${sansUrls.match(ISO_DATE)?.[0]}`);
   if (payload._meta?.collection_in_progress !== true) {
     assert(!text.includes('(in progress)'), `${name}: "(in progress)" without an active collection`);
   }
@@ -283,8 +311,17 @@ Deno.test('get_attribute_themes: % of answers leads, retired ids hidden, sources
   assertEquals(w.change_vs_previous_period.sentiment_points, -16);
   assertEquals(w.sample_size.answers_mentioning, 645);
   assertEquals(p.sources_in_attribute_answers.sources[0], {
-    domain: 'glassdoor.com', cited_in_pct_of_attribute_answers: 40, sample_size: { answers_citing: 138 },
+    domain: 'glassdoor.com', cited_in_pct_of_attribute_answers: 40,
+    top_pages: [{
+      url: 'https://www.glassdoor.com/Reviews/Ford-Motor-Company-Reviews-E263.htm', title: 'Ford Motor Company Reviews | Glassdoor',
+      cited_in_pct_of_attribute_answers: 26, sample_size: { answers_citing: 90 },
+    }],
+    sample_size: { answers_citing: 138 },
   });
+  // A page without an http(s) url is dropped; a missing title stays null (the host shows the url).
+  assertEquals(p.sources_in_attribute_answers.sources[1].top_pages.map((x: any) => [x.url, x.title]),
+    [['https://www.careers.ford.com/benefits', null]]);
+  assertStringIncludes(p._meta.methodology.join(' '), 'top_pages');
   assertEquals(p.example_themes.length, 2);
   assertEquals(p.example_themes[0].ai_platform, 'openai');
 
@@ -342,6 +379,13 @@ Deno.test('core tools default to the latest measured quarter, brand scope', asyn
   lint('get_citations', cit);
   assertEquals(cit.citations.length, 1);
   assertEquals(cit.citations[0].cited_in_pct_of_answers, 30);
+  assertEquals(cit.citations[0].top_pages.map((x: any) => x.url), [
+    'https://www.glassdoor.com/Reviews/Ford-Motor-Company-Reviews-E263.htm',
+    'https://www.glassdoor.com/Salary/Ford-Motor-Company-Salaries-E263.htm',
+  ]);
+  // Page shares use the same denominator as the domain shares (the window's answers).
+  assertEquals(cit.citations[0].top_pages[0].cited_in_pct_of_answers, Math.round(120 / cit.sample_size.answers * 100));
+  assert(cit.citations[0].top_pages[0].cited_in_pct_of_answers <= cit.citations[0].cited_in_pct_of_answers);
   const mb = await call('get_model_breakdown', { company_id: FORD_US });
   lint('get_model_breakdown', mb);
   assertEquals(mb.model_breakdown[0], {
@@ -392,4 +436,16 @@ Deno.test('tenancy: foreign company ids are rejected before any read', async () 
   assertStringIncludes(p.error, 'not in your organization');
   const bad = await call('get_visibility', { company_id: 'nope' });
   assertStringIncludes(bad.error, 'Invalid company_id');
+});
+
+Deno.test('get_sources: every domain carries its most-cited pages for linking', async () => {
+  const s = await call('get_sources', { company_id: FORD_US, quarters_back: 4, limit: 10 });
+  lint('get_sources', s);
+  const ford = s.sources.find((x: any) => x.domain === 'careers.ford.com');
+  assertEquals(ford.top_pages, [{
+    url: 'https://www.careers.ford.com/benefits', title: 'Employee Benefits at Ford',
+    cited_in_pct_of_answers: Math.round(200 / s.sample_size.answers * 100), sample_size: { answers_citing: 200 },
+  }]);
+  assertEquals(Object.keys(ford).indexOf('top_pages') < Object.keys(ford).indexOf('sample_size'), true);
+  assertStringIncludes(s._meta.methodology.join(' '), 'top_pages');
 });

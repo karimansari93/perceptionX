@@ -127,12 +127,11 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_citations',
     progressLabel: 'Reviewing citations',
-    description: `Websites/domains AI platforms cite when discussing the company, in the latest measured quarter(s): % of answers citing each domain, its share of all citations, and the answer gap (% of answers citing it while the company was absent). Set include_snippets=true to also get page titles and snippets — use this when the user asks HOW a source is being used (e.g. 'how does Glassdoor appear in answers?'). Do NOT call get_responses alongside this for citation questions. For market-filtered or gap/opportunity ranking use get_sources. ${PERIOD_SHARE_NOTE}`,
+    description: `Websites/domains AI platforms cite when discussing the company, in the latest measured quarter(s): % of answers citing each domain, its share of all citations, the answer gap (% of answers citing it while the company was absent), and top_pages — the most-cited page URLs on that domain with their titles, for linking. Use domain_filter to drill into one source's pages (e.g. 'glassdoor.com' → which Glassdoor pages AI cites and how often). Use for 'how does Glassdoor appear in answers?', 'give me links to the pages AI cites about us'. Do NOT call get_responses alongside this for citation questions. For market-filtered or gap/opportunity ranking use get_sources. ${PERIOD_SHARE_NOTE}`,
     input_schema: {
       type: 'object',
       properties: {
         company_id: companyIdProp,
-        include_snippets: { type: 'boolean', description: 'Set to true to include page titles and text snippets from each citation.' },
         domain_filter: { type: 'string', description: "Optional: filter to citations from a specific domain (e.g. 'glassdoor.com')." },
         quarters_back: quartersBackProp(1),
         include_siblings: includeSiblingsProp,
@@ -181,7 +180,7 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_attribute_themes',
     progressLabel: 'Analyzing themes by market',
-    description: "Use for questions like 'what's our culture like in India?', 'how is our compensation perceived in Germany?' or 'why did wellbeing change?'. Returns, per employer-brand attribute and per measured quarter: the % of answers discussing the attribute, its positive-sentiment %, its share of all themes, and the change in points vs the previous measured period. When a single attribute is requested it also returns real example themes with quote snippets and which AI platform said them, plus the sources cited in the answers that discuss that attribute (% of those answers citing each domain — association, not cause). Numbers match the PerceptionX dashboard. Attribute ids: mission-purpose-impact, compensation, company-culture, leadership, job-security, career-opportunities, wellbeing-balance, inclusion, innovation, application-communication, candidate-feedback, interview-experience, onboarding-experience (common aliases like 'pay', 'culture' or 'work-life balance' also resolve). " + PERIOD_SHARE_NOTE + ' Quote _meta.period_range and the matched market spellings when precision matters.',
+    description: "Use for questions like 'what's our culture like in India?', 'how is our compensation perceived in Germany?' or 'why did wellbeing change?'. Returns, per employer-brand attribute and per measured quarter: the % of answers discussing the attribute, its positive-sentiment %, its share of all themes, and the change in points vs the previous measured period. When a single attribute is requested it also returns real example themes with quote snippets and which AI platform said them, plus the sources cited in the answers that discuss that attribute (% of those answers citing each domain, with top_pages — the most-cited page URLs to link — association, not cause). Numbers match the PerceptionX dashboard. Attribute ids: mission-purpose-impact, compensation, company-culture, leadership, job-security, career-opportunities, wellbeing-balance, inclusion, innovation, application-communication, candidate-feedback, interview-experience, onboarding-experience (common aliases like 'pay', 'culture' or 'work-life balance' also resolve). " + PERIOD_SHARE_NOTE + ' Quote _meta.period_range and the matched market spellings when precision matters.',
     input_schema: {
       type: 'object',
       properties: {
@@ -213,7 +212,7 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_sources',
     progressLabel: 'Searching your sources',
-    description: "Which websites AI platforms cite when answering about the company, filtered by market — led by the % of answers citing each domain, with the ANSWER GAP: % of answers that cited the domain while the company was NOT mentioned. Set gap_only=true to rank by that gap — the outreach-opportunity list ('sources answering candidate questions in your space without you'). Domains are canonicalized (glassdoor.de/.ie/.com collapse to one). Use for 'which sources matter in Germany?', 'where should we be mentioned but aren't?'. " + PERIOD_SHARE_NOTE,
+    description: "Which websites AI platforms cite when answering about the company, filtered by market — led by the % of answers citing each domain, with the ANSWER GAP: % of answers that cited the domain while the company was NOT mentioned. Set gap_only=true to rank by that gap — the outreach-opportunity list ('sources answering candidate questions in your space without you'). Domains are canonicalized (glassdoor.de/.ie/.com collapse to one). Every source carries top_pages — its most-cited page URLs with titles — so answers can link the exact pages. Use for 'which sources matter in Germany?', 'where should we be mentioned but aren't?', 'link me the pages AI cites'. " + PERIOD_SHARE_NOTE,
     input_schema: {
       type: 'object',
       properties: {

@@ -24,7 +24,7 @@
 import {
   buildMeta, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER,
   extractSnippet, labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta,
-  quartersOfMonths, sentimentPct, sortQuarters,
+  quartersOfMonths, sentimentPct, sortQuarters, topPagesByDomain, PAGES_UNAVAILABLE_NOTE,
 } from './helpers.ts';
 import {
   metaFor, narrowToQuarter, resolveMeasurementPeriods, resolveScope,
@@ -508,10 +508,13 @@ export function getCompetitors(ctx: ToolContext, companyId: string, quartersBack
 }
 
 // ─── get_citations ──────────────────────────────────────────────────────────
+// Domains cited in the scope, shares-first, each with its most-cited pages
+// (url + title) so a host can link a source rather than name a bare domain.
+// Domain and page shares both come from cubes (complete counts, one
+// denominator), so a page's share reads against its domain's.
 export async function getCitations(
   ctx: ToolContext,
   companyId: string,
-  includeSnippets: boolean,
   domainFilter: string | undefined,
   quartersBack: number,
   includeSiblings: boolean
@@ -520,12 +523,19 @@ export async function getCitations(
   if (typeof r === 'string') return r;
 
   const filter = domainFilter ? domainFilter.replace(/^www\./, '').toLowerCase().trim() : '';
-  const [domainRes, rollupsRes] = await Promise.all([
+  const exactDomain = filter.includes('.') ? filter : null;   // a full domain narrows the page read itself
+  const [domainRes, rollupsRes, pagesRes] = await Promise.all([
     ctx.admin.rpc('mcp_get_domain_stats', {
       p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months,
       p_limit: filter ? 500 : 60,
     }),
     readRollups(ctx, r).then(d => ({ data: d, error: null })).catch(e => ({ data: null, error: e })),
+    ctx.admin.rpc('mcp_get_cited_pages', {
+      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months,
+      p_domain: exactDomain,
+      p_limit: filter ? 100 : 90,
+      p_per_domain: filter ? 10 : 3,
+    }),
   ]);
   if (domainRes.error) return JSON.stringify({ error: `Domain stats read failed: ${domainRes.error.message}` });
   if (rollupsRes.error) return JSON.stringify({ error: rollupsRes.error.message });
@@ -556,64 +566,38 @@ export async function getCitations(
     });
   }
 
+  const pagesByDomain = pagesRes.error
+    ? new Map<string, Record<string, unknown>[]>()
+    : topPagesByDomain(pagesRes.data?.rows || [], answers, 'cited_in_pct_of_answers');
+
   const citations: any[] = Array.from(byDomain.entries())
     .map(([domain, v]) => ({
       domain,
       cited_in_pct_of_answers: pct(v.citing, answers),
       share_of_citations_pct: pct(v.citations, totalCitations),
       answer_gap_pct_of_answers: pct(Math.max(0, v.citing - v.mentioned), answers),
+      top_pages: pagesByDomain.get(domain) || [],
       sample_size: { answers_citing: v.citing, citations: v.citations },
     }))
     .sort((a, b) => b.sample_size.answers_citing - a.sample_size.answers_citing)
     .slice(0, filter ? 50 : 20);
 
-  // Samples of HOW a source appears: titles/snippets/urls from a bounded
-  // set of recent answers in the window (never the full stream).
-  if (includeSnippets) {
-    const wanted = new Set(citations.map(c => c.domain));
-    const samples = new Map<string, { titles: string[]; snippets: string[]; urls: string[] }>();
-    const { data: recent } = await ctx.admin
-      .from('prompt_responses')
-      .select('citations, canonical_citations')
-      .in('company_id', r.scope.companyIds)
-      .in('response_month', r.months)
-      .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
-      .not('citations', 'is', null)
-      .order('tested_at', { ascending: false })
-      .limit(150);
-    for (const row of (recent || [])) {
-      let list: any[];
-      try {
-        const raw = row.canonical_citations ?? row.citations;
-        list = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        if (!Array.isArray(list)) continue;
-      } catch { continue; }
-      for (const c of list) {
-        if (!c || typeof c !== 'object') continue;
-        const domain = String(c.domain || '').replace(/^www\./, '').toLowerCase();
-        if (!domain || !wanted.has(domain)) continue;
-        const e = samples.get(domain) || { titles: [], snippets: [], urls: [] };
-        if (c.title && e.titles.length < 3 && !e.titles.includes(c.title)) e.titles.push(c.title);
-        if (c.snippet && e.snippets.length < 3) e.snippets.push(String(c.snippet).substring(0, 200));
-        if (c.url && e.urls.length < 3 && !e.urls.includes(c.url)) e.urls.push(c.url);
-        samples.set(domain, e);
-      }
-    }
-    for (const c of citations) {
-      const s = samples.get(c.domain);
-      c.sample_titles = s?.titles || [];
-      c.sample_snippets = s?.snippets || [];
-      c.sample_urls = s?.urls || [];
-    }
-  }
-
   return JSON.stringify({
     citations,
-    sample_size: { answers, citations: totalCitations, distinct_domains: domainRes.data?.domain_total ?? byDomain.size },
-    _coverage: coverageFound({ unique_domains: citations.length, ...(filter ? { domain_filter: domainFilter } : {}) }),
+    sample_size: {
+      answers,
+      citations: totalCitations,
+      distinct_domains: domainRes.data?.domain_total ?? byDomain.size,
+    },
+    _coverage: coverageFound({
+      unique_domains: citations.length,
+      ...(filter ? { domain_filter: domainFilter } : {}),
+      ...(pagesRes.error ? { pages_note: PAGES_UNAVAILABLE_NOTE } : {}),
+    }),
     _meta: metaFor(r, [
       'Domains are canonicalized (regional variants collapse to one root).',
       '"answer_gap" = answers citing this domain where the company was NOT mentioned — the outreach opportunity surface.',
+      METHODOLOGY_NOTES.pages,
     ]),
   });
 }
