@@ -122,6 +122,7 @@ export async function listCompanies(ctx: ToolContext): Promise<string> {
     _coverage: coverage,
     _meta: buildMeta({
       latest_period: labeled[labeled.length - 1] ?? null,
+      period_range: labeled.length ? { from: labeled[0], to: labeled[labeled.length - 1] } : null,
       periods: labeled,
       ...(periods.inProgressQuarter ? { collection_in_progress: true } : {}),
       note: 'Same-name profiles are one brand measured per market; the market-aware tools aggregate them (include_siblings) exactly like the dashboard.',
