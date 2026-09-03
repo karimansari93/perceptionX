@@ -8,19 +8,23 @@ import { Input } from '@/components/ui/input';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { canonicalizeLocationContext } from '@/utils/locationContext';
 import {
+  brandForCompanyId,
   completeProfileSetup,
-  focusSelectionFromRaw,
-  focusSelectionToRaw,
+  locationRawValue,
   profileSetupMetadata,
   profileSetupQueryKey,
-  pruneFocusSelection,
+  representativeCompanyId,
+  useOrgBrands,
   useOrgLocationOptions,
   useProfileSetupStatus,
-  type FocusSelection,
+  validLocationKey,
+  type OrgBrand,
   type ProfileSetupStatus,
 } from '@/hooks/useProfileSetup';
-import { LocationFocusPicker } from './LocationFocusPicker';
+import { CompanyBrandSelect } from './CompanyBrandSelect';
+import { LocationSelect } from './LocationSelect';
 
 const PAGE_BG = 'linear-gradient(135deg, #f7dee7 0%, #fbeaf0 45%, #eef1f8 100%)';
 const sans = { fontFamily: 'Plus Jakarta Sans, sans-serif' };
@@ -53,14 +57,34 @@ const ProfileSetupScreen = ({
   initial: ProfileSetupStatus | undefined;
 }) => {
   const queryClient = useQueryClient();
-  const { data: locationOptions = [], isLoading: locationsLoading } = useOrgLocationOptions(user.id);
+  const brandsQuery = useOrgBrands(user.id);
+  const brands = brandsQuery.data?.brands ?? [];
+  const [brandKey, setBrandKey] = useState<string | null>(null);
+  // Subsidiary in play: the user's pick, else the one their saved company
+  // belongs to, else the org's main brand. `undefined` while brands load
+  // keeps the country query pending.
+  const brand: OrgBrand | null | undefined = brandsQuery.isPending
+    ? undefined
+    : (brandKey ? brands.find((b) => b.key === brandKey) : undefined) ??
+      brandForCompanyId(brands, initial?.defaultCompanyId) ??
+      brands[0] ??
+      null;
+  const locationsQuery = useOrgLocationOptions(user.id, brand);
+  const locationOptions = locationsQuery.data ?? [];
+  const locationsPending = locationsQuery.isPending;
+
   const [fullName, setFullName] = useState(
     initial?.fullName || (user.user_metadata?.full_name as string | undefined) || '',
   );
-  const [focus, setFocus] = useState<FocusSelection>(() =>
-    focusSelectionFromRaw(initial?.defaultLocationContext, initial?.focusLocationContexts),
+  const [location, setLocation] = useState<string | null>(() =>
+    canonicalizeLocationContext(initial?.defaultLocationContext),
   );
   const [saving, setSaving] = useState(false);
+
+  const chooseBrand = (key: string) => {
+    setBrandKey(key);
+    setLocation(null); // countries belong to a subsidiary; start over
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,21 +93,20 @@ const ProfileSetupScreen = ({
       toast.error('Please enter your name');
       return;
     }
-    const selection = pruneFocusSelection(focus, locationOptions);
+    const locationKey = validLocationKey(location, locationOptions);
     setSaving(true);
     try {
-      // Session copy first (drives the dashboard default on this device), then
-      // the durable profile columns + completion stamp.
+      // Session copy first (drives the dashboard on this device), then the
+      // durable profile columns + completion stamp.
       const { error: metaError } = await supabase.auth.updateUser({
-        data: { full_name: name, ...profileSetupMetadata(selection, locationOptions) },
+        data: { full_name: name, ...profileSetupMetadata(locationKey, locationOptions, brand) },
       });
       if (metaError) throw metaError;
-      await completeProfileSetup({ fullName: name, selection, options: locationOptions });
-      const raw = focusSelectionToRaw(selection, locationOptions);
+      await completeProfileSetup({ fullName: name, locationKey, options: locationOptions, brand });
       queryClient.setQueryData<ProfileSetupStatus>(profileSetupQueryKey(user.id), {
         fullName: name,
-        defaultLocationContext: raw.primary,
-        focusLocationContexts: raw.focus,
+        defaultLocationContext: locationRawValue(locationKey, locationOptions),
+        defaultCompanyId: representativeCompanyId(brand, locationKey),
         onboardingCompletedAt: new Date().toISOString(),
       });
     } catch (error: unknown) {
@@ -94,7 +117,7 @@ const ProfileSetupScreen = ({
     }
   };
 
-  const showLocations = locationsLoading || locationOptions.length > 0;
+  const showFocus = brands.length > 1 || locationsPending || locationOptions.length > 0;
 
   return (
     <div className="min-h-screen w-screen flex items-center justify-center p-6" style={{ background: PAGE_BG }}>
@@ -105,7 +128,7 @@ const ProfileSetupScreen = ({
             Welcome to PerceptionX
           </h1>
           <p className="mt-3 text-[14px] text-nightsky/60" style={sans}>
-            Two quick questions so your dashboard opens on what matters to you.
+            A couple of quick questions so your dashboard opens on what matters to you.
           </p>
         </div>
 
@@ -127,24 +150,52 @@ const ProfileSetupScreen = ({
             />
           </div>
 
-          {showLocations && (
-            <div className="space-y-1.5">
-              <span className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                Which locations do you focus on?
-              </span>
-              <LocationFocusPicker
-                options={locationOptions}
-                value={focus}
-                onChange={setFocus}
-                loading={locationsLoading}
-                disabled={saving}
-              />
+          {showFocus && (
+            <div className="space-y-3 rounded-2xl border border-gray-100 bg-gray-50/60 p-4">
+              <p className="text-[13px] font-semibold text-nightsky">What do you want to focus on first?</p>
+
+              {brands.length > 1 && (
+                <div className="space-y-1.5">
+                  <label htmlFor="setup-company" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                    Subsidiary
+                  </label>
+                  <CompanyBrandSelect
+                    id="setup-company"
+                    brands={brands}
+                    value={brand?.key ?? null}
+                    onChange={chooseBrand}
+                    disabled={saving}
+                    className={inputClass}
+                  />
+                </div>
+              )}
+
+              {(locationsPending || locationOptions.length > 0) && (
+                <div className="space-y-1.5">
+                  <label htmlFor="setup-location" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                    Country
+                  </label>
+                  <LocationSelect
+                    id="setup-location"
+                    options={locationOptions}
+                    value={location}
+                    onChange={setLocation}
+                    loading={locationsPending}
+                    disabled={saving}
+                    className={inputClass}
+                  />
+                </div>
+              )}
+
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Your dashboard opens here. Change it any time from your account.
+              </p>
             </div>
           )}
 
           <Button
             type="submit"
-            disabled={saving || locationsLoading || !fullName.trim()}
+            disabled={saving || locationsPending || !fullName.trim()}
             className="w-full h-11 bg-pink hover:bg-pink/90 text-white rounded-full font-bold text-[15px] disabled:opacity-50 group"
           >
             {saving ? (

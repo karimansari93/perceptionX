@@ -7,14 +7,15 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { Check, Loader2, ArrowRight, Eye, EyeOff } from 'lucide-react';
-import { LocationFocusPicker } from '@/components/onboarding/LocationFocusPicker';
+import { CompanyBrandSelect } from '@/components/onboarding/CompanyBrandSelect';
+import { LocationSelect } from '@/components/onboarding/LocationSelect';
 import {
-  EMPTY_FOCUS,
   completeProfileSetup,
   profileSetupMetadata,
-  pruneFocusSelection,
+  useOrgBrands,
   useOrgLocationOptions,
-  type FocusSelection,
+  validLocationKey,
+  type OrgBrand,
 } from '@/hooks/useProfileSetup';
 
 const PASSWORD_MIN_LENGTH = 8;
@@ -63,12 +64,25 @@ const Welcome = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'valid' | 'expired'>('checking');
   const [expiredReason, setExpiredReason] = useState<'used' | 'invalid' | 'expired' | null>(null);
-  // Locations the invitee focuses on (canonical keys); the priority is what
-  // the dashboard opens on, the rest get pinned in the location menu. Options
-  // span the organization the invite created the membership in, so they match
-  // the dashboard's location filter.
-  const [focus, setFocus] = useState<FocusSelection>(EMPTY_FOCUS);
-  const { data: locationOptions = [], isLoading: locationsLoading } = useOrgLocationOptions(user?.id);
+  // "What do you want to focus on first?": one subsidiary (when the org has
+  // several) and one country — a canonical location key, or null for all.
+  // Country options are scoped to the subsidiary and match the dashboard's
+  // location filter; the dashboard lands on that company. `brand` stays
+  // undefined (and the country list pending) until brands load.
+  const brandsQuery = useOrgBrands(user?.id);
+  const brands = brandsQuery.data?.brands ?? [];
+  const [brandKey, setBrandKey] = useState<string | null>(null);
+  const brand: OrgBrand | null | undefined = brandsQuery.isPending
+    ? undefined
+    : (brandKey ? brands.find((b) => b.key === brandKey) : undefined) ?? brands[0] ?? null;
+  const locationsQuery = useOrgLocationOptions(user?.id, brand);
+  const locationOptions = locationsQuery.data ?? [];
+  const locationsLoading = locationsQuery.isPending;
+  const [location, setLocation] = useState<string | null>(null);
+  const chooseBrand = (key: string) => {
+    setBrandKey(key);
+    setLocation(null); // countries belong to a subsidiary; start over
+  };
 
   // New flow: exchange a durable invite token (?invite=…) for a fresh session.
   // The redeem-invite function mints a one-time OTP we verify here, so the
@@ -155,21 +169,21 @@ const Welcome = () => {
       return;
     }
 
-    const selection = pruneFocusSelection(focus, locationOptions);
+    const locationKey = validLocationKey(location, locationOptions);
 
     setLoading(true);
     try {
-      // Password plus session metadata (name, focus locations) in one call.
+      // Password plus session metadata (name, company, country) in one call.
       const { error } = await supabase.auth.updateUser({
         password,
-        data: { full_name: name, ...profileSetupMetadata(selection, locationOptions) },
+        data: { full_name: name, ...profileSetupMetadata(locationKey, locationOptions, brand) },
       });
       if (error) throw error;
 
       // Keep the app-facing profile in sync — the name is what teammates see
       // in invite emails when this user invites others later — and stamp
       // first-login setup complete so the dashboard gate never shows it.
-      await completeProfileSetup({ fullName: name, selection, options: locationOptions });
+      await completeProfileSetup({ fullName: name, locationKey, options: locationOptions, brand });
 
       toast.success("You're all set — welcome to PerceptionX!");
       navigate('/dashboard');
@@ -277,18 +291,46 @@ const Welcome = () => {
             />
           </div>
 
-          {(locationsLoading || locationOptions.length > 0) && (
-            <div className="space-y-1.5">
-              <span className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                Which locations do you focus on?
-              </span>
-              <LocationFocusPicker
-                options={locationOptions}
-                value={focus}
-                onChange={setFocus}
-                loading={locationsLoading}
-                disabled={loading}
-              />
+          {(brands.length > 1 || locationsLoading || locationOptions.length > 0) && (
+            <div className="space-y-3 rounded-2xl border border-gray-100 bg-gray-50/60 p-4">
+              <p className="text-[13px] font-semibold text-nightsky">What do you want to focus on first?</p>
+
+              {brands.length > 1 && (
+                <div className="space-y-1.5">
+                  <label htmlFor="company" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                    Subsidiary
+                  </label>
+                  <CompanyBrandSelect
+                    id="company"
+                    brands={brands}
+                    value={brand?.key ?? null}
+                    onChange={chooseBrand}
+                    disabled={loading}
+                    className={inputClass}
+                  />
+                </div>
+              )}
+
+              {(locationsLoading || locationOptions.length > 0) && (
+                <div className="space-y-1.5">
+                  <label htmlFor="location" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                    Country
+                  </label>
+                  <LocationSelect
+                    id="location"
+                    options={locationOptions}
+                    value={location}
+                    onChange={setLocation}
+                    loading={locationsLoading}
+                    disabled={loading}
+                    className={inputClass}
+                  />
+                </div>
+              )}
+
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Your dashboard opens here. Change it any time from your account.
+              </p>
             </div>
           )}
 
