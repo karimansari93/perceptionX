@@ -173,6 +173,9 @@ if (busiest) {
     check('focused attribute returns example_themes', Array.isArray(focus.example_themes));
     check('focused attribute returns the sources in those answers',
       Array.isArray(focus.sources_in_attribute_answers?.sources) && String(focus.sources_in_attribute_answers?.note || '').includes('not cause'));
+    check('source breakdown is populated (not a silent timeout)',
+      (focus.sources_in_attribute_answers?.sources || []).length > 0 || (focus.sources_in_attribute_answers?.sample_size?.answers_sampled ?? 0) === 0,
+      String(focus.sources_in_attribute_answers?.note || ''));
     checkPresentation('get_attribute_themes/focus', focus);
   }
 

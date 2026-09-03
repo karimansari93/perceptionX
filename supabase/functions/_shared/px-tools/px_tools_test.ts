@@ -121,7 +121,7 @@ function rpc(name: string, params: any): { data: any; error: any } {
         error: null,
       };
     case 'mcp_get_attribute_sources':
-      return { data: { attribute_answers: 345, rows: [{ domain: 'glassdoor.com', answers_citing: 138 }, { domain: 'careers.ford.com', answers_citing: 100 }] }, error: null };
+      return { data: { answers_sampled: 345, attribute_answers_pool: 645, rows: [{ domain: 'glassdoor.com', answers_citing: 138 }, { domain: 'careers.ford.com', answers_citing: 100 }] }, error: null };
     case 'mcp_get_theme_stats':
       return {
         data: {

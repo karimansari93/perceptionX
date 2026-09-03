@@ -239,10 +239,15 @@ export async function getAttributeThemes(
 
   // Real quotes + the sources in play when a single attribute is in focus —
   // the "what are people actually saying, and from where" half of the
-  // answer. Both are bounded to the reported window. No ids or dates.
+  // answer. Quotes span the window; the source breakdown is scoped to the
+  // LATEST measured quarter (the period a "why did this change" question is
+  // about, and a bounded read: a brand-wide multi-quarter scan of citation
+  // JSON exceeds the PostgREST statement budget). No ids or dates.
   let quotes: any[] = [];
   let sourcesBlock: Record<string, unknown> | undefined;
   if (attributeId) {
+    const latestQuarter = r.quarters[r.quarters.length - 1];
+    const latestMonths = r.months.filter(m => monthToQuarter(m) === latestQuarter);
     let q = ctx.admin
       .from('ai_themes')
       .select('theme_name, sentiment, context_snippets, keywords, created_at, prompt_responses!inner(ai_model, response_month, confirmed_prompts!inner(location_context))')
@@ -260,7 +265,7 @@ export async function getAttributeThemes(
         p_company_ids: r.scope.companyIds,
         p_attribute_id: attributeId,
         p_buckets: r.buckets,
-        p_months: r.months,
+        p_months: latestMonths,
         p_limit: 10,
       }),
     ]);
@@ -281,16 +286,26 @@ export async function getAttributeThemes(
       if (quotes.length >= 14) break;
     }
 
-    const attributeAnswers = Number(sourcesRes.data?.attribute_answers) || 0;
-    sourcesBlock = {
-      note: `Domains cited in the answers that discuss ${attributeName(attributeId)} — where this topic is being sourced from. Association, not cause.`,
-      sources: ((sourcesRes.data?.rows as any[]) || []).map((row: any) => ({
-        domain: row.domain,
-        cited_in_pct_of_attribute_answers: pct(row.answers_citing || 0, attributeAnswers),
-        sample_size: { answers_citing: row.answers_citing || 0 },
-      })),
-      sample_size: { attribute_answers: attributeAnswers },
-    };
+    // Percentages are of a random sample (up to 2,000) of the answers that
+    // discuss the attribute in the latest period — the payload says so.
+    const answersSampled = Number(sourcesRes.data?.answers_sampled) || 0;
+    const periodLabel = labelQuarter(latestQuarter, r.inProgressQuarter);
+    sourcesBlock = sourcesRes.error
+      ? {
+          period: periodLabel,
+          note: `The source breakdown for ${attributeName(attributeId)} could not be computed for this scope right now; ask again with a single market (location) to narrow it.`,
+          sources: [],
+        }
+      : {
+          period: periodLabel,
+          note: `Domains cited in the ${periodLabel} answers that discuss ${attributeName(attributeId)} (a random sample of ${answersSampled} answers) — where this topic is being sourced from. Association, not cause.`,
+          sources: ((sourcesRes.data?.rows as any[]) || []).map((row: any) => ({
+            domain: row.domain,
+            cited_in_pct_of_attribute_answers: pct(row.answers_citing || 0, answersSampled),
+            sample_size: { answers_citing: row.answers_citing || 0 },
+          })),
+          sample_size: { answers_sampled: answersSampled },
+        };
   }
 
   return JSON.stringify({
