@@ -135,7 +135,7 @@ const InviteTeammatesModal = ({ open, onOpenChange, orgs }: InviteTeammatesModal
     const value = email.trim().toLowerCase();
     if (!value) return null;
     if (!EMAIL_RE.test(value)) return 'Not a valid email address';
-    if (!value.endsWith(`@${userDomain}`)) return `Must be an @${userDomain} email`;
+    if (!value.endsWith(`@${userDomain}`)) return `Must be @${userDomain} email`;
     return null;
   };
 
