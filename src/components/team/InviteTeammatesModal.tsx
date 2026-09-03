@@ -169,14 +169,18 @@ const InviteTeammatesModal = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, selectedOrg?.organization_id, results]);
 
+  // The dashboard's own dialog is strict about the domain; the pX admin panel
+  // (on-behalf context) may invite any address — support and testing. The
+  // function applies the same rule server-side.
+  const enforceDomain = !allowSendOnBehalf;
   const isValidEmail = (email: string) =>
-    EMAIL_RE.test(email) && email.endsWith(`@${userDomain}`);
+    EMAIL_RE.test(email) && (!enforceDomain || email.endsWith(`@${userDomain}`));
 
   const rowError = (email: string): string | null => {
     const value = email.trim().toLowerCase();
     if (!value) return null;
     if (!EMAIL_RE.test(value)) return 'Not a valid email address';
-    if (!value.endsWith(`@${userDomain}`)) return `Must be a @${userDomain} email`;
+    if (enforceDomain && !value.endsWith(`@${userDomain}`)) return `Must be a @${userDomain} email`;
     return null;
   };
 
@@ -298,8 +302,17 @@ const InviteTeammatesModal = ({
                 Invite your team
               </DialogTitle>
               <DialogDescription className="text-[13px] text-gray-500 mt-1 leading-snug" style={{ fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
-                Add a teammate with a <span className="font-semibold text-[#13274F]">@{userDomain}</span> email
-                to join you. They just set a password and land on the dashboard.
+                {enforceDomain ? (
+                  <>
+                    Add a teammate with a <span className="font-semibold text-[#13274F]">@{userDomain}</span> email
+                    to join you. They just set a password and land on the dashboard.
+                  </>
+                ) : (
+                  <>
+                    Add a teammate by email — any domain, since you&rsquo;re sending as a PerceptionX admin.
+                    They just set a password and land on the dashboard.
+                  </>
+                )}
               </DialogDescription>
             </div>
           </div>

@@ -34,7 +34,9 @@ const corsHeaders = {
  * Rules enforced server-side:
  *   - Caller must be a Super Admin of the org (or a platform admin).
  *   - Invitee email domain must match the inviter's email domain (the caller,
- *     or the admin the invites are sent on behalf of).
+ *     or the admin the invites are sent on behalf of) — except when the
+ *     caller is a platform admin, who may invite any address (support,
+ *     testing). The dashboard's own invite dialog stays strict.
  *   - Resends are attributed to the invite's original inviter.
  *   - Email delivery: Resend when RESEND_API_KEY is set (branded
  *     "X invited you" email), otherwise Supabase's built-in invite email.
@@ -417,7 +419,9 @@ serve(async (req) => {
             results.push({ email, status: "error", message: "Invalid email address" });
             continue;
           }
-          if (email.split("@")[1] !== inviterDomain) {
+          // Org Super Admins may only invite their own domain. Platform admins
+          // (pX admin panel) may invite any address — support and testing.
+          if (!isPlatformAdmin && email.split("@")[1] !== inviterDomain) {
             results.push({
               email,
               status: "error",
