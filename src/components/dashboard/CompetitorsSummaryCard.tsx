@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { getCompetitorFavicon } from "@/utils/citationUtils";
+import { dedupeResponsesById } from "@/utils/responseUtils";
 import { poolCompetitorRows } from "@/hooks/dashboard/scopeStatsSelect";
 import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 import type { CompetitorStatsRow, ScopePromptTypeStatsRow } from "@/hooks/dashboard/dashboardQueries";
@@ -129,11 +130,11 @@ export const CompetitorsSummaryCard = ({
   // percentage is "share of these responses that mention it", matching the
   // Competitors tab.
   const competitiveResponses = useMemo(
-    () => responses.filter(r => r.confirmed_prompts?.prompt_type === 'competitive'),
+    () => dedupeResponsesById(responses).filter(r => r.confirmed_prompts?.prompt_type === 'competitive'),
     [responses]
   );
   const prevCompetitiveResponses = useMemo(
-    () => previousPeriodResponses.filter(r => r.confirmed_prompts?.prompt_type === 'competitive'),
+    () => dedupeResponsesById(previousPeriodResponses).filter(r => r.confirmed_prompts?.prompt_type === 'competitive'),
     [previousPeriodResponses]
   );
 
