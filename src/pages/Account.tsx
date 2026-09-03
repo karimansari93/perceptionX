@@ -10,6 +10,16 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { updatePromptText, isValidPromptUpdate } from '@/utils/promptUtils';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { useQueryClient } from '@tanstack/react-query';
+import { LocationPreferenceField } from '@/components/onboarding/LocationPreferenceField';
+import {
+  locationEntryRawValue,
+  profileSetupMetadata,
+  profileSetupQueryKey,
+  useOrgLocationOptions,
+  useProfileSetupStatus,
+} from '@/hooks/useProfileSetup';
+import { canonicalizeLocationContext } from '@/utils/locationContext';
 
 function AccountSidebar({ activeSection, onSectionChange }) {
   const { state } = useSidebar();
@@ -76,6 +86,17 @@ export default function Account() {
   const [success, setSuccess] = useState(false);
   const [form, setForm] = useState({ company: '', industry: '', email: '' });
   const [originalForm, setOriginalForm] = useState({ company: '', industry: '', email: '' });
+
+  // Default dashboard location — chosen at first login, editable here. Kept
+  // as "saved value unless the user touched the picker" so no effect has to
+  // copy query data into state.
+  const queryClient = useQueryClient();
+  const setupStatus = useProfileSetupStatus(user?.id);
+  const { data: locationOptions = [], isLoading: locationsLoading } = useOrgLocationOptions(user?.id);
+  const savedLocation = canonicalizeLocationContext(setupStatus.data?.defaultLocationContext);
+  const [pickedLocation, setPickedLocation] = useState<string | null>(null);
+  const [locationTouched, setLocationTouched] = useState(false);
+  const currentLocation = locationTouched ? pickedLocation : savedLocation;
 
   useEffect(() => {
     async function fetchData() {
@@ -160,6 +181,27 @@ export default function Account() {
     setSaving(true);
     setSuccess(false);
     try {
+      // Default dashboard location: session copy (what the dashboard reads on
+      // load) plus the durable profile column.
+      if (user && locationTouched && currentLocation !== savedLocation) {
+        const entry = locationOptions.find((o) => o.canonicalKey === currentLocation) ?? null;
+        const { error: metaError } = await supabase.auth.updateUser({
+          data: profileSetupMetadata(entry),
+        });
+        if (metaError) throw metaError;
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ default_location_context: locationEntryRawValue(entry) } as never)
+          .eq('id', user.id);
+        if (profileError) throw profileError;
+        queryClient.setQueryData(profileSetupQueryKey(user.id), (prev: unknown) =>
+          prev && typeof prev === 'object'
+            ? { ...(prev as object), defaultLocationContext: locationEntryRawValue(entry) }
+            : prev,
+        );
+        setLocationTouched(false);
+      }
+
       // Editing company info from the user-facing Account page has been
       // retired — companies are now managed by admins. Old code wrote to
       // user_onboarding (dead table); we no-op the persistence and let
@@ -250,6 +292,22 @@ export default function Account() {
                       Changing your industry will automatically update your existing prompts to reflect the new industry.
                     </p>
                   </div>
+                  {(locationsLoading || locationOptions.length > 0) && (
+                    <div>
+                      <label htmlFor="default-location" className="block text-sm font-medium mb-1">Default dashboard location</label>
+                      <LocationPreferenceField
+                        id="default-location"
+                        options={locationOptions}
+                        value={currentLocation}
+                        onChange={(key) => { setPickedLocation(key); setLocationTouched(true); }}
+                        loading={locationsLoading || setupStatus.isPending}
+                        disabled={loading || saving}
+                      />
+                      <p className="text-sm text-gray-500 mt-1">
+                        The location your dashboard opens on when you sign in. Starring a view on the dashboard overrides this in that browser.
+                      </p>
+                    </div>
+                  )}
                   <Button
                     type="submit"
                     disabled={loading || saving}

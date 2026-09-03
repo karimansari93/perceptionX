@@ -7,6 +7,8 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { Check, Loader2, ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { LocationPreferenceField } from '@/components/onboarding/LocationPreferenceField';
+import { completeProfileSetup, profileSetupMetadata, useOrgLocationOptions } from '@/hooks/useProfileSetup';
 
 const PASSWORD_MIN_LENGTH = 8;
 
@@ -54,6 +56,11 @@ const Welcome = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'valid' | 'expired'>('checking');
   const [expiredReason, setExpiredReason] = useState<'used' | 'invalid' | 'expired' | null>(null);
+  // Canonical key of the location the invitee wants the dashboard to open on;
+  // null = "All locations". Options span the organization the invite created
+  // the membership in, so they match the dashboard's location filter.
+  const [location, setLocation] = useState<string | null>(null);
+  const { data: locationOptions = [], isLoading: locationsLoading } = useOrgLocationOptions(user?.id);
 
   // New flow: exchange a durable invite token (?invite=…) for a fresh session.
   // The redeem-invite function mints a one-time OTP we verify here, so the
@@ -140,19 +147,21 @@ const Welcome = () => {
       return;
     }
 
+    const locationEntry = locationOptions.find((o) => o.canonicalKey === location) ?? null;
+
     setLoading(true);
     try {
+      // Password plus session metadata (name, default location) in one call.
       const { error } = await supabase.auth.updateUser({
         password,
-        data: { full_name: name },
+        data: { full_name: name, ...profileSetupMetadata(locationEntry) },
       });
       if (error) throw error;
 
-      // Keep the app-facing profile in sync; the name is what teammates see
-      // in invite emails when this user invites others later.
-      if (user) {
-        await supabase.from('profiles').update({ full_name: name }).eq('id', user.id);
-      }
+      // Keep the app-facing profile in sync — the name is what teammates see
+      // in invite emails when this user invites others later — and stamp
+      // first-login setup complete so the dashboard gate never shows it.
+      await completeProfileSetup({ fullName: name, location: locationEntry });
 
       toast.success("You're all set — welcome to PerceptionX!");
       navigate('/dashboard');
@@ -258,6 +267,26 @@ const Welcome = () => {
               required
             />
           </div>
+
+          {(locationsLoading || locationOptions.length > 0) && (
+            <div className="space-y-1.5">
+              <label htmlFor="location" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                Which location do you focus on?
+              </label>
+              <LocationPreferenceField
+                id="location"
+                options={locationOptions}
+                value={location}
+                onChange={setLocation}
+                loading={locationsLoading}
+                disabled={loading}
+                className={inputClass}
+              />
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Your dashboard will open on this location. Change it any time from your account.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <label htmlFor="password" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">

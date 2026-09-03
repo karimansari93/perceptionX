@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { stashReturnTo } from '@/lib/returnTo';
+import { ProfileSetupGate } from '@/components/onboarding/ProfileSetupGate';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -30,7 +31,9 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     return null;
   }
 
-  return <>{children}</>;
+  // Signed in, but never completed first-login setup (name + default
+  // location)? Show that instead of the page, once; then the page renders.
+  return <ProfileSetupGate>{children}</ProfileSetupGate>;
 };
 
 export default ProtectedRoute;

@@ -42,6 +42,7 @@ import { buildLocationOptions, canonicalizeLocationContext, companyCountryKey, G
 import { GLOBAL_LIKE } from "@/utils/locations";
 import { LEGACY_ATTRIBUTE_MAP } from "@/config/attributes";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
+import { defaultLocationFromUser } from "@/hooks/useProfileSetup";
 import { sentimentRatioV2, EXCLUDED_AI_MODELS_FILTER } from "@/lib/sentimentV2";
 
 // Pure aggregation of `company_*_by_location_mv` rows into the same shape the
@@ -1440,6 +1441,13 @@ export const useDashboardData = () => {
         if (starred.companyId == null) {
           stampStarredViewCompany(user?.id, currentCompany.id);
         }
+      } else {
+        // No pinned view for this company: fall back to the location the user
+        // chose at first login (profiles.default_location_context, mirrored
+        // into auth metadata so it reads without a fetch). rawUser rather than
+        // the id-memoized `user`, so a default saved this session is seen. The
+        // reconcile effect clears it if this company has no such location.
+        next = defaultLocationFromUser(rawUser);
       }
     }
     setSelectedLocationState(next ?? null);
