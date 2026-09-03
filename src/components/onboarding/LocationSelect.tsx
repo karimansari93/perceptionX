@@ -1,3 +1,4 @@
+import ReactCountryFlag from 'react-country-flag';
 import { Globe, MapPin } from 'lucide-react';
 import {
   Select,
@@ -6,7 +7,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { getCountryFlag } from '@/utils/countryFlags';
 import type { LocationEntry } from '@/utils/locationContext';
 
 // Radix Select forbids an empty-string item value, so "All countries" gets a
@@ -24,9 +24,18 @@ interface LocationSelectProps {
   className?: string;
 }
 
+// SVG flags (same as the Activate page): Windows has no flag emoji font, so
+// emoji flags render there as two-letter codes.
 const EntryIcon = ({ entry }: { entry: LocationEntry }) => {
   if (entry.icon === 'flag' && entry.flagCode) {
-    return <span className="text-base leading-none">{getCountryFlag(entry.flagCode)}</span>;
+    return (
+      <ReactCountryFlag
+        countryCode={entry.flagCode}
+        svg
+        aria-hidden
+        style={{ width: 18, height: 18, borderRadius: 3 }}
+      />
+    );
   }
   if (entry.icon === 'pin') return <MapPin className="h-4 w-4 text-gray-400" />;
   return <Globe className="h-4 w-4 text-gray-400" />;
