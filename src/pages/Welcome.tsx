@@ -7,8 +7,15 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { Check, Loader2, ArrowRight, Eye, EyeOff } from 'lucide-react';
-import { CompanyBrandSelect } from '@/components/onboarding/CompanyBrandSelect';
-import { LocationSelect } from '@/components/onboarding/LocationSelect';
+import { CompanyStep } from '@/components/onboarding/CompanyStep';
+import { CountryStep } from '@/components/onboarding/CountryStep';
+import {
+  SETUP_PAGE_BG,
+  SetupStepper,
+  setupDisplay,
+  setupInputClass,
+  setupSans,
+} from '@/components/onboarding/SetupStepper';
 import {
   completeProfileSetup,
   profileSetupMetadata,
@@ -45,14 +52,20 @@ const initialsOf = (name: string) =>
     .join('')
     .toUpperCase();
 
-const PAGE_BG =
-  'linear-gradient(135deg, #f7dee7 0%, #fbeaf0 45%, #eef1f8 100%)';
+const sans = setupSans;
+const display = setupDisplay;
 
-const sans = { fontFamily: 'Plus Jakarta Sans, sans-serif' };
-const display = { fontFamily: 'Geologica, sans-serif' };
+type StepId = 'about' | 'company' | 'country';
 
-// Landing page for team invites: the email's action link signs the invitee in
-// and redirects here so they can set a password before entering the dashboard.
+const primaryButtonClass =
+  'w-full h-11 bg-pink hover:bg-pink/90 text-white rounded-full font-bold text-[15px] disabled:opacity-50 group';
+
+// Landing page for team invites: the email's link signs the invitee in and
+// brings them here for a short step-by-step setup — name and password first
+// (saved immediately, so stopping here still leaves a working login), then
+// "what do you want to focus on first?": company (multi-brand orgs) and
+// country. Anyone who stops after step one gets the remaining questions from
+// the ProfileSetupGate on their next visit.
 const Welcome = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -64,25 +77,33 @@ const Welcome = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'valid' | 'expired'>('checking');
   const [expiredReason, setExpiredReason] = useState<'used' | 'invalid' | 'expired' | null>(null);
-  // "What do you want to focus on first?": one subsidiary (when the org has
-  // several) and one country — a canonical location key, or null for all.
-  // Country options are scoped to the subsidiary and match the dashboard's
-  // location filter; the dashboard lands on that company. `brand` stays
-  // undefined (and the country list pending) until brands load.
+
+  // "What do you want to focus on first?": one company (when the org has
+  // several) and one country. Country options are scoped to the company and
+  // match the dashboard's location filter; the dashboard lands there.
+  // `brand` stays undefined (and the country list pending) until brands load
+  // or, in a multi-brand org, until the company is chosen.
   const brandsQuery = useOrgBrands(user?.id);
   const brands = brandsQuery.data?.brands ?? [];
   const [brandKey, setBrandKey] = useState<string | null>(null);
   const brand: OrgBrand | null | undefined = brandsQuery.isPending
     ? undefined
-    : (brandKey ? brands.find((b) => b.key === brandKey) : undefined) ?? brands[0] ?? null;
+    : brands.length <= 1
+      ? brands[0] ?? null
+      : brandKey
+        ? brands.find((b) => b.key === brandKey) ?? null
+        : undefined;
   const locationsQuery = useOrgLocationOptions(user?.id, brand);
   const locationOptions = locationsQuery.data ?? [];
-  const locationsLoading = locationsQuery.isPending;
-  const [location, setLocation] = useState<string | null>(null);
-  const chooseBrand = (key: string) => {
-    setBrandKey(key);
-    setLocation(null); // countries belong to a subsidiary; start over
-  };
+  // undefined until the invitee picks; null = "All countries", chosen.
+  const [location, setLocation] = useState<string | null | undefined>(undefined);
+
+  // One question per step.
+  const steps: StepId[] = ['about', ...(brands.length > 1 ? (['company'] as StepId[]) : []), 'country'];
+  const [step, setStep] = useState<StepId>('about');
+  const stepIndex = Math.max(0, steps.indexOf(step));
+  const goNext = () => setStep(steps[Math.min(stepIndex + 1, steps.length - 1)]);
+  const goBack = () => setStep(steps[Math.max(stepIndex - 1, 0)]);
 
   // New flow: exchange a durable invite token (?invite=…) for a fresh session.
   // The redeem-invite function mints a one-time OTP we verify here, so the
@@ -158,8 +179,18 @@ const Welcome = () => {
 
   const inviterName = (user?.user_metadata?.inviter_name as string) || null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const requirements = [
+    { ok: password.length >= PASSWORD_MIN_LENGTH, label: 'At least 8 characters' },
+    { ok: /[A-Z]/.test(password), label: 'One uppercase letter' },
+    { ok: /[a-z]/.test(password), label: 'One lowercase letter' },
+    { ok: /[0-9]/.test(password), label: 'One number' },
+  ];
+  const passwordValid = !validatePassword(password);
+  const canContinueAbout = !!fullName.trim() && passwordValid && !brandsQuery.isPending;
+
+  // Step 1: save the login right away, so someone who stops here still has
+  // an account (the setup gate asks the rest on their next visit).
+  const saveCredentials = async () => {
     const name = fullName.trim();
     if (!name) {
       toast.error('Please enter your name');
@@ -170,28 +201,52 @@ const Welcome = () => {
       toast.error(validationError);
       return;
     }
-
-    const locationKey = validLocationKey(location, locationOptions);
-
     setLoading(true);
     try {
-      // Password plus session metadata (name, company, country) in one call.
       const { error } = await supabase.auth.updateUser({
         password,
-        data: { full_name: name, ...profileSetupMetadata(locationKey, locationOptions, brand) },
+        data: { full_name: name },
       });
       if (error) throw error;
-
       // Keep the app-facing profile in sync — the name is what teammates see
-      // in invite emails when this user invites others later — and stamp
-      // first-login setup complete so the dashboard gate never shows it.
-      await completeProfileSetup({ fullName: name, locationKey, options: locationOptions, brand });
+      // in invite emails when this user invites others later.
+      if (user) {
+        await supabase.from('profiles').update({ full_name: name }).eq('id', user.id);
+      }
+      goNext();
+    } catch (error: any) {
+      console.error('Error setting password:', error);
+      toast.error(error.message || 'Failed to set password');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const chooseBrand = (key: string) => {
+    setBrandKey(key);
+    setLocation(undefined); // countries belong to a company; choose again
+    goNext();
+  };
+
+  // Last step: company + country into the session and the profile, and
+  // stamp first-login setup complete so the dashboard gate never shows it.
+  const finish = async () => {
+    const name = fullName.trim();
+    const chosenBrand = brand ?? null;
+    const locationKey = validLocationKey(location ?? null, locationOptions);
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        data: { full_name: name, ...profileSetupMetadata(locationKey, locationOptions, chosenBrand) },
+      });
+      if (error) throw error;
+      await completeProfileSetup({ fullName: name, locationKey, options: locationOptions, brand: chosenBrand });
 
       toast.success("You're all set — welcome to PerceptionX!");
       navigate('/dashboard');
     } catch (error: any) {
-      console.error('Error setting password:', error);
-      toast.error(error.message || 'Failed to set password');
+      console.error('Error finishing setup:', error);
+      toast.error(error.message || 'Could not save your details');
     } finally {
       setLoading(false);
     }
@@ -203,7 +258,7 @@ const Welcome = () => {
 
   if (sessionStatus === 'expired') {
     return (
-      <div className="min-h-screen w-screen flex items-center justify-center p-6" style={{ background: PAGE_BG }}>
+      <div className="min-h-screen w-screen flex items-center justify-center p-6" style={{ background: SETUP_PAGE_BG }}>
         <div className="w-full max-w-[420px] bg-white rounded-3xl shadow-[0_24px_70px_-20px_rgba(19,39,79,0.3)] overflow-hidden text-center">
           <div className="bg-gradient-to-br from-pink/15 via-white to-[#13274F]/5 px-8 pt-9 pb-7">
             <img src="/logos/PerceptionX-PrimaryLogo.png" alt="PerceptionX" className="h-5 mx-auto mb-6" />
@@ -236,47 +291,70 @@ const Welcome = () => {
     );
   }
 
-  const requirements = [
-    { ok: password.length >= PASSWORD_MIN_LENGTH, label: 'At least 8 characters' },
-    { ok: /[A-Z]/.test(password), label: 'One uppercase letter' },
-    { ok: /[a-z]/.test(password), label: 'One lowercase letter' },
-    { ok: /[0-9]/.test(password), label: 'One number' },
-  ];
-  const passwordValid = !validatePassword(password);
-  // Wait for the location list so a submit can't silently drop the picks.
-  const canSubmit = !!fullName.trim() && passwordValid && !locationsLoading;
-
-  const inputClass =
-    'h-11 rounded-xl border-gray-200 bg-white placeholder:text-gray-300 placeholder:font-light focus-visible:ring-2 focus-visible:ring-pink/25 focus-visible:border-pink transition';
-
-  return (
-    <div className="min-h-screen w-screen flex items-center justify-center p-6" style={{ background: PAGE_BG }}>
-      <div className="w-full max-w-[420px] bg-white rounded-3xl shadow-[0_24px_70px_-20px_rgba(19,39,79,0.3)] overflow-hidden">
-        {/* Hero */}
-        <div className="bg-gradient-to-br from-pink/15 via-white to-[#13274F]/5 px-8 pt-9 pb-7 text-center border-b border-gray-100/80">
-          <img src="/logos/PerceptionX-PrimaryLogo.png" alt="PerceptionX" className="h-5 mx-auto mb-6" />
-          <h1 className="text-[24px] font-bold text-nightsky leading-tight" style={display}>
-            Welcome to the team
-          </h1>
-
-          {inviterName && (
-            <div className="mt-4 inline-flex items-center gap-2.5 rounded-full bg-white border border-gray-100 pl-1.5 pr-4 py-1.5 shadow-sm">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-pink text-white text-[11px] font-bold flex-shrink-0">
-                {initialsOf(inviterName)}
-              </span>
-              <span className="text-[13px] text-nightsky/80 leading-tight text-left" style={sans}>
-                <span className="font-semibold text-nightsky">{inviterName}</span> invited you to join them
-              </span>
-            </div>
-          )}
-
-          <p className="mt-3 text-[14px] text-nightsky/60" style={sans}>
-            Add your details and get started instantly.
-          </p>
+  const hero = (
+    <>
+      <img src="/logos/PerceptionX-PrimaryLogo.png" alt="PerceptionX" className="h-5 mx-auto mb-5" />
+      <h1 className="text-[22px] font-bold text-nightsky leading-tight" style={display}>
+        Welcome to the team
+      </h1>
+      {inviterName && (
+        <div className="mt-3 inline-flex items-center gap-2.5 rounded-full bg-white border border-gray-100 pl-1.5 pr-4 py-1.5 shadow-sm">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-pink text-white text-[11px] font-bold flex-shrink-0">
+            {initialsOf(inviterName)}
+          </span>
+          <span className="text-[13px] text-nightsky/80 leading-tight text-left" style={sans}>
+            <span className="font-semibold text-nightsky">{inviterName}</span> invited you to join them
+          </span>
         </div>
+      )}
+    </>
+  );
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="px-8 py-7 space-y-5" style={sans}>
+  const footnote = (
+    <div className="flex items-center justify-center gap-5">
+      <a href="https://perceptionx.ai/privacy" target="_blank" rel="noopener noreferrer" className="text-[11px] text-gray-400 hover:text-nightsky transition">
+        Privacy
+      </a>
+      <span className="h-3 w-px bg-gray-200" />
+      <a href="https://perceptionx.ai/terms" target="_blank" rel="noopener noreferrer" className="text-[11px] text-gray-400 hover:text-nightsky transition">
+        Terms
+      </a>
+    </div>
+  );
+
+  if (step === 'about') {
+    return (
+      <SetupStepper
+        hero={hero}
+        stepIndex={stepIndex}
+        stepCount={steps.length}
+        title="First, your details"
+        subtitle="Your name and a password for your account."
+        footnote={footnote}
+        action={
+          <Button type="submit" form="welcome-about" disabled={loading || !canContinueAbout} className={primaryButtonClass}>
+            {loading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Saving…
+              </>
+            ) : (
+              <>
+                Continue
+                <ArrowRight className="h-4 w-4 ml-2 transition-transform group-hover:translate-x-0.5" />
+              </>
+            )}
+          </Button>
+        }
+      >
+        <form
+          id="welcome-about"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void saveCredentials();
+          }}
+          className="space-y-5"
+        >
           <div className="space-y-1.5">
             <label htmlFor="fullName" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
               Your name
@@ -288,53 +366,11 @@ const Welcome = () => {
               onChange={(e) => setFullName(e.target.value)}
               placeholder="First and last name"
               autoComplete="name"
-              className={inputClass}
+              className={setupInputClass}
+              autoFocus
               required
             />
           </div>
-
-          {(brands.length > 1 || locationsLoading || locationOptions.length > 0) && (
-            <div className="space-y-3 rounded-2xl border border-gray-100 bg-gray-50/60 p-4">
-              <p className="text-[13px] font-semibold text-nightsky">What do you want to focus on first?</p>
-
-              {brands.length > 1 && (
-                <div className="space-y-1.5">
-                  <label htmlFor="company" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                    Company
-                  </label>
-                  <CompanyBrandSelect
-                    id="company"
-                    brands={brands}
-                    value={brand?.key ?? null}
-                    onChange={chooseBrand}
-                    disabled={loading}
-                    className={inputClass}
-                  />
-                </div>
-              )}
-
-              {(locationsLoading || locationOptions.length > 0) && (
-                <div className="space-y-1.5">
-                  <label htmlFor="location" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                    Country
-                  </label>
-                  <LocationSelect
-                    id="location"
-                    options={locationOptions}
-                    value={location}
-                    onChange={setLocation}
-                    loading={locationsLoading}
-                    disabled={loading}
-                    className={inputClass}
-                  />
-                </div>
-              )}
-
-              <p className="text-[11px] text-gray-400 leading-relaxed">
-                Your dashboard opens here. Change it any time from your account.
-              </p>
-            </div>
-          )}
 
           <div className="space-y-1.5">
             <label htmlFor="password" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
@@ -348,7 +384,7 @@ const Welcome = () => {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Create a password"
                 autoComplete="new-password"
-                className={`${inputClass} pr-11`}
+                className={`${setupInputClass} pr-11`}
                 required
               />
               <button
@@ -380,38 +416,74 @@ const Welcome = () => {
               </div>
             )}
           </div>
-
-          <Button
-            type="submit"
-            disabled={loading || !canSubmit}
-            className="w-full h-11 bg-pink hover:bg-pink/90 text-white rounded-full font-bold text-[15px] disabled:opacity-50 group"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                Setting up your account…
-              </>
-            ) : (
-              <>
-                Set password &amp; continue
-                <ArrowRight className="h-4 w-4 ml-2 transition-transform group-hover:translate-x-0.5" />
-              </>
-            )}
-          </Button>
         </form>
+      </SetupStepper>
+    );
+  }
 
-        {/* Footer */}
-        <div className="px-8 pb-7 -mt-2 flex items-center justify-center gap-5">
-          <a href="https://perceptionx.ai/privacy" target="_blank" rel="noopener noreferrer" className="text-[11px] text-gray-400 hover:text-nightsky transition">
-            Privacy
-          </a>
-          <span className="h-3 w-px bg-gray-200" />
-          <a href="https://perceptionx.ai/terms" target="_blank" rel="noopener noreferrer" className="text-[11px] text-gray-400 hover:text-nightsky transition">
-            Terms
-          </a>
-        </div>
-      </div>
-    </div>
+  if (step === 'company') {
+    return (
+      <SetupStepper
+        hero={hero}
+        stepIndex={stepIndex}
+        stepCount={steps.length}
+        title="Which company do you work with?"
+        subtitle="Your dashboard opens on this company. You can switch companies any time."
+        onBack={goBack}
+        footnote={footnote}
+        action={
+          <Button type="button" onClick={goNext} disabled={!brandKey} className={primaryButtonClass}>
+            Continue
+            <ArrowRight className="h-4 w-4 ml-2 transition-transform group-hover:translate-x-0.5" />
+          </Button>
+        }
+      >
+        <CompanyStep brands={brands} value={brandKey} onSelect={chooseBrand} disabled={loading} />
+      </SetupStepper>
+    );
+  }
+
+  const countriesLoading = locationsQuery.isPending;
+  const noCountries = locationsQuery.isSuccess && locationOptions.length === 0;
+  const chosen = location !== undefined || noCountries;
+  return (
+    <SetupStepper
+      hero={hero}
+      stepIndex={stepIndex}
+      stepCount={steps.length}
+      title="Which country do you focus on first?"
+      subtitle="Pick one to open on, or all countries. Change it any time from your account."
+      onBack={goBack}
+      footnote={footnote}
+      action={
+        <Button
+          type="button"
+          onClick={finish}
+          disabled={loading || countriesLoading || !chosen}
+          className={primaryButtonClass}
+        >
+          {loading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              Setting up your dashboard…
+            </>
+          ) : (
+            <>
+              Go to my dashboard
+              <ArrowRight className="h-4 w-4 ml-2 transition-transform group-hover:translate-x-0.5" />
+            </>
+          )}
+        </Button>
+      }
+    >
+      <CountryStep
+        options={locationOptions}
+        loading={countriesLoading}
+        value={location}
+        onSelect={setLocation}
+        disabled={loading}
+      />
+    </SetupStepper>
   );
 };
 
