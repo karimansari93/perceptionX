@@ -55,24 +55,35 @@ export const TRACKED_PLATFORMS = 'ChatGPT, Perplexity, Google AI Overviews, and 
 // payloads are the contract: any host model must be able to quote these
 // without access to our prompts.
 export const METHODOLOGY_NOTES = {
+  periods:
+    'Data is collected in periodic measurement waves (typically one per quarter) and reported by quarter. The periods listed are every period measured for this scope: a calendar month or quarter that is not listed was not a measurement period, not missing data. Sample sizes differ by wave, so compare periods on percentages, never on counts.',
+  shares:
+    'Percentages are the headline numbers; anything under sample_size is context for how much data sits behind a percentage and is never the story.',
   sentiment:
     'Sentiment = the share of opinionated (positive or negative) themes that are positive, as a percentage. Absent = not enough opinionated signal yet.',
   visibility:
     'Visibility = % of AI answers that mention the company by name.',
+  relevance:
+    'Relevance = citation-weighted freshness of the sources AI platforms cite (0-100).',
   platform_coverage:
     `Metrics are calculated from tracked consumer AI platforms: ${TRACKED_PLATFORMS}.`,
   eps:
     'EPS = 50% sentiment + 30% visibility + 20% relevance.',
+  attribute_share:
+    'mentioned_in_pct_of_answers = % of AI answers in the period that discuss the attribute; share_of_themes_pct = the attribute\'s share of all themes (the dashboard\'s attribute mix).',
 } as const;
 
-// Standard result envelope metadata. Client-facing periods are QUARTERS —
-// never raw dates or timestamps (collection is continuous inside a quarter,
-// so hard dates read as gaps/staleness that aren't real). `latest_period`
-// flags the running quarter as in progress so a light last data point is
-// never misread as a decline.
+// Standard result envelope metadata. Client-facing periods are QUARTERS
+// (never raw dates or timestamps), and they are MEASURED quarters: the
+// `periods` list is the complete set of collection waves in the window, so a
+// host model never has to guess whether an unlisted calendar quarter is a
+// gap. `latest_period` carries "(in progress)" only while a collection wave
+// is genuinely still writing.
 export interface EnvelopeMeta {
   latest_period?: string | null;
   period_range?: { from: string; to: string } | null;
+  periods?: string[];
+  collection_in_progress?: boolean;
   scope_companies?: number;
   scope_brand?: string;
   locations_matched?: string[];
@@ -82,7 +93,7 @@ export interface EnvelopeMeta {
 
 export function buildMeta(partial: Partial<EnvelopeMeta>): EnvelopeMeta {
   return {
-    methodology: [METHODOLOGY_NOTES.platform_coverage],
+    methodology: [METHODOLOGY_NOTES.platform_coverage, METHODOLOGY_NOTES.periods],
     ...partial,
   };
 }
@@ -90,36 +101,11 @@ export function buildMeta(partial: Partial<EnvelopeMeta>): EnvelopeMeta {
 // ─── Quarter helpers ────────────────────────────────────────────────────────
 // Internal storage stays monthly (the stats cubes' response_month grain);
 // everything client-facing rolls up to quarters at read time — same policy
-// as the dashboard's quarterly cutover.
+// as the dashboard's quarterly cutover (src/utils/quarterKey.ts).
 
 export function monthToQuarter(isoMonth: string): string {
   const [y, m] = isoMonth.slice(0, 10).split('-').map(Number);
   return `Q${Math.floor((m - 1) / 3) + 1} ${y}`;
-}
-
-export function currentQuarter(): string {
-  const now = new Date();
-  return `Q${Math.floor(now.getUTCMonth() / 3) + 1} ${now.getUTCFullYear()}`;
-}
-
-export function quarterLabel(q: string): string {
-  return q === currentQuarter() ? `${q} (in progress)` : q;
-}
-
-// The ISO first-of-month dates covering the last N quarters (including the
-// running one), oldest first — used to filter the monthly cubes.
-export function lastQuarterMonths(quartersBack: number): string[] {
-  const now = new Date();
-  const qStartMonth = Math.floor(now.getUTCMonth() / 3) * 3; // 0,3,6,9
-  const start = new Date(Date.UTC(now.getUTCFullYear(), qStartMonth - (quartersBack - 1) * 3, 1));
-  const out: string[] = [];
-  const cursor = new Date(start);
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  while (cursor <= end) {
-    out.push(cursor.toISOString().slice(0, 10));
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-  }
-  return out;
 }
 
 // Ascending-sort key for "Q3 2026" labels.
@@ -128,18 +114,126 @@ export function quarterSortKey(q: string): string {
   return m ? `${m[2]}-${m[1]}` : q;
 }
 
+export function sortQuarters(quarters: Iterable<string>): string[] {
+  return Array.from(new Set(quarters)).sort((a, b) => quarterSortKey(a).localeCompare(quarterSortKey(b)));
+}
+
+// Distinct quarters (ascending) covered by a list of ISO first-of-month dates.
+export function quartersOfMonths(months: string[]): string[] {
+  return sortQuarters(months.map(monthToQuarter));
+}
+
+// Presentation label: "(in progress)" is attached ONLY to the quarter whose
+// collection wave is still writing (decided from data, never from the
+// calendar) so a completed wave is never hedged as "may still be filling in".
+export function labelQuarter(q: string, inProgressQuarter: string | null): string {
+  return inProgressQuarter && q === inProgressQuarter ? `${q} (in progress)` : q;
+}
+
+// Strip a presentation label back to its bare quarter.
+export function bareQuarter(label: string): string {
+  return label.replace(/ \(in progress\)$/, '');
+}
+
+// The window a tool reports on: the last `quartersBack` MEASURED quarters of
+// the scope (not calendar quarters — a client that skipped a quarter still
+// gets N periods), as the months to filter cubes with plus the quarter labels
+// ascending.
+export function selectRecentQuarters(
+  measuredMonths: string[],
+  quartersBack: number
+): { months: string[]; quarters: string[] } {
+  const months = Array.from(new Set(measuredMonths.map(m => m.slice(0, 10)))).sort();
+  const quarters = quartersOfMonths(months);
+  const keep = new Set(quarters.slice(Math.max(0, quarters.length - Math.max(1, quartersBack))));
+  return {
+    months: months.filter(m => keep.has(monthToQuarter(m))),
+    quarters: quarters.filter(q => keep.has(q)),
+  };
+}
+
+// Roll monthly cube rows into an ordered quarterly series. `pick` extracts
+// the numeric fields to sum from each row. Quarter labels come out already
+// presentation-ready (see labelQuarter).
+export function toQuarterly<T extends Record<string, number>>(
+  rows: any[],
+  pick: (row: any) => T,
+  inProgressQuarter: string | null = null
+): Array<{ quarter: string } & T> {
+  const byQuarter = new Map<string, T>();
+  for (const row of rows) {
+    const q = monthToQuarter(String(row.response_month));
+    const vals = pick(row);
+    if (!byQuarter.has(q)) {
+      byQuarter.set(q, { ...vals });
+    } else {
+      const agg = byQuarter.get(q)!;
+      for (const k of Object.keys(vals)) (agg as any)[k] += vals[k];
+    }
+  }
+  return Array.from(byQuarter.entries())
+    .sort(([a], [b]) => quarterSortKey(a).localeCompare(quarterSortKey(b)))
+    .map(([quarter, vals]) => ({ quarter: labelQuarter(quarter, inProgressQuarter), ...vals }));
+}
+
+// ─── Number presentation ────────────────────────────────────────────────────
+// Percentages are integers ("81", never "0.81"); null when there is no
+// denominator so the host model says "no signal" instead of reading 0.
+
 export function pct(numerator: number, denominator: number): number | null {
   if (!denominator) return null;
   return Math.round((numerator / denominator) * 100);
 }
 
 // Sentiment (methodology v2) as an integer percentage: share of opinionated
-// themes that are positive. Null when nothing opinionated. Percentages, not
-// decimals — "81%", never "0.81".
+// themes that are positive. Null when nothing opinionated.
 export function sentimentPct(pos: number, neg: number): number | null {
   const polarized = pos + neg;
   if (polarized <= 0) return null;
   return Math.round((pos / polarized) * 100);
+}
+
+// One-decimal rate (e.g. citations per answer). Null without a denominator.
+export function rate1(numerator: number, denominator: number): number | null {
+  if (!denominator) return null;
+  return Math.round((numerator / denominator) * 10) / 10;
+}
+
+// Percentage-point change between two integer percentages.
+export function pointsDelta(latest: number | null | undefined, previous: number | null | undefined): number | null {
+  if (latest === null || latest === undefined || previous === null || previous === undefined) return null;
+  return latest - previous;
+}
+
+// Period-over-period change block shared by every trend-shaped payload:
+// latest vs the PREVIOUS MEASURED period (the dashboard's delta chip rule),
+// plus first→latest when there are more than two periods. Values are
+// percentage points; `note` only appears while a wave is still writing.
+export function changeBlock(
+  series: Array<{ quarter: string; value: number | null }>,
+  inProgressQuarter: string | null
+): Record<string, unknown> | null {
+  const points = series.filter(s => s.value !== null && s.value !== undefined) as Array<{ quarter: string; value: number }>;
+  if (points.length < 2) return null;
+  const latest = points[points.length - 1];
+  const previous = points[points.length - 2];
+  const first = points[0];
+  const block: Record<string, unknown> = {
+    latest_period: latest.quarter,
+    latest: latest.value,
+    previous_period: previous.quarter,
+    previous: previous.value,
+    delta_points_vs_previous: latest.value - previous.value,
+  };
+  if (points.length > 2) {
+    block.first_period = first.quarter;
+    block.first = first.value;
+    block.delta_points_since_first = latest.value - first.value;
+  }
+  if (inProgressQuarter && bareQuarter(latest.quarter) === inProgressQuarter) {
+    block.note = `${latest.quarter} is still being collected; its numbers can move until the wave completes.`;
+  }
+  return block;
 }
 
 export function extractSnippet(text: string, keyword: string, maxLength: number): string {

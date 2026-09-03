@@ -5,27 +5,32 @@
 // never re-derived from raw tables.
 //
 // Presentation rules (client feedback + ChatGPT plugin guidelines):
-//   * Periods are QUARTERS. Internal storage is monthly, but payloads never
-//     expose raw dates or timestamps — the running quarter is labeled
-//     "(in progress)" so a light last data point isn't misread as a decline.
-//   * Percentages, not decimals — "81", never "0.81".
+//   * Periods are MEASURED quarters. Collection runs in waves; the window is
+//     "the last N quarters with data", every listed period is a complete
+//     wave, and an unlisted calendar quarter is not a gap. "(in progress)"
+//     appears only while a wave is genuinely still writing (read from the
+//     pipeline, never from today's date).
+//   * Percentages lead. "% of answers" is the headline for everything —
+//     visibility, attribute mentions, sources, competitors — and every raw
+//     count sits under `sample_size` so a host model never narrates
+//     "dropped from 3,013 to 3,000 mentions".
+//   * Change is reported in percentage points against the PREVIOUS MEASURED
+//     period (the dashboard's delta-chip rule).
 //   * Say what's INCLUDED (tracked platforms), never what's excluded.
 //   * Response minimization: no internal ids, timestamps, or diagnostics.
 //
 // Every result is self-caveating: `_coverage` plus `_meta` carrying the
-// period range, matched market spellings, scope size, and methodology notes.
-// Over MCP the host model never sees our system prompt, so the payload is
-// the only place honesty can live.
+// measured periods, matched market spellings, scope size, and methodology
+// notes. Over MCP the host model never sees our system prompt, so the
+// payload is the only place honesty can live.
 
 import {
-  buildMeta, coverageFound, coverageNoData, coveragePartial, currentQuarter,
-  EXCLUDED_AI_MODELS_FILTER, lastQuarterMonths, METHODOLOGY_NOTES,
-  monthToQuarter, pct, quarterLabel, quarterSortKey, sentimentPct,
+  changeBlock, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER,
+  labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta, rate1, sentimentPct,
+  sortQuarters, toQuarterly,
 } from './helpers.ts';
-import {
-  resolveBrandScope, resolveLocationBuckets,
-} from './scope.ts';
-import type { ToolContext, BrandScope } from './scope.ts';
+import { answersByQuarter, metaFor, resolveScope } from './scope.ts';
+import type { ResolvedScope, ToolContext } from './scope.ts';
 
 // Methodology v2 attribute registry (mirrors src/config/attributes.ts /
 // _shared/theme-analysis.ts — ids are stable, display names client-facing).
@@ -44,6 +49,8 @@ export const ATTRIBUTES_V2: ReadonlyArray<{ id: string; name: string }> = [
   { id: 'interview-experience', name: 'Interview Experience' },
   { id: 'onboarding-experience', name: 'Onboarding Experience' },
 ];
+const ATTRIBUTE_ID_SET = new Set(ATTRIBUTES_V2.map(a => a.id));
+export const attributeName = (id: string): string => ATTRIBUTES_V2.find(a => a.id === id)?.name || id;
 
 // Common phrasings → attribute id, so a host model's first call lands
 // ("who's our top competitor for pay?" → compensation) instead of costing a
@@ -53,7 +60,8 @@ const ATTRIBUTE_ALIASES: Record<string, string> = {
   'benefits': 'compensation', 'perks': 'compensation', 'comp': 'compensation',
   'culture': 'company-culture', 'work culture': 'company-culture',
   'work-life balance': 'wellbeing-balance', 'work life balance': 'wellbeing-balance',
-  'wellbeing': 'wellbeing-balance', 'wellness': 'wellbeing-balance', 'balance': 'wellbeing-balance',
+  'wellbeing': 'wellbeing-balance', 'well-being': 'wellbeing-balance', 'wellness': 'wellbeing-balance',
+  'balance': 'wellbeing-balance',
   'career': 'career-opportunities', 'career growth': 'career-opportunities',
   'growth': 'career-opportunities', 'progression': 'career-opportunities',
   'diversity': 'inclusion', 'dei': 'inclusion', 'inclusion & diversity': 'inclusion',
@@ -84,83 +92,123 @@ export function resolveAttributeId(input: string | undefined | null): string | n
 
 const ATTRIBUTE_IDS_HELP = ATTRIBUTES_V2.map(a => a.id).join(', ');
 
-interface ResolvedScope {
-  scope: BrandScope;
-  buckets: string[] | null;      // null = no location filter
-  available: string[];
-  months: string[];              // internal cube filter (never emitted)
-  quartersBack: number;
+export function unknownAttributeError(input: string): string {
+  return JSON.stringify({ error: `Unknown attribute "${input}". Valid attribute ids: ${ATTRIBUTE_IDS_HELP}.` });
 }
 
-// Common preamble for every insight tool: brand scope + optional location
-// match + quarter window. Returns an error string (already JSON) on failure.
-async function resolveScopeAndLocation(
-  ctx: ToolContext,
-  companyId: string,
-  location: string | undefined,
-  quartersBack: number,
-  includeSiblings: boolean
-): Promise<ResolvedScope | string> {
-  const scope = await resolveBrandScope(ctx, companyId, includeSiblings);
-  if ('error' in scope) return JSON.stringify({ error: scope.error });
+// ─── Cube reads ─────────────────────────────────────────────────────────────
 
-  let buckets: string[] | null = null;
-  let available: string[] = [];
-  if (location && location.trim()) {
-    const match = await resolveLocationBuckets(ctx, scope.companyIds, location);
-    available = match.available;
-    if (!match.buckets.length) {
-      return JSON.stringify({
-        _coverage: coverageNoData(
-          `No tracked market matches "${location}" for ${scope.brandName}. Answer from the available markets or tell the user this market isn't covered yet.`,
-          { available_markets: available }
-        ),
-      });
-    }
-    buckets = match.buckets;
-  }
-  return { scope, buckets, available, months: lastQuarterMonths(quartersBack), quartersBack };
-}
-
-function metaFor(r: ResolvedScope, extraNotes: string[] = []) {
-  return buildMeta({
-    period_range: {
-      from: monthToQuarter(r.months[0]),
-      to: quarterLabel(monthToQuarter(r.months[r.months.length - 1])),
-    },
-    scope_companies: r.scope.companyIds.length,
-    scope_brand: r.scope.brandName,
-    locations_matched: r.buckets ?? undefined,
-    methodology: [METHODOLOGY_NOTES.platform_coverage, ...extraNotes],
+export async function readRollups(ctx: ToolContext, r: ResolvedScope): Promise<any> {
+  const { data, error } = await ctx.admin.rpc('mcp_get_rollups', {
+    p_company_ids: r.scope.companyIds,
+    p_buckets: r.buckets,
+    p_months: r.months,
   });
+  if (error) throw new Error(`Rollup read failed: ${error.message}`);
+  return data || {};
 }
 
-// Roll monthly cube rows into an ordered quarterly series. `pick` extracts
-// the numeric fields to sum from each row.
-function toQuarterly<T extends Record<string, number>>(
-  rows: any[],
-  pick: (row: any) => T
-): Array<{ quarter: string } & T> {
-  const byQuarter = new Map<string, T>();
+const sumOf = (m: Map<string, number>): number => Array.from(m.values()).reduce((s, v) => s + v, 0);
+
+// ─── Attribute rows ─────────────────────────────────────────────────────────
+// Shared by get_attribute_themes, get_attribute_breakdown and the overview.
+// "% of answers that discuss the attribute" leads (the client's requested
+// framing), the dashboard's share-of-themes mix rides along, raw counts nest
+// under sample_size.
+export interface AttributeRow {
+  attribute_id: string;
+  attribute: string;
+  mentioned_in_pct_of_answers: number | null;
+  positive_sentiment_pct: number | null;
+  share_of_themes_pct: number | null;
+  change_vs_previous_period?: Record<string, unknown>;
+  quarterly?: Array<Record<string, unknown>>;
+  sample_size: { answers_mentioning: number; themes: number; positive_themes: number; negative_themes: number; neutral_themes: number };
+}
+
+export function buildAttributeRows(
+  rollups: any,
+  r: ResolvedScope,
+  opts: { focus?: string | null; withQuarterly: boolean }
+): { attributes: AttributeRow[]; totalAnswers: number; allThemes: number } {
+  const rows: any[] = (rollups?.attribute_themes || []).filter(
+    (row: any) => ATTRIBUTE_ID_SET.has(String(row.attribute_id || '').trim())
+  );
+  const answersQ = answersByQuarter(rollups?.scope_stats || []);
+  const totalAnswers = sumOf(answersQ);
+
+  // Per-quarter theme totals across ALL attributes (share_of_themes denominator).
+  const themesQ = new Map<string, number>();
   for (const row of rows) {
     const q = monthToQuarter(String(row.response_month));
-    const vals = pick(row);
-    if (!byQuarter.has(q)) {
-      byQuarter.set(q, { ...vals });
-    } else {
-      const agg = byQuarter.get(q)!;
-      for (const k of Object.keys(vals)) (agg as any)[k] += vals[k];
-    }
+    themesQ.set(q, (themesQ.get(q) || 0) + (row.total_themes || 0));
   }
-  return Array.from(byQuarter.entries())
-    .sort(([a], [b]) => quarterSortKey(a).localeCompare(quarterSortKey(b)))
-    .map(([quarter, vals]) => ({ quarter: quarterLabel(quarter), ...vals }));
+  const allThemes = sumOf(themesQ);
+
+  type Acc = { total: number; pos: number; neg: number; neu: number; responses: number };
+  const blank = (): Acc => ({ total: 0, pos: 0, neg: 0, neu: 0, responses: 0 });
+  const add = (a: Acc, row: any) => {
+    a.total += row.total_themes || 0;
+    a.pos += row.positive_themes || 0;
+    a.neg += row.negative_themes || 0;
+    a.neu += row.neutral_themes || 0;
+    a.responses += row.response_count || 0;
+  };
+  const byAttr = new Map<string, { all: Acc; byQ: Map<string, Acc> }>();
+  for (const row of rows) {
+    const id = String(row.attribute_id).trim();
+    if (opts.focus && id !== opts.focus) continue;
+    if (!byAttr.has(id)) byAttr.set(id, { all: blank(), byQ: new Map() });
+    const entry = byAttr.get(id)!;
+    add(entry.all, row);
+    const q = monthToQuarter(String(row.response_month));
+    if (!entry.byQ.has(q)) entry.byQ.set(q, blank());
+    add(entry.byQ.get(q)!, row);
+  }
+
+  const attributes: AttributeRow[] = Array.from(byAttr.entries()).map(([id, a]) => {
+    const quarterly = sortQuarters(a.byQ.keys()).map(q => {
+      const v = a.byQ.get(q)!;
+      return {
+        quarter: labelQuarter(q, r.inProgressQuarter),
+        mentioned_in_pct_of_answers: pct(v.responses, answersQ.get(q) || 0),
+        positive_sentiment_pct: sentimentPct(v.pos, v.neg),
+        share_of_themes_pct: pct(v.total, themesQ.get(q) || 0),
+        sample_size: { answers_mentioning: v.responses, themes: v.total },
+      };
+    });
+    const last = quarterly[quarterly.length - 1];
+    const prev = quarterly[quarterly.length - 2];
+    const change = last && prev ? {
+      previous_period: prev.quarter,
+      mentioned_pct_points: pointsDelta(last.mentioned_in_pct_of_answers, prev.mentioned_in_pct_of_answers),
+      sentiment_points: pointsDelta(last.positive_sentiment_pct, prev.positive_sentiment_pct),
+      share_of_themes_points: pointsDelta(last.share_of_themes_pct, prev.share_of_themes_pct),
+    } : null;
+    return {
+      attribute_id: id,
+      attribute: attributeName(id),
+      mentioned_in_pct_of_answers: pct(a.all.responses, totalAnswers),
+      positive_sentiment_pct: sentimentPct(a.all.pos, a.all.neg),
+      share_of_themes_pct: pct(a.all.total, allThemes),
+      ...(change ? { change_vs_previous_period: change } : {}),
+      ...(opts.withQuarterly ? { quarterly } : {}),
+      sample_size: {
+        answers_mentioning: a.all.responses, themes: a.all.total,
+        positive_themes: a.all.pos, negative_themes: a.all.neg, neutral_themes: a.all.neu,
+      },
+    };
+  }).sort((x, y) =>
+    ((y.mentioned_in_pct_of_answers ?? -1) - (x.mentioned_in_pct_of_answers ?? -1))
+    || (y.sample_size.answers_mentioning - x.sample_size.answers_mentioning));
+
+  return { attributes, totalAnswers, allThemes };
 }
 
 // ─── get_attribute_themes ───────────────────────────────────────────────────
-// "What's our culture like in India?" — attribute × market sentiment from
-// the dashboard cube, quarterly, plus real theme quotes when a single
-// attribute is in focus.
+// "What's our culture like in India?" — attribute × market from the
+// dashboard cube, by measured quarter, plus real theme quotes and the
+// sources cited in those answers when a single attribute is in focus.
 export async function getAttributeThemes(
   ctx: ToolContext,
   companyId: string,
@@ -170,86 +218,55 @@ export async function getAttributeThemes(
   includeSiblings: boolean
 ): Promise<string> {
   const attributeId = attributeInput ? resolveAttributeId(attributeInput) : null;
-  if (attributeInput && !attributeId) {
-    return JSON.stringify({
-      error: `Unknown attribute "${attributeInput}". Valid attribute ids: ${ATTRIBUTE_IDS_HELP}.`,
-    });
-  }
+  if (attributeInput && !attributeId) return unknownAttributeError(attributeInput);
 
-  const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
+  const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
-  const { data: rollups, error } = await ctx.admin.rpc('mcp_get_rollups', {
-    p_company_ids: r.scope.companyIds,
-    p_buckets: r.buckets,
-    p_months: r.months,
-  });
-  if (error) return JSON.stringify({ error: `Rollup read failed: ${error.message}` });
+  let rollups: any;
+  try { rollups = await readRollups(ctx, r); } catch (err: any) { return JSON.stringify({ error: err.message }); }
 
-  const rows: any[] = (rollups?.attribute_themes || []).filter(
-    (row: any) => !attributeId || row.attribute_id === attributeId
-  );
-
-  if (!rows.length) {
+  const built = buildAttributeRows(rollups, r, { focus: attributeId, withQuarterly: true });
+  if (!built.attributes.length) {
     return JSON.stringify({
       _coverage: coverageNoData(
-        `No theme data for ${attributeId ?? 'any attribute'}${r.buckets ? ` in ${r.buckets.join('/')}` : ''} in the last ${r.quartersBack} quarters.`,
+        `No theme data for ${attributeId ? attributeName(attributeId) : 'any attribute'}${r.buckets ? ` in ${r.buckets.join('/')}` : ''} across the measured periods ${r.quarters.join(', ')}.`,
         r.available.length ? { available_markets: r.available } : {}
       ),
       _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment]),
     });
   }
 
-  // Aggregate: per attribute totals + quarterly series.
-  const byAttr = new Map<string, { total: number; pos: number; neg: number; neu: number; rows: any[] }>();
-  for (const row of rows) {
-    const id = row.attribute_id || 'unknown';
-    if (!byAttr.has(id)) byAttr.set(id, { total: 0, pos: 0, neg: 0, neu: 0, rows: [] });
-    const a = byAttr.get(id)!;
-    a.total += row.total_themes || 0;
-    a.pos += row.positive_themes || 0;
-    a.neg += row.negative_themes || 0;
-    a.neu += row.neutral_themes || 0;
-    a.rows.push(row);
-  }
-
-  const nameOf = (id: string) => ATTRIBUTES_V2.find(a => a.id === id)?.name || id;
-  const allThemes = Array.from(byAttr.values()).reduce((sum, a) => sum + a.total, 0);
-  const attributes = Array.from(byAttr.entries()).map(([id, a]) => ({
-    attribute_id: id,
-    attribute: nameOf(id),
-    positive_sentiment_pct: sentimentPct(a.pos, a.neg),
-    share_of_themes_pct: pct(a.total, allThemes),
-    total_themes: a.total,
-    positive_themes: a.pos,
-    negative_themes: a.neg,
-    neutral_themes: a.neu,
-    quarterly: toQuarterly(a.rows, (row) => ({
-      total_themes: row.total_themes || 0,
-      _pos: row.positive_themes || 0,
-      _neg: row.negative_themes || 0,
-    })).map(({ quarter, total_themes, _pos, _neg }) => ({
-      quarter, total_themes, positive_sentiment_pct: sentimentPct(_pos, _neg),
-    })),
-  })).sort((x, y) => y.total_themes - x.total_themes);
-
-  // Real quotes when a single attribute is in focus — the "what are people
-  // actually saying" half of the answer. Bounded, newest first, location-
-  // filtered through the prompt join. No ids or dates in the payload.
+  // Real quotes + the sources in play when a single attribute is in focus —
+  // the "what are people actually saying, and from where" half of the
+  // answer. Both are bounded to the reported window. No ids or dates.
   let quotes: any[] = [];
+  let sourcesBlock: Record<string, unknown> | undefined;
   if (attributeId) {
     let q = ctx.admin
       .from('ai_themes')
-      .select('theme_name, sentiment, context_snippets, keywords, created_at, prompt_responses!inner(ai_model, confirmed_prompts!inner(location_context))')
+      .select('theme_name, sentiment, context_snippets, keywords, created_at, prompt_responses!inner(ai_model, response_month, confirmed_prompts!inner(location_context))')
       .in('company_id', r.scope.companyIds)
       .eq('attribute_id', attributeId)
       .not('prompt_responses.ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
+      .in('prompt_responses.response_month', r.months)
       .order('created_at', { ascending: false })
       .limit(40);
     if (r.buckets) q = q.in('prompt_responses.confirmed_prompts.location_context', r.buckets);
-    const { data: themeRows } = await q;
+
+    const [themeRes, sourcesRes] = await Promise.all([
+      q,
+      ctx.admin.rpc('mcp_get_attribute_sources', {
+        p_company_ids: r.scope.companyIds,
+        p_attribute_id: attributeId,
+        p_buckets: r.buckets,
+        p_months: r.months,
+        p_limit: 10,
+      }),
+    ]);
+
     const seen = new Set<string>();
-    for (const t of (themeRows || [])) {
+    for (const t of (themeRes.data || [])) {
       const snippet = (t.context_snippets || [])[0];
       const key = `${t.theme_name}|${t.sentiment}`;
       if (seen.has(key)) continue;
@@ -263,16 +280,29 @@ export async function getAttributeThemes(
       });
       if (quotes.length >= 14) break;
     }
+
+    const attributeAnswers = Number(sourcesRes.data?.attribute_answers) || 0;
+    sourcesBlock = {
+      note: `Domains cited in the answers that discuss ${attributeName(attributeId)} — where this topic is being sourced from. Association, not cause.`,
+      sources: ((sourcesRes.data?.rows as any[]) || []).map((row: any) => ({
+        domain: row.domain,
+        cited_in_pct_of_attribute_answers: pct(row.answers_citing || 0, attributeAnswers),
+        sample_size: { answers_citing: row.answers_citing || 0 },
+      })),
+      sample_size: { attribute_answers: attributeAnswers },
+    };
   }
 
   return JSON.stringify({
-    attributes,
-    ...(attributeId ? { focus_attribute: attributeId, example_themes: quotes } : {}),
-    _coverage: coverageFound({
-      attribute_count: attributes.length,
-      total_themes: attributes.reduce((s, a) => s + a.total_themes, 0),
-    }),
-    _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment]),
+    attributes: built.attributes,
+    ...(attributeId ? {
+      focus_attribute: attributeId,
+      example_themes: quotes,
+      sources_in_attribute_answers: sourcesBlock,
+    } : {}),
+    sample_size: { answers: built.totalAnswers, themes: built.allThemes },
+    _coverage: coverageFound({ attribute_count: built.attributes.length, periods: r.quarters.length }),
+    _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment, METHODOLOGY_NOTES.attribute_share]),
   });
 }
 
@@ -285,21 +315,17 @@ export async function getVisibility(
   byModel: boolean,
   includeSiblings: boolean
 ): Promise<string> {
-  const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
+  const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
-  const { data: rollups, error } = await ctx.admin.rpc('mcp_get_rollups', {
-    p_company_ids: r.scope.companyIds,
-    p_buckets: r.buckets,
-    p_months: r.months,
-  });
-  if (error) return JSON.stringify({ error: `Rollup read failed: ${error.message}` });
+  let rollups: any;
+  try { rollups = await readRollups(ctx, r); } catch (err: any) { return JSON.stringify({ error: err.message }); }
 
   const stats: any[] = rollups?.scope_stats || [];
   if (!stats.length) {
     return JSON.stringify({
       _coverage: coverageNoData(
-        `No response data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${r.quartersBack} quarters.`,
+        `No answer data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} across the measured periods ${r.quarters.join(', ')}.`,
         r.available.length ? { available_markets: r.available } : {}
       ),
       _meta: metaFor(r, [METHODOLOGY_NOTES.visibility]),
@@ -315,8 +341,10 @@ export async function getVisibility(
   const quarterly = toQuarterly(stats, (row) => ({
     _total: row.total_responses || 0,
     _mentioned: row.mentioned_responses || 0,
-  })).map(({ quarter, _total, _mentioned }) => ({
-    quarter, total_responses: _total, mentioned: _mentioned, visibility_pct: pct(_mentioned, _total),
+  }), r.inProgressQuarter).map(({ quarter, _total, _mentioned }) => ({
+    quarter,
+    visibility_pct: pct(_mentioned, _total),
+    sample_size: { answers: _total, answers_mentioning_company: _mentioned },
   }));
 
   let platforms: any[] | undefined;
@@ -330,25 +358,30 @@ export async function getVisibility(
       mm.mentioned += row.mentions || 0;
     }
     platforms = Array.from(byModelMap.entries())
-      .map(([platform, v]) => ({ platform, total_responses: v.total, mentioned: v.mentioned, visibility_pct: pct(v.mentioned, v.total) }))
-      .sort((a, b) => (b.total_responses - a.total_responses));
+      .map(([platform, v]) => ({
+        platform,
+        visibility_pct: pct(v.mentioned, v.total),
+        sample_size: { answers: v.total, answers_mentioning_company: v.mentioned },
+      }))
+      .sort((a, b) => (b.visibility_pct ?? -1) - (a.visibility_pct ?? -1));
   }
 
   return JSON.stringify({
     visibility_pct: pct(mentioned, total),
-    total_responses: total,
-    mentioned_responses: mentioned,
     quarterly,
+    change: changeBlock(quarterly.map(q => ({ quarter: q.quarter, value: q.visibility_pct })), r.inProgressQuarter),
     ...(platforms ? { by_platform: platforms } : {}),
-    _coverage: coverageFound({ quarters_with_data: quarterly.length }),
+    sample_size: { answers: total, answers_mentioning_company: mentioned },
+    _coverage: coverageFound({ periods: quarterly.length }),
     _meta: metaFor(r, [METHODOLOGY_NOTES.visibility]),
   });
 }
 
 // ─── get_sources ────────────────────────────────────────────────────────────
-// Canonical citation domains for the scope, with the "answer gap" measure:
-// responses citing the domain where the company was NOT mentioned — the
-// outreach surface ("sources talking about your space without you").
+// Canonical citation domains for the scope, led by the share of answers
+// citing each, with the "answer gap": answers citing the domain where the
+// company was NOT mentioned — the outreach surface ("sources talking about
+// your space without you").
 export async function getSources(
   ctx: ToolContext,
   companyId: string,
@@ -358,7 +391,7 @@ export async function getSources(
   limit: number,
   includeSiblings: boolean
 ): Promise<string> {
-  const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
+  const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
   const [domainRes, rollupsRes] = await Promise.all([
@@ -383,7 +416,7 @@ export async function getSources(
   if (!rows.length) {
     return JSON.stringify({
       _coverage: coverageNoData(
-        `No citation data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${r.quartersBack} quarters.`,
+        `No citation data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} across the measured periods ${r.quarters.join(', ')}.`,
         r.available.length ? { available_markets: r.available } : {}
       ),
       _meta: metaFor(r),
@@ -400,34 +433,39 @@ export async function getSources(
     e.citations += row.citation_count || 0;
   }
 
-  // Shares lead, raw counts trail (presentation rule: "cited by 31% of
-  // answers" is the useful stat; counts stay only as sample-size context).
+  // Shares lead, raw counts nest under sample_size: "cited by 31% of
+  // answers" is the useful stat; counts stay only as sample-size context.
   let sources = Array.from(byDomain.entries()).map(([domain, v]) => {
     const gap = Math.max(0, v.citing - v.mentionedCiting);
     return {
       domain,
       cited_in_pct_of_answers: pct(v.citing, totalResponses),
-      gap_rate_pct: pct(gap, v.citing),      // of its citing answers, % where company absent
-      answer_gap: gap,                       // cited while the company was absent
-      responses_citing: v.citing,
-      cited_and_company_mentioned: v.mentionedCiting,
-      citation_count: v.citations,
+      answer_gap_pct_of_answers: pct(gap, totalResponses),   // cited while the company was absent
+      gap_rate_pct: pct(gap, v.citing),                      // of its citing answers, % where company absent
+      sample_size: {
+        answers_citing: v.citing,
+        answers_citing_with_company_mentioned: v.mentionedCiting,
+        answer_gap: gap,
+        citations: v.citations,
+      },
     };
   });
 
   sources = gapOnly
-    ? sources.filter(s => s.answer_gap > 0).sort((a, b) => b.answer_gap - a.answer_gap)
-    : sources.sort((a, b) => b.responses_citing - a.responses_citing);
+    ? sources.filter(s => s.sample_size.answer_gap > 0).sort((a, b) => b.sample_size.answer_gap - a.sample_size.answer_gap)
+    : sources.sort((a, b) => b.sample_size.answers_citing - a.sample_size.answers_citing);
   sources = sources.slice(0, limit);
 
   return JSON.stringify({
     sources,
-    total_answers_in_window: totalResponses,
-    distinct_domains_in_window: data?.domain_total ?? byDomain.size,
+    sample_size: {
+      answers: totalResponses,
+      distinct_domains: data?.domain_total ?? byDomain.size,
+    },
     _coverage: coverageFound({ returned: sources.length, gap_only: gapOnly }),
     _meta: metaFor(r, [
       'Domains are canonicalized (regional variants collapse to one root).',
-      '"answer_gap" = responses citing this domain where the company was NOT mentioned — the outreach opportunity surface.',
+      '"answer_gap" = answers citing this domain where the company was NOT mentioned — the outreach opportunity surface.',
     ]),
   });
 }
@@ -443,13 +481,9 @@ export async function getCompetitorLandscape(
   includeSiblings: boolean
 ): Promise<string> {
   const attributeId = attributeInput ? resolveAttributeId(attributeInput) : null;
-  if (attributeInput && !attributeId) {
-    return JSON.stringify({
-      error: `Unknown attribute "${attributeInput}". Valid attribute ids: ${ATTRIBUTE_IDS_HELP}.`,
-    });
-  }
+  if (attributeInput && !attributeId) return unknownAttributeError(attributeInput);
 
-  const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
+  const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
   const [statsRes, rollupsRes] = await Promise.all([
@@ -484,10 +518,13 @@ export async function getCompetitorLandscape(
   const competitors = Array.from(byName.entries()).map(([name, v]) => ({
     name,
     named_in_pct_of_answers: pct(v.responses, totalResponses),
-    responses_mentioning: v.responses,
-    co_mentioned_with_company: v.coMentions,
-    by_prompt_type: Object.fromEntries(v.byType),
-  })).sort((a, b) => b.responses_mentioning - a.responses_mentioning).slice(0, limit);
+    named_alongside_company_pct_of_answers: pct(v.coMentions, totalResponses),
+    sample_size: {
+      answers_naming: v.responses,
+      answers_naming_alongside_company: v.coMentions,
+      by_prompt_type: Object.fromEntries(v.byType),
+    },
+  })).sort((a, b) => b.sample_size.answers_naming - a.sample_size.answers_naming).slice(0, limit);
 
   // Attribute lens: share-of-voice on prompts carrying the attribute, plus
   // whatever competitor sentiment themes exist (a newer signal, accruing
@@ -527,24 +564,28 @@ export async function getCompetitorLandscape(
     const sovTotal = sov.attribute_responses ?? 0;
     attributeBlock = {
       attribute_id: attributeId,
+      attribute: attributeName(attributeId),
       share_of_voice: (sov.rows || []).map((row: any) => ({
         competitor_name: row.competitor_name,
         named_in_pct_of_attribute_answers: pct(row.responses_naming, sovTotal),
-        responses_naming: row.responses_naming,
+        sample_size: { answers_naming: row.responses_naming },
       })),
-      attribute_responses_analyzed: sovTotal,
       note: 'share_of_voice = competitors NAMED on prompts about this attribute. It is not competitor sentiment.',
       competitor_sentiment_themes: Array.from(tripleAgg.entries()).map(([name, v]) => ({
-        competitor: name, positive: v.pos, negative: v.neg, neutral: v.neu, example_snippet: v.snippet,
+        competitor: name,
+        positive_sentiment_pct: sentimentPct(v.pos, v.neg),
+        example_snippet: v.snippet,
+        sample_size: { positive: v.pos, negative: v.neg, neutral: v.neu },
       })),
       competitor_sentiment_note: triples.length
         ? 'Competitor sentiment is a newer signal accruing from Q3 2026 forward — treat as an early read, not a trend.'
         : 'Competitor sentiment is a newer signal accruing from Q3 2026 forward — no data for this attribute yet.',
+      sample_size: { attribute_answers: sovTotal },
     };
   }
 
   const coverage = competitors.length === 0 && !attributeBlock
-    ? coverageNoData(`No competitor mentions${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${r.quartersBack} quarters.`)
+    ? coverageNoData(`No competitor mentions${r.buckets ? ` for ${r.buckets.join('/')}` : ''} across the measured periods ${r.quarters.join(', ')}.`)
     : competitors.length === 0 && attributeBlock
       ? coveragePartial('No overall competitor stats in this window; only the attribute lens returned data.')
       : coverageFound({ competitor_count: competitors.length });
@@ -552,7 +593,7 @@ export async function getCompetitorLandscape(
   return JSON.stringify({
     competitors,
     ...(attributeBlock ? { attribute_lens: attributeBlock } : {}),
-    total_responses_in_window: totalResponses,
+    sample_size: { answers: totalResponses },
     _coverage: coverage,
     _meta: metaFor(r, [
       'Competitor names are canonicalized; job boards/platforms and the company itself are excluded from competitor lists.',
@@ -575,20 +616,16 @@ export async function getTrends(
     return JSON.stringify({ error: `Unknown metric "${metric}". Valid: ${valid.join(', ')}.` });
   }
 
-  const r = await resolveScopeAndLocation(ctx, companyId, location, quartersBack, includeSiblings);
+  const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
-  const { data: rollups, error } = await ctx.admin.rpc('mcp_get_rollups', {
-    p_company_ids: r.scope.companyIds,
-    p_buckets: r.buckets,
-    p_months: r.months,
-  });
-  if (error) return JSON.stringify({ error: `Rollup read failed: ${error.message}` });
+  let rollups: any;
+  try { rollups = await readRollups(ctx, r); } catch (err: any) { return JSON.stringify({ error: err.message }); }
 
   const stats: any[] = rollups?.scope_stats || [];
   if (!stats.length) {
     return JSON.stringify({
-      _coverage: coverageNoData(`No data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} in the last ${r.quartersBack} quarters.`),
+      _coverage: coverageNoData(`No data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} across the measured periods ${r.quarters.join(', ')}.`),
       _meta: metaFor(r),
     });
   }
@@ -599,29 +636,30 @@ export async function getTrends(
     _pos: row.positive_themes || 0,
     _neg: row.negative_themes || 0,
     _citations: row.total_citations || 0,
-  }));
+  }), r.inProgressQuarter);
 
   const series = quarterlyAgg.map(({ quarter, _total, _mentioned, _pos, _neg, _citations }) => {
-    if (m === 'visibility') return { quarter, visibility_pct: pct(_mentioned, _total), total_responses: _total };
-    if (m === 'sentiment') return { quarter, positive_sentiment_pct: sentimentPct(_pos, _neg), opinionated_themes: _pos + _neg };
-    return { quarter, total_citations: _citations };
+    if (m === 'visibility') {
+      return { quarter, visibility_pct: pct(_mentioned, _total), sample_size: { answers: _total, answers_mentioning_company: _mentioned } };
+    }
+    if (m === 'sentiment') {
+      return { quarter, positive_sentiment_pct: sentimentPct(_pos, _neg), sample_size: { opinionated_themes: _pos + _neg } };
+    }
+    return { quarter, citations_per_answer: rate1(_citations, _total), sample_size: { answers: _total, citations: _citations } };
   });
 
-  const valueOf = (s: any) => m === 'visibility' ? s.visibility_pct : m === 'sentiment' ? s.positive_sentiment_pct : s.total_citations;
-  const values = series.map(valueOf).filter((v): v is number => v !== null && v !== undefined);
-  const first = values[0] ?? null;
-  const last = values[values.length - 1] ?? null;
+  const valueOf = (s: any): number | null =>
+    m === 'visibility' ? s.visibility_pct : m === 'sentiment' ? s.positive_sentiment_pct : s.citations_per_answer;
 
   const methodologyNote = m === 'sentiment' ? [METHODOLOGY_NOTES.sentiment]
-    : m === 'visibility' ? [METHODOLOGY_NOTES.visibility] : [];
+    : m === 'visibility' ? [METHODOLOGY_NOTES.visibility]
+    : ['citations_per_answer = average number of sources cited per AI answer — a rate, so waves of different sizes compare directly.'];
 
   return JSON.stringify({
     metric: m,
     series,
-    change: first !== null && last !== null
-      ? { first, latest: last, delta: last - first, note: `The latest quarter (${quarterLabel(currentQuarter())}) may still be filling in.` }
-      : null,
-    _coverage: coverageFound({ quarters_with_data: series.length }),
+    change: changeBlock(series.map(s => ({ quarter: s.quarter, value: valueOf(s) })), r.inProgressQuarter),
+    _coverage: coverageFound({ periods: series.length }),
     _meta: metaFor(r, methodologyNote),
   });
 }

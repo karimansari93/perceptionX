@@ -1,49 +1,69 @@
 // ─── px-tools: core executors ───────────────────────────────────────────────
-// The original chat-with-data tool implementations, moved verbatim onto the
-// shared ToolContext so the MCP server runs the identical logic. Behavior
-// changes kept to exactly one: list_companies read countries from the dropped
-// user_onboarding table (silently yielding null); it now reads
-// companies.country.
+// The original chat-with-data tool surface (overview, metrics, themes,
+// attributes, competitors, citations, platforms, comparisons, answer texts),
+// rebuilt on the dashboard cubes and SQL aggregates for the Ford pilot
+// guardrail audit (2026-09-03). What changed and why:
+//
+//   * Windowed to MEASURED periods (default: the latest measured quarter,
+//     brand scope) — the dashboard's default view — instead of pooling every
+//     wave ever collected for one market profile. Pooled lifetime numbers
+//     did not match the app.
+//   * Aggregates come from RPCs (mcp_get_rollups, mcp_get_theme_stats,
+//     mcp_get_competitor_stats, mcp_get_domain_stats). The previous raw-row
+//     reads went through PostgREST, which caps at max_rows=1000, so every
+//     real company's counts were silently truncated.
+//   * Relevance reads company_relevance_scores_mv (the dashboard's source).
+//     The old read targeted a relation that does not exist, so EPS lost its
+//     20% relevance component.
+//   * Percentages lead; raw counts nest under sample_size; change is in
+//     percentage points vs the previous measured period.
+//
+// get_responses / search_responses stay as bounded raw reads (they return
+// answer texts, newest first) — periods on those are bare quarter labels.
 
 import {
-  coverageFound, coverageNoData, coveragePartial,
-  EXCLUDED_AI_MODELS_FILTER, extractSnippet,
-  monthToQuarter, quarterLabel, sentimentPct,
+  buildMeta, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER,
+  extractSnippet, labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta,
+  quartersOfMonths, sentimentPct, sortQuarters,
 } from './helpers.ts';
-import type { ToolContext } from './scope.ts';
+import {
+  metaFor, narrowToQuarter, resolveMeasurementPeriods, resolveScope,
+} from './scope.ts';
+import type { ResolvedScope, ToolContext } from './scope.ts';
+import {
+  attributeName, buildAttributeRows, getCompetitorLandscape, readRollups,
+} from './executors-insights.ts';
 
+// ─── Response-level sentiment (bounded reads only) ──────────────────────────
 async function getResponseSentiments(
   admin: any,
   responseIds: string[]
-): Promise<Map<string, { label: string; score: number | null; pos: number; neg: number }>> {
+): Promise<Map<string, { label: string; pos: number; neg: number }>> {
   if (!responseIds.length) return new Map();
 
-  // Methodology v2: sentiment comes from the text labels only —
-  // score = positive/(positive+negative), null when no polarized themes.
+  // Methodology v2: sentiment comes from the text labels only.
   const { data: themes } = await admin
     .from('ai_themes')
     .select('response_id, sentiment')
     .in('response_id', responseIds);
 
-  const grouped = new Map<string, { sentiments: string[] }>();
+  const grouped = new Map<string, { pos: number; neg: number }>();
   for (const t of (themes || [])) {
-    if (!grouped.has(t.response_id)) grouped.set(t.response_id, { sentiments: [] });
+    if (!grouped.has(t.response_id)) grouped.set(t.response_id, { pos: 0, neg: 0 });
     const entry = grouped.get(t.response_id)!;
-    if (t.sentiment) entry.sentiments.push(t.sentiment);
+    if (t.sentiment === 'positive') entry.pos++;
+    else if (t.sentiment === 'negative') entry.neg++;
   }
 
-  const result = new Map<string, { label: string; score: number | null; pos: number; neg: number }>();
-  for (const [id, data] of grouped) {
-    const pos = data.sentiments.filter(s => s === 'positive').length;
-    const neg = data.sentiments.filter(s => s === 'negative').length;
-    const score = (pos + neg) > 0 ? Math.round((pos / (pos + neg)) * 100) / 100 : null;
+  const result = new Map<string, { label: string; pos: number; neg: number }>();
+  for (const [id, { pos, neg }] of grouped) {
     const label = pos > neg ? 'positive' : neg > pos ? 'negative' : 'neutral';
-    result.set(id, { label, score, pos, neg });
+    result.set(id, { label, pos, neg });
   }
-
   return result;
 }
 
+// ─── list_companies ─────────────────────────────────────────────────────────
 export async function listCompanies(ctx: ToolContext): Promise<string> {
   const { admin, organizationId } = ctx;
   const { data: orgCompanies, error: orgError } = await admin
@@ -56,10 +76,10 @@ export async function listCompanies(ctx: ToolContext): Promise<string> {
 
   const companyIds = orgCompanies.map((oc: any) => oc.company_id);
 
-  const [companiesResult, industriesResult, responseCounts] = await Promise.all([
+  const [companiesResult, industriesResult, periods] = await Promise.all([
     admin.from('companies').select('id, name, country').in('id', companyIds),
     admin.from('company_industries').select('company_id, industry').in('company_id', companyIds),
-    admin.from('prompt_responses').select('company_id').in('company_id', companyIds).not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER),
+    resolveMeasurementPeriods(ctx, companyIds, null),
   ]);
 
   const industriesMap = new Map<string, Set<string>>();
@@ -68,137 +88,584 @@ export async function listCompanies(ctx: ToolContext): Promise<string> {
     industriesMap.get(r.company_id)!.add(r.industry);
   }
 
-  const countMap = new Map<string, number>();
-  for (const r of (responseCounts.data || [])) {
-    countMap.set(r.company_id, (countMap.get(r.company_id) || 0) + 1);
-  }
+  const companies = (companiesResult.data || []).map((c: any) => {
+    const measured = periods.byCompany.get(c.id);
+    const quarters = measured ? quartersOfMonths(measured.months) : [];
+    const latest = quarters[quarters.length - 1] ?? null;
+    return {
+      id: c.id,
+      name: c.name,
+      country: c.country || null,
+      industries: Array.from(industriesMap.get(c.id) || []),
+      latest_period: latest ? labelQuarter(latest, periods.inProgressQuarter) : null,
+      measured_periods: quarters.length,
+      // Lifetime answer count: a size cue for picking a profile, not a metric.
+      total_responses: measured?.answers ?? 0,
+    };
+  }).sort((a: any, b: any) => b.total_responses - a.total_responses || a.name.localeCompare(b.name));
 
-  const companies = (companiesResult.data || []).map((c: any) => ({
-    id: c.id,
-    name: c.name,
-    country: c.country || null,
-    industries: Array.from(industriesMap.get(c.id) || []),
-    total_responses: countMap.get(c.id) || 0,
-  }));
-
-  // Coverage: flag which companies have no AI response data yet so the
-  // model can tell the user "we haven't collected data for X" plainly
-  // instead of silently pretending the company doesn't exist.
-  const emptyCompanies = companies.filter((c: any) => c.total_responses === 0).map((c: any) => c.name);
-  const coverage = emptyCompanies.length === 0
+  // Coverage: flag profiles with no measured period yet so the model says
+  // "X hasn't been measured yet" plainly instead of pretending it doesn't
+  // exist — and never calls a measured profile's calendar gaps "missing".
+  const unmeasured = companies.filter((c: any) => c.measured_periods === 0).map((c: any) => c.name);
+  const coverage = unmeasured.length === 0
     ? coverageFound({ total_companies: companies.length })
     : coveragePartial(
-        `${emptyCompanies.length} of ${companies.length} companies have no response data yet`,
-        { empty_companies: emptyCompanies }
+        `${unmeasured.length} of ${companies.length} profiles have not been measured yet`,
+        { not_yet_measured: unmeasured }
       );
 
-  return JSON.stringify({ companies, total: companies.length, _coverage: coverage });
+  const labeled = periods.quarters.map(q => labelQuarter(q, periods.inProgressQuarter));
+  return JSON.stringify({
+    companies,
+    total: companies.length,
+    _coverage: coverage,
+    _meta: buildMeta({
+      latest_period: labeled[labeled.length - 1] ?? null,
+      periods: labeled,
+      ...(periods.inProgressQuarter ? { collection_in_progress: true } : {}),
+      note: 'Same-name profiles are one brand measured per market; the market-aware tools aggregate them (include_siblings) exactly like the dashboard.',
+    }),
+  });
 }
 
-export async function computeMetrics(admin: any, companyId: string) {
-  const [responsesResult, themesResult, relevanceResult, companyResult] = await Promise.all([
-    admin
-      .from('prompt_responses')
-      .select('id, company_mentioned')
-      .eq('company_id', companyId)
-      .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER),
-    admin
-      .from('ai_themes')
-      .select('sentiment, theme_name, prompt_responses!inner(ai_model)')
-      .eq('company_id', companyId)
-      .not('prompt_responses.ai_model', 'in', EXCLUDED_AI_MODELS_FILTER),
-    admin.from('company_relevance_scores').select('relevance_score').eq('company_id', companyId).maybeSingle(),
-    admin.from('companies').select('name').eq('id', companyId).single(),
-  ]);
-
-  const responses = responsesResult.data || [];
-  const themes = themesResult.data || [];
-  const totalResponses = responses.length;
-
-  if (totalResponses === 0) {
-    return { company: companyResult.data?.name, companyId, noData: true };
-  }
-
-  // Methodology v2: positive/(positive+negative) from the theme text labels;
-  // neutrals are excluded from the score.
-  const positiveThemes = themes.filter((t: any) => t.sentiment === 'positive').length;
-  const negativeThemes = themes.filter((t: any) => t.sentiment === 'negative').length;
-  const polarized = positiveThemes + negativeThemes;
-  const sentimentScore = polarized > 0 ? positiveThemes / polarized : 0.5;
-  const sentimentPctValue = Math.round(sentimentScore * 100);
-  const sentimentLabel = sentimentScore > 0.6 ? 'Positive' : sentimentScore < 0.4 ? 'Negative' : 'Neutral';
-
-  const mentioned = responses.filter((r: any) => r.company_mentioned).length;
-  const visibilityPct = Math.round((mentioned / totalResponses) * 100);
-  const relevancePct = Math.round(relevanceResult.data?.relevance_score || 0);
-
-  const eps = Math.round(sentimentPctValue * 0.5 + visibilityPct * 0.3 + relevancePct * 0.2);
-  const epsLabel = eps >= 80 ? 'Excellent' : eps >= 65 ? 'Good' : eps >= 50 ? 'Fair' : 'Poor';
-
-  return {
-    company: companyResult.data?.name,
-    companyId,
-    eps,
-    eps_label: epsLabel,
-    sentiment: { score: sentimentPctValue, label: sentimentLabel, positive_themes: positiveThemes, negative_themes: negativeThemes, total_themes: themes.length },
-    visibility: visibilityPct,
-    relevance: relevancePct,
-    total_responses: totalResponses,
-    mentioned_count: mentioned,
+// ─── Scorecard from the cubes ───────────────────────────────────────────────
+interface ScoredQuarter {
+  quarter: string;          // bare
+  label: string;            // presentation
+  eps: number;
+  eps_label: string;
+  positive_sentiment_pct: number | null;
+  visibility_pct: number | null;
+  relevance_pct: number | null;
+  sample_size: {
+    answers: number;
+    answers_mentioning_company: number;
+    opinionated_themes: number;
+    scored_citations: number;
   };
 }
 
-export async function getCompanyMetrics(ctx: ToolContext, companyId: string): Promise<string> {
-  const metrics = await computeMetrics(ctx.admin, companyId);
-  if (metrics.noData) {
+const epsLabel = (eps: number) => eps >= 80 ? 'Excellent' : eps >= 65 ? 'Good' : eps >= 50 ? 'Fair' : 'Poor';
+
+// One scorecard per measured quarter in the window, ascending. Mirrors the
+// dashboard: visibility = mentioned/total, sentiment = pos/(pos+neg),
+// relevance = citation-weighted average of the relevance MV; EPS = 50/30/20.
+// A quarter without opinionated themes scores sentiment as balanced (50) in
+// EPS and reports positive_sentiment_pct as null.
+export function scoreQuarters(rollups: any, r: ResolvedScope): ScoredQuarter[] {
+  type Acc = { answers: number; mentioned: number; pos: number; neg: number; valid: number; weighted: number };
+  const byQ = new Map<string, Acc>();
+  const get = (q: string) => {
+    if (!byQ.has(q)) byQ.set(q, { answers: 0, mentioned: 0, pos: 0, neg: 0, valid: 0, weighted: 0 });
+    return byQ.get(q)!;
+  };
+  for (const row of (rollups?.scope_stats || [])) {
+    const a = get(monthToQuarter(String(row.response_month)));
+    a.answers += row.total_responses || 0;
+    a.mentioned += row.mentioned_responses || 0;
+    a.pos += row.positive_themes || 0;
+    a.neg += row.negative_themes || 0;
+  }
+  for (const row of (rollups?.relevance || [])) {
+    const a = get(monthToQuarter(String(row.response_month)));
+    a.valid += Number(row.valid_citations) || 0;
+    a.weighted += Number(row.weighted_relevance) || 0;
+  }
+  return sortQuarters(byQ.keys())
+    .filter(q => byQ.get(q)!.answers > 0)
+    .map(q => {
+      const a = byQ.get(q)!;
+      const sentiment = sentimentPct(a.pos, a.neg);
+      const visibility = pct(a.mentioned, a.answers);
+      const relevance = a.valid > 0 ? Math.round(a.weighted / a.valid) : null;
+      const eps = Math.round((sentiment ?? 50) * 0.5 + (visibility ?? 0) * 0.3 + (relevance ?? 0) * 0.2);
+      return {
+        quarter: q,
+        label: labelQuarter(q, r.inProgressQuarter),
+        eps,
+        eps_label: epsLabel(eps),
+        positive_sentiment_pct: sentiment,
+        visibility_pct: visibility,
+        relevance_pct: relevance,
+        sample_size: {
+          answers: a.answers,
+          answers_mentioning_company: a.mentioned,
+          opinionated_themes: a.pos + a.neg,
+          scored_citations: a.valid,
+        },
+      };
+    });
+}
+
+function metricsPayload(r: ResolvedScope, scored: ScoredQuarter[]): Record<string, unknown> {
+  const latest = scored[scored.length - 1];
+  const previous = scored.length > 1 ? scored[scored.length - 2] : null;
+  return {
+    company: r.scope.brandName,
+    period: latest.label,
+    eps: latest.eps,
+    eps_label: latest.eps_label,
+    positive_sentiment_pct: latest.positive_sentiment_pct,
+    visibility_pct: latest.visibility_pct,
+    relevance_pct: latest.relevance_pct,
+    change_vs_previous_period: previous ? {
+      previous_period: previous.label,
+      eps_points: latest.eps - previous.eps,
+      sentiment_points: pointsDelta(latest.positive_sentiment_pct, previous.positive_sentiment_pct),
+      visibility_points: pointsDelta(latest.visibility_pct, previous.visibility_pct),
+      relevance_points: pointsDelta(latest.relevance_pct, previous.relevance_pct),
+    } : null,
+    sample_size: latest.sample_size,
+    scope_companies: r.scope.companyIds.length,
+  };
+}
+
+const SCORECARD_NOTES = [
+  METHODOLOGY_NOTES.eps, METHODOLOGY_NOTES.sentiment, METHODOLOGY_NOTES.visibility, METHODOLOGY_NOTES.relevance,
+];
+
+// Latest measured quarter + the one before it (for the delta), brand scope
+// by default — the dashboard's default scorecard.
+async function scorecard(
+  ctx: ToolContext,
+  companyId: string,
+  includeSiblings: boolean
+): Promise<{ r: ResolvedScope; rollups: any; scored: ScoredQuarter[] } | string> {
+  const r = await resolveScope(ctx, companyId, { quartersBack: 2, includeSiblings });
+  if (typeof r === 'string') return r;
+  let rollups: any;
+  try { rollups = await readRollups(ctx, r); } catch (err: any) { return JSON.stringify({ error: err.message }); }
+  const scored = scoreQuarters(rollups, r);
+  if (!scored.length) {
     return JSON.stringify({
-      company: metrics.company,
-      _coverage: coverageNoData(`No AI response data has been collected yet for ${metrics.company}.`),
+      company: r.scope.brandName,
+      _coverage: coverageNoData(`No AI answer data has been collected yet for ${r.scope.brandName}.`),
+      _meta: metaFor(r),
     });
   }
+  return { r, rollups, scored };
+}
+
+// ─── get_company_metrics ────────────────────────────────────────────────────
+export async function getCompanyMetrics(ctx: ToolContext, companyId: string, includeSiblings: boolean): Promise<string> {
+  const s = await scorecard(ctx, companyId, includeSiblings);
+  if (typeof s === 'string') return s;
+  const latest = s.scored[s.scored.length - 1];
   return JSON.stringify({
-    ...metrics,
-    formula: "EPS = 50% sentiment + 30% visibility + 20% relevance",
-    _coverage: coverageFound({ total_responses: metrics.total_responses }),
+    ...metricsPayload(s.r, s.scored),
+    formula: METHODOLOGY_NOTES.eps,
+    _coverage: coverageFound({ period: latest.label }),
+    _meta: metaFor(narrowToQuarter(s.r, latest.quarter), SCORECARD_NOTES),
   });
 }
 
-export async function getCompanyOverview(ctx: ToolContext, companyId: string): Promise<string> {
-  const [metricsData, themesData, competitorsData, citationsData] = await Promise.all([
-    computeMetrics(ctx.admin, companyId),
-    getThemes(ctx, companyId),
-    getCompetitors(ctx, companyId),
-    getCitations(ctx, companyId, false),
+// ─── get_company_overview ───────────────────────────────────────────────────
+// The dashboard's default view in one call: scorecard for the latest
+// measured quarter (with change vs the previous one), attributes by share of
+// answers, top themes, competitors and sources — all from the cubes, all
+// shares-first.
+export async function getCompanyOverview(ctx: ToolContext, companyId: string, includeSiblings: boolean): Promise<string> {
+  const s = await scorecard(ctx, companyId, includeSiblings);
+  if (typeof s === 'string') return s;
+  const { r, rollups, scored } = s;
+  const latest = scored[scored.length - 1];
+  const latestR = narrowToQuarter(r, latest.quarter);
+  const answers = latest.sample_size.answers;
+
+  const [compRes, srcRes, themeRes] = await Promise.all([
+    ctx.admin.rpc('mcp_get_competitor_stats', {
+      p_company_ids: r.scope.companyIds, p_buckets: null, p_months: latestR.months, p_limit: 5,
+    }),
+    ctx.admin.rpc('mcp_get_domain_stats', {
+      p_company_ids: r.scope.companyIds, p_buckets: null, p_months: latestR.months, p_limit: 5,
+    }),
+    ctx.admin.rpc('mcp_get_theme_stats', {
+      p_company_ids: r.scope.companyIds, p_buckets: null, p_months: latestR.months, p_limit: 8,
+    }),
   ]);
 
-  const themes = JSON.parse(themesData);
-  const competitors = JSON.parse(competitorsData);
-  const citations = JSON.parse(citationsData);
+  // Attributes: latest-quarter share of answers + change vs the previous
+  // measured quarter (built over the two-quarter window).
+  const attributes = buildAttributeRows(rollups, r, { withQuarterly: true }).attributes
+    .map(a => {
+      const q = (a.quarterly || []).find((x: any) => x.quarter === latest.label) as any;
+      if (!q) return null;
+      return {
+        attribute_id: a.attribute_id,
+        attribute: a.attribute,
+        mentioned_in_pct_of_answers: q.mentioned_in_pct_of_answers,
+        positive_sentiment_pct: q.positive_sentiment_pct,
+        ...(a.change_vs_previous_period ? { change_vs_previous_period: a.change_vs_previous_period } : {}),
+        sample_size: q.sample_size,
+      };
+    })
+    .filter(Boolean)
+    .sort((x: any, y: any) => (y.mentioned_in_pct_of_answers ?? -1) - (x.mentioned_in_pct_of_answers ?? -1))
+    .slice(0, 6);
 
-  // Per-section coverage rolled up so the model knows at a glance which
-  // slices of the overview have data and which don't.
-  const coverage = coverageFound({
-    has_metrics: !metricsData.noData,
-    has_themes: (themes.themes?.length || 0) > 0,
-    has_competitors: (competitors.competitors?.length || 0) > 0,
-    has_citations: (citations.citations?.length || 0) > 0,
-  });
-  if (metricsData.noData) {
-    return JSON.stringify({
-      company: metricsData.company,
-      _coverage: coverageNoData(`No AI response data has been collected yet for ${metricsData.company}.`),
-    });
+  const topThemes = ((themeRes.data?.themes as any[]) || []).map((t: any) => ({
+    theme: t.theme_name,
+    mentioned_in_pct_of_answers: pct(t.responses || 0, answers),
+    positive_sentiment_pct: sentimentPct(t.positive || 0, t.negative || 0),
+    attributes: (t.attribute_ids || []).map(attributeName),
+    sample_size: { answers: t.responses || 0 },
+  }));
+
+  const compAgg = new Map<string, number>();
+  for (const row of ((compRes.data?.rows as any[]) || [])) {
+    compAgg.set(row.competitor_name, (compAgg.get(row.competitor_name) || 0) + (row.responses_mentioning || 0));
   }
+  const topCompetitors = Array.from(compAgg.entries())
+    .map(([name, n]) => ({ name, named_in_pct_of_answers: pct(n, answers), sample_size: { answers_naming: n } }))
+    .sort((a, b) => b.sample_size.answers_naming - a.sample_size.answers_naming)
+    .slice(0, 5);
+
+  const srcAgg = new Map<string, { citing: number; mentioned: number }>();
+  for (const row of ((srcRes.data?.rows as any[]) || [])) {
+    const e = srcAgg.get(row.domain) || { citing: 0, mentioned: 0 };
+    e.citing += row.responses_citing || 0;
+    e.mentioned += row.mentioned_responses_citing || 0;
+    srcAgg.set(row.domain, e);
+  }
+  const topSources = Array.from(srcAgg.entries())
+    .map(([domain, v]) => ({
+      domain,
+      cited_in_pct_of_answers: pct(v.citing, answers),
+      answer_gap_pct_of_answers: pct(Math.max(0, v.citing - v.mentioned), answers),
+      sample_size: { answers_citing: v.citing },
+    }))
+    .sort((a, b) => b.sample_size.answers_citing - a.sample_size.answers_citing)
+    .slice(0, 5);
 
   return JSON.stringify({
-    metrics: metricsData,
-    top_themes: themes.themes?.slice(0, 8) || [],
-    top_competitors: competitors.competitors?.slice(0, 5) || [],
-    top_citations: citations.citations?.slice(0, 5) || [],
-    _coverage: coverage,
+    metrics: metricsPayload(r, scored),
+    top_attributes: attributes,
+    top_themes: topThemes,
+    top_competitors: topCompetitors,
+    top_sources: topSources,
+    _coverage: coverageFound({
+      period: latest.label,
+      has_previous_period: scored.length > 1,
+      has_attributes: attributes.length > 0,
+      has_themes: topThemes.length > 0,
+      has_competitors: topCompetitors.length > 0,
+      has_sources: topSources.length > 0,
+    }),
+    _meta: metaFor(r, [...SCORECARD_NOTES, METHODOLOGY_NOTES.attribute_share]),
   });
 }
 
+// ─── compare_companies ──────────────────────────────────────────────────────
+// Side-by-side scorecards for individual profiles (markets, subsidiaries),
+// each at ITS OWN latest measured period — so a profile last measured in Q2
+// is labeled as such rather than silently pooled with Q3 profiles.
+export async function compareCompanies(ctx: ToolContext, companyIds: string[]): Promise<string> {
+  const ids = companyIds.slice(0, 10);
+  const { data: comps } = await ctx.admin.from('companies').select('id, name, country').in('id', ids);
+  const nameOf = new Map<string, { name: string; country: string | null }>(
+    (comps || []).map((c: any) => [c.id, { name: c.name, country: c.country || null }])
+  );
+
+  const results = await Promise.all(ids.map(async (id) => {
+    const info = nameOf.get(id) || { name: id, country: null };
+    const r = await resolveScope(ctx, id, { quartersBack: 2, includeSiblings: false });
+    if (typeof r === 'string') return { company: info.name, country: info.country, measured: false };
+    let rollups: any;
+    try { rollups = await readRollups(ctx, r); } catch { return { company: info.name, country: info.country, measured: false }; }
+    const scored = scoreQuarters(rollups, r);
+    if (!scored.length) return { company: info.name, country: info.country, measured: false };
+    const { scope_companies: _omit, ...payload } = metricsPayload(r, scored);
+    return { ...payload, country: info.country, measured: true };
+  }));
+
+  const measured = results.filter((x: any) => x.measured);
+  const missing = results.filter((x: any) => !x.measured).map((x: any) => x.company);
+  const periods = Array.from(new Set(measured.map((x: any) => x.period)));
+
+  let coverage = missing.length === 0
+    ? coverageFound({ compared: measured.length })
+    : coveragePartial(
+        `${missing.length} of ${results.length} profiles have not been measured yet and are excluded from the comparison.`,
+        { not_yet_measured: missing }
+      );
+  if (periods.length > 1) {
+    coverage = { ...coverage, note: `Profiles were last measured in different periods (${periods.join(', ')}); each row is labeled with its own period.` };
+  }
+
+  return JSON.stringify({
+    comparison: measured.map(({ measured: _m, ...row }: any) => row),
+    _coverage: coverage,
+    _meta: buildMeta({ periods, methodology: [METHODOLOGY_NOTES.platform_coverage, METHODOLOGY_NOTES.periods, ...SCORECARD_NOTES] }),
+  });
+}
+
+// ─── get_themes ─────────────────────────────────────────────────────────────
+export async function getThemes(ctx: ToolContext, companyId: string, quartersBack: number, includeSiblings: boolean): Promise<string> {
+  const r = await resolveScope(ctx, companyId, { quartersBack, includeSiblings });
+  if (typeof r === 'string') return r;
+
+  const [rollupsRes, themeRes] = await Promise.all([
+    readRollups(ctx, r).then(d => ({ data: d, error: null })).catch(e => ({ data: null, error: e })),
+    ctx.admin.rpc('mcp_get_theme_stats', {
+      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months, p_limit: 30,
+    }),
+  ]);
+  if (rollupsRes.error) return JSON.stringify({ error: rollupsRes.error.message });
+  if (themeRes.error) return JSON.stringify({ error: `Theme stats read failed: ${themeRes.error.message}` });
+
+  const rollups = rollupsRes.data;
+  const built = buildAttributeRows(rollups, r, { withQuarterly: false });
+  const answers = built.totalAnswers;
+  const rows: any[] = themeRes.data?.themes || [];
+  if (!rows.length) {
+    return JSON.stringify({
+      themes: [],
+      _coverage: coverageNoData(`No themes have been extracted for ${r.scope.brandName} across the measured periods ${r.quarters.join(', ')}.`),
+      _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment]),
+    });
+  }
+
+  const themes = rows.map((t: any) => {
+    const pos = t.positive || 0, neg = t.negative || 0, neu = t.neutral || 0;
+    return {
+      theme: t.theme_name,
+      mentioned_in_pct_of_answers: pct(t.responses || 0, answers),
+      positive_sentiment_pct: sentimentPct(pos, neg),
+      sentiment_label: pos > neg ? 'Positive' : neg > pos ? 'Negative' : 'Mixed/Neutral',
+      attributes: (t.attribute_ids || []).map(attributeName),
+      platforms: t.platforms || [],
+      description: t.description || null,
+      sample_keywords: Array.isArray(t.keywords) ? t.keywords.slice(0, 5) : [],
+      sample_size: { answers: t.responses || 0, positive: pos, negative: neg, neutral: neu },
+    };
+  });
+
+  return JSON.stringify({
+    themes,
+    attribute_summary: built.attributes,
+    sample_size: {
+      answers,
+      answers_with_themes: themeRes.data?.responses_with_themes || 0,
+      distinct_themes: themeRes.data?.theme_total || 0,
+    },
+    _coverage: coverageFound({ theme_count: themes.length, attribute_count: built.attributes.length }),
+    _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment, METHODOLOGY_NOTES.attribute_share]),
+  });
+}
+
+// ─── get_attribute_breakdown ────────────────────────────────────────────────
+export async function getAttributeBreakdown(ctx: ToolContext, companyId: string, quartersBack: number, includeSiblings: boolean): Promise<string> {
+  const r = await resolveScope(ctx, companyId, { quartersBack, includeSiblings });
+  if (typeof r === 'string') return r;
+
+  const [rollupsRes, themeRes] = await Promise.all([
+    readRollups(ctx, r).then(d => ({ data: d, error: null })).catch(e => ({ data: null, error: e })),
+    ctx.admin.rpc('mcp_get_theme_stats', {
+      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months, p_limit: 1,
+    }),
+  ]);
+  if (rollupsRes.error) return JSON.stringify({ error: rollupsRes.error.message });
+
+  const built = buildAttributeRows(rollupsRes.data, r, { withQuarterly: true });
+  if (!built.attributes.length) {
+    return JSON.stringify({
+      _coverage: coverageNoData(`No attribute themes have been extracted for ${r.scope.brandName} across the measured periods ${r.quarters.join(', ')}.`),
+      _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment]),
+    });
+  }
+  const topThemes: Record<string, string[]> = themeRes.data?.attribute_top_themes || {};
+  const attributes = built.attributes.map(a => ({
+    ...a,
+    sentiment_label: a.sample_size.positive_themes > a.sample_size.negative_themes ? 'Positive'
+      : a.sample_size.negative_themes > a.sample_size.positive_themes ? 'Negative' : 'Mixed',
+    top_themes: topThemes[a.attribute_id] || [],
+  }));
+
+  return JSON.stringify({
+    attributes,
+    sample_size: { answers: built.totalAnswers, themes: built.allThemes },
+    _coverage: coverageFound({ attribute_count: attributes.length }),
+    _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment, METHODOLOGY_NOTES.attribute_share]),
+  });
+}
+
+// ─── get_competitors ────────────────────────────────────────────────────────
+// Same cube, same shape as get_competitor_landscape without the market /
+// attribute lenses.
+export function getCompetitors(ctx: ToolContext, companyId: string, quartersBack: number, includeSiblings: boolean): Promise<string> {
+  return getCompetitorLandscape(ctx, companyId, undefined, undefined, quartersBack, 15, includeSiblings);
+}
+
+// ─── get_citations ──────────────────────────────────────────────────────────
+export async function getCitations(
+  ctx: ToolContext,
+  companyId: string,
+  includeSnippets: boolean,
+  domainFilter: string | undefined,
+  quartersBack: number,
+  includeSiblings: boolean
+): Promise<string> {
+  const r = await resolveScope(ctx, companyId, { quartersBack, includeSiblings });
+  if (typeof r === 'string') return r;
+
+  const filter = domainFilter ? domainFilter.replace(/^www\./, '').toLowerCase().trim() : '';
+  const [domainRes, rollupsRes] = await Promise.all([
+    ctx.admin.rpc('mcp_get_domain_stats', {
+      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months,
+      p_limit: filter ? 500 : 60,
+    }),
+    readRollups(ctx, r).then(d => ({ data: d, error: null })).catch(e => ({ data: null, error: e })),
+  ]);
+  if (domainRes.error) return JSON.stringify({ error: `Domain stats read failed: ${domainRes.error.message}` });
+  if (rollupsRes.error) return JSON.stringify({ error: rollupsRes.error.message });
+
+  const answers = ((rollupsRes.data?.scope_stats || []) as any[]).reduce((s, row) => s + (row.total_responses || 0), 0);
+  const byDomain = new Map<string, { citing: number; mentioned: number; citations: number }>();
+  let totalCitations = 0;
+  for (const row of ((domainRes.data?.rows as any[]) || [])) {
+    const d = String(row.domain);
+    if (filter && !d.includes(filter)) continue;
+    const e = byDomain.get(d) || { citing: 0, mentioned: 0, citations: 0 };
+    e.citing += row.responses_citing || 0;
+    e.mentioned += row.mentioned_responses_citing || 0;
+    e.citations += row.citation_count || 0;
+    totalCitations += row.citation_count || 0;
+    byDomain.set(d, e);
+  }
+
+  if (!byDomain.size) {
+    return JSON.stringify({
+      citations: [],
+      _coverage: coverageNoData(
+        filter
+          ? `No citations from a domain matching "${domainFilter}" across the measured periods ${r.quarters.join(', ')}.`
+          : `No citations have been captured for ${r.scope.brandName} across the measured periods ${r.quarters.join(', ')}.`
+      ),
+      _meta: metaFor(r),
+    });
+  }
+
+  const citations: any[] = Array.from(byDomain.entries())
+    .map(([domain, v]) => ({
+      domain,
+      cited_in_pct_of_answers: pct(v.citing, answers),
+      share_of_citations_pct: pct(v.citations, totalCitations),
+      answer_gap_pct_of_answers: pct(Math.max(0, v.citing - v.mentioned), answers),
+      sample_size: { answers_citing: v.citing, citations: v.citations },
+    }))
+    .sort((a, b) => b.sample_size.answers_citing - a.sample_size.answers_citing)
+    .slice(0, filter ? 50 : 20);
+
+  // Samples of HOW a source appears: titles/snippets/urls from a bounded
+  // set of recent answers in the window (never the full stream).
+  if (includeSnippets) {
+    const wanted = new Set(citations.map(c => c.domain));
+    const samples = new Map<string, { titles: string[]; snippets: string[]; urls: string[] }>();
+    const { data: recent } = await ctx.admin
+      .from('prompt_responses')
+      .select('citations, canonical_citations')
+      .in('company_id', r.scope.companyIds)
+      .in('response_month', r.months)
+      .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
+      .not('citations', 'is', null)
+      .order('tested_at', { ascending: false })
+      .limit(150);
+    for (const row of (recent || [])) {
+      let list: any[];
+      try {
+        const raw = row.canonical_citations ?? row.citations;
+        list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!Array.isArray(list)) continue;
+      } catch { continue; }
+      for (const c of list) {
+        if (!c || typeof c !== 'object') continue;
+        const domain = String(c.domain || '').replace(/^www\./, '').toLowerCase();
+        if (!domain || !wanted.has(domain)) continue;
+        const e = samples.get(domain) || { titles: [], snippets: [], urls: [] };
+        if (c.title && e.titles.length < 3 && !e.titles.includes(c.title)) e.titles.push(c.title);
+        if (c.snippet && e.snippets.length < 3) e.snippets.push(String(c.snippet).substring(0, 200));
+        if (c.url && e.urls.length < 3 && !e.urls.includes(c.url)) e.urls.push(c.url);
+        samples.set(domain, e);
+      }
+    }
+    for (const c of citations) {
+      const s = samples.get(c.domain);
+      c.sample_titles = s?.titles || [];
+      c.sample_snippets = s?.snippets || [];
+      c.sample_urls = s?.urls || [];
+    }
+  }
+
+  return JSON.stringify({
+    citations,
+    sample_size: { answers, citations: totalCitations, distinct_domains: domainRes.data?.domain_total ?? byDomain.size },
+    _coverage: coverageFound({ unique_domains: citations.length, ...(filter ? { domain_filter: domainFilter } : {}) }),
+    _meta: metaFor(r, [
+      'Domains are canonicalized (regional variants collapse to one root).',
+      '"answer_gap" = answers citing this domain where the company was NOT mentioned — the outreach opportunity surface.',
+    ]),
+  });
+}
+
+// ─── get_model_breakdown ────────────────────────────────────────────────────
+export async function getModelBreakdown(ctx: ToolContext, companyId: string, quartersBack: number, includeSiblings: boolean): Promise<string> {
+  const r = await resolveScope(ctx, companyId, { quartersBack, includeSiblings });
+  if (typeof r === 'string') return r;
+
+  const [rollupsRes, themeRes] = await Promise.all([
+    readRollups(ctx, r).then(d => ({ data: d, error: null })).catch(e => ({ data: null, error: e })),
+    ctx.admin.rpc('mcp_get_theme_stats', {
+      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months, p_limit: 1,
+    }),
+  ]);
+  if (rollupsRes.error) return JSON.stringify({ error: rollupsRes.error.message });
+
+  const byModel = new Map<string, { answers: number; mentioned: number; withThemes: number; pos: number; neg: number; neu: number }>();
+  const get = (k: string) => {
+    if (!byModel.has(k)) byModel.set(k, { answers: 0, mentioned: 0, withThemes: 0, pos: 0, neg: 0, neu: 0 });
+    return byModel.get(k)!;
+  };
+  for (const row of (rollupsRes.data?.llm_stats || [])) {
+    const e = get(row.ai_model || 'unknown');
+    e.answers += row.total_responses || 0;
+    e.mentioned += row.mentions || 0;
+  }
+  for (const row of ((themeRes.data?.by_platform as any[]) || [])) {
+    const e = get(row.ai_model || 'unknown');
+    e.withThemes += row.responses_with_themes || 0;
+    e.pos += row.positive || 0;
+    e.neg += row.negative || 0;
+    e.neu += row.neutral || 0;
+  }
+  if (!byModel.size) {
+    return JSON.stringify({
+      _coverage: coverageNoData(`No AI answer data has been collected yet for ${r.scope.brandName} across the measured periods ${r.quarters.join(', ')}.`),
+      _meta: metaFor(r),
+    });
+  }
+
+  const breakdown = Array.from(byModel.entries()).map(([platform, v]) => ({
+    platform,
+    visibility_pct: pct(v.mentioned, v.answers),
+    positive_sentiment_pct: sentimentPct(v.pos, v.neg),
+    dominant_sentiment: v.pos > v.neg ? 'Positive' : v.neg > v.pos ? 'Negative' : 'Neutral',
+    sample_size: {
+      answers: v.answers,
+      answers_mentioning_company: v.mentioned,
+      answers_with_themes: v.withThemes,
+      positive_themes: v.pos, negative_themes: v.neg, neutral_themes: v.neu,
+    },
+  })).sort((a, b) => b.sample_size.answers - a.sample_size.answers);
+
+  return JSON.stringify({
+    model_breakdown: breakdown,
+    _coverage: coverageFound({ platform_count: breakdown.length }),
+    _meta: metaFor(r, [METHODOLOGY_NOTES.visibility, METHODOLOGY_NOTES.sentiment]),
+  });
+}
+
+// ─── get_responses / search_responses (bounded raw reads) ───────────────────
 export async function getResponses(
   ctx: ToolContext,
   companyId: string,
@@ -214,7 +681,7 @@ export async function getResponses(
     .from('prompt_responses')
     .select(`
       id, ai_model, response_text,
-      company_mentioned, detected_competitors, tested_at,
+      company_mentioned, detected_competitors, tested_at, response_month,
       confirmed_prompts(prompt_text, prompt_category, prompt_type)
     `)
     .eq('company_id', companyId)
@@ -248,6 +715,7 @@ export async function getResponses(
     const s = sentimentMap.get(r.id);
     // Response minimization (plugin guidelines): no internal ids or raw
     // timestamps in the payload — the client-facing period grain is quarters.
+    const month = r.response_month || r.tested_at;
     return {
       ai_model: r.ai_model,
       prompt: r.confirmed_prompts?.prompt_text,
@@ -258,19 +726,20 @@ export async function getResponses(
       sentiment: s?.label || null,
       company_mentioned: r.company_mentioned,
       competitors_mentioned: r.detected_competitors,
-      period: r.tested_at ? quarterLabel(monthToQuarter(String(r.tested_at))) : null,
+      period: month ? monthToQuarter(String(month)) : null,
     };
   });
 
   const coverage = responses.length === 0
     ? coverageNoData(
-        `No responses found` +
+        `No answers found` +
         (promptType ? ` for prompt_type "${promptType}"` : '') +
         (aiModel ? ` from ai_model "${aiModel}"` : '') +
         (sentimentFilter ? ` with sentiment "${sentimentFilter}"` : '') + '.'
       )
     : coverageFound({
         returned: responses.length,
+        order: 'newest first',
         filters_applied: {
           prompt_type: promptType || null,
           ai_model: aiModel || null,
@@ -281,380 +750,6 @@ export async function getResponses(
   return JSON.stringify({ total_returned: responses.length, responses, _coverage: coverage });
 }
 
-export async function getThemes(ctx: ToolContext, companyId: string): Promise<string> {
-  const { admin } = ctx;
-  const { data, error } = await admin
-    .from('ai_themes')
-    .select('theme_name, theme_description, sentiment, attribute_name, confidence_score, keywords, prompt_responses!inner(ai_model)')
-    .eq('company_id', companyId)
-    .not('prompt_responses.ai_model', 'in', EXCLUDED_AI_MODELS_FILTER);
-
-  if (error) return JSON.stringify({ error: error.message });
-  if (!data?.length) return JSON.stringify({
-    themes: [],
-    _coverage: coverageNoData("No themes have been extracted for this company yet."),
-  });
-
-  const themeMap = new Map<string, {
-    occurrences: number;
-    sentiment_counts: { positive: number; negative: number; neutral: number };
-    attributes: Set<string>;
-    descriptions: string[];
-    keywords: Set<string>;
-  }>();
-
-  for (const t of data) {
-    const key = t.theme_name;
-    if (!themeMap.has(key)) {
-      themeMap.set(key, { occurrences: 0, sentiment_counts: { positive: 0, negative: 0, neutral: 0 }, attributes: new Set(), descriptions: [], keywords: new Set() });
-    }
-    const entry = themeMap.get(key)!;
-    entry.occurrences++;
-    if (t.sentiment) entry.sentiment_counts[t.sentiment as 'positive' | 'negative' | 'neutral']++;
-    if (t.attribute_name) entry.attributes.add(t.attribute_name);
-    if (t.theme_description && entry.descriptions.length < 2) entry.descriptions.push(t.theme_description);
-    if (t.keywords?.length) t.keywords.slice(0, 3).forEach((k: string) => entry.keywords.add(k));
-  }
-
-  const themes = Array.from(themeMap.entries())
-    .map(([theme_name, stats]) => {
-      // Methodology v2: share of opinionated themes that are positive, as a
-      // whole percentage ("81", never "0.81"); null = no opinionated signal.
-      return {
-        theme: theme_name,
-        mentions: stats.occurrences,
-        positive_sentiment_pct: sentimentPct(stats.sentiment_counts.positive, stats.sentiment_counts.negative),
-        sentiment_label: stats.sentiment_counts.positive > stats.sentiment_counts.negative ? 'Positive' :
-          stats.sentiment_counts.negative > stats.sentiment_counts.positive ? 'Negative' : 'Mixed/Neutral',
-        sentiment_breakdown: stats.sentiment_counts,
-        attributes: Array.from(stats.attributes),
-        description: stats.descriptions[0] || null,
-        sample_keywords: Array.from(stats.keywords).slice(0, 5),
-      };
-    })
-    .sort((a, b) => b.mentions - a.mentions);
-
-  const attrMap = new Map<string, { positive: number; negative: number; neutral: number; count: number }>();
-  for (const t of data) {
-    if (!t.attribute_name) continue;
-    if (!attrMap.has(t.attribute_name)) attrMap.set(t.attribute_name, { positive: 0, negative: 0, neutral: 0, count: 0 });
-    const entry = attrMap.get(t.attribute_name)!;
-    entry.count++;
-    if (t.sentiment) entry[t.sentiment as 'positive' | 'negative' | 'neutral']++;
-  }
-
-  const attribute_summary = Array.from(attrMap.entries())
-    .map(([attr, counts]) => ({
-      attribute: attr,
-      total_themes: counts.count,
-      positive: counts.positive,
-      negative: counts.negative,
-      neutral: counts.neutral,
-      dominant_sentiment: counts.positive > counts.negative ? 'Positive' : counts.negative > counts.positive ? 'Negative' : 'Mixed',
-    }))
-    .sort((a, b) => b.total_themes - a.total_themes);
-
-  return JSON.stringify({
-    themes,
-    attribute_summary,
-    _coverage: coverageFound({ theme_count: themes.length, attribute_count: attribute_summary.length }),
-  });
-}
-
-export async function getAttributeBreakdown(ctx: ToolContext, companyId: string): Promise<string> {
-  const { admin } = ctx;
-  const [responsesResult, themesResult] = await Promise.all([
-    admin
-      .from('prompt_responses')
-      .select('id, ai_model')
-      .eq('company_id', companyId)
-      .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER),
-    admin
-      .from('ai_themes')
-      .select('response_id, attribute_id, attribute_name, sentiment, theme_name, confidence_score, keywords, context_snippets, prompt_responses!inner(ai_model)')
-      .eq('company_id', companyId)
-      .not('prompt_responses.ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
-      .not('attribute_name', 'is', null),
-  ]);
-
-  const responseIds = responsesResult.data || [];
-  if (!responseIds.length) return JSON.stringify({
-    _coverage: coverageNoData("No AI response data has been collected yet for this company."),
-  });
-
-  const data = themesResult.data || [];
-  if (themesResult.error) return JSON.stringify({ error: themesResult.error.message });
-  if (!data.length) return JSON.stringify({
-    _coverage: coverageNoData("No attributes have been extracted for this company yet."),
-  });
-
-  const responseModelMap = new Map<string, string>(responseIds.map((r: any) => [r.id, r.ai_model]));
-
-  const attrMap = new Map<string, {
-    id: string;
-    sentiments: string[];
-    themes: string[];
-    snippets: string[];
-    models: Set<string>;
-  }>();
-
-  for (const t of data) {
-    const attr = t.attribute_name;
-    if (!attr) continue;
-    if (!attrMap.has(attr)) {
-      attrMap.set(attr, { id: t.attribute_id, sentiments: [], themes: [], snippets: [], models: new Set() });
-    }
-    const entry = attrMap.get(attr)!;
-    if (t.sentiment) entry.sentiments.push(t.sentiment);
-    if (t.theme_name) entry.themes.push(t.theme_name);
-    if (t.context_snippets?.length) entry.snippets.push(...t.context_snippets.slice(0, 2));
-    const model = responseModelMap.get(t.response_id);
-    if (model) entry.models.add(model);
-  }
-
-  const attributes = Array.from(attrMap.entries()).map(([attr_name, stats]) => {
-    // Methodology v2: score = positive/(positive+negative) as 0-100;
-    // 50 = balanced/no polarized signal. Numeric sentiment_score not used.
-    const posCount = stats.sentiments.filter(s => s === 'positive').length;
-    const negCount = stats.sentiments.filter(s => s === 'negative').length;
-    const polarized = posCount + negCount;
-    return {
-      attribute: attr_name,
-      score_out_of_100: polarized > 0 ? Math.round((posCount / polarized) * 100) : 50,
-      sentiment_label: posCount > negCount ? 'Positive' : negCount > posCount ? 'Negative' : 'Mixed',
-      positive_count: posCount,
-      negative_count: negCount,
-      neutral_count: stats.sentiments.filter(s => s === 'neutral').length,
-      top_themes: [...new Set(stats.themes)].slice(0, 5),
-      ai_models_mentioning: Array.from(stats.models),
-      sample_snippets: stats.snippets.slice(0, 3),
-    };
-  }).sort((a, b) => b.score_out_of_100 - a.score_out_of_100);
-
-  return JSON.stringify({
-    attributes: attributes,
-    total_attributes: attributes.length,
-    _coverage: coverageFound({ attribute_count: attributes.length }),
-  });
-}
-
-export async function getCompetitors(ctx: ToolContext, companyId: string): Promise<string> {
-  const { admin } = ctx;
-  const { data } = await admin
-    .from('prompt_responses')
-    .select('detected_competitors, ai_model')
-    .eq('company_id', companyId)
-    .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
-    .not('detected_competitors', 'is', null);
-
-  const { count: total } = await admin
-    .from('prompt_responses')
-    .select('id', { count: 'exact', head: true })
-    .eq('company_id', companyId)
-    .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER);
-
-  const competitorCounts = new Map<string, { count: number; models: Set<string> }>();
-  for (const r of (data || [])) {
-    if (!r.detected_competitors) continue;
-    const comps = r.detected_competitors.split(',').map((c: string) => c.trim()).filter(Boolean);
-    for (const comp of comps) {
-      if (!competitorCounts.has(comp)) competitorCounts.set(comp, { count: 0, models: new Set() });
-      const entry = competitorCounts.get(comp)!;
-      entry.count++;
-      if (r.ai_model) entry.models.add(r.ai_model);
-    }
-  }
-
-  const competitors = Array.from(competitorCounts.entries())
-    .map(([name, stats]) => ({
-      name,
-      mentions: stats.count,
-      mention_rate: total > 0 ? `${Math.round((stats.count / total) * 100)}%` : '0%',
-      mentioned_by_models: Array.from(stats.models),
-    }))
-    .sort((a, b) => b.mentions - a.mentions)
-    .slice(0, 15);
-
-  const coverage = competitors.length === 0
-    ? coverageNoData("No competitor mentions have been detected in AI responses for this company yet.")
-    : coverageFound({ competitor_count: competitors.length, analyzed_responses: total || 0 });
-  return JSON.stringify({ competitors, total_responses: total || 0, _coverage: coverage });
-}
-
-export async function getCitations(
-  ctx: ToolContext,
-  companyId: string,
-  includeSnippets?: boolean,
-  domainFilter?: string
-): Promise<string> {
-  const { admin } = ctx;
-  const { data, error } = await admin
-    .from('prompt_responses')
-    .select('citations, ai_model')
-    .eq('company_id', companyId)
-    .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
-    .not('citations', 'is', null);
-
-  if (error) return JSON.stringify({ error: error.message });
-
-  let totalCitations = 0;
-  const domainMap = new Map<string, {
-    count: number;
-    models: Set<string>;
-    titles: string[];
-    snippets: string[];
-    urls: string[];
-  }>();
-
-  for (const r of (data || [])) {
-    let citationsList: any[];
-    try {
-      citationsList = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
-      if (!Array.isArray(citationsList)) continue;
-    } catch { continue; }
-
-    for (const citation of citationsList) {
-      if (!citation || typeof citation !== 'object') continue;
-
-      let domain = citation.domain || citation.source || null;
-      if (!domain && citation.url) {
-        try {
-          domain = new URL(citation.url).hostname;
-        } catch { continue; }
-      }
-      if (!domain) continue;
-
-      domain = domain.replace(/^www\./, '').toLowerCase();
-
-      if (domainFilter && !domain.includes(domainFilter.replace(/^www\./, '').toLowerCase())) continue;
-
-      totalCitations++;
-
-      if (!domainMap.has(domain)) {
-        domainMap.set(domain, { count: 0, models: new Set(), titles: [], snippets: [], urls: [] });
-      }
-      const entry = domainMap.get(domain)!;
-      entry.count++;
-      if (r.ai_model) entry.models.add(r.ai_model);
-
-      if (includeSnippets) {
-        if (citation.title && entry.titles.length < 3 && !entry.titles.includes(citation.title)) {
-          entry.titles.push(citation.title);
-        }
-        if (citation.snippet && entry.snippets.length < 3) {
-          entry.snippets.push(citation.snippet.substring(0, 200));
-        }
-        if (citation.url && entry.urls.length < 3) {
-          entry.urls.push(citation.url);
-        }
-      }
-    }
-  }
-
-  const citations = Array.from(domainMap.entries())
-    .map(([domain, stats]) => {
-      const result: any = {
-        domain,
-        count: stats.count,
-        share: totalCitations > 0 ? `${Math.round((stats.count / totalCitations) * 100)}%` : '0%',
-        cited_by_models: Array.from(stats.models),
-      };
-      if (includeSnippets) {
-        result.sample_titles = stats.titles;
-        result.sample_snippets = stats.snippets;
-        result.sample_urls = stats.urls;
-      }
-      return result;
-    })
-    .sort((a, b) => b.count - a.count)
-    .slice(0, domainFilter ? 50 : 20);
-
-  if (citations.length === 0) {
-    return JSON.stringify({
-      citations: [],
-      total_citations: 0,
-      _coverage: coverageNoData(
-        domainFilter
-          ? `No citations found for domain matching "${domainFilter}".`
-          : "No citations have been captured for this company yet."
-      ),
-    });
-  }
-
-  return JSON.stringify({
-    citations,
-    total_citations: totalCitations,
-    _coverage: coverageFound({ unique_domains: citations.length, total_citation_events: totalCitations }),
-  });
-}
-
-export async function compareCompanies(ctx: ToolContext, companyIds: string[]): Promise<string> {
-  const ids = companyIds.slice(0, 10);
-  const results = await Promise.all(ids.map(id => computeMetrics(ctx.admin, id)));
-  const missing = results.filter((r: any) => r.noData).map((r: any) => r.company);
-  const coverage = missing.length === 0
-    ? coverageFound({ compared: results.length })
-    : coveragePartial(
-        `${missing.length} of ${results.length} companies have no data yet and are excluded from the comparison.`,
-        { companies_without_data: missing }
-      );
-  return JSON.stringify({ comparison: results, _coverage: coverage });
-}
-
-export async function getModelBreakdown(ctx: ToolContext, companyId: string): Promise<string> {
-  const { admin } = ctx;
-  const { data: responses, error } = await admin
-    .from('prompt_responses')
-    .select('id, ai_model, company_mentioned')
-    .eq('company_id', companyId)
-    .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER);
-
-  if (error) return JSON.stringify({ error: error.message });
-  if (!responses?.length) return JSON.stringify({
-    _coverage: coverageNoData("No AI response data has been collected yet for this company."),
-  });
-
-  const sentimentMap = await getResponseSentiments(admin, responses.map((r: any) => r.id));
-
-  const modelMap = new Map<string, { total: number; mentioned: number; pos: number; neg: number; positive: number; negative: number; neutral: number }>();
-
-  for (const r of responses) {
-    const model = r.ai_model || 'unknown';
-    if (!modelMap.has(model)) modelMap.set(model, { total: 0, mentioned: 0, pos: 0, neg: 0, positive: 0, negative: 0, neutral: 0 });
-    const entry = modelMap.get(model)!;
-    entry.total++;
-    if (r.company_mentioned) entry.mentioned++;
-
-    const s = sentimentMap.get(r.id);
-    if (s) {
-      entry.pos += s.pos;
-      entry.neg += s.neg;
-      if (s.label === 'positive') entry.positive++;
-      else if (s.label === 'negative') entry.negative++;
-      else entry.neutral++;
-    } else {
-      entry.neutral++;
-    }
-  }
-
-  // Methodology v2: per-platform sentiment pools positive/negative theme
-  // counts across the platform's responses; percentage, null = no
-  // opinionated signal.
-  const breakdown = Array.from(modelMap.entries()).map(([model, stats]) => ({
-    platform: model,
-    total_responses: stats.total,
-    visibility_rate: `${Math.round((stats.mentioned / stats.total) * 100)}%`,
-    positive_sentiment_pct: sentimentPct(stats.pos, stats.neg),
-    sentiment_breakdown: { positive: stats.positive, negative: stats.negative, neutral: stats.neutral },
-    dominant_sentiment: stats.positive > stats.negative ? 'Positive' : stats.negative > stats.positive ? 'Negative' : 'Neutral',
-  })).sort((a, b) => b.total_responses - a.total_responses);
-
-  return JSON.stringify({
-    model_breakdown: breakdown,
-    _coverage: coverageFound({ model_count: breakdown.length, total_responses: responses.length }),
-  });
-}
-
 export async function searchResponses(ctx: ToolContext, companyId: string, keyword: string, limit?: number): Promise<string> {
   const { admin } = ctx;
   const maxLimit = Math.min(limit || 10, 30);
@@ -662,7 +757,7 @@ export async function searchResponses(ctx: ToolContext, companyId: string, keywo
   const { data, error } = await admin
     .from('prompt_responses')
     .select(`
-      id, ai_model, response_text, tested_at,
+      id, ai_model, response_text, tested_at, response_month,
       confirmed_prompts(prompt_text, prompt_type)
     `)
     .eq('company_id', companyId)
@@ -676,17 +771,20 @@ export async function searchResponses(ctx: ToolContext, companyId: string, keywo
   const responseIds = (data || []).map((r: any) => r.id);
   const sentimentMap = await getResponseSentiments(admin, responseIds);
 
-  const results = (data || []).map((r: any) => ({
-    ai_model: r.ai_model,
-    prompt: r.confirmed_prompts?.prompt_text,
-    prompt_type: r.confirmed_prompts?.prompt_type,
-    sentiment: sentimentMap.get(r.id)?.label || null,
-    snippet: extractSnippet(r.response_text || '', keyword, 300),
-    period: r.tested_at ? quarterLabel(monthToQuarter(String(r.tested_at))) : null,
-  }));
+  const results = (data || []).map((r: any) => {
+    const month = r.response_month || r.tested_at;
+    return {
+      ai_model: r.ai_model,
+      prompt: r.confirmed_prompts?.prompt_text,
+      prompt_type: r.confirmed_prompts?.prompt_type,
+      sentiment: sentimentMap.get(r.id)?.label || null,
+      snippet: extractSnippet(r.response_text || '', keyword, 300),
+      period: month ? monthToQuarter(String(month)) : null,
+    };
+  });
 
   const coverage = results.length === 0
-    ? coverageNoData(`No AI responses for this company mention "${keyword}".`)
-    : coverageFound({ matches: results.length, keyword });
+    ? coverageNoData(`No AI answers for this company mention "${keyword}".`)
+    : coverageFound({ matches: results.length, keyword, order: 'newest first' });
   return JSON.stringify({ keyword, results_found: results.length, results, _coverage: coverage });
 }

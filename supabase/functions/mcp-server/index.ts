@@ -46,11 +46,13 @@ const SERVER_INSTRUCTIONS = `PerceptionX tracks how consumer AI platforms (ChatG
 Rules for using these tools:
 1. Answer ONLY from tool results. Never fill gaps with general knowledge about the company — if a tool didn't return it, say the data isn't tracked yet.
 2. Every result has a _coverage field (found / partial / no_data). Honor it: on no_data, say so plainly; on partial, name what's missing.
-3. Periods are quarters ("Q3 2026"); the running quarter is marked "(in progress)" — a lighter latest point is normal, never call it a decline. Quote _meta.period_range and the matched market spellings when precision matters.
-4. Sentiment and visibility are percentages ("81%") — present them that way, never as decimals. Lead with shares ("cited by 31% of answers"), not raw counts; counts are sample-size context only.
-5. Data is scoped to this user's organization only. There is no cross-customer data.
-6. Competitor "share of voice on an attribute" means who gets NAMED when the topic comes up — it is not a claim that the competitor is rated better.
-7. Start with list_companies if you don't know company IDs. For market questions ("culture in India") use get_attribute_themes / get_visibility / get_sources / get_competitor_landscape / get_trends.`;
+3. Periods are MEASURED quarters ("Q3 2026"). Data is collected in waves, typically one per quarter, and _meta.periods lists every measured period in the window. A calendar month or quarter that is not listed was not a measurement period — never describe it as missing, a gap, or a pause, and never say a month is missing. Compare periods only against each other, in the order listed. A period is marked "(in progress)" only while its wave is still being collected; every other listed period is complete and final — do not hedge a completed period as partial or "still filling in".
+4. Lead with percentages. Every headline figure is a share of answers ("cited by 31% of answers", "wellbeing came up in 23% of answers, down 4 points from Q2 2026"). Anything under sample_size is a raw count for context only — never narrate a change as a count of mentions or responses. Sentiment and visibility are percentages ("81%"), never decimals.
+5. Change is reported in percentage points against the PREVIOUS measured period (change_vs_previous_period, delta_points_vs_previous). Quote it that way.
+6. Numbers match the PerceptionX dashboard: brand scope (all same-name market profiles) and the latest measured period by default. Quote _meta.period_range and the matched market spellings when precision matters.
+7. Data is scoped to this user's organization only. There is no cross-customer data.
+8. Competitor "share of voice on an attribute" means who gets NAMED when the topic comes up — it is not a claim that the competitor is rated better.
+9. Start with list_companies if you don't know company IDs. "How are we doing?" → get_company_overview. Market questions ("culture in India") → get_attribute_themes / get_visibility / get_sources / get_competitor_landscape / get_trends. "Why did X change?" → get_attribute_themes with attribute_id: it returns the example themes and the sources cited in those answers.`;
 
 // ─── Token auth ─────────────────────────────────────────────────────────────
 

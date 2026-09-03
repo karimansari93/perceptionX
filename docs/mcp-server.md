@@ -19,18 +19,25 @@ supabase/functions/_shared/px-tools     ← SHARED tool layer (16 tools)
         │                                  also consumed by chat-with-data
         ▼
 Dashboard stats cubes via service-role twin RPCs (mcp_get_rollups,
-mcp_get_domain_stats, mcp_get_competitor_stats, mcp_get_attribute_competitors)
+mcp_get_domain_stats, mcp_get_competitor_stats, mcp_get_attribute_competitors,
+mcp_get_measurement_periods, mcp_get_theme_stats, mcp_get_attribute_sources)
 ```
 
 **One tool layer, two transports.** `chat-with-data` (the in-app analyst, admin-only at `/chat`) and `mcp-server` execute the identical `px-tools` registry — same numbers, same `_coverage`/`_meta` caveats. The in-app chat is the development/eval harness for what external hosts consume.
 
-**Self-caveating payloads.** Over MCP our system prompt does not travel — only `initialize.instructions`, tool descriptions, and result payloads reach the host model. So every result embeds `_coverage` (found/partial/no_data), `_meta.period_range`, the matched market spellings, scope size, and methodology notes (sentiment formula, platform coverage, "SOV ≠ sentiment").
+**Self-caveating payloads.** Over MCP our system prompt does not travel — only `initialize.instructions`, tool descriptions, and result payloads reach the host model. So every result embeds `_coverage` (found/partial/no_data), `_meta.periods` / `_meta.period_range`, the matched market spellings, scope size, and methodology notes (sentiment formula, platform coverage, measured-period rule, "SOV ≠ sentiment").
 
-**Presentation rules (client feedback, Aug 2026 — enforced by the eval):**
-- **Quarters, never raw dates.** Internal storage is monthly; payloads roll up to quarters at read time, with the running quarter labeled "(in progress)" so a light latest point is never misread as a decline. No timestamps or ISO dates anywhere in a payload.
-- **Percentages, never decimals.** `positive_sentiment_pct: 81`, not `sentiment_ratio: 0.81`.
+**Presentation rules (client feedback Aug 2026 + Ford guardrail audit Sep 2026 — enforced by the eval and `_shared/px-tools/px_tools_test.ts`):**
+- **Measured quarters, never calendar quarters.** Collection runs in waves (Ford: one wave in Apr/May 2026, one in July). A tool's window is "the last N quarters that have data"; `_meta.periods` lists every one, `period_range` is bounded by data (never "from Q4 2025" when the first wave was Q2 2026), and the instructions tell the host model an unlisted month or quarter was not a measurement period — never a gap, never "May is missing". Internal storage stays monthly; payloads roll up at read time. No timestamps or ISO dates anywhere in a payload.
+- **"(in progress)" is a pipeline fact, not a calendar one.** The latest quarter is labeled in progress only while `company_batch_queue` has pending/processing work for the scope or the cubes saw answers in the last two days (`mcp_get_measurement_periods`). A completed wave is never hedged as "still filling in".
+- **Percentages lead; counts nest.** Every headline is a share of answers — `visibility_pct`, `mentioned_in_pct_of_answers` (attributes and themes), `cited_in_pct_of_answers` (sources), `named_in_pct_of_answers` (competitors) — and every raw count sits under `sample_size`, so a host model never narrates "dropped from 3,013 to 3,000 mentions". Integer percentages (`81`), never decimals.
+- **Change in points vs the previous measured period.** `change_vs_previous_period` / `delta_points_vs_previous` mirror the dashboard's delta chips (latest vs the previous period in the list, not the previous calendar quarter).
+- **Dashboard scope by default.** Every tool aggregates the brand scope (same-name market profiles) and the snapshot tools default to the latest measured quarter — the dashboard's default view — so ChatGPT and the app say the same numbers. `compare_companies` reports each profile at its own latest period and labels it.
+- **"Why did X change?" is answerable.** `get_attribute_themes` with an attribute returns the example themes and `sources_in_attribute_answers` — the domains cited in the answers that discuss that attribute (response-level association, framed as "not cause").
 - **Say what's included, never what's excluded.** Coverage is framed as the tracked platforms (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode); no payload or description mentions excluded models.
 - **Response minimization** (ChatGPT plugin guidelines): no internal ids, request ids, or diagnostics in tool responses; company UUIDs remain only because tool chaining requires them.
+
+**Why the Sep 2026 rebuild (defects found in the audit):** (1) windows were calendar quarters, so Ford's two waves read as "Q4 2025–Q3 2026 with gaps" and July's completed wave was hedged as in progress; (2) EPS read relevance from `company_relevance_scores`, a relation that does not exist — relevance silently scored 0 and EPS lost its 20% component; (3) the original chat tools aggregated raw rows pulled through PostgREST, which caps at `max_rows = 1000`, so every real company's theme/competitor/citation counts were truncated; (4) those tools pooled every wave ever collected for one market profile, which never matched the dashboard. All aggregates now come from the cubes or SQL RPCs.
 
 ## Security model
 
@@ -43,7 +50,7 @@ mcp_get_domain_stats, mcp_get_competitor_stats, mcp_get_attribute_competitors)
 
 ## Deploy order (safe at each step)
 
-1. **Migrations** (additive only): `20260831120000_mcp_auth.sql`, then `20260831120100_mcp_read_rpcs.sql`.
+1. **Migrations** (additive only): `20260831120000_mcp_auth.sql`, `20260831120100_mcp_read_rpcs.sql`, then `20260903120000_mcp_measurement_periods_and_theme_stats.sql` (adds `mcp_get_measurement_periods`, `mcp_get_theme_stats`, `mcp_get_attribute_sources`; replaces `mcp_get_rollups` in place to add the `relevance` family). The edge functions call the new RPCs on every request, so apply this migration BEFORE deploying them.
 2. **Edge functions**: deploy `chat-with-data` (now importing `_shared/px-tools`) and `mcp-server` (**verify_jwt = false** — it implements its own bearer auth; OAuth discovery must be reachable unauthenticated).
 3. **Frontend** (merge to main → Netlify): `_redirects` proxy rules, `/connect/consent` page, `/chat` admin route. Until this ships, OAuth can't complete (no consent page) — PATs against the direct functions URL work regardless.
 4. **Enable an org + mint a PAT** (below), run the eval.
@@ -91,13 +98,15 @@ MCP_TOKEN=pxk_... \
 deno run --allow-net --allow-env --allow-read scripts/mcp-eval/run.ts
 ```
 
-Phase A: 37 protocol + tool-shape invariants against the live server (coverage signals, quarter labels, integer-percentage checks, no-raw-dates lint, read-only annotations, tenant-rejection). Phase B (with `ANTHROPIC_API_KEY`): tool-selection eval over `questions.json` — the regression net for tool descriptions. Run it after ANY change to tool descriptions or the shared layer.
+Phase A: protocol + tool-shape invariants against the live server — coverage signals, measured-period envelopes (`_meta.periods`, data-bounded `period_range`, no "(in progress)" without an active collection), shares-first lint (inside list entries the only bare numbers are `*_pct` / `*_points` / `*_per_answer` / `eps`; everything else must sit under `sample_size`), integer-percentage checks, no-raw-dates lint, relevance present in EPS, read-only annotations, tenant-rejection. Phase B (with `ANTHROPIC_API_KEY`): tool-selection eval over `questions.json` — the regression net for tool descriptions. Run it after ANY change to tool descriptions or the shared layer.
 
-## Netflix pilot checklist
+Offline (no PAT needed): `cd supabase/functions && deno test _shared/px-tools/` replays a Ford-shaped fixture (two waves, Apr/May + July, nothing since) through the real executors and pins the same rules.
 
-1. `mcp_enable_org` for the Netflix org; confirm quotas.
+## Client pilot checklist (Netflix live; Ford next)
+
+1. `mcp_enable_org` for the org (Ford Motor Company: `0af791f6-db6e-4063-95c4-71cd31f8779a`); confirm quotas.
 2. Verify their users exist as `organization_members` (consent lists only orgs the user belongs to AND that are enabled).
-3. Run the eval with a PAT scoped to their org; spot-check the flagship questions ("culture in India", "visibility in Japan", "sources in Germany", "top competitor for pay" — expect the SOV-not-sentiment caveat).
+3. Run the eval with a PAT scoped to their org; spot-check the flagship questions ("how are we doing" — expect Q3 2026 numbers that match the dashboard, "culture in India", "visibility in Japan", "sources in Germany", "top competitor for pay" — expect the SOV-not-sentiment caveat, "why did wellbeing change" — expect points vs Q2 2026 plus the sources in those answers, and never a reference to May/June or Q1 as missing).
 4. Their workspace admin enables Developer Mode and adds `https://app.perceptionx.ai/mcp` (steps above); or we demo via Claude Code + PAT first.
 5. Watch `mcp_request_log` during the first sessions; tune tool descriptions where the host model picks the wrong tool.
 6. Revoke pilot PATs when OAuth is confirmed working.
@@ -109,7 +118,7 @@ Per OpenAI's plugin guidelines, already satisfied in code: unique verb-style too
 ## Known limits / later
 
 - **Competitor sentiment** (`competitor_themes`) accrues forward from Aug 2026 — the tools say so in-band until it has depth. Attribute SOV covers v2 prompts only.
-- **Theme↔citation linkage doesn't exist** — "which source drives this sentiment" is deliberately not a tool; needs extraction-time changes first.
+- **Theme↔citation linkage is response-level only.** `sources_in_attribute_answers` (on a focused `get_attribute_themes`) lists the domains cited in answers that carry a theme of that attribute — "the sources in play when wellbeing comes up". Which citation produced which sentence would need extraction-time changes; the payload says "association, not cause" for that reason.
 - **Apps SDK / directory (`@PerceptionX` with branded cards)**: later packaging step on this same server — add `resources` (skybridge card templates) + `_meta.openai/outputTemplate` to tool results, then submit for OpenAI review. Results already carry `structuredContent` in anticipation.
 - **Progress states**: hosts render their own "Running tool…" with our tool `title`s (e.g. "Searching your sources"); the streamed SSE statuses remain an in-app-chat nicety.
 - `mcp_org_settings.enabled` gates NEW requests only; long-lived PATs should carry `p_expires_in_days`.

@@ -57,7 +57,7 @@ export async function executeTool(
     // to the authenticated caller's organization. This is the hard security
     // boundary — RLS is disabled on some tables, so this check is the
     // primary defense against cross-tenant reads. Sibling ids resolved
-    // inside the insight tools come from the org's own rows by construction.
+    // inside the tools come from the org's own rows by construction.
     const idsToCheck: string[] = [];
     if (SINGLE_ID_TOOLS.has(toolName) && toolInput?.company_id) idsToCheck.push(toolInput.company_id);
     if (toolName === 'compare_companies' && Array.isArray(toolInput?.company_ids)) idsToCheck.push(...toolInput.company_ids);
@@ -69,7 +69,12 @@ export async function executeTool(
       }
     }
 
+    // Brand scope (same-name market profiles) by default — the dashboard's
+    // scope. Windows count MEASURED quarters: the snapshot tools default to
+    // the latest measured period, the trend-shaped tools to the last four.
     const includeSiblings = toolInput?.include_siblings !== false;
+    const latestPeriods = clampInt(toolInput?.quarters_back, 1, 8, 1);
+    const trendPeriods = clampInt(toolInput?.quarters_back, 1, 8, 4);
 
     let result: string;
     switch (toolName) {
@@ -77,10 +82,10 @@ export async function executeTool(
         result = await listCompanies(ctx);
         break;
       case 'get_company_overview':
-        result = await getCompanyOverview(ctx, toolInput.company_id);
+        result = await getCompanyOverview(ctx, toolInput.company_id, includeSiblings);
         break;
       case 'get_company_metrics':
-        result = await getCompanyMetrics(ctx, toolInput.company_id);
+        result = await getCompanyMetrics(ctx, toolInput.company_id, includeSiblings);
         break;
       case 'get_responses':
         result = await getResponses(
@@ -90,22 +95,25 @@ export async function executeTool(
         );
         break;
       case 'get_themes':
-        result = await getThemes(ctx, toolInput.company_id);
+        result = await getThemes(ctx, toolInput.company_id, latestPeriods, includeSiblings);
         break;
       case 'get_attribute_breakdown':
-        result = await getAttributeBreakdown(ctx, toolInput.company_id);
+        result = await getAttributeBreakdown(ctx, toolInput.company_id, latestPeriods, includeSiblings);
         break;
       case 'get_competitors':
-        result = await getCompetitors(ctx, toolInput.company_id);
+        result = await getCompetitors(ctx, toolInput.company_id, latestPeriods, includeSiblings);
         break;
       case 'get_citations':
-        result = await getCitations(ctx, toolInput.company_id, !!toolInput.include_snippets, toolInput.domain_filter);
+        result = await getCitations(
+          ctx, toolInput.company_id, !!toolInput.include_snippets, toolInput.domain_filter,
+          latestPeriods, includeSiblings
+        );
         break;
       case 'compare_companies':
         result = await compareCompanies(ctx, toolInput.company_ids.slice(0, 10));
         break;
       case 'get_model_breakdown':
-        result = await getModelBreakdown(ctx, toolInput.company_id);
+        result = await getModelBreakdown(ctx, toolInput.company_id, latestPeriods, includeSiblings);
         break;
       case 'search_responses':
         if (typeof toolInput?.keyword !== 'string' || !toolInput.keyword.trim()) {
@@ -119,33 +127,33 @@ export async function executeTool(
       case 'get_attribute_themes':
         result = await getAttributeThemes(
           ctx, toolInput.company_id, toolInput.attribute_id, toolInput.location,
-          clampInt(toolInput.quarters_back, 1, 8, 4), includeSiblings
+          trendPeriods, includeSiblings
         );
         break;
       case 'get_visibility':
         result = await getVisibility(
           ctx, toolInput.company_id, toolInput.location,
-          clampInt(toolInput.quarters_back, 1, 8, 4), !!toolInput.by_model, includeSiblings
+          trendPeriods, !!toolInput.by_model, includeSiblings
         );
         break;
       case 'get_sources':
         result = await getSources(
           ctx, toolInput.company_id, toolInput.location,
-          clampInt(toolInput.quarters_back, 1, 8, 4), !!toolInput.gap_only,
+          trendPeriods, !!toolInput.gap_only,
           clampInt(toolInput.limit, 1, 100, 25), includeSiblings
         );
         break;
       case 'get_competitor_landscape':
         result = await getCompetitorLandscape(
           ctx, toolInput.company_id, toolInput.location, toolInput.attribute_id,
-          clampInt(toolInput.quarters_back, 1, 8, 4),
+          trendPeriods,
           clampInt(toolInput.limit, 1, 50, 15), includeSiblings
         );
         break;
       case 'get_trends':
         result = await getTrends(
           ctx, toolInput.company_id, toolInput.metric || 'visibility', toolInput.location,
-          clampInt(toolInput.quarters_back, 1, 8, 4), includeSiblings
+          trendPeriods, includeSiblings
         );
         break;
       default:
