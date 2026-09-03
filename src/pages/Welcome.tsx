@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -88,26 +88,31 @@ const Welcome = () => {
   // The redeem-invite function mints a one-time OTP we verify here, so the
   // emailed link lives for 30 days (resending restarts the window) — and stops
   // working once accepted or revoked.
+  //
+  // Runs once per token, regardless of any session already in this browser.
+  // An invite link opened while someone else is signed in (a shared machine,
+  // or the admin who sent it clicking it themselves) must NOT hand that
+  // person the invitee's form — it would rewrite their name, password and
+  // dashboard focus. That session is dropped (this browser only) before the
+  // token is redeemed.
+  const redeemState = useRef<'idle' | 'redeeming' | 'done'>('idle');
   useEffect(() => {
     if (!inviteToken) return;
-    if (user) {
-      setSessionStatus('valid');
-      return;
-    }
-    let cancelled = false;
+    if (redeemState.current !== 'idle') return;
+    redeemState.current = 'redeeming';
     (async () => {
       try {
+        const { data: { session: existing } } = await supabase.auth.getSession();
+        if (existing) await supabase.auth.signOut({ scope: 'local' });
         const { data, error } = await supabase.functions.invoke('redeem-invite', {
           body: { token: inviteToken },
         });
         if (error) throw error;
         if (!data?.ok || !data?.tokenHash) {
-          if (!cancelled) {
-            setExpiredReason(
-              data?.reason === 'used' ? 'used' : data?.reason === 'expired' ? 'expired' : 'invalid',
-            );
-            setSessionStatus('expired');
-          }
+          setExpiredReason(
+            data?.reason === 'used' ? 'used' : data?.reason === 'expired' ? 'expired' : 'invalid',
+          );
+          setSessionStatus('expired');
           return;
         }
         const { error: otpError } = await supabase.auth.verifyOtp({
@@ -115,24 +120,19 @@ const Welcome = () => {
           type: 'magiclink',
         });
         if (otpError) throw otpError;
-        if (cancelled) return;
+        redeemState.current = 'done';
         setSessionStatus('valid');
         // Don't leave the token sitting in the URL / browser history.
         searchParams.delete('invite');
         setSearchParams(searchParams, { replace: true });
       } catch (err) {
         console.error('Invite redemption failed:', err);
-        if (!cancelled) {
-          setExpiredReason('invalid');
-          setSessionStatus('expired');
-        }
+        setExpiredReason('invalid');
+        setSessionStatus('expired');
       }
     })();
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inviteToken, user]);
+  }, [inviteToken]);
 
   // Legacy flow (Supabase auth action link drops the session in the URL hash),
   // or a bare /welcome visit: fall back to the previous session probe. Skipped
@@ -150,9 +150,11 @@ const Welcome = () => {
     return () => clearTimeout(timeout);
   }, [user, authLoading, inviteToken]);
 
+  // A session only counts once the token (if any) has been redeemed — the
+  // pre-existing session of someone else must not unlock the form.
   useEffect(() => {
-    if (user) setSessionStatus('valid');
-  }, [user]);
+    if (user && (!inviteToken || redeemState.current === 'done')) setSessionStatus('valid');
+  }, [user, inviteToken]);
 
   const inviterName = (user?.user_metadata?.inviter_name as string) || null;
 
