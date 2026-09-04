@@ -123,7 +123,7 @@ Remove the connector and add it again. The assistant only reads the tool list wh
 Check that PerceptionX is switched on for that chat, and ask it to "use PerceptionX" in the question.
 
 **Something else.**
-Email support@perceptionx.ai and tell us which assistant you're using.
+Email team@perceptionx.ai and tell us which assistant you're using.
 
 ---
 
