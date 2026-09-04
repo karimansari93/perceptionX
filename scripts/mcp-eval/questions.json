@@ -24,6 +24,8 @@
     { "q": "Why did wellbeing drop last quarter, and which sources are behind it?", "expect_any": ["get_attribute_themes"] },
     { "q": "How did our compensation perception change versus the previous period?", "expect_any": ["get_attribute_themes", "get_attribute_breakdown", "get_trends"] },
     { "q": "Give me links to the pages AI cites about our pay.", "expect_any": ["get_attribute_themes", "get_citations", "get_sources"] },
-    { "q": "Which Glassdoor pages come up, with links?", "expect_any": ["get_citations", "get_sources"] }
+    { "q": "Which Glassdoor pages come up, with links?", "expect_any": ["get_citations", "get_sources"] },
+    { "q": "How does AI describe us for finance roles?", "expect_any": ["get_attribute_themes", "get_visibility"] },
+    { "q": "Which job functions hear the most negative things about our wellbeing?", "expect_any": ["get_attribute_themes"] }
   ]
 }

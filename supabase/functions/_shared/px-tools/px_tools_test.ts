@@ -57,7 +57,10 @@ const tables: Record<string, any[]> = {
 // missing" and "Q3 is still in progress" misreads.
 const SCOPE_STATS = [
   { company_id: FORD_US, response_month: '2026-04-01', job_function_context: '', location_context: 'United States', total_responses: 1000, mentioned_responses: 800, total_citations: 8000, distinct_domains: 50, positive_themes: 300, negative_themes: 100, neutral_themes: 40 },
-  { company_id: FORD_US, response_month: '2026-07-01', job_function_context: '', location_context: 'United States', total_responses: 1000, mentioned_responses: 850, total_citations: 9000, distinct_domains: 55, positive_themes: 280, negative_themes: 120, neutral_themes: 40 },
+  // The July wave carries job functions (the April one is untagged): the
+  // filter must narrow periods AND figures, and the split must regroup rows.
+  { company_id: FORD_US, response_month: '2026-07-01', job_function_context: 'Finance', location_context: 'United States', total_responses: 600, mentioned_responses: 540, total_citations: 5400, distinct_domains: 55, positive_themes: 170, negative_themes: 70, neutral_themes: 24 },
+  { company_id: FORD_US, response_month: '2026-07-01', job_function_context: 'Manufacturing', location_context: 'United States', total_responses: 400, mentioned_responses: 310, total_citations: 3600, distinct_domains: 30, positive_themes: 110, negative_themes: 50, neutral_themes: 16 },
   { company_id: FORD_IN, response_month: '2026-04-01', job_function_context: '', location_context: 'India', total_responses: 500, mentioned_responses: 300, total_citations: 4000, distinct_domains: 30, positive_themes: 100, negative_themes: 50, neutral_themes: 20 },
   { company_id: FORD_IN, response_month: '2026-07-01', job_function_context: '', location_context: 'India', total_responses: 500, mentioned_responses: 350, total_citations: 5000, distinct_domains: 32, positive_themes: 90, negative_themes: 60, neutral_themes: 20 },
 ];
@@ -69,7 +72,8 @@ const LLM_STATS = [
 ];
 const ATTRIBUTE_THEMES = [
   { attribute_id: 'wellbeing-balance', response_month: '2026-04-01', job_function_context: '', total_themes: 200, positive_themes: 150, negative_themes: 30, neutral_themes: 20, response_count: 300 },
-  { attribute_id: 'wellbeing-balance', response_month: '2026-07-01', job_function_context: '', total_themes: 260, positive_themes: 160, negative_themes: 80, neutral_themes: 20, response_count: 345 },
+  { attribute_id: 'wellbeing-balance', response_month: '2026-07-01', job_function_context: 'Finance', total_themes: 160, positive_themes: 100, negative_themes: 50, neutral_themes: 10, response_count: 200 },
+  { attribute_id: 'wellbeing-balance', response_month: '2026-07-01', job_function_context: 'Manufacturing', total_themes: 100, positive_themes: 60, negative_themes: 30, neutral_themes: 10, response_count: 145 },
   { attribute_id: 'compensation', response_month: '2026-04-01', job_function_context: '', total_themes: 300, positive_themes: 200, negative_themes: 50, neutral_themes: 50, response_count: 400 },
   { attribute_id: 'compensation', response_month: '2026-07-01', job_function_context: '', total_themes: 300, positive_themes: 210, negative_themes: 60, neutral_themes: 30, response_count: 420 },
   // Retired v1 id — must never surface as an attribute row.
@@ -82,17 +86,21 @@ const RELEVANCE = [
 
 const inMonths = (row: any, months: string[] | null) => !months || months.includes(String(row.response_month).slice(0, 10));
 const inBuckets = (row: any, buckets: string[] | null) => !buckets || buckets.includes(row.location_context);
+const inJobFunctions = (row: any, jfs: string[] | null) => !jfs || jfs.includes(row.job_function_context ?? '');
 
 let activeCollection = false;
 
 function rpc(name: string, params: any): { data: any; error: any } {
   const months: string[] | null = params.p_months ?? null;
   const buckets: string[] | null = params.p_buckets ?? null;
+  const jfs: string[] | null = params.p_job_functions ?? null;
   switch (name) {
     case 'mcp_list_location_buckets':
       return { data: ['India', 'United States'], error: null };
+    case 'mcp_list_job_function_buckets':
+      return { data: ['Finance', 'Manufacturing'], error: null };
     case 'mcp_get_measurement_periods': {
-      const rows = SCOPE_STATS.filter(r => params.p_company_ids.includes(r.company_id) && inBuckets(r, buckets));
+      const rows = SCOPE_STATS.filter(r => params.p_company_ids.includes(r.company_id) && inBuckets(r, buckets) && inJobFunctions(r, jfs));
       const byCompany = new Map<string, { months: Set<string>; answers: number }>();
       for (const r of SCOPE_STATS.filter(r => params.p_company_ids.includes(r.company_id))) {
         const e = byCompany.get(r.company_id) || { months: new Set(), answers: 0 };
@@ -112,9 +120,9 @@ function rpc(name: string, params: any): { data: any; error: any } {
     case 'mcp_get_rollups':
       return {
         data: {
-          scope_stats: SCOPE_STATS.filter(r => params.p_company_ids.includes(r.company_id) && inMonths(r, months) && inBuckets(r, buckets)),
-          llm_stats: LLM_STATS.filter(r => inMonths(r, months) && inBuckets(r, buckets)),
-          attribute_themes: ATTRIBUTE_THEMES.filter(r => inMonths(r, months)),
+          scope_stats: SCOPE_STATS.filter(r => params.p_company_ids.includes(r.company_id) && inMonths(r, months) && inBuckets(r, buckets) && inJobFunctions(r, jfs)),
+          llm_stats: LLM_STATS.filter(r => inMonths(r, months) && inBuckets(r, buckets) && inJobFunctions(r, jfs)),
+          attribute_themes: ATTRIBUTE_THEMES.filter(r => inMonths(r, months) && inJobFunctions(r, jfs)),
           relevance: RELEVANCE.filter(r => inMonths(r, months)),
           data_as_of: '2026-09-03T00:00:00Z',
         },
@@ -223,7 +231,7 @@ const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
 // "..._per_answer", and the EPS composite. Anything else numeric inside a
 // list entry is a raw count and must live under sample_size.
 const SHARE_KEY = /(_pct(_|$)|_points$|_per_answer$|^eps$)/;
-const SERIES_KEYS = new Set(['top_pages', 'quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison']);
+const SERIES_KEYS = new Set(['by_job_function', 'top_pages', 'quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison']);
 
 function assertNoRawCountsLead(payload: any, path = '$') {
   if (Array.isArray(payload)) { payload.forEach((v, i) => assertNoRawCountsLead(v, `${path}[${i}]`)); return; }
@@ -448,4 +456,29 @@ Deno.test('get_sources: every domain carries its most-cited pages for linking', 
   }]);
   assertEquals(Object.keys(ford).indexOf('top_pages') < Object.keys(ford).indexOf('sample_size'), true);
   assertStringIncludes(s._meta.methodology.join(' '), 'top_pages');
+});
+
+Deno.test('job function: matched like markets, periods follow the filter, splits regroup the cube rows', async () => {
+  const fin = await call('get_visibility', { company_id: FORD_US, job_function: 'finance' });
+  lint('get_visibility/finance', fin);
+  assertEquals(fin._meta.job_functions_matched, ['Finance']);
+  assertEquals(fin._meta.periods, ['Q3 2026']);      // only the July wave tagged functions
+  assertEquals(fin.visibility_pct, 90);              // 540 of 600 Finance answers
+  assertStringIncludes(fin._meta.methodology.join(' '), 'job_functions_matched');
+
+  const hr = await call('get_visibility', { company_id: FORD_US, job_function: 'HR' });
+  assertEquals(hr._coverage.status, 'no_data');
+  assertEquals(hr._coverage.available_job_functions, ['Finance', 'Manufacturing']);
+
+  const split = await call('get_visibility', { company_id: FORD_US, by_job_function: true });
+  lint('get_visibility/by_job_function', split);
+  assertEquals(split.by_job_function.map((x: any) => [x.job_function, x.visibility_pct]), [['Finance', 90], ['Manufacturing', 78]]);
+  assertEquals(split.visibility_pct, 77);            // brand-wide figure unchanged by the split
+
+  const attr = await call('get_attribute_themes', { company_id: FORD_US, attribute_id: 'wellbeing', by_job_function: true });
+  lint('get_attribute_themes/by_job_function', attr);
+  assertEquals(
+    attr.attributes[0].by_job_function.map((x: any) => [x.job_function, x.mentioned_in_pct_of_answers, x.positive_sentiment_pct]),
+    [['Manufacturing', 36, 67], ['Finance', 33, 67]]
+  );
 });

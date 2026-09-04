@@ -276,13 +276,13 @@ export async function getCompanyOverview(ctx: ToolContext, companyId: string, in
 
   const [compRes, srcRes, themeRes] = await Promise.all([
     ctx.admin.rpc('mcp_get_competitor_stats', {
-      p_company_ids: r.scope.companyIds, p_buckets: null, p_months: latestR.months, p_limit: 5,
+      p_company_ids: r.scope.companyIds, p_buckets: null, p_job_functions: null, p_months: latestR.months, p_limit: 5,
     }),
     ctx.admin.rpc('mcp_get_domain_stats', {
-      p_company_ids: r.scope.companyIds, p_buckets: null, p_months: latestR.months, p_limit: 5,
+      p_company_ids: r.scope.companyIds, p_buckets: null, p_job_functions: null, p_months: latestR.months, p_limit: 5,
     }),
     ctx.admin.rpc('mcp_get_theme_stats', {
-      p_company_ids: r.scope.companyIds, p_buckets: null, p_months: latestR.months, p_limit: 8,
+      p_company_ids: r.scope.companyIds, p_buckets: null, p_job_functions: null, p_months: latestR.months, p_limit: 8,
     }),
   ]);
 
@@ -414,7 +414,7 @@ export async function getThemes(ctx: ToolContext, companyId: string, quartersBac
   const [rollupsRes, themeRes] = await Promise.all([
     readRollups(ctx, r).then(d => ({ data: d, error: null })).catch(e => ({ data: null, error: e })),
     ctx.admin.rpc('mcp_get_theme_stats', {
-      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months, p_limit: 30,
+      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_job_functions: r.jobFunctions, p_months: r.months, p_limit: 30,
     }),
   ]);
   if (rollupsRes.error) return JSON.stringify({ error: rollupsRes.error.message });
@@ -472,7 +472,7 @@ export async function getAttributeBreakdown(ctx: ToolContext, companyId: string,
   const [rollupsRes, themeRes] = await Promise.all([
     readRollups(ctx, r).then(d => ({ data: d, error: null })).catch(e => ({ data: null, error: e })),
     ctx.admin.rpc('mcp_get_theme_stats', {
-      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months, p_limit: 1,
+      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_job_functions: r.jobFunctions, p_months: r.months, p_limit: 1,
     }),
   ]);
   if (rollupsRes.error) return JSON.stringify({ error: rollupsRes.error.message });
@@ -526,12 +526,12 @@ export async function getCitations(
   const exactDomain = filter.includes('.') ? filter : null;   // a full domain narrows the page read itself
   const [domainRes, rollupsRes, pagesRes] = await Promise.all([
     ctx.admin.rpc('mcp_get_domain_stats', {
-      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months,
+      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_job_functions: r.jobFunctions, p_months: r.months,
       p_limit: filter ? 500 : 60,
     }),
     readRollups(ctx, r).then(d => ({ data: d, error: null })).catch(e => ({ data: null, error: e })),
     ctx.admin.rpc('mcp_get_cited_pages', {
-      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months,
+      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_job_functions: r.jobFunctions, p_months: r.months,
       p_domain: exactDomain,
       p_limit: filter ? 100 : 90,
       p_per_domain: filter ? 10 : 3,
@@ -610,7 +610,7 @@ export async function getModelBreakdown(ctx: ToolContext, companyId: string, qua
   const [rollupsRes, themeRes] = await Promise.all([
     readRollups(ctx, r).then(d => ({ data: d, error: null })).catch(e => ({ data: null, error: e })),
     ctx.admin.rpc('mcp_get_theme_stats', {
-      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_months: r.months, p_limit: 1,
+      p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_job_functions: r.jobFunctions, p_months: r.months, p_limit: 1,
     }),
   ]);
   if (rollupsRes.error) return JSON.stringify({ error: rollupsRes.error.message });

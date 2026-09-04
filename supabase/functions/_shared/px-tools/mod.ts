@@ -127,33 +127,34 @@ export async function executeTool(
       case 'get_attribute_themes':
         result = await getAttributeThemes(
           ctx, toolInput.company_id, toolInput.attribute_id, toolInput.location,
-          trendPeriods, includeSiblings
+          trendPeriods, includeSiblings, toolInput.job_function, !!toolInput.by_job_function
         );
         break;
       case 'get_visibility':
         result = await getVisibility(
           ctx, toolInput.company_id, toolInput.location,
-          trendPeriods, !!toolInput.by_model, includeSiblings
+          trendPeriods, !!toolInput.by_model, includeSiblings,
+          toolInput.job_function, !!toolInput.by_job_function
         );
         break;
       case 'get_sources':
         result = await getSources(
           ctx, toolInput.company_id, toolInput.location,
           trendPeriods, !!toolInput.gap_only,
-          clampInt(toolInput.limit, 1, 100, 25), includeSiblings
+          clampInt(toolInput.limit, 1, 100, 25), includeSiblings, toolInput.job_function
         );
         break;
       case 'get_competitor_landscape':
         result = await getCompetitorLandscape(
           ctx, toolInput.company_id, toolInput.location, toolInput.attribute_id,
           trendPeriods,
-          clampInt(toolInput.limit, 1, 50, 15), includeSiblings
+          clampInt(toolInput.limit, 1, 50, 15), includeSiblings, toolInput.job_function
         );
         break;
       case 'get_trends':
         result = await getTrends(
           ctx, toolInput.company_id, toolInput.metric || 'visibility', toolInput.location,
-          trendPeriods, includeSiblings
+          trendPeriods, includeSiblings, toolInput.job_function
         );
         break;
       default:

@@ -29,7 +29,7 @@ import {
   labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta, rate1, sentimentPct,
   sortQuarters, toQuarterly, topPagesByDomain, pageEntry, PAGES_UNAVAILABLE_NOTE,
 } from './helpers.ts';
-import { answersByQuarter, metaFor, resolveScope } from './scope.ts';
+import { answersByQuarter, metaFor, resolveScope, scopeSuffix } from './scope.ts';
 import type { ResolvedScope, ToolContext } from './scope.ts';
 
 // Methodology v2 attribute registry (mirrors src/config/attributes.ts /
@@ -101,7 +101,7 @@ export function unknownAttributeError(input: string): string {
 export async function readRollups(ctx: ToolContext, r: ResolvedScope): Promise<any> {
   const { data, error } = await ctx.admin.rpc('mcp_get_rollups', {
     p_company_ids: r.scope.companyIds,
-    p_buckets: r.buckets,
+    p_buckets: r.buckets, p_job_functions: r.jobFunctions,
     p_months: r.months,
   });
   if (error) throw new Error(`Rollup read failed: ${error.message}`);
@@ -205,6 +205,45 @@ export function buildAttributeRows(
   return { attributes, totalAnswers, allThemes };
 }
 
+// Per-function split for attribute rows: "wellbeing comes up in 40% of
+// Finance answers vs 25% of Manufacturing answers". Both cubes carry the
+// job function at their grain, so this regroups rows already read. Capped
+// at eight functions per attribute, largest share first.
+export function attachJobFunctionSplit(attributes: AttributeRow[], rollups: any, cap = 8): void {
+  const answersByFn = new Map<string, number>();
+  for (const row of ((rollups?.scope_stats as any[]) || [])) {
+    const k = String(row.job_function_context || '').trim();
+    if (!k) continue;
+    answersByFn.set(k, (answersByFn.get(k) || 0) + (row.total_responses || 0));
+  }
+  const perAttr = new Map<string, Map<string, { responses: number; pos: number; neg: number }>>();
+  for (const row of ((rollups?.attribute_themes as any[]) || [])) {
+    const k = String(row.job_function_context || '').trim();
+    if (!k) continue;
+    const a = String(row.attribute_id || '').trim();
+    if (!perAttr.has(a)) perAttr.set(a, new Map());
+    const m = perAttr.get(a)!;
+    const e = m.get(k) || { responses: 0, pos: 0, neg: 0 };
+    e.responses += row.response_count || 0;
+    e.pos += row.positive_themes || 0;
+    e.neg += row.negative_themes || 0;
+    m.set(k, e);
+  }
+  for (const attr of attributes as Array<AttributeRow & { by_job_function?: unknown[] }>) {
+    const m = perAttr.get(attr.attribute_id);
+    if (!m) continue;
+    attr.by_job_function = Array.from(m.entries())
+      .map(([job_function, v]) => ({
+        job_function,
+        mentioned_in_pct_of_answers: pct(v.responses, answersByFn.get(job_function) || 0),
+        positive_sentiment_pct: sentimentPct(v.pos, v.neg),
+        sample_size: { answers_mentioning: v.responses, answers: answersByFn.get(job_function) || 0 },
+      }))
+      .sort((x, y) => (y.mentioned_in_pct_of_answers ?? -1) - (x.mentioned_in_pct_of_answers ?? -1))
+      .slice(0, cap);
+  }
+}
+
 // ─── get_attribute_themes ───────────────────────────────────────────────────
 // "What's our culture like in India?" — attribute × market from the
 // dashboard cube, by measured quarter, plus real theme quotes and the
@@ -215,22 +254,25 @@ export async function getAttributeThemes(
   attributeInput: string | undefined,
   location: string | undefined,
   quartersBack: number,
-  includeSiblings: boolean
+  includeSiblings: boolean,
+  jobFunction?: string,
+  byJobFunction = false
 ): Promise<string> {
   const attributeId = attributeInput ? resolveAttributeId(attributeInput) : null;
   if (attributeInput && !attributeId) return unknownAttributeError(attributeInput);
 
-  const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
+  const r = await resolveScope(ctx, companyId, { location, jobFunction, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
   let rollups: any;
   try { rollups = await readRollups(ctx, r); } catch (err: any) { return JSON.stringify({ error: err.message }); }
 
   const built = buildAttributeRows(rollups, r, { focus: attributeId, withQuarterly: true });
+  if (byJobFunction) attachJobFunctionSplit(built.attributes, rollups);
   if (!built.attributes.length) {
     return JSON.stringify({
       _coverage: coverageNoData(
-        `No theme data for ${attributeId ? attributeName(attributeId) : 'any attribute'}${r.buckets ? ` in ${r.buckets.join('/')}` : ''} across the measured periods ${r.quarters.join(', ')}.`,
+        `No theme data for ${attributeId ? attributeName(attributeId) : 'any attribute'}${scopeSuffix(r)} across the measured periods ${r.quarters.join(', ')}.`,
         r.available.length ? { available_markets: r.available } : {}
       ),
       _meta: metaFor(r, [METHODOLOGY_NOTES.sentiment]),
@@ -264,7 +306,7 @@ export async function getAttributeThemes(
       ctx.admin.rpc('mcp_get_attribute_sources', {
         p_company_ids: r.scope.companyIds,
         p_attribute_id: attributeId,
-        p_buckets: r.buckets,
+        p_buckets: r.buckets, p_job_functions: r.jobFunctions,
         p_months: latestMonths,
         p_limit: 10,
       }),
@@ -334,9 +376,11 @@ export async function getVisibility(
   location: string | undefined,
   quartersBack: number,
   byModel: boolean,
-  includeSiblings: boolean
+  includeSiblings: boolean,
+  jobFunction?: string,
+  byJobFunction = false
 ): Promise<string> {
-  const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
+  const r = await resolveScope(ctx, companyId, { location, jobFunction, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
   let rollups: any;
@@ -346,7 +390,7 @@ export async function getVisibility(
   if (!stats.length) {
     return JSON.stringify({
       _coverage: coverageNoData(
-        `No answer data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} across the measured periods ${r.quarters.join(', ')}.`,
+        `No answer data${scopeSuffix(r)} across the measured periods ${r.quarters.join(', ')}.`,
         r.available.length ? { available_markets: r.available } : {}
       ),
       _meta: metaFor(r, [METHODOLOGY_NOTES.visibility]),
@@ -387,11 +431,34 @@ export async function getVisibility(
       .sort((a, b) => (b.visibility_pct ?? -1) - (a.visibility_pct ?? -1));
   }
 
+  // Split by job function: the scope-stats cube carries the function at
+  // its grain, so this is a regroup of rows already read — no extra query.
+  let functions: any[] | undefined;
+  if (byJobFunction) {
+    const byFn = new Map<string, { total: number; mentioned: number }>();
+    for (const row of stats) {
+      const k = String(row.job_function_context || '').trim();
+      if (!k) continue;
+      const e = byFn.get(k) || { total: 0, mentioned: 0 };
+      e.total += row.total_responses || 0;
+      e.mentioned += row.mentioned_responses || 0;
+      byFn.set(k, e);
+    }
+    functions = Array.from(byFn.entries())
+      .map(([job_function, v]) => ({
+        job_function,
+        visibility_pct: pct(v.mentioned, v.total),
+        sample_size: { answers: v.total, answers_mentioning_company: v.mentioned },
+      }))
+      .sort((a, b) => (b.visibility_pct ?? -1) - (a.visibility_pct ?? -1));
+  }
+
   return JSON.stringify({
     visibility_pct: pct(mentioned, total),
     quarterly,
     change: changeBlock(quarterly.map(q => ({ quarter: q.quarter, value: q.visibility_pct })), r.inProgressQuarter),
     ...(platforms ? { by_platform: platforms } : {}),
+    ...(functions ? { by_job_function: functions } : {}),
     sample_size: { answers: total, answers_mentioning_company: mentioned },
     _coverage: coverageFound({ periods: quarterly.length }),
     _meta: metaFor(r, [METHODOLOGY_NOTES.visibility]),
@@ -410,21 +477,22 @@ export async function getSources(
   quartersBack: number,
   gapOnly: boolean,
   limit: number,
-  includeSiblings: boolean
+  includeSiblings: boolean,
+  jobFunction?: string
 ): Promise<string> {
-  const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
+  const r = await resolveScope(ctx, companyId, { location, jobFunction, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
   const [domainRes, rollupsRes, pagesRes] = await Promise.all([
     ctx.admin.rpc('mcp_get_domain_stats', {
       p_company_ids: r.scope.companyIds,
-      p_buckets: r.buckets,
+      p_buckets: r.buckets, p_job_functions: r.jobFunctions,
       p_months: r.months,
       p_limit: Math.max(limit * 3, 100), // headroom before gap filtering
     }),
     ctx.admin.rpc('mcp_get_rollups', {
       p_company_ids: r.scope.companyIds,
-      p_buckets: r.buckets,
+      p_buckets: r.buckets, p_job_functions: r.jobFunctions,
       p_months: r.months,
     }),
     // Most-cited pages per domain (url + title) from the page cube — the
@@ -432,7 +500,7 @@ export async function getSources(
     // domain shares.
     ctx.admin.rpc('mcp_get_cited_pages', {
       p_company_ids: r.scope.companyIds,
-      p_buckets: r.buckets,
+      p_buckets: r.buckets, p_job_functions: r.jobFunctions,
       p_months: r.months,
       p_limit: Math.max(limit * 3, 90),
       p_per_domain: 3,
@@ -447,7 +515,7 @@ export async function getSources(
   if (!rows.length) {
     return JSON.stringify({
       _coverage: coverageNoData(
-        `No citation data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} across the measured periods ${r.quarters.join(', ')}.`,
+        `No citation data${scopeSuffix(r)} across the measured periods ${r.quarters.join(', ')}.`,
         r.available.length ? { available_markets: r.available } : {}
       ),
       _meta: metaFor(r),
@@ -485,9 +553,10 @@ export async function getSources(
   sources = gapOnly
     ? sources.filter(s => s.sample_size.answer_gap > 0).sort((a, b) => b.sample_size.answer_gap - a.sample_size.answer_gap)
     : sources.sort((a, b) => b.sample_size.answers_citing - a.sample_size.answers_citing);
+  const pagesSampled = pagesRes.error ? 0 : Number(pagesRes.data?.answers_sampled) || 0;   // > 0 only under a job-function filter
   const pagesByDomain = pagesRes.error
     ? new Map<string, Record<string, unknown>[]>()
-    : topPagesByDomain(pagesRes.data?.rows || [], totalResponses, 'cited_in_pct_of_answers');
+    : topPagesByDomain(pagesRes.data?.rows || [], pagesSampled || totalResponses, 'cited_in_pct_of_answers');
   const sourcesWithPages = sources.slice(0, limit).map(({ sample_size, ...s }) => ({
     ...s,
     top_pages: pagesByDomain.get(s.domain) || [],
@@ -499,6 +568,7 @@ export async function getSources(
     sample_size: {
       answers: totalResponses,
       distinct_domains: data?.domain_total ?? byDomain.size,
+      ...(pagesSampled ? { answers_sampled_for_pages: pagesSampled } : {}),
     },
     _coverage: coverageFound({
       returned: sourcesWithPages.length,
@@ -521,24 +591,25 @@ export async function getCompetitorLandscape(
   attributeInput: string | undefined,
   quartersBack: number,
   limit: number,
-  includeSiblings: boolean
+  includeSiblings: boolean,
+  jobFunction?: string
 ): Promise<string> {
   const attributeId = attributeInput ? resolveAttributeId(attributeInput) : null;
   if (attributeInput && !attributeId) return unknownAttributeError(attributeInput);
 
-  const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
+  const r = await resolveScope(ctx, companyId, { location, jobFunction, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
   const [statsRes, rollupsRes] = await Promise.all([
     ctx.admin.rpc('mcp_get_competitor_stats', {
       p_company_ids: r.scope.companyIds,
-      p_buckets: r.buckets,
+      p_buckets: r.buckets, p_job_functions: r.jobFunctions,
       p_months: r.months,
       p_limit: limit,
     }),
     ctx.admin.rpc('mcp_get_rollups', {
       p_company_ids: r.scope.companyIds,
-      p_buckets: r.buckets,
+      p_buckets: r.buckets, p_job_functions: r.jobFunctions,
       p_months: r.months,
     }),
   ]);
@@ -580,7 +651,7 @@ export async function getCompetitorLandscape(
         p_company_ids: r.scope.companyIds,
         p_attribute_id: attributeId,
         p_self_name: r.scope.brandName,
-        p_buckets: r.buckets,
+        p_buckets: r.buckets, p_job_functions: r.jobFunctions,
         p_months: r.months,
         p_limit: limit,
       }),
@@ -628,7 +699,7 @@ export async function getCompetitorLandscape(
   }
 
   const coverage = competitors.length === 0 && !attributeBlock
-    ? coverageNoData(`No competitor mentions${r.buckets ? ` for ${r.buckets.join('/')}` : ''} across the measured periods ${r.quarters.join(', ')}.`)
+    ? coverageNoData(`No competitor mentions${scopeSuffix(r)} across the measured periods ${r.quarters.join(', ')}.`)
     : competitors.length === 0 && attributeBlock
       ? coveragePartial('No overall competitor stats in this window; only the attribute lens returned data.')
       : coverageFound({ competitor_count: competitors.length });
@@ -651,7 +722,8 @@ export async function getTrends(
   metric: string,
   location: string | undefined,
   quartersBack: number,
-  includeSiblings: boolean
+  includeSiblings: boolean,
+  jobFunction?: string
 ): Promise<string> {
   const valid = ['visibility', 'sentiment', 'citations'];
   const m = (metric || 'visibility').toLowerCase();
@@ -659,7 +731,7 @@ export async function getTrends(
     return JSON.stringify({ error: `Unknown metric "${metric}". Valid: ${valid.join(', ')}.` });
   }
 
-  const r = await resolveScope(ctx, companyId, { location, quartersBack, includeSiblings });
+  const r = await resolveScope(ctx, companyId, { location, jobFunction, quartersBack, includeSiblings });
   if (typeof r === 'string') return r;
 
   let rollups: any;
@@ -668,7 +740,7 @@ export async function getTrends(
   const stats: any[] = rollups?.scope_stats || [];
   if (!stats.length) {
     return JSON.stringify({
-      _coverage: coverageNoData(`No data${r.buckets ? ` for ${r.buckets.join('/')}` : ''} across the measured periods ${r.quarters.join(', ')}.`),
+      _coverage: coverageNoData(`No data${scopeSuffix(r)} across the measured periods ${r.quarters.join(', ')}.`),
       _meta: metaFor(r),
     });
   }

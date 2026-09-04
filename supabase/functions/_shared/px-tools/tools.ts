@@ -40,6 +40,10 @@ const locationProp = {
   type: 'string',
   description: "Optional market filter, e.g. 'India', 'Germany', 'Japan'. Matched against the organization's tracked markets; if the market isn't tracked, the tool says so and lists what is.",
 };
+const jobFunctionProp = {
+  type: 'string',
+  description: "Optional job-function filter, e.g. 'Finance', 'Manufacturing', 'Human Resources', 'engineering'. Matched against the organization's tracked job functions (common shorthand like 'HR' resolves); if the function isn't tracked, the tool says so and lists what is. Without it, figures span every job function.",
+};
 const quartersBackProp = (dflt: number) => ({
   type: 'number',
   description: `How many of the most recent MEASURED quarters to include (default ${dflt}, max 8). Data is collected in waves, so this counts quarters that have data — never calendar quarters — and every returned period is complete.`,
@@ -180,13 +184,15 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_attribute_themes',
     progressLabel: 'Analyzing themes by market',
-    description: "Use for questions like 'what's our culture like in India?', 'how is our compensation perceived in Germany?' or 'why did wellbeing change?'. Returns, per employer-brand attribute and per measured quarter: the % of answers discussing the attribute, its positive-sentiment %, its share of all themes, and the change in points vs the previous measured period. When a single attribute is requested it also returns real example themes with quote snippets and which AI platform said them, plus the sources cited in the answers that discuss that attribute (% of those answers citing each domain, with top_pages — the most-cited page URLs to link — association, not cause). Numbers match the PerceptionX dashboard. Attribute ids: mission-purpose-impact, compensation, company-culture, leadership, job-security, career-opportunities, wellbeing-balance, inclusion, innovation, application-communication, candidate-feedback, interview-experience, onboarding-experience (common aliases like 'pay', 'culture' or 'work-life balance' also resolve). " + PERIOD_SHARE_NOTE + ' Quote _meta.period_range and the matched market spellings when precision matters.',
+    description: "Use for questions like 'what's our culture like in India?', 'how is our compensation perceived in Germany?', 'how does AI describe us for finance roles?' or 'why did wellbeing change?'. Filter by market (location) and/or job function (job_function); set by_job_function=true to see which functions hear an attribute most. Returns, per employer-brand attribute and per measured quarter: the % of answers discussing the attribute, its positive-sentiment %, its share of all themes, and the change in points vs the previous measured period. When a single attribute is requested it also returns real example themes with quote snippets and which AI platform said them, plus the sources cited in the answers that discuss that attribute (% of those answers citing each domain, with top_pages — the most-cited page URLs to link — association, not cause). Numbers match the PerceptionX dashboard. Attribute ids: mission-purpose-impact, compensation, company-culture, leadership, job-security, career-opportunities, wellbeing-balance, inclusion, innovation, application-communication, candidate-feedback, interview-experience, onboarding-experience (common aliases like 'pay', 'culture' or 'work-life balance' also resolve). " + PERIOD_SHARE_NOTE + ' Quote _meta.period_range and the matched market spellings when precision matters.',
     input_schema: {
       type: 'object',
       properties: {
         company_id: companyIdProp,
         attribute_id: { type: 'string', description: "Optional single attribute to focus on (id, display name, or common alias, e.g. 'company-culture', 'Compensation', 'pay'). When set, real example themes/quotes and the sources in those answers are included." },
+        by_job_function: { type: 'boolean', description: 'Split each attribute by job function — which functions hear it most and how positive (default false). Combine with attribute_id for one attribute.' },
         location: locationProp,
+        job_function: jobFunctionProp,
         quarters_back: quartersBackProp(4),
         include_siblings: includeSiblingsProp,
       },
@@ -196,14 +202,16 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_visibility',
     progressLabel: 'Measuring visibility',
-    description: "Visibility = % of AI answers that mention the company by name. Filter by market and get the series by measured quarter with the change in points vs the previous measured period; set by_model=true to split by AI platform (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode). Use for 'how visible are we in Japan?', 'is our visibility improving?', 'which AI platform mentions us least?'. Numbers match the dashboard rollups. " + PERIOD_SHARE_NOTE,
+    description: "Visibility = % of AI answers that mention the company by name. Filter by market and/or job function and get the series by measured quarter with the change in points vs the previous measured period; set by_model=true to split by AI platform (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode) or by_job_function=true to split by job function. Use for 'how visible are we in Japan?', 'is our visibility improving?', 'which AI platform mentions us least?', 'which job functions see us least?'. Numbers match the dashboard rollups. " + PERIOD_SHARE_NOTE,
     input_schema: {
       type: 'object',
       properties: {
         company_id: companyIdProp,
         location: locationProp,
+        job_function: jobFunctionProp,
         quarters_back: quartersBackProp(4),
         by_model: { type: 'boolean', description: 'Also split visibility by AI platform (default false)' },
+        by_job_function: { type: 'boolean', description: 'Also split visibility by job function (default false)' },
         include_siblings: includeSiblingsProp,
       },
       required: ['company_id'],
@@ -212,12 +220,13 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_sources',
     progressLabel: 'Searching your sources',
-    description: "Which websites AI platforms cite when answering about the company, filtered by market — led by the % of answers citing each domain, with the ANSWER GAP: % of answers that cited the domain while the company was NOT mentioned. Set gap_only=true to rank by that gap — the outreach-opportunity list ('sources answering candidate questions in your space without you'). Domains are canonicalized (glassdoor.de/.ie/.com collapse to one). Every source carries top_pages — its most-cited page URLs with titles — so answers can link the exact pages. Use for 'which sources matter in Germany?', 'where should we be mentioned but aren't?', 'link me the pages AI cites'. " + PERIOD_SHARE_NOTE,
+    description: "Which websites AI platforms cite when answering about the company, filtered by market and/or job function — led by the % of answers citing each domain, with the ANSWER GAP: % of answers that cited the domain while the company was NOT mentioned. Set gap_only=true to rank by that gap — the outreach-opportunity list ('sources answering candidate questions in your space without you'). Domains are canonicalized (glassdoor.de/.ie/.com collapse to one). Every source carries top_pages — its most-cited page URLs with titles — so answers can link the exact pages. Use for 'which sources matter in Germany?', 'where should we be mentioned but aren't?', 'link me the pages AI cites'. " + PERIOD_SHARE_NOTE,
     input_schema: {
       type: 'object',
       properties: {
         company_id: companyIdProp,
         location: locationProp,
+        job_function: jobFunctionProp,
         quarters_back: quartersBackProp(4),
         gap_only: { type: 'boolean', description: 'Rank by answer gap (cited while company absent) instead of overall citation share (default false)' },
         limit: { type: 'number', description: 'Max domains to return (default 25, max 100)' },
@@ -229,12 +238,13 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_competitor_landscape',
     progressLabel: 'Mapping the competitor landscape',
-    description: "Competitors named by AI platforms across the brand scope, filtered by market: % of answers naming each competitor and % naming them alongside the company, with per-prompt-type context. Optionally pass attribute_id (e.g. 'compensation' or the alias 'pay') to get the attribute lens: share-of-voice on prompts about that attribute ('who gets named when pay comes up') plus early competitor-sentiment themes where available. IMPORTANT: share-of-voice is who gets NAMED, not who is rated better — say so when answering 'who is our top competitor for X'. Names are canonicalized; job boards and the company itself are excluded from competitor lists. " + PERIOD_SHARE_NOTE,
+    description: "Competitors named by AI platforms across the brand scope, filtered by market and/or job function: % of answers naming each competitor and % naming them alongside the company, with per-prompt-type context. Optionally pass attribute_id (e.g. 'compensation' or the alias 'pay') to get the attribute lens: share-of-voice on prompts about that attribute ('who gets named when pay comes up') plus early competitor-sentiment themes where available. IMPORTANT: share-of-voice is who gets NAMED, not who is rated better — say so when answering 'who is our top competitor for X'. Names are canonicalized; job boards and the company itself are excluded from competitor lists. " + PERIOD_SHARE_NOTE,
     input_schema: {
       type: 'object',
       properties: {
         company_id: companyIdProp,
         location: locationProp,
+        job_function: jobFunctionProp,
         attribute_id: { type: 'string', description: "Optional attribute lens (id, display name, or alias, e.g. 'compensation', 'pay')." },
         quarters_back: quartersBackProp(4),
         limit: { type: 'number', description: 'Max competitors to return (default 15, max 50)' },
@@ -246,13 +256,14 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_trends',
     progressLabel: 'Charting the trend',
-    description: "Series by measured quarter for one metric — 'visibility' (% of answers mentioning the company), 'sentiment' (positive-sentiment %), or 'citations' (citations per answer) — optionally filtered by market. Returns the series plus change in points vs the previous measured period and since the first. Every listed period is a complete collection wave; a period is marked '(in progress)' only while its wave is still being collected. Use for 'is our sentiment in Germany improving?', 'visibility trend this year'. " + PERIOD_SHARE_NOTE,
+    description: "Series by measured quarter for one metric — 'visibility' (% of answers mentioning the company), 'sentiment' (positive-sentiment %), or 'citations' (citations per answer) — optionally filtered by market and/or job function. Returns the series plus change in points vs the previous measured period and since the first. Every listed period is a complete collection wave; a period is marked '(in progress)' only while its wave is still being collected. Use for 'is our sentiment in Germany improving?', 'visibility trend this year'. " + PERIOD_SHARE_NOTE,
     input_schema: {
       type: 'object',
       properties: {
         company_id: companyIdProp,
         metric: { type: 'string', description: "'visibility' | 'sentiment' | 'citations' (default 'visibility')" },
         location: locationProp,
+        job_function: jobFunctionProp,
         quarters_back: quartersBackProp(4),
         include_siblings: includeSiblingsProp,
       },

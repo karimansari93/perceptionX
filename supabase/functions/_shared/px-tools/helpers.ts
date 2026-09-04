@@ -74,7 +74,9 @@ export const METHODOLOGY_NOTES = {
   theme_sample:
     'Theme-level figures (individual themes, per-platform sentiment) are computed from a random sample of the period\'s answers; sample_size states how many. Visibility, attribute and source figures are complete.',
   pages:
-    'top_pages = the most-cited page URLs (with titles) on each source; a page\'s cited_in_pct_of_answers is the % of all answers in the window, the same denominator as its domain. Link a source with the exact url returned; never construct or guess a URL.',
+    'top_pages = the most-cited page URLs (with titles) on each source; a page\'s cited_in_pct_of_answers is the % of all answers in the window, the same denominator as its domain. Link a source with the exact url returned; never construct or guess a URL. Under a job_function filter the pages come from a random sample of the filtered answers and sample_size.answers_sampled_for_pages states how many.',
+  filters:
+    'Figures span every market and job function in the scope unless _meta lists locations_matched or job_functions_matched. location and job_function are optional filters on the market-aware tools; by_job_function splits a figure by function. Never present unfiltered figures as specific to a role, function or market.',
 } as const;
 
 // Standard result envelope metadata. Client-facing periods are QUARTERS

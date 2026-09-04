@@ -94,7 +94,7 @@ const QUARTER = /^Q[1-4] \d{4}( \(in progress\))?$/;
 // "..._per_answer", and the EPS composite. Anything else numeric inside a
 // list entry is a raw count and must live under sample_size.
 const SHARE_KEY = /(_pct(_|$)|_points$|_per_answer$|^eps$)/;
-const SERIES_KEYS = new Set(['top_pages', 'quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison']);
+const SERIES_KEYS = new Set(['by_job_function', 'top_pages', 'quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison']);
 
 function rawCountLeaks(payload: any, path = '$', out: string[] = []): string[] {
   if (Array.isArray(payload)) { payload.forEach((v, i) => rawCountLeaks(v, `${path}[${i}]`, out)); return out; }
@@ -188,6 +188,29 @@ if (busiest) {
 
   const { parsed: badLoc } = await callTool('get_visibility', { company_id: cid, location: 'Atlantis' });
   check('unknown market → no_data with available_markets', badLoc._coverage?.status === 'no_data' && Array.isArray(badLoc._coverage?.available_markets));
+
+  const { parsed: badFn } = await callTool('get_visibility', { company_id: cid, job_function: 'Astronaut Corps' });
+  check('unknown job function → no_data with available_job_functions', badFn._coverage?.status === 'no_data' && Array.isArray(badFn._coverage?.available_job_functions));
+  const fn = badFn._coverage?.available_job_functions?.[0];
+  if (fn) {
+    const { parsed: fnVis } = await callTool('get_visibility', { company_id: cid, job_function: fn, quarters_back: 4 });
+    check('job function filter applies and is echoed in _meta',
+      fnVis._coverage?.status === 'found' && Array.isArray(fnVis._meta?.job_functions_matched) && fnVis._meta.job_functions_matched.includes(fn),
+      String(fnVis._coverage?.reason || fnVis.error || ''));
+    if (fnVis._coverage?.status === 'found') checkPresentation('get_visibility/job_function', fnVis);
+    const { parsed: fnSplit } = await callTool('get_visibility', { company_id: cid, by_job_function: true, quarters_back: 4 });
+    check('by_job_function splits visibility, share-first',
+      Array.isArray(fnSplit.by_job_function) && fnSplit.by_job_function.length > 0 && fnSplit.by_job_function.every((x: any) => Object.keys(x)[1] === 'visibility_pct'));
+    const { parsed: fnAttr } = await callTool('get_attribute_themes', { company_id: cid, attribute_id: 'pay', by_job_function: true, quarters_back: 4 });
+    check('by_job_function splits an attribute',
+      fnAttr._coverage?.status !== 'found' || (fnAttr.attributes || []).every((a: any) => Array.isArray(a.by_job_function) && a.by_job_function.length > 0));
+    if (fnAttr._coverage?.status === 'found') checkPresentation('get_attribute_themes/by_job_function', fnAttr);
+    const { parsed: fnSrc } = await callTool('get_sources', { company_id: cid, job_function: fn, quarters_back: 1, limit: 5 });
+    check('sources honor the job function filter and state the page sample',
+      fnSrc._coverage?.status !== 'found' || ((fnSrc.sources || []).length > 0 && (fnSrc.sample_size?.answers_sampled_for_pages ?? 0) > 0),
+      String(fnSrc._coverage?.reason || fnSrc.error || ''));
+    if (fnSrc._coverage?.status === 'found') checkPresentation('get_sources/job_function', fnSrc);
+  }
 
   const { parsed: sources } = await callTool('get_sources', { company_id: cid, quarters_back: 4, limit: 10 });
   check('get_sources has _coverage + _meta', !!sources._coverage && !!sources._meta);

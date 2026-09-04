@@ -97,12 +97,45 @@ export async function resolveLocationBuckets(
   const available = Array.from(
     new Set(((data as string[] | null) || []).map((l) => (l ?? '').trim()).filter((l) => l !== ''))
   ).sort() as string[];
-  const q = requestedLocation.trim().toLowerCase();
-  if (!q) return { buckets: [], available };
+  return { buckets: matchBuckets(available, requestedLocation), available };
+}
+
+// Shared fuzzy matcher for free-text buckets: exact (case-insensitive)
+// first, then containment either way, with optional aliases for the ways
+// people name things ("HR" → Human Resources, "engineers" → Engineering).
+export function matchBuckets(available: string[], requested: string, aliases: Record<string, string> = {}): string[] {
+  const q = requested.trim().toLowerCase();
+  if (!q) return [];
   const exact = available.filter(l => l.toLowerCase() === q);
-  if (exact.length) return { buckets: exact, available };
-  const fuzzy = available.filter(l => l.toLowerCase().includes(q) || q.includes(l.toLowerCase()));
-  return { buckets: fuzzy, available };
+  if (exact.length) return exact;
+  const terms = Array.from(new Set([q, aliases[q]].filter(Boolean))) as string[];
+  return available.filter(l => terms.some(t => l.toLowerCase().includes(t) || t.includes(l.toLowerCase())));
+}
+
+// ─── Job-function bucket matching ───────────────────────────────────────────
+// job_function_context is free-text on prompts too ("Finance", "Marketing &
+// Sales", "Manufacturing Engineering", "" = untagged). Same approach as
+// markets: the scope's distinct functions from the cube, fuzzy-matched, and
+// the available list returned on a miss so the model can say what IS
+// tracked instead of presenting brand-wide figures as function-specific.
+const JOB_FUNCTION_ALIASES: Record<string, string> = {
+  hr: 'human resources', people: 'human resources', 'people team': 'human resources',
+  it: 'technology', tech: 'technology', software: 'technology',
+  engineer: 'engineering', engineers: 'engineering',
+  sales: 'sales', marketing: 'marketing', ops: 'operations',
+  legal: 'counsel', lawyers: 'counsel', accounting: 'finance',
+};
+
+export async function resolveJobFunctionBuckets(
+  ctx: ToolContext,
+  companyIds: string[],
+  requested: string
+): Promise<{ buckets: string[]; available: string[] }> {
+  const { data } = await ctx.admin.rpc('mcp_list_job_function_buckets', { p_company_ids: companyIds });
+  const available = Array.from(
+    new Set(((data as string[] | null) || []).map((l) => (l ?? '').trim()).filter((l) => l !== ''))
+  ).sort() as string[];
+  return { buckets: matchBuckets(available, requested, JOB_FUNCTION_ALIASES), available };
 }
 
 // ─── Measurement periods ────────────────────────────────────────────────────
@@ -121,11 +154,13 @@ export interface MeasurementPeriods {
 export async function resolveMeasurementPeriods(
   ctx: ToolContext,
   companyIds: string[],
-  buckets: string[] | null
+  buckets: string[] | null,
+  jobFunctions: string[] | null = null
 ): Promise<MeasurementPeriods> {
   const { data, error } = await ctx.admin.rpc('mcp_get_measurement_periods', {
     p_company_ids: companyIds,
     p_buckets: buckets,
+    p_job_functions: jobFunctions,
   });
   if (error) throw new Error(`Measurement periods read failed: ${error.message}`);
   const months = Array.from(new Set(((data?.months as unknown[]) || []).map(m => String(m).slice(0, 10)))).sort();
@@ -149,6 +184,8 @@ export interface ResolvedScope {
   scope: BrandScope;
   buckets: string[] | null;      // null = no location filter
   available: string[];           // the scope's tracked market spellings
+  jobFunctions: string[] | null; // null = no job-function filter
+  availableJobFunctions: string[];
   periods: MeasurementPeriods;   // every measured period for the scope/location
   months: string[];              // the reported window's months (internal cube filter, never emitted)
   quarters: string[];            // the reported window's quarters, ascending, bare labels
@@ -158,6 +195,7 @@ export interface ResolvedScope {
 
 export interface ScopeOptions {
   location?: string;
+  jobFunction?: string;
   quartersBack: number;
   includeSiblings: boolean;
 }
@@ -190,13 +228,31 @@ export async function resolveScope(
     buckets = match.buckets;
   }
 
-  const periods = await resolveMeasurementPeriods(ctx, scope.companyIds, buckets);
+  let jobFunctions: string[] | null = null;
+  let availableJobFunctions: string[] = [];
+  if (opts.jobFunction && opts.jobFunction.trim()) {
+    const match = await resolveJobFunctionBuckets(ctx, scope.companyIds, opts.jobFunction);
+    availableJobFunctions = match.available;
+    if (!match.buckets.length) {
+      return JSON.stringify({
+        _coverage: {
+          status: 'no_data',
+          reason: `No tracked job function matches "${opts.jobFunction}" for ${scope.brandName}. Answer from the available job functions, or give the brand-wide figures and say they are not function-specific.`,
+          available_job_functions: availableJobFunctions,
+        },
+      });
+    }
+    jobFunctions = match.buckets;
+  }
+
+  const periods = await resolveMeasurementPeriods(ctx, scope.companyIds, buckets, jobFunctions);
   if (!periods.months.length) {
     return JSON.stringify({
       _coverage: {
         status: 'no_data',
-        reason: `No AI answers have been collected yet for ${scope.brandName}${buckets ? ` in ${buckets.join('/')}` : ''}.`,
+        reason: `No AI answers have been collected yet for ${scope.brandName}${buckets ? ` in ${buckets.join('/')}` : ''}${jobFunctions ? ` for ${jobFunctions.join('/')} roles` : ''}.`,
         ...(available.length ? { available_markets: available } : {}),
+        ...(availableJobFunctions.length ? { available_job_functions: availableJobFunctions } : {}),
       },
       _meta: buildMeta({ scope_companies: scope.companyIds.length, scope_brand: scope.brandName }),
     });
@@ -204,7 +260,7 @@ export async function resolveScope(
 
   const window = selectRecentQuarters(periods.months, opts.quartersBack);
   return {
-    scope, buckets, available, periods,
+    scope, buckets, available, jobFunctions, availableJobFunctions, periods,
     months: window.months,
     quarters: window.quarters,
     inProgressQuarter: periods.inProgressQuarter,
@@ -226,8 +282,18 @@ export function metaFor(r: ResolvedScope, extraNotes: string[] = []) {
     scope_companies: r.scope.companyIds.length,
     scope_brand: r.scope.brandName,
     ...(r.buckets ? { locations_matched: r.buckets } : {}),
-    methodology: [METHODOLOGY_NOTES.platform_coverage, METHODOLOGY_NOTES.periods, METHODOLOGY_NOTES.shares, ...extraNotes],
+    ...(r.jobFunctions ? { job_functions_matched: r.jobFunctions } : {}),
+    methodology: [METHODOLOGY_NOTES.platform_coverage, METHODOLOGY_NOTES.periods, METHODOLOGY_NOTES.shares, METHODOLOGY_NOTES.filters, ...extraNotes],
   });
+}
+
+// " for India, Finance roles" — the scope's active filters, for no-data
+// reasons and notes, so a filtered answer never reads as brand-wide.
+export function scopeSuffix(r: ResolvedScope): string {
+  const parts: string[] = [];
+  if (r.buckets) parts.push(r.buckets.join('/'));
+  if (r.jobFunctions) parts.push(`${r.jobFunctions.join('/')} roles`);
+  return parts.length ? ` for ${parts.join(', ')}` : '';
 }
 
 // The same scope narrowed to one of its quarters (for "latest period only"
