@@ -11,7 +11,11 @@
 //   * SSE framing: {text}, {status}, {sources}, {error}, [DONE];
 //   * a request log (chat_request_log) and a per-org daily cap
 //     (chat_org_settings.daily_cap, default 300);
-//   * the data-grounded starter questions (action: "starters").
+//   * the data-grounded starter questions (action: "starters") and the
+//     scope options for the chat's scope bar (action: "scope");
+//   * the question scope (body.scope: company / location / jobFunction from
+//     the dashboard filters) appended to the user turn as an explicit
+//     filter instruction — see scope.ts.
 // Read-only: nothing here writes customer data.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -22,6 +26,7 @@ import { anthropicTools, executeTool, genRequestId, toolLabels } from "../_share
 import type { ToolContext } from "../_shared/px-tools/mod.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { getStarterQuestions } from "./starters.ts";
+import { getScopeOptions, normalizeScope, scopeNote } from "./scope.ts";
 import { collectSources } from "./sources.ts";
 import type { SourceLink } from "./sources.ts";
 
@@ -131,7 +136,7 @@ serve(async (req) => {
   const requestId = genRequestId();
   try {
     const body = await req.json().catch(() => ({}));
-    const { message, conversationHistory, organizationId, conversationId, action } = body ?? {};
+    const { message, conversationHistory, organizationId, conversationId, action, scope: rawScope } = body ?? {};
     if (!organizationId || typeof organizationId !== 'string') return jsonResponse({ error: 'Organization ID is required' }, 400);
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -146,6 +151,10 @@ serve(async (req) => {
     // Starter questions for the welcome screen: cheap, cached, not capped.
     if (action === 'starters') {
       const result = await getStarterQuestions(toolCtx);
+      return jsonResponse(result);
+    }
+    if (action === 'scope') {
+      const result = await getScopeOptions(toolCtx, normalizeScope(rawScope).company);
       return jsonResponse(result);
     }
 
@@ -192,7 +201,7 @@ serve(async (req) => {
       return new Response(capped, { headers: streamHeaders });
     }
 
-    console.log(`[${requestId}] chat start org="${orgName}" user=${auth.userId} msg="${message.substring(0, 100)}"`);
+    console.log(`[${requestId}] chat start org="${orgName}" user=${auth.userId} scope=${JSON.stringify(normalizeScope(rawScope))} msg="${message.substring(0, 100)}"`);
 
     // History: the last N turns the client sent, as plain text turns.
     const messages: Anthropic.MessageParam[] = [];
@@ -203,7 +212,16 @@ serve(async (req) => {
         }
       }
     }
-    messages.push({ role: 'user', content: message.trim() });
+    // The dashboard filters travel as a second text block on the user turn
+    // (after the cached prefix), never inside the system prompt.
+    const scope = normalizeScope(rawScope);
+    const note = scopeNote(scope);
+    messages.push({
+      role: 'user',
+      content: note
+        ? [{ type: 'text', text: message.trim() }, { type: 'text', text: note }]
+        : message.trim(),
+    });
 
     const client = new Anthropic({ apiKey: claudeApiKey });
     let cancelled = false;
