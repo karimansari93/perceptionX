@@ -340,6 +340,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   const navigateToSection = useCallback((section: string) => {
     const routes: Record<string, string> = {
       overview: '/dashboard',
+      chat: '/chat',
       sources: '/dashboard/sources',
       competitors: '/dashboard/competitors',
       thematic: '/dashboard/themes',

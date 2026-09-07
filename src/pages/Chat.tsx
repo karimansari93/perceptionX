@@ -6,6 +6,11 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { ASK_AI_SUBLINE, ASK_AI_TITLE } from '@/lib/askAi';
 
+// Questions already handed over in this session, keyed by the router entry
+// that carried them — so a remount of this page (or a hot reload in dev)
+// never sends the same question twice.
+const consumedHandovers = new Set<string>();
+
 function ChatContent() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -17,7 +22,12 @@ function ChatContent() {
   // reload doesn't re-ask it.
   const [initialQuestion, setInitialQuestion] = useState<string | null>(() => {
     const fromState = (location.state as { question?: string } | null)?.question;
-    return (fromState || searchParams.get('q') || '').trim() || null;
+    const q = (fromState || searchParams.get('q') || '').trim();
+    if (!q) return null;
+    const token = `${location.key}:${q}`;
+    if (consumedHandovers.has(token)) return null;
+    consumedHandovers.add(token);
+    return q;
   });
   const handleSent = useCallback(() => {
     setInitialQuestion(null);
