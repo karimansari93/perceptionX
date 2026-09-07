@@ -1,0 +1,28 @@
+// ─── chat-with-data: the sources SSE event ──────────────────────────────────
+// Walks every tool result of a turn for rows shaped { domain, top_pages:
+// [{url, title, *_pct_of_answers}] } — get_sources, get_citations and the
+// attribute-source breakdown all carry them — and returns one flat list, so
+// the UI renders a sources footer from data rather than from the model's text
+// and the eval can check every link the analyst wrote against it.
+
+export interface SourceLink { title: string; url: string; domain: string; share?: number | null }
+
+export function collectSources(payload: unknown, out: Map<string, SourceLink>): void {
+  if (Array.isArray(payload)) { for (const v of payload) collectSources(v, out); return; }
+  if (!payload || typeof payload !== 'object') return;
+  const obj = payload as Record<string, unknown>;
+  if (typeof obj.domain === 'string' && Array.isArray(obj.top_pages)) {
+    for (const page of obj.top_pages as any[]) {
+      const url = String(page?.url || '');
+      if (!/^https?:\/\//i.test(url) || out.has(url)) continue;
+      const shareKey = Object.keys(page || {}).find(k => /_pct(_|$)/.test(k));
+      out.set(url, {
+        title: page?.title ? String(page.title) : url,
+        url,
+        domain: obj.domain,
+        share: shareKey ? (page[shareKey] as number | null) : null,
+      });
+    }
+  }
+  for (const v of Object.values(obj)) collectSources(v, out);
+}
