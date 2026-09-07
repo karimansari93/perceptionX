@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X } from 'lucide-react';
 import { OrganizationDataDetail } from './OrganizationDataDetail';
+import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
 import { generatePdfThumbnail } from '@/utils/pdfThumbnail';
 
 const PDF_MIME = 'application/pdf';
@@ -75,6 +76,8 @@ export const OrganizationManagementTab = () => {
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showReportsModal, setShowReportsModal] = useState(false);
+  // Org whose teammates are being invited on behalf of one of its Super Admins
+  const [inviteOrg, setInviteOrg] = useState<Organization | null>(null);
 
   // Reports modal state
   const [reportsOrg, setReportsOrg] = useState<Organization | null>(null);
@@ -759,6 +762,16 @@ export const OrganizationManagementTab = () => {
                             <UserPlus className="h-3.5 w-3.5 mr-1" />
                             Add User
                           </Button>
+                          <Button
+                            onClick={() => setInviteOrg(org)}
+                            size="sm"
+                            variant="outline"
+                            className="border-slate-200 text-slate-600 h-7 text-xs"
+                            title="Email invites attributed to one of this organization's Super Admins"
+                          >
+                            <Mail className="h-3.5 w-3.5 mr-1" />
+                            Invite as admin
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -769,6 +782,14 @@ export const OrganizationManagementTab = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Invite teammates on behalf of one of the org's Super Admins */}
+      <InviteTeammatesModal
+        open={inviteOrg !== null}
+        onOpenChange={(next) => { if (!next) setInviteOrg(null); }}
+        orgs={inviteOrg ? [{ organization_id: inviteOrg.id, organization_name: inviteOrg.name }] : []}
+        allowSendOnBehalf
+      />
 
       {/* Create Organization Modal */}
       <Dialog open={showCreateOrgModal} onOpenChange={setShowCreateOrgModal}>

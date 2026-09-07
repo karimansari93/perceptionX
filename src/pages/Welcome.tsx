@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,6 +7,16 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { Check, Loader2, ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { CompanyBrandSelect } from '@/components/onboarding/CompanyBrandSelect';
+import { LocationSelect } from '@/components/onboarding/LocationSelect';
+import {
+  completeProfileSetup,
+  profileSetupMetadata,
+  useOrgBrands,
+  useOrgLocationOptions,
+  validLocationKey,
+  type OrgBrand,
+} from '@/hooks/useProfileSetup';
 
 const PASSWORD_MIN_LENGTH = 8;
 
@@ -54,31 +64,55 @@ const Welcome = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'valid' | 'expired'>('checking');
   const [expiredReason, setExpiredReason] = useState<'used' | 'invalid' | 'expired' | null>(null);
+  // "What do you want to focus on first?": one subsidiary (when the org has
+  // several) and one country — a canonical location key, or null for all.
+  // Country options are scoped to the subsidiary and match the dashboard's
+  // location filter; the dashboard lands on that company. `brand` stays
+  // undefined (and the country list pending) until brands load.
+  const brandsQuery = useOrgBrands(user?.id);
+  const brands = brandsQuery.data?.brands ?? [];
+  const [brandKey, setBrandKey] = useState<string | null>(null);
+  const brand: OrgBrand | null | undefined = brandsQuery.isPending
+    ? undefined
+    : (brandKey ? brands.find((b) => b.key === brandKey) : undefined) ?? brands[0] ?? null;
+  const locationsQuery = useOrgLocationOptions(user?.id, brand);
+  const locationOptions = locationsQuery.data ?? [];
+  const locationsLoading = locationsQuery.isPending;
+  const [location, setLocation] = useState<string | null>(null);
+  const chooseBrand = (key: string) => {
+    setBrandKey(key);
+    setLocation(null); // countries belong to a subsidiary; start over
+  };
 
   // New flow: exchange a durable invite token (?invite=…) for a fresh session.
   // The redeem-invite function mints a one-time OTP we verify here, so the
   // emailed link lives for 30 days (resending restarts the window) — and stops
   // working once accepted or revoked.
+  //
+  // Runs once per token, regardless of any session already in this browser.
+  // An invite link opened while someone else is signed in (a shared machine,
+  // or the admin who sent it clicking it themselves) must NOT hand that
+  // person the invitee's form — it would rewrite their name, password and
+  // dashboard focus. That session is dropped (this browser only) before the
+  // token is redeemed.
+  const redeemState = useRef<'idle' | 'redeeming' | 'done'>('idle');
   useEffect(() => {
     if (!inviteToken) return;
-    if (user) {
-      setSessionStatus('valid');
-      return;
-    }
-    let cancelled = false;
+    if (redeemState.current !== 'idle') return;
+    redeemState.current = 'redeeming';
     (async () => {
       try {
+        const { data: { session: existing } } = await supabase.auth.getSession();
+        if (existing) await supabase.auth.signOut({ scope: 'local' });
         const { data, error } = await supabase.functions.invoke('redeem-invite', {
           body: { token: inviteToken },
         });
         if (error) throw error;
         if (!data?.ok || !data?.tokenHash) {
-          if (!cancelled) {
-            setExpiredReason(
-              data?.reason === 'used' ? 'used' : data?.reason === 'expired' ? 'expired' : 'invalid',
-            );
-            setSessionStatus('expired');
-          }
+          setExpiredReason(
+            data?.reason === 'used' ? 'used' : data?.reason === 'expired' ? 'expired' : 'invalid',
+          );
+          setSessionStatus('expired');
           return;
         }
         const { error: otpError } = await supabase.auth.verifyOtp({
@@ -86,24 +120,19 @@ const Welcome = () => {
           type: 'magiclink',
         });
         if (otpError) throw otpError;
-        if (cancelled) return;
+        redeemState.current = 'done';
         setSessionStatus('valid');
         // Don't leave the token sitting in the URL / browser history.
         searchParams.delete('invite');
         setSearchParams(searchParams, { replace: true });
       } catch (err) {
         console.error('Invite redemption failed:', err);
-        if (!cancelled) {
-          setExpiredReason('invalid');
-          setSessionStatus('expired');
-        }
+        setExpiredReason('invalid');
+        setSessionStatus('expired');
       }
     })();
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inviteToken, user]);
+  }, [inviteToken]);
 
   // Legacy flow (Supabase auth action link drops the session in the URL hash),
   // or a bare /welcome visit: fall back to the previous session probe. Skipped
@@ -121,9 +150,11 @@ const Welcome = () => {
     return () => clearTimeout(timeout);
   }, [user, authLoading, inviteToken]);
 
+  // A session only counts once the token (if any) has been redeemed — the
+  // pre-existing session of someone else must not unlock the form.
   useEffect(() => {
-    if (user) setSessionStatus('valid');
-  }, [user]);
+    if (user && (!inviteToken || redeemState.current === 'done')) setSessionStatus('valid');
+  }, [user, inviteToken]);
 
   const inviterName = (user?.user_metadata?.inviter_name as string) || null;
 
@@ -140,19 +171,21 @@ const Welcome = () => {
       return;
     }
 
+    const locationKey = validLocationKey(location, locationOptions);
+
     setLoading(true);
     try {
+      // Password plus session metadata (name, company, country) in one call.
       const { error } = await supabase.auth.updateUser({
         password,
-        data: { full_name: name },
+        data: { full_name: name, ...profileSetupMetadata(locationKey, locationOptions, brand) },
       });
       if (error) throw error;
 
-      // Keep the app-facing profile in sync; the name is what teammates see
-      // in invite emails when this user invites others later.
-      if (user) {
-        await supabase.from('profiles').update({ full_name: name }).eq('id', user.id);
-      }
+      // Keep the app-facing profile in sync — the name is what teammates see
+      // in invite emails when this user invites others later — and stamp
+      // first-login setup complete so the dashboard gate never shows it.
+      await completeProfileSetup({ fullName: name, locationKey, options: locationOptions, brand });
 
       toast.success("You're all set — welcome to PerceptionX!");
       navigate('/dashboard');
@@ -210,7 +243,8 @@ const Welcome = () => {
     { ok: /[0-9]/.test(password), label: 'One number' },
   ];
   const passwordValid = !validatePassword(password);
-  const canSubmit = !!fullName.trim() && passwordValid;
+  // Wait for the location list so a submit can't silently drop the picks.
+  const canSubmit = !!fullName.trim() && passwordValid && !locationsLoading;
 
   const inputClass =
     'h-11 rounded-xl border-gray-200 bg-white placeholder:text-gray-300 placeholder:font-light focus-visible:ring-2 focus-visible:ring-pink/25 focus-visible:border-pink transition';
@@ -258,6 +292,49 @@ const Welcome = () => {
               required
             />
           </div>
+
+          {(brands.length > 1 || locationsLoading || locationOptions.length > 0) && (
+            <div className="space-y-3 rounded-2xl border border-gray-100 bg-gray-50/60 p-4">
+              <p className="text-[13px] font-semibold text-nightsky">What do you want to focus on first?</p>
+
+              {brands.length > 1 && (
+                <div className="space-y-1.5">
+                  <label htmlFor="company" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                    Company
+                  </label>
+                  <CompanyBrandSelect
+                    id="company"
+                    brands={brands}
+                    value={brand?.key ?? null}
+                    onChange={chooseBrand}
+                    disabled={loading}
+                    className={inputClass}
+                  />
+                </div>
+              )}
+
+              {(locationsLoading || locationOptions.length > 0) && (
+                <div className="space-y-1.5">
+                  <label htmlFor="location" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                    Country
+                  </label>
+                  <LocationSelect
+                    id="location"
+                    options={locationOptions}
+                    value={location}
+                    onChange={setLocation}
+                    loading={locationsLoading}
+                    disabled={loading}
+                    className={inputClass}
+                  />
+                </div>
+              )}
+
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Your dashboard opens here. Change it any time from your account.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <label htmlFor="password" className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">

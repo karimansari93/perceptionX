@@ -2,6 +2,8 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './AuthContext';
 import { readStarredView } from '@/hooks/useStarredView';
+import { defaultCompanyFromUser } from '@/hooks/useProfileSetup';
+import type { User } from '@supabase/supabase-js';
 import { toast } from 'sonner';
 
 export interface Company {
@@ -84,8 +86,9 @@ const isAdminUser = (email: string | undefined): boolean => {
 // company here makes the reconcile a no-op.
 const pickInitialCompany = (
   companies: Company[],
-  userId: string | null | undefined,
+  user: User | null | undefined,
 ): Company | null => {
+  const userId = user?.id;
   const base = companies.find(c => c.is_default) || companies[0] || null;
   if (!base) return null;
 
@@ -104,6 +107,19 @@ const pickInitialCompany = (
   if (starred?.companyId) {
     const starredCompany = companies.find(c => c.id === starred.companyId);
     if (starredCompany) return starredCompany;
+  }
+
+  // Profile default from first-login setup (mirrored into auth metadata):
+  // the brand the user said they work with. The exact row if still
+  // accessible, else any row of the same brand; falls through otherwise.
+  const preferred = defaultCompanyFromUser(user);
+  if (preferred) {
+    const preferredCompany =
+      companies.find(c => c.id === preferred.id) ||
+      (preferred.name
+        ? companies.find(c => c.name.trim().toLowerCase() === preferred.name.trim().toLowerCase())
+        : undefined);
+    if (preferredCompany) return preferredCompany;
   }
 
   // Legacy starred views (pre-companyId) stored a country code as location;
@@ -253,7 +269,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (!prevCurrent) {
             // No current company — pick the starred/US landing company so the
             // first dashboard load is for the right company (see pickInitialCompany).
-            return pickInitialCompany(companies, user.id);
+            return pickInitialCompany(companies, user);
           } else {
             // Check if current company is still valid
             const stillValid = companies.find(c => c.id === prevCurrent.id);
@@ -261,7 +277,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
               return prevCurrent;
             } else {
               // Current company no longer valid
-              return pickInitialCompany(companies, user.id);
+              return pickInitialCompany(companies, user);
             }
           }
         });

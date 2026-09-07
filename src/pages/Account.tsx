@@ -10,6 +10,23 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { updatePromptText, isValidPromptUpdate } from '@/utils/promptUtils';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { useQueryClient } from '@tanstack/react-query';
+import { CompanyBrandSelect } from '@/components/onboarding/CompanyBrandSelect';
+import { LocationSelect } from '@/components/onboarding/LocationSelect';
+import {
+  brandForCompanyId,
+  locationRawValue,
+  profileSetupMetadata,
+  profileSetupQueryKey,
+  representativeCompanyId,
+  saveDashboardFocus,
+  useOrgBrands,
+  useOrgLocationOptions,
+  useProfileSetupStatus,
+  validLocationKey,
+  type OrgBrand,
+} from '@/hooks/useProfileSetup';
+import { canonicalizeLocationContext } from '@/utils/locationContext';
 
 function AccountSidebar({ activeSection, onSectionChange }) {
   const { state } = useSidebar();
@@ -76,6 +93,35 @@ export default function Account() {
   const [success, setSuccess] = useState(false);
   const [form, setForm] = useState({ company: '', industry: '', email: '' });
   const [originalForm, setOriginalForm] = useState({ company: '', industry: '', email: '' });
+
+  // Dashboard focus (subsidiary + country) — chosen at first login, editable
+  // here. Kept as "saved value unless the user touched a picker" so no
+  // effect has to copy query data into state.
+  const queryClient = useQueryClient();
+  const setupStatus = useProfileSetupStatus(user?.id);
+  const brandsQuery = useOrgBrands(user?.id);
+  const brands = brandsQuery.data?.brands ?? [];
+  const [pickedBrandKey, setPickedBrandKey] = useState<string | null>(null);
+  const brand: OrgBrand | null | undefined =
+    brandsQuery.isPending || setupStatus.isPending
+      ? undefined
+      : (pickedBrandKey ? brands.find((b) => b.key === pickedBrandKey) : undefined) ??
+        brandForCompanyId(brands, setupStatus.data?.defaultCompanyId) ??
+        brands[0] ??
+        null;
+  const locationsQuery = useOrgLocationOptions(user?.id, brand);
+  const locationOptions = locationsQuery.data ?? [];
+  const locationsLoading = locationsQuery.isPending;
+  const savedLocation = canonicalizeLocationContext(setupStatus.data?.defaultLocationContext);
+  const [pickedLocation, setPickedLocation] = useState<string | null>(null);
+  const [locationTouched, setLocationTouched] = useState(false);
+  const currentLocation = locationTouched ? pickedLocation : savedLocation;
+  const chooseBrand = (key: string) => {
+    setPickedBrandKey(key);
+    setPickedLocation(null); // countries belong to a subsidiary; start over
+    setLocationTouched(true);
+  };
+  const focusTouched = locationTouched || pickedBrandKey !== null;
 
   useEffect(() => {
     async function fetchData() {
@@ -160,6 +206,26 @@ export default function Account() {
     setSaving(true);
     setSuccess(false);
     try {
+      // Dashboard focus: session copy (what the dashboard reads on load) plus
+      // the durable profile columns.
+      if (user && focusTouched && !locationsLoading) {
+        const locationKey = validLocationKey(currentLocation, locationOptions);
+        const { error: metaError } = await supabase.auth.updateUser({
+          data: profileSetupMetadata(locationKey, locationOptions, brand),
+        });
+        if (metaError) throw metaError;
+        await saveDashboardFocus({ locationKey, options: locationOptions, brand });
+        const defaultLocationContext = locationRawValue(locationKey, locationOptions);
+        const defaultCompanyId = representativeCompanyId(brand, locationKey);
+        queryClient.setQueryData(profileSetupQueryKey(user.id), (prev: unknown) =>
+          prev && typeof prev === 'object'
+            ? { ...(prev as object), defaultLocationContext, defaultCompanyId }
+            : prev,
+        );
+        setLocationTouched(false);
+        setPickedBrandKey(null);
+      }
+
       // Editing company info from the user-facing Account page has been
       // retired — companies are now managed by admins. Old code wrote to
       // user_onboarding (dead table); we no-op the persistence and let
@@ -250,6 +316,35 @@ export default function Account() {
                       Changing your industry will automatically update your existing prompts to reflect the new industry.
                     </p>
                   </div>
+                  {brands.length > 1 && (
+                    <div>
+                      <label htmlFor="default-company" className="block text-sm font-medium mb-1">Dashboard focus: company</label>
+                      <CompanyBrandSelect
+                        id="default-company"
+                        brands={brands}
+                        value={brand?.key ?? null}
+                        onChange={chooseBrand}
+                        disabled={loading || saving}
+                      />
+                      <p className="text-sm text-gray-500 mt-1">The company your dashboard opens on when you sign in.</p>
+                    </div>
+                  )}
+                  {(locationsLoading || locationOptions.length > 0) && (
+                    <div>
+                      <label htmlFor="default-location" className="block text-sm font-medium mb-1">Dashboard focus: country</label>
+                      <LocationSelect
+                        id="default-location"
+                        options={locationOptions}
+                        value={currentLocation}
+                        onChange={(key) => { setPickedLocation(key); setLocationTouched(true); }}
+                        loading={locationsLoading || setupStatus.isPending}
+                        disabled={loading || saving}
+                      />
+                      <p className="text-sm text-gray-500 mt-1">
+                        The country your dashboard opens on when you sign in. Starring a view on the dashboard overrides this in that browser.
+                      </p>
+                    </div>
+                  )}
                   <Button
                     type="submit"
                     disabled={loading || saving}
