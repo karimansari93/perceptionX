@@ -15,15 +15,23 @@ https://app.perceptionx.ai/.well-known/… ← OAuth discovery at domain root
 supabase/functions/mcp-server           ← OAuth AS + MCP JSON-RPC
         │
         ▼
-supabase/functions/_shared/px-tools     ← SHARED tool layer (16 tools)
-        │                                  also consumed by chat-with-data
+supabase/functions/_shared/px-tools     ← SHARED tool layer (16 tools) + the rulebook
+        │                                  (instructions.ts); also consumed by chat-with-data (/chat)
         ▼
 Dashboard stats cubes via service-role twin RPCs (mcp_get_rollups,
 mcp_get_domain_stats, mcp_get_competitor_stats, mcp_get_attribute_competitors,
 mcp_get_measurement_periods, mcp_get_theme_stats, mcp_get_attribute_sources)
 ```
 
-**One tool layer, two transports.** `chat-with-data` (the in-app analyst, admin-only at `/chat`) and `mcp-server` execute the identical `px-tools` registry — same numbers, same `_coverage`/`_meta` caveats. The in-app chat is the development/eval harness for what external hosts consume.
+**One tool layer, one rulebook, three transports.** `chat-with-data` (the in-app "Ask PerceptionX" analyst at `/chat`, open to every organization member) and `mcp-server` (ChatGPT, Claude, Claude Code) execute the identical `px-tools` registry — same numbers, same links, same `location`/`job_function` filters, same `_coverage`/`_meta` caveats — and follow the identical rules. The eleven rules live once, in `_shared/px-tools/instructions.ts` (`PX_RULES` / `PX_INSTRUCTIONS`): `mcp-server` sends that constant as `initialize.instructions`, and `chat-with-data/prompt.ts` embeds the same constant word for word inside the analyst persona, adding only a "presentation notes" and a "how to respond" section. `chat-with-data/prompt_test.ts` pins that (one copy of the rules, no paraphrase, byte-stable per organization). Edit a rule in the module and every transport changes together; never copy the text.
+
+**The in-app chat (`chat-with-data`, since v31, 2026-09-07).** The official SDK (`npm:@anthropic-ai/sdk`, boots on the edge runtime) on `claude-opus-5` (`CLAUDE_MODEL` secret; adaptive thinking on, `output_config.effort` from `CLAUDE_EFFORT`, default `high`), `cache_control` on the system block (tools → system → messages; the prompt carries no timestamps or ids so the prefix caches per org), `max_tokens` 16000, streaming, up to 10 tool rounds with every parallel `tool_result` in one user message and failed tools as `is_error` blocks. `stop_reason: refusal` streams a plain "I can't help with that here." line. SSE events: `{text}`, `{status}`, `{sources: [{title, url, domain}]}` (every `top_pages` URL the turn's tools returned — the UI's Sources footer and the eval's link check come from this, not from the model's text), `{error}`, `[DONE]`. Auth is the Supabase JWT plus an `organization_members` check for the body's `organizationId`; every tool call is scoped to that verified org and `executeTool` re-checks company ownership. Read-only: nothing writes customer data.
+
+- **Request log** — `chat_request_log` (migration `20260907120000_chat_request_log_and_org_settings.sql`, applied): one row per request with organization, user, conversation, the tools called, rounds, input/output/cache-read tokens, time to first token, duration, status (`ok` / `refusal` / `rate_limited` / `error`) and error. Admin-only SELECT (same RLS posture as `mcp_request_log`).
+- **Daily cap** — `chat_org_settings.daily_cap` per organization (no row = 300 a day, counted from `chat_request_log`; `enabled=false` switches the chat off for that org). When hit, the user gets a friendly in-chat line and the request is logged as `rate_limited`.
+- **Starter questions** — the welcome screen and the overview chat box ask `chat-with-data` with `action: "starters"`. The four questions are built from px-tools data (`list_companies` → busiest brand → `get_company_overview`, plus the tracked market and job-function lists): one visibility question naming a market and the latest measured period, one theme question on the most-discussed attribute, one sources-with-links question on the most-cited source, one job-function question — cached per org for 24 h in `chat_org_settings.starter_questions`. Organizations with no measured data get the four questions from `docs/connect-your-ai-assistant.md`. Never a month-level or cross-customer question, by construction.
+- **Frontend** — `/chat` is `ProtectedRoute` + `AskAiRoute` (any owner/admin/member of an organization; `VITE_ASK_AI_ENABLED=false` is the platform-wide kill switch that also hides the sidebar "Ask AI" entry and the overview chat box). Answers render with `react-markdown` + `remark-gfm`; links open the exact returned URL in a new tab, non-http(s) hrefs render as plain text. The overview tab opens with the chat box ("Hey <first name>, what do you want to do today?"); a question typed there opens `/chat` with it already sent.
+- **Eval** — `scripts/mcp-eval/chat-eval.ts` (below).
 
 **Self-caveating payloads.** Over MCP our system prompt does not travel — only `initialize.instructions`, tool descriptions, and result payloads reach the host model. So every result embeds `_coverage` (found/partial/no_data), `_meta.periods` / `_meta.period_range`, the matched market spellings, scope size, and methodology notes (sentiment formula, platform coverage, measured-period rule, "SOV ≠ sentiment").
 
@@ -61,6 +69,8 @@ mcp_get_measurement_periods, mcp_get_theme_stats, mcp_get_attribute_sources)
 **Page cube refresh policy (incident, 2026-09-03 14:40 UTC):** `company_page_stats_mv` is refreshed per company only — it is in `refresh_company_metrics(p_company_id)` and `_refresh_cm_dispatch`, but NOT in the hourly full-rebuild list (`20260903190000_page_stats_out_of_full_rebuild.sql`). The first full rebuild (all 188 companies, ~1M page rows in one transaction, scheduled as a one-off pg_cron job) coincided with a Postgres restart four minutes in (256 MB shared_buffers, 3.5 MB work_mem); the job was unscheduled and the backfill was redone per company in batches of 15–25 (20–50 s each). Never run `_refresh_cm_page_stats(NULL)` on this instance size; backfill a new org with `select _refresh_cm_page_stats(company_id) from organization_companies where organization_id = ...` in batches.
 
 **Job function (2026-09-04, mcp-server v14):** `20260903200000_mcp_job_function_filter.sql` adds `p_job_functions` to every read RPC (old signatures dropped) and `mcp_list_job_function_buckets`; the five market-aware tools take `job_function`, `get_visibility` and `get_attribute_themes` take `by_job_function`, and instruction rule 11 covers scope. The live eval passes 161/161 on Ford with a filtered read, both splits and the sampled page path under a job-function filter.
+
+**Shared rulebook (2026-09-07, mcp-server v16, chat-with-data v31):** `SERVER_INSTRUCTIONS` is now `PX_INSTRUCTIONS` from `_shared/px-tools/instructions.ts` (byte-identical to the v14 constant; `initialize.instructions` did not change) and the in-app chat embeds the same constant. Both deployed with `supabase functions deploy <fn> --use-api` (source files, no bundle; `mcp-server` with `--no-verify-jwt`), both log "booted", and the live eval passes 161/161 on Ford against v16 with a temporary PAT (revoked after the run). `suggest-questions` (v5) is no longer called by the app and can be deleted from the project.
 4. **Enable an org + mint a PAT** (below), run the eval.
 
 ## Admin operations (SQL editor / service role — no UI by design)
@@ -108,7 +118,17 @@ deno run --allow-net --allow-env --allow-read scripts/mcp-eval/run.ts
 
 Phase A: protocol + tool-shape invariants against the live server — coverage signals, measured-period envelopes (`_meta.periods`, data-bounded `period_range`, no "(in progress)" without an active collection), shares-first lint (inside list entries the only bare numbers are `*_pct` / `*_points` / `*_per_answer` / `eps`; everything else must sit under `sample_size`), integer-percentage checks, no-raw-dates lint, relevance present in EPS, read-only annotations, tenant-rejection. Phase B (with `ANTHROPIC_API_KEY`): tool-selection eval over `questions.json` — the regression net for tool descriptions. Run it after ANY change to tool descriptions or the shared layer.
 
-Offline (no PAT needed): `cd supabase/functions && deno test _shared/px-tools/` replays a Ford-shaped fixture (two waves, Apr/May + July, nothing since) through the real executors and pins the same rules.
+Offline (no PAT needed): `cd supabase/functions && deno test _shared/px-tools/ chat-with-data/` replays a Ford-shaped fixture (two waves, Apr/May + July, nothing since) through the real executors and pins the same rules (14 tests), plus the chat's rulebook/prompt and sources-event tests (3 tests).
+
+**In-app chat eval** (signs in as a real user; needs a member of the org under test):
+
+```bash
+SUPABASE_URL=https://ofyjvfmcgtntwamkubui.supabase.co SUPABASE_ANON_KEY=eyJ... \
+CHAT_EVAL_EMAIL=member@customer.com CHAT_EVAL_PASSWORD=... CHAT_EVAL_ORG=<organization uuid> \
+deno run --allow-net --allow-env --allow-read scripts/mcp-eval/chat-eval.ts
+```
+
+Posts the manual QA script from `docs/ask-ai-build-brief.md` §5 plus every `questions.json` question to `chat-with-data`, collects each stream, prints the answers verbatim, and lints them: no calendar-gap language ("missing", "gap", "no data for May", "still filling in", "pause"), no decimal sentiment or visibility, no other-customer talk, every markdown link's host present in that turn's `{sources}` event and every link URL one the tools returned (a bare domain link fails), and every answer that names a source carrying at least one link. Reports time-to-first-token p50 (the brief's rule: drop `CLAUDE_EFFORT` to `medium` if it sits above ~6 s on Ford). `--only "<substring>"` narrows the set, `--extra "<question>"` adds one. Run it on Ford and PepsiCo after any change to the prompt, the rulebook or the tool layer. **Run record:** RUN_RECORD_PLACEHOLDER
 
 ## Client pilot checklist (Netflix live; Ford next)
 
@@ -130,3 +150,9 @@ Per OpenAI's plugin guidelines, already satisfied in code: unique verb-style too
 - **Apps SDK / directory (`@PerceptionX` with branded cards)**: later packaging step on this same server — add `resources` (skybridge card templates) + `_meta.openai/outputTemplate` to tool results, then submit for OpenAI review. Results already carry `structuredContent` in anticipation.
 - **Progress states**: hosts render their own "Running tool…" with our tool `title`s (e.g. "Searching your sources"); the streamed SSE statuses remain an in-app-chat nicety.
 - `mcp_org_settings.enabled` gates NEW requests only; long-lived PATs should carry `p_expires_in_days`.
+- **Server-side refusal fallbacks** (`fallbacks: "default"` on the beta Messages path) would re-run a classifier refusal on another model instead of streaming the plain refusal line; not enabled — the analyst's refusals are rule-driven (org-only data), not classifier-driven.
+
+## Next
+
+- **Reroute the dashboard "Ask AI" buttons through the chat.** `OverviewTab`, `SourceDetailsModal` and `CompetitorDetailsModal` still build their own prompts from client-side rows and call `test-prompt-claude` directly, with none of the rulebook (raw counts, calendar periods, no coverage signals, no links). Open `/chat` with a prefilled question instead (`navigate('/chat', { state: { question: 'Summarise BMW versus Ford on the competitors tab' } })` — the page already accepts it) so they inherit the rulebook, then retire the direct `test-prompt-claude` calls.
+- **Delete the deployed `suggest-questions` function** (its source is gone from the repo; `supabase functions delete suggest-questions`).
