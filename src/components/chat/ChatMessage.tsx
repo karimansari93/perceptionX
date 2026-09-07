@@ -5,6 +5,7 @@ import type { Components } from 'react-markdown';
 import { cn } from '@/lib/utils';
 import { Bot, ExternalLink, User } from 'lucide-react';
 import { Favicon } from '@/components/ui/favicon';
+import { ScopeChips } from './ChatScopeBar';
 import type { ChatMessage as ChatMessageType, SourceLink } from '@/services/chatService';
 
 interface ChatMessageProps {
@@ -91,7 +92,10 @@ export function ChatMessage({ message }: ChatMessageProps) {
             <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
           </div>
         ) : isUser ? (
-          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          <>
+            {message.scope && <ScopeChips scope={message.scope} />}
+            <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          </>
         ) : (
           <>
             <div className="break-words chat-message-content">

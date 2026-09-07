@@ -1,23 +1,34 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChat } from '@/hooks/useChat';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useStarterQuestions } from '@/hooks/useStarterQuestions';
 import { greetingFor } from '@/lib/askAi';
+import type { ChatScope } from '@/services/chatService';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 import { ChatWelcome } from './ChatWelcome';
 import { ChatConversationList } from './ChatConversationList';
+import { ChatScopeBar } from './ChatScopeBar';
 import { AlertTriangle } from 'lucide-react';
 
 interface ChatCoreProps {
   mode: 'full' | 'compact';
   /** A question to send as soon as the chat is ready (from the overview chat box). */
   initialQuestion?: string | null;
+  /** The dashboard filters the handed-over question was asked under. */
+  initialScope?: ChatScope | null;
+  /** Identifies the navigation that carried the question (sent once per key). */
+  handoverKey?: string;
   onInitialQuestionSent?: () => void;
 }
 
-export function ChatCore({ mode, initialQuestion, onInitialQuestionSent }: ChatCoreProps) {
+// Handovers already sent this session, keyed by navigation entry + question,
+// so a remount, a double-invoked effect or a dev hot reload never asks the
+// same question twice.
+const sentHandovers = new Set<string>();
+
+export function ChatCore({ mode, initialQuestion, initialScope, handoverKey, onInitialQuestionSent }: ChatCoreProps) {
   const { currentCompany } = useCompany();
   const { user } = useAuth();
   const {
@@ -36,6 +47,18 @@ export function ChatCore({ mode, initialQuestion, onInitialQuestionSent }: ChatC
   } = useChat();
   const { questions, isLoading: questionsLoading } = useStarterQuestions(organizationId);
 
+  // The scope every question is asked under: the handed-over filters, else
+  // the dashboard's current company with no market / function filter.
+  const [scope, setScope] = useState<ChatScope>(() => ({
+    company: initialScope?.company ?? currentCompany?.name ?? null,
+    location: initialScope?.location ?? null,
+    jobFunction: initialScope?.jobFunction ?? null,
+  }));
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+
+  const send = useCallback((text: string) => sendMessage(text, scopeRef.current), [sendMessage]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -48,20 +71,20 @@ export function ChatCore({ mode, initialQuestion, onInitialQuestionSent }: ChatC
 
   // A question handed over from the overview chat box: send it once, as its
   // own new conversation, as soon as the org is known.
-  const sentInitialRef = useRef<string | null>(null);
   useEffect(() => {
     const q = initialQuestion?.trim();
     if (!q || !organizationId || isLoading) return;
-    if (sentInitialRef.current === q) return;
-    sentInitialRef.current = q;
+    const token = `${handoverKey ?? ''}:${q}`;
+    if (sentHandovers.has(token)) return;
+    sentHandovers.add(token);
     startNewConversation();
     // sendMessage reads the (now empty) message list on the next tick.
     setTimeout(() => {
-      sendMessage(q);
+      sendMessage(q, scopeRef.current);
       onInitialQuestionSent?.();
     }, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialQuestion, organizationId]);
+  }, [initialQuestion, handoverKey, organizationId]);
 
   const showConversationList = mode === 'full';
 
@@ -98,9 +121,9 @@ export function ChatCore({ mode, initialQuestion, onInitialQuestionSent }: ChatC
         <div ref={messagesContainerRef} className="flex-1 overflow-y-auto">
           {messages.length === 0 ? (
             <ChatWelcome
-              onSuggestionClick={sendMessage}
+              onSuggestionClick={send}
               greeting={greetingFor(user)}
-              companyName={currentCompany?.name}
+              companyName={scope.company ?? currentCompany?.name}
               questions={questions}
               questionsLoading={questionsLoading}
             />
@@ -123,14 +146,18 @@ export function ChatCore({ mode, initialQuestion, onInitialQuestionSent }: ChatC
           )}
         </div>
 
-        {/* Input area */}
-        <ChatInput
-          onSend={sendMessage}
-          onStop={stopStreaming}
-          isLoading={isLoading}
-          disabled={!organizationId}
-          placeholder="Ask about your AI employer perception data…"
-        />
+        {/* Scope + input */}
+        <div className="border-t bg-white">
+          <ChatScopeBar organizationId={organizationId} scope={scope} onChange={setScope} disabled={isLoading} />
+          <ChatInput
+            onSend={send}
+            onStop={stopStreaming}
+            isLoading={isLoading}
+            disabled={!organizationId}
+            placeholder="Ask about your AI employer perception data…"
+            bare
+          />
+        </div>
       </div>
     </div>
   );

@@ -1146,7 +1146,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
     <div className="flex flex-col gap-8 w-full">
       {/* Ask PerceptionX — the chat box. Typing here opens /chat with the
           question; the score row and everything else sit below it. */}
-      <AskAiHero companyName={companyName} />
+      <AskAiHero companyName={companyName} market={market} jobFunction={selectedJobFunctionFilter} />
 
       <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
         {/* Perception Score Card */}

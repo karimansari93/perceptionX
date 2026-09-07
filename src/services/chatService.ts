@@ -9,6 +9,22 @@ export interface SourceLink {
   domain: string;
 }
 
+// The dashboard filters a question is asked under (company / market / job
+// function). Sent with the message so the analyst applies the same
+// location / job_function filters, and shown as chips on the question.
+export interface ChatScope {
+  company?: string | null;
+  location?: string | null;
+  jobFunction?: string | null;
+}
+
+export interface ScopeOptions {
+  brands: string[];
+  brand: string | null;
+  markets: string[];
+  job_functions: string[];
+}
+
 export interface ChatMessage {
   id?: string;
   role: 'user' | 'assistant';
@@ -17,6 +33,7 @@ export interface ChatMessage {
   isStreaming?: boolean;
   statusText?: string;
   sources?: SourceLink[];
+  scope?: ChatScope;
 }
 
 export type StreamChunk =
@@ -62,6 +79,7 @@ export async function sendChatMessage(
   organizationId: string,
   conversationHistory: ChatMessage[],
   conversationId?: string | null,
+  scope?: ChatScope | null,
 ): Promise<ReadableStream<StreamChunk>> {
   const response = await fetch(functionsUrl(), {
     method: 'POST',
@@ -70,6 +88,7 @@ export async function sendChatMessage(
       message,
       organizationId,
       conversationId: conversationId ?? undefined,
+      scope: scope ?? undefined,
       conversationHistory: conversationHistory.map(m => ({ role: m.role, content: m.content })),
     }),
   });
@@ -136,6 +155,27 @@ export async function fetchStarterQuestions(organizationId: string): Promise<Sta
   const questions = Array.isArray(body?.questions) ? body.questions.map(String).slice(0, 4) : [];
   if (questions.length !== 4) throw new Error('Starter questions malformed');
   return { questions, source: body.source === 'data' ? 'data' : 'fallback' };
+}
+
+/**
+ * Scope options for the chat's scope bar: the organization's brands and the
+ * tracked markets and job functions of one brand (the same spellings the
+ * analyst's tools match against).
+ */
+export async function fetchScopeOptions(organizationId: string, company?: string | null): Promise<ScopeOptions> {
+  const response = await fetch(functionsUrl(), {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({ action: 'scope', organizationId, scope: company ? { company } : undefined }),
+  });
+  if (!response.ok) throw new Error(`Scope options failed: ${response.status}`);
+  const body = await response.json();
+  return {
+    brands: Array.isArray(body?.brands) ? body.brands.map(String) : [],
+    brand: typeof body?.brand === 'string' ? body.brand : null,
+    markets: Array.isArray(body?.markets) ? body.markets.map(String) : [],
+    job_functions: Array.isArray(body?.job_functions) ? body.job_functions.map(String) : [],
+  };
 }
 
 /**

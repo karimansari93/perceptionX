@@ -5,11 +5,7 @@ import { ChatCore } from '@/components/chat/ChatCore';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { ASK_AI_SUBLINE, ASK_AI_TITLE } from '@/lib/askAi';
-
-// Questions already handed over in this session, keyed by the router entry
-// that carried them — so a remount of this page (or a hot reload in dev)
-// never sends the same question twice.
-const consumedHandovers = new Set<string>();
+import type { ChatScope } from '@/services/chatService';
 
 function ChatContent() {
   const navigate = useNavigate();
@@ -20,15 +16,14 @@ function ChatContent() {
   // A question can arrive from the overview chat box (router state) or a
   // link (?q=). It is sent once and then cleared from the URL/state so a
   // reload doesn't re-ask it.
+  const [initialScope] = useState<ChatScope | null>(() => (location.state as { scope?: ChatScope } | null)?.scope ?? null);
   const [initialQuestion, setInitialQuestion] = useState<string | null>(() => {
     const fromState = (location.state as { question?: string } | null)?.question;
-    const q = (fromState || searchParams.get('q') || '').trim();
-    if (!q) return null;
-    const token = `${location.key}:${q}`;
-    if (consumedHandovers.has(token)) return null;
-    consumedHandovers.add(token);
-    return q;
+    return (fromState || searchParams.get('q') || '').trim() || null;
   });
+  // The router entry that carried the question: ChatCore sends each
+  // (entry, question) pair once, even across remounts or dev hot reloads.
+  const [handoverKey] = useState(() => location.key);
   const handleSent = useCallback(() => {
     setInitialQuestion(null);
     navigate('/chat', { replace: true, state: null });
@@ -56,7 +51,13 @@ function ChatContent() {
 
         {/* Full-page chat */}
         <div className="flex-1 overflow-hidden">
-          <ChatCore mode="full" initialQuestion={initialQuestion} onInitialQuestionSent={handleSent} />
+          <ChatCore
+            mode="full"
+            initialQuestion={initialQuestion}
+            initialScope={initialScope}
+            handoverKey={handoverKey}
+            onInitialQuestionSent={handleSent}
+          />
         </div>
       </SidebarInset>
     </div>

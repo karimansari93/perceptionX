@@ -9,13 +9,17 @@ import { cn } from '@/lib/utils';
 
 interface AskAiHeroProps {
   companyName?: string;
+  /** Selected market label (null = all locations) — travels with the question. */
+  market?: string | null;
+  /** Selected job function ('all' = every function) — travels with the question. */
+  jobFunction?: string;
 }
 
 // The overview's chat box. Typing a question here opens the full Ask
 // PerceptionX page with that question already sent, so every answer goes
 // through the same analyst (and the same rulebook) as the sidebar chat and
 // the ChatGPT/Claude connectors.
-export function AskAiHero({ companyName }: AskAiHeroProps) {
+export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { currentCompany } = useCompany();
@@ -24,11 +28,20 @@ export function AskAiHero({ companyName }: AskAiHeroProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // The dashboard's filters travel with the question, so the chat asks (and
+  // says it asks) about this company, market and function.
+  const scopeCompany = currentCompany?.name ?? companyName ?? null;
+  const scopeLocation = market ?? null;
+  const scopeFunction = jobFunction && jobFunction !== 'all' ? jobFunction : null;
+  const scopeLabel = [scopeCompany, scopeLocation ?? 'All locations', scopeFunction ?? 'All functions'].filter(Boolean).join(' · ');
+
   const ask = useCallback((question: string) => {
     const q = question.trim();
     if (!q) return;
-    navigate('/chat', { state: { question: q } });
-  }, [navigate]);
+    navigate('/chat', {
+      state: { question: q, scope: { company: scopeCompany, location: scopeLocation, jobFunction: scopeFunction } },
+    });
+  }, [navigate, scopeCompany, scopeLocation, scopeFunction]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -59,6 +72,7 @@ export function AskAiHero({ companyName }: AskAiHeroProps) {
           <h2 className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight">{greetingFor(user)}</h2>
           <p className="text-sm text-gray-500 truncate">
             Ask anything about how AI describes {companyName || 'your organisation'} to candidates.
+            <span className="text-gray-400"> Asking about: {scopeLabel}.</span>
           </p>
         </div>
       </div>

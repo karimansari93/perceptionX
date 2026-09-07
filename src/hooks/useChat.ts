@@ -3,6 +3,7 @@ import { useCompany } from '@/contexts/CompanyContext';
 import {
   ChatMessage,
   ChatConversation,
+  ChatScope,
   SourceLink,
   sendChatMessage,
   createConversation,
@@ -90,15 +91,17 @@ export function useChat() {
     });
   }, []);
 
-  // Send a message
-  const sendMessage = useCallback(async (text: string) => {
+  // Send a message, under the dashboard scope (company / market / function)
+  // the user has set — shown as chips on the question and applied by the
+  // analyst as tool filters.
+  const sendMessage = useCallback(async (text: string, scope?: ChatScope | null) => {
     if (!text.trim() || isLoading || !organizationId) return;
 
     setError(null);
     setIsLoading(true);
 
     // Add user message to the UI
-    const userMessage: ChatMessage = { role: 'user', content: text.trim() };
+    const userMessage: ChatMessage = { role: 'user', content: text.trim(), ...(scope ? { scope } : {}) };
     const currentMessages = [...messages, userMessage];
     setMessages(currentMessages);
 
@@ -137,7 +140,7 @@ export function useChat() {
       const recent = messages.slice(-HISTORY_WINDOW);
       const history = recent.map(m => ({ role: m.role, content: m.content }));
 
-      const stream = await sendChatMessage(text.trim(), organizationId, history, conversationId);
+      const stream = await sendChatMessage(text.trim(), organizationId, history, conversationId, scope);
       const reader = stream.getReader();
       streamReaderRef.current = reader;
 
