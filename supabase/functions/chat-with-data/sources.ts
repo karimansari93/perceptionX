@@ -17,7 +17,8 @@ export function collectSources(payload: unknown, out: Map<string, SourceLink>): 
       if (!/^https?:\/\//i.test(url) || out.has(url)) continue;
       const shareKey = Object.keys(page || {}).find(k => /_pct(_|$)/.test(k));
       out.set(url, {
-        title: page?.title ? String(page.title) : url,
+        // Page titles arrive with backslash-escaped quotes from the page cube.
+        title: page?.title ? String(page.title).replace(/\\(["'])/g, '$1') : url,
         url,
         domain: obj.domain,
         share: shareKey ? (page[shareKey] as number | null) : null,

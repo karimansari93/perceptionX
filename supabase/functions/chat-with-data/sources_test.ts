@@ -12,7 +12,7 @@ Deno.test('sources event: every top_pages url in a tool result, deduped, http(s)
     ],
     sources_in_attribute_answers: { sources: [
       { domain: 'indeed.com', cited_in_pct_of_attribute_answers: 9, top_pages: [
-        { url: 'https://www.indeed.com/cmp/Ford', title: 'Ford Careers', cited_in_pct_of_attribute_answers: 4 },
+        { url: 'https://www.indeed.com/cmp/Ford', title: 'Ford \\"culture\\" Reviews', cited_in_pct_of_attribute_answers: 4 },
         { url: 'https://www.glassdoor.com/Reviews/Ford-Reviews-E123.htm', title: 'dup', cited_in_pct_of_attribute_answers: 2 },
       ] },
     ] },
@@ -25,4 +25,5 @@ Deno.test('sources event: every top_pages url in a tool result, deduped, http(s)
   ]);
   assertEquals(out.get('https://www.indeed.com/cmp/Ford')?.domain, 'indeed.com');
   assertEquals(out.get('https://www.indeed.com/cmp/Ford')?.share, 4);
+  assertEquals(out.get('https://www.indeed.com/cmp/Ford')?.title, 'Ford "culture" Reviews');
 });
