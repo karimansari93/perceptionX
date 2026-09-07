@@ -33,7 +33,6 @@ import { categorizeSourceByMediaType } from "@/utils/sourceConfig";
 import { poolDomainMonthly, poolDomainRows } from "@/hooks/dashboard/scopeStatsSelect";
 import { sentimentRatioV2 } from "@/lib/sentimentV2";
 import LLMLogo from "@/components/LLMLogo";
-import { ScrollablePills } from "./ScrollablePills";
 import { FilterDropdown } from "./FilterDropdown";
 import { TablePagination } from "./TablePagination";
 import { useTabSearchSeed } from "@/contexts/TabSearchSeedContext";
@@ -1411,19 +1410,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
         </p>
       </div>
 
-      {/* Job function filter */}
-      {getUniqueJobFunctions.length > 0 && (
-        <div className="sticky top-0 z-10 bg-white pb-2">
-          <ScrollablePills
-            selected={selectedJobFunctionFilter}
-            onSelect={setSelectedJobFunctionFilter}
-            options={[
-              { value: 'all', label: 'All functions' },
-              ...getUniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
-            ]}
-          />
-        </div>
-      )}
+      {/* Job function filter lives in the top bar (DashboardHeader). */}
 
       {!hasAnyData && !responsesLoading ? (
         <Card className="shadow-sm border border-gray-200">

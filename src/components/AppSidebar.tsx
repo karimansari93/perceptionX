@@ -40,9 +40,6 @@ const navigationGroups: NavigationGroup[] = [
     title: "Dashboard",
     items: [
       { title: "Overview", icon: BarChart3, section: "overview", group: "dashboard", route: "/dashboard" },
-      // Ask PerceptionX — the in-app analyst (same tools and rulebook as the
-      // ChatGPT/Claude connector). Hidden by the VITE_ASK_AI_ENABLED kill switch.
-      ...(ASK_AI_ENABLED ? [{ title: "Ask AI", icon: Sparkles, section: "chat", group: "dashboard", route: "/chat" }] : []),
       { title: "Sources", icon: Globe, section: "sources", group: "dashboard", route: "/dashboard/sources" },
       { title: "Competitors", icon: Users, section: "competitors", group: "dashboard", route: "/dashboard/competitors" },
       { title: "Themes", icon: Lightbulb, section: "thematic", group: "dashboard", route: "/dashboard/themes" },
@@ -51,6 +48,9 @@ const navigationGroups: NavigationGroup[] = [
   {
     title: "Analyze",
     items: [
+      // Ask PerceptionX — the in-app analyst (same tools and rulebook as the
+      // ChatGPT/Claude connector). Hidden by the VITE_ASK_AI_ENABLED kill switch.
+      ...(ASK_AI_ENABLED ? [{ title: "Ask AI", icon: Sparkles, section: "chat", group: "analyze", route: "/chat" }] : []),
       { title: "Reports", icon: Download, section: "reports", group: "reports", route: "/analyze/reports" },
     ]
   },

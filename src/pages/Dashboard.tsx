@@ -284,6 +284,14 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     }
   }, [selectedJobFunction, availableJobFunctions, allResponses.length, responsesLoadedCompanyId, currentCompany?.id, setSelectedJobFunction]);
 
+  // Options for the top-bar job-function filter: the current view's
+  // vocabulary from the scope cube as soon as it lands, else whatever the raw
+  // stream has shown so far.
+  const jobFunctionOptions = useMemo(
+    () => Array.from(cubeJobFunctions ?? availableJobFunctions).sort((a, b) => a.localeCompare(b)),
+    [cubeJobFunctions, availableJobFunctions]
+  );
+
   // Raw prompt_responses now stream in AFTER first paint (the headline
   // numbers are rollup-first). While the current company's stream hasn't
   // fully landed, raw-derived tabs render skeleton rows instead of "No data"
@@ -799,6 +807,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           availablePeriods={activeSection === 'reports' ? undefined : availablePeriods}
           selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}
           onPeriodChange={activeSection === 'reports' ? undefined : handlePeriodChange}
+          jobFunctionOptions={activeSection === 'reports' ? undefined : jobFunctionOptions}
+          selectedJobFunction={selectedJobFunction}
+          onJobFunctionChange={activeSection === 'reports' ? undefined : handleJobFunctionChange}
           userId={user?.id ?? null}
           companyId={currentCompany?.id ?? null}
           onLocationPrefetch={activeSection === 'reports' ? undefined : prefetchLocationRollups}

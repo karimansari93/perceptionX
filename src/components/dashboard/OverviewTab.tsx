@@ -21,7 +21,6 @@ import LLMLogo from "@/components/LLMLogo";
 import { SourcesSummaryCard } from "./SourcesSummaryCard";
 import { CompetitorsSummaryCard } from "./CompetitorsSummaryCard";
 import { AttributesSummaryCard } from "./AttributesSummaryCard";
-import { ScrollablePills } from "./ScrollablePills";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
@@ -1148,19 +1147,6 @@ CRITICAL: When you reference information from a source, add an inline citation l
       {/* Ask PerceptionX — the chat box. Typing here opens /chat with the
           question; the score row and everything else sit below it. */}
       <AskAiHero companyName={companyName} />
-
-      {getUniqueJobFunctions.length > 0 && (
-        <div data-tour="job-function-filter">
-          <ScrollablePills
-            selected={selectedJobFunctionFilter}
-            onSelect={setSelectedJobFunctionFilter}
-            options={[
-              { value: 'all', label: 'All functions' },
-              ...getUniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
-            ]}
-          />
-        </div>
-      )}
 
       <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
         {/* Perception Score Card */}

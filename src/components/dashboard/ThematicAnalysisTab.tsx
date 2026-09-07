@@ -34,7 +34,6 @@ import { ATTRIBUTES, normalizeAttributeId } from '@/config/attributes';
 import { ATTRIBUTE_ICONS } from '@/config/attributeIcons';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { Favicon } from '@/components/ui/favicon';
-import { ScrollablePills } from './ScrollablePills';
 import { useTabSearchSeed } from '@/contexts/TabSearchSeedContext';
 
 interface ThematicAnalysisTabProps {
@@ -759,16 +758,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
             </p>
           </div>
         </div>
-        {getUniqueJobFunctions.length > 0 && (
-          <ScrollablePills
-            selected={selectedJobFunctionFilter}
-            onSelect={setSelectedJobFunctionFilter}
-            options={[
-              { value: 'all', label: 'All functions' },
-              ...getUniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
-            ]}
-          />
-        )}
+        {/* Job function filter lives in the top bar (DashboardHeader). */}
       </div>
 
       {/* No Data Message — skeleton while the raw stream is still arriving */}
