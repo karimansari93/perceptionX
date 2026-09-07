@@ -20,6 +20,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { ErrorBoundary } from "react-error-boundary";
 import { usePageTracking } from "@/hooks/usePageTracking";
 import AdminRoute from "./components/AdminRoute";
+import AskAiRoute from "./components/AskAiRoute";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { logger } from "@/lib/utils";
 import { AlertTriangle, RefreshCw, Home } from "lucide-react";

@@ -1,11 +1,28 @@
+import { useCallback, useState } from 'react';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/AppSidebar';
 import { ChatCore } from '@/components/chat/ChatCore';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { ASK_AI_SUBLINE, ASK_AI_TITLE } from '@/lib/askAi';
 
 function ChatContent() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  useDocumentTitle(ASK_AI_TITLE);
+
+  // A question can arrive from the overview chat box (router state) or a
+  // link (?q=). It is sent once and then cleared from the URL/state so a
+  // reload doesn't re-ask it.
+  const [initialQuestion, setInitialQuestion] = useState<string | null>(() => {
+    const fromState = (location.state as { question?: string } | null)?.question;
+    return (fromState || searchParams.get('q') || '').trim() || null;
+  });
+  const handleSent = useCallback(() => {
+    setInitialQuestion(null);
+    navigate('/chat', { replace: true, state: null });
+  }, [navigate]);
 
   return (
     <div className="flex h-screen bg-gray-50 w-full">
@@ -21,15 +38,15 @@ function ChatContent() {
             className="w-8 h-8 object-contain rounded-full"
             src="/logos/PinkBadge.png"
           />
-          <div>
-            <h1 className="text-sm font-semibold text-gray-900">Employer Perception Analyst</h1>
-            <p className="text-xs text-gray-500">Ask questions about your organization's AI employer perception data</p>
+          <div className="min-w-0">
+            <h1 className="text-sm font-semibold text-gray-900">{ASK_AI_TITLE}</h1>
+            <p className="text-xs text-gray-500 truncate">{ASK_AI_SUBLINE}</p>
           </div>
         </div>
 
         {/* Full-page chat */}
         <div className="flex-1 overflow-hidden">
-          <ChatCore mode="full" />
+          <ChatCore mode="full" initialQuestion={initialQuestion} onInitialQuestionSent={handleSent} />
         </div>
       </SidebarInset>
     </div>

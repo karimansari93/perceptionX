@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { Favicon } from "@/components/ui/favicon";
+import { AskAiHero } from "@/components/chat/AskAiHero";
 import { extractSourceUrl, getFavicon } from "@/utils/citationUtils";
 import {
   ChartContainer,
@@ -1144,13 +1145,9 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
   return (
     <div className="flex flex-col gap-8 w-full">
-      {/* Main Section Header */}
-      <div className="space-y-2">
-        <h2 className="text-2xl font-bold text-gray-900">Overview</h2>
-        <p className="text-gray-600">
-          Get a comprehensive view of {companyName}'s AI perception metrics, performance trends, and key insights.
-        </p>
-      </div>
+      {/* Ask PerceptionX — the chat box. Typing here opens /chat with the
+          question; the score row and everything else sit below it. */}
+      <AskAiHero companyName={companyName} />
 
       {getUniqueJobFunctions.length > 0 && (
         <div data-tour="job-function-filter">

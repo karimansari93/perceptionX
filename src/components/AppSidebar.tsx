@@ -1,4 +1,5 @@
-import { BarChart3, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass, UserPlus, Search } from "lucide-react";
+import { BarChart3, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass, UserPlus, Search, Sparkles } from "lucide-react";
+import { ASK_AI_ENABLED } from "@/lib/askAi";
 import {
   Sidebar,
   SidebarContent,
