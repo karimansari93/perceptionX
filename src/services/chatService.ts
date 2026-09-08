@@ -14,9 +14,11 @@ export interface SourceLink {
 // location / job_function filters, and shown as chips on the question.
 export interface ChatScope {
   company?: string | null;
-  location?: string | null;
-  jobFunction?: string | null;
+  locations: string[];
+  jobFunctions: string[];
 }
+
+export const EMPTY_SCOPE: ChatScope = { company: null, locations: [], jobFunctions: [] };
 
 export interface ScopeOptions {
   brands: string[];
@@ -33,13 +35,15 @@ export interface ChatMessage {
   isStreaming?: boolean;
   statusText?: string;
   sources?: SourceLink[];
+  competitors?: string[];
   scope?: ChatScope;
 }
 
 export type StreamChunk =
   | { type: 'text'; value: string }
   | { type: 'status'; value: string }
-  | { type: 'sources'; value: SourceLink[] };
+  | { type: 'sources'; value: SourceLink[] }
+  | { type: 'competitors'; value: string[] };
 
 export interface ChatConversation {
   id: string;
@@ -127,6 +131,9 @@ export async function sendChatMessage(
                 .filter((s: any) => s && typeof s.url === 'string' && /^https?:\/\//i.test(s.url))
                 .map((s: any) => ({ title: String(s.title || s.url), url: s.url, domain: String(s.domain || '') }));
               controller.enqueue({ type: 'sources', value: sources });
+            }
+            if (Array.isArray(parsed.competitors)) {
+              controller.enqueue({ type: 'competitors', value: parsed.competitors.filter((c: unknown) => typeof c === 'string' && c).map(String) });
             }
           } catch (e) {
             console.warn('Skipped unparseable SSE chunk:', data, e);

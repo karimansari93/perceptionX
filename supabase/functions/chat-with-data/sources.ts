@@ -27,3 +27,19 @@ export function collectSources(payload: unknown, out: Map<string, SourceLink>): 
   }
   for (const v of Object.values(obj)) collectSources(v, out);
 }
+
+// ─── Competitors named this turn ────────────────────────────────────────────
+// Every competitor row a tool returned ({ name | competitor, named_in_pct_of_
+// answers }) — get_company_overview, get_competitors and
+// get_competitor_landscape all carry them — so the UI can decorate the names
+// in the answer with their logos.
+export function collectCompetitors(payload: unknown, out: Set<string>): void {
+  if (Array.isArray(payload)) { for (const v of payload) collectCompetitors(v, out); return; }
+  if (!payload || typeof payload !== 'object') return;
+  const obj = payload as Record<string, unknown>;
+  if ('named_in_pct_of_answers' in obj) {
+    const name = [obj.name, obj.competitor, obj.competitor_name].find(v => typeof v === 'string' && v.trim());
+    if (name) out.add(String(name).trim());
+  }
+  for (const v of Object.values(obj)) collectCompetitors(v, out);
+}

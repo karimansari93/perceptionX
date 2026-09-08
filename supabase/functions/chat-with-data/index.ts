@@ -8,7 +8,7 @@
 //     every company_id is re-checked for ownership inside executeTool;
 //   * the Claude loop on the official SDK (streaming, adaptive thinking,
 //     prompt caching on the system block, refusal handling);
-//   * SSE framing: {text}, {status}, {sources}, {error}, [DONE];
+//   * SSE framing: {text}, {status}, {competitors}, {sources}, {error}, [DONE];
 //   * a request log (chat_request_log) and a per-org daily cap
 //     (chat_org_settings.daily_cap, default 300);
 //   * the data-grounded starter questions (action: "starters") and the
@@ -27,7 +27,7 @@ import type { ToolContext } from "../_shared/px-tools/mod.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { getStarterQuestions } from "./starters.ts";
 import { getScopeOptions, normalizeScope, scopeNote } from "./scope.ts";
-import { collectSources } from "./sources.ts";
+import { collectCompetitors, collectSources } from "./sources.ts";
 import type { SourceLink } from "./sources.ts";
 
 const MODEL = Deno.env.get('CLAUDE_MODEL') || 'claude-opus-5';
@@ -231,6 +231,7 @@ serve(async (req) => {
       const tStart = Date.now();
       const log = { ...logBase };
       const sources = new Map<string, SourceLink>();
+      const competitors = new Set<string>();
       let streamedText = '';
       const enqueue = (chunk: Uint8Array) => { if (!cancelled) { try { ctrl.enqueue(chunk); } catch { cancelled = true; } } };
       const finish = () => {
@@ -295,7 +296,7 @@ serve(async (req) => {
             let parsed: any = null;
             try { parsed = JSON.parse(output); } catch { /* raw text */ }
             const isError = !!(parsed && typeof parsed === 'object' && parsed.error);
-            if (parsed && !isError) collectSources(parsed, sources);
+            if (parsed && !isError) { collectSources(parsed, sources); collectCompetitors(parsed, competitors); }
             return { type: 'tool_result', tool_use_id: t.id, content: output, ...(isError ? { is_error: true } : {}) };
           }));
           messages.push({ role: 'user', content: results });
@@ -305,6 +306,7 @@ serve(async (req) => {
           }
         }
 
+        if (competitors.size) enqueue(sseEvent({ competitors: Array.from(competitors).slice(0, 40) }));
         if (sources.size) {
           const list = Array.from(sources.values())
             .sort((a, b) => (b.share ?? -1) - (a.share ?? -1))

@@ -146,6 +146,7 @@ export function useChat() {
 
       let fullResponse = '';
       let sources: SourceLink[] = [];
+      let competitors: string[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -159,11 +160,14 @@ export function useChat() {
         } else if (value.type === 'sources') {
           sources = value.value;
           patchLast({ sources });
+        } else if (value.type === 'competitors') {
+          competitors = value.value;
+          patchLast({ competitors });
         }
       }
 
       // Mark streaming as complete
-      patchLast({ content: fullResponse, statusText: undefined, isStreaming: false, sources });
+      patchLast({ content: fullResponse, statusText: undefined, isStreaming: false, sources, competitors });
 
       // Save assistant message to DB
       if (fullResponse && conversationId) {

@@ -27,3 +27,18 @@ Deno.test('sources event: every top_pages url in a tool result, deduped, http(s)
   assertEquals(out.get('https://www.indeed.com/cmp/Ford')?.share, 4);
   assertEquals(out.get('https://www.indeed.com/cmp/Ford')?.title, 'Ford "culture" Reviews');
 });
+
+import { collectCompetitors } from './sources.ts';
+
+Deno.test('competitors event: every named competitor row, deduped', () => {
+  const payload = {
+    top_competitors: [
+      { name: 'Amazon', named_in_pct_of_answers: 17, sample_size: { answers_naming: 120 } },
+      { name: 'Disney', named_in_pct_of_answers: 15, sample_size: { answers_naming: 100 } },
+    ],
+    competitors: [{ competitor: 'Amazon', named_in_pct_of_answers: 20 }, { competitor: '', named_in_pct_of_answers: 1 }],
+  };
+  const out = new Set<string>();
+  collectCompetitors(payload, out);
+  assertEquals(Array.from(out), ['Amazon', 'Disney']);
+});

@@ -9,7 +9,7 @@ import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 import { ChatWelcome } from './ChatWelcome';
 import { ChatConversationList } from './ChatConversationList';
-import { ChatScopeBar } from './ChatScopeBar';
+import { ChatScopeBar, ScopePickers, scopeSummary, useScopeOptions } from './ChatScopeBar';
 import { AlertTriangle } from 'lucide-react';
 
 interface ChatCoreProps {
@@ -48,14 +48,19 @@ export function ChatCore({ mode, initialQuestion, initialScope, handoverKey, onI
   const { questions, isLoading: questionsLoading } = useStarterQuestions(organizationId);
 
   // The scope every question is asked under: the handed-over filters, else
-  // the dashboard's current company with no market / function filter.
+  // the dashboard's current company with every market and function.
   const [scope, setScope] = useState<ChatScope>(() => ({
     company: initialScope?.company ?? currentCompany?.name ?? null,
-    location: initialScope?.location ?? null,
-    jobFunction: initialScope?.jobFunction ?? null,
+    locations: initialScope?.locations ?? [],
+    jobFunctions: initialScope?.jobFunctions ?? [],
   }));
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+  const { options: scopeOptions } = useScopeOptions(organizationId, scope.company);
+  // Adopt the resolved brand name when none was set.
+  useEffect(() => {
+    if (scopeOptions?.brand && !scope.company) setScope(s => ({ ...s, company: scopeOptions.brand }));
+  }, [scopeOptions?.brand, scope.company]);
 
   const send = useCallback((text: string) => sendMessage(text, scopeRef.current), [sendMessage]);
 
@@ -99,6 +104,8 @@ export function ChatCore({ mode, initialQuestion, initialScope, handoverKey, onI
     );
   }
 
+  const pickers = <ScopePickers scope={scope} options={scopeOptions} onChange={setScope} disabled={isLoading} size="md" />;
+
   return (
     <div className="flex h-full">
       {/* Conversation sidebar (full mode only) */}
@@ -126,6 +133,8 @@ export function ChatCore({ mode, initialQuestion, initialScope, handoverKey, onI
               companyName={scope.company ?? currentCompany?.name}
               questions={questions}
               questionsLoading={questionsLoading}
+              scopePickers={pickers}
+              scopeSummary={scopeSummary(scope)}
             />
           ) : (
             <div className="max-w-3xl mx-auto px-4 py-4">
@@ -148,13 +157,15 @@ export function ChatCore({ mode, initialQuestion, initialScope, handoverKey, onI
 
         {/* Scope + input */}
         <div className="border-t bg-white">
-          <ChatScopeBar organizationId={organizationId} scope={scope} onChange={setScope} disabled={isLoading} />
+          {messages.length > 0 && (
+            <ChatScopeBar scope={scope} options={scopeOptions} onChange={setScope} disabled={isLoading} />
+          )}
           <ChatInput
             onSend={send}
             onStop={stopStreaming}
             isLoading={isLoading}
             disabled={!organizationId}
-            placeholder="Ask about your AI employer perception data…"
+            placeholder={`Ask about ${scopeSummary(scope)}…`}
             bare
           />
         </div>
