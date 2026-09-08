@@ -8,9 +8,11 @@ interface ChatInputProps {
   isLoading: boolean;
   disabled?: boolean;
   placeholder?: string;
+  /** No top border / background of its own (the parent draws the frame). */
+  bare?: boolean;
 }
 
-export function ChatInput({ onSend, onStop, isLoading, disabled, placeholder }: ChatInputProps) {
+export function ChatInput({ onSend, onStop, isLoading, disabled, placeholder, bare }: ChatInputProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -43,7 +45,7 @@ export function ChatInput({ onSend, onStop, isLoading, disabled, placeholder }: 
   }, []);
 
   return (
-    <div className="border-t bg-white p-4">
+    <div className={bare ? 'p-4 pt-3' : 'border-t bg-white p-4'}>
       <div className="flex items-end gap-2 max-w-3xl mx-auto">
         <div className="flex-1 relative">
           <textarea

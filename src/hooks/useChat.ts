@@ -3,7 +3,8 @@ import { useCompany } from '@/contexts/CompanyContext';
 import {
   ChatMessage,
   ChatConversation,
-  StreamChunk,
+  ChatScope,
+  SourceLink,
   sendChatMessage,
   createConversation,
   listConversations,
@@ -13,16 +14,17 @@ import {
   deleteConversation as deleteConversationService,
 } from '@/services/chatService';
 
+const titleFor = (text: string) => (text.length > 50 ? text.substring(0, 47) + '...' : text);
+
 export function useChat() {
-  const { currentCompany, userCompanies } = useCompany();
+  const { currentCompany } = useCompany();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const streamReaderRef = useRef<ReadableStreamDefaultReader<string> | null>(null);
+  const streamReaderRef = useRef<ReadableStreamDefaultReader<unknown> | null>(null);
 
   const organizationId = currentCompany?.organization_id;
 
@@ -48,9 +50,20 @@ export function useChat() {
     }
   }, [organizationId, loadConversations]);
 
+  // Stops rendering an in-flight answer here. The server keeps going and
+  // saves the finished answer to its thread.
+  const cancelStream = useCallback(() => {
+    if (streamReaderRef.current) {
+      streamReaderRef.current.cancel();
+      streamReaderRef.current = null;
+    }
+  }, []);
+  useEffect(() => cancelStream, [cancelStream]);
+
   // Load a specific conversation
   const loadConversation = useCallback(async (conversationId: string) => {
     try {
+      cancelStream();
       setIsLoading(true);
       setError(null);
       const msgs = await loadConversationMessages(conversationId);
@@ -77,15 +90,29 @@ export function useChat() {
     setIsLoading(false);
   }, []);
 
-  // Send a message
-  const sendMessage = useCallback(async (text: string) => {
+  // Patch the streaming assistant message in place.
+  const patchLast = useCallback((patch: Partial<ChatMessage>) => {
+    setMessages(prev => {
+      const updated = [...prev];
+      const lastMsg = updated[updated.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant') {
+        updated[updated.length - 1] = { ...lastMsg, ...patch };
+      }
+      return updated;
+    });
+  }, []);
+
+  // Send a message, under the dashboard scope (company / market / function)
+  // the user has set — shown as chips on the question and applied by the
+  // analyst as tool filters.
+  const sendMessage = useCallback(async (text: string, scope?: ChatScope | null) => {
     if (!text.trim() || isLoading || !organizationId) return;
 
     setError(null);
     setIsLoading(true);
 
     // Add user message to the UI
-    const userMessage: ChatMessage = { role: 'user', content: text.trim() };
+    const userMessage: ChatMessage = { role: 'user', content: text.trim(), ...(scope ? { scope } : {}) };
     const currentMessages = [...messages, userMessage];
     setMessages(currentMessages);
 
@@ -93,8 +120,7 @@ export function useChat() {
     let conversationId = currentConversationId;
     if (!conversationId) {
       try {
-        const title = text.trim().length > 50 ? text.trim().substring(0, 47) + '...' : text.trim();
-        const convo = await createConversation(organizationId, title);
+        const convo = await createConversation(organizationId, titleFor(text.trim()), scope);
         conversationId = convo.id;
         setCurrentConversationId(conversationId);
         setConversations(prev => [convo, ...prev]);
@@ -113,26 +139,26 @@ export function useChat() {
       console.error('Failed to save user message:', err);
     }
 
-    // Add streaming assistant message placeholder
-    const assistantMessage: ChatMessage = { role: 'assistant', content: '', isStreaming: true };
+    // Add streaming assistant message placeholder (it carries the scope it
+    // answers under, for the SCOPE row).
+    const assistantMessage: ChatMessage = { role: 'assistant', content: '', isStreaming: true, ...(scope ? { scope } : {}) };
     setMessages([...currentMessages, assistantMessage]);
 
     try {
-      // Build history excluding the current user message (it's sent separately).
-      // Cap at the last N turns to prevent context bloat on long threads —
-      // Claude Opus 4.7 has a large context window, but every extra turn
-      // costs latency and tokens, and relevance drops off fast. 20 messages
-      // (≈10 exchanges) preserves useful short-term memory without
-      // dragging old unrelated queries into every call.
+      // Build history excluding the current user message (it's sent
+      // separately). Cap at the last N turns to keep the prompt small — the
+      // server applies the same window.
       const HISTORY_WINDOW = 20;
       const recent = messages.slice(-HISTORY_WINDOW);
       const history = recent.map(m => ({ role: m.role, content: m.content }));
 
-      const stream = await sendChatMessage(text.trim(), organizationId, history);
+      const stream = await sendChatMessage(text.trim(), organizationId, history, conversationId, scope);
       const reader = stream.getReader();
-      streamReaderRef.current = reader as any;
+      streamReaderRef.current = reader;
 
       let fullResponse = '';
+      let sources: SourceLink[] = [];
+      let competitors: string[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -140,48 +166,25 @@ export function useChat() {
 
         if (value.type === 'text') {
           fullResponse += value.value;
-          setMessages(prev => {
-            const updated = [...prev];
-            const lastMsg = updated[updated.length - 1];
-            if (lastMsg && lastMsg.role === 'assistant') {
-              updated[updated.length - 1] = { ...lastMsg, content: fullResponse, statusText: undefined, isStreaming: true };
-            }
-            return updated;
-          });
+          patchLast({ content: fullResponse, statusText: undefined, isStreaming: true });
         } else if (value.type === 'status') {
-          setMessages(prev => {
-            const updated = [...prev];
-            const lastMsg = updated[updated.length - 1];
-            if (lastMsg && lastMsg.role === 'assistant') {
-              updated[updated.length - 1] = { ...lastMsg, statusText: value.value, isStreaming: true };
-            }
-            return updated;
-          });
+          patchLast({ statusText: value.value, isStreaming: true });
+        } else if (value.type === 'sources') {
+          sources = value.value;
+          patchLast({ sources });
+        } else if (value.type === 'competitors') {
+          competitors = value.value;
+          patchLast({ competitors });
         }
       }
 
-      // Mark streaming as complete
-      setMessages(prev => {
-        const updated = [...prev];
-        const lastMsg = updated[updated.length - 1];
-        if (lastMsg && lastMsg.role === 'assistant') {
-          updated[updated.length - 1] = { ...lastMsg, content: fullResponse, statusText: undefined, isStreaming: false };
-        }
-        return updated;
-      });
-
-      // Save assistant message to DB
-      if (fullResponse && conversationId) {
-        try {
-          await saveMessage(conversationId, 'assistant', fullResponse);
-        } catch (err) {
-          console.error('Failed to save assistant message:', err);
-        }
-      }
+      // Mark streaming as complete. The answer itself is saved to the thread
+      // by chat-with-data, so leaving mid-stream loses nothing.
+      patchLast({ content: fullResponse, statusText: undefined, isStreaming: false, sources, competitors });
 
       // Update conversation title if this was the first exchange
       if (messages.length === 0 && conversationId) {
-        const title = text.trim().length > 50 ? text.trim().substring(0, 47) + '...' : text.trim();
+        const title = titleFor(text.trim());
         try {
           await updateConversationTitle(conversationId, title);
           setConversations(prev =>
@@ -201,6 +204,8 @@ export function useChat() {
         const lastMsg = updated[updated.length - 1];
         if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.content) {
           updated.pop();
+        } else if (lastMsg && lastMsg.role === 'assistant') {
+          updated[updated.length - 1] = { ...lastMsg, isStreaming: false, statusText: undefined };
         }
         return updated;
       });
@@ -208,7 +213,7 @@ export function useChat() {
       streamReaderRef.current = null;
       setIsLoading(false);
     }
-  }, [messages, currentConversationId, organizationId, isLoading]);
+  }, [messages, currentConversationId, organizationId, isLoading, patchLast]);
 
   // Delete a conversation
   const deleteConversation = useCallback(async (conversationId: string) => {
@@ -239,7 +244,7 @@ export function useChat() {
       const updated = [...prev];
       const lastMsg = updated[updated.length - 1];
       if (lastMsg && lastMsg.isStreaming) {
-        updated[updated.length - 1] = { ...lastMsg, isStreaming: false };
+        updated[updated.length - 1] = { ...lastMsg, isStreaming: false, statusText: undefined };
       }
       return updated;
     });

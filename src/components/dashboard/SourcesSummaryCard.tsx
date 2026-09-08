@@ -296,13 +296,10 @@ export const SourcesSummaryCard = ({
         {/* Source name and favicon */}
         <div className="flex items-center space-x-2 min-w-0 flex-1">
           <Favicon domain={source.domain} />
-          <div className="min-w-0 flex items-center space-x-1">
-            <span className="text-xs font-medium text-gray-900 truncate" title={source.displayName}>
+          <div className="min-w-0 flex items-center">
+            <span className="text-xs font-medium text-gray-900 truncate" title={`${source.displayName} · ${mediaTypeInfo.label}`}>
               {source.displayName}
             </span>
-            <Badge className={`text-xs px-1 py-0 h-4 ${mediaTypeInfo.colors}`}>
-              {mediaTypeInfo.label}
-            </Badge>
           </div>
         </div>
 
@@ -336,7 +333,7 @@ export const SourcesSummaryCard = ({
     return (
       <Card className="shadow-sm border border-gray-200">
         <CardHeader className="pb-2 px-4 sm:px-6">
-          <CardTitle className="text-lg font-semibold">Sources</CardTitle>
+          <CardTitle className="text-[15px] font-semibold text-[#13274F]">Sources</CardTitle>
         </CardHeader>
         <CardContent className="px-4 sm:px-6">
           {(responsesLoading || cubesLoading) && !domainPool ? (
@@ -366,7 +363,7 @@ export const SourcesSummaryCard = ({
     <Card className="shadow-sm border border-gray-200">
       <CardHeader className="pb-2 px-4 sm:px-6">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-lg font-semibold">Sources</CardTitle>
+          <CardTitle className="text-[15px] font-semibold text-[#13274F]">Sources</CardTitle>
           <Button
             variant="outline"
             size="sm"

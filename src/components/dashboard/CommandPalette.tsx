@@ -7,7 +7,8 @@ import {
   CommandGroup,
   CommandItem,
 } from "@/components/ui/command";
-import { BarChart3, Globe, Users, Lightbulb, MessageSquare, Download } from "lucide-react";
+import { BarChart3, Globe, Users, Lightbulb, MessageSquare, Download, Sparkles } from "lucide-react";
+import { ASK_AI_ENABLED } from "@/lib/askAi";
 import { PromptData, CitationCount } from "@/types/dashboard";
 import { ATTRIBUTES } from "@/config/attributes";
 import { useSeedTabSearch } from "@/contexts/TabSearchSeedContext";
@@ -24,6 +25,7 @@ interface CommandPaletteProps {
 
 const SECTIONS: { section: string; label: string; icon: typeof BarChart3 }[] = [
   { section: "overview", label: "Overview", icon: BarChart3 },
+  ...(ASK_AI_ENABLED ? [{ section: "chat", label: "Ask AI", icon: Sparkles }] : []),
   { section: "prompts", label: "Prompts", icon: MessageSquare },
   { section: "sources", label: "Sources", icon: Globe },
   { section: "competitors", label: "Competitors", icon: Users },

@@ -3,7 +3,6 @@ import { PromptData } from "@/types/dashboard";
 import { ResponseDetailsModal } from "./ResponseDetailsModal";
 import { PromptResponse } from "@/types/dashboard";
 import { PromptTable } from "./PromptTable";
-import { ScrollablePills } from "./ScrollablePills";
 import type { RefreshProgress } from "@/hooks/useRefreshPrompts";
 import { usePersistedState } from "@/hooks/usePersistedState";
 
@@ -89,19 +88,7 @@ export const PromptsTab = memo(({
         </p>
       </div>
 
-      {/* Job function filter — shared with Overview, Sources, Competitors */}
-      {existingJobFunctions.length > 0 && (
-        <div className="sticky top-0 z-10 bg-white pb-2">
-          <ScrollablePills
-            selected={selectedJobFunction}
-            onSelect={onJobFunctionChange ?? (() => {})}
-            options={[
-              { value: 'all', label: 'All functions' },
-              ...existingJobFunctions.map((fn) => ({ value: fn, label: fn })),
-            ]}
-          />
-        </div>
-      )}
+      {/* Job function filter lives in the top bar (DashboardHeader). */}
 
       {/* Single Combined Table */}
       <PromptTable

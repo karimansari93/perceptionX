@@ -42,7 +42,6 @@ import {
 import { normalizeEntityName } from "@/utils/competitorUtils";
 import { locationFlag } from "@/utils/locationContext";
 import LLMLogo from "@/components/LLMLogo";
-import { ScrollablePills } from "./ScrollablePills";
 import { SearchInput } from "./SearchInput";
 import { FilterDropdown } from "./FilterDropdown";
 import { TablePagination } from "./TablePagination";
@@ -1202,19 +1201,7 @@ export const CompetitorsTab = memo(({
         </p>
       </div>
 
-      {/* Global job function filter */}
-      {uniqueJobFunctions.length > 0 && (
-        <div className="sticky top-0 z-10 bg-white pb-2">
-          <ScrollablePills
-            selected={selectedJobFunctionFilter}
-            onSelect={setSelectedJobFunctionFilter}
-            options={[
-              { value: "all", label: "All functions" },
-              ...uniqueJobFunctions.map((fn) => ({ value: fn, label: fn })),
-            ]}
-          />
-        </div>
-      )}
+      {/* Job function filter lives in the top bar (DashboardHeader). */}
 
       {!hasAnyData && !responsesLoading ? (
         <Card className="shadow-sm border border-gray-200">

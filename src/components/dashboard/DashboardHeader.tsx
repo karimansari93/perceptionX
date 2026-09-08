@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { CompanySwitcher } from "./CompanySwitcher";
 import { LocationFilter } from "./LocationFilter";
-import { PeriodSelector } from "./PeriodSelector";
+import { JobFunctionFilter } from "./JobFunctionFilter";
 import { PeriodInfo } from "@/hooks/useDashboardData";
 import { StarSavedView } from "./StarSavedView";
 import { LocationEntry } from "@/utils/locationContext";
@@ -21,9 +21,15 @@ interface DashboardHeaderProps {
   onLocationChange?: (location: string | null) => void;
   onPendingLocationChange?: (location: string | null) => void;
   locationOptions?: LocationEntry[];
+  // Period props are accepted but unused: the view is always the latest
+  // measured period.
   availablePeriods?: PeriodInfo[];
   selectedPeriod?: string | null;
   onPeriodChange?: (period: string | null) => void;
+  // Job-function filter (owned by the Dashboard, shared by every tab).
+  jobFunctionOptions?: string[];
+  selectedJobFunction?: string;
+  onJobFunctionChange?: (value: string) => void;
   userId?: string | null;
   companyId?: string | null;
   // Intent prefetch for the two switchers (see useDashboardData).
@@ -45,6 +51,9 @@ export const DashboardHeader = React.memo(({
   availablePeriods,
   selectedPeriod,
   onPeriodChange,
+  jobFunctionOptions,
+  selectedJobFunction,
+  onJobFunctionChange,
   userId,
   companyId,
   onLocationPrefetch,
@@ -78,16 +87,8 @@ export const DashboardHeader = React.memo(({
         {/* Right side with LocationFilter, CompanySwitcher and debug button */}
         <div className="flex-1" />
         <div className="flex items-center gap-2 sm:gap-3">
-          {onPeriodChange && availablePeriods && availablePeriods.length > 1 && (
-            <div data-tour="period-selector">
-              <PeriodSelector
-                availablePeriods={availablePeriods}
-                selectedPeriod={selectedPeriod ?? null}
-                onPeriodChange={onPeriodChange}
-                className={isMobile ? "min-w-[120px]" : ""}
-              />
-            </div>
-          )}
+          {/* No period selector: the dashboard always shows the latest
+              measured period (customers want the current data). */}
           {onLocationChange && (
             <div data-tour="location-filter">
               <LocationFilter
@@ -95,6 +96,16 @@ export const DashboardHeader = React.memo(({
                 onLocationChange={onLocationChange}
                 options={locationOptions}
                 onIntentPrefetch={onLocationPrefetch}
+                className={isMobile ? "min-w-[120px]" : ""}
+              />
+            </div>
+          )}
+          {onJobFunctionChange && jobFunctionOptions && jobFunctionOptions.length > 0 && (
+            <div data-tour="job-function-filter">
+              <JobFunctionFilter
+                options={jobFunctionOptions}
+                selected={selectedJobFunction ?? 'all'}
+                onChange={onJobFunctionChange}
                 className={isMobile ? "min-w-[120px]" : ""}
               />
             </div>

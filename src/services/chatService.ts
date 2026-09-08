@@ -1,5 +1,38 @@
 import { supabase } from '@/integrations/supabase/client';
 
+// A page the tools returned for an assistant turn (the `sources` SSE event):
+// the only URLs the analyst is allowed to link, so the UI renders them from
+// data rather than from the model's text.
+export interface SourceLink {
+  title: string;
+  url: string;
+  domain: string;
+  /** Answers citing the domain this turn (context only). */
+  answers?: number | null;
+  /** The domain's share of answers this turn, as an integer percentage. */
+  pct?: number | null;
+}
+
+// The dashboard filters a question is asked under (company / market / job
+// function). Sent with the message so the analyst applies the same
+// location / job_function filters, and shown as chips on the question.
+export interface ChatScope {
+  company?: string | null;
+  locations: string[];
+  jobFunctions: string[];
+}
+
+export const EMPTY_SCOPE: ChatScope = { company: null, locations: [], jobFunctions: [] };
+
+export interface ScopeOptions {
+  brands: string[];
+  brand: string | null;
+  markets: string[];
+  job_functions: string[];
+  /** The brand's latest measured period ("Q3 2026"). */
+  period: string | null;
+}
+
 export interface ChatMessage {
   id?: string;
   role: 'user' | 'assistant';
@@ -7,12 +40,16 @@ export interface ChatMessage {
   created_at?: string;
   isStreaming?: boolean;
   statusText?: string;
+  sources?: SourceLink[];
+  competitors?: string[];
+  scope?: ChatScope;
 }
 
-export interface StreamChunk {
-  type: 'text' | 'status';
-  value: string;
-}
+export type StreamChunk =
+  | { type: 'text'; value: string }
+  | { type: 'status'; value: string }
+  | { type: 'sources'; value: SourceLink[] }
+  | { type: 'competitors'; value: string[] };
 
 export interface ChatConversation {
   id: string;
@@ -21,37 +58,53 @@ export interface ChatConversation {
   title: string;
   created_at: string;
   updated_at: string;
+  /** The scope the thread was answered in (snapshotted when it was created). */
+  scope?: ChatScope | null;
+}
+
+export interface Starter { title: string; sub: string }
+
+export interface StarterQuestions {
+  questions: string[];
+  starters: Starter[];
+  source: 'data' | 'fallback';
+}
+
+function functionsUrl(): string {
+  return `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat-with-data`;
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated');
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${session.access_token}`,
+    'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+  };
 }
 
 /**
- * Send a chat message and receive a streaming response from Claude.
- * Returns a ReadableStream that yields StreamChunk objects (text or status updates).
+ * Send a chat message and receive a streaming response from the analyst.
+ * Returns a ReadableStream of StreamChunk objects (text deltas, tool status
+ * lines, and the sources the tools returned for this turn).
  */
 export async function sendChatMessage(
   message: string,
   organizationId: string,
-  conversationHistory: ChatMessage[]
+  conversationHistory: ChatMessage[],
+  conversationId?: string | null,
+  scope?: ChatScope | null,
 ): Promise<ReadableStream<StreamChunk>> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) {
-    throw new Error('Not authenticated');
-  }
-
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const response = await fetch(`${supabaseUrl}/functions/v1/chat-with-data`, {
+  const response = await fetch(functionsUrl(), {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session.access_token}`,
-      'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-    },
+    headers: await authHeaders(),
     body: JSON.stringify({
       message,
       organizationId,
-      conversationHistory: conversationHistory.map(m => ({
-        role: m.role,
-        content: m.content,
-      })),
+      conversationId: conversationId ?? undefined,
+      scope: scope ?? undefined,
+      conversationHistory: conversationHistory.map(m => ({ role: m.role, content: m.content })),
     }),
   });
 
@@ -59,10 +112,7 @@ export async function sendChatMessage(
     const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
     throw new Error(errorData.error || `Chat request failed: ${response.status}`);
   }
-
-  if (!response.body) {
-    throw new Error('No response body');
-  }
+  if (!response.body) throw new Error('No response body');
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -70,43 +120,34 @@ export async function sendChatMessage(
   return new ReadableStream<StreamChunk>({
     async pull(controller) {
       let buffer = '';
-
       while (true) {
         const { done, value } = await reader.read();
-
-        if (done) {
-          controller.close();
-          return;
-        }
+        if (done) { controller.close(); return; }
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim();
-
-            if (data === '[DONE]') {
-              controller.close();
-              return;
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') { controller.close(); return; }
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.error) { controller.error(new Error(parsed.error)); return; }
+            if (typeof parsed.text === 'string' && parsed.text) controller.enqueue({ type: 'text', value: parsed.text });
+            if (typeof parsed.status === 'string') controller.enqueue({ type: 'status', value: parsed.status });
+            if (Array.isArray(parsed.sources)) {
+              const sources = parsed.sources
+                .filter((s: any) => s && typeof s.url === 'string' && /^https?:\/\//i.test(s.url))
+                .map((s: any) => ({ title: String(s.title || s.url), url: s.url, domain: String(s.domain || ''), answers: typeof s.answers === 'number' ? s.answers : null, pct: typeof s.pct === 'number' ? s.pct : null }));
+              controller.enqueue({ type: 'sources', value: sources });
             }
-
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.error) {
-                controller.error(new Error(parsed.error));
-                return;
-              }
-              if (parsed.text) {
-                controller.enqueue({ type: 'text', value: parsed.text });
-              }
-              if (parsed.status) {
-                controller.enqueue({ type: 'status', value: parsed.status });
-              }
-            } catch (e) {
-              console.warn('Skipped unparseable SSE chunk:', data, e);
+            if (Array.isArray(parsed.competitors)) {
+              controller.enqueue({ type: 'competitors', value: parsed.competitors.filter((c: unknown) => typeof c === 'string' && c).map(String) });
             }
+          } catch (e) {
+            console.warn('Skipped unparseable SSE chunk:', data, e);
           }
         }
       }
@@ -118,11 +159,54 @@ export async function sendChatMessage(
 }
 
 /**
+ * The four data-grounded starter questions for an organization (built on the
+ * server from px-tools data; cached there for a day).
+ */
+export async function fetchStarterQuestions(organizationId: string): Promise<StarterQuestions> {
+  const response = await fetch(functionsUrl(), {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({ action: 'starters', organizationId }),
+  });
+  if (!response.ok) throw new Error(`Starter questions failed: ${response.status}`);
+  const body = await response.json();
+  const questions = Array.isArray(body?.questions) ? body.questions.map(String).slice(0, 4) : [];
+  if (questions.length !== 4) throw new Error('Starter questions malformed');
+  const starters: Starter[] = Array.isArray(body?.starters) && body.starters.length === 4
+    ? body.starters.map((s: any) => ({ title: String(s?.title ?? ''), sub: String(s?.sub ?? '') }))
+    : questions.map((q: string) => ({ title: q, sub: '' }));
+  return { questions, starters, source: body.source === 'data' ? 'data' : 'fallback' };
+}
+
+/**
+ * Scope options for the chat's scope bar: the organization's brands and the
+ * tracked markets and job functions of one brand (the same spellings the
+ * analyst's tools match against).
+ */
+export async function fetchScopeOptions(organizationId: string, company?: string | null): Promise<ScopeOptions> {
+  const response = await fetch(functionsUrl(), {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: JSON.stringify({ action: 'scope', organizationId, scope: company ? { company } : undefined }),
+  });
+  if (!response.ok) throw new Error(`Scope options failed: ${response.status}`);
+  const body = await response.json();
+  return {
+    brands: Array.isArray(body?.brands) ? body.brands.map(String) : [],
+    brand: typeof body?.brand === 'string' ? body.brand : null,
+    markets: Array.isArray(body?.markets) ? body.markets.map(String) : [],
+    job_functions: Array.isArray(body?.job_functions) ? body.job_functions.map(String) : [],
+    period: typeof body?.period === 'string' ? body.period : null,
+  };
+}
+
+/**
  * Create a new chat conversation.
  */
 export async function createConversation(
   organizationId: string,
-  title: string = 'New conversation'
+  title: string = 'New conversation',
+  scope?: ChatScope | null,
 ): Promise<ChatConversation> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
@@ -133,6 +217,7 @@ export async function createConversation(
       organization_id: organizationId,
       user_id: user.id,
       title,
+      ...(scope ? { scope } : {}),
     })
     .select()
     .single();
@@ -180,16 +265,19 @@ export async function loadConversationMessages(
     role: m.role as 'user' | 'assistant',
     content: m.content,
     created_at: m.created_at,
+    sources: Array.isArray(m.sources) ? (m.sources as SourceLink[]) : undefined,
   }));
 }
 
 /**
- * Save a message to a conversation.
+ * Save a message to a conversation (with the sources the tools returned for
+ * an assistant turn, so a reopened thread keeps its sources footer).
  */
 export async function saveMessage(
   conversationId: string,
   role: 'user' | 'assistant',
-  content: string
+  content: string,
+  sources?: SourceLink[],
 ): Promise<ChatMessage> {
   const { data, error } = await supabase
     .from('chat_messages')
@@ -197,6 +285,7 @@ export async function saveMessage(
       conversation_id: conversationId,
       role,
       content,
+      ...(sources && sources.length ? { sources } : {}),
     })
     .select()
     .single();
@@ -207,6 +296,7 @@ export async function saveMessage(
     role: data.role as 'user' | 'assistant',
     content: data.content,
     created_at: data.created_at,
+    sources: Array.isArray(data.sources) ? (data.sources as SourceLink[]) : undefined,
   };
 }
 

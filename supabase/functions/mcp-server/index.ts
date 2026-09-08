@@ -21,6 +21,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { executeTool, genRequestId, mcpTools } from "../_shared/px-tools/mod.ts";
+import { PX_INSTRUCTIONS } from "../_shared/px-tools/instructions.ts";
 import type { ToolContext } from "../_shared/px-tools/mod.ts";
 import { json, MCP_CORS_HEADERS, sha256Hex } from "./http.ts";
 import {
@@ -40,17 +41,10 @@ const SERVER_VERSION = '1.0.0';
 
 // The host model (ChatGPT/Claude) includes these instructions in its context.
 // This is the only prompt-level surface we get over MCP — everything else
-// must live in tool descriptions and result payloads.
-const SERVER_INSTRUCTIONS = `PerceptionX tracks how consumer AI platforms (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode) describe this organization as an employer — visibility, sentiment, themes, cited sources, and competitors, by market.
-
-Rules for using these tools:
-1. Answer ONLY from tool results. Never fill gaps with general knowledge about the company — if a tool didn't return it, say the data isn't tracked yet.
-2. Every result has a _coverage field (found / partial / no_data). Honor it: on no_data, say so plainly; on partial, name what's missing.
-3. Periods are quarters ("Q3 2026"); the running quarter is marked "(in progress)" — a lighter latest point is normal, never call it a decline. Quote _meta.period_range and the matched market spellings when precision matters.
-4. Sentiment and visibility are percentages ("81%") — present them that way, never as decimals. Lead with shares ("cited by 31% of answers"), not raw counts; counts are sample-size context only.
-5. Data is scoped to this user's organization only. There is no cross-customer data.
-6. Competitor "share of voice on an attribute" means who gets NAMED when the topic comes up — it is not a claim that the competitor is rated better.
-7. Start with list_companies if you don't know company IDs. For market questions ("culture in India") use get_attribute_themes / get_visibility / get_sources / get_competitor_landscape / get_trends.`;
+// must live in tool descriptions and result payloads. The text is the shared
+// rulebook (_shared/px-tools/instructions.ts); the in-app chat wraps the same
+// constant with its analyst persona — one rulebook, every transport.
+const SERVER_INSTRUCTIONS = PX_INSTRUCTIONS;
 
 // ─── Token auth ─────────────────────────────────────────────────────────────
 

@@ -1,4 +1,5 @@
-import { BarChart3, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass, UserPlus, Search } from "lucide-react";
+import { BarChart3, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass, UserPlus, Search, Sparkles, Plug } from "lucide-react";
+import { ASK_AI_ENABLED } from "@/lib/askAi";
 import {
   Sidebar,
   SidebarContent,
@@ -18,7 +19,11 @@ import { useNavigate } from 'react-router-dom';
 import { useWalkthrough } from '@/contexts/WalkthroughContext';
 import { useSuperAdminOrgs } from '@/hooks/useIsSuperAdmin';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
-import { useState } from 'react';
+import { WhatsNewModal } from '@/components/announcement/WhatsNewModal';
+import { useAnnouncement } from '@/hooks/useAnnouncement';
+import { useAuth } from '@/contexts/AuthContext';
+import type { AnnouncementStep } from '@/lib/announcements';
+import { useEffect, useState } from 'react';
 
 interface NavigationItem {
   title: string;
@@ -47,6 +52,9 @@ const navigationGroups: NavigationGroup[] = [
   {
     title: "Analyze",
     items: [
+      // Ask PerceptionX — the in-app analyst (same tools and rulebook as the
+      // ChatGPT/Claude connector). Hidden by the VITE_ASK_AI_ENABLED kill switch.
+      ...(ASK_AI_ENABLED ? [{ title: "Ask AI", icon: Sparkles, section: "chat", group: "analyze", route: "/chat" }] : []),
       { title: "Reports", icon: Download, section: "reports", group: "reports", route: "/analyze/reports" },
     ]
   },
@@ -86,6 +94,16 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
   const { start: startWalkthrough } = useWalkthrough();
   const { orgs: superAdminOrgs } = useSuperAdminOrgs();
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  // What's-new: opens once per announcement version for returning users
+  // (ProfileSetupGate runs first, so brand-new accounts never see it), and
+  // again from the "Set up AI integrations" card, straight on the form.
+  const { user } = useAuth();
+  const { unseen: announcementUnseen, markSeen: markAnnouncementSeen } = useAnnouncement(user);
+  const [whatsNew, setWhatsNew] = useState<{ open: boolean; step: AnnouncementStep }>({ open: false, step: 'intro' });
+  useEffect(() => {
+    if (ASK_AI_ENABLED && announcementUnseen) setWhatsNew({ open: true, step: 'intro' });
+  }, [announcementUnseen]);
+  const closeWhatsNew = () => { setWhatsNew(w => ({ ...w, open: false })); void markAnnouncementSeen(); };
 
   const handleSectionClick = (item: NavigationItem) => {
     // Coming-soon items are locked — keep the entry visible but disable navigation
@@ -149,7 +167,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
   return (
     <>
       <Sidebar className="border-r bg-white/90 backdrop-blur-sm transition-all duration-200">
-        <SidebarHeader className="border-b border-gray-200/50 flex flex-row items-center justify-between p-6">
+        <SidebarHeader className="h-16 box-content border-b border-gray-200/50 flex flex-row items-center justify-between px-6 py-0">
           <div className="flex items-center gap-2">
             <img
               alt="Perception Logo"
@@ -208,6 +226,21 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
           ))}
         </SidebarContent>
         <SidebarFooter className="p-4 flex flex-col gap-3">
+          {ASK_AI_ENABLED && (
+            <button
+              type="button"
+              onClick={() => setWhatsNew({ open: true, step: 'form' })}
+              className="w-full rounded-xl border border-[#DB5E89]/[0.32] bg-gradient-to-br from-[#DB5E89]/[0.12] via-white via-[62%] to-[#0DBCBA]/[0.07] p-3 text-left transition-colors hover:border-[#DB5E89] flex items-center gap-3 [@media(max-height:660px)]:hidden"
+            >
+              <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-[#13274F]/10 bg-white text-[#DB5E89]">
+                <Plug className="h-[18px] w-[18px]" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block whitespace-nowrap text-[13px] font-semibold leading-[1.2] text-[#13274F]">Set up AI integrations</span>
+                <span className="mt-0.5 block text-[11px] leading-[1.3] text-[#6b7280] [@media(max-height:760px)]:hidden">Use PerceptionX in ChatGPT or any other AI</span>
+              </span>
+            </button>
+          )}
           <button
             type="button"
             onClick={startWalkthrough}
@@ -247,6 +280,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
           <UserMenu />
         </SidebarFooter>
       </Sidebar>
+      <WhatsNewModal open={whatsNew.open} initialStep={whatsNew.step} onClose={closeWhatsNew} />
       <InviteTeammatesModal
         open={inviteModalOpen}
         onOpenChange={setInviteModalOpen}

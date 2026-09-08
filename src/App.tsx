@@ -20,6 +20,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { ErrorBoundary } from "react-error-boundary";
 import { usePageTracking } from "@/hooks/usePageTracking";
 import AdminRoute from "./components/AdminRoute";
+import AskAiRoute from "./components/AskAiRoute";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { logger } from "@/lib/utils";
 import { AlertTriangle, RefreshCw, Home } from "lucide-react";
@@ -40,8 +41,9 @@ const AdminBriefReview = lazyWithRetry(() => import("./pages/AdminBriefReview"))
 const GoogleOneTapCallback = lazyWithRetry(() => import("@/components/GoogleOneTapCallback"));
 const Onboarding = lazyWithRetry(() => import("./pages/Onboarding"));
 const Activate = lazyWithRetry(() => import("./pages/Activate"));
-// Chat is the internal eval harness for the shared px-tools layer (the same
-// tools the MCP server exposes) — platform-admin only until it graduates.
+// Ask PerceptionX: the in-app analyst on the shared px-tools layer (the same
+// tools and rulebook the MCP server gives ChatGPT/Claude), open to every
+// organization member.
 const Chat = lazyWithRetry(() => import("./pages/Chat"));
 // OAuth consent for the MCP server (ChatGPT/Claude connectors land here).
 const McpConsent = lazyWithRetry(() => import("./pages/McpConsent"));
@@ -321,12 +323,12 @@ const App = () => (
                       <Account />
                     </SidebarProvider>                </ProtectedRoute>
               } />
-              {/* Internal eval harness for the shared data-tool layer. */}
+              {/* Ask PerceptionX — any organization member (VITE_ASK_AI_ENABLED kill switch). */}
               <Route path="/chat" element={
                 <ProtectedRoute>
-                  <AdminRoute>
+                  <AskAiRoute>
                     <Chat />
-                  </AdminRoute>
+                  </AskAiRoute>
                 </ProtectedRoute>
               } />
               {/* MCP OAuth consent — reached from the mcp-server /authorize
