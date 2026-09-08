@@ -190,3 +190,24 @@
   .px-ov-summary > .grid { height: 100%; min-height: 0; }
   .px-ov-summary > .grid > div { min-height: 0; overflow-y: auto; }
 }
+
+/* What's-new modal: the "Ask AI answering" demo, one 9 s CSS loop. */
+@keyframes px-demo-type { 0% { width: 0; opacity: 1 } 16%, 94% { width: 100%; opacity: 1 } 98%, 100% { width: 100%; opacity: 0 } }
+@keyframes px-demo-caret { 0%, 100% { opacity: 1 } 50% { opacity: 0 } }
+@keyframes px-demo-s1 { 0%, 22% { opacity: 0; transform: translateY(4px) } 30%, 94% { opacity: 1; transform: none } 98%, 100% { opacity: 0 } }
+@keyframes px-demo-s2 { 0%, 34% { opacity: 0; transform: translateY(4px) } 42%, 94% { opacity: 1; transform: none } 98%, 100% { opacity: 0 } }
+@keyframes px-demo-s3 { 0%, 48% { opacity: 0; transform: translateY(4px) } 56%, 94% { opacity: 1; transform: none } 98%, 100% { opacity: 0 } }
+@keyframes px-demo-bar { 0%, 42% { width: 0 } 60%, 96% { width: 69% } 100% { width: 0 } }
+.px-demo-type { animation: px-demo-type 9s linear infinite; }
+.px-demo-caret { animation: px-demo-caret .9s step-end infinite; }
+.px-demo-s1 { animation: px-demo-s1 9s linear infinite; }
+.px-demo-s2 { animation: px-demo-s2 9s linear infinite; }
+.px-demo-s3 { animation: px-demo-s3 9s linear infinite; }
+.px-demo-bar { width: 0; animation: px-demo-bar 9s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .px-demo-type, .px-demo-caret, .px-demo-s1, .px-demo-s2, .px-demo-s3, .px-demo-bar { animation: none; }
+  .px-demo-type { width: 100%; }
+  .px-demo-caret { display: none; }
+  .px-demo-s1, .px-demo-s2, .px-demo-s3 { opacity: 1; transform: none; }
+  .px-demo-bar { width: 69%; }
+}
