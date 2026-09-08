@@ -56,6 +56,11 @@ serve(async (req) => {
     }
   }
 
+  // Cap: ten requests per user per day, so the Slack channel cannot be spammed.
+  const since = new Date(Date.now() - 86400000).toISOString();
+  const { count } = await admin.from('integration_requests').select('id', { count: 'exact', head: true }).eq('user_id', user.id).gte('created_at', since);
+  if ((count ?? 0) >= 10) return json({ error: 'too many requests today' }, 429);
+
   const replyTo = user.email ?? '';
   const { error: insertError } = await admin.from('integration_requests').insert({
     user_id: user.id, organization_id: organizationId, tools, other, note, reply_to: replyTo,
