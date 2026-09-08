@@ -1,6 +1,6 @@
 import { ArrowUp, History, MessageSquare } from 'lucide-react';
 import { useCallback, useState, KeyboardEvent } from 'react';
-import type { ChatConversation, ChatScope, ScopeOptions, Starter } from '@/services/chatService';
+import type { ChatConversation, ChatScope, ScopeOptions } from '@/services/chatService';
 import { ScopePickers, scopeSummary } from './ChatScopeBar';
 import { cn } from '@/lib/utils';
 
@@ -10,8 +10,6 @@ interface ChatWelcomeProps {
   scope: ChatScope;
   scopeOptions: ScopeOptions | null;
   onScopeChange: (scope: ChatScope) => void;
-  starters: Starter[];
-  startersLoading?: boolean;
   recent: ChatConversation[];
   onSend: (question: string) => void;
   onOpenConversation: (id: string) => void;
@@ -39,10 +37,10 @@ export function conversationMeta(c: ChatConversation): string {
 }
 
 // The Ask AI page (design handoff, "Ask AI page / new chat"): greeting,
-// a composer card with the scope chips (company · markets · functions ·
-// period), four data-grounded starters, and the three most recent chats.
+// a composer card with the scope chips (company · markets · functions)
+// and the three most recent chats. Suggestions live on the overview hero only.
 export function ChatWelcome({
-  greeting, companyName, scope, scopeOptions, onScopeChange, starters, startersLoading,
+  greeting, companyName, scope, scopeOptions, onScopeChange,
   recent, onSend, onOpenConversation, onOpenList, disabled,
 }: ChatWelcomeProps) {
   const [draft, setDraft] = useState('');
@@ -73,7 +71,7 @@ export function ChatWelcome({
             className="w-full border-0 bg-transparent px-0 pt-0.5 pb-3 text-[15px] text-[#13274F] placeholder:text-gray-400 focus:outline-none"
           />
           <div className="flex flex-wrap items-center gap-2">
-            <ScopePickers scope={scope} options={scopeOptions} onChange={onScopeChange} disabled={disabled} variant="chip" showPeriod />
+            <ScopePickers scope={scope} options={scopeOptions} onChange={onScopeChange} disabled={disabled} variant="chip" />
             <div className="flex-1" />
             <button
               type="button"
@@ -85,22 +83,6 @@ export function ChatWelcome({
               <ArrowUp className="h-4 w-4" />
             </button>
           </div>
-        </div>
-
-        {/* Starters */}
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {starters.map((s, i) => (
-            <button
-              key={`${i}-${s.title}`}
-              type="button"
-              onClick={() => send(s.title)}
-              disabled={disabled}
-              className={cn('rounded-xl border border-gray-200 bg-white p-[14px] text-left transition-colors hover:border-[#DB5E89]', startersLoading && 'animate-pulse')}
-            >
-              <div className="text-[13.5px] font-semibold text-[#13274F]">{s.title}</div>
-              {s.sub && <div className="mt-1 text-xs text-gray-500">{s.sub}</div>}
-            </button>
-          ))}
         </div>
 
         {/* Recent */}

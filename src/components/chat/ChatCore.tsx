@@ -4,7 +4,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useChat } from '@/hooks/useChat';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { useStarterQuestions } from '@/hooks/useStarterQuestions';
 import { greetingFor } from '@/lib/askAi';
 import type { ChatConversation, ChatScope } from '@/services/chatService';
 import { ChatMessage } from './ChatMessage';
@@ -51,7 +50,6 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
     stopStreaming,
     organizationId,
   } = useChat();
-  const { starters, isLoading: startersLoading } = useStarterQuestions(organizationId);
   const [showList, setShowList] = useState(false);
 
   // The scope every question is asked under: the handed-over filters, else
@@ -126,8 +124,6 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
           scope={scope}
           scopeOptions={scopeOptions}
           onScopeChange={setScope}
-          starters={starters}
-          startersLoading={startersLoading}
           recent={conversations}
           onSend={send}
           onOpenConversation={openConversation}
@@ -209,7 +205,7 @@ function ThreadComposer({ scope, options, onScopeChange, onSend, onStop, isLoadi
         </PopoverTrigger>
         <PopoverContent align="start" className="w-auto max-w-[420px] p-3">
           <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#DB5E89]">Ask about</div>
-          <ScopePickers scope={scope} options={options} onChange={onScopeChange} variant="chip" showPeriod />
+          <ScopePickers scope={scope} options={options} onChange={onScopeChange} variant="chip" />
         </PopoverContent>
       </Popover>
       <input

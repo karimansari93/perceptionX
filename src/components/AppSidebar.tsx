@@ -153,7 +153,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
   return (
     <>
       <Sidebar className="border-r bg-white/90 backdrop-blur-sm transition-all duration-200">
-        <SidebarHeader className="border-b border-gray-200/50 flex flex-row items-center justify-between p-6">
+        <SidebarHeader className="h-16 box-content border-b border-gray-200/50 flex flex-row items-center justify-between px-6 py-0">
           <div className="flex items-center gap-2">
             <img
               alt="Perception Logo"

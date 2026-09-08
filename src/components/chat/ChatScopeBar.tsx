@@ -137,13 +137,11 @@ interface ScopePickersProps {
   onChange: (scope: ChatScope) => void;
   disabled?: boolean;
   variant?: ChipVariant;
-  /** Show the brand's latest measured period as a read-only chip. */
-  showPeriod?: boolean;
 }
 
-// Company (one) + markets (many) + job functions (many) [+ period]: what a
+// Company (one) + markets (many) + job functions (many): what a
 // question is asked about. Scope is chosen, never dismissed — no ✕ chips.
-export function ScopePickers({ scope, options, onChange, disabled, variant = 'chip', showPeriod }: ScopePickersProps) {
+export function ScopePickers({ scope, options, onChange, disabled, variant = 'chip' }: ScopePickersProps) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <CompanyPicker
@@ -173,11 +171,6 @@ export function ScopePickers({ scope, options, onChange, disabled, variant = 'ch
         disabled={disabled}
         variant={variant}
       />
-      {showPeriod && options?.period && (
-        <span className={cn(chipClass(variant), 'tabular-nums cursor-default hover:border-[#13274F]/[0.12]')} title="Latest measured period">
-          {options.period}
-        </span>
-      )}
     </div>
   );
 }

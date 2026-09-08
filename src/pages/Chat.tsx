@@ -38,7 +38,7 @@ function ChatContent() {
       <AppSidebar activeSection="chat" onSectionChange={() => {}} />
       <SidebarInset className="flex min-h-0 flex-1 flex-col">
         {/* Header: the dashboard's breadcrumb treatment */}
-        <header className="flex h-16 flex-none items-center border-b border-gray-200/50 bg-white/80 px-4 backdrop-blur-sm sm:px-8">
+        <header className="box-content flex h-16 flex-none items-center border-b border-gray-200/50 bg-white/80 px-4 backdrop-blur-sm sm:px-8">
           <SidebarTrigger className="mr-4 h-7 w-7 text-[#13274F] md:hidden" />
           <div className="flex items-center gap-3">
             <span className="hidden text-base font-light text-gray-500 sm:inline">Dashboard</span>
