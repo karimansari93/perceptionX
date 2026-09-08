@@ -20,7 +20,7 @@ interface AskAiHeroProps {
 // The overview's hero chat block (design handoff, "Overview"): greeting with
 // the company's logo, the ASK ABOUT scope chips (company · markets ·
 // functions, pre-ticked from the dashboard filters), the composer, and the
-// four data-grounded starters as teal pills. Asking opens the Answer page
+// three data-grounded starters as quiet pills. Asking opens the Answer page
 // with the question already sent under that scope.
 export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) {
   const navigate = useNavigate();
@@ -125,12 +125,12 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
             onClick={() => ask(s.title)}
             title={s.sub || undefined}
             className={cn(
-              'inline-flex h-[30px] max-w-full items-center gap-1.5 rounded-full border border-[#0DBCBA]/35 bg-[#0DBCBA]/[0.09] px-[11px] text-[12.5px] text-[#0F6E6D] transition-colors hover:border-[#0DBCBA] hover:bg-[#0DBCBA]/[0.16]',
+              'inline-flex h-[30px] max-w-full items-center gap-1.5 rounded-full border border-[#13274F]/[0.12] bg-white/80 px-[11px] text-[12.5px] text-gray-600 transition-colors hover:border-[#DB5E89] hover:text-[#13274F]',
               isLoading && 'animate-pulse'
             )}
           >
             <span className="truncate">{s.title}</span>
-            <ArrowUpRight className="h-3 w-3 flex-shrink-0 text-[#0DBCBA]/85" />
+            <ArrowUpRight className="h-3 w-3 flex-shrink-0 text-gray-400" />
           </button>
         ))}
       </div>
