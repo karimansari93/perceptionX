@@ -1,7 +1,7 @@
 import { ArrowUp, History, MessageSquare } from 'lucide-react';
 import { useCallback, useState, KeyboardEvent } from 'react';
 import type { ChatConversation, ChatScope, ScopeOptions } from '@/services/chatService';
-import { ScopePickers, scopeSummary } from './ChatScopeBar';
+import { BrandLogo, ScopePickers, scopeSummary } from './ChatScopeBar';
 import { cn } from '@/lib/utils';
 
 interface ChatWelcomeProps {
@@ -53,7 +53,9 @@ export function ChatWelcome({
       <div className="w-full max-w-[720px] animate-in fade-in slide-in-from-bottom-2 duration-300">
         {/* Greeting */}
         <div className="mb-[26px] flex flex-col items-center gap-[14px] text-center">
-          <img alt="" src="/logos/PinkBadge.png" className="h-11 w-11 object-contain" />
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#13274F]/10 bg-white p-1.5">
+            <BrandLogo name={brand} className="h-full w-full text-base" />
+          </span>
           <h2 className="font-headline text-[30px] font-semibold leading-tight tracking-[-0.02em] text-[#13274F]">{greeting}</h2>
           <p className="max-w-[600px] text-sm text-gray-500">
             Built on PerceptionX's own measurement of what ChatGPT, Perplexity and Google AI tell candidates about {brand} — the same numbers as your dashboard, linked to the pages those platforms cite.
