@@ -77,12 +77,12 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
   return (
     <section
       data-tour="ask-ai"
-      className="rounded-2xl border border-[#13274F]/10 bg-gradient-to-br from-white via-white to-[#0DBCBA]/10 shadow-sm px-6 py-6 sm:px-8 sm:py-7"
+      className="flex-shrink-0 rounded-2xl border border-[#13274F]/10 bg-gradient-to-br from-white via-white to-[#0DBCBA]/10 shadow-sm px-5 py-4 sm:px-6"
     >
-      <div className="flex items-center gap-3 mb-4">
-        <img alt="PerceptionX" className="h-9 w-9 object-contain rounded-full" src="/logos/PinkBadge.png" />
+      <div className="flex items-center gap-3 mb-3">
+        <img alt="PerceptionX" className="h-8 w-8 object-contain rounded-full" src="/logos/PinkBadge.png" />
         <div className="min-w-0">
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight">{greetingFor(user)}</h2>
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 leading-tight">{greetingFor(user)}</h2>
           <p className="text-sm text-gray-500 truncate">
             Ask anything about how AI describes {companyName || 'your organisation'} to candidates.
           </p>
@@ -90,8 +90,8 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
       </div>
 
       {/* Step 1: scope */}
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mr-1">1 · Ask about</span>
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mr-1">Ask about</span>
         <ScopePickers scope={scope} options={options} onChange={onScopeChange} size="sm" />
       </div>
 
@@ -103,34 +103,34 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={1}
-          placeholder={`2 · Ask about ${scopeSummary(scope)}…`}
-          className="flex-1 resize-none rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm focus:border-[#13274F] focus:outline-none focus:ring-1 focus:ring-[#13274F]"
-          style={{ maxHeight: '120px' }}
+          placeholder="Ask about anything…"
+          className="flex-1 resize-none rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm focus:border-[#13274F] focus:outline-none focus:ring-1 focus:ring-[#13274F]"
+          style={{ maxHeight: '80px' }}
         />
         <button
           type="button"
           onClick={() => ask(value)}
           disabled={!value.trim()}
           aria-label="Ask PerceptionX"
-          className="h-11 w-11 rounded-xl flex-shrink-0 bg-[#13274F] hover:bg-[#1a3468] text-white disabled:opacity-40 flex items-center justify-center transition-colors"
+          className="h-10 w-10 rounded-xl flex-shrink-0 bg-[#13274F] hover:bg-[#1a3468] text-white disabled:opacity-40 flex items-center justify-center transition-colors"
         >
           <ArrowRight className="h-4 w-4" />
         </button>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-2 flex gap-2 min-w-0">
         {questions.map((q, i) => (
           <button
             key={`${i}-${q}`}
             type="button"
             onClick={() => ask(q)}
             className={cn(
-              'group inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-600 hover:border-[#13274F]/40 hover:text-[#13274F] transition-colors',
+              'group inline-flex min-w-0 flex-1 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-xs text-gray-600 hover:border-[#13274F]/40 hover:text-[#13274F] transition-colors',
               isLoading && 'animate-pulse'
             )}
           >
-            <span>{q}</span>
-            <ArrowUpRight className="h-3 w-3 text-gray-300 group-hover:text-[#13274F]" />
+            <span className="truncate" title={q}>{q}</span>
+            <ArrowUpRight className="h-3 w-3 flex-shrink-0 text-gray-300 group-hover:text-[#13274F]" />
           </button>
         ))}
       </div>

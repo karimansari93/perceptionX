@@ -165,7 +165,7 @@ export function ChatCore({ mode, initialQuestion, initialScope, handoverKey, onI
             onStop={stopStreaming}
             isLoading={isLoading}
             disabled={!organizationId}
-            placeholder={`Ask about ${scopeSummary(scope)}…`}
+            placeholder="Ask about anything…"
             bare
           />
         </div>

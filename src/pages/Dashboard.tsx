@@ -590,9 +590,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     ) : null;
 
     return (
-      <div className="w-full">
+      <div className="w-full h-full">
         {/* OverviewTab — always mounted (default landing tab) */}
-        <div style={{ display: activeSection === 'overview' ? 'block' : 'none' }}>
+        <div style={{ display: activeSection === 'overview' ? 'block' : 'none' }} className={activeSection === 'overview' ? 'h-full' : undefined}>
           <OverviewTab
             responses={responses}
             metrics={metrics}
@@ -841,7 +841,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
               </div>
             </div>
           ) : (
-            <div className="p-6">
+            <div className={activeSection === 'overview' ? 'p-4 sm:p-5 h-full' : 'p-6'}>
               {renderDashboardContent()}
             </div>
           )}

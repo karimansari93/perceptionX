@@ -1143,16 +1143,18 @@ CRITICAL: When you reference information from a source, add an inline citation l
   }, [cubeScopeRows, cubeQuarterKey, responses]);
 
   return (
-    <div className="flex flex-col gap-8 w-full">
+    <div className="flex flex-col gap-4 w-full h-full min-h-0 overflow-hidden">
       {/* Ask PerceptionX — the chat box. Typing here opens /chat with the
-          question; the score row and everything else sit below it. */}
+          question; the score row and everything else sit below it. The
+          overview never scrolls: hero and score row are fixed height, the
+          summary row takes the rest and its cards scroll internally. */}
       <AskAiHero companyName={companyName} market={market} jobFunction={selectedJobFunctionFilter} />
 
-      <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+      <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full flex-shrink-0">
         {/* Perception Score Card */}
         <Card
           data-tour="eps-card"
-          className="bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col justify-between hover:shadow-md transition-shadow duration-200 p-0 relative overflow-hidden h-full min-h-[240px] cursor-pointer"
+          className="bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col justify-between hover:shadow-md transition-shadow duration-200 p-0 relative overflow-hidden h-[190px] cursor-pointer"
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
           {/* Top: Score, label, % change */}
@@ -1273,7 +1275,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
         {/* Score Breakdown Card — opens the same EPS drill-down sheet */}
         <Card
           data-tour="eps-breakdown"
-          className="bg-white rounded-2xl shadow-sm p-0 hover:shadow-md transition-shadow duration-200 cursor-pointer h-full min-h-[240px] flex flex-col"
+          className="bg-white rounded-2xl shadow-sm p-0 hover:shadow-md transition-shadow duration-200 cursor-pointer h-[190px] flex flex-col overflow-hidden"
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
           <CardHeader className="pb-2 pt-6 px-4 sm:px-8 flex-shrink-0">
@@ -1402,8 +1404,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
       {/* Summary Cards Grid - only render when all metrics (including themes) are ready */}
       {!metricsCalculating && (
-      <div className="space-y-3">
-        <div data-tour="summary-row" className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+      <div className="flex-1 min-h-0">
+        <div data-tour="summary-row" className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0 [&>div]:min-h-0 [&>div]:overflow-y-auto [&>div]:rounded-xl">
           <div>
             <SourcesSummaryCard
               topCitations={topCitations}
