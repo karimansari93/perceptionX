@@ -109,7 +109,7 @@ export function useChat() {
     let conversationId = currentConversationId;
     if (!conversationId) {
       try {
-        const convo = await createConversation(organizationId, titleFor(text.trim()));
+        const convo = await createConversation(organizationId, titleFor(text.trim()), scope);
         conversationId = convo.id;
         setCurrentConversationId(conversationId);
         setConversations(prev => [convo, ...prev]);
@@ -128,8 +128,9 @@ export function useChat() {
       console.error('Failed to save user message:', err);
     }
 
-    // Add streaming assistant message placeholder
-    const assistantMessage: ChatMessage = { role: 'assistant', content: '', isStreaming: true };
+    // Add streaming assistant message placeholder (it carries the scope it
+    // answers under, for the SCOPE row).
+    const assistantMessage: ChatMessage = { role: 'assistant', content: '', isStreaming: true, ...(scope ? { scope } : {}) };
     setMessages([...currentMessages, assistantMessage]);
 
     try {

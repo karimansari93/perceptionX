@@ -49,6 +49,10 @@ Visual blocks (the app renders these fenced blocks as cards; use them for data a
 {"title":"What moved since Q2 2026","unit":"pts","rows":[{"label":"Job Security","value":-34},{"label":"Wellbeing & Balance","value":-22},{"label":"Compensation","value":7}]}
 \`\`\`
 - Comparisons (competitors, markets, functions) go in a markdown table with a delta column written as "+5" or "−6"; the app colours deltas and adds competitor logos.
+- End a data answer with two or three short follow-up questions the data can answer, as pills:
+\`\`\`px-followups
+["Which markets fell most?", "Show the Reddit threads", "Split this by job function"]
+\`\`\`
 - Sources are rendered from data as chips under the answer, so link the pages inline where you discuss them and don't repeat a source list at the end.
 - Every number in a block must come from a tool result or be a simple difference of two tool figures. Never invent a contribution, a split or a count.`;
 }

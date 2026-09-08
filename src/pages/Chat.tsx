@@ -1,17 +1,21 @@
 import { useCallback, useState } from 'react';
-import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
+import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
+import { ChevronRight } from 'lucide-react';
 import { AppSidebar } from '@/components/AppSidebar';
-import { ChatCore } from '@/components/chat/ChatCore';
+import { ChatCore, type ChatView } from '@/components/chat/ChatCore';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
-import { ASK_AI_SUBLINE, ASK_AI_TITLE } from '@/lib/askAi';
+import { ASK_AI_TITLE } from '@/lib/askAi';
 import type { ChatScope } from '@/services/chatService';
+
+const CRUMB: Record<ChatView, string> = { new: 'New chat', thread: 'Chats', list: 'Chats' };
 
 function ChatContent() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   useDocumentTitle(ASK_AI_TITLE);
+  const [view, setView] = useState<ChatView>('new');
 
   // A question can arrive from the overview chat box (router state) or a
   // link (?q=). It is sent once and then cleared from the URL/state so a
@@ -30,33 +34,26 @@ function ChatContent() {
   }, [navigate]);
 
   return (
-    <div className="flex h-screen bg-gray-50 w-full">
-      <AppSidebar
-        activeSection="chat"
-        onSectionChange={() => {}}
-      />
-      <SidebarInset className="flex-1 flex flex-col">
-        {/* Minimal header */}
-        <div className="flex items-center gap-3 px-6 py-3 border-b bg-white/80 backdrop-blur-sm">
-          <img
-            alt="PerceptionX"
-            className="w-8 h-8 object-contain rounded-full"
-            src="/logos/PinkBadge.png"
-          />
-          <div className="min-w-0">
-            <h1 className="text-sm font-semibold text-gray-900">{ASK_AI_TITLE}</h1>
-            <p className="text-xs text-gray-500 truncate">{ASK_AI_SUBLINE}</p>
+    <div className="flex h-screen w-full bg-white">
+      <AppSidebar activeSection="chat" onSectionChange={() => {}} />
+      <SidebarInset className="flex min-h-0 flex-1 flex-col">
+        {/* Header: the dashboard's breadcrumb treatment */}
+        <header className="flex h-16 flex-none items-center border-b border-gray-200/50 bg-white/80 px-4 backdrop-blur-sm sm:px-8">
+          <SidebarTrigger className="mr-4 h-7 w-7 text-[#13274F] md:hidden" />
+          <div className="flex items-center gap-3">
+            <span className="hidden text-base font-light text-gray-500 sm:inline">Dashboard</span>
+            <ChevronRight className="mx-1 hidden h-5 w-5 text-[#13274F] sm:inline" />
+            <span className="text-base font-medium text-gray-700">{CRUMB[view]}</span>
           </div>
-        </div>
+        </header>
 
-        {/* Full-page chat */}
-        <div className="flex-1 overflow-hidden">
+        <div className="min-h-0 flex-1">
           <ChatCore
-            mode="full"
             initialQuestion={initialQuestion}
             initialScope={initialScope}
             handoverKey={handoverKey}
             onInitialQuestionSent={handleSent}
+            onViewChange={setView}
           />
         </div>
       </SidebarInset>

@@ -6,7 +6,7 @@ import { useCompany } from '@/contexts/CompanyContext';
 import { useStarterQuestions } from '@/hooks/useStarterQuestions';
 import { ASK_AI_ENABLED, greetingFor } from '@/lib/askAi';
 import type { ChatScope } from '@/services/chatService';
-import { ScopePickers, scopeSummary, useScopeOptions } from './ChatScopeBar';
+import { BrandLogo, ScopePickers, useScopeOptions } from './ChatScopeBar';
 import { cn } from '@/lib/utils';
 
 interface AskAiHeroProps {
@@ -17,20 +17,19 @@ interface AskAiHeroProps {
   jobFunction?: string;
 }
 
-// The overview's chat box. Step one is the scope — which markets and job
-// functions (several of each are fine), pre-ticked from the dashboard
-// filters — then the question. Asking opens the full Ask PerceptionX page
-// with the question already sent under that scope, so every answer goes
-// through the same analyst (and the same rulebook) as the sidebar chat and
-// the ChatGPT/Claude connectors.
+// The overview's hero chat block (design handoff, "Overview"): greeting with
+// the company's logo, the ASK ABOUT scope chips (company · markets ·
+// functions, pre-ticked from the dashboard filters), the composer, and the
+// four data-grounded starters as teal pills. Asking opens the Answer page
+// with the question already sent under that scope.
 export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { currentCompany } = useCompany();
   const organizationId = currentCompany?.organization_id;
-  const { questions, isLoading } = useStarterQuestions(organizationId);
+  const { starters, isLoading } = useStarterQuestions(organizationId);
   const [value, setValue] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const [scope, setScope] = useState<ChatScope>(() => ({
     company: currentCompany?.name ?? companyName ?? null,
@@ -56,11 +55,8 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
     navigate('/chat', { state: { question: q, scope } });
   }, [navigate, scope]);
 
-  const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      ask(value);
-    }
+  const handleKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') { e.preventDefault(); ask(value); }
   }, [ask, value]);
 
   if (!ASK_AI_ENABLED) {
@@ -74,63 +70,67 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
     );
   }
 
+  const brand = scope.company ?? companyName ?? 'your organisation';
+
   return (
     <section
       data-tour="ask-ai"
-      className="flex-shrink-0 rounded-2xl border border-[#13274F]/10 bg-gradient-to-br from-white via-white to-[#0DBCBA]/10 shadow-sm px-5 py-4 sm:px-6"
+      className="flex-shrink-0 rounded-2xl border border-[#0DBCBA]/[0.28] px-[22px] pt-5 pb-[18px] animate-in fade-in slide-in-from-bottom-2 duration-300"
+      style={{ background: 'radial-gradient(120% 130% at 100% 0%, rgba(216,239,240,.75), rgba(236,248,248,.5) 40%, #fff 72%)' }}
     >
-      <div className="flex items-center gap-3 mb-3">
-        <img alt="PerceptionX" className="h-8 w-8 object-contain rounded-full" src="/logos/PinkBadge.png" />
+      {/* Greeting row */}
+      <div className="flex items-start gap-3">
+        <span className="mt-[1px] flex h-[34px] w-[34px] flex-shrink-0 items-center justify-center rounded-lg border border-[#13274F]/10 bg-white p-[3px]">
+          <BrandLogo name={brand} className="h-full w-full" />
+        </span>
         <div className="min-w-0">
-          <h2 className="text-lg sm:text-xl font-bold text-gray-900 leading-tight">{greetingFor(user)}</h2>
-          <p className="text-sm text-gray-500 truncate">
-            Ask anything about how AI describes {companyName || 'your organisation'} to candidates.
-          </p>
+          <h2 className="font-headline text-[23px] font-bold leading-[1.2] tracking-[-0.02em] text-[#13274F]">{greetingFor(user)}</h2>
+          <p className="mt-[3px] text-[13.5px] text-gray-500">Ask anything about how AI describes {brand} to candidates.</p>
         </div>
       </div>
 
-      {/* Step 1: scope */}
-      <div className="flex flex-wrap items-center gap-2 mb-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mr-1">Ask about</span>
-        <ScopePickers scope={scope} options={options} onChange={onScopeChange} size="sm" />
+      {/* Scope row */}
+      <div className="mt-[14px] mb-[11px] flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#DB5E89]">Ask about</span>
+        <ScopePickers scope={scope} options={options} onChange={onScopeChange} variant="pill" />
       </div>
 
-      {/* Step 2: question */}
-      <div className="flex items-end gap-2">
-        <textarea
-          ref={textareaRef}
+      {/* Composer */}
+      <div className="flex items-center gap-2.5">
+        <input
+          ref={inputRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          rows={1}
           placeholder="Ask about anything…"
-          className="flex-1 resize-none rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm focus:border-[#13274F] focus:outline-none focus:ring-1 focus:ring-[#13274F]"
-          style={{ maxHeight: '80px' }}
+          className="h-[46px] flex-1 rounded-xl border-[1.5px] border-[#13274F]/35 bg-white px-[15px] text-[15px] text-[#13274F] shadow-[0_1px_2px_rgba(19,39,79,.06)] placeholder:text-gray-400 focus:border-[#13274F] focus:outline-none"
         />
         <button
           type="button"
           onClick={() => ask(value)}
-          disabled={!value.trim()}
           aria-label="Ask PerceptionX"
-          className="h-10 w-10 rounded-xl flex-shrink-0 bg-[#13274F] hover:bg-[#1a3468] text-white disabled:opacity-40 flex items-center justify-center transition-colors"
+          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-[#13274F] text-white transition-colors hover:bg-[#183056] disabled:opacity-40"
+          disabled={!value.trim()}
         >
-          <ArrowRight className="h-4 w-4" />
+          <ArrowRight className="h-[18px] w-[18px]" />
         </button>
       </div>
 
-      <div className="mt-2 flex gap-2 min-w-0">
-        {questions.map((q, i) => (
+      {/* Suggestion pills */}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {starters.map((s, i) => (
           <button
-            key={`${i}-${q}`}
+            key={`${i}-${s.title}`}
             type="button"
-            onClick={() => ask(q)}
+            onClick={() => ask(s.title)}
+            title={s.sub || undefined}
             className={cn(
-              'group inline-flex min-w-0 flex-1 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-xs text-gray-600 hover:border-[#13274F]/40 hover:text-[#13274F] transition-colors',
+              'inline-flex h-[30px] max-w-full items-center gap-1.5 rounded-full border border-[#0DBCBA]/35 bg-[#0DBCBA]/[0.09] px-[11px] text-[12.5px] text-[#0F6E6D] transition-colors hover:border-[#0DBCBA] hover:bg-[#0DBCBA]/[0.16]',
               isLoading && 'animate-pulse'
             )}
           >
-            <span className="truncate" title={q}>{q}</span>
-            <ArrowUpRight className="h-3 w-3 flex-shrink-0 text-gray-300 group-hover:text-[#13274F]" />
+            <span className="truncate">{s.title}</span>
+            <ArrowUpRight className="h-3 w-3 flex-shrink-0 text-[#0DBCBA]/85" />
           </button>
         ))}
       </div>

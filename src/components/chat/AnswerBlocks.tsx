@@ -1,95 +1,101 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, ExternalLink, TrendingDown, TrendingUp, Minus } from 'lucide-react';
+import { ExternalLink, TrendingDown, TrendingUp } from 'lucide-react';
 import { Favicon } from '@/components/ui/favicon';
 import { cn } from '@/lib/utils';
 import type { SourceLink } from '@/services/chatService';
 
 // ─── Visual blocks the analyst emits as fenced JSON ─────────────────────────
-// ```px-context {period, scope, brand, answers}```   → pills
-// ```px-stats  [{label, value, delta}]```             → tiles
-// ```px-bars   {title, unit, rows:[{label, value}]}``` → horizontal bars
+// ```px-context   {period, scope, brand, answers}```     → merged into the SCOPE row
+// ```px-stats     [{label, value, delta}]```              → metric cards
+// ```px-bars      {title, unit, rows:[{label, value}]}``` → contribution chart
+// ```px-followups ["…", "…"]```                          → follow-up pills
 // Anything unparseable (still streaming, malformed) renders as a skeleton.
 
-export const PX_BLOCK = /language-px-(context|stats|bars)/;
+export const PX_BLOCK = /language-px-(context|stats|bars|followups)/;
+export const PX_CONTEXT_FENCE = /```px-context\s*\n([\s\S]*?)```/;
 
-export function parseBlock(lang: string, raw: string): unknown | null {
+export function parseBlock(_lang: string, raw: string): unknown | null {
   try { return JSON.parse(raw.trim()); } catch { return null; }
 }
 
-function Delta({ value, unit = '' }: { value: number | null | undefined; unit?: string }) {
+export interface AnswerContext { period?: string | null; answers?: number | null; scope?: string | null; brand?: string | null }
+
+// Pulls the px-context block out of the markdown (it renders as part of the
+// SCOPE row, not inline) and returns what it said.
+export function extractContext(markdown: string): { body: string; context: AnswerContext | null } {
+  const m = markdown.match(PX_CONTEXT_FENCE);
+  if (!m) return { body: markdown, context: null };
+  const data = parseBlock('context', m[1]) as any;
+  const context: AnswerContext | null = data && typeof data === 'object'
+    ? {
+        period: typeof data.period === 'string' ? data.period : null,
+        answers: typeof data.answers === 'number' ? data.answers : null,
+        scope: typeof data.scope === 'string' ? data.scope : null,
+        brand: typeof data.brand === 'string' ? data.brand : null,
+      }
+    : null;
+  return { body: markdown.replace(PX_CONTEXT_FENCE, '').replace(/^\s*\n/, ''), context };
+}
+
+const rise = 'animate-in fade-in slide-in-from-bottom-2 duration-300';
+
+function Delta({ value, size = 'sm' }: { value: number | null | undefined; size?: 'sm' | 'xs' }) {
   if (value === null || value === undefined || Number.isNaN(value)) return null;
-  const Icon = value > 0 ? TrendingUp : value < 0 ? TrendingDown : Minus;
-  const color = value > 0 ? 'text-emerald-600' : value < 0 ? 'text-rose-600' : 'text-gray-400';
+  if (value === 0) return <span className="text-[11.5px] font-semibold text-gray-400">–</span>;
+  const Icon = value > 0 ? TrendingUp : TrendingDown;
   return (
-    <span className={cn('inline-flex items-center gap-0.5 text-sm font-semibold', color)}>
-      <Icon className="h-3.5 w-3.5" />
-      {Math.abs(value)}{unit}
+    <span className={cn('inline-flex items-center gap-0.5 font-semibold tabular-nums', size === 'sm' ? 'text-xs' : 'text-[11.5px]', value > 0 ? 'text-[#16a34a]' : 'text-[#dc2626]')}>
+      <Icon className="h-3 w-3" />
+      {Math.abs(value)}
     </span>
   );
 }
 
 export function BlockSkeleton() {
-  return (
-    <div className="my-2 h-16 rounded-xl border border-gray-200 bg-white/60 animate-pulse" />
-  );
+  return <div className="my-1 h-16 rounded-xl border border-gray-200 bg-gray-50 animate-pulse" />;
 }
 
-export function ContextPills({ data }: { data: any }) {
-  const pills: string[] = [];
-  if (data?.period) pills.push(String(data.period));
-  if (data?.scope) pills.push(String(data.scope));
-  const brand = data?.brand ? String(data.brand) : null;
-  const answers = typeof data?.answers === 'number' ? data.answers : null;
-  if (brand || answers !== null) pills.push([brand, answers !== null ? `${answers.toLocaleString()} answers` : null].filter(Boolean).join(' · '));
-  if (!pills.length) return null;
-  return (
-    <div className="flex flex-wrap gap-1.5 mb-3">
-      {pills.map(p => (
-        <span key={p} className="inline-flex items-center rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-medium text-gray-600">{p}</span>
-      ))}
-    </div>
-  );
-}
-
+// c. Metric cards
 export function StatTiles({ data }: { data: any }) {
   const tiles = Array.isArray(data) ? data.filter(t => t && t.label != null && t.value != null).slice(0, 4) : [];
   if (!tiles.length) return null;
   return (
-    <div className={cn('grid gap-3 my-3', tiles.length === 1 ? 'grid-cols-1' : tiles.length === 2 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3', tiles.length === 4 && 'sm:grid-cols-4')}>
+    <div className={cn('grid gap-3', tiles.length === 1 ? 'grid-cols-1' : tiles.length === 2 ? 'grid-cols-2' : tiles.length === 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3', rise)}>
       {tiles.map((t: any, i: number) => (
-        <div key={i} className="rounded-xl border border-gray-200 bg-white px-4 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 truncate">{String(t.label)}</div>
+        <div key={i} className="rounded-xl border border-gray-200 bg-white p-[14px]">
+          <div className="truncate text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">{String(t.label)}</div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-gray-900 leading-none">{String(t.value)}</span>
+            <span className="font-headline text-[26px] font-bold leading-none tracking-[-0.02em] text-[#13274F] tabular-nums">{String(t.value)}</span>
             <Delta value={typeof t.delta === 'number' ? t.delta : null} />
           </div>
-          {t.note && <div className="mt-1 text-[11px] text-gray-500 truncate">{String(t.note)}</div>}
+          {t.note && <div className="mt-1 truncate text-[11px] text-gray-400">{String(t.note)}</div>}
         </div>
       ))}
     </div>
   );
 }
 
+// d. Contribution chart — pink for what pulled down, teal for what lifted.
 export function ContributionBars({ data }: { data: any }) {
   const rows = Array.isArray(data?.rows) ? data.rows.filter((r: any) => r && r.label != null && typeof r.value === 'number').slice(0, 12) : [];
   if (!rows.length) return null;
   const unit = data?.unit === 'pts' ? '' : typeof data?.unit === 'string' ? data.unit : '';
   const max = Math.max(...rows.map((r: any) => Math.abs(r.value)), 1);
   return (
-    <div className="my-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
-      {data?.title && <div className="text-sm font-semibold text-gray-900 mb-2">{String(data.title)}</div>}
-      <div className="space-y-1.5">
+    <div className={cn('rounded-xl border border-gray-200 bg-white p-[18px]', rise)}>
+      {data?.title && <div className="mb-[14px] text-xs font-semibold text-[#13274F]">{String(data.title)}</div>}
+      <div className="space-y-2.5">
         {rows.map((r: any, i: number) => {
           const neg = r.value < 0;
-          const width = Math.max(4, Math.round((Math.abs(r.value) / max) * 100));
+          const width = Math.max(3, Math.round((Math.abs(r.value) / max) * 100));
           return (
-            <div key={i} className="grid grid-cols-[minmax(0,10rem)_1fr_3rem] items-center gap-3 text-xs">
-              <span className="truncate text-gray-600" title={String(r.label)}>{String(r.label)}</span>
-              <div className={cn('h-2.5 rounded-full overflow-hidden', neg ? 'bg-rose-100' : 'bg-teal-100')}>
-                <div className={cn('h-full rounded-full', neg ? 'bg-rose-500' : 'bg-teal-500')} style={{ width: `${width}%` }} />
+            <div key={i} className="flex items-center gap-3 text-xs">
+              <span className="w-[150px] flex-none truncate text-gray-600" title={String(r.label)}>{String(r.label)}</span>
+              <div className={cn('h-[14px] flex-1 overflow-hidden rounded-[7px]', neg ? 'bg-[#DB5E89]/[0.12]' : 'bg-[#0DBCBA]/[0.12]')}>
+                <div className={cn('h-full rounded-[7px]', neg ? 'bg-[#DB5E89]' : 'bg-[#0DBCBA]')} style={{ width: `${width}%` }} />
               </div>
-              <span className={cn('text-right font-semibold tabular-nums', neg ? 'text-rose-600' : r.value > 0 ? 'text-teal-600' : 'text-gray-500')}>
-                {r.value > 0 ? '+' : r.value < 0 ? '−' : ''}{Math.abs(r.value)}{unit}
+              <span className={cn('w-[34px] text-right font-semibold tabular-nums', neg ? 'text-[#13274F]' : 'text-[#0DBCBA]')}>
+                {r.value > 0 ? '+' : r.value < 0 ? '-' : ''}{Math.abs(r.value)}{unit}
               </span>
             </div>
           );
@@ -99,23 +105,43 @@ export function ContributionBars({ data }: { data: any }) {
   );
 }
 
-// A delta cell in a comparison table: "+5", "−6", "-6 pts", "0".
+// g. Follow-ups
+export function FollowUps({ data, onAsk }: { data: any; onAsk?: (q: string) => void }) {
+  const items = Array.isArray(data) ? data.filter(q => typeof q === 'string' && q.trim()).slice(0, 4) : [];
+  if (!items.length) return null;
+  return (
+    <div className={cn('flex flex-wrap gap-2 pt-1', rise)}>
+      {items.map((q: string) => (
+        <button
+          key={q}
+          type="button"
+          onClick={() => onAsk?.(q)}
+          className="h-8 rounded-full border border-gray-200 bg-white px-3 text-[12.5px] text-gray-600 transition-colors hover:border-[#DB5E89] hover:text-[#13274F]"
+        >
+          {q}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// A delta cell in a comparison table: "+5", "−6", "-6 pts".
 const DELTA_CELL = /^[+\-−–]?\d+(\.\d+)?\s*(pts?|points|%)?$/;
 export function isDeltaText(text: string): boolean {
   const t = text.trim();
   return /^[+\-−–]/.test(t) && DELTA_CELL.test(t);
 }
-export function deltaClass(text: string): string {
+// Semantic colour: in a "vs <brand>" column a competitor ahead (+) is the
+// bad news (red), behind (−) is good (teal); elsewhere + is green, − red.
+export function deltaClass(text: string, versusBrand: boolean): string {
   const t = text.trim();
-  if (t.startsWith('+')) return 'text-emerald-600 font-semibold';
-  if (/^[\-−–]/.test(t)) return 'text-rose-600 font-semibold';
-  return '';
+  const positive = t.startsWith('+');
+  if (versusBrand) return positive ? 'text-[#dc2626] font-semibold' : 'text-[#0DBCBA] font-semibold';
+  return positive ? 'text-[#16a34a] font-semibold' : 'text-[#dc2626] font-semibold';
 }
 
-// ─── Sources chips (from the {sources} event) ───────────────────────────────
-// One chip per domain (favicon, domain, answers citing it); expanding a chip
-// lists that domain's pages, each linked to the exact returned URL.
-export function SourceChips({ sources, content }: { sources: SourceLink[]; content: string }) {
+// f. Sources — one pill per domain (favicon, domain, responses citing it).
+export function SourcePills({ sources, content }: { sources: SourceLink[]; content: string }) {
   const [open, setOpen] = useState<string | null>(null);
   const byDomain = new Map<string, { answers: number | null; pages: SourceLink[]; linked: boolean }>();
   for (const s of sources) {
@@ -130,34 +156,32 @@ export function SourceChips({ sources, content }: { sources: SourceLink[]; conte
   if (!domains.length) return null;
   const openEntry = open ? byDomain.get(open) : null;
   return (
-    <div className="mt-3 pt-3 border-t border-gray-200/80">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Sources</div>
-      <div className="flex flex-wrap gap-1.5">
+    <div className={rise}>
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">Sources</div>
+      <div className="flex flex-wrap gap-2">
         {domains.map(([domain, e]) => (
           <button
             key={domain}
             type="button"
             onClick={() => setOpen(open === domain ? null : domain)}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors',
-              open === domain ? 'border-[#13274F]/40 bg-[#13274F]/5 text-[#13274F]' : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+              'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[5px] text-xs transition-colors',
+              open === domain ? 'border-[#DB5E89] text-[#13274F]' : 'border-gray-200 text-gray-600 hover:border-[#DB5E89] hover:text-[#13274F]'
             )}
           >
-            <Favicon domain={domain} size="sm" className="rounded-sm flex-shrink-0" />
-            <span>{domain}</span>
-            {e.answers !== null && <span className="text-gray-400">· {e.answers.toLocaleString()} answers</span>}
-            {open === domain ? <ChevronUp className="h-3 w-3 text-gray-400" /> : <ChevronDown className="h-3 w-3 text-gray-400" />}
+            <Favicon domain={domain} size="sm" className="flex-shrink-0 rounded-sm" />
+            <span>{domain}{e.answers !== null ? ` · ${e.answers.toLocaleString()} responses` : ''}</span>
           </button>
         ))}
       </div>
       {open && openEntry && (
-        <ul className="mt-2 space-y-1 rounded-lg border border-gray-200 bg-white px-3 py-2">
+        <ul className="mt-2 space-y-1 rounded-xl border border-gray-200 bg-white px-3 py-2">
           {openEntry.pages.map(p => (
             <li key={p.url} className="min-w-0">
               <a href={p.url} target="_blank" rel="noopener noreferrer" title={p.url}
-                 className="group inline-flex items-center gap-1.5 min-w-0 text-xs text-gray-700 hover:text-[#13274F]">
+                 className="group inline-flex min-w-0 items-center gap-1.5 text-xs text-gray-600 hover:text-[#13274F]">
                 <span className="truncate max-w-[28rem]">{p.title || p.url}</span>
-                <ExternalLink className="h-3 w-3 text-gray-400 group-hover:text-[#13274F] flex-shrink-0" />
+                <ExternalLink className="h-3 w-3 flex-shrink-0 text-gray-400 group-hover:text-[#13274F]" />
               </a>
             </li>
           ))}

@@ -1054,6 +1054,14 @@ CRITICAL: When you reference information from a source, add an inline citation l
     ];
   }, [activeEpsTrend, scorecardMetrics.perceptionScore, responses.length]);
 
+  // Up to four evenly spaced period labels under the EPS chart.
+  const epsAxisLabels = useMemo(() => {
+    const labels = epsChartData.map((p: any) => String(p.date ?? p.key ?? ''));
+    if (labels.length <= 4) return labels;
+    const picks = [0, Math.round((labels.length - 1) / 3), Math.round(2 * (labels.length - 1) / 3), labels.length - 1];
+    return picks.map(i => labels[i]);
+  }, [epsChartData]);
+
   // Recharts replays its entry animation whenever the chart data identity
   // changes (filter switches, refetches); only the true first mount should
   // animate, so flip this ref once the first animation completes.
@@ -1151,254 +1159,139 @@ CRITICAL: When you reference information from a source, add an inline citation l
       <AskAiHero companyName={companyName} market={market} jobFunction={selectedJobFunctionFilter} />
 
       <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full flex-shrink-0">
-        {/* Perception Score Card */}
+        {/* EPS card — the score sits in the header's right slot; the chart fills the body. */}
         <Card
           data-tour="eps-card"
-          className="bg-gray-50/80 border-0 shadow-none rounded-2xl flex flex-col justify-between hover:shadow-md transition-shadow duration-200 p-0 relative overflow-hidden h-[190px] cursor-pointer"
+          className="flex h-[190px] cursor-pointer flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-0 shadow-[0_1px_2px_rgba(0,0,0,.05)]"
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
-          {/* Top: Score, label, % change */}
-          <div className="flex flex-row items-start justify-between px-8 pt-6 pb-1 z-10">
-            <div className="flex flex-col items-start">
-              <div className="flex items-center gap-2 mb-2">
-                <CardTitle className="text-lg font-bold text-gray-700 tracking-wide">EPS</CardTitle>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="ml-1 cursor-pointer align-middle">
-                        <HelpCircle className="w-5 h-5 text-gray-400 hover:text-gray-600" />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent side="top">
-                The Employer Perception Score is an aggregate of sentiment, visibility and competitive scores.
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              <div className="flex items-end gap-3 mb-1 mt-2">
-                {metricsCalculating ? (
-                  // The score is rollup-derived; while those fetches settle,
-                  // skeleton instead of flashing a false 0 / "No Data".
-                  <Skeleton className="h-14 w-28" />
-                ) : (
-                  <>
-                    <span className="text-6xl font-extrabold text-gray-900 drop-shadow-sm leading-none">
-                      {scorecardMetrics.perceptionScore}
+          <div className="flex flex-none items-center gap-1.5 px-4 pb-2.5 pt-[14px]">
+            <CardTitle className="text-[15px] font-semibold text-[#13274F]">EPS</CardTitle>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="cursor-pointer"><HelpCircle className="h-3.5 w-3.5 text-gray-400 hover:text-gray-600" /></span>
+                </TooltipTrigger>
+                <TooltipContent side="top">The Employer Perception Score is an aggregate of sentiment, visibility and relevance.</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <div className="flex-1" />
+            {metricsCalculating ? (
+              <Skeleton className="h-8 w-20" />
+            ) : (
+              <>
+                <span className="font-headline text-[34px] font-bold leading-none tracking-[-0.03em] text-[#13274F] tabular-nums">{scorecardMetrics.perceptionScore}</span>
+                {epsDelta !== null && (
+                  epsDelta === 0 ? (
+                    <span className="ml-1 inline-flex items-center text-[13px] font-semibold text-gray-400"><Minus className="h-[13px] w-[13px]" /></span>
+                  ) : (
+                    <span className={`ml-1 inline-flex items-center gap-0.5 text-[13px] font-semibold tabular-nums ${epsDelta > 0 ? 'text-[#16a34a]' : 'text-[#dc2626]'}`}>
+                      {epsDelta > 0 ? <TrendingUp className="h-[13px] w-[13px]" /> : <TrendingDown className="h-[13px] w-[13px]" />}
+                      {Math.abs(epsDelta)}
                     </span>
-                    {epsDelta !== null && (
-                      epsDelta === 0 ? (
-                        <span className="ml-4 flex items-center gap-1 text-xl font-semibold text-gray-400" style={{ marginBottom: 6 }}>
-                          <Minus className="w-5 h-5" />0
-                        </span>
-                      ) : (
-                        <span
-                          className={`ml-4 flex items-center gap-1 text-xl font-semibold ${epsDelta > 0 ? 'text-green-600' : 'text-red-600'}`}
-                          style={{ marginBottom: 6 }}
-                        >
-                          {epsDelta > 0 ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
-                          {Math.abs(epsDelta)}
-                        </span>
-                      )
-                    )}
-                  </>
+                  )
                 )}
-              </div>
-            </div>
-            {/* Badge in top right */}
-            <div className="flex items-start">
-              {metricsCalculating ? (
-                <Skeleton className="h-7 w-20 mt-1 rounded-full" />
-              ) : (
-                <span className={`px-3 py-1 rounded-full text-base font-semibold mt-1 ${
-                  scorecardMetrics.perceptionScore >= 80 ? 'bg-green-100 text-green-800' : scorecardMetrics.perceptionScore >= 65 ? 'bg-blue-100 text-blue-800' : scorecardMetrics.perceptionScore >= 50 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
-                }`}>{scorecardMetrics.perceptionLabel}</span>
-              )}
-            </div>
+              </>
+            )}
           </div>
-          {/* Bottom: Chart, visually anchored */}
-           <div className="w-full flex-1 flex items-end" style={{ minHeight: 0 }}>
-             <div className="w-full" style={{ height: '96px' }}>
-               {!metricsCalculating && (
-               <ChartContainer config={{ score: { label: "Score", color: "#0DBCBA" } }} className="w-full h-full">
-                 <AreaChart
-                   data={epsChartData}
-                   margin={{ top: 8, right: 6, left: 0, bottom: 0 }}
-                 >
-                <defs>
-                  <linearGradient id="colorPerceptionBg" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#0DBCBA" stopOpacity={0.32}/>
-                    <stop offset="55%" stopColor="#0DBCBA" stopOpacity={0.10}/>
-                    <stop offset="100%" stopColor="#0DBCBA" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                {/* Pad the domain so the curve floats with fill beneath it
-                    instead of hugging the baseline as a thin sliver. */}
-                <YAxis
-                  hide
-                  domain={[
-                    (dataMin: number) => Math.max(0, Math.floor(dataMin) - 6),
-                    (dataMax: number) => Math.min(100, Math.ceil(dataMax) + 4),
-                  ]}
-                />
-                 <Area
-                   type="natural"
-                   dataKey="score"
-                   stroke="#0DBCBA"
-                   strokeWidth={2.5}
-                   fill="url(#colorPerceptionBg)"
-                   dot={(props: any) => {
-                     const { cx, cy, index } = props;
-                     const isLast = index === epsChartData.length - 1;
-                     return (
-                       <circle
-                         key={`eps-dot-${index}`}
-                         cx={cx}
-                         cy={cy}
-                         r={isLast ? 4 : 0}
-                         fill="#0DBCBA"
-                         stroke="#ffffff"
-                         strokeWidth={isLast ? 2 : 0}
-                       />
-                     );
-                   }}
-                   activeDot={{ r: 4, fill: '#0DBCBA', stroke: '#ffffff', strokeWidth: 2 }}
-                   isAnimationActive={!hasEpsChartAnimatedRef.current}
-                   animationDuration={900}
-                   onAnimationEnd={() => { hasEpsChartAnimatedRef.current = true; }}
-                 />
-                 </AreaChart>
-               </ChartContainer>
-               )}
-             </div>
-           </div>
+          <div className="relative min-h-[70px] flex-1">
+            {!metricsCalculating && (
+              <ChartContainer config={{ score: { label: "Score", color: "#0DBCBA" } }} className="h-full w-full">
+                <AreaChart data={epsChartData} margin={{ top: 6, right: 6, left: 0, bottom: 18 }}>
+                  <defs>
+                    <linearGradient id="colorPerceptionBg" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#0DBCBA" stopOpacity={0.24} />
+                      <stop offset="100%" stopColor="#0DBCBA" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <YAxis hide domain={[(dataMin: number) => Math.max(0, Math.floor(dataMin) - 6), (dataMax: number) => Math.min(100, Math.ceil(dataMax) + 4)]} />
+                  <Area
+                    type="natural"
+                    dataKey="score"
+                    stroke="#0DBCBA"
+                    strokeWidth={3}
+                    fill="url(#colorPerceptionBg)"
+                    dot={(props: any) => {
+                      const { cx, cy, index } = props;
+                      const isLast = index === epsChartData.length - 1;
+                      return <circle key={`eps-dot-${index}`} cx={cx} cy={cy} r={isLast ? 4.5 : 0} fill="#0DBCBA" />;
+                    }}
+                    activeDot={{ r: 4, fill: '#0DBCBA', stroke: '#ffffff', strokeWidth: 2 }}
+                    isAnimationActive={!hasEpsChartAnimatedRef.current}
+                    animationDuration={900}
+                    onAnimationEnd={() => { hasEpsChartAnimatedRef.current = true; }}
+                  />
+                </AreaChart>
+              </ChartContainer>
+            )}
+            {!metricsCalculating && epsChartData.length > 1 && (
+              <div className="pointer-events-none absolute bottom-1.5 left-[18px] right-[18px] flex justify-between text-[10.5px] text-gray-400 tabular-nums">
+                {epsAxisLabels.map((l, i) => <span key={`${i}-${l}`}>{l}</span>)}
+              </div>
+            )}
+          </div>
         </Card>
-        {/* Score Breakdown Card — opens the same EPS drill-down sheet */}
+
+        {/* Breakdown card — three rows: name · value · delta, bar, "was X%". */}
         <Card
           data-tour="eps-breakdown"
-          className="bg-white rounded-2xl shadow-sm p-0 hover:shadow-md transition-shadow duration-200 cursor-pointer h-[190px] flex flex-col overflow-hidden"
+          className="flex h-[190px] cursor-pointer flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-0 shadow-[0_1px_2px_rgba(0,0,0,.05)]"
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
-          <CardHeader className="pb-2 pt-6 px-4 sm:px-8 flex-shrink-0">
-            <div className="flex items-center gap-2 mb-2">
-              <CardTitle className="text-lg font-bold text-gray-700">Breakdown</CardTitle>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="ml-1 cursor-pointer align-middle">
-                      <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600" />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    Click to learn more about each score component
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          </CardHeader>
-          <CardContent className="px-4 sm:px-8 pb-4 flex-1 flex flex-col justify-center">
+          <div className="flex flex-none items-center gap-1.5 px-4 pb-2 pt-[14px]">
+            <CardTitle className="text-[15px] font-semibold text-[#13274F]">Breakdown</CardTitle>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="cursor-pointer"><HelpCircle className="h-3.5 w-3.5 text-gray-400 hover:text-gray-600" /></span>
+                </TooltipTrigger>
+                <TooltipContent side="top">Click to learn more about each score component</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <div className="flex-1" />
+            {responses.length > 0 && <span className="text-[11px] text-gray-400 tabular-nums">{responses.length.toLocaleString()} responses</span>}
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col px-4 pb-3">
             {metricsCalculating ? (
-              // Show loading skeletons while metrics are calculating
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="text-center">
-                  <Skeleton className="h-8 w-16 mx-auto mb-2" />
-                  <Skeleton className="h-4 w-20 mx-auto" />
-                </div>
-                <div className="text-center">
-                  <Skeleton className="h-8 w-16 mx-auto mb-2" />
-                  <Skeleton className="h-4 w-20 mx-auto" />
-                </div>
-                <div className="text-center">
-                  <Skeleton className="h-8 w-16 mx-auto mb-2" />
-                  <Skeleton className="h-4 w-20 mx-auto" />
-                </div>
+              <div className="grid flex-1 grid-cols-3 gap-4">
+                {[0, 1, 2].map(i => <div key={i} className="text-center"><Skeleton className="mx-auto mb-2 h-6 w-16" /><Skeleton className="mx-auto h-3 w-20" /></div>)}
               </div>
             ) : (() => {
-              // Breakdown deltas share the EPS sparkline's source: the previous
-              // point of the active per-month trend. This keeps all three
-              // components consistent with each other and with the headline EPS
-              // delta, and makes them work under the function filter too —
-              // unlike the old path, which sourced each component differently
-              // (sentiment/relevance from MVs that may lack a prior month,
-              // visibility recomputed) so only some ever resolved.
               const prevPoint = activeEpsTrend.length >= 2 ? activeEpsTrend[activeEpsTrend.length - 2] : null;
-              const hasPrevSentiment = !!prevPoint;
-              const hasPrevVisibility = !!prevPoint;
-              const hasPrevRelevance = !!prevPoint;
-
-              const sentimentChange = prevPoint ? scorecardMetrics.sentimentScore - prevPoint.sentiment : 0;
-              const visibilityChange = prevPoint ? scorecardMetrics.visibilityScore - prevPoint.visibility : 0;
-              const relevanceChange = prevPoint ? scorecardMetrics.relevanceScore - prevPoint.relevance : 0;
-
-              const currentSentiment = scorecardMetrics.sentimentScore;
-              const currentVisibility = scorecardMetrics.visibilityScore;
-              const currentRelevance = scorecardMetrics.relevanceScore;
-              
-              return (
-                <>
-            <div className="flex items-center gap-2 sm:gap-3 mb-6">
-              <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Sentiment</span>
-              <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-green-500 transition-all duration-300" style={{ width: `${currentSentiment}%` }} />
-              </div>
-                    <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
-                      <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentSentiment}%</span>
-                      <span className="w-[40px] flex justify-end">
-                        {hasPrevSentiment && (sentimentChange !== 0 ? (
-                          <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                            sentimentChange > 0 ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                            {sentimentChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
-                            {sentimentChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                            <span className="whitespace-nowrap">{Math.abs(sentimentChange)}</span>
+              const rows = [
+                { name: 'Sentiment', value: scorecardMetrics.sentimentScore, prev: prevPoint?.sentiment ?? null, fill: 'bg-[#22c55e]' },
+                { name: 'Visibility', value: scorecardMetrics.visibilityScore, prev: prevPoint?.visibility ?? null, fill: 'bg-[#3b82f6]' },
+                { name: 'Relevance', value: scorecardMetrics.relevanceScore, prev: prevPoint?.relevance ?? null, fill: 'bg-[#f97316]' },
+              ];
+              return rows.map((row, i) => {
+                const delta = row.prev === null ? null : Math.round(row.value - row.prev);
+                return (
+                  <div key={row.name} className={`flex min-h-0 flex-1 flex-col justify-center gap-1.5 ${i > 0 ? 'border-t border-[#13274F]/[0.08] pt-2' : 'pt-0.5'}`}>
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-[76px] text-[13px] font-medium text-gray-700">{row.name}</span>
+                      <span className="font-headline text-[19px] font-bold leading-none text-[#13274F] tabular-nums">{Math.round(row.value)}%</span>
+                      <span className="flex w-[38px] justify-end text-[11.5px] font-semibold tabular-nums">
+                        {delta === null || delta === 0 ? (
+                          <span className="text-gray-400">–</span>
+                        ) : (
+                          <span className={`inline-flex items-center gap-0.5 ${delta > 0 ? 'text-[#16a34a]' : 'text-[#dc2626]'}`}>
+                            {delta > 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                            {Math.abs(delta)}
                           </span>
-                        ) : <span className="text-xs text-gray-400">-</span>)}
+                        )}
                       </span>
                     </div>
-            </div>
-            <div className="flex items-center gap-2 sm:gap-3 mb-6">
-              <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Visibility</span>
-              <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${currentVisibility}%` }} />
-              </div>
-                    <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
-                      <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentVisibility}%</span>
-                      <span className="w-[40px] flex justify-end">
-                        {hasPrevVisibility && (visibilityChange !== 0 ? (
-                          <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                            visibilityChange > 0 ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                            {visibilityChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
-                            {visibilityChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                            <span className="whitespace-nowrap">{Math.abs(visibilityChange)}</span>
-                          </span>
-                        ) : <span className="text-xs text-gray-400">-</span>)}
-                      </span>
+                    <div className="flex items-center gap-2.5">
+                      <div className="h-2 min-w-[60px] flex-1 overflow-hidden rounded-full bg-[#eef0f3]">
+                        <div className={`h-full rounded-full ${row.fill} transition-all duration-300`} style={{ width: `${Math.max(0, Math.min(100, row.value))}%` }} />
+                      </div>
+                      {row.prev !== null && <span className="text-[11px] text-gray-400 tabular-nums">was {Math.round(row.prev)}%</span>}
                     </div>
-            </div>
-            <div className="flex items-center gap-2 sm:gap-3">
-              <span className="w-20 sm:w-28 text-xs sm:text-sm font-medium text-gray-700">Relevance</span>
-              <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${currentRelevance}%` }} />
-              </div>
-                    <div className="flex items-center gap-1 ml-1 sm:ml-2 flex-shrink-0">
-                      <span className="text-xs sm:text-sm font-semibold text-gray-700 min-w-[24px] sm:min-w-[32px] text-right">{currentRelevance}%</span>
-                      <span className="w-[40px] flex justify-end">
-                        {hasPrevRelevance && (relevanceChange !== 0 ? (
-                          <span className={`text-xs font-semibold flex items-center gap-0.5 ${
-                            relevanceChange > 0 ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                            {relevanceChange > 0 && <TrendingUp className="w-3 h-3 flex-shrink-0" />}
-                            {relevanceChange < 0 && <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                            <span className="whitespace-nowrap">{Math.abs(relevanceChange)}</span>
-                          </span>
-                        ) : <span className="text-xs text-gray-400">-</span>)}
-                      </span>
-            </div>
                   </div>
-                </>
-              );
+                );
+              });
             })()}
-          </CardContent>
+          </div>
         </Card>
       </div>
 

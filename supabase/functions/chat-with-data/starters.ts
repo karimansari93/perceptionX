@@ -43,12 +43,22 @@ function distinct(values: unknown): string[] {
   return Array.from(new Set(((values as unknown[]) || []).map(v => String(v ?? '').trim()).filter(Boolean))).sort();
 }
 
+export interface Starter { title: string; sub: string }
+
 export interface StarterResult {
   questions: string[];
+  starters: Starter[];
   source: 'data' | 'fallback';
 }
 
-async function buildFromData(ctx: ToolContext): Promise<string[] | null> {
+export const FALLBACK_SUBS: readonly string[] = [
+  'EPS versus the previous quarter',
+  'Themes and the sources behind them',
+  'The pages AI actually cites',
+  'Visibility split by function',
+];
+
+async function buildFromData(ctx: ToolContext): Promise<Starter[] | null> {
   const companies = JSON.parse(await executeTool(ctx, 'list_companies', {}));
   const busiest = ((companies?.companies as any[]) || [])
     .filter(c => (c.total_responses || 0) > 0)
@@ -88,7 +98,13 @@ async function buildFromData(ctx: ToolContext): Promise<string[] | null> {
     ? `Which ${prettyDomain(String(topSource))} pages come up most, with links?`
     : 'Which sources do AI platforms cite about us, with links?';
   const q4 = fn ? `How does AI describe us for ${fn} roles?` : 'Show visibility by job function.';
-  return [q1, q2, q3, q4];
+  const periodSub = period ? ` · ${period}` : '';
+  return [
+    { title: q1, sub: `Visibility${market ? ` · ${market}` : ''}${periodSub}` },
+    { title: q2, sub: topAttribute ? `${String(topAttribute)}${hasPrevious ? ' · versus last quarter' : periodSub}` : `Themes${periodSub}` },
+    { title: q3, sub: topSource ? `${String(topSource)} · with links` : 'The pages AI cites' },
+    { title: q4, sub: fn ? `${fn} roles${periodSub}` : 'Split by job function' },
+  ];
 }
 
 export async function getStarterQuestions(ctx: ToolContext): Promise<StarterResult> {
@@ -99,21 +115,27 @@ export async function getStarterQuestions(ctx: ToolContext): Promise<StarterResu
     .eq('organization_id', organizationId)
     .maybeSingle();
   const cachedAt = row?.starters_generated_at ? Date.parse(row.starters_generated_at) : NaN;
-  if (Array.isArray(row?.starter_questions) && row.starter_questions.length === 4 &&
+  const cached = Array.isArray(row?.starter_questions) ? row.starter_questions : null;
+  // Cached rows are {title, sub} objects (older rows held plain strings).
+  if (cached && cached.length === 4 && cached.every((c: any) => c && typeof c === 'object' && c.title) &&
       Number.isFinite(cachedAt) && Date.now() - cachedAt < CACHE_TTL_MS) {
-    return { questions: row.starter_questions.map(String), source: 'data' };
+    const starters: Starter[] = cached.map((c: any) => ({ title: String(c.title), sub: String(c.sub ?? '') }));
+    return { questions: starters.map(s => s.title), starters, source: 'data' };
   }
 
-  let questions: string[] | null = null;
-  try { questions = await buildFromData(ctx); }
+  let starters: Starter[] | null = null;
+  try { starters = await buildFromData(ctx); }
   catch (err) { console.warn(`[${ctx.requestId}] starters build failed:`, err); }
-  if (!questions) return { questions: [...FALLBACK_STARTERS], source: 'fallback' };
+  if (!starters) {
+    const fallback = FALLBACK_STARTERS.map((title, i) => ({ title, sub: FALLBACK_SUBS[i] }));
+    return { questions: [...FALLBACK_STARTERS], starters: fallback, source: 'fallback' };
+  }
 
   // Cache; a fresh row gets the table defaults for cap/enabled, an existing
   // row keeps its cap.
   await admin.from('chat_org_settings').upsert(
-    { organization_id: organizationId, starter_questions: questions, starters_generated_at: new Date().toISOString() },
+    { organization_id: organizationId, starter_questions: starters, starters_generated_at: new Date().toISOString() },
     { onConflict: 'organization_id' },
   );
-  return { questions, source: 'data' };
+  return { questions: starters.map(s => s.title), starters, source: 'data' };
 }

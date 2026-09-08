@@ -27,6 +27,8 @@ export interface ScopeOptions {
   brand: string | null;
   markets: string[];
   job_functions: string[];
+  /** The brand's latest measured period ("Q3 2026"). */
+  period: string | null;
 }
 
 export interface ChatMessage {
@@ -54,10 +56,15 @@ export interface ChatConversation {
   title: string;
   created_at: string;
   updated_at: string;
+  /** The scope the thread was answered in (snapshotted when it was created). */
+  scope?: ChatScope | null;
 }
+
+export interface Starter { title: string; sub: string }
 
 export interface StarterQuestions {
   questions: string[];
+  starters: Starter[];
   source: 'data' | 'fallback';
 }
 
@@ -163,7 +170,10 @@ export async function fetchStarterQuestions(organizationId: string): Promise<Sta
   const body = await response.json();
   const questions = Array.isArray(body?.questions) ? body.questions.map(String).slice(0, 4) : [];
   if (questions.length !== 4) throw new Error('Starter questions malformed');
-  return { questions, source: body.source === 'data' ? 'data' : 'fallback' };
+  const starters: Starter[] = Array.isArray(body?.starters) && body.starters.length === 4
+    ? body.starters.map((s: any) => ({ title: String(s?.title ?? ''), sub: String(s?.sub ?? '') }))
+    : questions.map((q: string) => ({ title: q, sub: '' }));
+  return { questions, starters, source: body.source === 'data' ? 'data' : 'fallback' };
 }
 
 /**
@@ -184,6 +194,7 @@ export async function fetchScopeOptions(organizationId: string, company?: string
     brand: typeof body?.brand === 'string' ? body.brand : null,
     markets: Array.isArray(body?.markets) ? body.markets.map(String) : [],
     job_functions: Array.isArray(body?.job_functions) ? body.job_functions.map(String) : [],
+    period: typeof body?.period === 'string' ? body.period : null,
   };
 }
 
@@ -192,7 +203,8 @@ export async function fetchScopeOptions(organizationId: string, company?: string
  */
 export async function createConversation(
   organizationId: string,
-  title: string = 'New conversation'
+  title: string = 'New conversation',
+  scope?: ChatScope | null,
 ): Promise<ChatConversation> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
@@ -203,6 +215,7 @@ export async function createConversation(
       organization_id: organizationId,
       user_id: user.id,
       title,
+      ...(scope ? { scope } : {}),
     })
     .select()
     .single();
