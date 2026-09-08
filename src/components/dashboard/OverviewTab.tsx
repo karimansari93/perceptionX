@@ -1165,7 +1165,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
         {/* EPS card — the score sits in the header's right slot; the chart fills the body. */}
         <Card
           data-tour="eps-card"
-          className="flex h-[190px] cursor-pointer flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-0 shadow-[0_1px_2px_rgba(0,0,0,.05)]"
+          className="flex h-[224px] cursor-pointer flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-0 shadow-[0_1px_2px_rgba(0,0,0,.05)]"
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
           <div className="flex flex-none items-center gap-1.5 px-4 pb-2.5 pt-[14px]">
@@ -1238,7 +1238,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
         {/* Breakdown card — three rows: name · value · delta, bar, "was X%". */}
         <Card
           data-tour="eps-breakdown"
-          className="flex h-[190px] cursor-pointer flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-0 shadow-[0_1px_2px_rgba(0,0,0,.05)]"
+          className="flex h-[224px] cursor-pointer flex-col overflow-hidden rounded-lg border border-gray-200 bg-white p-0 shadow-[0_1px_2px_rgba(0,0,0,.05)]"
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
           <div className="flex flex-none items-center gap-1.5 px-4 pb-2 pt-[14px]">

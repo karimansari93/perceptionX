@@ -296,13 +296,10 @@ export const SourcesSummaryCard = ({
         {/* Source name and favicon */}
         <div className="flex items-center space-x-2 min-w-0 flex-1">
           <Favicon domain={source.domain} />
-          <div className="min-w-0 flex items-center space-x-1">
-            <span className="text-xs font-medium text-gray-900 truncate" title={source.displayName}>
+          <div className="min-w-0 flex items-center">
+            <span className="text-xs font-medium text-gray-900 truncate" title={`${source.displayName} · ${mediaTypeInfo.label}`}>
               {source.displayName}
             </span>
-            <Badge className={`text-xs px-1 py-0 h-4 ${mediaTypeInfo.colors}`}>
-              {mediaTypeInfo.label}
-            </Badge>
           </div>
         </div>
 
