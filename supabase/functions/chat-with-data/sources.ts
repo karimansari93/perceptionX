@@ -5,13 +5,14 @@
 // the UI renders a sources footer from data rather than from the model's text
 // and the eval can check every link the analyst wrote against it.
 
-export interface SourceLink { title: string; url: string; domain: string; share?: number | null }
+export interface SourceLink { title: string; url: string; domain: string; share?: number | null; domainAnswers?: number | null }
 
 export function collectSources(payload: unknown, out: Map<string, SourceLink>): void {
   if (Array.isArray(payload)) { for (const v of payload) collectSources(v, out); return; }
   if (!payload || typeof payload !== 'object') return;
   const obj = payload as Record<string, unknown>;
   if (typeof obj.domain === 'string' && Array.isArray(obj.top_pages)) {
+    const domainAnswers = Number((obj.sample_size as any)?.answers_citing) || null;
     for (const page of obj.top_pages as any[]) {
       const url = String(page?.url || '');
       if (!/^https?:\/\//i.test(url) || out.has(url)) continue;
@@ -22,6 +23,7 @@ export function collectSources(payload: unknown, out: Map<string, SourceLink>): 
         url,
         domain: obj.domain,
         share: shareKey ? (page[shareKey] as number | null) : null,
+        domainAnswers,
       });
     }
   }

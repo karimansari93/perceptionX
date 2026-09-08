@@ -6,8 +6,21 @@ import { cn } from '@/lib/utils';
 import { ExternalLink, User } from 'lucide-react';
 import { Favicon } from '@/components/ui/favicon';
 import { getCompetitorFavicon } from '@/utils/citationUtils';
-import type { ChatMessage as ChatMessageType, SourceLink } from '@/services/chatService';
+import type { ChatMessage as ChatMessageType } from '@/services/chatService';
 import { ScopeChips } from './ChatScopeBar';
+import { BlockSkeleton, ContextPills, ContributionBars, PX_BLOCK, SourceChips, StatTiles, deltaClass, isDeltaText, parseBlock } from './AnswerBlocks';
+
+// A fenced px-* block: render it as a card (or a skeleton while it streams).
+function PxBlock({ lang, raw }: { lang: string; raw: string }) {
+  const data = parseBlock(lang, raw);
+  if (data === null) return <BlockSkeleton />;
+  if (lang === 'context') return <ContextPills data={data} />;
+  if (lang === 'stats') return <StatTiles data={data} />;
+  return <ContributionBars data={data} />;
+}
+
+const textOf = (children: unknown): string =>
+  Array.isArray(children) ? children.map(textOf).join('') : typeof children === 'string' ? children : '';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -79,13 +92,22 @@ const markdownComponents: Components = {
   blockquote: ({ children }) => (
     <blockquote className="border-l-2 border-[#0DBCBA]/60 pl-3 my-2 text-gray-600 italic">{children}</blockquote>
   ),
-  code: ({ children, className }) =>
-    className ? (
+  code: ({ children, className }) => {
+    const px = className?.match(PX_BLOCK);
+    if (px) return <PxBlock lang={px[1]} raw={textOf(children)} />;
+    return className ? (
       <code className="block bg-white rounded-md border border-gray-200 p-2 text-xs font-mono overflow-x-auto my-2">{children}</code>
     ) : (
       <code className="bg-white rounded border border-gray-200 px-1 py-0.5 text-[0.85em] font-mono">{children}</code>
-    ),
-  pre: ({ children }) => <pre className="my-2">{children}</pre>,
+    );
+  },
+  // px-* blocks are cards, not preformatted text.
+  pre: ({ children }) => {
+    const child = Array.isArray(children) ? children[0] : children;
+    const cls = (child as any)?.props?.className;
+    if (typeof cls === 'string' && PX_BLOCK.test(cls)) return <>{children}</>;
+    return <pre className="my-2">{children}</pre>;
+  },
   hr: () => <hr className="my-3 border-gray-200" />,
   table: ({ children }) => (
     <div className="overflow-x-auto my-3 rounded-lg border border-gray-200 bg-white">
@@ -94,7 +116,11 @@ const markdownComponents: Components = {
   ),
   thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
   th: ({ children }) => <th className="text-left font-semibold text-gray-700 px-3 py-2 border-b border-gray-200 whitespace-nowrap">{children}</th>,
-  td: ({ children }) => <td className="px-3 py-2 border-b border-gray-100 align-top">{children}</td>,
+  td: ({ children }) => {
+    const text = textOf(children);
+    const delta = isDeltaText(text);
+    return <td className={cn('px-3 py-2 border-b border-gray-100 align-top', delta && 'text-right tabular-nums', delta && deltaClass(text))}>{children}</td>;
+  },
 };
 
 // Wraps every mention of a competitor the tools named this turn in a
@@ -162,60 +188,11 @@ export function ChatMessage({ message }: ChatMessageProps) {
               <div className="mt-2 text-xs text-gray-500">{statusText}</div>
             )}
             {!message.isStreaming && message.sources && message.sources.length > 0 && (
-              <SourcesFooter sources={message.sources} content={message.content} />
+              <SourceChips sources={message.sources} content={message.content} />
             )}
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-const SOURCES_PREVIEW = 5;
-
-// Compact "Sources" footer built from the pages the tools returned for this
-// turn. Pages the answer actually linked come first; the rest sit behind a
-// "show all" toggle so a long source list never crowds the answer.
-function SourcesFooter({ sources, content }: { sources: SourceLink[]; content: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const ordered = useMemo(() => {
-    const linked = sources.filter(s => content.includes(s.url));
-    const rest = sources.filter(s => !content.includes(s.url));
-    return [...linked, ...rest];
-  }, [sources, content]);
-  const visible = expanded ? ordered : ordered.slice(0, SOURCES_PREVIEW);
-  const hidden = ordered.length - visible.length;
-
-  return (
-    <div className="mt-3 pt-3 border-t border-gray-200/80">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 mb-1.5">Sources</div>
-      <ul className="space-y-1">
-        {visible.map((s) => (
-          <li key={s.url} className="flex items-start gap-2 min-w-0">
-            <Favicon domain={s.domain} size="sm" className="mt-[3px] flex-shrink-0 rounded-sm" />
-            <a
-              href={s.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={s.url}
-              className="group inline-flex items-baseline gap-1 min-w-0 text-xs text-gray-700 hover:text-[#13274F]"
-            >
-              <span className="truncate max-w-[26rem]">{s.title || s.url}</span>
-              <span className="text-gray-400 flex-shrink-0">· {s.domain}</span>
-              <ExternalLink className="h-3 w-3 text-gray-400 group-hover:text-[#13274F] flex-shrink-0 self-center" />
-            </a>
-          </li>
-        ))}
-      </ul>
-      {(hidden > 0 || expanded) && ordered.length > SOURCES_PREVIEW && (
-        <button
-          type="button"
-          onClick={() => setExpanded(v => !v)}
-          className="mt-1.5 text-xs text-gray-500 hover:text-[#13274F] underline underline-offset-2"
-        >
-          {expanded ? 'Show fewer' : `Show all ${ordered.length} pages`}
-        </button>
-      )}
     </div>
   );
 }

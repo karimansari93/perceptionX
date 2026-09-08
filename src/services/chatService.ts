@@ -7,6 +7,8 @@ export interface SourceLink {
   title: string;
   url: string;
   domain: string;
+  /** Answers citing the domain this turn (context only). */
+  answers?: number | null;
 }
 
 // The dashboard filters a question is asked under (company / market / job
@@ -129,7 +131,7 @@ export async function sendChatMessage(
             if (Array.isArray(parsed.sources)) {
               const sources = parsed.sources
                 .filter((s: any) => s && typeof s.url === 'string' && /^https?:\/\//i.test(s.url))
-                .map((s: any) => ({ title: String(s.title || s.url), url: s.url, domain: String(s.domain || '') }));
+                .map((s: any) => ({ title: String(s.title || s.url), url: s.url, domain: String(s.domain || ''), answers: typeof s.answers === 'number' ? s.answers : null }));
               controller.enqueue({ type: 'sources', value: sources });
             }
             if (Array.isArray(parsed.competitors)) {
