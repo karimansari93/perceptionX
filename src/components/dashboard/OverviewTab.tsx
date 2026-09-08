@@ -1054,6 +1054,9 @@ CRITICAL: When you reference information from a source, add an inline citation l
     ];
   }, [activeEpsTrend, scorecardMetrics.perceptionScore, responses.length]);
 
+  // The selected period's sample, for the Breakdown header.
+  const breakdownResponses = activeEpsTrend.length ? (activeEpsTrend[activeEpsTrend.length - 1]?.responseCount ?? 0) : responses.length;
+
   // Up to four evenly spaced period labels under the EPS chart.
   const epsAxisLabels = useMemo(() => {
     const labels = epsChartData.map((p: any) => String(p.date ?? p.key ?? ''));
@@ -1151,7 +1154,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
   }, [cubeScopeRows, cubeQuarterKey, responses]);
 
   return (
-    <div className="flex flex-col gap-4 w-full h-full min-h-0 overflow-hidden">
+    <div className="px-ov flex flex-col gap-4 w-full min-h-0">
       {/* Ask PerceptionX — the chat box. Typing here opens /chat with the
           question; the score row and everything else sit below it. The
           overview never scrolls: hero and score row are fixed height, the
@@ -1249,7 +1252,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
               </Tooltip>
             </TooltipProvider>
             <div className="flex-1" />
-            {responses.length > 0 && <span className="text-[11px] text-gray-400 tabular-nums">{responses.length.toLocaleString()} responses</span>}
+            {breakdownResponses > 0 && <span className="text-[11px] text-gray-400 tabular-nums">{breakdownResponses.toLocaleString()} responses</span>}
           </div>
           <div className="flex min-h-0 flex-1 flex-col px-4 pb-3">
             {metricsCalculating ? (
@@ -1297,8 +1300,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
 
       {/* Summary Cards Grid - only render when all metrics (including themes) are ready */}
       {!metricsCalculating && (
-      <div className="flex-1 min-h-0">
-        <div data-tour="summary-row" className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0 [&>div]:min-h-0 [&>div]:overflow-y-auto [&>div]:rounded-xl">
+      <div className="px-ov-summary">
+        <div data-tour="summary-row" className="grid grid-cols-1 lg:grid-cols-3 gap-4 [&>div]:rounded-xl">
           <div>
             <SourcesSummaryCard
               topCitations={topCitations}
@@ -1335,7 +1338,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
             />
           </div>
 
-          <div className="lg:col-span-2 xl:col-span-1">
+          <div>
             <AttributesSummaryCard
               aiThemes={fnThemes}
               attributeThemes={attributeThemes}

@@ -54,5 +54,5 @@ Visual blocks (the app renders these fenced blocks as cards; use them for data a
 ["Which markets fell most?", "Show the Reddit threads", "Split this by job function"]
 \`\`\`
 - Sources are rendered from data as chips under the answer, so link the pages inline where you discuss them and don't repeat a source list at the end.
-- Every number in a block must come from a tool result or be a simple difference of two tool figures. Never invent a contribution, a split or a count.`;
+- Every number in a block must come from a tool result or be a simple difference of two tool figures. Never invent a contribution, a split or a count. Blocks must be valid JSON — close every bracket — and headings start on their own line.`;
 }

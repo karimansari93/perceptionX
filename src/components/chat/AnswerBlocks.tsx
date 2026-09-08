@@ -14,8 +14,25 @@ import type { SourceLink } from '@/services/chatService';
 export const PX_BLOCK = /language-px-(context|stats|bars|followups)/;
 export const PX_CONTEXT_FENCE = /```px-context\s*\n([\s\S]*?)```/;
 
+// The model occasionally drops the final "}" or "]" of a block; close any
+// brackets still open (outside strings) before giving up.
+function closeBrackets(s: string): string {
+  const stack: string[] = [];
+  let inStr = false, esc = false;
+  for (const ch of s) {
+    if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+  return s + stack.reverse().join('');
+}
+
 export function parseBlock(_lang: string, raw: string): unknown | null {
-  try { return JSON.parse(raw.trim()); } catch { return null; }
+  const s = raw.trim();
+  try { return JSON.parse(s); } catch { /* try a repair */ }
+  try { return JSON.parse(closeBrackets(s)); } catch { return null; }
 }
 
 export interface AnswerContext { period?: string | null; answers?: number | null; scope?: string | null; brand?: string | null }

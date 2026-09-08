@@ -179,3 +179,14 @@
     display: none !important;
   }
 }
+
+/* Overview "one screen" mode (design handoff): on a desktop-sized viewport the
+   overview never scrolls — hero and score row are fixed, the summary row
+   takes the rest and its cards scroll inside themselves. Below that the page
+   reflows and scrolls normally. */
+@media (min-width: 1080px) and (min-height: 720px) {
+  .px-ov { height: 100%; overflow: hidden; }
+  .px-ov-summary { flex: 1 1 auto; min-height: 0; }
+  .px-ov-summary > .grid { height: 100%; min-height: 0; }
+  .px-ov-summary > .grid > div { min-height: 0; overflow-y: auto; }
+}
