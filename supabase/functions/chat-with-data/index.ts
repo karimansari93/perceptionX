@@ -37,6 +37,7 @@ const MAX_TOOL_ROUNDS = 10;
 const DEFAULT_DAILY_CAP = 300;
 const HISTORY_WINDOW = 20;
 const MAX_SOURCES = 40;
+const HOLD_CHARS = 200; // text held back per round until it is clearly an answer, not narration
 const REFUSAL_TEXT = "I can't help with that here.";
 
 // ─── SSE helpers ────────────────────────────────────────────────────────────
@@ -258,13 +259,31 @@ serve(async (req) => {
             messages,
           });
           current = turn;
+          // Text that arrives before a tool call in the same round is process
+          // narration ("I'll pull the company list first"). Hold the first
+          // stretch of each round's text back; drop it if a tool call starts,
+          // flush it once it is clearly an answer or the round ends.
+          let held = '';
+          let narration = false;
+          const flushHeld = () => {
+            if (held && !narration) {
+              if (log.first_token_ms === null) log.first_token_ms = Date.now() - tStart;
+              streamedText += held;
+              enqueue(sseEvent({ text: held }));
+            }
+            held = '';
+          };
           turn.on('text', (delta: string) => {
-            if (log.first_token_ms === null) log.first_token_ms = Date.now() - tStart;
-            streamedText += delta;
-            enqueue(sseEvent({ text: delta }));
+            if (narration) return;
+            held += delta;
+            if (held.length >= HOLD_CHARS) flushHeld();
+          });
+          turn.on('streamEvent', (ev: Anthropic.MessageStreamEvent) => {
+            if (ev.type === 'content_block_start' && ev.content_block.type === 'tool_use') { narration = true; held = ''; }
           });
 
           const reply = await turn.finalMessage();
+          flushHeld();
           log.input_tokens += reply.usage.input_tokens ?? 0;
           log.output_tokens += reply.usage.output_tokens ?? 0;
           log.cache_read_tokens += reply.usage.cache_read_input_tokens ?? 0;

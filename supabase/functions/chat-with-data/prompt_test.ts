@@ -30,5 +30,7 @@ Deno.test('chat prompt embeds the rulebook word for word, adds only persona and 
   assertStringIncludes(prompt, 'ChatGPT, Perplexity, Google AI Overviews, Google AI Mode');
   assertStringIncludes(prompt, 'EPS = 50% sentiment + 30% visibility + 20% relevance');
   assertStringIncludes(prompt, 'association');
+  // Chat voice: no process narration, answer first.
+  assertStringIncludes(prompt, 'Never narrate your process');
   assert(!/excluded models|excludes? (claude|gemini|deepseek)/i.test(prompt));
 });

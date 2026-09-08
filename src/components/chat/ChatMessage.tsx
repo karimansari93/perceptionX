@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 import { cn } from '@/lib/utils';
 import { ExternalLink } from 'lucide-react';
 import { Favicon } from '@/components/ui/favicon';
-import { getCompetitorFavicon } from '@/utils/citationUtils';
+import { getCompetitorFavicon, getFavicon } from '@/utils/citationUtils';
 import type { ChatMessage as ChatMessageType } from '@/services/chatService';
 import { ScopeChips } from './ChatScopeBar';
 import {
@@ -20,6 +20,22 @@ interface ChatMessageProps {
 
 const isHttpUrl = (href: unknown): href is string => typeof href === 'string' && /^https?:\/\//i.test(href);
 const COMPETITOR_SCHEME = 'px-competitor:';
+const DOMAIN_SCHEME = 'px-domain:';
+// react-markdown drops unknown URL schemes; let ours through so the chips render.
+const urlTransform = (url: string) => (url.startsWith(COMPETITOR_SCHEME) || url.startsWith(DOMAIN_SCHEME) ? url : defaultUrlTransform(url));
+
+// Sources the analyst names in words rather than as domains. Anything else
+// gets a logo when it appears as a domain (glassdoor.com) or is one of the
+// domains behind this answer.
+const SOURCE_NAMES: Record<string, string> = {
+  glassdoor: 'glassdoor.com', indeed: 'indeed.com', reddit: 'reddit.com', linkedin: 'linkedin.com',
+  comparably: 'comparably.com', blind: 'teamblind.com', 'levels.fyi': 'levels.fyi', wikipedia: 'en.wikipedia.org',
+  youtube: 'youtube.com', instagram: 'instagram.com', facebook: 'facebook.com', tiktok: 'tiktok.com',
+  'built in': 'builtin.com', builtin: 'builtin.com', 'great place to work': 'greatplacetowork.com',
+  ambitionbox: 'ambitionbox.com', kununu: 'kununu.com', quora: 'quora.com', 'the muse': 'themuse.com',
+  fishbowl: 'fishbowlapp.com', 'hacker news': 'news.ycombinator.com', forbes: 'forbes.com',
+  'business insider': 'businessinsider.com', bloomberg: 'bloomberg.com', reuters: 'reuters.com',
+};
 
 function hostOf(url: string): string {
   try { return new URL(url).host.replace(/^www\./, ''); } catch { return ''; }
@@ -47,21 +63,24 @@ function SourceLinkInline({ href, children }: { href: string; children: React.Re
   );
 }
 
-// A named competitor: its logo next to the name.
-function CompetitorChip({ name }: { name: string }) {
+// A named company (competitor or the brand itself): its logo.dev mark next
+// to the name. A bare domain or a named source gets the same treatment with
+// the domain's logo.
+function LogoChip({ src, label, children }: { src: string; label: string; children: React.ReactNode }) {
   const [broken, setBroken] = useState(false);
-  const src = getCompetitorFavicon(name);
   return (
-    <span className="inline-flex items-center gap-1 align-baseline font-medium text-[#13274F]">
+    <span className="inline-flex items-center gap-1 align-baseline whitespace-nowrap font-medium text-[#13274F]">
       {src && !broken ? (
         <img src={src} alt="" className="h-[1em] w-[1em] rounded-sm object-contain" onError={() => setBroken(true)} />
       ) : (
-        <span className="inline-flex h-[1em] w-[1em] items-center justify-center rounded-sm bg-gray-200 text-[0.6em] text-gray-600">{name.charAt(0)}</span>
+        <span className="inline-flex h-[1em] w-[1em] items-center justify-center rounded-sm bg-gray-200 text-[0.6em] text-gray-600">{label.charAt(0)}</span>
       )}
-      {name}
+      {children}
     </span>
   );
 }
+const CompetitorChip = ({ name }: { name: string }) => <LogoChip src={getCompetitorFavicon(name)} label={name}>{name}</LogoChip>;
+const DomainChip = ({ domain, children }: { domain: string; children: React.ReactNode }) => <LogoChip src={getFavicon(domain)} label={domain}>{children}</LogoChip>;
 
 // A fenced px-* block → card (or a skeleton while it streams).
 function PxBlock({ lang, raw, onAsk }: { lang: string; raw: string; onAsk?: (q: string) => void }) {
@@ -78,6 +97,9 @@ function buildComponents(onAsk?: (q: string) => void): Components {
     a: ({ href, children }) => {
       if (typeof href === 'string' && href.startsWith(COMPETITOR_SCHEME)) {
         return <CompetitorChip name={decodeURIComponent(href.slice(COMPETITOR_SCHEME.length))} />;
+      }
+      if (typeof href === 'string' && href.startsWith(DOMAIN_SCHEME)) {
+        return <DomainChip domain={decodeURIComponent(href.slice(DOMAIN_SCHEME.length))}>{children}</DomainChip>;
       }
       return isHttpUrl(href) ? <SourceLinkInline href={href}>{children}</SourceLinkInline> : <span>{children}</span>;
     },
@@ -129,19 +151,50 @@ function buildComponents(onAsk?: (q: string) => void): Components {
   };
 }
 
-// Wraps every mention of a competitor the tools named this turn in a
-// `px-competitor:` link (rendered as a logo chip). Skips code, existing
-// links and URLs so nothing already linked is touched.
-function decorateCompetitors(markdown: string, competitors: string[] | undefined): string {
-  const names = (competitors ?? []).map(n => n.trim()).filter(n => n.length >= 2).sort((a, b) => b.length - a.length);
-  if (!names.length) return markdown;
-  const escaped = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const mention = new RegExp(`(^|[^\\w/@.-])(${escaped.join('|')})(?=$|[^\\w/.-])`, 'g');
-  const protectedRe = /(```[\s\S]*?```|`[^`\n]*`|\[[^\]\n]*\]\([^)\n]*\)|https?:\/\/\S+)/g;
-  return markdown
-    .split(protectedRe)
-    .map((seg, i) => (i % 2 === 1 ? seg : seg.replace(mention, (_m, pre, name) => `${pre}[${name}](${COMPETITOR_SCHEME}${encodeURIComponent(name)})`)))
-    .join('');
+// Code, existing links and URLs: never touched by the decorators below.
+const PROTECTED = /(```[\s\S]*?```|`[^`\n]*`|\[[^\]\n]*\]\([^)\n]*\)|https?:\/\/\S+)/g;
+const escapeRe = (s: string) => s.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&');
+
+// Runs a replacer over the plain-text segments of the markdown only.
+function decoratePlain(markdown: string, fn: (seg: string) => string): string {
+  return markdown.split(PROTECTED).map((seg, i) => (i % 2 === 1 ? seg : fn(seg))).join('');
+}
+
+// Bare domains: glassdoor.com, jobs.netflix.com, en.wikipedia.org, gov.uk.
+const DOMAIN_RE = /(^|[^\w/@.-])((?:[a-z0-9-]+\.)+(?:com|org|net|io|co|ai|app|fyi|dev|edu|gov|uk|de|fr|br|in|jp|ca|au|nl|es|it|se|ch|mx|ar|sg|ie|nz|pl|be|at|dk|no|fi|pt|za|kr|hk|tw|ph|id|my|th|vn|tr|ru|cz|hu|ro|gr|il|ae|sa|cl|pe))(?=$|[^\w/-])/gi;
+
+// Wraps every mention of a company (the competitors the tools named this
+// turn, plus the brand itself) in a px-competitor: link, and every bare
+// domain or named source in a px-domain: link — each rendered as a logo.dev
+// chip, in prose and in table cells alike.
+export function decorateEntities(markdown: string, competitors: string[] | undefined, brand: string | null | undefined, sourceDomains: string[]): string {
+  let out = markdown;
+
+  const names = [...(competitors ?? []), ...(brand ? [brand] : [])]
+    .map(n => n.trim()).filter(n => n.length >= 2).sort((a, b) => b.length - a.length);
+  if (names.length) {
+    const mention = new RegExp('(^|[^\\w/@.-])(' + names.map(escapeRe).join('|') + ')(?=$|[^\\w/.-])', 'g');
+    out = decoratePlain(out, seg => seg.replace(mention, (_m, pre, name) => pre + '[' + name + '](' + COMPETITOR_SCHEME + encodeURIComponent(name) + ')'));
+  }
+
+  out = decoratePlain(out, seg => seg.replace(DOMAIN_RE, (_m, pre, dom) => pre + '[' + dom + '](' + DOMAIN_SCHEME + encodeURIComponent(dom.toLowerCase()) + ')'));
+
+  // Named sources: the well-known ones, plus the domains behind this answer by their first label.
+  const named = new Map<string, string>(Object.entries(SOURCE_NAMES));
+  for (const d of sourceDomains) {
+    const host = d.replace(/^www\./, '');
+    const label = host.split('.')[0];
+    if (label.length >= 4 && !named.has(label)) named.set(label, host);
+  }
+  const keys = Array.from(named.keys()).sort((a, b) => b.length - a.length);
+  if (keys.length) {
+    const nameRe = new RegExp('(^|[^\\w/@.-])(' + keys.map(escapeRe).join('|') + ')(?=$|[^\\w/.-])', 'gi');
+    out = decoratePlain(out, seg => seg.replace(nameRe, (m, pre, name) => {
+      const dom = named.get(name.toLowerCase());
+      return dom ? pre + '[' + name + '](' + DOMAIN_SCHEME + encodeURIComponent(dom) + ')' : m;
+    }));
+  }
+  return out;
 }
 
 // Colours delta cells after render: red/green by sign, or the semantic
@@ -168,9 +221,10 @@ export function ChatMessage({ message, onAsk }: ChatMessageProps) {
   const statusText = message.statusText;
 
   const { body, context } = useMemo(() => (isUser ? { body: message.content, context: null } : extractContext(message.content)), [isUser, message.content]);
+  const sourceDomains = useMemo(() => Array.from(new Set((message.sources ?? []).map(s => s.domain).filter(Boolean))), [message.sources]);
   const decorated = useMemo(
-    () => (isUser || message.isStreaming ? body : decorateCompetitors(body, message.competitors)),
-    [isUser, message.isStreaming, body, message.competitors]
+    () => (isUser || message.isStreaming ? body : decorateEntities(body, message.competitors, message.scope?.company, sourceDomains)),
+    [isUser, message.isStreaming, body, message.competitors, message.scope?.company, sourceDomains]
   );
   const components = useMemo(() => buildComponents(onAsk), [onAsk]);
 
@@ -206,7 +260,7 @@ export function ChatMessage({ message, onAsk }: ChatMessageProps) {
         ) : (
           <>
             <div className="chat-message-content flex flex-col gap-4 break-words">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={urlTransform}>
                 {decorated}
               </ReactMarkdown>
             </div>
