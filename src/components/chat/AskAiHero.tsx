@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState, KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, ArrowUpRight } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCompany } from '@/contexts/CompanyContext';
-import { useStarterQuestions } from '@/hooks/useStarterQuestions';
 import { ASK_AI_ENABLED, greetingFor } from '@/lib/askAi';
 import type { ChatScope } from '@/services/chatService';
 import { BrandLogo, ScopePickers, useScopeOptions } from './ChatScopeBar';
-import { cn } from '@/lib/utils';
 
 interface AskAiHeroProps {
   companyName?: string;
@@ -19,15 +17,13 @@ interface AskAiHeroProps {
 
 // The overview's hero chat block (design handoff, "Overview"): greeting with
 // the company's logo, the ASK ABOUT scope chips (company · markets ·
-// functions, pre-ticked from the dashboard filters), the composer, and the
-// three data-grounded starters as quiet pills. Asking opens the Answer page
-// with the question already sent under that scope.
+// functions, pre-ticked from the dashboard filters) and the composer. Asking
+// opens the Answer page with the question already sent under that scope.
 export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { currentCompany } = useCompany();
   const organizationId = currentCompany?.organization_id;
-  const { starters, isLoading } = useStarterQuestions(organizationId);
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -116,24 +112,6 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
         </button>
       </div>
 
-      {/* Suggestion pills — three of the four starters; the visibility one is dropped here. */}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {starters.slice(1, 4).map((s, i) => (
-          <button
-            key={`${i}-${s.title}`}
-            type="button"
-            onClick={() => ask(s.title)}
-            title={s.sub || undefined}
-            className={cn(
-              'inline-flex h-[30px] max-w-full items-center gap-1.5 rounded-full border border-[#13274F]/[0.12] bg-white/80 px-[11px] text-[12.5px] text-gray-600 transition-colors hover:border-[#DB5E89] hover:text-[#13274F]',
-              isLoading && 'animate-pulse'
-            )}
-          >
-            <span className="truncate">{s.title}</span>
-            <ArrowUpRight className="h-3 w-3 flex-shrink-0 text-gray-400" />
-          </button>
-        ))}
-      </div>
     </section>
   );
 }

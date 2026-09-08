@@ -56,11 +56,6 @@ const navigationGroups: NavigationGroup[] = [
       // ChatGPT/Claude connector). Hidden by the VITE_ASK_AI_ENABLED kill switch.
       ...(ASK_AI_ENABLED ? [{ title: "Ask AI", icon: Sparkles, section: "chat", group: "analyze", route: "/chat" }] : []),
       { title: "Reports", icon: Download, section: "reports", group: "reports", route: "/analyze/reports" },
-    ]
-  },
-  {
-    title: "Monitoring",
-    items: [
       { title: "Prompts", icon: MessageSquare, section: "prompts", group: "monitor", route: "/monitor" },
     ]
   },
@@ -194,9 +189,9 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
             </div>
           )}
           {navigationGroups.map((group, groupIndex) => (
-            <SidebarGroup key={group.title} className={group.title === "Monitoring" ? "hidden sm:block" : ""}>
+            <SidebarGroup key={group.title} className="py-1">
               <SidebarGroupContent>
-                <div className="px-3 py-2">
+                <div className="px-3 pt-1 pb-1.5">
                   <div className="flex items-center gap-2">
                     <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
                       {group.title}
@@ -225,7 +220,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
             </SidebarGroup>
           ))}
         </SidebarContent>
-        <SidebarFooter className="p-4 flex flex-col gap-3">
+        <SidebarFooter className="p-4 pt-2 flex flex-col gap-2">
           {ASK_AI_ENABLED && (
             <button
               type="button"
@@ -237,14 +232,14 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block whitespace-nowrap text-[13px] font-semibold leading-[1.2] text-[#13274F]">Set up AI integrations</span>
-                <span className="mt-0.5 block text-[11px] leading-[1.3] text-[#6b7280] [@media(max-height:760px)]:hidden">Use PerceptionX in ChatGPT or any other AI</span>
+                <span className="mt-0.5 block text-[11px] leading-[1.3] text-[#6b7280] [@media(max-height:860px)]:hidden">Use PerceptionX in ChatGPT or any other AI</span>
               </span>
             </button>
           )}
           <button
             type="button"
             onClick={startWalkthrough}
-            className="group w-full text-left rounded-xl border border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/10 via-white to-[#13274F]/5 hover:from-[#0DBCBA]/15 hover:to-[#13274F]/10 hover:border-[#0DBCBA]/60 hover:shadow-md transition-all p-3 flex items-center gap-3"
+            className="[@media(max-height:740px)]:hidden group w-full text-left rounded-xl border border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/10 via-white to-[#13274F]/5 hover:from-[#0DBCBA]/15 hover:to-[#13274F]/10 hover:border-[#0DBCBA]/60 hover:shadow-md transition-all p-3 flex items-center gap-3"
           >
             <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[#0DBCBA] text-white shadow-sm group-hover:scale-105 transition-transform">
               <Compass className="h-5 w-5" />
@@ -253,7 +248,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
               <div className="text-sm font-semibold text-[#13274F] leading-tight">
                 Want a guided tour?
               </div>
-              <div className="text-[11px] text-gray-500 leading-tight mt-0.5">
+              <div className="text-[11px] text-gray-500 leading-tight mt-0.5 [@media(max-height:860px)]:hidden">
                 Try this — a 2 min walkthrough.
               </div>
             </div>
@@ -262,7 +257,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
             <button
               type="button"
               onClick={() => setInviteModalOpen(true)}
-              className="group w-full text-left rounded-xl border border-pink/30 bg-gradient-to-br from-pink/10 via-white to-[#13274F]/5 hover:from-pink/15 hover:to-[#13274F]/10 hover:border-pink/60 hover:shadow-md transition-all p-3 flex items-center gap-3"
+              className="[@media(max-height:740px)]:hidden group w-full text-left rounded-xl border border-pink/30 bg-gradient-to-br from-pink/10 via-white to-[#13274F]/5 hover:from-pink/15 hover:to-[#13274F]/10 hover:border-pink/60 hover:shadow-md transition-all p-3 flex items-center gap-3"
             >
               <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-pink text-white shadow-sm group-hover:scale-105 transition-transform">
                 <UserPlus className="h-5 w-5" />
@@ -271,7 +266,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
                 <div className="text-sm font-semibold text-[#13274F] leading-tight">
                   Invite teammates
                 </div>
-                <div className="text-[11px] text-gray-500 leading-tight mt-0.5">
+                <div className="text-[11px] text-gray-500 leading-tight mt-0.5 [@media(max-height:860px)]:hidden">
                   Bring your team onto the dashboard.
                 </div>
               </div>
