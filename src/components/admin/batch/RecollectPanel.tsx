@@ -377,9 +377,9 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
                       <Checkbox checked={selectedIds.has(c.companyId)} onCheckedChange={() => toggle(c.companyId)} />
                       <div className="flex-1 min-w-0">
                         <span className="text-sm font-medium truncate">{c.name}</span>
-                        {c.country && (
-                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0 ml-2">{c.country}</Badge>
-                        )}
+                        {c.countries.map((country) => (
+                          <Badge key={country} variant="secondary" className="text-[10px] px-1.5 py-0 ml-2">{country}</Badge>
+                        ))}
                       </div>
                       <div className="flex items-center gap-2 shrink-0 text-xs">
                         <span className="text-muted-foreground">{c.coveredCount}/{c.activeCount}</span>

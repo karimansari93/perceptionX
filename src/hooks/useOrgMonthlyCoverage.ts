@@ -18,6 +18,12 @@ export type CompanyCoverage = {
   companyId: string;
   name: string;
   industry: string | null;
+  // Every market the company has active prompts for (sorted, "Global" if the
+  // only location is the global one). A single company row can span several
+  // markets (e.g. PepsiCo: United States + Brazil + India), so callers should
+  // render this list rather than `country`.
+  countries: string[];
+  // First entry of `countries` — kept for callers that need a single label.
   country: string | null;
   activeCount: number;
   coveredCount: number;
@@ -134,18 +140,19 @@ export function useOrgMonthlyCoverage(organizationId: string, month: string) {
           const active = activeByCompany.get(c.id) || [];
           const missingPromptIds = active.filter((id) => !collected.has(id));
           const locs = locationsByCompany.get(c.id);
-          let country: string | null = null;
+          let countries: string[] = [];
           if (locs && locs.size > 0) {
-            const nonGlobal = [...locs].filter(
-              (l) => l !== 'GLOBAL' && l !== 'Global (All Countries)'
-            );
-            country = nonGlobal.length > 0 ? nonGlobal[0] : 'Global';
+            const nonGlobal = [...locs]
+              .filter((l) => l !== 'GLOBAL' && l !== 'Global (All Countries)')
+              .sort((a, b) => a.localeCompare(b));
+            countries = nonGlobal.length > 0 ? nonGlobal : ['Global'];
           }
           return {
             companyId: c.id,
             name: c.name,
             industry: c.industry,
-            country,
+            countries,
+            country: countries[0] ?? null,
             activeCount: active.length,
             coveredCount: active.length - missingPromptIds.length,
             missingCount: missingPromptIds.length,

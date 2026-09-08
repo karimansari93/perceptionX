@@ -14,6 +14,7 @@ export type OrgCompany = {
   createdAt: string | null;
   lastUpdated: string | null;
   country: string | null;
+  countries: string[];
 };
 
 type Props = {
@@ -106,12 +107,16 @@ export const CompanyMultiSelect = ({ organizationId, selectedIds, onSelectionCha
       setCompanies(
         companyData.map((c: any) => {
           const locations = locationMap.get(c.id);
-          // Pick the primary location (first non-GLOBAL, or GLOBAL if that's all there is)
-          let country: string | null = null;
+          // Every market the company has prompts for (sorted), or Global if
+          // that's all there is. One company can span several markets.
+          let countries: string[] = [];
           if (locations && locations.size > 0) {
-            const nonGlobal = [...locations].filter(l => l !== 'GLOBAL');
-            country = nonGlobal.length > 0 ? nonGlobal[0] : 'Global';
+            const nonGlobal = [...locations]
+              .filter(l => l !== 'GLOBAL' && l !== 'Global (All Countries)')
+              .sort((a, b) => a.localeCompare(b));
+            countries = nonGlobal.length > 0 ? nonGlobal : ['Global'];
           }
+          const country = countries[0] ?? null;
           return {
             id: c.id,
             name: c.name,
@@ -120,6 +125,7 @@ export const CompanyMultiSelect = ({ organizationId, selectedIds, onSelectionCha
             createdAt: c.created_at,
             lastUpdated: c.updated_at,
             country,
+            countries,
           };
         })
       );
@@ -189,11 +195,11 @@ export const CompanyMultiSelect = ({ organizationId, selectedIds, onSelectionCha
               />
               <div className="flex-1 min-w-0">
                 <span className="text-sm font-medium">{company.name}</span>
-                {company.country && (
-                  <Badge variant="secondary" className="text-[10px] ml-2 px-1.5 py-0">
-                    {company.country}
+                {company.countries.map((country) => (
+                  <Badge key={country} variant="secondary" className="text-[10px] ml-2 px-1.5 py-0">
+                    {country}
                   </Badge>
-                )}
+                ))}
                 {company.industry && (
                   <span className="text-xs text-muted-foreground ml-2">
                     {company.industry}
