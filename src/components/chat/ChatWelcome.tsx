@@ -57,7 +57,9 @@ export function ChatWelcome({
         <div className="mb-[26px] flex flex-col items-center gap-[14px] text-center">
           <img alt="" src="/logos/PinkBadge.png" className="h-11 w-11 object-contain" />
           <h2 className="font-headline text-[30px] font-semibold leading-tight tracking-[-0.02em] text-[#13274F]">{greeting}</h2>
-          <p className="text-sm text-gray-500">Answers are grounded in {brand}'s tracked prompts, scoped to the market and function below.</p>
+          <p className="max-w-[600px] text-sm text-gray-500">
+            Built on PerceptionX's own measurement of what ChatGPT, Perplexity and Google AI tell candidates about {brand} — the same numbers as your dashboard, linked to the pages those platforms cite.
+          </p>
         </div>
 
         {/* Composer card */}
