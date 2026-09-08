@@ -116,9 +116,9 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
         </button>
       </div>
 
-      {/* Suggestion pills */}
+      {/* Suggestion pills — three of the four starters; the visibility one is dropped here. */}
       <div className="mt-3 flex flex-wrap gap-2">
-        {starters.map((s, i) => (
+        {starters.slice(1, 4).map((s, i) => (
           <button
             key={`${i}-${s.title}`}
             type="button"
