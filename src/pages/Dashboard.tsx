@@ -804,9 +804,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           onLocationChange={activeSection === 'reports' ? undefined : handleLocationChange}
           onPendingLocationChange={activeSection === 'reports' ? undefined : setPendingLocation}
           locationOptions={activeSection === 'reports' ? undefined : locationOptions}
-          availablePeriods={activeSection === 'reports' ? undefined : availablePeriods}
-          selectedPeriod={activeSection === 'reports' ? undefined : selectedPeriod}
-          onPeriodChange={activeSection === 'reports' ? undefined : handlePeriodChange}
           jobFunctionOptions={activeSection === 'reports' ? undefined : jobFunctionOptions}
           selectedJobFunction={selectedJobFunction}
           onJobFunctionChange={activeSection === 'reports' ? undefined : handleJobFunctionChange}

@@ -253,7 +253,7 @@ export function WalkthroughProvider({ children }: { children: React.ReactNode })
       }
 
       // Target missing — could be a lazy chunk still loading, OR an element
-      // that never renders (e.g. PeriodSelector hides when only one period).
+      // that never renders (e.g. a filter that hides when it has one option).
       // Poll briefly for it; if it never appears, advance past the step
       // instead of looping forever.
       if (type === EVENTS.TARGET_NOT_FOUND) {

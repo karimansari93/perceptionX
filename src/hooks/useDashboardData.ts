@@ -1435,7 +1435,8 @@ export const useDashboardData = () => {
         // Normalize the stored location so legacy ISO codes ("US") and
         // canonical keys ("united states", "burbank") both resolve.
         next = canonicalizeLocationContext(starred.location);
-        if (starred.period) setSelectedPeriod(starred.period);
+        // The period is no longer restored: the dashboard always shows the
+        // latest measured period.
         // Legacy entry (no companyId): bind it to the company it just applied
         // on, so it stops leaking onto every other company from now on.
         if (starred.companyId == null) {
