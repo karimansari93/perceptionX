@@ -124,6 +124,23 @@ interface RequestLog {
   error: string | null;
 }
 
+// The finished answer goes into the thread from here, not from the browser:
+// a user who switches thread, leaves the page or closes the tab mid-answer
+// still finds it when they come back. The conversation must belong to the
+// caller (the id arrived in the request body).
+async function saveAssistantMessage(
+  admin: any, conversationId: string, userId: string, content: string, sources: unknown[],
+): Promise<void> {
+  const { data: convo } = await admin
+    .from('chat_conversations').select('id').eq('id', conversationId).eq('user_id', userId).maybeSingle();
+  if (!convo) { console.warn('assistant message not saved: conversation not owned by caller'); return; }
+  const { error } = await admin.from('chat_messages').insert({
+    conversation_id: conversationId, role: 'assistant', content, ...(sources.length ? { sources } : {}),
+  });
+  if (error) console.error('assistant message save failed:', error);
+  else await admin.from('chat_conversations').update({ updated_at: new Date().toISOString() }).eq('id', conversationId);
+}
+
 async function writeLog(admin: any, entry: RequestLog): Promise<void> {
   const { error } = await admin.from('chat_request_log').insert(entry);
   if (error) console.error('chat_request_log insert failed:', error.message);
@@ -234,6 +251,7 @@ serve(async (req) => {
       const sources = new Map<string, SourceLink>();
       const competitors = new Set<string>();
       let streamedText = '';
+      let sourceRows: unknown[] = [];
       const enqueue = (chunk: Uint8Array) => { if (!cancelled) { try { ctrl.enqueue(chunk); } catch { cancelled = true; } } };
       const finish = () => {
         if (cancelled) return;
@@ -331,6 +349,7 @@ serve(async (req) => {
             .sort((a, b) => (b.share ?? -1) - (a.share ?? -1))
             .slice(0, MAX_SOURCES)
             .map(({ title, url, domain, domainAnswers, domainPct }) => ({ title, url, domain, answers: domainAnswers ?? null, pct: domainPct ?? null }));
+          sourceRows = list;
           enqueue(sseEvent({ sources: list }));
         }
       } catch (err: any) {
@@ -344,6 +363,10 @@ serve(async (req) => {
       } finally {
         log.duration_ms = Date.now() - tStart;
         log.tool_names = Array.from(new Set(log.tool_names));
+        const answer = streamedText.trim() || (log.status === 'refusal' ? REFUSAL_TEXT : '');
+        if (log.conversation_id && answer && log.status !== 'error') {
+          await saveAssistantMessage(admin, log.conversation_id, auth.userId, answer, sourceRows);
+        }
         finish();
         console.log(`[${requestId}] chat done status=${log.status} rounds=${log.rounds} tools=${log.tool_names.join(',')} ttft=${log.first_token_ms}ms ms=${log.duration_ms}`);
         await writeLog(admin, log);
@@ -355,8 +378,10 @@ serve(async (req) => {
         runAnalyst(ctrl).catch(err => console.error(`[${requestId}] unhandled:`, err));
       },
       cancel() {
+        // The browser went away (thread switch, navigation, closed tab, Stop).
+        // Stop sending, but let the analyst finish so the answer is saved to
+        // the thread; it is there when the user comes back.
         cancelled = true;
-        try { current?.abort(); } catch { /* already finished */ }
       },
     });
 

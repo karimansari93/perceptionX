@@ -50,9 +50,20 @@ export function useChat() {
     }
   }, [organizationId, loadConversations]);
 
+  // Stops rendering an in-flight answer here. The server keeps going and
+  // saves the finished answer to its thread.
+  const cancelStream = useCallback(() => {
+    if (streamReaderRef.current) {
+      streamReaderRef.current.cancel();
+      streamReaderRef.current = null;
+    }
+  }, []);
+  useEffect(() => cancelStream, [cancelStream]);
+
   // Load a specific conversation
   const loadConversation = useCallback(async (conversationId: string) => {
     try {
+      cancelStream();
       setIsLoading(true);
       setError(null);
       const msgs = await loadConversationMessages(conversationId);
@@ -167,17 +178,9 @@ export function useChat() {
         }
       }
 
-      // Mark streaming as complete
+      // Mark streaming as complete. The answer itself is saved to the thread
+      // by chat-with-data, so leaving mid-stream loses nothing.
       patchLast({ content: fullResponse, statusText: undefined, isStreaming: false, sources, competitors });
-
-      // Save assistant message to DB
-      if (fullResponse && conversationId) {
-        try {
-          await saveMessage(conversationId, 'assistant', fullResponse, sources);
-        } catch (err) {
-          console.error('Failed to save assistant message:', err);
-        }
-      }
 
       // Update conversation title if this was the first exchange
       if (messages.length === 0 && conversationId) {
