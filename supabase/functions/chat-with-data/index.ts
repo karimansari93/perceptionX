@@ -330,7 +330,7 @@ serve(async (req) => {
           const list = Array.from(sources.values())
             .sort((a, b) => (b.share ?? -1) - (a.share ?? -1))
             .slice(0, MAX_SOURCES)
-            .map(({ title, url, domain, domainAnswers }) => ({ title, url, domain, answers: domainAnswers ?? null }));
+            .map(({ title, url, domain, domainAnswers, domainPct }) => ({ title, url, domain, answers: domainAnswers ?? null, pct: domainPct ?? null }));
           enqueue(sseEvent({ sources: list }));
         }
       } catch (err: any) {

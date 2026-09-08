@@ -154,18 +154,25 @@ function buildComponents(onAsk?: (q: string) => void): Components {
 const PROTECTED = /(```[\s\S]*?```|`[^`\n]*`|\[[^\]\n]*\]\([^)\n]*\)|https?:\/\/\S+)/g;
 const escapeRe = (s: string) => s.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&');
 
-// Runs a replacer over the plain-text segments of the markdown only.
+// Runs a replacer over the plain-text segments of table rows only: logos
+// belong in comparison tables, where a mark next to each name reads as a
+// column; in running prose they interrupt the sentence, and linked sources
+// already carry their favicon badge there.
+const TABLE_ROW = /^\s*\|/;
 function decoratePlain(markdown: string, fn: (seg: string) => string): string {
-  return markdown.split(PROTECTED).map((seg, i) => (i % 2 === 1 ? seg : fn(seg))).join('');
+  return markdown
+    .split('\n')
+    .map(line => (TABLE_ROW.test(line) ? line.split(PROTECTED).map((seg, i) => (i % 2 === 1 ? seg : fn(seg))).join('') : line))
+    .join('\n');
 }
 
 // Bare domains: glassdoor.com, jobs.netflix.com, en.wikipedia.org, gov.uk.
 const DOMAIN_RE = /(^|[^\w/@.-])((?:[a-z0-9-]+\.)+(?:com|org|net|io|co|ai|app|fyi|dev|edu|gov|uk|de|fr|br|in|jp|ca|au|nl|es|it|se|ch|mx|ar|sg|ie|nz|pl|be|at|dk|no|fi|pt|za|kr|hk|tw|ph|id|my|th|vn|tr|ru|cz|hu|ro|gr|il|ae|sa|cl|pe))(?=$|[^\w/-])/gi;
 
-// Wraps every mention of a company (the competitors the tools named this
-// turn, plus the brand itself) in a px-competitor: link, and every bare
-// domain or named source in a px-domain: link — each rendered as a logo.dev
-// chip, in prose and in table cells alike.
+// In table cells, wraps every mention of a company (the competitors the
+// tools named this turn, plus the brand itself) in a px-competitor: link,
+// and every bare domain or named source in a px-domain: link — each
+// rendered as a logo.dev chip.
 export function decorateEntities(markdown: string, competitors: string[] | undefined, brand: string | null | undefined, sourceDomains: string[]): string {
   let out = markdown;
 

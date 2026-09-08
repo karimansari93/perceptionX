@@ -5,7 +5,7 @@
 // the UI renders a sources footer from data rather than from the model's text
 // and the eval can check every link the analyst wrote against it.
 
-export interface SourceLink { title: string; url: string; domain: string; share?: number | null; domainAnswers?: number | null }
+export interface SourceLink { title: string; url: string; domain: string; share?: number | null; domainAnswers?: number | null; domainPct?: number | null }
 
 export function collectSources(payload: unknown, out: Map<string, SourceLink>): void {
   if (Array.isArray(payload)) { for (const v of payload) collectSources(v, out); return; }
@@ -13,6 +13,10 @@ export function collectSources(payload: unknown, out: Map<string, SourceLink>): 
   const obj = payload as Record<string, unknown>;
   if (typeof obj.domain === 'string' && Array.isArray(obj.top_pages)) {
     const domainAnswers = Number((obj.sample_size as any)?.answers_citing) || null;
+    // The domain's share of answers — the headline the UI shows (shares lead,
+    // counts nest). Whichever *_pct_of_*answers key the tool used.
+    const domainPctKey = Object.keys(obj).find(k => /_pct_of_.*answers$/.test(k));
+    const domainPct = domainPctKey && typeof obj[domainPctKey] === 'number' ? (obj[domainPctKey] as number) : null;
     for (const page of obj.top_pages as any[]) {
       const url = String(page?.url || '');
       if (!/^https?:\/\//i.test(url) || out.has(url)) continue;
@@ -24,6 +28,7 @@ export function collectSources(payload: unknown, out: Map<string, SourceLink>): 
         domain: obj.domain,
         share: shareKey ? (page[shareKey] as number | null) : null,
         domainAnswers,
+        domainPct,
       });
     }
   }

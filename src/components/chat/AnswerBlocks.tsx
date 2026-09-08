@@ -157,19 +157,20 @@ export function deltaClass(text: string, versusBrand: boolean): string {
   return positive ? 'text-[#16a34a] font-semibold' : 'text-[#dc2626] font-semibold';
 }
 
-// f. Sources — one pill per domain (favicon, domain, responses citing it).
+// f. Sources — one pill per domain (favicon, domain, share of answers citing it).
 export function SourcePills({ sources, content }: { sources: SourceLink[]; content: string }) {
   const [open, setOpen] = useState<string | null>(null);
-  const byDomain = new Map<string, { answers: number | null; pages: SourceLink[]; linked: boolean }>();
+  const byDomain = new Map<string, { answers: number | null; pct: number | null; pages: SourceLink[]; linked: boolean }>();
   for (const s of sources) {
-    const e = byDomain.get(s.domain) || { answers: null, pages: [], linked: false };
+    const e = byDomain.get(s.domain) || { answers: null, pct: null, pages: [], linked: false };
     e.pages.push(s);
     if (typeof s.answers === 'number' && s.answers > (e.answers ?? -1)) e.answers = s.answers;
+    if (typeof s.pct === 'number' && s.pct > (e.pct ?? -1)) e.pct = s.pct;
     if (content.includes(s.url)) e.linked = true;
     byDomain.set(s.domain, e);
   }
   const domains = Array.from(byDomain.entries())
-    .sort((a, b) => Number(b[1].linked) - Number(a[1].linked) || (b[1].answers ?? 0) - (a[1].answers ?? 0));
+    .sort((a, b) => Number(b[1].linked) - Number(a[1].linked) || (b[1].pct ?? 0) - (a[1].pct ?? 0) || (b[1].answers ?? 0) - (a[1].answers ?? 0));
   if (!domains.length) return null;
   const openEntry = open ? byDomain.get(open) : null;
   return (
@@ -187,7 +188,7 @@ export function SourcePills({ sources, content }: { sources: SourceLink[]; conte
             )}
           >
             <Favicon domain={domain} size="sm" className="flex-shrink-0 rounded-sm" />
-            <span>{domain}{e.answers !== null ? ` · ${e.answers.toLocaleString()} responses` : ''}</span>
+            <span>{domain}{e.pct !== null ? ` · ${e.pct}% of answers` : ''}</span>
           </button>
         ))}
       </div>
