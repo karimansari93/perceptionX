@@ -19,9 +19,10 @@ interface AskAiHeroProps {
 
 // The overview's hero chat block (design handoff, "Overview"): greeting with
 // the company's logo, the ASK ABOUT scope chips (company · markets ·
-// functions, pre-ticked from the dashboard filters), the composer, and the
-// three data-grounded starters as quiet pills. Asking opens the Answer page
-// with the question already sent under that scope.
+// functions, pre-ticked from the dashboard filters), the composer, and on
+// viewports taller than the smallest laptop three data-grounded starters as
+// quiet pills. Asking opens the Answer page with the question already sent
+// under that scope.
 export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -116,8 +117,8 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
         </button>
       </div>
 
-      {/* Suggestion pills — three of the four starters; the visibility one is dropped here. */}
-      <div className="mt-3 flex flex-wrap gap-2">
+      {/* Suggestion pills — three of the four starters; hidden on the smallest laptops so the overview fits one screen. */}
+      <div className="mt-3 hidden flex-wrap gap-2 [@media(min-height:800px)]:flex">
         {starters.slice(1, 4).map((s, i) => (
           <button
             key={`${i}-${s.title}`}

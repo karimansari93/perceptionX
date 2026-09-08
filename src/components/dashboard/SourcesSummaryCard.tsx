@@ -292,7 +292,7 @@ export const SourcesSummaryCard = ({
       : 0;
 
     return (
-      <div className="flex items-center justify-between py-2 hover:bg-gray-50/50 transition-colors rounded-lg px-2">
+      <div className="flex items-center justify-between py-1.5 hover:bg-gray-50/50 transition-colors rounded-lg px-2">
         {/* Source name and favicon */}
         <div className="flex items-center space-x-2 min-w-0 flex-1">
           <Favicon domain={source.domain} />
@@ -332,10 +332,10 @@ export const SourcesSummaryCard = ({
   if (topSources.length === 0) {
     return (
       <Card className="shadow-sm border border-gray-200">
-        <CardHeader className="pb-2 px-4 sm:px-6">
+        <CardHeader className="px-4 pt-[14px] pb-1.5">
           <CardTitle className="text-[15px] font-semibold text-[#13274F]">Sources</CardTitle>
         </CardHeader>
-        <CardContent className="px-4 sm:px-6">
+        <CardContent className="px-4 pb-2.5">
           {(responsesLoading || cubesLoading) && !domainPool ? (
             <div className="space-y-3 py-2" aria-busy="true">
               {[1, 2, 3, 4, 5].map(i => (
@@ -361,21 +361,21 @@ export const SourcesSummaryCard = ({
 
   return (
     <Card className="shadow-sm border border-gray-200">
-      <CardHeader className="pb-2 px-4 sm:px-6">
+      <CardHeader className="px-4 pt-[14px] pb-1.5">
         <div className="flex items-center justify-between">
           <CardTitle className="text-[15px] font-semibold text-[#13274F]">Sources</CardTitle>
           <Button
             variant="outline"
             size="sm"
             onClick={() => navigate('/dashboard/sources')}
-            className="text-xs"
+            className="h-7 rounded-full px-2.5 text-[11px]"
           >
             View All
             <ExternalLink className="w-3 h-3 ml-1" />
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="px-4 sm:px-6">
+      <CardContent className="px-4 pb-2.5">
         <div className="space-y-1">
           {topSources.map((source, idx) => (
             <div key={idx}>

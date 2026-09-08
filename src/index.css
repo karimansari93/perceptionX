@@ -181,14 +181,12 @@
 }
 
 /* Overview "one screen" mode (design handoff): on a desktop-sized viewport the
-   overview never scrolls — hero and score row are fixed, the summary row
-   takes the rest and its cards scroll inside themselves. Below that the page
-   reflows and scrolls normally. */
+   overview fits one screen when its content does; the summary cards keep
+   their natural height (no stretching). When it does not fit (five rows at
+   a lower height), the page scrolls — the cards never scroll inside
+   themselves. */
 @media (min-width: 1080px) and (min-height: 720px) {
-  .px-ov { height: 100%; overflow: hidden; }
-  .px-ov-summary { flex: 1 1 auto; min-height: 0; }
-  .px-ov-summary > .grid { height: 100%; min-height: 0; }
-  .px-ov-summary > .grid > div { min-height: 0; overflow-y: auto; }
+  .px-ov { min-height: 100%; }
 }
 
 /* What's-new modal: the "Ask AI answering" demo, one 9 s CSS loop. */
