@@ -1183,7 +1183,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
               <Skeleton className="h-8 w-20" />
             ) : (
               <>
-                <span className="font-headline text-[34px] font-bold leading-none tracking-[-0.03em] text-[#13274F] tabular-nums">{scorecardMetrics.perceptionScore}</span>
+                <span className="font-headline text-2xl font-bold leading-none tracking-[-0.02em] text-[#13274F] tabular-nums">{scorecardMetrics.perceptionScore}</span>
                 {epsDelta !== null && (
                   epsDelta === 0 ? (
                     <span className="ml-1 inline-flex items-center text-[13px] font-semibold text-gray-400"><Minus className="h-[13px] w-[13px]" /></span>
@@ -1271,9 +1271,9 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 return (
                   <div key={row.name} className={`flex min-h-0 flex-1 flex-col justify-center gap-1.5 ${i > 0 ? 'border-t border-[#13274F]/[0.08] pt-2' : 'pt-0.5'}`}>
                     <div className="flex items-center gap-2.5">
-                      <span className="w-[76px] text-[13px] font-medium text-gray-700">{row.name}</span>
-                      <span className="font-headline text-[19px] font-bold leading-none text-[#13274F] tabular-nums">{Math.round(row.value)}%</span>
-                      <span className="flex w-[38px] justify-end text-[11.5px] font-semibold tabular-nums">
+                      <span className="flex-1 text-[13px] font-medium text-gray-700">{row.name}</span>
+                      <span className="font-headline text-[15px] font-bold leading-none text-[#13274F] tabular-nums">{Math.round(row.value)}%</span>
+                      <span className="flex w-[34px] justify-end text-[11.5px] font-semibold tabular-nums">
                         {delta === null || delta === 0 ? (
                           <span className="text-gray-400">–</span>
                         ) : (
