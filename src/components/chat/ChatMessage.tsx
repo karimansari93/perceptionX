@@ -4,7 +4,6 @@ import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 import { cn } from '@/lib/utils';
 import { ExternalLink } from 'lucide-react';
-import { Favicon } from '@/components/ui/favicon';
 import { getCompetitorFavicon, getFavicon } from '@/utils/citationUtils';
 import type { ChatMessage as ChatMessageType } from '@/services/chatService';
 import { ScopeChips } from './ChatScopeBar';
@@ -56,7 +55,7 @@ function SourceLinkInline({ href, children }: { href: string; children: React.Re
       title={href}
       className="inline-flex max-w-full items-center gap-1 align-baseline rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[0.9em] leading-tight text-[#13274F] transition-colors hover:border-[#DB5E89]"
     >
-      <Favicon domain={hostOf(href)} size="sm" className="flex-shrink-0 rounded-sm" />
+      <img src={getFavicon(hostOf(href))} alt="" className="h-3 w-3 flex-shrink-0 rounded-sm object-contain" onError={e => { e.currentTarget.style.display = "none"; }} />
       <span className="truncate max-w-[22rem]">{children}</span>
       <ExternalLink className="h-3 w-3 flex-shrink-0 text-gray-400" />
     </a>

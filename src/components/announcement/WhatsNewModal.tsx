@@ -122,7 +122,7 @@ export function WhatsNewModal({ open, initialStep, onClose }: WhatsNewModalProps
                     <Sparkles className="h-[17px] w-[17px]" />
                   </span>
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-[#13274F]">Ask AI, on every dashboard</div>
+                    <div className="text-sm font-semibold text-[#13274F]">Ask AI inside PerceptionX</div>
                     <p className="mt-0.5 text-[13px] leading-[1.5] text-[#6b7280] [text-wrap:pretty]">
                       Ask about sentiment, sources, competitors or themes in plain language. Answers are scoped to the company, market and function you are looking at, and every one cites its sources.
                     </p>
@@ -152,7 +152,7 @@ export function WhatsNewModal({ open, initialStep, onClose }: WhatsNewModalProps
               {/* Actions */}
               <div className="flex gap-2.5 px-6 pb-5 pt-[18px]">
                 <button type="button" onClick={tryAskAi} className={navyBtn}>Try Ask AI</button>
-                <button type="button" onClick={() => setStep('form')} className={outlineBtn}>Tell us what you use</button>
+                <button type="button" onClick={() => setStep('form')} className={outlineBtn}>Set up in my AI assistant</button>
               </div>
             </>
           )}

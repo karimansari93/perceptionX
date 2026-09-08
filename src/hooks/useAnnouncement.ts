@@ -56,15 +56,12 @@ export interface IntegrationRequestInput {
   replyTo: string;
 }
 
-// The "which assistants does your team use?" form → integration_requests.
+// The "which assistants does your team use?" form → the integration-request
+// edge function, which stores the row and posts it to Slack.
 export async function submitIntegrationRequest(input: IntegrationRequestInput): Promise<void> {
-  const { error } = await supabase.from('integration_requests').insert({
-    user_id: input.userId,
-    organization_id: input.organizationId,
-    tools: input.tools,
-    other: input.other.trim(),
-    note: input.note.trim(),
-    reply_to: input.replyTo,
+  const { data, error } = await supabase.functions.invoke('integration-request', {
+    body: { organizationId: input.organizationId, tools: input.tools, other: input.other.trim(), note: input.note.trim() },
   });
   if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error || 'request failed');
 }
