@@ -281,7 +281,21 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
   };
 
   const normalizeResponsesOnce = (input: any[]): NormalizedResponse[] => {
-    return input.map((r) => {
+    // Count each response ONCE. stitchResponses used to append a second,
+    // attribute-shaped copy of the newest response per prompt × model (same
+    // id, same citations), which doubled every page and domain count for the
+    // latest wave while the previous wave stayed single, so the delta chips
+    // inflated one way (+124% on a page that really moved +12%). That is
+    // fixed at the source; this guard keeps the table honest if any caller
+    // ever hands this tab duplicate ids again. First occurrence wins.
+    const seenIds = new Set<string>();
+    const unique: any[] = [];
+    for (const r of input) {
+      if (!r?.id || seenIds.has(r.id)) continue;
+      seenIds.add(r.id);
+      unique.push(r);
+    }
+    return unique.map((r) => {
       let parsed: any = r.citations;
       if (typeof parsed === 'string') {
         try { parsed = JSON.parse(parsed); } catch { parsed = null; }

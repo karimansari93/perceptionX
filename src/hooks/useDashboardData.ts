@@ -234,52 +234,25 @@ const EMPTY_OBJECT = Object.freeze({});
 // rows get the reformatted duplicate entry the Thematic/Overview attribute
 // views consume.
 const stitchResponses = (rows: any[], prompts: any[]): PromptResponse[] => {
+  // One row per response, joined to its prompt. This used to ALSO append an
+  // "attribute-shaped" copy of the newest response per prompt × model (same
+  // id, same citations, a reshaped confirmed_prompts). That copy was never
+  // load-bearing — every attribute view reads the attribute rollups keyed by
+  // response_id — but it doubled the latest collection wave everywhere the
+  // raw list is counted (headline response count, citation totals, competitor
+  // and model counts, duplicated quotes, doubled modal rows) while older
+  // waves stayed single, so every current-vs-previous delta inflated one way.
+  // The copy also lacked attribute_id / prompt_theme and carried the prompt's
+  // company_id, so deprecated prompt sets leaked past isOverallCandidateExperience
+  // and location attribution split the pair. Return the base rows only.
   const promptById = new Map<string, any>(prompts.map(p => [p.id, p]));
-  const base: any[] = [];
+  const base: PromptResponse[] = [];
   for (const r of rows) {
     const prompt = promptById.get(r.confirmed_prompt_id);
     if (!prompt) continue;
     base.push({ ...r, confirmed_prompts: prompt });
   }
-
-  const attributeRaw = base.filter(r =>
-    r.confirmed_prompts?.attribute_id != null &&
-    (r.confirmed_prompts?.company_id == null || r.confirmed_prompts.company_id === r.company_id)
-  );
-  const attributeLatestMap = new Map<string, any>();
-  attributeRaw.forEach(response => {
-    const key = `${response.confirmed_prompt_id}_${response.ai_model}`;
-    if (!attributeLatestMap.has(key)) {
-      attributeLatestMap.set(key, response);
-    }
-  });
-  const attributeResponsesFormatted: PromptResponse[] = Array.from(attributeLatestMap.values()).map(response => {
-    const promptType = response.confirmed_prompts.prompt_type;
-    const attributeId = response.confirmed_prompts.attribute_id || promptType;
-    const promptText = response.confirmed_prompts?.prompt_text || `${promptType} analysis for ${attributeId}`;
-    return {
-      id: response.id,
-      confirmed_prompt_id: response.confirmed_prompt_id,
-      company_id: response.confirmed_prompts.company_id,
-      ai_model: response.ai_model,
-      response_text: response.response_text,
-      citations: response.citations,
-      tested_at: response.tested_at || response.updated_at || response.created_at,
-      response_month: response.response_month,
-      company_mentioned: response.company_mentioned,
-      detected_competitors: response.detected_competitors,
-      confirmed_prompts: {
-        prompt_text: promptText,
-        prompt_category: attributeId.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()),
-        prompt_type: promptType,
-        industry_context: response.confirmed_prompts.industry_context,
-        job_function_context: response.confirmed_prompts.job_function_context,
-        location_context: response.confirmed_prompts.location_context
-      }
-    };
-  });
-
-  return [...base, ...attributeResponsesFormatted];
+  return base;
 };
 
 // Sum MV rows by a key column (e.g. domain → citation_count). Needed wherever
@@ -2145,9 +2118,9 @@ export const useDashboardData = () => {
       const visibilityScore = typeof response.company_mentioned === 'boolean' ? (response.company_mentioned ? 100 : 0) : undefined;
       
       if (existing) {
-        // stitchResponses appends a reformatted duplicate row (same response
-        // id, same prompt) for attribute-tagged responses — count each
-        // RESPONSE once, but let the metadata backfills below still run.
+        // Defensive: count each RESPONSE once even if the stream ever hands
+        // us the same id twice (stitchResponses no longer duplicates rows),
+        // but let the metadata backfills below still run.
         const seenIds = (existing as any)._seenIds as Set<string>;
         const isDuplicateRow = seenIds.has(response.id);
         if (!isDuplicateRow) {
@@ -2340,8 +2313,9 @@ export const useDashboardData = () => {
     // (citation totals, day-grain trend inputs) come from here when the cube
     // has landed; the raw-row math below stays as the fallback for scopes
     // awaiting their first stats refresh. The cube covers all time (not just
-    // the eager stream window) and counts each response once (the raw path
-    // double-counts stitched attribute rows) — both deliberate corrections.
+    // the eager stream window) and counts each response once — both
+    // deliberate corrections (the raw path used to double-count the newest
+    // wave via stitched attribute copies; that is fixed at the source now).
     const statsSel: StatsSelection = {
       locationKey: selectedLocation && selectedLocationEntry ? selectedLocation : null,
       countryKeyByCompanyId,
