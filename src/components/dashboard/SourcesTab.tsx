@@ -282,14 +282,13 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
   };
 
   const normalizeResponsesOnce = (input: any[]): NormalizedResponse[] => {
-    // Count each response ONCE. The stream hands us stitchResponses' output,
-    // which appends a second, attribute-shaped copy of the newest response
-    // per prompt × model (same id, same citations). Left in, every page and
-    // domain count for the latest wave doubles while the previous wave — never
-    // the newest — stays single, so the delta chips inflate one way (+124%
-    // on a page that really moved +12%). The cube path already counts each
-    // response once; this brings the raw path in line. First occurrence wins,
-    // which is the un-stitched row carrying the prompt's real category.
+    // Count each response ONCE. stitchResponses used to append a second,
+    // attribute-shaped copy of the newest response per prompt × model (same
+    // id, same citations), which doubled every page and domain count for the
+    // latest wave while the previous wave stayed single, so the delta chips
+    // inflated one way (+124% on a page that really moved +12%). That is
+    // fixed at the source; this guard keeps the table honest if any caller
+    // ever hands this tab duplicate ids again. First occurrence wins.
     const seenIds = new Set<string>();
     const unique: any[] = [];
     for (const r of input) {
