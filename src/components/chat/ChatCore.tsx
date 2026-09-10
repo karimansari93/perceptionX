@@ -157,8 +157,8 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Thread bar */}
-      <div className="flex-none border-b border-gray-200/70 bg-white px-8 pb-3 pt-4">
-        <div className="mx-auto flex max-w-[760px] items-center gap-2.5">
+      <div className="flex-none border-b border-gray-200/70 bg-white px-4 pb-3 pt-3 sm:px-8">
+        <div className="flex items-center gap-2.5">
           <button type="button" onClick={newChat} className={pillClass}><ArrowLeft className="h-3.5 w-3.5" />New chat</button>
           <button type="button" onClick={() => setShowList(true)} className={pillClass}><History className="h-3.5 w-3.5" />All chats</button>
           <div className="flex-1" />
