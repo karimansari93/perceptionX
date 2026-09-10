@@ -5,7 +5,7 @@ import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-e
 import { COUNTRY_CODE_TO_NAME } from "../_shared/countries.ts";
 
 // OpenAI model for bulk industry collection. The client-facing collection path
-// (test-prompt-openai) deliberately runs gpt-5.5 to mirror ChatGPT's live
+// (test-prompt-openai) deliberately runs gpt-5.6-sol to mirror ChatGPT's live
 // default; this internal rankings pipeline just needs mention/citation data at
 // minimum cost, so it runs OpenAI's cheapest tier (nano) instead.
 const OPENAI_MODEL = "gpt-5-nano";

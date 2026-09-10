@@ -2,14 +2,16 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts"
 
-// Primary model: rolling `gpt-5.5` so we stay aligned with the model ChatGPT
-// actually serves by default (GPT-5.5 Instant became the ChatGPT default on
-// 2026-05-05). For GEO measurement, matching the live ChatGPT model is the
-// point — citations only mean something if they reflect what real users see.
-const PRIMARY_MODEL = 'gpt-5.5'
+// Primary model: `gpt-5.6-sol` (the GPT-5.6 flagship; `gpt-5.6` is an alias
+// for it) so we stay aligned with the model ChatGPT actually serves. The
+// GPT-5.6 family (Sol / Terra / Luna) went GA on 2026-07-09 and replaced
+// GPT-5.5 as the ChatGPT default. For GEO measurement, matching the live
+// ChatGPT model is the point — citations only mean something if they reflect
+// what real users see.
+const PRIMARY_MODEL = 'gpt-5.6-sol'
 // Fallbacks tried only if the primary is unavailable (e.g. future deprecation),
 // preserving the original "never silently degrade" intent while staying robust.
-const MODEL_FALLBACKS = ['gpt-5.2', 'gpt-4.1']
+const MODEL_FALLBACKS = ['gpt-5.5', 'gpt-5.2', 'gpt-4.1']
 
 const SYSTEM_INSTRUCTIONS =
   `You are a research assistant providing well-sourced, up-to-date information ` +
@@ -169,7 +171,7 @@ async function callOpenAIWebSearch(prompt: string, useWebSearch: boolean, modelO
   if (!apiKey) throw new Error('OPENAI_API_KEY not configured')
 
   // modelOverride forces a single exact model (used for A/B tests, e.g. comparing
-  // gpt-5.5 vs gpt-5.4-mini); without it we use the primary + fallback chain.
+  // gpt-5.6-sol vs gpt-5.6-terra); without it we use the primary + fallback chain.
   const models = modelOverride ? [modelOverride] : [PRIMARY_MODEL, ...MODEL_FALLBACKS]
 
   // One request at a specific service tier. `serviceTier` undefined = standard.
@@ -181,10 +183,12 @@ async function callOpenAIWebSearch(prompt: string, useWebSearch: boolean, modelO
       input: prompt,
       max_output_tokens: useWebSearch ? 4000 : 2000,
       // Low effort keeps grounded answers close to ChatGPT's default "Instant"
-      // experience; minimal effort keeps the no-search utility calls fast. Only
-      // the reasoning (gpt-5.x) models accept this parameter.
+      // experience; 'none' keeps the no-search utility calls fast. Only the
+      // reasoning (gpt-5.x) models accept this parameter, and gpt-5.5 / gpt-5.6
+      // accept none|low|medium|high|xhigh (5.6 adds max) — 'minimal' was
+      // dropped, so we use 'none' as the fastest setting.
       ...(model.startsWith('gpt-5')
-        ? { reasoning: { effort: useWebSearch ? 'low' : 'minimal' } }
+        ? { reasoning: { effort: useWebSearch ? 'low' : 'none' } }
         : {}),
       // search_context_size 'low' keeps real search + url_citation sources while
       // trimming the retrieved page content fed into the prompt.
