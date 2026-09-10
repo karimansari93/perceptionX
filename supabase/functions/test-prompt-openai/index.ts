@@ -2,18 +2,17 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
 import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts"
 
-// Primary model: `gpt-5.6-sol` (the GPT-5.6 flagship; `gpt-5.6` is an alias
-// for it) so we stay aligned with the model ChatGPT serves to paid users. The
-// GPT-5.6 family (Sol / Terra / Luna) went GA on 2026-07-09: Free and Go
-// tiers get Luna (fast everyday model, optional "Think" for more reasoning),
-// while Plus/Pro/Business get Sol. We track Sol because that is what the
-// professional audience our customers care about actually sees. For GEO
+// Primary model: `gpt-5.6-luna`, the model ChatGPT serves to Free and Go
+// users. The GPT-5.6 family (Sol / Terra / Luna) went GA on 2026-07-09: Free
+// and Go tiers get Luna (fast everyday model, optional "Think" for more
+// reasoning), while paid tiers get Sol. We track Luna because the bulk of
+// job seekers asking ChatGPT about employers are on the free tier. For GEO
 // measurement, matching the live ChatGPT model is the point — citations only
 // mean something if they reflect what real users see.
-const PRIMARY_MODEL = 'gpt-5.6-sol'
+const PRIMARY_MODEL = 'gpt-5.6-luna'
 // Fallbacks tried only if the primary is unavailable (e.g. future deprecation),
 // preserving the original "never silently degrade" intent while staying robust.
-const MODEL_FALLBACKS = ['gpt-5.5', 'gpt-5.2', 'gpt-4.1']
+const MODEL_FALLBACKS = ['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.2', 'gpt-4.1']
 
 const SYSTEM_INSTRUCTIONS =
   `You are a research assistant providing well-sourced, up-to-date information ` +
@@ -173,7 +172,7 @@ async function callOpenAIWebSearch(prompt: string, useWebSearch: boolean, modelO
   if (!apiKey) throw new Error('OPENAI_API_KEY not configured')
 
   // modelOverride forces a single exact model (used for A/B tests, e.g. comparing
-  // gpt-5.6-sol vs gpt-5.6-terra); without it we use the primary + fallback chain.
+  // gpt-5.6-luna vs gpt-5.6-sol); without it we use the primary + fallback chain.
   const models = modelOverride ? [modelOverride] : [PRIMARY_MODEL, ...MODEL_FALLBACKS]
 
   // One request at a specific service tier. `serviceTier` undefined = standard.
