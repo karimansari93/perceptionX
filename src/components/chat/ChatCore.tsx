@@ -91,12 +91,13 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
   const [justAsked, setJustAsked] = useState(false);
   useEffect(() => {
     const prev = prevRef.current;
-    if (messages.length > 0 && prev.count === 0) {
-      setJustAsked(false);
-      messagesEndRef.current?.scrollIntoView({ block: 'end' });
-    } else if (lastUserIdx > prev.lastUserIdx) {
+    const justSent = lastUserIdx > prev.lastUserIdx && lastUserIdx === messages.length - 1;
+    if (justSent) {
       setJustAsked(true);
       requestAnimationFrame(() => lastUserRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    } else if (messages.length > 0 && prev.count === 0) {
+      setJustAsked(false);
+      messagesEndRef.current?.scrollIntoView({ block: 'end' });
     }
     prevRef.current = { count: messages.length, lastUserIdx };
   }, [messages.length, lastUserIdx]);

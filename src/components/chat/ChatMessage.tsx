@@ -1,9 +1,9 @@
-import { useMemo } from 'react';
+import { Children, createContext, isValidElement, useContext, useMemo, useRef } from 'react';
+import * as HoverCardPrimitive from '@radix-ui/react-hover-card';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 import { cn } from '@/lib/utils';
-import { ExternalLink } from 'lucide-react';
 import { Favicon } from '@/components/ui/favicon';
 import { competitorDomain } from '@/utils/citationUtils';
 import type { ChatMessage as ChatMessageType } from '@/services/chatService';
@@ -41,26 +41,99 @@ function hostOf(url: string): string {
   try { return new URL(url).host.replace(/^www\./, ''); } catch { return ''; }
 }
 
+// The short name a citation pill shows for a host: a known brand's own
+// spelling, else the registrable label capitalised ("careers.ford.com" →
+// "Ford", "reviews.canadastop100.com" → "Canadastop100").
+const SITE_LABELS: Record<string, string> = {
+  glassdoor: 'Glassdoor', indeed: 'Indeed', linkedin: 'LinkedIn', reddit: 'Reddit', youtube: 'YouTube', tiktok: 'TikTok',
+  instagram: 'Instagram', facebook: 'Facebook', teamblind: 'Blind', kununu: 'Kununu', comparably: 'Comparably',
+  ambitionbox: 'AmbitionBox', greatplacetowork: 'Great Place To Work', builtin: 'Built In', wikipedia: 'Wikipedia',
+  levels: 'Levels.fyi', ycombinator: 'Hacker News', quora: 'Quora', themuse: 'The Muse', fishbowlapp: 'Fishbowl',
+  prosple: 'Prosple', seek: 'SEEK', canadastop100: "Canada's Top 100", tagesschau: 'Tagesschau', gov: 'GOV.UK',
+  forbes: 'Forbes', bloomberg: 'Bloomberg', reuters: 'Reuters', businessinsider: 'Business Insider', ft: 'FT',
+  nytimes: 'NYT', theguardian: 'The Guardian', bbc: 'BBC', cnbc: 'CNBC', wsj: 'WSJ', medium: 'Medium', github: 'GitHub',
+};
+const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'gov', 'ac', 'edu']);
+export function siteLabel(host: string): string {
+  const parts = host.toLowerCase().split('.').filter(Boolean);
+  if (parts.length < 2) return host;
+  // Registrable label: the part before the TLD, skipping a second-level
+  // suffix such as ".com.br" or ".co.uk".
+  let idx = parts.length - 2;
+  if (parts.length >= 3 && SECOND_LEVEL.has(parts[idx]) && parts[parts.length - 1].length === 2) idx -= 1;
+  const label = parts[idx];
+  if (SITE_LABELS[label]) return SITE_LABELS[label];
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 const textOf = (children: unknown): string =>
   Array.isArray(children) ? children.map(textOf).join('') : typeof children === 'string' ? children : '';
 
 // ─── Inline decorations ─────────────────────────────────────────────────────
 
-// A linked source: favicon + title, opens the exact returned URL in a new tab.
+// A list item that is nothing but a link ("which pages…?" answers) shows
+// the citation in full — title and URL — instead of a pill.
+const FullCitation = createContext(false);
+
+// A citation: a small pill with the site's favicon and name, after the
+// sentence it supports; hovering shows the page title and URL. In a link
+// list it shows the full title with the URL underneath. Either way it
+// opens the exact returned URL in a new tab.
 function SourceLinkInline({ href, children }: { href: string; children: React.ReactNode }) {
+  const host = hostOf(href);
+  const label = siteLabel(host);
+  const title = textOf(children).trim();
+  const hasTitle = !!title && title !== href;
+  if (useContext(FullCitation)) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className="group inline-flex max-w-full flex-col gap-0.5 no-underline">
+        <span className="inline-flex items-center gap-1.5 text-[14.5px] text-[#13274F] group-hover:underline">
+          <Favicon domain={host} size="sm" className="flex-shrink-0 rounded-sm" />
+          <span>{hasTitle ? title : label}</span>
+        </span>
+        <span className="truncate pl-[18px] text-[12px] text-gray-400">{href}</span>
+      </a>
+    );
+  }
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={href}
-      className="inline-flex max-w-full items-center gap-1 align-baseline rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[0.9em] leading-tight text-[#13274F] transition-colors hover:border-[#DB5E89]"
-    >
-      <Favicon domain={hostOf(href)} size="sm" className="flex-shrink-0 rounded-sm" />
-      <span className="truncate max-w-[22rem]">{children}</span>
-      <ExternalLink className="h-3 w-3 flex-shrink-0 text-gray-400" />
-    </a>
+    <HoverCardPrimitive.Root openDelay={150} closeDelay={80}>
+      <HoverCardPrimitive.Trigger asChild>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mx-0.5 inline-flex h-[19px] max-w-full items-center gap-1 rounded-full bg-gray-100 px-1.5 align-[2px] text-[11px] font-medium leading-none text-gray-600 no-underline transition-colors hover:bg-gray-200 hover:text-[#13274F]"
+        >
+          <Favicon domain={host} size="sm" className="flex-shrink-0 rounded-sm" />
+          <span className="truncate">{label}</span>
+        </a>
+      </HoverCardPrimitive.Trigger>
+      <HoverCardPrimitive.Portal>
+        <HoverCardPrimitive.Content
+          side="bottom"
+          align="start"
+          sideOffset={6}
+          className="z-50 w-[320px] rounded-xl border border-gray-200 bg-white p-3 shadow-[0_12px_32px_rgba(19,39,79,.14)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+        >
+          <div className="flex items-center gap-1.5 text-[11px] text-gray-500">
+            <Favicon domain={host} size="sm" className="flex-shrink-0 rounded-sm" />
+            <span>{label}</span>
+          </div>
+          {hasTitle && <div className="mt-1.5 line-clamp-2 text-[13px] font-semibold leading-snug text-[#13274F]">{title}</div>}
+          <a href={href} target="_blank" rel="noopener noreferrer" className="mt-1.5 block truncate text-[11.5px] text-gray-400 hover:text-[#13274F] hover:underline">{href}</a>
+        </HoverCardPrimitive.Content>
+      </HoverCardPrimitive.Portal>
+    </HoverCardPrimitive.Root>
   );
+}
+
+// True when a list item holds a single link and nothing else worth a word
+// (whitespace, a trailing full stop): the analyst is listing pages.
+function isLinkOnlyItem(children: React.ReactNode): boolean {
+  const kids = Children.toArray(children).filter(c => !(typeof c === 'string' && c.trim().replace(/[.,;:]/g, '') === ''));
+  if (kids.length !== 1) return false;
+  const only = kids[0];
+  return isValidElement(only) && typeof (only.props as any)?.href === 'string' && /^https?:\/\//i.test((only.props as any).href);
 }
 
 // A named company (competitor or the brand itself): its logo.dev mark next
@@ -81,9 +154,14 @@ function LogoChip({ domain, label, children }: { domain: string; label: string; 
 const CompetitorChip = ({ name }: { name: string }) => <LogoChip domain={competitorDomain(name)} label={name}>{name}</LogoChip>;
 const DomainChip = ({ domain, children }: { domain: string; children: React.ReactNode }) => <LogoChip domain={domain} label={domain}>{children}</LogoChip>;
 
-// A fenced px-* block → card (or a skeleton while it streams).
+// A fenced px-* block → card. While the block streams, its JSON parses on
+// some chunks and not on others; the card keeps the last parse that worked
+// instead of blinking to a skeleton, which only shows before the first one.
 function PxBlock({ lang, raw, onAsk }: { lang: string; raw: string; onAsk?: (q: string) => void }) {
-  const data = parseBlock(lang, raw);
+  const parsed = parseBlock(lang, raw);
+  const lastGood = useRef<unknown>(null);
+  if (parsed !== null) lastGood.current = parsed;
+  const data = parsed ?? lastGood.current;
   if (data === null) return <BlockSkeleton />;
   if (lang === 'stats') return <StatTiles data={data} />;
   if (lang === 'bars') return <ContributionBars data={data} />;
@@ -109,7 +187,11 @@ function buildComponents(onAsk?: (q: string) => void): Components {
     h4: ({ children }) => <h5 className="text-sm font-semibold text-[#13274F]">{children}</h5>,
     ul: ({ children }) => <ul className="list-disc space-y-1 pl-5 text-[14.5px] leading-[1.6] text-[#13274F]">{children}</ul>,
     ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5 text-[14.5px] leading-[1.6] text-[#13274F]">{children}</ol>,
-    li: ({ children }) => <li>{children}</li>,
+    li: ({ children }) => (
+      isLinkOnlyItem(children)
+        ? <li className="list-none -ml-5"><FullCitation.Provider value={true}>{children}</FullCitation.Provider></li>
+        : <li>{children}</li>
+    ),
     strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
     em: ({ children }) => <em>{children}</em>,
     blockquote: ({ children }) => <blockquote className="border-l-2 border-[#0DBCBA]/60 pl-3 text-gray-600 italic">{children}</blockquote>,

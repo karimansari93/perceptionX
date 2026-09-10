@@ -14,8 +14,9 @@ import type { SourceLink } from '@/services/chatService';
 export const PX_BLOCK = /language-px-(context|stats|bars|followups)/;
 export const PX_CONTEXT_FENCE = /```px-context\s*\n([\s\S]*?)```/;
 
-// The model occasionally drops the final "}" or "]" of a block; close any
-// brackets still open (outside strings) before giving up.
+// A block that is still streaming (or that the model cut short) stops
+// mid-string or mid-bracket; close the open string, then every bracket
+// still open, before giving up.
 function closeBrackets(s: string): string {
   const stack: string[] = [];
   let inStr = false, esc = false;
@@ -26,7 +27,8 @@ function closeBrackets(s: string): string {
     else if (ch === '[') stack.push(']');
     else if (ch === '}' || ch === ']') stack.pop();
   }
-  return s + stack.reverse().join('');
+  const closeString = inStr ? (esc ? '""' : '"') : '';
+  return s + closeString + stack.reverse().join('');
 }
 
 export function parseBlock(_lang: string, raw: string): unknown | null {
