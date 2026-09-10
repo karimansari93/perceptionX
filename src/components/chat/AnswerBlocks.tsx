@@ -157,9 +157,16 @@ export function deltaClass(text: string, versusBrand: boolean): string {
   return positive ? 'text-[#16a34a] font-semibold' : 'text-[#dc2626] font-semibold';
 }
 
-// f. Sources — one pill per domain (favicon, domain, share of answers citing it).
+// f. Sources — one quiet line under the answer. The answer links its sources
+// inline, so this strip only lists the domains it actually cited (else the
+// five biggest), as favicon chips; "+N more" expands to every domain the
+// tools returned. A chip opens that domain's pages; its share of answers sits
+// in the tooltip and the page list header rather than on every chip.
+const PRIMARY_WHEN_NOTHING_LINKED = 5;
+
 export function SourcePills({ sources, content }: { sources: SourceLink[]; content: string }) {
   const [open, setOpen] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const byDomain = new Map<string, { answers: number | null; pct: number | null; pages: SourceLink[]; linked: boolean }>();
   for (const s of sources) {
     const e = byDomain.get(s.domain) || { answers: null, pct: null, pages: [], linked: false };
@@ -172,38 +179,61 @@ export function SourcePills({ sources, content }: { sources: SourceLink[]; conte
   const domains = Array.from(byDomain.entries())
     .sort((a, b) => Number(b[1].linked) - Number(a[1].linked) || (b[1].pct ?? 0) - (a[1].pct ?? 0) || (b[1].answers ?? 0) - (a[1].answers ?? 0));
   if (!domains.length) return null;
+
+  const linked = domains.filter(([, e]) => e.linked);
+  const primary = linked.length ? linked : domains.slice(0, PRIMARY_WHEN_NOTHING_LINKED);
+  const hidden = domains.length - primary.length;
+  const shown = expanded ? domains : primary;
   const openEntry = open ? byDomain.get(open) : null;
+
   return (
     <div className={rise}>
-      <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-400">Sources</div>
-      <div className="flex flex-wrap gap-2">
-        {domains.map(([domain, e]) => (
+      <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
+        <span className="mr-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400">Sources</span>
+        {shown.map(([domain, e]) => (
           <button
             key={domain}
             type="button"
             onClick={() => setOpen(open === domain ? null : domain)}
+            title={e.pct !== null ? `${domain} · ${e.pct}% of answers` : domain}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[5px] text-xs transition-colors',
-              open === domain ? 'border-[#DB5E89] text-[#13274F]' : 'border-gray-200 text-gray-600 hover:border-[#DB5E89] hover:text-[#13274F]'
+              'inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11.5px] transition-colors',
+              open === domain ? 'bg-[#DB5E89]/[0.08] text-[#13274F]' : 'text-gray-600 hover:bg-gray-100 hover:text-[#13274F]'
             )}
           >
             <Favicon domain={domain} size="sm" className="flex-shrink-0 rounded-sm" />
-            <span>{domain}{e.pct !== null ? ` · ${e.pct}% of answers` : ''}</span>
+            <span>{domain}</span>
           </button>
         ))}
+        {hidden > 0 && (
+          <button
+            type="button"
+            onClick={() => { setExpanded(x => !x); if (expanded) setOpen(null); }}
+            className="inline-flex h-6 items-center rounded-md px-1.5 text-[11.5px] text-gray-400 transition-colors hover:bg-gray-100 hover:text-[#13274F]"
+          >
+            {expanded ? 'Show fewer' : `+${hidden} more`}
+          </button>
+        )}
       </div>
       {open && openEntry && (
-        <ul className="mt-2 space-y-1 rounded-xl border border-gray-200 bg-white px-3 py-2">
-          {openEntry.pages.map(p => (
-            <li key={p.url} className="min-w-0">
-              <a href={p.url} target="_blank" rel="noopener noreferrer" title={p.url}
-                 className="group inline-flex min-w-0 items-center gap-1.5 text-xs text-gray-600 hover:text-[#13274F]">
-                <span className="truncate max-w-[28rem]">{p.title || p.url}</span>
-                <ExternalLink className="h-3 w-3 flex-shrink-0 text-gray-400 group-hover:text-[#13274F]" />
-              </a>
-            </li>
-          ))}
-        </ul>
+        <div className="mt-2 rounded-xl border border-gray-200 bg-white px-3 py-2">
+          <div className="mb-1 flex items-center gap-1.5 text-[11px] text-gray-400">
+            <Favicon domain={open} size="sm" className="flex-shrink-0 rounded-sm" />
+            <span className="font-medium text-gray-600">{open}</span>
+            {openEntry.pct !== null && <span>· cited in {openEntry.pct}% of answers</span>}
+          </div>
+          <ul className="space-y-1">
+            {openEntry.pages.map(p => (
+              <li key={p.url} className="min-w-0">
+                <a href={p.url} target="_blank" rel="noopener noreferrer" title={p.url}
+                   className="group inline-flex min-w-0 items-center gap-1.5 text-xs text-gray-600 hover:text-[#13274F]">
+                  <span className="truncate max-w-[28rem]">{p.title || p.url}</span>
+                  <ExternalLink className="h-3 w-3 flex-shrink-0 text-gray-400 group-hover:text-[#13274F]" />
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
