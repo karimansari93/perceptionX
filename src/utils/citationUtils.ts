@@ -114,22 +114,22 @@ export const getEmailDomainFavicon = (email: string): string => {
   return domain ? getFavicon(domain) : '';
 };
 
-export const getCompetitorFavicon = (competitorName: string): string => {
+// The domain a competitor's mark is looked up under: "General Motors" →
+// generalmotors.com. Conservative — only simple, short names get a guess.
+export const competitorDomain = (competitorName: string): string => {
   if (!competitorName) return '';
-  
-  // For competitor names, we'll use a more conservative approach
-  // Only create domains for simple, short names that are likely to exist
   const cleanName = competitorName.trim().toLowerCase()
     .replace(/\s+/g, '') // Remove spaces
     .replace(/[^a-z0-9-]/g, '') // Remove special characters except hyphens
     .replace(/-+/g, '-') // Replace multiple hyphens with single
     .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
-  
-  // Only create domain if we have a valid, reasonably short name
   if (cleanName.length === 0 || cleanName.length > 20) return '';
-  
-  const domain = `${cleanName}.com`;
-  return getFavicon(domain);
+  return `${cleanName}.com`;
+};
+
+export const getCompetitorFavicon = (competitorName: string): string => {
+  const domain = competitorDomain(competitorName);
+  return domain ? getFavicon(domain) : '';
 };
 
 // Treat domain as missing when it's empty or the literal "unknown" (e.g. from ChatGPT citations)

@@ -58,7 +58,7 @@ export function ChatWelcome({
           </span>
           <h2 className="font-headline text-[30px] font-semibold leading-tight tracking-[-0.02em] text-[#13274F]">{greeting}</h2>
           <p className="max-w-[600px] text-sm text-gray-500">
-            Built on PerceptionX's own measurement of what ChatGPT, Perplexity and Google AI tell candidates about {brand} — the same numbers as your dashboard, linked to the pages those platforms cite.
+            Everything AI tells candidates about working at {brand} — sentiment, sources, competitors and themes, by market and job function — measured by PerceptionX and matched to your dashboard.
           </p>
         </div>
 

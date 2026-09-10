@@ -79,8 +79,28 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
   }, [conversations, loadConversation]);
   const newChat = useCallback(() => { setShowList(false); startNewConversation(); }, [startNewConversation]);
 
+  // Scrolling, the way chat apps do it: a question you just sent is pinned
+  // to the top of the thread and the answer grows below it without moving
+  // the viewport; an opened thread starts at its end. Nothing follows the
+  // stream. The spacer under the last turn is what lets a short question
+  // reach the top.
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  const lastUserRef = useRef<HTMLDivElement>(null);
+  const lastUserIdx = useMemo(() => messages.map(m => m.role).lastIndexOf('user'), [messages]);
+  const prevRef = useRef({ count: 0, lastUserIdx: -1 });
+  const [justAsked, setJustAsked] = useState(false);
+  useEffect(() => {
+    const prev = prevRef.current;
+    const justSent = lastUserIdx > prev.lastUserIdx && lastUserIdx === messages.length - 1;
+    if (justSent) {
+      setJustAsked(true);
+      requestAnimationFrame(() => lastUserRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    } else if (messages.length > 0 && prev.count === 0) {
+      setJustAsked(false);
+      messagesEndRef.current?.scrollIntoView({ block: 'end' });
+    }
+    prevRef.current = { count: messages.length, lastUserIdx };
+  }, [messages.length, lastUserIdx]);
 
   // A question handed over from the overview chat box: send it once, as its
   // own new conversation, as soon as the org is known.
@@ -137,13 +157,13 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Thread bar */}
-      <div className="flex-none px-8 pt-4">
-        <div className="mx-auto flex max-w-[760px] items-center gap-2.5">
+      <div className="flex-none border-b border-gray-200/70 bg-white px-4 pb-3 pt-3 sm:px-8">
+        <div className="flex items-center gap-2.5">
           <button type="button" onClick={newChat} className={pillClass}><ArrowLeft className="h-3.5 w-3.5" />New chat</button>
           <button type="button" onClick={() => setShowList(true)} className={pillClass}><History className="h-3.5 w-3.5" />All chats</button>
           <div className="flex-1" />
           {current && (
-            <span className="truncate text-xs text-gray-400">{current.title} · {relativeAge(current.updated_at)} ago</span>
+            <span className="truncate text-xs text-gray-400">{current.title} · {scopeSummary(scope)} · {relativeAge(current.updated_at)} ago</span>
           )}
         </div>
       </div>
@@ -152,7 +172,9 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-[760px] flex-col gap-6 px-8 pb-6 pt-6">
           {messages.map((msg, i) => (
-            <ChatMessage key={msg.id ?? i} message={msg} onAsk={send} />
+            <div key={msg.id ?? i} ref={i === lastUserIdx ? lastUserRef : undefined} className="scroll-mt-6">
+              <ChatMessage message={msg} onAsk={send} />
+            </div>
           ))}
           {error && (
             <div className="flex items-center gap-3 text-sm text-[#dc2626]">
@@ -163,6 +185,7 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
               )}
             </div>
           )}
+          {justAsked && <div aria-hidden="true" className="h-[55vh] flex-none" />}
           <div ref={messagesEndRef} />
         </div>
       </div>
