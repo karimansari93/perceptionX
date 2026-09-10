@@ -3,11 +3,13 @@ import { corsHeaders } from "../_shared/cors.ts"
 import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts"
 
 // Primary model: `gpt-5.6-sol` (the GPT-5.6 flagship; `gpt-5.6` is an alias
-// for it) so we stay aligned with the model ChatGPT actually serves. The
-// GPT-5.6 family (Sol / Terra / Luna) went GA on 2026-07-09 and replaced
-// GPT-5.5 as the ChatGPT default. For GEO measurement, matching the live
-// ChatGPT model is the point — citations only mean something if they reflect
-// what real users see.
+// for it) so we stay aligned with the model ChatGPT serves to paid users. The
+// GPT-5.6 family (Sol / Terra / Luna) went GA on 2026-07-09: Free and Go
+// tiers get Luna (fast everyday model, optional "Think" for more reasoning),
+// while Plus/Pro/Business get Sol. We track Sol because that is what the
+// professional audience our customers care about actually sees. For GEO
+// measurement, matching the live ChatGPT model is the point — citations only
+// mean something if they reflect what real users see.
 const PRIMARY_MODEL = 'gpt-5.6-sol'
 // Fallbacks tried only if the primary is unavailable (e.g. future deprecation),
 // preserving the original "never silently degrade" intent while staying robust.
