@@ -7,7 +7,6 @@ import { cn } from '@/lib/utils';
 import { Favicon } from '@/components/ui/favicon';
 import { competitorDomain } from '@/utils/citationUtils';
 import type { ChatMessage as ChatMessageType } from '@/services/chatService';
-import { ScopeChips } from './ChatScopeBar';
 import {
   BlockSkeleton, ContributionBars, FollowUps, PX_BLOCK, SourcePills, StatTiles,
   deltaClass, extractContext, isDeltaText, parseBlock,
@@ -330,14 +329,6 @@ export function ChatMessage({ message, onAsk }: ChatMessageProps) {
     <div className="flex gap-3">
       <img alt="" src="/logos/PinkBadge.png" className="mt-0.5 h-[26px] w-[26px] flex-none object-contain" />
       <div className="flex min-w-0 flex-1 flex-col gap-4" ref={colourDeltas}>
-        {/* a. Scope row */}
-        {message.scope && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="mr-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[#DB5E89]">Scope</span>
-            <ScopeChips scope={message.scope} period={context?.period ?? null} answers={context?.answers ?? null} />
-          </div>
-        )}
-
         {isWaiting ? (
           <div className="flex items-center gap-2 text-[13px] text-gray-500">
             <span>Thinking</span>
@@ -355,8 +346,12 @@ export function ChatMessage({ message, onAsk }: ChatMessageProps) {
             {working && (
               <div className="text-xs text-gray-500">Thinking…</div>
             )}
-            {!message.isStreaming && message.sources && message.sources.length > 0 && (
-              <SourcePills sources={message.sources} content={message.content} />
+            {!message.isStreaming && (
+              <SourcePills
+                sources={message.sources ?? []}
+                content={message.content}
+                caption={[context?.period, typeof context?.answers === 'number' ? `${context.answers.toLocaleString()} responses` : null].filter(Boolean).join(' · ') || null}
+              />
             )}
           </>
         )}

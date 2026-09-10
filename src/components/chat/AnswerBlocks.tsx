@@ -168,7 +168,7 @@ export function deltaClass(text: string, versusBrand: boolean): string {
 // in the tooltip and the page list header rather than on every chip.
 const PRIMARY_WHEN_NOTHING_LINKED = 5;
 
-export function SourcePills({ sources, content }: { sources: SourceLink[]; content: string }) {
+export function SourcePills({ sources, content, caption }: { sources: SourceLink[]; content: string; caption?: string | null }) {
   const [open, setOpen] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const byDomain = new Map<string, { answers: number | null; pct: number | null; pages: SourceLink[]; linked: boolean }>();
@@ -182,7 +182,7 @@ export function SourcePills({ sources, content }: { sources: SourceLink[]; conte
   }
   const domains = Array.from(byDomain.entries())
     .sort((a, b) => Number(b[1].linked) - Number(a[1].linked) || (b[1].pct ?? 0) - (a[1].pct ?? 0) || (b[1].answers ?? 0) - (a[1].answers ?? 0));
-  if (!domains.length) return null;
+  if (!domains.length && !caption) return null;
 
   const linked = domains.filter(([, e]) => e.linked);
   const primary = linked.length ? linked : domains.slice(0, PRIMARY_WHEN_NOTHING_LINKED);
@@ -193,7 +193,8 @@ export function SourcePills({ sources, content }: { sources: SourceLink[]; conte
   return (
     <div className={rise}>
       <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
-        <span className="mr-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400">Sources</span>
+        {caption && <span className="mr-2 text-[11px] text-gray-400">{caption}</span>}
+        {domains.length > 0 && <span className="mr-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400">Sources</span>}
         {shown.map(([domain, e]) => (
           <button
             key={domain}

@@ -36,6 +36,12 @@ const candidates = (domain: string, px: number): string[] => {
   ];
 };
 
+// What resolved for a domain (at a size): the candidate index that loaded,
+// or -1 when none did. A component that mounts later — the same pill
+// re-created on every streamed chunk — starts from the answer instead of
+// re-running the chain, so nothing blinks.
+const resolved = new Map<string, number>();
+
 // Inline elements throughout (span, not div) so a favicon can sit inside
 // running text and links without invalid nesting.
 export const Favicon: React.FC<FaviconProps> = ({
@@ -45,9 +51,15 @@ export const Favicon: React.FC<FaviconProps> = ({
   alt = `${domain} favicon`,
 }) => {
   const px = size === 'lg' ? 64 : 32;
-  const [attempt, setAttempt] = useState(0);
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => { setAttempt(0); setLoaded(false); }, [domain]);
+  const cacheKey = `${domain.trim().toLowerCase().replace(/^www\./, '')}@${px}`;
+  const known = resolved.get(cacheKey);
+  const [attempt, setAttempt] = useState(known === undefined ? 0 : known === -1 ? Number.MAX_SAFE_INTEGER : known);
+  const [loaded, setLoaded] = useState(known !== undefined && known >= 0);
+  useEffect(() => {
+    const k = resolved.get(cacheKey);
+    setAttempt(k === undefined ? 0 : k === -1 ? Number.MAX_SAFE_INTEGER : k);
+    setLoaded(k !== undefined && k >= 0);
+  }, [cacheKey]);
 
   if (!domain) {
     return (
@@ -59,6 +71,7 @@ export const Favicon: React.FC<FaviconProps> = ({
 
   const sources = candidates(domain, px);
   if (attempt >= sources.length) {
+    resolved.set(cacheKey, -1);
     return (
       <span className={`inline-flex items-center justify-center rounded bg-blue-100 ${boxClass(size)} ${className}`} title={domain}>
         <span className={`font-medium text-blue-600 ${textClass(size)}`}>{domain.charAt(0).toUpperCase()}</span>
@@ -79,7 +92,7 @@ export const Favicon: React.FC<FaviconProps> = ({
         alt={alt}
         className={`${boxClass(size)} flex-shrink-0 object-contain transition-opacity ${loaded ? 'opacity-100' : 'opacity-0'}`}
         onError={() => { setLoaded(false); setAttempt(a => a + 1); }}
-        onLoad={() => setLoaded(true)}
+        onLoad={() => { resolved.set(cacheKey, attempt); setLoaded(true); }}
       />
     </span>
   );

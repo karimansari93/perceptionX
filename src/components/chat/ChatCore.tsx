@@ -163,7 +163,7 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
           <button type="button" onClick={() => setShowList(true)} className={pillClass}><History className="h-3.5 w-3.5" />All chats</button>
           <div className="flex-1" />
           {current && (
-            <span className="truncate text-xs text-gray-400">{current.title} · {relativeAge(current.updated_at)} ago</span>
+            <span className="truncate text-xs text-gray-400">{current.title} · {scopeSummary(scope)} · {relativeAge(current.updated_at)} ago</span>
           )}
         </div>
       </div>
