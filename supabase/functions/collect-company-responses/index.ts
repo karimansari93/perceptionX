@@ -2,6 +2,35 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 
+// Fallback strings the Google edge functions return in `response` instead of
+// a 500 (see _shared/google-serp.ts serpapi*/scrapingdog* return paths and
+// the last-resort catch in both wrappers). None of these is an answer.
+const PROVIDER_FAILURE_RE =
+  /^(?:Google (?:search|AI Mode|AI Overviews?) (?:API |temporary )?error|Google AI Mode error|AI Overview error|Failed to fetch|No AI overview available|No response generated|.+ is not configured\.)/i;
+
+export function isProviderFailureText(text: string): boolean {
+  return PROVIDER_FAILURE_RE.test((text || "").trim());
+}
+
+// Keep an auditable record of what failed and why, out of prompt_responses.
+// Best-effort: a failure to log must not mask the collection error itself.
+async function recordCollectionFailure(
+  supabase: any,
+  f: { companyId: string; promptId: string; model: string; errorText: string; collectionMonth: string | null },
+): Promise<void> {
+  try {
+    await supabase.from("prompt_response_failures").insert({
+      company_id: f.companyId,
+      confirmed_prompt_id: f.promptId,
+      ai_model: f.model,
+      error_text: f.errorText.slice(0, 2000),
+      collection_cycle: f.collectionMonth ? f.collectionMonth.slice(0, 10) : null,
+    });
+  } catch (e: any) {
+    console.error("recordCollectionFailure:", e?.message);
+  }
+}
+
 serve(async (req) => {
   console.log("collect-company-responses function called", {
     method: req.method,
@@ -36,15 +65,21 @@ serve(async (req) => {
       skipIfCollectedInMonth = null,
     } = body;
 
-    // Derive month window [start, next-month-start) from "YYYY-MM".
+    // Derive the period window [start, end) from "YYYY-MM" or "YYYY-Qn".
     let skipMonthStart: string | null = null;
     let skipMonthEnd: string | null = null;
-    if (skipIfCollectedInMonth && /^\d{4}-\d{2}$/.test(skipIfCollectedInMonth)) {
-      const [y, m] = skipIfCollectedInMonth.split("-").map(Number);
-      const start = new Date(Date.UTC(y, m - 1, 1));
-      const end = new Date(Date.UTC(y, m, 1));
-      skipMonthStart = start.toISOString();
-      skipMonthEnd = end.toISOString();
+    if (skipIfCollectedInMonth) {
+      const quarter = String(skipIfCollectedInMonth).match(/^(\d{4})-Q([1-4])$/i);
+      if (quarter) {
+        const y = Number(quarter[1]);
+        const firstMonth = (Number(quarter[2]) - 1) * 3; // Q1→0, Q2→3, Q3→6, Q4→9
+        skipMonthStart = new Date(Date.UTC(y, firstMonth, 1)).toISOString();
+        skipMonthEnd = new Date(Date.UTC(y, firstMonth + 3, 1)).toISOString();
+      } else if (/^\d{4}-\d{2}$/.test(skipIfCollectedInMonth)) {
+        const [y, m] = String(skipIfCollectedInMonth).split("-").map(Number);
+        skipMonthStart = new Date(Date.UTC(y, m - 1, 1)).toISOString();
+        skipMonthEnd = new Date(Date.UTC(y, m, 1)).toISOString();
+      }
     }
 
     if (!companyId) {
@@ -125,44 +160,60 @@ serve(async (req) => {
       new Date(Date.UTC(nowForWindow.getUTCFullYear(), nowForWindow.getUTCMonth() + 1, 1)).toISOString();
 
     // Resolve organization_id from organization_companies (company can belong to one or more orgs)
-    // Fetch prompts for this company
-    let promptsQuery = supabase
-      .from("confirmed_prompts")
-      .select("*")
-      .eq("is_active", true);
+    // Fetch prompts for this company. Built as a factory because pagination
+    // needs a fresh builder per page (builders are mutable).
+    const buildPromptsQuery = () => {
+      let promptsQuery = supabase
+        .from("confirmed_prompts")
+        .select("*")
+        .eq("is_active", true);
 
-    // If promptIds are provided, use them — but ALSO constrain by company_id
-    // as defense-in-depth. A buggy or malicious caller must not be able to run
-    // responses for another organization's prompts under this company_id
-    // (previously this was a "trust me" comment with no enforcement).
-    if (promptIds && promptIds.length > 0) {
-      promptsQuery = promptsQuery.in("id", promptIds).eq("company_id", companyId);
-    } else {
-      promptsQuery = promptsQuery.eq("company_id", companyId);
-    }
-
-    // Filter by prompt types if provided
-    if (promptTypes && promptTypes.length > 0) {
-      promptsQuery = promptsQuery.in("prompt_type", promptTypes);
-    }
-
-    // Filter by prompt categories if provided (PostgREST or syntax: comma = OR)
-    if (promptCategories && promptCategories.length > 0) {
-      const orParts: string[] = [];
-      for (const cat of promptCategories) {
-        if (cat === "General") {
-          orParts.push("prompt_category.eq.General", "prompt_category.is.null");
-        } else {
-          orParts.push(`prompt_category.eq.${cat}`);
-        }
+      // If promptIds are provided, use them — but ALSO constrain by company_id
+      // as defense-in-depth. A buggy or malicious caller must not be able to run
+      // responses for another organization's prompts under this company_id
+      // (previously this was a "trust me" comment with no enforcement).
+      if (promptIds && promptIds.length > 0) {
+        promptsQuery = promptsQuery.in("id", promptIds).eq("company_id", companyId);
+      } else {
+        promptsQuery = promptsQuery.eq("company_id", companyId);
       }
-      promptsQuery = promptsQuery.or(orParts.join(","));
-    }
 
-    const { data: allPrompts, error: promptsError } = await promptsQuery;
+      // Filter by prompt types if provided
+      if (promptTypes && promptTypes.length > 0) {
+        promptsQuery = promptsQuery.in("prompt_type", promptTypes);
+      }
 
-    if (promptsError) {
-      throw new Error(`Failed to fetch prompts: ${promptsError.message}`);
+      // Filter by prompt categories if provided (PostgREST or syntax: comma = OR)
+      if (promptCategories && promptCategories.length > 0) {
+        const orParts: string[] = [];
+        for (const cat of promptCategories) {
+          if (cat === "General") {
+            orParts.push("prompt_category.eq.General", "prompt_category.is.null");
+          } else {
+            orParts.push(`prompt_category.eq.${cat}`);
+          }
+        }
+        promptsQuery = promptsQuery.or(orParts.join(","));
+      }
+      return promptsQuery;
+    };
+
+    // Paginate past PostgREST's 1000-row response cap. Without this, any
+    // company with >1000 active prompts silently collected an arbitrary 1000
+    // of them (CSL Behring: 300 of 1300 prompts never collected). The stable
+    // .order("id") is required for correct .range() paging.
+    const PROMPT_PAGE_SIZE = 1000;
+    const allPrompts: any[] = [];
+    for (let page = 0; ; page++) {
+      const from = page * PROMPT_PAGE_SIZE;
+      const { data: promptPage, error: promptsError } = await buildPromptsQuery()
+        .order("id", { ascending: true })
+        .range(from, from + PROMPT_PAGE_SIZE - 1);
+      if (promptsError) {
+        throw new Error(`Failed to fetch prompts: ${promptsError.message}`);
+      }
+      allPrompts.push(...(promptPage ?? []));
+      if (!promptPage || promptPage.length < PROMPT_PAGE_SIZE) break;
     }
 
     if (!allPrompts || allPrompts.length === 0) {
@@ -345,6 +396,22 @@ serve(async (req) => {
 
                 if (!responseText) {
                   throw new Error(`No response from ${modelName}`);
+                }
+
+                // The Google functions answer 200 with a failure STRING in
+                // `response` by design (so a queue run never aborts). Until
+                // now that string was stored as if it were the model's answer:
+                // it counted in visibility denominators and citation totals,
+                // and the per-month unique index then blocked a real re-run
+                // (PepsiCo Sep-2026: 6 such rows). Detect the fallback shapes
+                // and skip the row; the prompt stays "missing" for the month,
+                // so the coverage panel surfaces it and a recollect fills it.
+                if (isProviderFailureText(responseText)) {
+                  await recordCollectionFailure(supabase, {
+                    companyId, promptId: prompt.id, model: modelName,
+                    errorText: responseText, collectionMonth: skipMonthStart,
+                  });
+                  throw new Error(`${modelName} returned a failure string, not an answer: ${responseText.slice(0, 120)}`);
                 }
               }
 
