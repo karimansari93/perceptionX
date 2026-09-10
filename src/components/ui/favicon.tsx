@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { getFavicon } from '@/utils/citationUtils';
 
 interface FaviconProps {
@@ -8,89 +8,79 @@ interface FaviconProps {
   alt?: string;
 }
 
-export const Favicon: React.FC<FaviconProps> = ({ 
-  domain, 
-  size = 'md', 
+const boxClass = (size: string): string => {
+  switch (size) {
+    case 'sm': return 'w-3 h-3';
+    case 'lg': return 'w-6 h-6';
+    default: return 'w-4 h-4';
+  }
+};
+
+const textClass = (size: string): string => {
+  switch (size) {
+    case 'sm': return 'text-[8px]';
+    case 'lg': return 'text-sm';
+    default: return 'text-xs';
+  }
+};
+
+// Where a domain's mark can come from, in order. Logo.dev first (brand
+// marks, monogram fallback, needs VITE_LOGO_DEV_TOKEN); Google's favicon
+// service second (the site's own favicon, no key, answers a globe for
+// unknown domains rather than 404); the coloured initial last.
+const candidates = (domain: string, px: number): string[] => {
+  const clean = domain.trim().toLowerCase().replace(/^www\./, '');
+  return [
+    getFavicon(clean, px),
+    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(clean)}&sz=${px}`,
+  ];
+};
+
+// Inline elements throughout (span, not div) so a favicon can sit inside
+// running text and links without invalid nesting.
+export const Favicon: React.FC<FaviconProps> = ({
+  domain,
+  size = 'md',
   className = '',
-  alt = `${domain} favicon`
+  alt = `${domain} favicon`,
 }) => {
-  const [hasError, setHasError] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Helpers declared BEFORE the early-return so the !domain branch can use
-  // them without hitting TDZ errors. Function expressions (const =) don't hoist.
-  const getSizeClasses = (size: string): string => {
-    switch (size) {
-      case 'sm': return 'w-3 h-3';
-      case 'lg': return 'w-6 h-6';
-      default: return 'w-4 h-4';
-    }
-  };
-
-  const getImageSizeClasses = (size: string): string => {
-    switch (size) {
-      case 'sm': return 'w-3 h-3';
-      case 'lg': return 'w-6 h-6';
-      default: return 'w-4 h-4';
-    }
-  };
-
-  const getTextSizeClasses = (size: string): string => {
-    switch (size) {
-      case 'sm': return 'text-[8px]';
-      case 'lg': return 'text-sm';
-      default: return 'text-xs';
-    }
-  };
+  const px = size === 'lg' ? 64 : 32;
+  const [attempt, setAttempt] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => { setAttempt(0); setLoaded(false); }, [domain]);
 
   if (!domain) {
     return (
-      <div className={`bg-gray-100 rounded flex items-center justify-center ${getSizeClasses(size)} ${className}`}>
-        <span className={`font-medium text-gray-500 ${getTextSizeClasses(size)}`}>?</span>
-      </div>
+      <span className={`inline-flex items-center justify-center rounded bg-gray-100 ${boxClass(size)} ${className}`}>
+        <span className={`font-medium text-gray-500 ${textClass(size)}`}>?</span>
+      </span>
     );
   }
 
-  const handleError = (event: React.SyntheticEvent<HTMLImageElement, Event>) => {
-    // Logo.dev's monogram fallback almost always returns an image, so an error
-    // here means a hard failure (network/token issue). Fall back to the
-    // colored-initial chip below.
-    setHasError(true);
-    setIsLoading(false);
-    event.currentTarget.style.display = 'none';
-  };
-
-  const handleLoad = () => {
-    setIsLoading(false);
-  };
-
-  if (hasError) {
-    // Fallback to colored dot with domain initial
+  const sources = candidates(domain, px);
+  if (attempt >= sources.length) {
     return (
-      <div className={`bg-blue-100 rounded flex items-center justify-center ${getSizeClasses(size)} ${className}`}>
-        <span className={`font-medium text-blue-600 ${getTextSizeClasses(size)}`}>
-          {domain.charAt(0).toUpperCase()}
-        </span>
-      </div>
+      <span className={`inline-flex items-center justify-center rounded bg-blue-100 ${boxClass(size)} ${className}`} title={domain}>
+        <span className={`font-medium text-blue-600 ${textClass(size)}`}>{domain.charAt(0).toUpperCase()}</span>
+      </span>
     );
   }
-
-  const currentUrl = getFavicon(domain, size === 'lg' ? 64 : 32);
 
   return (
-    <div className={`relative ${getSizeClasses(size)} ${className}`}>
-      {isLoading && (
-        <div className={`absolute inset-0 bg-gray-100 rounded flex items-center justify-center ${getSizeClasses(size)}`}>
-          <span className={`font-medium text-gray-400 ${getTextSizeClasses(size)}`}>•</span>
-        </div>
+    <span className={`relative inline-flex ${boxClass(size)} ${className}`}>
+      {!loaded && (
+        <span className={`absolute inset-0 inline-flex items-center justify-center rounded bg-gray-100 ${boxClass(size)}`}>
+          <span className={`font-medium text-gray-400 ${textClass(size)}`}>•</span>
+        </span>
       )}
       <img
-        src={currentUrl}
+        key={sources[attempt]}
+        src={sources[attempt]}
         alt={alt}
-        className={`${getImageSizeClasses(size)} flex-shrink-0 object-contain ${isLoading ? 'opacity-0' : 'opacity-100'} transition-opacity`}
-        onError={handleError}
-        onLoad={handleLoad}
+        className={`${boxClass(size)} flex-shrink-0 object-contain transition-opacity ${loaded ? 'opacity-100' : 'opacity-0'}`}
+        onError={() => { setLoaded(false); setAttempt(a => a + 1); }}
+        onLoad={() => setLoaded(true)}
       />
-    </div>
+    </span>
   );
-}; 
+};

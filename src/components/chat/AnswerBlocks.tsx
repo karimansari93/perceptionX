@@ -97,6 +97,8 @@ export function ContributionBars({ data }: { data: any }) {
   const rows = Array.isArray(data?.rows) ? data.rows.filter((r: any) => r && r.label != null && typeof r.value === 'number').slice(0, 12) : [];
   if (!rows.length) return null;
   const unit = data?.unit === 'pts' ? '' : typeof data?.unit === 'string' ? data.unit : '';
+  // "+34" reads as a change; "86% positive" is a level, so no sign there.
+  const signed = !unit || /\bpts?\b|point/i.test(unit);
   const max = Math.max(...rows.map((r: any) => Math.abs(r.value)), 1);
   return (
     <div className={cn('rounded-xl border border-gray-200 bg-white p-[18px]', rise)}>
@@ -111,8 +113,8 @@ export function ContributionBars({ data }: { data: any }) {
               <div className={cn('h-[14px] flex-1 overflow-hidden rounded-[7px]', neg ? 'bg-[#DB5E89]/[0.12]' : 'bg-[#0DBCBA]/[0.12]')}>
                 <div className={cn('h-full rounded-[7px]', neg ? 'bg-[#DB5E89]' : 'bg-[#0DBCBA]')} style={{ width: `${width}%` }} />
               </div>
-              <span className={cn('w-[34px] text-right font-semibold tabular-nums', neg ? 'text-[#13274F]' : 'text-[#0DBCBA]')}>
-                {r.value > 0 ? '+' : r.value < 0 ? '-' : ''}{Math.abs(r.value)}{unit}
+              <span className={cn('min-w-[34px] flex-none whitespace-nowrap text-right font-semibold tabular-nums', neg ? 'text-[#13274F]' : 'text-[#0DBCBA]')}>
+                {signed && r.value > 0 ? '+' : r.value < 0 ? '-' : ''}{Math.abs(r.value)}{unit}
               </span>
             </div>
           );

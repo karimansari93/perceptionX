@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 import { cn } from '@/lib/utils';
 import { ExternalLink } from 'lucide-react';
-import { getCompetitorFavicon, getFavicon } from '@/utils/citationUtils';
+import { Favicon } from '@/components/ui/favicon';
+import { competitorDomain } from '@/utils/citationUtils';
 import type { ChatMessage as ChatMessageType } from '@/services/chatService';
 import { ScopeChips } from './ChatScopeBar';
 import {
@@ -55,7 +56,7 @@ function SourceLinkInline({ href, children }: { href: string; children: React.Re
       title={href}
       className="inline-flex max-w-full items-center gap-1 align-baseline rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[0.9em] leading-tight text-[#13274F] transition-colors hover:border-[#DB5E89]"
     >
-      <img src={getFavicon(hostOf(href))} alt="" className="h-3 w-3 flex-shrink-0 rounded-sm object-contain" onError={e => { e.currentTarget.style.display = "none"; }} />
+      <Favicon domain={hostOf(href)} size="sm" className="flex-shrink-0 rounded-sm" />
       <span className="truncate max-w-[22rem]">{children}</span>
       <ExternalLink className="h-3 w-3 flex-shrink-0 text-gray-400" />
     </a>
@@ -65,12 +66,11 @@ function SourceLinkInline({ href, children }: { href: string; children: React.Re
 // A named company (competitor or the brand itself): its logo.dev mark next
 // to the name. A bare domain or a named source gets the same treatment with
 // the domain's logo.
-function LogoChip({ src, label, children }: { src: string; label: string; children: React.ReactNode }) {
-  const [broken, setBroken] = useState(false);
+function LogoChip({ domain, label, children }: { domain: string; label: string; children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1 align-baseline whitespace-nowrap font-medium text-[#13274F]">
-      {src && !broken ? (
-        <img src={src} alt="" className="h-[1em] w-[1em] rounded-sm object-contain" onError={() => setBroken(true)} />
+      {domain ? (
+        <Favicon domain={domain} size="sm" className="flex-shrink-0 rounded-sm" />
       ) : (
         <span className="inline-flex h-[1em] w-[1em] items-center justify-center rounded-sm bg-gray-200 text-[0.6em] text-gray-600">{label.charAt(0)}</span>
       )}
@@ -78,8 +78,8 @@ function LogoChip({ src, label, children }: { src: string; label: string; childr
     </span>
   );
 }
-const CompetitorChip = ({ name }: { name: string }) => <LogoChip src={getCompetitorFavicon(name)} label={name}>{name}</LogoChip>;
-const DomainChip = ({ domain, children }: { domain: string; children: React.ReactNode }) => <LogoChip src={getFavicon(domain)} label={domain}>{children}</LogoChip>;
+const CompetitorChip = ({ name }: { name: string }) => <LogoChip domain={competitorDomain(name)} label={name}>{name}</LogoChip>;
+const DomainChip = ({ domain, children }: { domain: string; children: React.ReactNode }) => <LogoChip domain={domain} label={domain}>{children}</LogoChip>;
 
 // A fenced px-* block → card (or a skeleton while it streams).
 function PxBlock({ lang, raw, onAsk }: { lang: string; raw: string; onAsk?: (q: string) => void }) {
@@ -224,7 +224,7 @@ function colourDeltas(root: HTMLElement | null) {
 export function ChatMessage({ message, onAsk }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const isWaiting = message.isStreaming && !message.content;
-  const statusText = message.statusText;
+  const working = !!message.isStreaming && !!message.statusText;
 
   const { body, context } = useMemo(() => (isUser ? { body: message.content, context: null } : extractContext(message.content)), [isUser, message.content]);
   const sourceDomains = useMemo(() => Array.from(new Set((message.sources ?? []).map(s => s.domain).filter(Boolean))), [message.sources]);
@@ -258,7 +258,7 @@ export function ChatMessage({ message, onAsk }: ChatMessageProps) {
 
         {isWaiting ? (
           <div className="flex items-center gap-2 text-[13px] text-gray-500">
-            <span>{statusText || 'Reading your data'}</span>
+            <span>Thinking</span>
             <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '0ms' }} />
             <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '150ms' }} />
             <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '300ms' }} />
@@ -270,8 +270,8 @@ export function ChatMessage({ message, onAsk }: ChatMessageProps) {
                 {decorated}
               </ReactMarkdown>
             </div>
-            {message.isStreaming && statusText && (
-              <div className="text-xs text-gray-500">{statusText}</div>
+            {working && (
+              <div className="text-xs text-gray-500">Thinking…</div>
             )}
             {!message.isStreaming && message.sources && message.sources.length > 0 && (
               <SourcePills sources={message.sources} content={message.content} />
