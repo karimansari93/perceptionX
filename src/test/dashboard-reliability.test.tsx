@@ -6,6 +6,7 @@ import { server } from './msw/server';
 import { MockBackend } from './msw/supabase';
 import * as F from './fixtures/dashboard';
 import { metricEl, readMetric, renderDashboard, seedSession, watchScorecard } from './renderDashboard';
+import { getRecentDashboardErrors } from '@/lib/observability';
 
 // Regression suite for docs/audits/DATA_RELIABILITY_AUDIT_2026-09-11.md,
 // findings P0-1 (location rollups failing silently → 0% metrics) and P1-1
@@ -61,6 +62,23 @@ describe('dashboard data reliability', () => {
     // First attempt + the single query-level retry, both answered 500.
     expect(backend.counters.get_location_rollups).toBe(2);
     expect(backend.rpcCalls('get_location_rollups').map((c) => c.status)).toEqual([500, 500]);
+
+    // Observability (audit P1-4): the failure is reported once, with the
+    // family, RPC, HTTP status, SQLSTATE, timing and who/what was affected —
+    // enough to answer "why did this user see no sentiment at 10:42?".
+    const reported = getRecentDashboardErrors().filter((e) => e.family === 'location');
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({
+      rpc: 'get_location_rollups',
+      http_status: 500,
+      pg_code: '57014',
+      user_id: F.USER_ID,
+      organization_id: F.ORG_ID,
+      company_id: F.COMPANY_ID,
+      scope_key: F.COMPANY_ID,
+    });
+    expect(reported[0].location_key).toMatch(/united states/i);
+    expect(typeof reported[0].elapsed_ms).toBe('number');
   });
 
   it('scenario 2: a later retry succeeds → real metrics appear without a browser refresh', async () => {

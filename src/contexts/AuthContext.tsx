@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import { setObservabilityUser } from '@/lib/observability';
 
 interface AuthContextType {
   user: User | null;
@@ -31,6 +32,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       (event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
+        setObservabilityUser(session?.user?.id ?? null);
         setLoading(false);
         
         // Handle password recovery: flag it so no page can redirect to dashboard
@@ -53,6 +55,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         setSession(session);
         setUser(session?.user ?? null);
+        setObservabilityUser(session?.user?.id ?? null);
       }
       setLoading(false);
     });

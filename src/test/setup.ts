@@ -3,6 +3,7 @@ import { cleanup } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 import { server } from './msw/server';
 import { SUPABASE_HOST } from './msw/supabase';
+import { clearRecentDashboardErrors } from '@/lib/observability';
 
 // ---- jsdom polyfills for the dashboard tree ----
 if (typeof window.matchMedia !== 'function') {
@@ -50,6 +51,7 @@ beforeAll(() => { /* server already listening (see above) */ });
 afterEach(() => {
   server.resetHandlers();
   cleanup();
+  clearRecentDashboardErrors();
   localStorage.clear();
   sessionStorage.clear();
 });

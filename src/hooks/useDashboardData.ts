@@ -43,6 +43,7 @@ import { GLOBAL_LIKE } from "@/utils/locations";
 import { LEGACY_ATTRIBUTE_MAP } from "@/config/attributes";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
 import { defaultLocationFromUser, focusAppliesToCompany } from "@/hooks/useProfileSetup";
+import { setObservabilityContext } from "@/lib/observability";
 import { sentimentRatioV2, EXCLUDED_AI_MODELS_FILTER } from "@/lib/sentimentV2";
 
 // Pure aggregation of `company_*_by_location_mv` rows into the same shape the
@@ -1634,6 +1635,15 @@ export const useDashboardData = () => {
   }, [selectedOwnedKey, scopeKey]);
 
   const locationQueryEnabled = scopeReady && !!selectedLocation && locSelectionFetchable;
+  // Company / scope / location for dashboard error reports, so a failed
+  // family can be tied to what the user was looking at (audit P1-4).
+  useEffect(() => {
+    setObservabilityContext({
+      companyId: currentCompany?.id ?? null,
+      scopeKey: scopeReady ? scopeKey : null,
+      locationKey: selectedLocation ?? null,
+    });
+  }, [currentCompany?.id, scopeReady, scopeKey, selectedLocation]);
   const locRollupsQuery = useQuery({
     queryKey: dashboardKeys.locationRollups(scopeKey, selectedLocation ?? ''),
     queryFn: ({ signal }) => fetchLocationRollups({

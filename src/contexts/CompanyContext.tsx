@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { setObservabilityContext } from '@/lib/observability';
 import { useAuth } from './AuthContext';
 import { readStarredView } from '@/hooks/useStarredView';
 import { defaultCompanyFromUser } from '@/hooks/useProfileSetup';
@@ -198,6 +199,8 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
           )
         `)
         .eq('user_id', user.id);
+      // Organization id for dashboard error reports (src/lib/observability.ts).
+      setObservabilityContext({ organizationId: (orgMemberships as any)?.[0]?.organization_id ?? null });
 
       if (orgError) {
         console.error('🔍 Error fetching organization memberships:', orgError);

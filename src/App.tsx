@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient } from "@tanstack/react-query";
+import { createQueryClient } from "@/lib/queryClient";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
@@ -23,6 +23,7 @@ import AdminRoute from "./components/AdminRoute";
 import AskAiRoute from "./components/AskAiRoute";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { logger } from "@/lib/utils";
+import { initObservability, reportRenderError } from "@/lib/observability";
 import { AlertTriangle, RefreshCw, Home } from "lucide-react";
 import { Suspense, useEffect } from "react";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
@@ -48,17 +49,14 @@ const Chat = lazyWithRetry(() => import("./pages/Chat"));
 // OAuth consent for the MCP server (ChatGPT/Claude connectors land here).
 const McpConsent = lazyWithRetry(() => import("./pages/McpConsent"));
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      staleTime: 5 * 60 * 1000, // 5 minutes
-      refetchOnWindowFocus: false, // Don't refetch when tab regains focus
-      refetchOnMount: false, // Don't refetch when component mounts
-      refetchOnReconnect: false, // Don't refetch when internet reconnects
-    },
-  },
-});
+// Error reporting for dashboard fetches (audit P1-4): Sentry when
+// VITE_SENTRY_DSN is configured, otherwise an in-memory buffer. Initialised
+// before the QueryClient so its cache hook can report from the start.
+initObservability();
+
+// Retry policy + QueryCache error hook live in src/lib/queryClient.ts,
+// shared with the regression tests.
+const queryClient = createQueryClient();
 
 // Warm starts: persist the SMALL dashboard fetch families (rollups, prompts,
 // scope stats, location rollups) so reopening the app paints the last-seen
@@ -103,11 +101,8 @@ const logError = (error: Error, errorInfo: { componentStack: string }) => {
     url: window.location.href
   });
   
-  // In production, this would send to Sentry or similar service
-  if (import.meta.env.PROD) {
-    // TODO: Integrate with Sentry when configured
-    // Sentry.captureException(error, { contexts: { react: { componentStack: errorInfo.componentStack } } });
-  }
+  // Sentry when configured (src/lib/observability.ts); no-op otherwise.
+  reportRenderError(error, errorInfo.componentStack);
 };
 
 // Error Fallback Component

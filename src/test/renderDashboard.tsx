@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { render } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createQueryClient } from '@/lib/queryClient';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { SidebarProvider } from '@/components/ui/sidebar';
@@ -10,20 +11,10 @@ import ProtectedRoute from '@/components/ProtectedRoute';
 import Dashboard from '@/pages/Dashboard';
 import * as F from './fixtures/dashboard';
 
-// Same QueryClient defaults as src/App.tsx — the retry policy is part of what
-// the scenarios reproduce (one query-level retry on top of the page plan).
-export const makeQueryClient = () =>
-  new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: 1,
-        staleTime: 5 * 60 * 1000,
-        refetchOnWindowFocus: false,
-        refetchOnMount: false,
-        refetchOnReconnect: false,
-      },
-    },
-  });
+// The app's own QueryClient factory (src/lib/queryClient.ts): the retry
+// policy is part of what the scenarios reproduce (one query-level retry on
+// top of the page plan) and the QueryCache hook is what reports failures.
+export const makeQueryClient = createQueryClient;
 
 // Stand-in for the sign-in page: the real one navigates to /dashboard once
 // signInWithPassword resolves (src/pages/Auth.tsx); this does the same.

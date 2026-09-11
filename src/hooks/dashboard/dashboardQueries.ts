@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { EXCLUDED_AI_MODELS } from "@/lib/sentimentV2";
+import { recordRpcAttempt, SLOW_RPC_MS } from "@/lib/observability";
 
 // Query-key factory for every dashboard fetch family. Keys are scoped by the
 // BRAND SCOPE signature (sorted sibling company ids), not the entry company:
@@ -158,10 +159,26 @@ const RETRY_PAGE_SIZE = 250;
 const EAGER_DAYS = 180;
 
 const rpc = async <T,>(fn: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<T> => {
+  const startedAt = performance.now();
   let q: any = (supabase as any).rpc(fn, args);
   if (signal) q = q.abortSignal(signal);
-  const { data, error } = await q;
-  if (error) throw error;
+  const { data, error, status } = await q;
+  const elapsedMs = Math.round(performance.now() - startedAt);
+  const httpStatus = typeof status === 'number' ? status : null;
+  if (error) {
+    // Carry what the reliability report needs on the error itself (the
+    // RPC name, HTTP status and how long the failing attempt took) — never
+    // the request or response payload. QueryCache.onError picks these up
+    // once the query's retries are exhausted (src/lib/observability.ts).
+    Object.assign(error, { rpc: fn, status: httpStatus ?? error.status ?? null, elapsedMs });
+    if (!signal?.aborted) {
+      recordRpcAttempt({ rpc: fn, status: httpStatus, code: error.code ?? null, elapsedMs, ok: false });
+    }
+    throw error;
+  }
+  if (elapsedMs >= SLOW_RPC_MS) {
+    recordRpcAttempt({ rpc: fn, status: httpStatus, code: null, elapsedMs, ok: true });
+  }
   return data as T;
 };
 
