@@ -28,9 +28,10 @@ second under the 8 s statement timeout.
 ## What is never sent
 
 Request or response bodies, prompt or response text, e-mail addresses, names,
-auth tokens or API keys. Sentry is initialised with `sendDefaultPii: false`;
-the user object carries only the id; request headers, cookies and data are
-stripped in `beforeSend`.
+auth tokens or API keys. Sentry is initialised with every `dataCollection`
+category off (user info, cookies, headers, bodies, query strings); the user
+object carries only the id; request headers, cookies and data are stripped
+again in `beforeSend`.
 
 ## Transport
 

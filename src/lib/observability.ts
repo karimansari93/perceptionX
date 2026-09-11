@@ -16,8 +16,8 @@ import * as Sentry from '@sentry/react';
 //
 // What is deliberately NOT captured: response or request bodies, prompt or
 // response text, e-mail addresses or names, auth tokens or API keys. Sentry
-// is initialised with sendDefaultPii off, and the user object carries only
-// the id.
+// is initialised with every dataCollection category off, and the user object
+// carries only the id.
 //
 // Transport: Sentry when VITE_SENTRY_DSN is set at build time; otherwise the
 // same structured record is kept in an in-memory ring buffer (readable from
@@ -86,7 +86,17 @@ export const initObservability = (options: InitOptions = {}): boolean => {
   Sentry.init({
     dsn,
     environment: options.environment ?? (import.meta.env.VITE_SENTRY_ENVIRONMENT as string | undefined) ?? import.meta.env.MODE,
-    sendDefaultPii: false,
+    // Every data-collection category off (this replaces the deprecated
+    // sendDefaultPii): no user info beyond the id we set ourselves, no
+    // cookies, headers, bodies or query strings.
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      httpHeaders: { request: false, response: false },
+      httpBodies: [],
+      queryParams: false,
+      urlQueryParams: false,
+    },
     tracesSampleRate: 0,
     beforeSend(event) {
       // Belt and braces: an id is all we ever want to know about a person.

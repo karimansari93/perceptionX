@@ -120,7 +120,11 @@ describe('observability: reporting', () => {
 
   it('with a DSN: sends the exception with tags, a dashboard context and a per-(family, code) fingerprint; user carries only an id', () => {
     expect(initObservability({ dsn: 'https://public@example.ingest.sentry.io/1', environment: 'test' })).toBe(true);
-    expect(Sentry.init).toHaveBeenCalledWith(expect.objectContaining({ sendDefaultPii: false, environment: 'test', tracesSampleRate: 0 }));
+    expect(Sentry.init).toHaveBeenCalledWith(expect.objectContaining({
+      environment: 'test',
+      tracesSampleRate: 0,
+      dataCollection: expect.objectContaining({ userInfo: false, cookies: false, httpBodies: [], queryParams: false }),
+    }));
     setObservabilityUser('user-1');
     expect(Sentry.setUser).toHaveBeenCalledWith({ id: 'user-1' });
     setObservabilityContext({ organizationId: 'org-1', companyId: 'company-1', scopeKey: SCOPE, locationKey: 'united states' });
