@@ -1,0 +1,83 @@
+{
+  "results": {
+    "A_first_load": {
+      "sentiment": 0,
+      "visibility": 70,
+      "relevance": 0,
+      "eps": 21,
+      "themesEmpty": true,
+      "sourcesEmpty": false,
+      "competitorsEmpty": false,
+      "connectionIssue": false,
+      "skeletons": 0,
+      "ms": 3507,
+      "requests": [
+        "get_scope_prompts:200",
+        "get_dashboard_rollups:200",
+        "get_scope_stats:200",
+        "get_location_rollups:500",
+        "get_domain_stats:200",
+        "get_competitor_stats:200",
+        "get_company_responses_page:200",
+        "get_location_rollups:500"
+      ]
+    },
+    "B_refresh": {
+      "sentiment": 82,
+      "visibility": 70,
+      "relevance": 63,
+      "eps": 75,
+      "themesEmpty": false,
+      "sourcesEmpty": false,
+      "competitorsEmpty": false,
+      "connectionIssue": false,
+      "skeletons": 0,
+      "ms": 2131,
+      "requests": [
+        "get_company_responses_page:200",
+        "get_location_rollups:200"
+      ]
+    },
+    "C_stream_failure": {
+      "ms": 46815,
+      "pageRpcAttempts": 6,
+      "skeletons": 1,
+      "promptsRendered": false,
+      "connectionIssue": false,
+      "headerResponses": null,
+      "visibleTextSample": "Toggle Sidebar Search… Ctrl K DASHBOARD Overview Sources Competitors Themes ANALYZE Ask AI Reports Prompts Set up AI integrations Use PerceptionX in ChatGPT or any other AI Want a guided tour? Try this — a 2 min walkthrough. Invite teammates Bring your team onto the dashboard. RE repro@example.com Monitor Prompts 🇺🇸 United States All functions A Acme Prompts Monitor and analyze Acme's prompt performance across different AI models and track response quality. All types All themes New in PerceptionX Why did sentiment drop 13 points? Reddit threads on the July restructuring drove 6 of the 13 poi"
+    }
+  },
+  "consoleErrors": [
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "[A/B] Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED",
+    "[A/B] Failed to load resource: net::ERR_FAILED"
+  ]
+}
