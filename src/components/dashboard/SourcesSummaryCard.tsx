@@ -185,7 +185,8 @@ export const SourcesSummaryCard = ({
   };
 
   // Calculate source trends: compare coverage % (responses citing the source ÷
-  // mentioned responses) between current and previous periods.
+  // mentioned responses) between current and previous periods. The result is
+  // a percentage-POINT difference and the chip labels it "pts".
   const sourceTrends = useMemo(() => {
     if (domainPool && domainStatsRows && cubeMentionedTotals) {
       // Cube path: pool the previous quarter and diff coverage %. No previous
@@ -309,7 +310,7 @@ export const SourcesSummaryCard = ({
             {mentionPercent.toFixed(1)}%
           </span>
           {hasPreviousPeriod && (
-            <span className="w-[40px] flex justify-end">
+            <span className="w-[52px] flex justify-end">
               {(() => {
                 const delta = Math.round(source.trendChange);
                 if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
@@ -318,7 +319,7 @@ export const SourcesSummaryCard = ({
                     delta > 0 ? 'text-green-600' : 'text-red-600'
                   }`}>
                     {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                    <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+                    <span className="whitespace-nowrap">{Math.abs(delta)} pts</span>
                   </span>
                 );
               })()}
