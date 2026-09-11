@@ -1,0 +1,139 @@
+{
+  "results": {
+    "s1_location_fail": {
+      "eps": {
+        "present": true,
+        "text": "—",
+        "unavailable": true
+      },
+      "sentiment": {
+        "present": true,
+        "text": "—",
+        "unavailable": true
+      },
+      "visibility": {
+        "present": true,
+        "text": "70%",
+        "unavailable": false
+      },
+      "relevance": {
+        "present": true,
+        "text": "—",
+        "unavailable": true
+      },
+      "themesEmptyCopy": false,
+      "themesError": true,
+      "locationError": true,
+      "alerts": 2,
+      "retryButtons": 2,
+      "busy": 0,
+      "connectionIssue": false,
+      "requests": [
+        "get_scope_prompts:200",
+        "get_dashboard_rollups:200",
+        "get_scope_stats:200",
+        "get_location_rollups:500",
+        "get_domain_stats:200",
+        "get_competitor_stats:200",
+        "get_company_responses_page:200",
+        "get_location_rollups:500"
+      ]
+    },
+    "s2_retry_recovers": {
+      "eps": {
+        "present": true,
+        "text": "75",
+        "unavailable": false
+      },
+      "sentiment": {
+        "present": true,
+        "text": "82%",
+        "unavailable": false
+      },
+      "visibility": {
+        "present": true,
+        "text": "70%",
+        "unavailable": false
+      },
+      "relevance": {
+        "present": true,
+        "text": "63%",
+        "unavailable": false
+      },
+      "themesEmptyCopy": false,
+      "themesError": false,
+      "locationError": false,
+      "alerts": 0,
+      "retryButtons": 0,
+      "busy": 0,
+      "connectionIssue": false,
+      "locationRollupsCalls": 3
+    },
+    "s3_real_zero": {
+      "eps": {
+        "present": true,
+        "text": "21",
+        "unavailable": false
+      },
+      "sentiment": {
+        "present": true,
+        "text": "0%",
+        "unavailable": false
+      },
+      "visibility": {
+        "present": true,
+        "text": "70%",
+        "unavailable": false
+      },
+      "relevance": {
+        "present": true,
+        "text": "0%",
+        "unavailable": false
+      },
+      "themesEmptyCopy": false,
+      "themesError": false,
+      "locationError": false,
+      "alerts": 0,
+      "retryButtons": 0,
+      "busy": 0,
+      "connectionIssue": false
+    },
+    "s4_stream_fail": {
+      "ms": 21175,
+      "pageAttempts": 6,
+      "busy": 0,
+      "retryButtons": 1,
+      "errorShown": true
+    },
+    "s4_overview": {
+      "eps": {
+        "present": true,
+        "text": "75",
+        "unavailable": false
+      },
+      "sentiment": {
+        "present": true,
+        "text": "82%",
+        "unavailable": false
+      },
+      "visibility": {
+        "present": true,
+        "text": "70%",
+        "unavailable": false
+      },
+      "relevance": {
+        "present": true,
+        "text": "63%",
+        "unavailable": false
+      },
+      "themesEmptyCopy": false,
+      "themesError": false,
+      "locationError": false,
+      "alerts": 0,
+      "retryButtons": 0,
+      "busy": 0,
+      "connectionIssue": false
+    }
+  },
+  "failures": []
+}

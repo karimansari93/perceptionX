@@ -12,7 +12,20 @@ The harness runs the real frontend against a fully mocked PostgREST/Auth backend
 | B · refresh | none (same tab, `page.reload()`) | 82% / 70% / 63%, EPS 75, themes present; only 2 RPC calls because the other families rehydrate from IndexedDB |
 | C · stream failure | `get_company_responses_page` → 500 on every attempt | 6 page attempts over ~47 s, then the Prompts page stays on a skeleton with no error |
 
-Results are in `results.json`; screenshots in `A_first_load.png`, `B_refresh.png`, `C_stream_failure.png`.
+Results are in `results.json`; screenshots in `A_first_load.png`, `B_refresh.png`, `C_stream_failure.png`. These capture the **pre-fix** behaviour and are kept as the incident evidence.
+
+## After the fix (`run-fixed.cjs`)
+
+`run-fixed.cjs` runs the same mocked backend against the remediated dashboard and *asserts* the reliability rules instead of recording what rendered (`results-fixed.json`, `fixed_*.png`):
+
+| Scenario | Fault | Asserted |
+|---|---|---|
+| S1 | `get_location_rollups` → 500 `57014` on attempts 1–2 | Sentiment and Relevance render `—` (unavailable), Visibility 70%, EPS `—`, Themes shows "Couldn't load themes." + Retry, no legitimate-empty copy |
+| S2 | Retry clicked, backend healthy | 82% / 70% / 63%, EPS 75, errors cleared, exactly one extra location request, no reload |
+| S3 | genuine 0% sentiment and 0 relevance | `0%` / `0%`, EPS 21, no error state |
+| S4 | `get_company_responses_page` → 500 on every attempt | "Couldn't load responses." + Retry on Prompts, zero skeletons, Overview headline still 82/70/63 |
+
+The same scenarios (plus a cold-login one) run headlessly in CI as Vitest + React Testing Library + MSW tests: `src/test/dashboard-reliability.test.tsx` (`npm test`).
 
 ## Running it
 

@@ -59,6 +59,8 @@ function makeBackend(faults) {
         if (table === 'organization_members') return json(200, F.organizationMembers);
         if (table === 'profiles') return json(200, wantsObject ? F.profile : [F.profile]);
         if (table === 'companies') return json(200, wantsObject ? F.companyRow : [F.companyRow]);
+        // Mark the What's-new announcement as seen so its dialog never overlays the page.
+        if (table === 'announcement_seen') return json(200, wantsObject ? { version: 'seen' } : [{ version: 'seen' }]);
         return json(200, wantsObject ? {} : []);
       }
       return route.continue();
