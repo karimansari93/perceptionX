@@ -186,7 +186,12 @@ export const SourcesSummaryCard = ({
 
   // Calculate source trends: compare coverage % (responses citing the source ÷
   // mentioned responses) between current and previous periods. The result is
-  // a percentage-POINT difference and the chip labels it "pts".
+  // the RELATIVE change of that share (43% → 47% reads +9%), the same reading
+  // as the Sources tab; Infinity marks a source with no previous-period base
+  // (the chip says "New").
+  const relativeChange = (currentPct: number, previousPct: number): number =>
+    previousPct > 0 ? ((currentPct - previousPct) / previousPct) * 100 : currentPct > 0 ? Infinity : 0;
+
   const sourceTrends = useMemo(() => {
     if (domainPool && domainStatsRows && cubeMentionedTotals) {
       // Cube path: pool the previous quarter and diff coverage %. No previous
@@ -204,7 +209,7 @@ export const SourcesSummaryCard = ({
         const currentPct = currentTotal > 0 ? (entry.mentionedResponsesCiting / currentTotal) * 100 : 0;
         const previousCiting = prevPool.get(entry.domain)?.mentionedResponsesCiting || 0;
         const previousPct = previousTotal > 0 ? (previousCiting / previousTotal) * 100 : 0;
-        trends[entry.domain] = currentPct - previousPct;
+        trends[entry.domain] = relativeChange(currentPct, previousPct);
       });
       return trends;
     }
@@ -246,7 +251,7 @@ export const SourcesSummaryCard = ({
     Object.keys(current.counts).forEach(domain => {
       const currentPct = current.total > 0 ? ((current.counts[domain] || 0) / current.total) * 100 : 0;
       const previousPct = previous.total > 0 ? ((previous.counts[domain] || 0) / previous.total) * 100 : 0;
-      trends[domain] = currentPct - previousPct;
+      trends[domain] = relativeChange(currentPct, previousPct);
     });
 
     return trends;
@@ -310,8 +315,11 @@ export const SourcesSummaryCard = ({
             {mentionPercent.toFixed(1)}%
           </span>
           {hasPreviousPeriod && (
-            <span className="w-[52px] flex justify-end">
+            <span className="w-[44px] flex justify-end">
               {(() => {
+                if (!Number.isFinite(source.trendChange)) {
+                  return <span className="text-xs font-semibold text-green-600 whitespace-nowrap">New</span>;
+                }
                 const delta = Math.round(source.trendChange);
                 if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
                 return (
@@ -319,7 +327,7 @@ export const SourcesSummaryCard = ({
                     delta > 0 ? 'text-green-600' : 'text-red-600'
                   }`}>
                     {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-                    <span className="whitespace-nowrap">{Math.abs(delta)} pts</span>
+                    <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
                   </span>
                 );
               })()}

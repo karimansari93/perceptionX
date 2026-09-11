@@ -70,11 +70,13 @@ const normalizeDomain = (domain: string): string => {
 const MENTIONED_COLOR = '#0DBCBA';
 const NOT_MENTIONED_COLOR = '#D1D5DB';
 // Trending-domains card: bar color for a source losing share (a rising one
-// reuses the brand teal), rows shown per direction, and the citing-response
-// floor a row needs — one new answer citing a site is noise, not a trend.
+// reuses the brand teal), rows shown per direction, and the floor a row needs
+// in the period it is moving from — citing responses and share of responses —
+// so a site that went from one answer to three never tops the card.
 const FALLING_COLOR = '#FCA5A5';
 const TRENDING_ROW_LIMIT = 10;
 const TRENDING_MIN_COUNT = 3;
+const TRENDING_MIN_SHARE = 1; // % of responses
 
 // Coverage share of a domain/page: % of analyzed responses citing it.
 const shareOf = (count: number, total: number) =>
@@ -615,58 +617,58 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
   }, [analyzed, prevAnalyzed]);
 
   // ---------------------------------------------------------------------
-  // Trending domains: the sources whose coverage share moved the most versus
-  // the previous period, so a site gaining (or losing) voice shows up without
-  // scanning the ranked list. Share is the list's measure — responses citing
-  // the domain ÷ responses in the selection, each period on its own total —
-  // and the move is in percentage points. A domain first cited this period
-  // rises from zero and is flagged "New"; one cited last period but not this
-  // one falls to zero. A row needs TRENDING_MIN_COUNT citing responses in the
-  // period it is moving from (rising: this one; falling: the previous one) so
-  // one stray answer never tops the card, and a move under a tenth of a point
-  // is not a move. No previous period means nothing to compare against — both
-  // lists stay empty and the card says so.
+  // Trending domains: the sources whose coverage share grew or shrank the
+  // most, relative to where it stood in the previous period, so a site
+  // gaining (or losing) voice shows up without scanning the ranked list.
+  // Share is the list's measure — responses citing the domain ÷ responses in
+  // the selection, each period on its own total — and the move is the
+  // relative change of that share (43% → 47% reads +9%), the same reading as
+  // the pages table's chip. A domain first cited this period has no base to
+  // grow from: it leads the rising list, marked "New". One cited last period
+  // but not this one is a 100% fall. A row needs TRENDING_MIN_COUNT citing
+  // responses and TRENDING_MIN_SHARE of the responses in the period it is
+  // moving from (rising: this one; falling: the previous one), and a move
+  // that rounds to 0% is not a move. No previous period — or a previous
+  // period with no responses in the selection — means nothing to compare
+  // against: both lists stay empty and the card says so.
   // ---------------------------------------------------------------------
   type TrendingRow = {
     domain: string;
-    count: number;      // citing responses this period
-    prevCount: number;  // …and in the previous period
-    share: number;      // coverage share this period (%)
-    prevShare: number;  // …and in the previous period
-    delta: number;      // share − prevShare, in points
-    isNew: boolean;     // not cited at all in the previous period
+    count: number;         // citing responses this period
+    prevCount: number;     // …and in the previous period
+    share: number;         // coverage share this period (%)
+    prevShare: number;     // …and in the previous period
+    change: number | null; // relative change of the share (%); null = new
   };
 
   const trendingDomains = useMemo(() => {
     const empty = { rising: [] as TrendingRow[], falling: [] as TrendingRow[] };
-    if (!hasPrevPeriod) return empty;
+    if (!hasPrevPeriod || prevAnalyzed.total === 0) return empty;
     const rows: TrendingRow[] = domainList.map((row) => {
       const share = shareOf(row.count, analyzed.total);
       const prevShare = shareOf(row.prevCount, prevAnalyzed.total);
-      return {
-        domain: row.domain,
-        count: row.count,
-        prevCount: row.prevCount,
-        share,
-        prevShare,
-        delta: share - prevShare,
-        isNew: row.prevCount === 0,
-      };
+      const change = prevShare > 0 ? ((share - prevShare) / prevShare) * 100 : null;
+      return { domain: row.domain, count: row.count, prevCount: row.prevCount, share, prevShare, change };
     });
     // The ranked list only holds this period's domains; a source cited last
-    // period and not this one is added here as a fall to zero.
+    // period and not this one is added here as a 100% fall.
     for (const [domain, prevCount] of prevAnalyzed.domainCounts) {
       if (!domain || domain === 'unknown' || analyzed.domainCounts.has(domain)) continue;
-      const prevShare = shareOf(prevCount, prevAnalyzed.total);
-      rows.push({ domain, count: 0, prevCount, share: 0, prevShare, delta: -prevShare, isNew: false });
+      rows.push({ domain, count: 0, prevCount, share: 0, prevShare: shareOf(prevCount, prevAnalyzed.total), change: -100 });
     }
     const rising = rows
-      .filter((r) => r.delta >= 0.05 && r.count >= TRENDING_MIN_COUNT)
-      .sort((a, b) => b.delta - a.delta || b.count - a.count)
+      .filter((r) => r.count >= TRENDING_MIN_COUNT && r.share >= TRENDING_MIN_SHARE && (r.change === null || r.change >= 0.5))
+      .sort((a, b) => {
+        // New domains lead, largest share first; then the biggest relative rise.
+        if ((a.change === null) !== (b.change === null)) return a.change === null ? -1 : 1;
+        if (a.change === null || b.change === null) return b.share - a.share;
+        return b.change - a.change || b.count - a.count;
+      })
       .slice(0, TRENDING_ROW_LIMIT);
     const falling = rows
-      .filter((r) => r.delta <= -0.05 && r.prevCount >= TRENDING_MIN_COUNT)
-      .sort((a, b) => a.delta - b.delta || b.prevCount - a.prevCount)
+      .filter((r): r is TrendingRow & { change: number } =>
+        r.change !== null && r.change <= -0.5 && r.prevCount >= TRENDING_MIN_COUNT && r.prevShare >= TRENDING_MIN_SHARE)
+      .sort((a, b) => a.change - b.change || b.prevCount - a.prevCount)
       .slice(0, TRENDING_ROW_LIMIT);
     return { rising, falling };
   }, [hasPrevPeriod, domainList, analyzed, prevAnalyzed]);
@@ -935,20 +937,21 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
     setFilterSentiments([]);
   };
 
-  // Delta chip: percentage-point change of the coverage share vs the previous
-  // period, labelled in points so it is never read as a relative change (the
-  // pages table's chip IS relative, and says %). Only shown for sources that
-  // existed in the previous period.
+  // Delta chip: how much the coverage share moved versus the previous period,
+  // relative to where it stood (43% → 47% reads "+9%") — the same reading as
+  // the pages table's chip. Only shown for sources that existed in the
+  // previous period.
   const renderShareDelta = (count: number, prevCount: number) => {
     if (!hasPrevPeriod || prevCount <= 0) return null;
     const cur = shareOf(count, analyzed.total);
     const prev = shareOf(prevCount, prevAnalyzed.total);
-    const delta = Math.round(cur - prev);
-    if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
+    if (prev <= 0) return null;
+    const pct = Math.round(((cur - prev) / prev) * 100);
+    if (pct === 0) return <span className="text-xs text-gray-400">-</span>;
     return (
-      <span className={`text-xs font-semibold flex items-center gap-0.5 ${delta > 0 ? 'text-green-600' : 'text-red-600'}`}>
-        {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-        <span className="whitespace-nowrap">{Math.abs(delta)} pts</span>
+      <span className={`text-xs font-semibold flex items-center gap-0.5 ${pct > 0 ? 'text-green-600' : 'text-red-600'}`}>
+        {pct > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+        <span className="whitespace-nowrap">{Math.abs(pct)}%</span>
       </span>
     );
   };
@@ -985,16 +988,18 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
     (pagesTablePage + 1) * PAGES_TABLE_PAGE_SIZE,
   );
 
-  // One row of the trending card: rank, logo, domain (flagged "New" when it
-  // had no citations last period) and the share it holds now; beneath, a bar
-  // sized to the card's largest move, where the share stood last period, and
-  // the move itself in points. Teal for a rise, red for a fall — the same
-  // encoding as the delta chips elsewhere on the page.
-  const renderTrendingRow = (row: TrendingRow, idx: number, maxAbsDelta: number) => {
+  // One row of the trending card: rank, logo, domain and the share it holds
+  // now; beneath, a bar sized to the card's largest relative move, where the
+  // share stood last period, and the move itself. A new domain has no base
+  // to move from — it takes the full bar and its chip says "New". Teal for a
+  // rise, red for a fall, the same encoding as the delta chips elsewhere on
+  // the page.
+  const renderTrendingRow = (row: TrendingRow, idx: number, maxAbsChange: number) => {
     const displayName = getSourceDisplayName(row.domain);
-    const rising = row.delta > 0;
-    const barPct = maxAbsDelta > 0 ? (Math.abs(row.delta) / maxAbsDelta) * 100 : 0;
-    const before = row.isNew ? 'not cited last period' : `${row.prevShare.toFixed(1)}% last period`;
+    const isNew = row.change === null;
+    const rising = isNew || (row.change as number) > 0;
+    const barPct = isNew ? 100 : maxAbsChange > 0 ? (Math.abs(row.change as number) / maxAbsChange) * 100 : 0;
+    const before = isNew ? 'not cited last period' : `${row.prevShare.toFixed(1)}% last period`;
     return (
       <button
         key={row.domain}
@@ -1006,11 +1011,6 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
           <span className="w-5 text-right text-xs font-medium text-gray-400 tabular-nums flex-shrink-0">{idx + 1}</span>
           <Favicon domain={row.domain} />
           <span className="text-sm font-medium text-gray-900 truncate" title={displayName}>{displayName}</span>
-          {row.isNew && (
-            <Badge className="bg-green-100 text-green-700 border-0 text-[10px] px-1.5 py-0 pointer-events-none flex-shrink-0">
-              New
-            </Badge>
-          )}
           <span className="ml-auto flex-shrink-0 text-sm font-semibold text-gray-900 tabular-nums">
             {row.share.toFixed(1)}%
           </span>
@@ -1025,9 +1025,9 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
           <span className="text-[11px] text-gray-400 tabular-nums whitespace-nowrap flex-shrink-0">
             was {row.prevShare.toFixed(1)}%
           </span>
-          <span className={`w-[62px] flex items-center justify-end gap-0.5 flex-shrink-0 text-xs font-semibold ${rising ? 'text-green-600' : 'text-red-600'}`}>
+          <span className={`w-[52px] flex items-center justify-end gap-0.5 flex-shrink-0 text-xs font-semibold ${rising ? 'text-green-600' : 'text-red-600'}`}>
             {rising ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-            <span className="whitespace-nowrap">{Math.abs(row.delta).toFixed(1)} pts</span>
+            <span className="whitespace-nowrap">{isNew ? 'New' : `${Math.abs(Math.round(row.change as number))}%`}</span>
           </span>
         </div>
       </button>
@@ -1065,7 +1065,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
               <div className="h-full rounded-full" style={{ width: `${100 - mentionRate}%`, backgroundColor: NOT_MENTIONED_COLOR }} />
             )}
           </div>
-          <span className="w-[58px] flex justify-end flex-shrink-0">{renderShareDelta(row.count, row.prevCount)}</span>
+          <span className="w-[52px] flex justify-end flex-shrink-0">{renderShareDelta(row.count, row.prevCount)}</span>
         </div>
       </button>
     );
@@ -1220,8 +1220,8 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                             this source (responses cite several sources, so these don't add
                             up to 100%). The bar splits each source's citations into
                             responses that mention {companyName || 'your company'} and
-                            responses where it's absent. The change beside it is in
-                            percentage points versus the previous period.
+                            responses where it's absent. The change beside it is how
+                            much that share moved versus the previous period.
                           </p>
                         </TooltipContent>
                       </Tooltip>
@@ -1262,10 +1262,10 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                         </TooltipTrigger>
                         <TooltipContent className="max-w-[280px]">
                           <p className="text-xs">
-                            The domains whose share of AI responses moved the most versus
-                            the previous period, in percentage points. Rising shows the
-                            sources gaining voice — "New" marks a domain cited for the
-                            first time this period — and Falling the sources losing it.
+                            The domains whose share of AI responses grew or shrank the
+                            most versus the previous period. Rising shows the sources
+                            gaining voice, with a domain cited for the first time this
+                            period marked New; Falling shows the sources losing it.
                             Click a row to open the source.
                           </p>
                         </TooltipContent>
@@ -1317,11 +1317,12 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                       </div>
                     );
                   }
-                  // Bars are scaled to the largest move in the visible list.
-                  const maxAbsDelta = rows.reduce((m, r) => Math.max(m, Math.abs(r.delta)), 0);
+                  // Bars are scaled to the largest relative move in the visible
+                  // list; a new domain (no base) takes the full bar.
+                  const maxAbsChange = rows.reduce((m, r) => (r.change === null ? m : Math.max(m, Math.abs(r.change))), 0);
                   return (
                     <div className="h-full max-h-[400px] overflow-y-auto pr-1">
-                      {rows.map((row, idx) => renderTrendingRow(row, idx, maxAbsDelta))}
+                      {rows.map((row, idx) => renderTrendingRow(row, idx, maxAbsChange))}
                     </div>
                   );
                 })()}
