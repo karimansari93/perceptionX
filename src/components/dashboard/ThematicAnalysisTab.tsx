@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { DataUnavailable } from './DataUnavailable';
+import type { DashboardFamilyStatus } from '@/types/dashboard';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -60,6 +62,13 @@ interface ThematicAnalysisTabProps {
   // arriving (it loads AFTER first paint). Gates the empty state: skeleton
   // cards, never "No Experience Data", until the stream is final.
   responsesLoading?: boolean;
+  // Reliability-audit failure states: the attribute-theme family's status and
+  // the response-stream failure flag, plus a targeted retry. A failed request
+  // renders "Couldn't load …" + Retry — never "No Themes Found" /
+  // "No Experience Data", and never a permanent skeleton.
+  themesStatus?: DashboardFamilyStatus;
+  streamError?: boolean;
+  onRetry?: () => void;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
@@ -170,7 +179,7 @@ const SMALL_LABEL_CLS = 'text-[11px] font-semibold uppercase tracking-[0.1em]';
 const EMPTY_ARRAY: any[] = [];
 const EMPTY_OBJECT: Record<string, string> = {};
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = EMPTY_ARRAY, fetchAIThemesForAttribute, aiThemeAttrsLoaded = EMPTY_ARRAY, onRefreshThemes, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, cubeQuarterKey, cubeMonthFloor = null, cubeScopeRows, cubePromptTypeRows }: ThematicAnalysisTabProps) => {
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = EMPTY_ARRAY, fetchAIThemesForAttribute, aiThemeAttrsLoaded = EMPTY_ARRAY, onRefreshThemes, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, themesStatus = 'ready', streamError = false, onRetry, selectedJobFunction = 'all', onJobFunctionChange, cubeQuarterKey, cubeMonthFloor = null, cubeScopeRows, cubePromptTypeRows }: ThematicAnalysisTabProps) => {
 
   // Modal state — persisted so a reload restores the open drilldown.
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
@@ -763,7 +772,17 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
 
       {/* No Data Message — skeleton while the raw stream is still arriving */}
       {!hasScopedData && (
-        responsesLoading ? (
+        streamError && !cubePromptTypeRows ? (
+          <Card>
+            <CardContent className="p-6">
+              <DataUnavailable
+                title="Couldn't load responses."
+                description="The response data behind this analysis didn't load. Retry to fetch it again."
+                onRetry={onRetry}
+              />
+            </CardContent>
+          </Card>
+        ) : responsesLoading ? (
           <Card>
             <CardContent className="p-6" aria-busy="true">
               {/* Plot-shaped placeholder so the loading state matches the quadrant. */}
@@ -791,8 +810,17 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         )
       )}
 
-      {/* Empty State — only show after loading completes */}
-      {!aiThemesLoading && themeData.length === 0 && hasScopedData && (
+      {/* Theme family failed: explicit error + Retry, never the empty copy. */}
+      {themesStatus === 'error' && themeData.length === 0 && (
+        <Card>
+          <CardContent className="p-6">
+            <DataUnavailable title="Couldn't load themes." onRetry={onRetry} />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Empty State — only after the theme family and raw themes have loaded */}
+      {themesStatus === 'ready' && !aiThemesLoading && themeData.length === 0 && hasScopedData && (
         <Card>
           <CardContent className="p-6">
             <div className="text-center">

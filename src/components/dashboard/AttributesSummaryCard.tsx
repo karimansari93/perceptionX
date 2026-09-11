@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { DataUnavailable } from './DataUnavailable';
+import type { DashboardFamilyStatus } from '@/types/dashboard';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, TrendingDown, ExternalLink, Target, Award, Users, Heart, Shield, Lightbulb, Coffee, Crown, Lock, MessageSquare, MessageCircle, ClipboardList, UserCheck } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +20,11 @@ interface AttributesSummaryCardProps {
   previousPeriodResponses?: any[];
   responses?: any[];
   aiThemesLoading?: boolean;
+  // Load status of the attribute-theme rows (company/location rollups). A
+  // failed request renders "Couldn't load themes." + Retry — never the
+  // legitimate-empty copy (reliability audit P0-1 / P2-1).
+  themesStatus?: DashboardFamilyStatus;
+  onRetry?: () => void;
   // Explicit period/function scoping for the MV rows. When provided
   // (undefined = not wired, fall back to the response key-set scoping), the
   // card filters MV rows by the quarter of their response_month directly —
@@ -59,6 +66,8 @@ export const AttributesSummaryCard = ({
   previousPeriodResponses = [],
   responses = [],
   aiThemesLoading = false,
+  themesStatus = 'ready',
+  onRetry,
   cubeQuarterKey,
   cubePrevQuarterKey,
   cubeMonthFloor = null,
@@ -358,8 +367,10 @@ export const AttributesSummaryCard = ({
           <CardTitle className="text-[15px] font-semibold text-[#13274F]">Themes</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-2.5">
-          {aiThemesLoading ? (
-            <div className="space-y-3 py-2">
+          {themesStatus === 'error' ? (
+            <DataUnavailable title="Couldn't load themes." onRetry={onRetry} />
+          ) : aiThemesLoading || themesStatus === 'loading' ? (
+            <div className="space-y-3 py-2" aria-busy="true">
               {[1,2,3,4,5].map(i => (
                 <div key={i} className="flex items-center justify-between py-1">
                   <div className="flex items-center gap-2">
