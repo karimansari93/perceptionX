@@ -30,8 +30,10 @@ const expectHeadline = (expected: { sentiment: string; visibility: string; relev
 };
 
 describe('dashboard data reliability', () => {
-  it('scenario 1: get_location_rollups times out twice → unavailable + retry, never 0%', async () => {
-    const backend = new MockBackend({ faults: { get_location_rollups: (attempt) => attempt <= 2 } });
+  it('scenario 1: get_location_rollups times out on every automatic attempt → unavailable + retry, never 0%', async () => {
+    // The family retries twice on its own (3–4.5 s, then 6–7.5 s apart); the
+    // incident state is reached when all three automatic attempts time out.
+    const backend = new MockBackend({ faults: { get_location_rollups: (attempt) => attempt <= 3 } });
     server.use(...backend.handlers());
     seedSession();
     const watch = watchScorecard();
@@ -59,9 +61,9 @@ describe('dashboard data reliability', () => {
     expect(screen.getAllByRole('button', { name: /retry/i }).length).toBeGreaterThan(0);
     // At no point during the load did any metric paint as a zero.
     expect(watch.falseZeros()).toEqual([]);
-    // First attempt + the single query-level retry, both answered 500.
-    expect(backend.counters.get_location_rollups).toBe(2);
-    expect(backend.rpcCalls('get_location_rollups').map((c) => c.status)).toEqual([500, 500]);
+    // First attempt + two spaced query-level retries, all answered 500.
+    expect(backend.counters.get_location_rollups).toBe(3);
+    expect(backend.rpcCalls('get_location_rollups').map((c) => c.status)).toEqual([500, 500, 500]);
 
     // Observability (audit P1-4): the failure is reported once, with the
     // family, RPC, HTTP status, SQLSTATE, timing and who/what was affected —
@@ -82,7 +84,7 @@ describe('dashboard data reliability', () => {
   });
 
   it('scenario 2: a later retry succeeds → real metrics appear without a browser refresh', async () => {
-    const backend = new MockBackend({ faults: { get_location_rollups: (attempt) => attempt <= 2 } });
+    const backend = new MockBackend({ faults: { get_location_rollups: (attempt) => attempt <= 3 } });
     server.use(...backend.handlers());
     seedSession();
     const watch = watchScorecard();
@@ -103,7 +105,7 @@ describe('dashboard data reliability', () => {
     // Themes card now shows the fixture attributes.
     expect(await screen.findByText('Company Culture', {}, { timeout: 10_000 })).toBeInTheDocument();
     // Retry re-issued ONLY the failed family (one more call), not the whole burst.
-    expect(backend.counters.get_location_rollups).toBe(3);
+    expect(backend.counters.get_location_rollups).toBe(4);
     expect(backend.counters.get_dashboard_rollups).toBe(1);
     expect(watch.falseZeros()).toEqual([]);
   });

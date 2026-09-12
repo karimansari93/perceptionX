@@ -339,7 +339,7 @@ export const AttributesSummaryCard = ({
           <span className="text-xs font-semibold text-gray-900 w-10 text-right">
             {sentimentScore}%
           </span>
-          {previousPeriodResponses.length > 0 && (
+          {(cubeQuarterKey !== undefined ? cubePrevQuarterKey != null : previousPeriodResponses.length > 0) && (
             <span className="w-[40px] flex justify-end">
               {(() => {
                 const delta = Math.round(attribute.trendChange);

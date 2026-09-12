@@ -170,7 +170,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     themesStatus,
     streamError,
     retryFailedQueries,
+    responsesStreaming,
+    requestRawResponses,
   } = dashboardData;
+
 
   // `isRefreshing` ships with the TanStack rewrite of useDashboardData (true
   // while a scope's queries revalidate in the background with data already
@@ -302,11 +305,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   // empty states. Keyed on responsesLoadedCompanyId — the one flag that means
   // "the raw set is FINAL" (all pages committed, loaded empty, or cache-
   // restored).
-  // A failed walk is NOT "still streaming": responsesLoadedCompanyId stays
-  // null on failure, so without this guard every raw-derived view skeletoned
-  // forever (reliability audit P1-1). Consumers receive streamError + a
-  // targeted retry and render an explicit error state instead.
-  const responsesStreaming = !streamError && responsesLoadedCompanyId !== currentCompany?.id;
+  // responsesStreaming comes from the hook: true only while a REQUESTED
+  // stream is still arriving (a failed walk is not "still streaming", and an
+  // unrequested one is neither loading nor failed — reliability audit P1-1).
 
   // The starred view (location + period) is applied inside useDashboardData's
   // company-entry effect — same code path as pending sibling-switch locations,
@@ -332,6 +333,14 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
 
 
   const [activeSection, setActiveSection] = useState(defaultSection || "overview");
+
+  // The raw response stream is on demand: the Overview is fully rollup/cube
+  // backed, so only the detail tabs ask for it (once; it stays cached for
+  // the session). Overview drill-downs that need raw text (competitor
+  // mentions) request it themselves.
+  useEffect(() => {
+    if (activeSection !== 'overview') requestRawResponses();
+  }, [activeSection, requestRawResponses]);
   const [activeGroup, setActiveGroup] = useState(defaultGroup || "dashboard");
   useDocumentTitle(SECTION_TITLES[activeSection]);
   const { state, isMobile } = useSidebar();
@@ -645,6 +654,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             themesStatus={themesStatus}
             streamError={streamError}
             onRetry={retryFailedQueries}
+            onRequestRawResponses={requestRawResponses}
           />
         </div>
 
