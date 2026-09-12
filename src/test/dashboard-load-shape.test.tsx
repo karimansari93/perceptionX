@@ -20,7 +20,7 @@ const SignOutProbe = () => {
 };
 
 describe('dashboard cold-load shape', () => {
-  it('fires in waves: the response stream waits for the headline families, and no more than four RPCs are in flight', async () => {
+  it('fires in waves: the Overview never opens the response stream; a detail tab opens it after the headline families settled; at most four RPCs in flight', async () => {
     // Every RPC takes 250 ms of "server time" so overlap is observable.
     const backend = new MockBackend({ rpcDelayMs: 250 });
     server.use(...backend.handlers());
@@ -28,8 +28,20 @@ describe('dashboard cold-load shape', () => {
     renderDashboard();
 
     await waitForScorecard();
-    await waitFor(() => expect(backend.counters.get_company_responses_page).toBeGreaterThanOrEqual(1), { timeout: 30_000 });
     await waitFor(() => expect(readMetric('sentiment')?.text).toBe(F.EXPECTED.sentiment), { timeout: 20_000 });
+    // Rollup/cube-backed Overview: sources and competitors cards render from
+    // the cubes, themes from the rollups, and prompt_responses is never read.
+    await screen.findByText('glassdoor.com', {}, { timeout: 10_000 });
+    await screen.findByText('Globex', {}, { timeout: 10_000 });
+    await screen.findByText('Company Culture', {}, { timeout: 10_000 });
+    expect(backend.counters.get_company_responses_page ?? 0).toBe(0);
+    expect(document.querySelectorAll('[aria-busy="true"]').length).toBe(0);
+
+    // Opening the Prompts tab is what requests the raw rows.
+    const user = userEvent.setup();
+    await user.click(screen.getAllByText(/^Prompts$/)[0]);
+    await waitFor(() => expect(backend.counters.get_company_responses_page).toBeGreaterThanOrEqual(1), { timeout: 30_000 });
+    await screen.findByText('What is it like to work at Acme?', {}, { timeout: 20_000 });
 
     const rollups = backend.rpcCalls('get_dashboard_rollups')[0];
     const stats = backend.rpcCalls('get_scope_stats')[0];
@@ -68,10 +80,11 @@ describe('dashboard cold-load shape', () => {
 
   it('does not open the response stream while the rollups are still failing and retrying', async () => {
     // Rollups fail on the first two attempts (retry: 2 → third succeeds).
+    // Rendered on the Prompts tab so the stream is wanted from the start.
     const backend = new MockBackend({ faults: { get_dashboard_rollups: (attempt) => attempt <= 2 } });
     server.use(...backend.handlers());
     seedSession();
-    renderDashboard();
+    renderDashboard({ route: '/monitor' });
 
     await waitForScorecard();
     await waitFor(() => expect(readMetric('sentiment')?.text).toBe(F.EXPECTED.sentiment), { timeout: 40_000 });

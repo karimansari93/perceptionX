@@ -99,6 +99,9 @@ interface OverviewTabProps {
   streamError?: boolean;
   // Refetch only the families currently in error.
   onRetry?: () => void;
+  // The raw response stream is on demand; drill-downs that need response
+  // text (competitor mentions) ask for it here.
+  onRequestRawResponses?: () => void;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   // Fields are optional because the MV may not yet have per-month data for
@@ -183,6 +186,7 @@ export const OverviewTab = memo(({
   themesStatus = 'ready',
   streamError = false,
   onRetry,
+  onRequestRawResponses,
   responseTexts = {},
   fetchResponseTexts,
   previousPeriodMetrics = null,
@@ -627,11 +631,19 @@ export const OverviewTab = memo(({
   };
 
   const handleCompetitorClick = (competitor: string) => {
+    // Snippets come from raw response text, which is fetched on demand.
+    onRequestRawResponses?.();
     const snippets = getSnippetsForCompetitor(competitor);
     setSelectedCompetitor(competitor);
     setCompetitorSnippets(snippets);
     setIsCompetitorModalOpen(true);
   };
+  // Re-extract once the stream lands while the popup is open.
+  useEffect(() => {
+    if (!isCompetitorModalOpen || !selectedCompetitor || responses.length === 0) return;
+    setCompetitorSnippets(getSnippetsForCompetitor(selectedCompetitor));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [responses, isCompetitorModalOpen, selectedCompetitor]);
 
   const handleCloseCompetitorModal = () => {
     setIsCompetitorModalOpen(false);
@@ -1613,6 +1625,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
                   </div>
                 );
               })
+            ) : responsesLoading ? (
+              <div className="text-gray-500 text-sm" aria-busy="true">Loading mentions…</div>
             ) : (
               <div className="text-gray-500 text-sm">No mentions found.</div>
             )}

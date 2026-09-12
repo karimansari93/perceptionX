@@ -395,6 +395,19 @@ export const useDashboardData = () => {
   // validity unknowable — don't judge) from "loaded with zero rows" (final —
   // a stale selection must clear).
   const [responsesLoadedCompanyId, setResponsesLoadedCompanyId] = useState<string | null>(null);
+  // RAW RESPONSE STREAM ON DEMAND (reliability audit, longer-term item 17).
+  // Every headline number has a rollup or cube; the raw rows only feed the
+  // detail views (Prompts table + response popup, cited pages, competitor
+  // snippets, theme drill-downs). The page requests the stream when one of
+  // those opens (requestRawResponses); the hook requests it itself as a
+  // fallback when a selection cannot be served by the location RPC, when a
+  // cube family failed, or when Reports asks for the full history. Until
+  // then a cold load never touches prompt_responses — the 1.2 GB table that
+  // was the biggest single load the dashboard put on the database.
+  const [rawResponsesWanted, setRawResponsesWanted] = useState(false);
+  const [rawFallbackNeeded, setRawFallbackNeeded] = useState(false);
+  const requestRawResponses = useCallback(() => setRawResponsesWanted(true), []);
+  const rawResponsesEnabled = rawResponsesWanted || rawFallbackNeeded;
 
   // ---- Query-cached fetch families (TanStack Query) ----
   // Every family is keyed by the brand-scope signature, so anything the user
@@ -404,7 +417,10 @@ export const useDashboardData = () => {
   // these paths, and the 5-minute companyDataCacheRef restore machinery.
   const queryClient = useQueryClient();
   const scopeReady = !!user?.id && !!currentCompany?.id && scopeCompanyIds.length > 0;
-  const FRESH_MS = 5 * 60 * 1000; // parity with the old per-company cache TTL
+  // Data changes per collection wave (quarterly) plus the refresh jobs, not
+  // per page view: 30 minutes keeps in-session revisits and tab returns
+  // instant instead of re-querying every family every 5 minutes.
+  const FRESH_MS = 30 * 60 * 1000;
   const KEEP_MS = 45 * 60 * 1000;
 
   // COLD-LOAD SHAPE (reliability audit P0-2): a cold load used to open six
@@ -465,7 +481,7 @@ export const useDashboardData = () => {
   const firstPagesQuery = useQuery({
     queryKey: dashboardKeys.responsesFirst(scopeKey),
     queryFn: ({ signal }) => fetchResponsesFirstPages(scopeCompanyIds, signal),
-    enabled: scopeReady && promptsQuery.data !== undefined && rollupsSettled && statsSettled,
+    enabled: scopeReady && rawResponsesEnabled && promptsQuery.data !== undefined && rollupsSettled && statsSettled,
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,
@@ -482,7 +498,7 @@ export const useDashboardData = () => {
       queryClient.getQueryData<FirstPages>(dashboardKeys.responsesFirst(scopeKey)),
       signal
     ),
-    enabled: scopeReady && firstPagesQuery.data !== undefined,
+    enabled: scopeReady && rawResponsesEnabled && firstPagesQuery.data !== undefined,
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,
@@ -675,6 +691,10 @@ export const useDashboardData = () => {
     (firstPagesQuery.isError && firstPagesQuery.data === undefined) ||
     (fullStreamQuery.isError && fullStreamQuery.data === undefined)
   );
+  // "Raw rows still arriving" — only while the stream has actually been
+  // requested; an unrequested stream is neither loading nor failed, and the
+  // cube-backed views must not skeleton for it.
+  const responsesStreaming = rawResponsesEnabled && !streamError && responsesLoadedCompanyId !== currentCompany?.id;
   useEffect(() => {
     if (!criticalError) {
       setConnectionError(null);
@@ -1386,6 +1406,7 @@ export const useDashboardData = () => {
   // Function to load all historical responses (for complete trend analysis)
   const loadAllHistoricalResponses = useCallback(async () => {
     setLoadAllResponses(true);
+    setRawResponsesWanted(true);
     await queryClient.invalidateQueries({ queryKey: dashboardKeys.responsesFull(scopeKey) });
   }, [queryClient, scopeKey]);
 
@@ -1729,6 +1750,18 @@ export const useDashboardData = () => {
     gcTime: KEEP_MS,
     refetchOnMount: true,
   });
+  // Hook-driven reasons to open the raw stream (see rawResponsesEnabled):
+  // a selection the location RPC cannot serve (pending/starred mid-switch),
+  // Reports asking for the full history, or a cube family that failed — the
+  // cards then take their pre-cube raw path instead of showing a false
+  // empty state.
+  useEffect(() => {
+    setRawFallbackNeeded(
+      (!!selectedLocation && !locSelectionFetchable) ||
+      loadAllResponses ||
+      scopeStatsQuery.isError || domainStatsQuery.isError || competitorStatsQuery.isError
+    );
+  }, [selectedLocation, locSelectionFetchable, loadAllResponses, scopeStatsQuery.isError, domainStatsQuery.isError, competitorStatsQuery.isError]);
   // True while any interactive cube for the CURRENT scope+location is still
   // on its first fetch. The response stream can finish before these land
   // (they chain behind location rollups on a switch), so cube-fed cards must
@@ -1924,8 +1957,8 @@ export const useDashboardData = () => {
     const errored = !!(promptsQuery.error || rollupsQuery.error || firstPagesQuery.error || fullStreamQuery.error);
     const prompts = !scopeReady || errored || promptsQuery.data !== undefined;
     const rollupsDone = !scopeReady || errored || rollupsQuery.data !== undefined;
-    const responsesFirst = !scopeReady || errored || firstPagesQuery.data !== undefined;
-    const responsesFull = !scopeReady || errored || fullStreamQuery.data !== undefined;
+    const responsesFirst = !scopeReady || errored || !rawResponsesEnabled || firstPagesQuery.data !== undefined;
+    const responsesFull = !scopeReady || errored || !rawResponsesEnabled || fullStreamQuery.data !== undefined;
     return {
       prompts,
       rollups: rollupsDone,
@@ -1939,7 +1972,7 @@ export const useDashboardData = () => {
       complete: prompts && rollupsDone && responsesFirst && responsesFull,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeReady, promptsQuery.data, rollupsQuery.data, firstPagesQuery.data, fullStreamQuery.data,
+  }, [scopeReady, rawResponsesEnabled, promptsQuery.data, rollupsQuery.data, firstPagesQuery.data, fullStreamQuery.data,
       promptsQuery.error, rollupsQuery.error, firstPagesQuery.error, fullStreamQuery.error]);
 
   // True while any dashboard family revalidates in the background with data
@@ -1999,11 +2032,15 @@ export const useDashboardData = () => {
   // guard kept it forever).
   useEffect(() => {
     if (!selectedLocation) return;
-    if (responsesLoadedCompanyId === null || responsesLoadedCompanyId !== currentCompany?.id) return;
+    const rawFinal = responsesLoadedCompanyId !== null && responsesLoadedCompanyId === currentCompany?.id;
+    // Without a requested stream, the scope-stats cube (every location
+    // spelling of the scope) is the complete option set.
+    const cubeFinal = !rawResponsesEnabled && scopeStatsQuery.data !== undefined;
+    if (!rawFinal && !cubeFinal) return;
     if (!locationOptions.some(o => o.canonicalKey === selectedLocation)) {
       setSelectedLocationState(null);
     }
-  }, [selectedLocation, responsesLoadedCompanyId, currentCompany?.id, locationOptions]);
+  }, [selectedLocation, responsesLoadedCompanyId, currentCompany?.id, locationOptions, rawResponsesEnabled, scopeStatsQuery.data]);
 
   // Determine effective period (latest if none selected)
   const effectivePeriod = useMemo(() => {
@@ -2367,7 +2404,8 @@ export const useDashboardData = () => {
       visibilityRowsForSelection.length > 0 ||
       (!visibilityMvLoading && responses.length > 0) ||
       responsesFinal ||
-      streamError;
+      streamError ||
+      !rawResponsesEnabled;
 
     // Relevance is ready if backend metrics exist OR recency fetch completed
     const hasBackendRelevance = companyRelevanceMetrics !== null;
@@ -2378,7 +2416,7 @@ export const useDashboardData = () => {
       !locationMetricsLoading && !finalAndEmpty;
     setMetricsCalculating(!allReady);
 
-  }, [loading, responses.length, responsesLoadedCompanyId, currentCompany?.id, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length, locationMetricsLoading, visibilityMvLoading, visibilityRowsForSelection, streamError]);
+  }, [loading, responses.length, responsesLoadedCompanyId, currentCompany?.id, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length, locationMetricsLoading, visibilityMvLoading, visibilityRowsForSelection, streamError, rawResponsesEnabled]);
 
   const metrics: DashboardMetrics = useMemo(() => {
     // Use period-filtered responses when a period is selected (multi-month companies)
@@ -3200,6 +3238,9 @@ export const useDashboardData = () => {
     // scope to this, not the single current company or all userCompanies.
     scopeCompanyIds,
     responsesLoadedCompanyId, // company whose responses are FINAL (loaded/empty/cached)
+    responsesStreaming, // raw rows requested and still arriving (never true for an unrequested stream)
+    rawResponsesEnabled, // the raw stream has been requested (a detail view opened, or a fallback)
+    requestRawResponses, // detail views call this the moment they need raw rows
     isRefreshing, // background revalidation with content on screen — subtle indicator, never a skeleton
     hydration, // per-family first-load progress for the branded loading screen
     prefetchLocationRollups, // intent prefetch for the location dropdown
