@@ -83,20 +83,20 @@ const STEPS: WalkthroughStep[] = [
     route: '/dashboard/competitors',
   },
   {
-    target: '[data-tour="sources-chart"]',
-    title: 'Top cited domains',
+    target: '[data-tour="sources-domain-list"]',
+    title: 'Cited domains',
     content:
-      'Sources shows where AI is getting its answers about you. This chart tracks the domains cited most often over time — switch to the bar view for this month\'s ranking. Click any bar, label or legend entry to open that source.',
-    placement: 'bottom',
+      "Sources shows where AI is getting its answers about you. Every cited domain, ranked by the share of AI responses citing it. The bar under each one splits those citations in two: teal where your company was mentioned in the answer, grey where it wasn't. A lot of grey on a big source is a visibility gap — that source is shaping answers you're absent from. Click any row to open that source.",
+    placement: 'right',
     disableBeacon: true,
     disableScrolling: true,
     route: '/dashboard/sources',
   },
   {
-    target: '[data-tour="sources-domain-list"]',
-    title: 'Mentioned vs not mentioned',
+    target: '[data-tour="sources-trending"]',
+    title: 'Trending domains',
     content:
-      "Every cited domain, ranked by the share of AI responses citing it. The bar under each one splits those citations in two: teal where your company was mentioned in the answer, grey where it wasn't. A lot of grey on a big source is a visibility gap — that source is shaping answers you're absent from.",
+      'The domains gaining the most share of AI responses since the previous period, with the ones cited for the first time flagged "New". Switch to Falling to see which sources are losing voice.',
     placement: 'left',
     disableBeacon: true,
     disableScrolling: true,

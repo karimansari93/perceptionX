@@ -5,21 +5,9 @@ import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CitationCount } from "@/types/dashboard";
 import {
-  FileText, TrendingUp, TrendingDown, Info, ExternalLink, ChartLine, BarChartHorizontal,
+  FileText, TrendingUp, TrendingDown, Info, ExternalLink,
   Search, Tags, HelpCircle, Globe, Bot, SmilePlus,
 } from 'lucide-react';
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  LabelList,
-  Tooltip as RechartsTooltip,
-} from 'recharts';
 import { SourceDetailsModal } from "./SourceDetailsModal";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -27,11 +15,11 @@ import { Favicon } from "@/components/ui/favicon";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { enhanceCitations, normalizePageKey, getFavicon } from "@/utils/citationUtils";
+import { enhanceCitations, normalizePageKey } from "@/utils/citationUtils";
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { getAttributeIconByName } from "@/config/attributeIcons";
 import { categorizeSourceByMediaType } from "@/utils/sourceConfig";
-import { poolDomainMonthly, poolDomainRows } from "@/hooks/dashboard/scopeStatsSelect";
+import { poolDomainRows } from "@/hooks/dashboard/scopeStatsSelect";
 import { sentimentRatioV2 } from "@/lib/sentimentV2";
 import LLMLogo from "@/components/LLMLogo";
 import { FilterDropdown } from "./FilterDropdown";
@@ -83,16 +71,21 @@ const normalizeDomain = (domain: string): string => {
   return domain.trim().toLowerCase().replace(/^www\./, '');
 };
 
-// Trend-line series palette — brand teal first, then hues validated for
-// CVD-safe adjacency on the white surface (dataviz six-checks). Fixed order.
-const CHART_COLORS = ['#0DBCBA', '#5B7FD9', '#DB5E89', '#E8A33D', '#8B5CF6'];
-const TREND_SERIES_LIMIT = 5;
 // The mentioned/not-mentioned split colors used by the domain-list bars.
 const MENTIONED_COLOR = '#0DBCBA';
 const NOT_MENTIONED_COLOR = '#D1D5DB';
-// Horizontal ranking (bar mode) row count and bar thickness.
-const BAR_RANK_LIMIT = 8;
-const RANK_BAR_SIZE = 18;
+// Trending-domains card: bar color for a source losing share (a rising one
+// reuses the brand teal), rows shown per direction, and the floor a row needs
+// in the period it is moving from — citing responses and share of responses —
+// so a site that went from one answer to three never tops the card.
+const FALLING_COLOR = '#FCA5A5';
+const TRENDING_ROW_LIMIT = 10;
+const TRENDING_MIN_COUNT = 3;
+const TRENDING_MIN_SHARE = 1; // % of responses
+
+// Coverage share of a domain/page: % of analyzed responses citing it.
+const shareOf = (count: number, total: number) =>
+  total > 0 ? Math.min(100, (count / total) * 100) : 0;
 // How many domain rows render before the "Show all" opt-in (each row mounts a
 // Favicon image; keeping the initial DOM small keeps the tab snappy at
 // Netflix-scale source counts).
@@ -223,21 +216,6 @@ const titleFromUrl = (url: string, domain: string): string => {
   } catch {
     return domain;
   }
-};
-
-type TrendGranularity = 'week' | 'month';
-
-const startOfWeekTs = (ts: number): number => {
-  const d = new Date(ts);
-  const day = (d.getDay() + 6) % 7; // Monday = 0
-  d.setDate(d.getDate() - day);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-};
-
-const startOfMonthTs = (ts: number): number => {
-  const d = new Date(ts);
-  return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
 };
 
 export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = null, cubePrevQuarterKey = null, cubesLoading = false, streamError = false, onRetry, topCitations, responses, parseCitations, companyName, searchResults = EMPTY_ARRAY, currentCompanyId, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, responseSentimentRows = EMPTY_ARRAY }: SourcesTabProps) => {
@@ -419,9 +397,9 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
   useEffect(() => {
     setPagesTablePage(0);
   }, [pageSearch, filterAttributes, filterQuestionTypes, filterSourceTypes, filterModels, filterSentiments, selectedJobFunction]);
-  // Chart form toggle for the trends card - persisted. 'bar' = horizontal
-  // ranking for the current month (the default); 'line' = trend over time.
-  const [trendChartType, setTrendChartType] = usePersistedState<'line' | 'bar'>('sourcesTab.trendChartType', 'bar');
+  // Trending-domains card direction - persisted. 'rising' = sources gaining
+  // share versus the previous period (the default); 'falling' = losing it.
+  const [trendingDirection, setTrendingDirection] = usePersistedState<'rising' | 'falling'>('sourcesTab.trendingDirection', 'rising');
   // Controlled by the parent Dashboard so the job-function selection is shared
   // across all tabs and never resets on tab switch.
   const selectedJobFunctionFilter = selectedJobFunction;
@@ -439,16 +417,6 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
   const handleSourceClick = (citation: CitationCount) => {
     setSelectedSource(citation);
     setIsSourceModalOpen(true);
-  };
-
-  // Open a domain's source modal by name — used by every chart affordance
-  // (bars, axis labels, legend) so they all behave like the list rows.
-  // Only ever called from event handlers, so reading `analyzed` (declared
-  // below) is safe: it's initialized long before any click lands.
-  const openDomainModal = (domain: string) => {
-    const d = normalizeDomain(domain);
-    if (!d) return;
-    handleSourceClick({ domain: d, count: analyzed.domainCounts.get(d) || 0 });
   };
 
   const handleCloseSourceModal = () => {
@@ -654,165 +622,61 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
   }, [analyzed, prevAnalyzed]);
 
   // ---------------------------------------------------------------------
-  // Chart data.
-  // Line mode: responses citing each of the top domains, bucketed by week
-  // (short periods) or month, contiguous so gaps render as zero. Series keys
-  // are s0..s4 — recharts treats dots in dataKey strings ("glassdoor.com")
-  // as nested paths, so domains can't be keys directly.
-  // Bar mode: horizontal ranking of the top domains within the month the
-  // data is currently on (the latest month with responses).
+  // Trending domains: the sources whose coverage share grew or shrank the
+  // most, relative to where it stood in the previous period, so a site
+  // gaining (or losing) voice shows up without scanning the ranked list.
+  // Share is the list's measure — responses citing the domain ÷ responses in
+  // the selection, each period on its own total — and the move is the
+  // relative change of that share (43% → 47% reads +9%), the same reading as
+  // the pages table's chip. A domain first cited this period has no base to
+  // grow from: it leads the rising list, marked "New". One cited last period
+  // but not this one is a 100% fall. A row needs TRENDING_MIN_COUNT citing
+  // responses and TRENDING_MIN_SHARE of the responses in the period it is
+  // moving from (rising: this one; falling: the previous one), and a move
+  // that rounds to 0% is not a move. No previous period — or a previous
+  // period with no responses in the selection — means nothing to compare
+  // against: both lists stay empty and the card says so.
   // ---------------------------------------------------------------------
-  const trend = useMemo(() => {
-    const series = domainList.slice(0, TREND_SERIES_LIMIT).map(d => d.domain);
-    const empty = {
-      data: [] as Record<string, any>[],
-      series,
-      granularity: 'week' as TrendGranularity,
-      monthLabel: '',
-      monthTotal: 0,
-      monthRanking: [] as { name: string; domain: string; count: number }[],
-    };
-    if (series.length === 0) return empty;
+  type TrendingRow = {
+    domain: string;
+    count: number;         // citing responses this period
+    prevCount: number;     // …and in the previous period
+    share: number;         // coverage share this period (%)
+    prevShare: number;     // …and in the previous period
+    change: number | null; // relative change of the share (%); null = new
+  };
 
-    // Cube path: month-grain series straight from the domain cube. The cube
-    // has no week grain, so short windows (<=2 distinct pooled months) fall
-    // through to the raw path below, which applies the same granularity rule
-    // to raw timestamps. Cube months are collection-cycle months
-    // (response_month), not tested_at calendar months.
-    if (cubeActive) {
-      const monthlyPooled = poolDomainMonthly(domainStats!.rows, { quarterKey: cubeQuarterKey, jobFunction: cubeJobFunction });
-      const byDomain = new Map<string, Map<string, number>>();
-      const monthSet = new Set<string>();
-      for (const [rawDomain, months] of monthlyPooled) {
-        const d = normalizeDomain(rawDomain);
-        if (!d || d === 'unknown') continue;
-        let merged = byDomain.get(d);
-        if (!merged) { merged = new Map(); byDomain.set(d, merged); }
-        for (const [month, v] of months) {
-          merged.set(month, (merged.get(month) || 0) + v);
-          monthSet.add(month);
-        }
-      }
-      if (monthSet.size > 2) {
-        const monthsAsc = Array.from(monthSet).sort();
-        const firstMonth = monthsAsc[0];
-        const lastMonth = monthsAsc[monthsAsc.length - 1];
-        const multiYear = firstMonth.slice(0, 4) !== lastMonth.slice(0, 4);
-        // Contiguous month keys so gaps render as zero, capped at the same
-        // 60 buckets as the raw path.
-        let [y, m] = firstMonth.split('-').map(Number);
-        const [lastY, lastM] = lastMonth.split('-').map(Number);
-        const data: Record<string, any>[] = [];
-        while ((y < lastY || (y === lastY && m <= lastM)) && data.length < 60) {
-          const ts = new Date(y, m - 1, 1).getTime();
-          const key = `${y}-${String(m).padStart(2, '0')}`;
-          const row: Record<string, any> = {
-            ts,
-            label: new Date(ts).toLocaleDateString('en-US', multiYear ? { month: 'short', year: '2-digit' } : { month: 'short' }),
-          };
-          series.forEach((domain, i) => { row[`s${i}`] = byDomain.get(domain)?.get(key) || 0; });
-          data.push(row);
-          m += 1;
-          if (m > 12) { m = 1; y += 1; }
-        }
-
-        // Bar-mode ranking: the latest pooled month, over ALL cube domains.
-        const rankRows: { name: string; domain: string; count: number }[] = [];
-        for (const [domain, months] of byDomain) {
-          const count = months.get(lastMonth) || 0;
-          if (count > 0) rankRows.push({ name: getSourceDisplayName(domain), domain, count });
-        }
-        const monthRanking = rankRows.sort((a, b) => b.count - a.count).slice(0, BAR_RANK_LIMIT);
-
-        // The ranking tooltip's share denominator is "responses in the
-        // month" — from the scope cube, on the same cycle-month grain as the
-        // pooled counts above.
-        const monthStartTs = new Date(lastY, lastM - 1, 1).getTime();
-        const monthTotal = cubeScopeTotals?.byMonth.get(lastMonth) || 0;
-
-        return {
-          data,
-          series,
-          granularity: 'month' as TrendGranularity,
-          monthLabel: new Date(monthStartTs).toLocaleDateString('en-US', { month: 'long' }),
-          monthTotal,
-          monthRanking,
-        };
-      }
-      // <=2 pooled months: week grain, which only the raw rows can serve.
-    }
-
-    let minTs = Infinity;
-    let maxTs = -Infinity;
-    const monthKeys = new Set<string>();
-    for (const nr of analyzed.matching) {
-      if (nr.testedAt == null) continue;
-      if (nr.testedAt < minTs) minTs = nr.testedAt;
-      if (nr.testedAt > maxTs) maxTs = nr.testedAt;
-      const d = new Date(nr.testedAt);
-      monthKeys.add(`${d.getFullYear()}-${d.getMonth()}`);
-    }
-    if (!Number.isFinite(minTs)) return empty;
-
-    const granularity: TrendGranularity = monthKeys.size > 2 ? 'month' : 'week';
-    const bucketOf = granularity === 'month' ? startOfMonthTs : startOfWeekTs;
-
-    const bucketStarts: number[] = [];
-    let cursor = bucketOf(minTs);
-    const last = bucketOf(maxTs);
-    while (cursor <= last && bucketStarts.length < 60) {
-      bucketStarts.push(cursor);
-      const d = new Date(cursor);
-      if (granularity === 'month') d.setMonth(d.getMonth() + 1);
-      else d.setDate(d.getDate() + 7);
-      cursor = d.getTime();
-    }
-
-    const multiYear = new Date(minTs).getFullYear() !== new Date(maxTs).getFullYear();
-    const rowByBucket = new Map<number, Record<string, any>>();
-    const data = bucketStarts.map(ts => {
-      const d = new Date(ts);
-      const label = granularity === 'month'
-        ? d.toLocaleDateString('en-US', multiYear ? { month: 'short', year: '2-digit' } : { month: 'short' })
-        : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const row: Record<string, any> = { ts, label };
-      series.forEach((_, i) => { row[`s${i}`] = 0; });
-      rowByBucket.set(ts, row);
-      return row;
+  const trendingDomains = useMemo(() => {
+    const empty = { rising: [] as TrendingRow[], falling: [] as TrendingRow[] };
+    if (!hasPrevPeriod || prevAnalyzed.total === 0) return empty;
+    const rows: TrendingRow[] = domainList.map((row) => {
+      const share = shareOf(row.count, analyzed.total);
+      const prevShare = shareOf(row.prevCount, prevAnalyzed.total);
+      const change = prevShare > 0 ? ((share - prevShare) / prevShare) * 100 : null;
+      return { domain: row.domain, count: row.count, prevCount: row.prevCount, share, prevShare, change };
     });
-
-    // Current-month ranking for bar mode: counts scoped to the latest month.
-    const currentMonthStart = startOfMonthTs(maxTs);
-    const monthLabel = new Date(currentMonthStart).toLocaleDateString('en-US', { month: 'long' });
-    const monthCounts = new Map<string, number>();
-    let monthTotal = 0;
-
-    const seriesIndex = new Map(series.map((domain, i) => [domain, i]));
-    for (const nr of analyzed.matching) {
-      if (nr.testedAt == null) continue;
-      const row = rowByBucket.get(bucketOf(nr.testedAt));
-      if (row) {
-        for (const d of nr.domains) {
-          const i = seriesIndex.get(d);
-          if (i !== undefined) row[`s${i}`] += 1;
-        }
-      }
-      if (startOfMonthTs(nr.testedAt) === currentMonthStart) {
-        monthTotal += 1;
-        for (const d of nr.domains) {
-          if (d === 'unknown') continue;
-          monthCounts.set(d, (monthCounts.get(d) || 0) + 1);
-        }
-      }
+    // The ranked list only holds this period's domains; a source cited last
+    // period and not this one is added here as a 100% fall.
+    for (const [domain, prevCount] of prevAnalyzed.domainCounts) {
+      if (!domain || domain === 'unknown' || analyzed.domainCounts.has(domain)) continue;
+      rows.push({ domain, count: 0, prevCount, share: 0, prevShare: shareOf(prevCount, prevAnalyzed.total), change: -100 });
     }
-
-    const monthRanking = Array.from(monthCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, BAR_RANK_LIMIT)
-      .map(([domain, count]) => ({ name: getSourceDisplayName(domain), domain, count }));
-
-    return { data, series, granularity, monthLabel, monthTotal, monthRanking };
-  }, [analyzed, domainList, cubeActive, cubeScopeTotals, domainStats, cubeQuarterKey, cubeJobFunction]);
+    const rising = rows
+      .filter((r) => r.count >= TRENDING_MIN_COUNT && r.share >= TRENDING_MIN_SHARE && (r.change === null || r.change >= 0.5))
+      .sort((a, b) => {
+        // New domains lead, largest share first; then the biggest relative rise.
+        if ((a.change === null) !== (b.change === null)) return a.change === null ? -1 : 1;
+        if (a.change === null || b.change === null) return b.share - a.share;
+        return b.change - a.change || b.count - a.count;
+      })
+      .slice(0, TRENDING_ROW_LIMIT);
+    const falling = rows
+      .filter((r): r is TrendingRow & { change: number } =>
+        r.change !== null && r.change <= -0.5 && r.prevCount >= TRENDING_MIN_COUNT && r.prevShare >= TRENDING_MIN_SHARE)
+      .sort((a, b) => a.change - b.change || b.prevCount - a.prevCount)
+      .slice(0, TRENDING_ROW_LIMIT);
+    return { rising, falling };
+  }, [hasPrevPeriod, domainList, analyzed, prevAnalyzed]);
 
   // ---------------------------------------------------------------------
   // Source type (media type) per domain. Classified from the domain and the
@@ -1078,22 +942,21 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
     setFilterSentiments([]);
   };
 
-  // Coverage share of a domain/page: % of analyzed responses citing it.
-  const shareOf = (count: number, total: number) =>
-    total > 0 ? Math.min(100, (count / total) * 100) : 0;
-
-  // Delta chip: percentage-point change of the coverage share vs the previous
-  // period. Only shown for sources that existed in the previous period.
+  // Delta chip: how much the coverage share moved versus the previous period,
+  // relative to where it stood (43% → 47% reads "+9%") — the same reading as
+  // the pages table's chip. Only shown for sources that existed in the
+  // previous period.
   const renderShareDelta = (count: number, prevCount: number) => {
     if (!hasPrevPeriod || prevCount <= 0) return null;
     const cur = shareOf(count, analyzed.total);
     const prev = shareOf(prevCount, prevAnalyzed.total);
-    const delta = Math.round(cur - prev);
-    if (delta === 0) return <span className="text-xs text-gray-400">-</span>;
+    if (prev <= 0) return null;
+    const pct = Math.round(((cur - prev) / prev) * 100);
+    if (pct === 0) return <span className="text-xs text-gray-400">-</span>;
     return (
-      <span className={`text-xs font-semibold flex items-center gap-0.5 ${delta > 0 ? 'text-green-600' : 'text-red-600'}`}>
-        {delta > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
-        <span className="whitespace-nowrap">{Math.abs(delta)}%</span>
+      <span className={`text-xs font-semibold flex items-center gap-0.5 ${pct > 0 ? 'text-green-600' : 'text-red-600'}`}>
+        {pct > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+        <span className="whitespace-nowrap">{Math.abs(pct)}%</span>
       </span>
     );
   };
@@ -1129,167 +992,56 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
     pagesTablePage * PAGES_TABLE_PAGE_SIZE,
     (pagesTablePage + 1) * PAGES_TABLE_PAGE_SIZE,
   );
-  const chartSeriesSet = useMemo(() => new Map(trend.series.map((d, i) => [d, CHART_COLORS[i]])), [trend.series]);
 
-  // Shared crosshair tooltip for the line chart: bucket label, then series
-  // rows sorted by value.
-  const TrendTooltipContent = ({ active, payload, label }: any) => {
-    if (!active || !payload?.length) return null;
-    const rows = [...payload].sort((a, b) => (b.value || 0) - (a.value || 0));
+  // One row of the trending card: rank, logo, domain and the share it holds
+  // now; beneath, a bar sized to the card's largest relative move, where the
+  // share stood last period, and the move itself. A new domain has no base
+  // to move from — it takes the full bar and its chip says "New". Teal for a
+  // rise, red for a fall, the same encoding as the delta chips elsewhere on
+  // the page.
+  const renderTrendingRow = (row: TrendingRow, idx: number, maxAbsChange: number) => {
+    const displayName = getSourceDisplayName(row.domain);
+    const isNew = row.change === null;
+    const rising = isNew || (row.change as number) > 0;
+    const barPct = isNew ? 100 : maxAbsChange > 0 ? (Math.abs(row.change as number) / maxAbsChange) * 100 : 0;
+    const before = isNew ? 'not cited last period' : `${row.prevShare.toFixed(1)}% last period`;
     return (
-      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-md min-w-[180px]">
-        <p className="text-xs font-semibold text-gray-900 mb-1.5">{label}</p>
-        {rows.map((p) => (
-          <div key={p.name} className="flex items-center gap-2 py-0.5">
-            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: p.color || p.stroke }} />
-            <Favicon domain={p.name} size="sm" />
-            <span className="text-xs text-gray-600 truncate max-w-[150px]">{p.name}</span>
-            <span className="ml-auto text-xs font-semibold text-gray-900 tabular-nums pl-3">{p.value}</span>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  // Per-bar tooltip for the current-month ranking.
-  const RankTooltipContent = ({ active, payload }: any) => {
-    if (!active || !payload?.length) return null;
-    const row = payload[0]?.payload;
-    if (!row) return null;
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-md">
-        <div className="flex items-center gap-1.5">
-          <Favicon domain={row.domain} size="sm" />
-          <p className="text-xs font-semibold text-gray-900">{row.name}</p>
-        </div>
-        <p className="text-xs text-gray-600 mt-0.5">
-          {row.count.toLocaleString()} citations
-          {trend.monthTotal > 0 && <> · {shareOf(row.count, trend.monthTotal).toFixed(1)}% of responses</>}
-        </p>
-      </div>
-    );
-  };
-
-  // Y-axis tick for the ranking chart: the domain's logo beside its name, so a
-  // domain is never named without its mark. SVG <image> (not the Favicon
-  // component) because ticks render inside the chart surface.
-  const RANK_AXIS_WIDTH = 168;
-  const RankAxisTick = ({ x, y, payload }: any) => {
-    const domain: string = payload?.value || '';
-    // `x` is the axis line; the label block starts at the chart's left edge.
-    // Clamped at 0 so the logo never renders outside the SVG viewport.
-    const left = Math.max(0, x - RANK_AXIS_WIDTH + 8);
-    const label = domain.length > 18 ? `${domain.slice(0, 17)}…` : domain;
-    return (
-      <g
-        transform={`translate(${left}, ${y})`}
-        style={{ cursor: 'pointer' }}
-        onClick={() => openDomainModal(domain)}
+      <button
+        key={row.domain}
+        onClick={() => handleSourceClick({ domain: row.domain, count: row.count })}
+        className="w-full text-left px-2 sm:px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors"
+        title={`Cited by ${row.share.toFixed(1)}% of responses, ${before} (${row.count.toLocaleString()} vs ${row.prevCount.toLocaleString()} responses)`}
       >
-        {/* Invisible hit area so the whole label row is clickable, not just the glyphs. */}
-        <rect x={-4} y={-11} width={RANK_AXIS_WIDTH} height={22} fill="transparent" />
-        {/* Letter chip sits under the logo: SVG <image> has no error fallback,
-            so a logo that fails to load (e.g. no logo.dev token configured)
-            reveals this instead of a broken-image glyph. */}
-        <rect x={0} y={-7} width={14} height={14} rx={3} fill="#F3F4F6" />
-        <text x={7} y={0} dy="0.32em" textAnchor="middle" fontSize={9} fontWeight={600} fill="#9CA3AF">
-          {domain.charAt(0).toUpperCase()}
-        </text>
-        <image href={getFavicon(domain, 32)} x={0} y={-7} width={14} height={14} preserveAspectRatio="xMidYMid meet" />
-        <text x={20} y={0} dy="0.32em" textAnchor="start" fontSize={11} fill="#374151">{label}</text>
-      </g>
-    );
-  };
-
-  const axisTickStyle = { fontSize: 11, fill: '#9CA3AF' } as const;
-
-  const renderTrendChart = () => {
-    if (trendChartType === 'bar') {
-      if (trend.monthRanking.length === 0) {
-        return (
-          <div className="h-full flex items-center justify-center text-sm text-gray-400">
-            No citation data for this month.
-          </div>
-        );
-      }
-      // Nominal ranking: one series, so every bar wears the brand hue — the
-      // title carries identity, values ride the bar ends.
-      return (
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={trend.monthRanking} layout="vertical" margin={{ top: 4, right: 40, left: 0, bottom: 0 }}>
-            <XAxis type="number" hide />
-            <YAxis
-              type="category"
-              dataKey="name"
-              width={RANK_AXIS_WIDTH}
-              tick={<RankAxisTick />}
-              tickLine={false}
-              axisLine={false}
-            />
-            <RechartsTooltip content={<RankTooltipContent />} cursor={{ fill: 'rgba(0,0,0,0.03)' }} />
-            <Bar
-              dataKey="count"
-              name="Citations"
-              fill={MENTIONED_COLOR}
-              // Fully rounded ends (half the bar thickness), matching the
-              // pill-shaped bars used elsewhere in the dashboard.
-              radius={[RANK_BAR_SIZE / 2, RANK_BAR_SIZE / 2, RANK_BAR_SIZE / 2, RANK_BAR_SIZE / 2]}
-              maxBarSize={RANK_BAR_SIZE}
-              cursor="pointer"
-              onClick={(data: any) => openDomainModal(data?.domain || data?.payload?.domain)}
-              // Responses stream in after first paint, so the bars re-render
-              // mid-animation and recharts' onAnimationEnd never fires — which
-              // permanently suppresses the LabelList values. No entry animation
-              // means the values are always drawn.
-              isAnimationActive={false}
-            >
-              <LabelList
-                dataKey="count"
-                position="right"
-                formatter={(v: number) => v.toLocaleString()}
-                style={{ fontSize: 11, fill: '#6B7280' }}
-              />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      );
-    }
-    if (trend.data.length === 0) {
-      return (
-        <div className="h-full flex items-center justify-center text-sm text-gray-400">
-          No trend data for this period.
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="w-5 text-right text-xs font-medium text-gray-400 tabular-nums flex-shrink-0">{idx + 1}</span>
+          <Favicon domain={row.domain} />
+          <span className="text-sm font-medium text-gray-900 truncate" title={displayName}>{displayName}</span>
+          <span className="ml-auto flex-shrink-0 text-sm font-semibold text-gray-900 tabular-nums">
+            {row.share.toFixed(1)}%
+          </span>
         </div>
-      );
-    }
-    const showDots = trend.data.length <= 10;
-    return (
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={trend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-          <CartesianGrid vertical={false} stroke="#F3F4F6" />
-          <XAxis dataKey="label" tick={axisTickStyle} tickLine={false} axisLine={false} minTickGap={24} />
-          <YAxis allowDecimals={false} width={34} tick={axisTickStyle} tickLine={false} axisLine={false} />
-          <RechartsTooltip content={<TrendTooltipContent />} cursor={{ stroke: '#E5E7EB' }} />
-          {trend.series.map((domain, i) => (
-            <Line
-              key={domain}
-              type="monotone"
-              dataKey={`s${i}`}
-              name={domain}
-              stroke={CHART_COLORS[i]}
-              strokeWidth={2}
-              dot={showDots ? { r: 3.5, fill: CHART_COLORS[i], stroke: '#ffffff', strokeWidth: 1.5 } : false}
-              activeDot={{ r: 4, fill: CHART_COLORS[i], stroke: '#ffffff', strokeWidth: 2 }}
+        <div className="mt-1.5 ml-[30px] flex items-center gap-2">
+          <div className="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden" aria-hidden>
+            <div
+              className="h-full rounded-full"
+              style={{ width: `${barPct}%`, backgroundColor: rising ? MENTIONED_COLOR : FALLING_COLOR }}
             />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
+          </div>
+          <span className="text-[11px] text-gray-400 tabular-nums whitespace-nowrap flex-shrink-0">
+            was {row.prevShare.toFixed(1)}%
+          </span>
+          <span className={`w-[52px] flex items-center justify-end gap-0.5 flex-shrink-0 text-xs font-semibold ${rising ? 'text-green-600' : 'text-red-600'}`}>
+            {rising ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
+            <span className="whitespace-nowrap">{isNew ? 'New' : `${Math.abs(Math.round(row.change as number))}%`}</span>
+          </span>
+        </div>
+      </button>
     );
   };
 
   const renderDomainRow = (row: { domain: string; count: number; mentionedCount: number; prevCount: number }, idx: number) => {
     const displayName = getSourceDisplayName(row.domain);
     const share = shareOf(row.count, analyzed.total);
-    const seriesColor = chartSeriesSet.get(row.domain);
     const mentionRate = row.count > 0 ? (row.mentionedCount / row.count) * 100 : 0;
     return (
       <button
@@ -1302,9 +1054,6 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
           <span className="w-5 text-right text-xs font-medium text-gray-400 tabular-nums flex-shrink-0">{idx + 1}</span>
           <Favicon domain={row.domain} />
           <span className="text-sm font-medium text-gray-900 truncate" title={displayName}>{displayName}</span>
-          {seriesColor && (
-            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: seriesColor }} aria-hidden />
-          )}
           <span className="ml-auto flex-shrink-0 text-sm font-semibold text-gray-900 tabular-nums">
             {share.toFixed(1)}%
           </span>
@@ -1321,7 +1070,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
               <div className="h-full rounded-full" style={{ width: `${100 - mentionRate}%`, backgroundColor: NOT_MENTIONED_COLOR }} />
             )}
           </div>
-          <span className="w-[45px] flex justify-end flex-shrink-0">{renderShareDelta(row.count, row.prevCount)}</span>
+          <span className="w-[52px] flex justify-end flex-shrink-0">{renderShareDelta(row.count, row.prevCount)}</span>
         </div>
       </button>
     );
@@ -1452,76 +1201,11 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
         </Card>
       ) : (
         <>
-          {/* Row 1: trend chart + ranked domain list */}
+          {/* Row 1: ranked domain list + the domains moving the most. The
+              ranking IS the "top cited domains" view — the chart it replaced
+              showed the same rows in a second shape. */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-stretch">
-            <Card data-tour="sources-chart" className="shadow-sm border border-gray-200 lg:col-span-3 flex flex-col">
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <CardTitle className="text-base font-bold text-gray-800">Top cited domains</CardTitle>
-                  </div>
-                  {/* Ranking first — it's the default view. */}
-                  <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100 flex-shrink-0">
-                    <button
-                      onClick={() => setTrendChartType('bar')}
-                      title="This month's ranking"
-                      aria-label="This month's ranking"
-                      className={`px-2 py-1 rounded-md transition-all ${
-                        trendChartType === 'bar' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                      }`}
-                    >
-                      <BarChartHorizontal className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setTrendChartType('line')}
-                      title="Trend over time"
-                      aria-label="Trend over time"
-                      className={`px-2 py-1 rounded-md transition-all ${
-                        trendChartType === 'line' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                      }`}
-                    >
-                      <ChartLine className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="flex-1 flex flex-col pt-2">
-                {/* Cube-fed chart data can exist before the raw stream lands;
-                    skeleton only while there is genuinely nothing to draw. */}
-                {(responsesLoading || cubesLoading) && trend.data.length === 0 && trend.monthRanking.length === 0 ? (
-                  <div className="flex-1 min-h-[280px] rounded-md bg-gray-100 animate-pulse" aria-busy="true" />
-                ) : (
-                  <>
-                    {/* Fills the card so the chart matches the height of the
-                        domain list beside it instead of leaving dead space. */}
-                    <div className="flex-1 min-h-[280px]">
-                      {renderTrendChart()}
-                    </div>
-                    {/* Legend (line mode): identity via favicon + name, never color alone */}
-                    {trendChartType === 'line' && (
-                      <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-3 px-1">
-                        {trend.series.map((domain, i) => (
-                          <button
-                            key={domain}
-                            onClick={() => handleSourceClick({ domain, count: analyzed.domainCounts.get(domain) || 0 })}
-                            className="flex items-center gap-1.5 group min-w-0"
-                            title={`Open ${domain}`}
-                          >
-                            <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: CHART_COLORS[i] }} />
-                            <Favicon domain={domain} size="sm" />
-                            <span className="text-xs text-gray-600 group-hover:text-gray-900 truncate max-w-[150px]">
-                              {getSourceDisplayName(domain)}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card data-tour="sources-domain-list" className="shadow-sm border border-gray-200 lg:col-span-2 flex flex-col">
+            <Card data-tour="sources-domain-list" className="shadow-sm border border-gray-200 lg:col-span-3 flex flex-col">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-2 min-w-0">
@@ -1551,7 +1235,8 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                             this source (responses cite several sources, so these don't add
                             up to 100%). The bar splits each source's citations into
                             responses that mention {companyName || 'your company'} and
-                            responses where it's absent.
+                            responses where it's absent. The change beside it is how
+                            much that share moved versus the previous period.
                           </p>
                         </TooltipContent>
                       </Tooltip>
@@ -1577,6 +1262,85 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                     )}
                   </div>
                 )}
+              </CardContent>
+            </Card>
+
+            <Card data-tour="sources-trending" className="shadow-sm border border-gray-200 lg:col-span-2 flex flex-col">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <CardTitle className="text-base font-bold text-gray-800">Trending domains</CardTitle>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-help text-gray-400"><Info className="w-3.5 h-3.5" /></span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-[280px]">
+                          <p className="text-xs">
+                            The domains whose share of AI responses grew or shrank the
+                            most versus the previous period. Rising shows the sources
+                            gaining voice, with a domain cited for the first time this
+                            period marked New; Falling shows the sources losing it.
+                            Click a row to open the source.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  {/* Rising first — it's the default view. */}
+                  <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-100 flex-shrink-0">
+                    <button
+                      onClick={() => setTrendingDirection('rising')}
+                      title="Sources gaining share"
+                      className={`px-2 py-0.5 rounded-md text-xs font-medium transition-all ${
+                        trendingDirection === 'rising' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                    >
+                      Rising
+                    </button>
+                    <button
+                      onClick={() => setTrendingDirection('falling')}
+                      title="Sources losing share"
+                      className={`px-2 py-0.5 rounded-md text-xs font-medium transition-all ${
+                        trendingDirection === 'falling' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                    >
+                      Falling
+                    </button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="flex-1 min-h-0 pt-0 px-2 sm:px-3 pb-3">
+                {(() => {
+                  if ((responsesLoading || cubesLoading) && analyzed.total === 0) {
+                    return <div className="px-2">{loadingSkeleton(8)}</div>;
+                  }
+                  if (!hasPrevPeriod) {
+                    return (
+                      <div className="h-full min-h-[160px] flex items-center justify-center px-4 text-center text-sm text-gray-400">
+                        Trends appear once there is a previous measurement period to compare against.
+                      </div>
+                    );
+                  }
+                  const rows = trendingDirection === 'rising' ? trendingDomains.rising : trendingDomains.falling;
+                  if (rows.length === 0) {
+                    return (
+                      <div className="h-full min-h-[160px] flex items-center justify-center px-4 text-center text-sm text-gray-400">
+                        {trendingDirection === 'rising'
+                          ? 'No domain gained share versus the previous period.'
+                          : 'No domain lost share versus the previous period.'}
+                      </div>
+                    );
+                  }
+                  // Bars are scaled to the largest relative move in the visible
+                  // list; a new domain (no base) takes the full bar.
+                  const maxAbsChange = rows.reduce((m, r) => (r.change === null ? m : Math.max(m, Math.abs(r.change))), 0);
+                  return (
+                    <div className="h-full max-h-[400px] overflow-y-auto pr-1">
+                      {rows.map((row, idx) => renderTrendingRow(row, idx, maxAbsChange))}
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
           </div>
