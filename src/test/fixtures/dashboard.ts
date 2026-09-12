@@ -38,6 +38,9 @@ export const session = {
   access_token: accessToken, refresh_token: 'repro-refresh', token_type: 'bearer',
   expires_in: 10 * 365 * 86400, expires_at: expiresAt, user,
 };
+// The same person before first-login setup has saved a default brand/market.
+export const userWithoutDefaults = { ...user, user_metadata: { full_name: 'Repro User' } };
+export const sessionWithoutDefaults = { ...session, user: userWithoutDefaults };
 
 const company = {
   id: COMPANY_ID, name: 'Acme', industry: 'Technology', country: 'US', company_size: null,
@@ -47,6 +50,17 @@ const company = {
 export const organizationMembers = [{
   organization_id: ORG_ID, role: 'member', is_default: true,
   organizations: { id: ORG_ID, name: 'Acme Org', organization_companies: [{ companies: company }] },
+}];
+// A second profile in the same organisation (a different brand so the
+// dashboard scope stays a single company in every other test).
+export const SIBLING_COMPANY_ID = '44444444-4444-4444-8444-444444444444';
+export const siblingCompany = { ...company, id: SIBLING_COMPANY_ID, name: 'Acme Canada', country: 'CA' };
+export const organizationMembersWithSibling = [{
+  ...organizationMembers[0],
+  organizations: {
+    ...organizationMembers[0].organizations,
+    organization_companies: [{ companies: company }, { companies: siblingCompany }],
+  },
 }];
 export const profile = {
   full_name: 'Repro User', default_location_context: 'United States', default_company_id: COMPANY_ID,

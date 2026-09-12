@@ -21,6 +21,11 @@ export interface BackendOptions {
   // and concurrency of the cold-load burst. Per-RPC overrides win.
   rpcDelayMs?: number;
   rpcDelayByFn?: Record<string, number>;
+  // Override the rows a PostgREST table returns.
+  tables?: Record<string, unknown[]>;
+  // The signed-in GoTrue user (defaults to the fixture user). PUT /auth/v1/user
+  // merges `data` into its user_metadata, like the real endpoint.
+  user?: Record<string, any>;
 }
 
 export interface CallRecord {
@@ -46,12 +51,16 @@ export class MockBackend {
   maxInFlight = 0;
   private rpcDelayMs: number;
   private rpcDelayByFn: Record<string, number>;
+  private tables: Record<string, unknown[]>;
+  user: Record<string, any>;
 
   constructor(opts: BackendOptions = {}) {
     this.faults = { ...(opts.faults ?? {}) };
     this.rpcOverrides = { ...(opts.rpc ?? {}) };
     this.rpcDelayMs = opts.rpcDelayMs ?? 0;
     this.rpcDelayByFn = { ...(opts.rpcDelayByFn ?? {}) };
+    this.tables = { ...(opts.tables ?? {}) };
+    this.user = { ...(opts.user ?? F.user) };
   }
 
   setFault(fn: string, fault: FaultFn | null) {
@@ -78,6 +87,7 @@ export class MockBackend {
   }
 
   private tableRows(table: string): unknown[] {
+    if (this.tables[table]) return this.tables[table];
     switch (table) {
       case 'organization_members': return F.organizationMembers;
       case 'profiles': return [F.profile];
@@ -97,11 +107,20 @@ export class MockBackend {
       // ---- GoTrue ----
       http.post(`${SUPABASE_URL}/auth/v1/token`, () => {
         log('POST', '/auth/v1/token', 200);
-        return HttpResponse.json(F.session);
+        return HttpResponse.json({ ...F.session, user: this.user });
       }),
       http.get(`${SUPABASE_URL}/auth/v1/user`, () => {
         log('GET', '/auth/v1/user', 200);
-        return HttpResponse.json(F.user);
+        return HttpResponse.json(this.user);
+      }),
+      // supabase.auth.updateUser(): what ProfileSetupGate calls to store the
+      // chosen brand + market in the session's user_metadata.
+      http.put(`${SUPABASE_URL}/auth/v1/user`, async ({ request }) => {
+        let body: any = {};
+        try { body = await request.json(); } catch { /* no body */ }
+        this.user = { ...this.user, user_metadata: { ...(this.user.user_metadata ?? {}), ...(body?.data ?? {}) } };
+        log('PUT', '/auth/v1/user', 200);
+        return HttpResponse.json(this.user);
       }),
       http.post(`${SUPABASE_URL}/auth/v1/logout`, () => {
         log('POST', '/auth/v1/logout', 204);

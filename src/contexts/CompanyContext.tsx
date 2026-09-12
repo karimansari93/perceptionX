@@ -359,6 +359,27 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [fetchUserCompanies, authLoading, user?.id]); // Only depend on user.id, not entire user object
 
+  // First-login setup (ProfileSetupGate) writes the chosen brand into the
+  // session's user metadata AFTER the landing company was picked above, and
+  // the fetch effect deliberately keys on user.id only — so on that very
+  // first visit the dashboard landed on the organisation's default profile
+  // instead of the one the person had just chosen, and honoured the choice
+  // only from the next sign-in (reliability audit P2-2). Re-run the landing
+  // rule whenever the profile default CHANGES; an explicit company switch
+  // never touches the metadata, so it is never overridden here.
+  const appliedPreferredRef = useRef<string | null>(null);
+  const preferred = defaultCompanyFromUser(user);
+  const preferredKey = preferred ? `${preferred.id}|${preferred.name}` : null;
+  useEffect(() => {
+    if (userCompanies.length === 0) return; // nothing to land on yet; re-runs when companies arrive
+    if (preferredKey === appliedPreferredRef.current) return;
+    appliedPreferredRef.current = preferredKey;
+    if (!preferredKey) return;
+    const landing = pickInitialCompany(userCompanies, user);
+    setCurrentCompany(prev => (landing && prev?.id !== landing.id ? landing : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferredKey, userCompanies]);
+
   const switchCompany = useCallback(async (companyId: string) => {
     let company = userCompanies.find(c => c.id === companyId);
 
