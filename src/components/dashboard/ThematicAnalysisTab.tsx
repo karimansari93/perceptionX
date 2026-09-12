@@ -1,11 +1,16 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { DataUnavailable } from './DataUnavailable';
 import type { DashboardFamilyStatus } from '@/types/dashboard';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { usePersistedState } from '@/hooks/usePersistedState';
-import { sentimentRatioV2 } from '@/lib/sentimentV2';
+import { sentimentRatioV2, isExcludedAiModel } from '@/lib/sentimentV2';
+import { supabase } from '@/integrations/supabase/client';
+import { enhanceCitations, extractSourceUrl } from '@/utils/citationUtils';
 import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
 import type { ScopeStatsRow, ScopePromptTypeStatsRow } from '@/hooks/dashboard/dashboardQueries';
 import {
@@ -22,6 +27,7 @@ import {
   Crown,
   Lock,
   TrendingUp,
+  TrendingDown,
   FileText,
   MessageSquare,
   ClipboardList,
@@ -29,14 +35,22 @@ import {
   UserCheck,
   Briefcase,
   Info,
-  X
+  X,
+  Layers,
+  Tags,
+  Globe,
+  Bot
 } from 'lucide-react';
 import { PromptResponse } from '@/types/dashboard';
-import { ATTRIBUTES, normalizeAttributeId } from '@/config/attributes';
+import { ATTRIBUTES, normalizeAttributeId, getAttributeIdByName } from '@/config/attributes';
 import { ATTRIBUTE_ICONS } from '@/config/attributeIcons';
 import { getLLMDisplayName } from '@/config/llmLogos';
 import { Favicon } from '@/components/ui/favicon';
+import LLMLogo from '@/components/LLMLogo';
 import { useTabSearchSeed } from '@/contexts/TabSearchSeedContext';
+import { SearchInput } from './SearchInput';
+import { FilterDropdown } from './FilterDropdown';
+import { TablePagination } from './TablePagination';
 
 interface ThematicAnalysisTabProps {
   responses: PromptResponse[];
@@ -84,6 +98,15 @@ interface ThematicAnalysisTabProps {
   cubeMonthFloor?: string | null;
   cubeScopeRows?: ScopeStatsRow[];
   cubePromptTypeRows?: ScopePromptTypeStatsRow[];
+  // Measured company id — scopes the competitor_themes read behind the
+  // attributes table's "Competitor gap" column (the same fetch CompetitorsTab
+  // makes for its head-to-head sentiment).
+  currentCompanyId?: string;
+  // url_recency_cache rows {url, domain, recency_score 0-100} — the citation
+  // freshness score behind the attributes table's Relevance column, the same
+  // rows the Overview scorecard and Competitors head-to-head read.
+  recencyData?: any[];
+  recencyDataLoading?: boolean;
 }
 
 interface AITheme {
@@ -162,6 +185,11 @@ const GROUP_META: Record<GroupKey, { title: string; color: string; blurb: string
 };
 const GROUP_ORDER: GroupKey[] = ['fix', 'protect', 'amplify', 'watch'];
 
+// Attributes table (CompetitorsTab's "Card 3" pattern).
+const TABLE_PAGE_SIZE = 15;
+const TOP_SOURCES_PER_ROW = 5;
+type TableSortKey = 'name' | 'group' | 'sentiment' | 'visibility' | 'relevance' | 'gap' | 'sources';
+
 const BAND_LABELS: Record<number, string> = {
   5: 'Very high',
   4: 'High',
@@ -179,13 +207,74 @@ const SMALL_LABEL_CLS = 'text-[11px] font-semibold uppercase tracking-[0.1em]';
 const EMPTY_ARRAY: any[] = [];
 const EMPTY_OBJECT: Record<string, string> = {};
 
-export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = EMPTY_ARRAY, fetchAIThemesForAttribute, aiThemeAttrsLoaded = EMPTY_ARRAY, onRefreshThemes, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, themesStatus = 'ready', streamError = false, onRetry, selectedJobFunction = 'all', onJobFunctionChange, cubeQuarterKey, cubeMonthFloor = null, cubeScopeRows, cubePromptTypeRows }: ThematicAnalysisTabProps) => {
+export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = EMPTY_ARRAY, fetchAIThemesForAttribute, aiThemeAttrsLoaded = EMPTY_ARRAY, onRefreshThemes, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, themesStatus = 'ready', streamError = false, onRetry, selectedJobFunction = 'all', onJobFunctionChange, cubeQuarterKey, cubeMonthFloor = null, cubeScopeRows, cubePromptTypeRows, currentCompanyId, recencyData = EMPTY_ARRAY, recencyDataLoading = false }: ThematicAnalysisTabProps) => {
 
   // Modal state — persisted so a reload restores the open drilldown.
   const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
   const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('thematicTab.isModalOpen', false);
   // Modal filter: the sentiment split filters quotes and sources together.
   const [polarity, setPolarity] = useState<'positive' | 'neutral' | 'negative' | null>(null);
+
+  // Attributes table — search, filter chips, sort and page.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterGroups, setFilterGroups] = useState<string[]>([]);
+  const [filterCategories, setFilterCategories] = useState<string[]>([]);
+  const [filterSources, setFilterSources] = useState<string[]>([]);
+  const [filterModels, setFilterModels] = useState<string[]>([]);
+  const [sortKey, setSortKey] = useState<TableSortKey>('visibility');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [tablePage, setTablePage] = useState(0);
+
+  // A page index only means something for the row set it was chosen on —
+  // jump back to page 1 whenever the rows are re-filtered, re-sorted or
+  // re-scoped.
+  useEffect(() => {
+    setTablePage(0);
+  }, [searchQuery, filterGroups, filterCategories, filterSources, filterModels, sortKey, sortDir, selectedJobFunction, cubeQuarterKey]);
+
+  // Competitor ↔ attribute ↔ sentiment triples (competitor_themes), the
+  // competitive-set side of the table's "Competitor gap". Loaded once per
+  // company, exactly as CompetitorsTab does; rows only exist for responses
+  // themed after the extraction pass started emitting them, so the column
+  // degrades to "—" for an attribute with no rows yet.
+  const [competitorThemeRows, setCompetitorThemeRows] = useState<any[]>([]);
+  const [competitorThemesLoaded, setCompetitorThemesLoaded] = useState(false);
+  useEffect(() => {
+    if (!currentCompanyId) {
+      setCompetitorThemeRows([]);
+      setCompetitorThemesLoaded(true);
+      return;
+    }
+    let cancelled = false;
+    setCompetitorThemesLoaded(false);
+    (async () => {
+      const PAGE = 1000;
+      const all: any[] = [];
+      try {
+        for (let page = 0; page < 25; page += 1) {
+          const { data, error } = await (supabase as any)
+            .from('competitor_themes')
+            .select('response_id, competitor_name, attribute_id, sentiment')
+            .eq('company_id', currentCompanyId)
+            .range(page * PAGE, (page + 1) * PAGE - 1);
+          if (cancelled) return;
+          if (error) {
+            console.warn('competitor_themes fetch failed:', error.message);
+            break;
+          }
+          all.push(...(data ?? []));
+          if (!data || data.length < PAGE) break;
+        }
+      } catch (err) {
+        console.warn('competitor_themes fetch failed:', err);
+      }
+      if (!cancelled) {
+        setCompetitorThemeRows(all);
+        setCompetitorThemesLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentCompanyId]);
 
   // Reset the modal filter whenever a different attribute is opened.
   useEffect(() => {
@@ -463,6 +552,268 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     })),
   [attributes]);
 
+  // ---- Attributes table derivations ----------------------------------------
+
+  // Raw responses in scope for the table's stream-fed columns: the current
+  // period's stream narrowed to the job-function pill. Deliberately NOT
+  // prompt-type filtered — the MV behind sentiment/visibility isn't either.
+  const streamInScope = useMemo(
+    () => selectedJobFunctionFilter === 'all'
+      ? responses
+      : responses.filter(r => r.confirmed_prompts?.job_function_context?.trim() === selectedJobFunctionFilter),
+    [responses, selectedJobFunctionFilter]
+  );
+
+  // Visibility denominator: every in-scope answer (all prompt types). From
+  // the scope cube when wired — the same "% of answers" denominator the MCP
+  // tools use (scope_stats total_responses) — else the scoped raw stream.
+  const totalScopedAnswers = useMemo(() => {
+    if (cubeQuarterKey !== undefined && cubeScopeRows) {
+      let total = 0;
+      for (const r of cubeScopeRows) {
+        if (selectedJobFunctionFilter !== 'all' && (r.job_function_context || '').trim() !== selectedJobFunctionFilter) continue;
+        if (cubeQuarterKey) {
+          if (!r.response_month || quarterKeyOfMonthStr(String(r.response_month)) !== cubeQuarterKey) continue;
+        } else if (cubeMonthFloor && r.response_month && String(r.response_month).slice(0, 7) < cubeMonthFloor) {
+          continue;
+        }
+        total += Number(r.total_responses) || 0;
+      }
+      return total;
+    }
+    return streamInScope.length;
+  }, [cubeQuarterKey, cubeScopeRows, cubeMonthFloor, selectedJobFunctionFilter, streamInScope]);
+
+  // Stream-fed extras per attribute — cited domains, AI models and citation
+  // freshness — keyed by the PROMPT's attribute (confirmed_prompts.attribute_id,
+  // with legacy prompt_theme names folded in): the same response → attribute
+  // link the Sources tab uses for its attributes column. Citations parse once
+  // per response. Relevance is the mean url_recency_cache score (0–100) of the
+  // cited URLs, matched exactly as the Overview scorecard's fallback does.
+  const attributeExtras = useMemo(() => {
+    const recencyByUrl = new Map<string, number>();
+    for (const item of recencyData) {
+      const score = Number(item?.recency_score);
+      if (item?.url && Number.isFinite(score)) recencyByUrl.set(item.url, score);
+    }
+    const out = new Map<string, {
+      domainCounts: Map<string, number>; // domain → responses citing it
+      models: Set<string>;
+      recencySum: number;
+      recencyN: number;
+    }>();
+    for (const r of streamInScope) {
+      const cp: any = r.confirmed_prompts;
+      const attrId = normalizeAttributeId(cp?.attribute_id) ?? getAttributeIdByName(cp?.prompt_theme);
+      if (!attrId || isExcludedAiModel(r.ai_model)) continue;
+      let agg = out.get(attrId);
+      if (!agg) {
+        agg = { domainCounts: new Map(), models: new Set(), recencySum: 0, recencyN: 0 };
+        out.set(attrId, agg);
+      }
+      if (r.ai_model) agg.models.add(getLLMDisplayName(r.ai_model));
+      let parsed: any = r.citations;
+      if (typeof parsed === 'string') {
+        try { parsed = JSON.parse(parsed); } catch { parsed = null; }
+      }
+      if (!Array.isArray(parsed)) continue;
+      const seen = new Set<string>();
+      for (const c of enhanceCitations(parsed)) {
+        if (c.type !== 'website' || !c.domain) continue;
+        const d = c.domain.trim().toLowerCase().replace(/^www\./, '');
+        if (d && !seen.has(d)) {
+          seen.add(d);
+          agg.domainCounts.set(d, (agg.domainCounts.get(d) || 0) + 1);
+        }
+        if (c.url) {
+          const score = recencyByUrl.get(extractSourceUrl(c.url));
+          if (score !== undefined) {
+            agg.recencySum += score;
+            agg.recencyN += 1;
+          }
+        }
+      }
+    }
+    return out;
+  }, [streamInScope, recencyData]);
+
+  // Competitive-set sentiment per attribute from the competitor_themes triples
+  // on in-scope answers: each competitor's methodology-v2 ratio, then the
+  // unweighted mean across competitors — the same "own minus peer average"
+  // family as the competitor benchmark's sentiment_gap.
+  const competitorSentimentByAttr = useMemo(() => {
+    const out = new Map<string, number>();
+    if (competitorThemeRows.length === 0) return out;
+    const inScope = new Set(streamInScope.map(r => r.id));
+    const byAttr = new Map<string, Map<string, { positive: number; negative: number }>>();
+    for (const row of competitorThemeRows) {
+      if (!inScope.has(row.response_id)) continue;
+      const attrId = normalizeAttributeId(row.attribute_id);
+      if (!attrId || !row.competitor_name) continue;
+      let comps = byAttr.get(attrId);
+      if (!comps) {
+        comps = new Map();
+        byAttr.set(attrId, comps);
+      }
+      const c = comps.get(row.competitor_name) ?? { positive: 0, negative: 0 };
+      if (row.sentiment === 'positive') c.positive += 1;
+      else if (row.sentiment === 'negative') c.negative += 1;
+      comps.set(row.competitor_name, c);
+    }
+    byAttr.forEach((comps, attrId) => {
+      const ratios: number[] = [];
+      comps.forEach(c => {
+        const ratio = sentimentRatioV2(c.positive, c.negative);
+        if (ratio !== null) ratios.push(ratio * 100);
+      });
+      if (ratios.length > 0) out.set(attrId, ratios.reduce((a, b) => a + b, 0) / ratios.length);
+    });
+    return out;
+  }, [competitorThemeRows, streamInScope]);
+
+  type AttributeTableRow = {
+    id: string;
+    name: string;
+    category: string;
+    group: GroupKey;
+    sentimentPct: number;
+    color: string;
+    visibilityPct: number | null;
+    relevance: number | null;
+    gapPts: number | null;
+    /** Top cited domains (the stack). */
+    sources: string[];
+    /** Every cited domain (the Sources filter). */
+    domains: string[];
+    sourceCount: number;
+    models: string[];
+  };
+
+  const allTableRows = useMemo((): AttributeTableRow[] => attributes.map(a => {
+    const extras = attributeExtras.get(a.id);
+    const domainsRanked = extras
+      ? Array.from(extras.domainCounts.entries())
+          .sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
+          .map(([domain]) => domain)
+      : [];
+    const peer = competitorSentimentByAttr.get(a.id);
+    return {
+      id: a.id,
+      name: a.name,
+      category: ATTRIBUTES.find(x => x.id === a.id)?.category ?? 'Other',
+      group: a.group,
+      sentimentPct: a.sentimentPct,
+      color: a.color,
+      visibilityPct: totalScopedAnswers > 0 ? Math.min(100, (a.count / totalScopedAnswers) * 100) : null,
+      relevance: extras && extras.recencyN > 0 ? Math.round(extras.recencySum / extras.recencyN) : null,
+      gapPts: peer === undefined ? null : Math.round(a.sentimentPct - peer),
+      sources: domainsRanked.slice(0, TOP_SOURCES_PER_ROW),
+      domains: domainsRanked,
+      sourceCount: domainsRanked.length,
+      models: extras ? Array.from(extras.models).sort() : [],
+    };
+  }), [attributes, attributeExtras, competitorSentimentByAttr, totalScopedAnswers]);
+
+  const filteredTableRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const groupFilter = new Set(filterGroups);
+    const categoryFilter = new Set(filterCategories);
+    const sourceFilter = new Set(filterSources);
+    const modelFilter = new Set(filterModels);
+    const rows = allTableRows.filter(row => {
+      if (q && !row.name.toLowerCase().includes(q)) return false;
+      if (groupFilter.size > 0 && !groupFilter.has(row.group)) return false;
+      if (categoryFilter.size > 0 && !categoryFilter.has(row.category)) return false;
+      if (sourceFilter.size > 0 && !row.domains.some(d => sourceFilter.has(d))) return false;
+      if (modelFilter.size > 0 && !row.models.some(m => modelFilter.has(m))) return false;
+      return true;
+    });
+    const dir = sortDir === 'asc' ? 1 : -1;
+    // Unavailable metrics (null) sort after every real value in both directions.
+    const num = (a: number | null, b: number | null) =>
+      a === null || b === null ? (a === null ? 1 : 0) - (b === null ? 1 : 0) : dir * (a - b);
+    return [...rows].sort((a, b) => {
+      switch (sortKey) {
+        case 'name': return dir * a.name.localeCompare(b.name);
+        // Ranked so the default (desc) click reads in GROUP_ORDER: Fix first → Watchlist.
+        case 'group': return dir * (GROUP_ORDER.indexOf(b.group) - GROUP_ORDER.indexOf(a.group)) || a.name.localeCompare(b.name);
+        case 'sentiment': return dir * (a.sentimentPct - b.sentimentPct);
+        case 'relevance': return num(a.relevance, b.relevance);
+        case 'gap': return num(a.gapPts, b.gapPts);
+        case 'sources': return dir * (a.sourceCount - b.sourceCount);
+        default: return num(a.visibilityPct, b.visibilityPct) || dir * (a.sentimentPct - b.sentimentPct);
+      }
+    });
+  }, [allTableRows, searchQuery, filterGroups, filterCategories, filterSources, filterModels, sortKey, sortDir]);
+
+  const tableFilterOptions = useMemo(() => {
+    const groupCounts = new Map<GroupKey, number>();
+    const categoryCounts = new Map<string, number>();
+    const sourceCounts = new Map<string, number>();
+    const modelCounts = new Map<string, number>();
+    for (const row of allTableRows) {
+      groupCounts.set(row.group, (groupCounts.get(row.group) || 0) + 1);
+      categoryCounts.set(row.category, (categoryCounts.get(row.category) || 0) + 1);
+      row.domains.forEach(d => sourceCounts.set(d, (sourceCounts.get(d) || 0) + 1));
+      row.models.forEach(m => modelCounts.set(m, (modelCounts.get(m) || 0) + 1));
+    }
+    const byCountDesc = (a: [string, number], b: [string, number]) => b[1] - a[1] || a[0].localeCompare(b[0]);
+    return {
+      groups: GROUP_ORDER
+        .filter(g => groupCounts.has(g))
+        .map(g => ({
+          value: g,
+          label: GROUP_META[g].title,
+          count: groupCounts.get(g),
+          adornment: <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: GROUP_META[g].color }} />,
+        })),
+      categories: Array.from(categoryCounts.entries())
+        .sort(byCountDesc)
+        .map(([value, count]) => ({ value, label: value, count })),
+      sources: Array.from(sourceCounts.entries())
+        .sort(byCountDesc)
+        .map(([value, count]) => ({
+          value,
+          label: value,
+          count,
+          adornment: <Favicon domain={value} size="sm" />,
+        })),
+      models: Array.from(modelCounts.entries())
+        .sort(byCountDesc)
+        .map(([value, count]) => ({
+          value,
+          label: value,
+          count,
+          adornment: <LLMLogo modelName={value} size="sm" showFallback={false} />,
+        })),
+    };
+  }, [allTableRows]);
+
+  const activeFilterCount =
+    filterGroups.length + filterCategories.length + filterSources.length + filterModels.length;
+
+  const clearAllFilters = () => {
+    setFilterGroups([]);
+    setFilterCategories([]);
+    setFilterSources([]);
+    setFilterModels([]);
+  };
+
+  const toggleSort = (key: TableSortKey) => {
+    if (sortKey === key) {
+      setSortDir(d => (d === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'name' ? 'asc' : 'desc');
+    }
+  };
+
+  // The MV-fed columns (sentiment, visibility, group) are final as soon as the
+  // attribute rows exist; only the stream-fed extras (sources, models,
+  // relevance) and the competitor triples lag behind, so those cells show
+  // their own pending state while the raw stream is still arriving.
+  const rawExtrasPending = responsesLoading;
+
   // Matrix marker placement. x = sentiment%, y = volume band center. Labels
   // sit to the right of the dot by default; to keep names from overprinting
   // (or clipping at the plot edge) each marker picks, in order of preference,
@@ -702,6 +1053,21 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     setPolarity(prev => (prev === key ? null : key));
   };
 
+  const SortableHead = ({ label, k, className }: { label: string; k: TableSortKey; className?: string }) => (
+    <TableHead
+      className={`cursor-pointer select-none hover:text-gray-900 ${className ?? ''}`}
+      onClick={() => toggleSort(k)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {sortKey === k && <span className="text-[10px] text-gray-400">{sortDir === 'desc' ? '▼' : '▲'}</span>}
+      </span>
+    </TableHead>
+  );
+
+  const pendingCell = <span className="inline-block h-4 w-14 rounded bg-gray-100 animate-pulse" aria-busy="true" />;
+  const emptyCell = <span className="text-xs text-gray-400">—</span>;
+
   // Modal header + split counts come from the MV (instant); themes/sources/
   // quotes come from the raw rows (lazy-loaded on open).
   const splitCounts = modalAttribute
@@ -930,6 +1296,167 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
             ))}
           </div>
         </div>
+      )}
+
+      {/* Attributes table — every attribute side by side on the metrics the
+          matrix can't carry. Structure copies CompetitorsTab's "Card 3". */}
+      {attributes.length > 0 && (
+        <Card className="shadow-sm border border-gray-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <CardTitle className="text-base font-bold text-gray-800">Attributes</CardTitle>
+              <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
+                {attributes.length.toLocaleString()}
+              </Badge>
+              {activeFilterCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearAllFilters}
+                  className="h-6 px-2 text-xs text-gray-400 hover:text-gray-600"
+                >
+                  Clear filters ({activeFilterCount})
+                </Button>
+              )}
+            </div>
+            {/* Filter row: search, Group, Category, Sources, Models. Job
+                function and market are global — never duplicated here. */}
+            <div className="flex items-center gap-2 flex-wrap pt-2">
+              <SearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search attributes..."
+                className="max-w-xs"
+              />
+              <FilterDropdown label="Group" icon={Layers} options={tableFilterOptions.groups} selected={filterGroups} onChange={setFilterGroups} />
+              <FilterDropdown label="Category" icon={Tags} options={tableFilterOptions.categories} selected={filterCategories} onChange={setFilterCategories} searchable />
+              <FilterDropdown label="Sources" icon={Globe} options={tableFilterOptions.sources} selected={filterSources} onChange={setFilterSources} searchable />
+              <FilterDropdown label="Models" icon={Bot} options={tableFilterOptions.models} selected={filterModels} onChange={setFilterModels} />
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {filteredTableRows.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <p className="text-sm">No attributes match the current filters.</p>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <SortableHead label="Attribute" k="name" className="min-w-[230px]" />
+                        <SortableHead label="Group" k="group" className="min-w-[110px]" />
+                        <SortableHead label="Sentiment" k="sentiment" className="min-w-[170px]" />
+                        <SortableHead label="Visibility" k="visibility" className="min-w-[110px]" />
+                        <SortableHead label="Relevance" k="relevance" className="min-w-[100px]" />
+                        <SortableHead label="Competitor gap" k="gap" className="min-w-[110px]" />
+                        <SortableHead label="Top sources cited" k="sources" className="min-w-[170px]" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredTableRows.slice(tablePage * TABLE_PAGE_SIZE, (tablePage + 1) * TABLE_PAGE_SIZE).map(row => {
+                        const RowIcon = ATTRIBUTE_ICONS[row.id] || Activity;
+                        return (
+                          <TableRow
+                            key={row.id}
+                            onClick={() => openAttribute(row.id)}
+                            className="cursor-pointer transition-colors"
+                          >
+                            <TableCell>
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <RowIcon className="w-4 h-4 flex-none" style={{ color: INK_MUTED }} />
+                                <span className="text-sm font-medium text-gray-900">{row.name}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600">
+                                <span className="w-2 h-2 rounded-full flex-none" style={{ background: GROUP_META[row.group].color }} />
+                                {GROUP_META[row.group].title}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2.5">
+                                <span className="w-[38px] flex-none text-sm font-semibold text-gray-900 tabular-nums">
+                                  {row.sentimentPct}%
+                                </span>
+                                <span className="flex-1 h-2 rounded-lg overflow-hidden max-w-[96px]" style={{ background: BAR_TRACK }}>
+                                  <span className="block h-full rounded-lg" style={{ width: `${row.sentimentPct}%`, background: row.color }} />
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {row.visibilityPct === null ? emptyCell : (
+                                <span className="text-sm font-semibold text-gray-900 tabular-nums">{row.visibilityPct.toFixed(1)}%</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {row.relevance === null
+                                ? (rawExtrasPending || recencyDataLoading ? pendingCell : emptyCell)
+                                : <span className="text-sm text-gray-600 tabular-nums">{row.relevance}</span>}
+                            </TableCell>
+                            <TableCell>
+                              {row.gapPts === null ? (
+                                rawExtrasPending || !competitorThemesLoaded ? pendingCell : emptyCell
+                              ) : (
+                                <span
+                                  className="inline-flex items-center gap-1 text-xs font-semibold"
+                                  style={{ color: row.gapPts > 0 ? '#0A9A98' : row.gapPts < 0 ? PINK : INK_DIM }}
+                                >
+                                  {row.gapPts > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : row.gapPts < 0 ? <TrendingDown className="w-3 h-3 flex-shrink-0" /> : null}
+                                  <span className="whitespace-nowrap">
+                                    {row.gapPts > 0 ? '+' : row.gapPts < 0 ? '−' : ''}{Math.abs(row.gapPts)} pts
+                                  </span>
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {row.sources.length === 0 ? (
+                                rawExtrasPending ? pendingCell : emptyCell
+                              ) : (
+                                <TooltipProvider>
+                                  {/* Overlapping stack, same as the Competitors and Sources tabs. */}
+                                  <div className="flex items-center w-fit">
+                                    <div className="flex items-center">
+                                      {row.sources.map((domain, i) => (
+                                        <Tooltip key={domain}>
+                                          <TooltipTrigger asChild>
+                                            <span
+                                              className="relative flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 ring-2 ring-white cursor-help overflow-hidden"
+                                              style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
+                                            >
+                                              <Favicon domain={domain} />
+                                            </span>
+                                          </TooltipTrigger>
+                                          <TooltipContent><p className="text-xs">{domain}</p></TooltipContent>
+                                        </Tooltip>
+                                      ))}
+                                    </div>
+                                    {row.sourceCount > TOP_SOURCES_PER_ROW && (
+                                      <span className="text-xs text-gray-400 pl-3 whitespace-nowrap">
+                                        +{(row.sourceCount - TOP_SOURCES_PER_ROW).toLocaleString()}
+                                      </span>
+                                    )}
+                                  </div>
+                                </TooltipProvider>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+                <TablePagination
+                  page={tablePage}
+                  pageCount={Math.ceil(filteredTableRows.length / TABLE_PAGE_SIZE)}
+                  onPageChange={setTablePage}
+                  totalLabel={`${(tablePage * TABLE_PAGE_SIZE + 1).toLocaleString()}–${Math.min((tablePage + 1) * TABLE_PAGE_SIZE, filteredTableRows.length).toLocaleString()} of ${filteredTableRows.length.toLocaleString()} attributes`}
+                />
+              </>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* Attribute detail modal — one scroll, no tabs. The sentiment split is
