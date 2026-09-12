@@ -28,8 +28,8 @@ const AuthStub = () => {
 // Persist a session exactly where supabase-js keeps it, so getSession()
 // resolves the user without a network round-trip (a warm "already logged in"
 // tab). Omit this for the cold-login scenario.
-export const seedSession = () => {
-  localStorage.setItem(F.STORAGE_KEY, JSON.stringify(F.session));
+export const seedSession = (session: object = F.session) => {
+  localStorage.setItem(F.STORAGE_KEY, JSON.stringify(session));
 };
 
 export interface RenderOptions {
