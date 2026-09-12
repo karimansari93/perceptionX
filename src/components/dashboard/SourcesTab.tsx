@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, memo } from "react";
+import { DataUnavailable } from "./DataUnavailable";
 import type { DomainStats, ScopeStatsRow } from '@/hooks/dashboard/dashboardQueries';
 import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,6 +52,10 @@ interface SourcesTabProps {
   // True while any interactive cube is still on its first fetch — the
   // stream can finish before the cubes on a company/location switch.
   cubesLoading?: boolean;
+  // Reliability-audit stream failure: with nothing cached the tab renders an
+  // error + Retry instead of "No citations found yet".
+  streamError?: boolean;
+  onRetry?: () => void;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
@@ -213,7 +218,7 @@ const titleFromUrl = (url: string, domain: string): string => {
   }
 };
 
-export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = null, cubePrevQuarterKey = null, cubesLoading = false, topCitations, responses, parseCitations, companyName, searchResults = EMPTY_ARRAY, currentCompanyId, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, responseSentimentRows = EMPTY_ARRAY }: SourcesTabProps) => {
+export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = null, cubePrevQuarterKey = null, cubesLoading = false, streamError = false, onRetry, topCitations, responses, parseCitations, companyName, searchResults = EMPTY_ARRAY, currentCompanyId, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, selectedJobFunction = 'all', onJobFunctionChange, responseSentimentRows = EMPTY_ARRAY }: SourcesTabProps) => {
 
   // Responses arrive already scoped by useDashboardData (brand scope — the
   // current company plus same-name sibling profiles — with the location and
@@ -1175,7 +1180,17 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
 
       {/* Job function filter lives in the top bar (DashboardHeader). */}
 
-      {!hasAnyData && !responsesLoading ? (
+      {!hasAnyData && streamError ? (
+        <Card className="shadow-sm border border-gray-200">
+          <CardContent className="p-6">
+            <DataUnavailable
+              title="Couldn't load sources."
+              description="The response data behind this tab didn't load. Retry to fetch it again."
+              onRetry={onRetry}
+            />
+          </CardContent>
+        </Card>
+      ) : !hasAnyData && !responsesLoading ? (
         <Card className="shadow-sm border border-gray-200">
           <CardContent className="p-6">
             <div className="text-center py-12 text-gray-500">

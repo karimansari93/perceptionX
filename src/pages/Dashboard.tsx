@@ -166,6 +166,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     cubePrevQuarterKey,
     cubeMonthFloor,
     cubesLoading,
+    headlineMetricsError,
+    themesStatus,
+    streamError,
+    retryFailedQueries,
   } = dashboardData;
 
   // `isRefreshing` ships with the TanStack rewrite of useDashboardData (true
@@ -298,7 +302,11 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   // empty states. Keyed on responsesLoadedCompanyId — the one flag that means
   // "the raw set is FINAL" (all pages committed, loaded empty, or cache-
   // restored).
-  const responsesStreaming = responsesLoadedCompanyId !== currentCompany?.id;
+  // A failed walk is NOT "still streaming": responsesLoadedCompanyId stays
+  // null on failure, so without this guard every raw-derived view skeletoned
+  // forever (reliability audit P1-1). Consumers receive streamError + a
+  // targeted retry and render an explicit error state instead.
+  const responsesStreaming = !streamError && responsesLoadedCompanyId !== currentCompany?.id;
 
   // The starred view (location + period) is applied inside useDashboardData's
   // company-entry effect — same code path as pending sibling-switch locations,
@@ -633,6 +641,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             cubePrevQuarterKey={cubePrevQuarterKey}
             cubeMonthFloor={cubeMonthFloor}
             cubesLoading={cubesLoading}
+            metricsError={headlineMetricsError}
+            themesStatus={themesStatus}
+            streamError={streamError}
+            onRetry={retryFailedQueries}
           />
         </div>
 
@@ -659,6 +671,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 cubeQuarterKey={cubeQuarterKey}
                 cubePrevQuarterKey={cubePrevQuarterKey}
                 cubesLoading={cubesLoading}
+                streamError={streamError}
+                onRetry={retryFailedQueries}
               />
             </Suspense>
           </div>
@@ -685,6 +699,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 cubeQuarterKey={cubeQuarterKey}
                 cubePrevQuarterKey={cubePrevQuarterKey}
                 cubesLoading={cubesLoading}
+                streamError={streamError}
+                onRetry={retryFailedQueries}
               />
             </Suspense>
           </div>
@@ -712,6 +728,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 cubeMonthFloor={cubeMonthFloor}
                 cubeScopeRows={cubeScopeRows}
                 cubePromptTypeRows={cubePromptTypeRows}
+                themesStatus={themesStatus}
+                streamError={streamError}
+                onRetry={retryFailedQueries}
               />
             </Suspense>
           </div>
@@ -731,6 +750,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 fetchResponseTexts={fetchResponseTexts}
                 scopeCompanyIds={scopeCompanyIds}
                 responsesLoading={responsesStreaming}
+                streamError={streamError}
+                onRetry={retryFailedQueries}
                 selectedJobFunction={selectedJobFunction}
                 onJobFunctionChange={handleJobFunctionChange}
               />

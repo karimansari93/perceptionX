@@ -91,8 +91,17 @@ export interface PromptData {
   attributePromptType?: string;
 }
 
+// Load status of one dashboard data family (a rollup RPC, the response
+// stream, a cube). 'error' means the request failed with nothing cached —
+// consumers must render an explicit error/retry state, never an empty state.
+export type DashboardFamilyStatus = 'loading' | 'ready' | 'error';
+
 export interface DashboardMetrics {
-  averageSentiment: number;
+  // Headline metrics are `null` when UNAVAILABLE: the source family failed,
+  // has not loaded, or carries no signal (methodology v2 sentiment with no
+  // polarized themes). A calculated 0 is a real 0 and stays a number. The UI
+  // renders null as "—" / an explicit unavailable state — never as 0%.
+  averageSentiment: number | null;
   sentimentLabel: string;
   sentimentTrendComparison: {
     value: number;
@@ -109,16 +118,18 @@ export interface DashboardMetrics {
   totalCitations: number;
   uniqueDomains: number;
   totalResponses: number;
-  averageVisibility: number;
-  averageRelevance: number;
+  averageVisibility: number | null;
+  averageRelevance: number | null;
   positiveCount: number;
   neutralCount: number;
   negativeCount: number;
-  perceptionScore: number;
+  // EPS (50/30/20 of the three scores) is null whenever ANY input is null —
+  // a missing input is never substituted with 0.
+  perceptionScore: number | null;
   perceptionLabel: string;
-  sentimentScore: number;
-  visibilityScore: number;
-  relevanceScore: number;
+  sentimentScore: number | null;
+  visibilityScore: number | null;
+  relevanceScore: number | null;
 }
 
 export interface VisibilityMetrics {

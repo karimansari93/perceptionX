@@ -1,4 +1,5 @@
 import { Fragment, useState, useMemo, useEffect, useCallback, memo } from "react";
+import { DataUnavailable } from "./DataUnavailable";
 import type { CompetitorStats, ScopePromptTypeStatsRow } from '@/hooks/dashboard/dashboardQueries';
 import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -159,6 +160,10 @@ interface CompetitorsTabProps {
   // True while any interactive cube is still on its first fetch — the
   // stream can finish before the cubes on a company/location switch.
   cubesLoading?: boolean;
+  // Reliability-audit stream failure: with nothing cached the tab renders an
+  // error + Retry instead of "No competitors detected yet".
+  streamError?: boolean;
+  onRetry?: () => void;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
@@ -187,6 +192,8 @@ export const CompetitorsTab = memo(({
   previousPeriodResponses = EMPTY_ARRAY,
   responsesLoading = false,
   cubesLoading = false,
+  streamError = false,
+  onRetry,
   selectedJobFunction = "all",
   onJobFunctionChange,
   responseSentimentRows = EMPTY_ARRAY,
@@ -1203,7 +1210,17 @@ export const CompetitorsTab = memo(({
 
       {/* Job function filter lives in the top bar (DashboardHeader). */}
 
-      {!hasAnyData && !responsesLoading ? (
+      {!hasAnyData && streamError ? (
+        <Card className="shadow-sm border border-gray-200">
+          <CardContent className="p-6">
+            <DataUnavailable
+              title="Couldn't load competitors."
+              description="The response data behind this tab didn't load. Retry to fetch it again."
+              onRetry={onRetry}
+            />
+          </CardContent>
+        </Card>
+      ) : !hasAnyData && !responsesLoading ? (
         <Card className="shadow-sm border border-gray-200">
           <CardContent className="p-6">
             <div className="text-center py-12 text-gray-500">

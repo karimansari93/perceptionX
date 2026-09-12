@@ -18,14 +18,16 @@ import { DiscoveryStats } from "@/lib/discoveryStats";
 interface EpsDrilldownSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  score: number;
+  // null = unavailable (the source family failed or has no signal): shown as
+  // "—" and left out of every comparison — never treated as 0.
+  score: number | null;
   label: string;
   companyName: string;
   market: string | null | undefined;
   // Live values from the dashboard breakdown — source of truth for the
   // displayed component value. The MV is used only for peer_avg.
-  liveSentiment: number;
-  liveVisibility: number;
+  liveSentiment: number | null;
+  liveVisibility: number | null;
   // Discovery-prompt visibility: target's mention rate on open-ended
   // ("best employers in X") prompts plus the top entities the AI surfaces
   // in those same responses. Computed from `responses` in OverviewTab.
@@ -225,7 +227,7 @@ export function EpsDrilldownSheet({
   const peerRanges = computePeerRanges(marketRows, companyName);
 
   const sentimentGap =
-    data && data.sentiment_peer_avg !== null && !Number.isNaN(data.sentiment_peer_avg)
+    liveSentiment !== null && data && data.sentiment_peer_avg !== null && !Number.isNaN(data.sentiment_peer_avg)
       ? liveSentiment - data.sentiment_peer_avg
       : null;
   const sentimentLabel = sentimentGap !== null ? getPositionLabel(sentimentGap) : null;
@@ -263,12 +265,14 @@ export function EpsDrilldownSheet({
       thinkingTimers.push(setTimeout(() => setAiThinkingStep(i), i * 900));
     }
 
+    const scoreText = score === null ? 'unavailable' : String(score);
+    const sentimentText = liveSentiment === null ? 'unavailable' : `${liveSentiment.toFixed(0)}%`;
     const epsLine = peerRanges.eps.min !== null && peerRanges.eps.max !== null
-      ? `${score} (${label}). Peer EPS in this market ranges from ${peerRanges.eps.min.toFixed(0)} to ${peerRanges.eps.max.toFixed(0)}.`
-      : `${score} (${label}).`;
+      ? `${scoreText} (${label}). Peer EPS in this market ranges from ${peerRanges.eps.min.toFixed(0)} to ${peerRanges.eps.max.toFixed(0)}.`
+      : `${scoreText} (${label}).`;
     const sentLine = peerRanges.sentiment.min !== null && peerRanges.sentiment.max !== null
-      ? `${liveSentiment.toFixed(0)}%. Peer sentiment ranges ${peerRanges.sentiment.min.toFixed(0)}–${peerRanges.sentiment.max.toFixed(0)}%.`
-      : `${liveSentiment.toFixed(0)}%.`;
+      ? `${sentimentText}. Peer sentiment ranges ${peerRanges.sentiment.min.toFixed(0)}–${peerRanges.sentiment.max.toFixed(0)}%.`
+      : `${sentimentText}.`;
 
     // Visibility — DO NOT pass raw percentages for the comparison. We only give
     // the AI multiplicative ratios from open-ended search data, because the
@@ -573,6 +577,13 @@ Hard rules:
           </h3>
 
           {(() => {
+            if (liveSentiment === null) {
+              return (
+                <div className="rounded-xl border border-dashed p-4 text-sm text-gray-500">
+                  Sentiment isn't available for this selection, so there is nothing to compare yet.
+                </div>
+              );
+            }
             const peers = marketRows
               .filter((r) => r.company_name !== companyName && r.sentiment_pct !== null)
               .map((r) => ({

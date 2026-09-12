@@ -4,7 +4,8 @@ import { poolCompetitorRows } from '@/hooks/dashboard/scopeStatsSelect';
 import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { MetricCard } from "./MetricCard";
-import { DashboardMetrics, CitationCount, LLMMentionRanking } from "@/types/dashboard";
+import { DashboardMetrics, DashboardFamilyStatus, CitationCount, LLMMentionRanking } from "@/types/dashboard";
+import { DataUnavailable } from "./DataUnavailable";
 import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown, Sparkles, Loader2, CheckCircle2, Minus } from 'lucide-react';
 import { usePersistedState } from "@/hooks/usePersistedState";
 
@@ -87,6 +88,17 @@ interface OverviewTabProps {
   // paint) — raw-derived summary cards skeleton instead of "No data".
   responsesLoading?: boolean;
   metricsCalculating?: boolean; // Whether metrics are still being calculated (for UX - show all together)
+  // Reliability-audit failure states (docs/audits/DATA_RELIABILITY_AUDIT_2026-09-11.md).
+  // The family feeding the scorecard (location rollups) failed with nothing
+  // cached: EPS/Breakdown render an explicit error + Retry — never 0%.
+  metricsError?: boolean;
+  // Load status of the attribute-theme rows behind the Themes card.
+  themesStatus?: DashboardFamilyStatus;
+  // The response-stream walk failed: raw-derived cards stop skeletoning and
+  // show a retry state instead.
+  streamError?: boolean;
+  // Refetch only the families currently in error.
+  onRetry?: () => void;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
   // Fields are optional because the MV may not yet have per-month data for
@@ -105,11 +117,11 @@ interface OverviewTabProps {
   market?: string | null;
   // Per-job-function scorecard metrics — lets the function filter rescope EPS/Breakdown.
   metricsByJobFunction?: Record<string, {
-    perceptionScore: number;
+    perceptionScore: number | null;
     perceptionLabel: string;
-    sentimentScore: number;
-    visibilityScore: number;
-    relevanceScore: number;
+    sentimentScore: number | null;
+    visibilityScore: number | null;
+    relevanceScore: number | null;
   }>;
   // Global job-function filter, shared across all dashboard tabs and owned by
   // the parent Dashboard so a selection persists when switching tabs.
@@ -167,6 +179,10 @@ export const OverviewTab = memo(({
   aiThemesLoading = false,
   responsesLoading = false,
   metricsCalculating = false,
+  metricsError = false,
+  themesStatus = 'ready',
+  streamError = false,
+  onRetry,
   responseTexts = {},
   fetchResponseTexts,
   previousPeriodMetrics = null,
@@ -1048,6 +1064,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
     if (Array.isArray(activeEpsTrend) && activeEpsTrend.length > 1) {
       return activeEpsTrend;
     }
+    // No headline EPS (an input is unavailable) → nothing to chart.
+    if (scorecardMetrics.perceptionScore === null) return [];
     return [
       { date: 'Start', score: scorecardMetrics.perceptionScore, responseCount: responses.length },
       { date: 'Today', score: scorecardMetrics.perceptionScore, responseCount: responses.length },
@@ -1183,8 +1201,15 @@ CRITICAL: When you reference information from a source, add an inline citation l
               <Skeleton className="h-8 w-20" />
             ) : (
               <>
-                <span className="font-headline text-2xl font-bold leading-none tracking-[-0.02em] text-[#13274F] tabular-nums">{scorecardMetrics.perceptionScore}</span>
-                {epsDelta !== null && (
+                <span
+                  className="font-headline text-2xl font-bold leading-none tracking-[-0.02em] text-[#13274F] tabular-nums"
+                  title={scorecardMetrics.perceptionScore === null ? 'EPS unavailable' : undefined}
+                  data-metric="eps"
+                  data-unavailable={scorecardMetrics.perceptionScore === null ? 'true' : undefined}
+                >
+                  {scorecardMetrics.perceptionScore === null ? '—' : scorecardMetrics.perceptionScore}
+                </span>
+                {scorecardMetrics.perceptionScore !== null && epsDelta !== null && (
                   epsDelta === 0 ? (
                     <span className="ml-1 inline-flex items-center text-[13px] font-semibold text-gray-400"><Minus className="h-[13px] w-[13px]" /></span>
                   ) : (
@@ -1198,7 +1223,21 @@ CRITICAL: When you reference information from a source, add an inline citation l
             )}
           </div>
           <div className="relative min-h-[70px] flex-1">
-            {!metricsCalculating && (
+            {!metricsCalculating && metricsError && (
+              <DataUnavailable
+                variant="inline"
+                className="px-4 pt-1"
+                title="Couldn't load this location's metrics."
+                description="Sentiment and relevance are unavailable until the request succeeds."
+                onRetry={onRetry}
+              />
+            )}
+            {!metricsCalculating && !metricsError && scorecardMetrics.perceptionScore === null && (
+              <p className="px-4 pt-1 text-[12px] leading-snug text-gray-500">
+                EPS needs sentiment, visibility and relevance. At least one isn't available for this selection yet.
+              </p>
+            )}
+            {!metricsCalculating && scorecardMetrics.perceptionScore !== null && epsChartData.length > 0 && (
               <ChartContainer config={{ score: { label: "Score", color: "#0DBCBA" } }} className="h-full w-full">
                 <AreaChart data={epsChartData} margin={{ top: 6, right: 6, left: 0, bottom: 18 }}>
                   <defs>
@@ -1227,7 +1266,7 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 </AreaChart>
               </ChartContainer>
             )}
-            {!metricsCalculating && epsChartData.length > 1 && (
+            {!metricsCalculating && scorecardMetrics.perceptionScore !== null && epsChartData.length > 1 && (
               <div className="pointer-events-none absolute bottom-1.5 left-[18px] right-[18px] flex justify-between text-[10.5px] text-gray-400 tabular-nums">
                 {epsAxisLabels.map((l, i) => <span key={`${i}-${l}`}>{l}</span>)}
               </div>
@@ -1267,12 +1306,23 @@ CRITICAL: When you reference information from a source, add an inline citation l
                 { name: 'Relevance', value: scorecardMetrics.relevanceScore, prev: prevPoint?.relevance ?? null, fill: 'bg-[#f97316]' },
               ];
               return rows.map((row, i) => {
-                const delta = row.prev === null ? null : Math.round(row.value - row.prev);
+                // null = unavailable (failed / not loaded / no signal). It is
+                // rendered as "—", never as 0%; a real 0 is a number and
+                // still renders as "0%".
+                const unavailable = row.value === null;
+                const delta = unavailable || row.prev === null ? null : Math.round(row.value - row.prev);
                 return (
                   <div key={row.name} className={`flex min-h-0 flex-1 flex-col justify-center gap-1.5 ${i > 0 ? 'border-t border-[#13274F]/[0.08] pt-2' : 'pt-0.5'}`}>
                     <div className="flex items-center gap-2.5">
                       <span className="flex-1 text-[13px] font-medium text-gray-700">{row.name}</span>
-                      <span className="font-headline text-[15px] font-bold leading-none text-[#13274F] tabular-nums">{Math.round(row.value)}%</span>
+                      <span
+                        className={`font-headline text-[15px] font-bold leading-none tabular-nums ${unavailable ? 'text-gray-400' : 'text-[#13274F]'}`}
+                        title={unavailable ? (metricsError ? "Couldn't load" : 'Not available') : undefined}
+                        data-metric={row.name.toLowerCase()}
+                        data-unavailable={unavailable ? 'true' : undefined}
+                      >
+                        {unavailable ? '—' : `${Math.round(row.value)}%`}
+                      </span>
                       <span className="flex w-[34px] justify-end text-[11.5px] font-semibold tabular-nums">
                         {delta === null || delta === 0 ? (
                           <span className="text-gray-400">–</span>
@@ -1286,9 +1336,9 @@ CRITICAL: When you reference information from a source, add an inline citation l
                     </div>
                     <div className="flex items-center gap-2.5">
                       <div className="h-2 min-w-[60px] flex-1 overflow-hidden rounded-full bg-[#eef0f3]">
-                        <div className={`h-full rounded-full ${row.fill} transition-all duration-300`} style={{ width: `${Math.max(0, Math.min(100, row.value))}%` }} />
+                        <div className={`h-full rounded-full ${row.fill} transition-all duration-300`} style={{ width: `${unavailable ? 0 : Math.max(0, Math.min(100, row.value))}%` }} />
                       </div>
-                      {row.prev !== null && <span className="text-[11px] text-gray-400 tabular-nums">was {Math.round(row.prev)}%</span>}
+                      {!unavailable && row.prev !== null && <span className="text-[11px] text-gray-400 tabular-nums">was {Math.round(row.prev)}%</span>}
                     </div>
                   </div>
                 );
@@ -1312,6 +1362,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
               previousPeriodResponses={fnPreviousResponses}
               responsesLoading={responsesLoading}
               cubesLoading={cubesLoading}
+              streamError={streamError}
+              onRetry={onRetry}
               domainStatsRows={domainStats?.rows}
               cubeScopeRows={cubeScopeRows}
               cubeQuarterKey={cubeQuarterKey}
@@ -1330,6 +1382,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
               previousPeriodResponses={fnPreviousResponses}
               responsesLoading={responsesLoading}
               cubesLoading={cubesLoading}
+              streamError={streamError}
+              onRetry={onRetry}
               competitorStatsRows={competitorStats?.rows}
               cubePromptTypeRows={cubePromptTypeRows}
               cubeQuarterKey={cubeQuarterKey}
@@ -1347,6 +1401,8 @@ CRITICAL: When you reference information from a source, add an inline citation l
               previousPeriodResponses={fnPreviousResponses}
               responses={fnResponses}
               aiThemesLoading={aiThemesLoading}
+              themesStatus={themesStatus}
+              onRetry={onRetry}
               cubeQuarterKey={cubeQuarterKey}
               cubePrevQuarterKey={cubePrevQuarterKey}
               cubeMonthFloor={cubeMonthFloor}

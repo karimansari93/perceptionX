@@ -33,7 +33,7 @@ import {
 import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
-import { PromptResponse, DashboardMetrics, CitationCount, PromptData, Citation, CompetitorMention, LLMMentionRanking } from "@/types/dashboard";
+import { PromptResponse, DashboardMetrics, DashboardFamilyStatus, CitationCount, PromptData, Citation, CompetitorMention, LLMMentionRanking } from "@/types/dashboard";
 import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
@@ -43,6 +43,7 @@ import { GLOBAL_LIKE } from "@/utils/locations";
 import { LEGACY_ATTRIBUTE_MAP } from "@/config/attributes";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
 import { defaultLocationFromUser, focusAppliesToCompany } from "@/hooks/useProfileSetup";
+import { setObservabilityContext } from "@/lib/observability";
 import { sentimentRatioV2, EXCLUDED_AI_MODELS_FILTER } from "@/lib/sentimentV2";
 
 // Pure aggregation of `company_*_by_location_mv` rows into the same shape the
@@ -639,6 +640,15 @@ export const useDashboardData = () => {
       console.error('Error loading dashboard response stream (background):', backgroundError);
     }
   }, [backgroundError]);
+  // Explicit stream failure (reliability audit P1-1). When a page walk fails
+  // with nothing cached, the raw set is not "still arriving" — it is
+  // unavailable until a retry. responsesLoadedCompanyId stays null on
+  // failure, which every consumer used to read as "streaming forever" and
+  // rendered as a permanent skeleton. Consumers gate on this flag instead.
+  const streamError = scopeReady && (
+    (firstPagesQuery.isError && firstPagesQuery.data === undefined) ||
+    (fullStreamQuery.isError && fullStreamQuery.data === undefined)
+  );
   useEffect(() => {
     if (!criticalError) {
       setConnectionError(null);
@@ -1326,6 +1336,17 @@ export const useDashboardData = () => {
     }
   }, [user?.id, currentCompany?.id]); // Only depend on IDs, not the function
 
+  // Targeted recovery for inline error states: refetch ONLY the dashboard
+  // families currently in error (the location rollups, the response stream,
+  // a cube). refreshData() below invalidates every family, which re-issues
+  // the whole cold-load burst the audit identified as the trigger.
+  const retryFailedQueries = useCallback(async () => {
+    await queryClient.refetchQueries({
+      queryKey: dashboardKeys.all,
+      predicate: (q) => q.state.status === 'error',
+    });
+  }, [queryClient]);
+
   const refreshData = useCallback(async () => {
     searchResultsCache.current = { companyId: null, timestamp: 0, data: [] };
     recencyDataCacheRef.current = null;
@@ -1614,6 +1635,15 @@ export const useDashboardData = () => {
   }, [selectedOwnedKey, scopeKey]);
 
   const locationQueryEnabled = scopeReady && !!selectedLocation && locSelectionFetchable;
+  // Company / scope / location for dashboard error reports, so a failed
+  // family can be tied to what the user was looking at (audit P1-4).
+  useEffect(() => {
+    setObservabilityContext({
+      companyId: currentCompany?.id ?? null,
+      scopeKey: scopeReady ? scopeKey : null,
+      locationKey: selectedLocation ?? null,
+    });
+  }, [currentCompany?.id, scopeReady, scopeKey, selectedLocation]);
   const locRollupsQuery = useQuery({
     queryKey: dashboardKeys.locationRollups(scopeKey, selectedLocation ?? ''),
     queryFn: ({ signal }) => fetchLocationRollups({
@@ -1627,6 +1657,14 @@ export const useDashboardData = () => {
     gcTime: KEEP_MS,
     refetchOnMount: true,
   });
+  // Location family failure (reliability audit P0-1). An errored query has
+  // isPending === false and data === undefined, which downstream read as "no
+  // location rows": the scorecard then coalesced sentiment and relevance to
+  // 0% next to a real visibility number, and the Themes card showed the
+  // legitimate-empty copy. Tracked explicitly so the derived metrics become
+  // unavailable (null) and the UI renders an error/retry state instead.
+  const locationRollupsError =
+    locationQueryEnabled && locRollupsQuery.isError && locRollupsQuery.data === undefined;
 
   // Interactive cubes (domain + competitor stats): ONE fetch per
   // (scope, location selection), month × job-function (× prompt_type) kept
@@ -1784,7 +1822,7 @@ export const useDashboardData = () => {
   const locationMetricsLoading = !!selectedLocation && (
     locationQueryEnabled
       ? locRollupsQuery.isPending
-      : responsesLoadedCompanyId !== currentCompany?.id
+      : responsesLoadedCompanyId !== currentCompany?.id && !streamError
   );
 
   // Intent prefetch: called on dropdown open/hover so a target's rollups are
@@ -1905,6 +1943,19 @@ export const useDashboardData = () => {
   const effMvTopCompetitors = locActive ? locMvTopCompetitors : mvTopCompetitors;
   const effMvLlmRankings = locActive ? locMvLlmRankings : mvLlmRankings;
   const effAttributeThemes = locActive ? locAttributeThemes : attributeThemes;
+
+  // Status of the family the scorecard and the Themes card are reading from.
+  // A company-wide rollup failure already surfaces as criticalError (the
+  // page-level "Connection Issue" screen); the location family had no
+  // failure path at all before the reliability audit.
+  const headlineMetricsError = locActive && locationRollupsError;
+  const themesStatus: DashboardFamilyStatus = locActive
+    ? (locationRollupsError
+        ? 'error'
+        : locRollupsQuery.data === undefined && locationQueryEnabled ? 'loading' : 'ready')
+    : (rollupsQuery.data !== undefined
+        ? 'ready'
+        : rollupsQuery.isError ? 'error' : 'loading');
 
   // Reconcile a selection that isn't valid for the current company back to null
   // ("All locations"), so the internal state matches what the trigger shows and
@@ -2278,10 +2329,13 @@ export const useDashboardData = () => {
     // A selection whose bucket is missing from the visibility MV (differential
     // MV staleness) must keep waiting for the raw fallback, or the scorecard
     // would paint real sentiment next to a false 0% visibility.
+    // A failed stream settles the raw fallback too (visibility then reads as
+    // unavailable, never as 0% from zero loaded responses).
     const visibilityReady =
       visibilityRowsForSelection.length > 0 ||
       (!visibilityMvLoading && responses.length > 0) ||
-      responsesFinal;
+      responsesFinal ||
+      streamError;
 
     // Relevance is ready if backend metrics exist OR recency fetch completed
     const hasBackendRelevance = companyRelevanceMetrics !== null;
@@ -2292,7 +2346,7 @@ export const useDashboardData = () => {
       !locationMetricsLoading && !finalAndEmpty;
     setMetricsCalculating(!allReady);
 
-  }, [loading, responses.length, responsesLoadedCompanyId, currentCompany?.id, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length, locationMetricsLoading, visibilityMvLoading, visibilityRowsForSelection]);
+  }, [loading, responses.length, responsesLoadedCompanyId, currentCompany?.id, companyMetricsLoading, companySentimentMetrics, companyRelevanceMetrics, recencyDataLoading, recencyData.length, locationMetricsLoading, visibilityMvLoading, visibilityRowsForSelection, streamError]);
 
   const metrics: DashboardMetrics = useMemo(() => {
     // Use period-filtered responses when a period is selected (multi-month companies)
@@ -2345,30 +2399,33 @@ export const useDashboardData = () => {
     // rollup has data, compute from it even before responses arrive.
     if ((loading || responses.length === 0) && !effSentimentMetrics && !effRelevanceMetrics && !mvVisibility) {
       return {
-        averageSentiment: 0,
-        sentimentLabel: 'Neutral',
+        averageSentiment: null,
+        sentimentLabel: 'Unavailable',
         sentimentTrendComparison: { value: 0, direction: 'neutral' as const },
         visibilityTrendComparison: { value: 0, direction: 'neutral' as const },
         citationsTrendComparison: { value: 0, direction: 'neutral' as const },
         totalCitations: 0,
         uniqueDomains: 0,
         totalResponses: 0,
-        averageVisibility: 0,
-        averageRelevance: 0,
+        averageVisibility: null,
+        averageRelevance: null,
         positiveCount: 0,
         neutralCount: 0,
         negativeCount: 0,
-        perceptionScore: 0,
+        perceptionScore: null,
         perceptionLabel: 'No Data',
-        // Required on DashboardMetrics — include them so the early-return
-        // path typechecks. All zero because nothing has loaded yet.
-        sentimentScore: 0,
-        visibilityScore: 0,
-        relevanceScore: 0,
+        // Nothing has loaded yet: every score is UNAVAILABLE (null), never 0.
+        // A 0 here used to paint as a real "0%" the moment the skeleton
+        // released (reliability audit P0-1 / P2-1).
+        sentimentScore: null,
+        visibilityScore: null,
+        relevanceScore: null,
       };
     }
     
-    let averageSentiment = 0;
+    // null = no usable sentiment source (family failed, still loading, or no
+    // polarized themes — methodology v2: "no signal", never 0).
+    let averageSentiment: number | null = null;
     let positiveCount = 0;
     let neutralCount = 0;
     let negativeCount = 0;
@@ -2378,10 +2435,10 @@ export const useDashboardData = () => {
       // Period selected — use per-month MV value
       averageSentiment = effSentimentByMonth[effectivePeriodKey];
     } else if (effSentimentMetrics) {
-      // No specific period — use all-months aggregate from MV.
-      // (v2 ratio is null when no polarized themes exist; counts below are
-      // all-neutral in that case so 0 here can't read as "fully negative".)
-      averageSentiment = effSentimentMetrics.sentiment_ratio ?? 0;
+      // No specific period — use all-months aggregate from MV. The v2 ratio
+      // is null when no polarized themes exist: that stays null ("no signal")
+      // rather than becoming a 0% that reads as "fully negative".
+      averageSentiment = effSentimentMetrics.sentiment_ratio ?? null;
     }
     // Estimate counts based on ratios (for display purposes)
     const totalResponses = responses.length;
@@ -2395,7 +2452,9 @@ export const useDashboardData = () => {
       neutralCount = totalResponses;
     }
 
-    const sentimentLabel = averageSentiment > 0.6 ? 'Positive' : averageSentiment < 0.4 ? 'Negative' : 'Neutral';
+    const sentimentLabel = averageSentiment === null
+      ? 'Unavailable'
+      : averageSentiment > 0.6 ? 'Positive' : averageSentiment < 0.4 ? 'Negative' : 'Neutral';
 
     let sentimentTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
     let visibilityTrendComparison: { value: number; direction: 'up' | 'down' | 'neutral' } = { value: 0, direction: 'neutral' };
@@ -2527,17 +2586,20 @@ export const useDashboardData = () => {
     // independent of how much of the raw response stream has arrived — see
     // mvVisibility hoisted above); fall back to counting loaded responses
     // when the rollup has no matching rows.
+    // No rollup rows AND no loaded responses = no visibility source at all
+    // (still streaming, or the stream failed): unavailable, not 0%.
     const mentionedCount = responses.filter(r => r.company_mentioned === true).length;
-    const averageVisibility = mvVisibility
+    const averageVisibility: number | null = mvVisibility
       ? mvVisibility.pct
       : responses.length > 0
         ? (mentionedCount / responses.length) * 100
-        : 0;
+        : null;
 
-    // Use period-specific relevance from MV when a period is active, otherwise fall back to all-months aggregate
-    const averageRelevance = (effectivePeriodKey && effRelevanceByMonth[effectivePeriodKey] !== undefined)
+    // Use period-specific relevance from MV when a period is active, otherwise
+    // fall back to the all-months aggregate; no aggregate = unavailable.
+    const averageRelevance: number | null = (effectivePeriodKey && effRelevanceByMonth[effectivePeriodKey] !== undefined)
       ? effRelevanceByMonth[effectivePeriodKey]
-      : effRelevanceMetrics?.relevance_score ?? 0;
+      : effRelevanceMetrics?.relevance_score ?? null;
 
     // Calculate overall perception score
     const calculatePerceptionScore = () => {
@@ -2545,12 +2607,19 @@ export const useDashboardData = () => {
       // used to imply that, but raw rows now stream in after first paint
       // while the rollups already carry the exact score inputs.
       if (responses.length === 0 && !mvVisibility && !effSentimentMetrics && !effRelevanceMetrics) {
-        return { score: 0, label: 'No Data', sentimentScore: 0, visibilityScore: 0, relevanceScore: 0 };
+        return { score: null, label: 'No Data', sentimentScore: null, visibilityScore: null, relevanceScore: null };
       }
 
-      const sentimentScore = Math.round(Math.max(0, Math.min(100, averageSentiment * 100)));
-      const visibilityScore = Math.round(averageVisibility);
-      const relevanceScore = Math.round(averageRelevance);
+      const sentimentScore = averageSentiment === null ? null : Math.round(Math.max(0, Math.min(100, averageSentiment * 100)));
+      const visibilityScore = averageVisibility === null ? null : Math.round(averageVisibility);
+      const relevanceScore = averageRelevance === null ? null : Math.round(averageRelevance);
+
+      // EPS is only defined when every input it weights is a real number. A
+      // metric that failed to load (or has no signal) is null, and null must
+      // never be substituted with 0 inside the formula (reliability audit).
+      if (sentimentScore === null || visibilityScore === null || relevanceScore === null) {
+        return { score: null, label: 'Unavailable', sentimentScore, visibilityScore, relevanceScore };
+      }
 
       // Weighted formula: 50% sentiment + 30% visibility + 20% relevance
       const perceptionScore = Math.round(
@@ -2609,7 +2678,7 @@ export const useDashboardData = () => {
     const sentimentAgg = effSentimentMetrics?.sentiment_ratio;
     const relevanceAgg = effRelevanceMetrics?.relevance_score;
 
-    const full = periodsAsc.map((p) => {
+    const full = periodsAsc.flatMap((p) => {
       // Snapshot-quarter bucketing (responsePeriodKey), matching the period
       // filter — NOT tested_at, which can fall in the prior calendar quarter.
       // Visibility prefers the exact rollup for the quarter.
@@ -2620,16 +2689,21 @@ export const useDashboardData = () => {
         ? Math.round(mvMonth.pct)
         : monthResponses.length > 0
           ? Math.round((mentioned / monthResponses.length) * 100)
-          : 0;
+          : null;
 
-      const sRatio = effSentimentByMonth[p.key] ?? sentimentAgg ?? 0;
-      const sentiment = Math.round(Math.max(0, Math.min(100, sRatio * 100)));
+      const sRatio = effSentimentByMonth[p.key] ?? sentimentAgg ?? null;
+      const sentiment = sRatio === null ? null : Math.round(Math.max(0, Math.min(100, sRatio * 100)));
 
-      const rVal = effRelevanceByMonth[p.key] ?? relevanceAgg ?? 0;
-      const relevance = Math.round(rVal);
+      const rVal = effRelevanceByMonth[p.key] ?? relevanceAgg ?? null;
+      const relevance = rVal === null ? null : Math.round(rVal);
+
+      // A period whose sentiment, visibility or relevance cannot be resolved
+      // (family failed, not loaded, or no signal) has no EPS point. Zero-
+      // filling here drew the sparkline through artificial lows.
+      if (sentiment === null || visibility === null || relevance === null) return [];
 
       const score = Math.round(sentiment * 0.5 + visibility * 0.3 + relevance * 0.2);
-      return {
+      return [{
         key: p.key,
         date: p.label,
         score,
@@ -2637,7 +2711,7 @@ export const useDashboardData = () => {
         visibility,
         relevance,
         responseCount: mvMonth ? mvMonth.total : monthResponses.length,
-      };
+      }];
     });
 
     // Trim to the selected period so the line ends on the quarter whose EPS the
@@ -2659,8 +2733,8 @@ export const useDashboardData = () => {
   // 50/30/20 weighting as the global score.
   const metricsByJobFunction = useMemo(() => {
     const result: Record<string, {
-      perceptionScore: number; perceptionLabel: string;
-      sentimentScore: number; visibilityScore: number; relevanceScore: number;
+      perceptionScore: number | null; perceptionLabel: string;
+      sentimentScore: number | null; visibilityScore: number | null; relevanceScore: number | null;
     }> = {};
 
     const fns = new Set<string>();
@@ -2684,7 +2758,7 @@ export const useDashboardData = () => {
       const fnRatio = sentimentRatioV2(positiveThemes, negativeThemes);
       const sentimentScore = fnRatio !== null
         ? Math.round(Math.max(0, Math.min(100, fnRatio * 100)))
-        : 0;
+        : null;
 
       // Relevance — citation-weighted average recency score
       let relWeighted = 0, relWeight = 0;
@@ -2693,7 +2767,7 @@ export const useDashboardData = () => {
         relWeighted += (r.relevance_score || 0) * (r.valid_citations || 0);
         relWeight += r.valid_citations || 0;
       });
-      const relevanceScore = relWeight > 0 ? Math.round(relWeighted / relWeight) : 0;
+      const relevanceScore = relWeight > 0 ? Math.round(relWeighted / relWeight) : null;
 
       // Visibility — prefer the exact rollup for (function, effective period);
       // fall back to the company_mentioned rate of this function's responses.
@@ -2706,8 +2780,13 @@ export const useDashboardData = () => {
         ? Math.round(mvFn.pct)
         : fnResponses.length > 0
           ? Math.round((mentioned / fnResponses.length) * 100)
-          : 0;
+          : null;
 
+      // Same rule as the headline: no EPS unless every input is available.
+      if (sentimentScore === null || visibilityScore === null || relevanceScore === null) {
+        result[fn] = { perceptionScore: null, perceptionLabel: 'Unavailable', sentimentScore, visibilityScore, relevanceScore };
+        return;
+      }
       const perceptionScore = Math.round(
         (sentimentScore * 0.5) + (visibilityScore * 0.3) + (relevanceScore * 0.2)
       );
@@ -2786,10 +2865,13 @@ export const useDashboardData = () => {
         const sbRatio = sb ? sentimentRatioV2(sb.pos, sb.neg) : null;
         const sentiment = sbRatio !== null
           ? Math.round(Math.max(0, Math.min(100, sbRatio * 100)))
-          : (agg?.sentimentScore ?? 0);
+          : (agg?.sentimentScore ?? null);
 
         const rb = relBucket.get(`${fn} ${p.key}`);
-        const relevance = rb && rb.wt > 0 ? Math.round(rb.w / rb.wt) : (agg?.relevanceScore ?? 0);
+        const relevance = rb && rb.wt > 0 ? Math.round(rb.w / rb.wt) : (agg?.relevanceScore ?? null);
+
+        // No EPS point when an input is unavailable (never a zero substitute).
+        if (sentiment === null || relevance === null) return;
 
         const score = Math.round(sentiment * 0.5 + visibility * 0.3 + relevance * 0.2);
         series.push({ key: p.key, date: p.label, score, sentiment, visibility, relevance, responseCount: mvFnMonth ? mvFnMonth.total : monthResponses.length });
@@ -2798,7 +2880,7 @@ export const useDashboardData = () => {
       // Trim to the selected period; pin the endpoint to the headline metric.
       const selIdx = effectivePeriod ? series.findIndex(d => d.key === effectivePeriod.key) : series.length - 1;
       const trimmed = selIdx >= 0 ? series.slice(0, selIdx + 1) : series;
-      if (trimmed.length > 0 && agg && effectivePeriod && trimmed[trimmed.length - 1].key === effectivePeriod.key) {
+      if (trimmed.length > 0 && agg && agg.perceptionScore !== null && effectivePeriod && trimmed[trimmed.length - 1].key === effectivePeriod.key) {
         const last = trimmed[trimmed.length - 1];
         trimmed[trimmed.length - 1] = {
           ...last,
@@ -3075,6 +3157,12 @@ export const useDashboardData = () => {
     setPendingLocation, // Stash a location to apply right after a company switch (sibling-row brands)
     locationOptions, // Merged dropdown options (in-company location_context + sibling-company switches)
     locationMetricsLoading,
+    // Reliability-audit failure states. Consumers must render these as
+    // explicit error/retry UI — never as 0%, an empty state, or a skeleton.
+    headlineMetricsError, // the family feeding the scorecard (location rollups) failed with nothing cached
+    themesStatus, // 'loading' | 'ready' | 'error' for the attribute-theme rows the Themes card reads
+    streamError, // the response-stream walk failed with nothing cached (raw-derived views stop waiting)
+    retryFailedQueries, // refetch only the families currently in error
     // Brand scope: current company + same-org same-name siblings. Consumers
     // that resolve prompts/companies (e.g. the modal refresh, reports) must
     // scope to this, not the single current company or all userCompanies.

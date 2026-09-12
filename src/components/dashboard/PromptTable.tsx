@@ -1,4 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
+import { DataUnavailable } from './DataUnavailable';
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,11 +20,16 @@ interface PromptTableProps {
   // arriving (it loads AFTER first paint). Gates the empty state: skeleton
   // rows, never "No prompts tracked yet", until the stream is final.
   responsesLoading?: boolean;
+  // The response-stream walk failed with nothing (or only part) cached. The
+  // table must resolve to an error + Retry state — never a permanent
+  // skeleton (reliability audit P1-1).
+  streamError?: boolean;
+  onRetry?: () => void;
 }
 
 const INITIAL_ROWS = 50;
 
-export const PromptTable = memo(({ prompts, onPromptClick, responsesLoading = false }: PromptTableProps) => {
+export const PromptTable = memo(({ prompts, onPromptClick, responsesLoading = false, streamError = false, onRetry }: PromptTableProps) => {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [showAll, setShowAll] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
@@ -127,7 +133,11 @@ export const PromptTable = memo(({ prompts, onPromptClick, responsesLoading = fa
   // real response data, the list is only the zero-count prompt shells merged
   // from activePrompts — rendering those reads as "every prompt has 0
   // responses / not mentioned", which is fabricated. Skeleton instead.
-  const awaitingResponseData = responsesLoading && !filteredPrompts.some(p => (p.responses ?? 0) > 0);
+  const hasAnyResponseData = filteredPrompts.some(p => (p.responses ?? 0) > 0);
+  const awaitingResponseData = responsesLoading && !streamError && !hasAnyResponseData;
+  // Stream failed and nothing landed: the zero-count shells would read as
+  // "every prompt has 0 responses", which is fabricated — show the failure.
+  const responseDataFailed = streamError && !hasAnyResponseData;
 
   // avgSentiment is the methodology-v2 ratio positive/(positive+negative),
   // 0..1 — same 0.6/0.4 label thresholds as the rest of the dashboard.
@@ -353,7 +363,27 @@ export const PromptTable = memo(({ prompts, onPromptClick, responsesLoading = fa
         </Select>
       </div>
 
-      {awaitingResponseData ? (
+      {streamError && !responseDataFailed && (
+        <DataUnavailable
+          variant="inline"
+          className="mb-3"
+          title="Some responses couldn't be loaded."
+          description="Counts below may be incomplete."
+          onRetry={onRetry}
+        />
+      )}
+
+      {responseDataFailed ? (
+        <Card>
+          <CardContent className="px-4 sm:px-6">
+            <DataUnavailable
+              title="Couldn't load responses."
+              description="The response data for these prompts didn't load. Retry to fetch it again."
+              onRetry={onRetry}
+            />
+          </CardContent>
+        </Card>
+      ) : awaitingResponseData ? (
         <Card>
           <CardContent className="px-4 sm:px-6">
             <div className="space-y-3 py-4" aria-busy="true">

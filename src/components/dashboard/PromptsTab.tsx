@@ -20,6 +20,9 @@ interface PromptsTabProps {
   // True while the raw response stream is still arriving (loads AFTER first
   // paint) — forwarded to PromptTable so it skeletons instead of "No prompts".
   responsesLoading?: boolean;
+  // Reliability-audit stream failure state + targeted retry (see PromptTable).
+  streamError?: boolean;
+  onRetry?: () => void;
   selectedJobFunction?: string;
   onJobFunctionChange?: (value: string) => void;
 }
@@ -35,6 +38,8 @@ export const PromptsTab = memo(({
   fetchResponseTexts,
   scopeCompanyIds,
   responsesLoading = false,
+  streamError = false,
+  onRetry,
   selectedJobFunction = 'all',
   onJobFunctionChange,
 }: PromptsTabProps) => {
@@ -95,6 +100,8 @@ export const PromptsTab = memo(({
         prompts={filteredPromptsData}
         onPromptClick={handlePromptClick}
         responsesLoading={responsesLoading}
+        streamError={streamError}
+        onRetry={onRetry}
       />
 
       {/* Response Details Modal */}

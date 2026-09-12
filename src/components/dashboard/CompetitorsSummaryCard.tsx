@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { DataUnavailable } from './DataUnavailable';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, TrendingDown, ExternalLink } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,10 @@ interface CompetitorsSummaryCardProps {
   // True while any interactive cube is still on its first fetch — the empty
   // state must wait for the cubes, not just the stream.
   cubesLoading?: boolean;
+  // The response-stream walk failed with nothing cached and no cube is
+  // available: show an error + Retry, never "No competitor mentions found yet".
+  streamError?: boolean;
+  onRetry?: () => void;
   // Phase-3 cubes. Rows arrive already location-filtered; this card pools
   // them by quarter + job function (+ prompt_type 'competitive'). BOTH cubes
   // must be present to switch: a cube numerator (each response counted once)
@@ -47,6 +52,8 @@ export const CompetitorsSummaryCard = ({
   previousPeriodResponses = [],
   responsesLoading = false,
   cubesLoading = false,
+  streamError = false,
+  onRetry,
   competitorStatsRows,
   cubePromptTypeRows,
   cubeQuarterKey = null,
@@ -338,7 +345,9 @@ export const CompetitorsSummaryCard = ({
           <CardTitle className="text-[15px] font-semibold text-[#13274F]">Competitors</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-2.5">
-          {responsesLoading || cubesLoading ? (
+          {streamError && !competitorPools ? (
+            <DataUnavailable title="Couldn't load competitors." onRetry={onRetry} />
+          ) : responsesLoading || cubesLoading ? (
             <div className="space-y-3 py-2" aria-busy="true">
               {[1, 2, 3, 4, 5].map(i => (
                 <div key={i} className="flex items-center justify-between py-1">

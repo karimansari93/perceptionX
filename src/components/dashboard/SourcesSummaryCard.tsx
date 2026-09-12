@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { DataUnavailable } from './DataUnavailable';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CitationCount } from "@/types/dashboard";
 import { FileText, ExternalLink, TrendingUp, TrendingDown } from 'lucide-react';
@@ -34,6 +35,10 @@ interface SourcesSummaryCardProps {
   // behind location rollups on a switch), so the empty state must wait for
   // both.
   cubesLoading?: boolean;
+  // The response-stream walk failed with nothing cached and no cube is
+  // available: show an error + Retry, never "No sources found yet".
+  streamError?: boolean;
+  onRetry?: () => void;
   // Phase-3 domain cube. Rows arrive already location-filtered; this card
   // pools them by quarter + job function. undefined = scope not backfilled
   // yet → every aggregation below falls back to the raw-row scan.
@@ -56,6 +61,8 @@ export const SourcesSummaryCard = ({
   previousPeriodResponses = [],
   responsesLoading = false,
   cubesLoading = false,
+  streamError = false,
+  onRetry,
   domainStatsRows,
   cubeScopeRows,
   cubeQuarterKey = null,
@@ -345,7 +352,9 @@ export const SourcesSummaryCard = ({
           <CardTitle className="text-[15px] font-semibold text-[#13274F]">Sources</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-2.5">
-          {(responsesLoading || cubesLoading) && !domainPool ? (
+          {streamError && !domainPool ? (
+            <DataUnavailable title="Couldn't load sources." onRetry={onRetry} />
+          ) : (responsesLoading || cubesLoading) && !domainPool ? (
             <div className="space-y-3 py-2" aria-busy="true">
               {[1, 2, 3, 4, 5].map(i => (
                 <div key={i} className="flex items-center justify-between py-1">
