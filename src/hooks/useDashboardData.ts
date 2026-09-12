@@ -44,6 +44,7 @@ import { LEGACY_ATTRIBUTE_MAP } from "@/config/attributes";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
 import { defaultLocationFromUser, focusAppliesToCompany } from "@/hooks/useProfileSetup";
 import { setObservabilityContext } from "@/lib/observability";
+import { dashboardRetryDelay } from "@/lib/queryClient";
 import { sentimentRatioV2, EXCLUDED_AI_MODELS_FILTER } from "@/lib/sentimentV2";
 
 // Pure aggregation of `company_*_by_location_mv` rows into the same shape the
@@ -406,6 +407,18 @@ export const useDashboardData = () => {
   const FRESH_MS = 5 * 60 * 1000; // parity with the old per-company cache TTL
   const KEEP_MS = 45 * 60 * 1000;
 
+  // COLD-LOAD SHAPE (reliability audit P0-2): a cold load used to open six
+  // composite RPCs plus the first response pages within the same second —
+  // ten statements from one tab against a 60-connection instance already
+  // running background refreshes, which is what pushed calls over the 8 s
+  // statement timeout. Families now fire in waves:
+  //   1. prompts + rollups (+ the location rollups, defined further down)
+  //   2. scope stats + the domain/competitor cubes, once the rollups settle
+  //   3. the response stream, once the stats have settled (two pages at a time)
+  // Warm starts are unaffected: persisted families are "settled" on first
+  // render, so the stream starts immediately as before. A single retry
+  // rounds no longer re-enter the timeout window: dashboardRetryDelay
+  // spaces attempts 3–4.5 s apart, then 6–7.5 s.
   const promptsQuery = useQuery({
     queryKey: dashboardKeys.prompts(scopeKey),
     queryFn: ({ signal }) => fetchScopePrompts(scopeCompanyIds, signal),
@@ -413,6 +426,8 @@ export const useDashboardData = () => {
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,
+    retry: 2,
+    retryDelay: dashboardRetryDelay,
   });
   const rollupsQuery = useQuery({
     queryKey: dashboardKeys.rollups(scopeKey),
@@ -421,34 +436,44 @@ export const useDashboardData = () => {
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,
+    retry: 2,
+    retryDelay: dashboardRetryDelay,
   });
-  // Phase-3 scope-stats cube (~4 KB/company). Fetched alongside the rollups;
-  // consumers switch from raw-row memos to this cube one at a time (each flip
-  // verified old-vs-new), so it rides inert until then.
+  // "Settled" = answered (data, possibly cached) or failed for good. Wave 2
+  // and 3 gates must release on failure too, or a rollups error would hold
+  // the stream and the cubes forever.
+  const rollupsSettled = rollupsQuery.data !== undefined || rollupsQuery.isError;
+  // Phase-3 scope-stats cube (~4 KB/company). Wave 2: fetched once the
+  // rollups settle; consumers switch from raw-row memos to this cube one at
+  // a time (each flip verified old-vs-new), so it rides inert until then.
   const scopeStatsQuery = useQuery({
     queryKey: dashboardKeys.scopeStats(scopeKey),
     queryFn: ({ signal }) => fetchScopeStats(scopeCompanyIds, signal),
-    enabled: scopeReady,
+    enabled: scopeReady && rollupsSettled,
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,
+    retry: 2,
+    retryDelay: dashboardRetryDelay,
   });
   const scopeStats: ScopeStats | undefined = scopeStatsQuery.data;
+  const statsSettled = scopeStatsQuery.data !== undefined || scopeStatsQuery.isError;
   // Response stream, two stages: the newest page of every profile commits
   // eagerly (tables hydrate fast), then the full keyset walk replaces it.
-  // Prompts gate the stream so the critical path gets bandwidth first.
+  // Wave 3: prompts, rollups and stats gate the stream so the critical path
+  // gets the database first.
   const firstPagesQuery = useQuery({
     queryKey: dashboardKeys.responsesFirst(scopeKey),
     queryFn: ({ signal }) => fetchResponsesFirstPages(scopeCompanyIds, signal),
-    enabled: scopeReady && promptsQuery.data !== undefined,
+    enabled: scopeReady && promptsQuery.data !== undefined && rollupsSettled && statsSettled,
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,
-    // Each page already retries 3 attempts internally (with shrunken retry
-    // pages); the default query-level retry (3) on top of that multiplied a
-    // failing wide-scope walk into dozens of extra 8-second statement-timeout
-    // requests against an already saturated database.
+    // Each page already retries once internally (with a shrunken retry
+    // page); a query-level retry re-runs the whole multi-page walk, so one
+    // is the most the database should be asked to absorb.
     retry: 1,
+    retryDelay: dashboardRetryDelay,
   });
   const fullStreamQuery = useQuery({
     queryKey: dashboardKeys.responsesFull(scopeKey),
@@ -462,6 +487,7 @@ export const useDashboardData = () => {
     gcTime: KEEP_MS,
     refetchOnMount: true,
     retry: 1,
+    retryDelay: dashboardRetryDelay,
   });
   // ---- Values derived from the cached families. Same names and shapes the
   // rest of the hook (and its consumers) always used. ----
@@ -1656,6 +1682,8 @@ export const useDashboardData = () => {
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,
+    retry: 2,
+    retryDelay: dashboardRetryDelay,
   });
   // Location family failure (reliability audit P0-1). An errored query has
   // isPending === false and data === undefined, which downstream read as "no
@@ -1684,7 +1712,9 @@ export const useDashboardData = () => {
   const domainStatsQuery = useQuery({
     queryKey: dashboardKeys.domainStats(scopeKey, cubeLocationKey),
     queryFn: ({ signal }) => fetchDomainStats(cubeParams, signal),
-    enabled: scopeReady,
+    enabled: scopeReady && rollupsSettled, // wave 2 (see the cold-load shape note above)
+    retry: 2,
+    retryDelay: dashboardRetryDelay,
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,
@@ -1692,7 +1722,9 @@ export const useDashboardData = () => {
   const competitorStatsQuery = useQuery({
     queryKey: dashboardKeys.competitorStats(scopeKey, cubeLocationKey),
     queryFn: ({ signal }) => fetchCompetitorStats(cubeParams, signal),
-    enabled: scopeReady,
+    enabled: scopeReady && rollupsSettled, // wave 2 (see the cold-load shape note above)
+    retry: 2,
+    retryDelay: dashboardRetryDelay,
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
     refetchOnMount: true,

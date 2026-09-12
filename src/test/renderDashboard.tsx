@@ -32,11 +32,16 @@ export const seedSession = () => {
   localStorage.setItem(F.STORAGE_KEY, JSON.stringify(F.session));
 };
 
-export interface RenderOptions { route?: '/dashboard' | '/monitor' }
+export interface RenderOptions {
+  route?: '/dashboard' | '/monitor';
+  // Rendered inside the providers (next to the routes) — for tests that need
+  // to drive a context action such as sign-out.
+  probe?: ReactNode;
+}
 
 // The provider tree the real app wraps the dashboard in (src/App.tsx), minus
 // the IndexedDB persister (cold path) and analytics.
-export const renderDashboard = ({ route = '/dashboard' }: RenderOptions = {}) => {
+export const renderDashboard = ({ route = '/dashboard', probe = null }: RenderOptions = {}) => {
   const queryClient = makeQueryClient();
   const tree: ReactNode = (
     <QueryClientProvider client={queryClient}>
@@ -44,6 +49,7 @@ export const renderDashboard = ({ route = '/dashboard' }: RenderOptions = {}) =>
         <MemoryRouter initialEntries={[route]}>
           <AuthProvider>
             <CompanyProvider>
+              {probe}
               <Routes>
                 <Route path="/auth" element={<AuthStub />} />
                 <Route path="/dashboard" element={

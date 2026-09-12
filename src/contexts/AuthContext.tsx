@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { User, Session } from '@supabase/supabase-js';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { setObservabilityUser } from '@/lib/observability';
+import { clearDashboardCaches } from '@/lib/queryClient';
 
 interface AuthContextType {
   user: User | null;
@@ -25,6 +27,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     // Set up auth state listener
@@ -71,7 +74,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Clear local state even if signOut fails
     setSession(null);
     setUser(null);
-  }, []);
+    // Nothing of this account may survive on the device: cached dashboard
+    // families and the persisted IndexedDB snapshot go with the session.
+    await clearDashboardCaches(queryClient);
+  }, [queryClient]);
 
   const clearSession = useCallback(() => {
     setSession(null);

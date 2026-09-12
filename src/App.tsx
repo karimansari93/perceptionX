@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { createQueryClient } from "@/lib/queryClient";
+import { createQueryClient, DASHBOARD_CACHE_KEY } from "@/lib/queryClient";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
 import { get as idbGet, set as idbSet, del as idbDel } from "idb-keyval";
@@ -69,7 +69,7 @@ const queryClient = createQueryClient();
 // pass localStorage's ~5 MB quota, and a failed setItem silently strands a
 // stale partial snapshot.
 const cachePersister = createAsyncStoragePersister({
-  key: 'px-dashboard-cache-v1',
+  key: DASHBOARD_CACHE_KEY,
   storage: {
     getItem: (k: string) => idbGet(k).then(v => (v == null ? null : (v as string))),
     setItem: (k: string, v: string) => idbSet(k, v),

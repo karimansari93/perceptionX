@@ -253,10 +253,14 @@ const fetchResponsePage = async (
     p_before_id: cursor?.id ?? null,
     p_limit: limit,
   }, signal);
+  // Two attempts per page (the query layer adds one more round): a failed
+  // full page is retried once, shrunken, after a 3–4.5 s jittered backoff.
+  // Three attempts here × the query-level retry meant up to six 8-second
+  // statements per page against a database that was already cancelling
+  // them (reliability audit P1-2).
   const plan = [
     { backoff: 0, limit: PAGE_SIZE },
-    { backoff: 2500, limit: RETRY_PAGE_SIZE },
-    { backoff: 6000, limit: RETRY_PAGE_SIZE },
+    { backoff: 3000, limit: RETRY_PAGE_SIZE },
   ];
   for (let i = 0; ; i += 1) {
     try {
@@ -264,7 +268,7 @@ const fetchResponsePage = async (
       return { rows, limit: plan[i].limit };
     } catch (err) {
       if (signal?.aborted || i + 1 >= plan.length) throw err;
-      await new Promise(r => setTimeout(r, plan[i + 1].backoff + Math.random() * 1000));
+      await new Promise(r => setTimeout(r, plan[i + 1].backoff + Math.random() * 1500));
       if (signal?.aborted) throw err;
     }
   }
@@ -293,10 +297,11 @@ export interface FirstPages extends ResponseStream {
 
 // Newest page of every scope profile, in parallel. Small enough to commit
 // eagerly so tables hydrate while the rest of the stream arrives. Concurrency
-// 4: an 18-wide burst of cold-cache pages tipped Postgres into transient
-// 500s under contention (observed on the Ford scope).
+// 2 (was 4): the stream now starts only after the headline families have
+// settled, and two pages at a time keeps a cold load at three or four
+// statements in flight instead of ten (reliability audit P0-2).
 export const fetchResponsesFirstPages = async (scopeIds: string[], signal?: AbortSignal): Promise<FirstPages> => {
-  const pages = await boundedMap(scopeIds, 4, id => fetchResponsePage(id, null, signal));
+  const pages = await boundedMap(scopeIds, 2, id => fetchResponsePage(id, null, signal));
   const cursorByCompany: FirstPages['cursorByCompany'] = {};
   let complete = true;
   pages.forEach(({ rows, limit }, i) => {

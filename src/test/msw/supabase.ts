@@ -17,9 +17,21 @@ export interface BackendOptions {
   faults?: Record<string, FaultFn>;
   // Override the payload of a successful RPC.
   rpc?: Record<string, (body: any) => unknown>;
+  // Simulated server time per RPC call (ms) — lets tests observe ordering
+  // and concurrency of the cold-load burst. Per-RPC overrides win.
+  rpcDelayMs?: number;
+  rpcDelayByFn?: Record<string, number>;
 }
 
-export interface CallRecord { method: string; path: string; status: number }
+export interface CallRecord {
+  method: string;
+  path: string;
+  status: number;
+  startedAt: number;
+  completedAt: number;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 // In-memory Supabase for the dashboard: PostgREST tables + RPCs + GoTrue.
 // Every request is logged and RPC attempts are counted per function.
@@ -28,10 +40,18 @@ export class MockBackend {
   counters: Record<string, number> = {};
   faults: Record<string, FaultFn>;
   rpcOverrides: Record<string, (body: any) => unknown>;
+  // RPC statements in flight right now / the highest that ever was — the
+  // "burst" the audit identified is this number.
+  inFlight = 0;
+  maxInFlight = 0;
+  private rpcDelayMs: number;
+  private rpcDelayByFn: Record<string, number>;
 
   constructor(opts: BackendOptions = {}) {
     this.faults = { ...(opts.faults ?? {}) };
     this.rpcOverrides = { ...(opts.rpc ?? {}) };
+    this.rpcDelayMs = opts.rpcDelayMs ?? 0;
+    this.rpcDelayByFn = { ...(opts.rpcDelayByFn ?? {}) };
   }
 
   setFault(fn: string, fault: FaultFn | null) {
@@ -70,7 +90,8 @@ export class MockBackend {
 
   handlers(): HttpHandler[] {
     const log = (method: string, path: string, status: number) => {
-      this.calls.push({ method, path, status });
+      const now = Date.now();
+      this.calls.push({ method, path, status, startedAt: now, completedAt: now });
     };
     return [
       // ---- GoTrue ----
@@ -95,15 +116,27 @@ export class MockBackend {
         const fn = String(params.fn);
         const path = `/rest/v1/rpc/${fn}`;
         this.counters[fn] = (this.counters[fn] ?? 0) + 1;
-        const fault = this.faults[fn];
-        if (fault && fault(this.counters[fn])) {
-          log('POST', path, 500);
-          return HttpResponse.json(TIMEOUT_57014, { status: 500 });
+        const attempt = this.counters[fn];
+        const rec: CallRecord = { method: 'POST', path, status: 0, startedAt: Date.now(), completedAt: 0 };
+        this.calls.push(rec);
+        this.inFlight += 1;
+        this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+        try {
+          const delay = this.rpcDelayByFn[fn] ?? this.rpcDelayMs;
+          if (delay > 0) await sleep(delay);
+          const fault = this.faults[fn];
+          if (fault && fault(attempt)) {
+            rec.status = 500;
+            return HttpResponse.json(TIMEOUT_57014, { status: 500 });
+          }
+          let body: any = null;
+          try { body = await request.json(); } catch { /* no body */ }
+          rec.status = 200;
+          return HttpResponse.json(this.rpcImpl(fn, body));
+        } finally {
+          this.inFlight -= 1;
+          rec.completedAt = Date.now();
         }
-        let body: any = null;
-        try { body = await request.json(); } catch { /* no body */ }
-        log('POST', path, 200);
-        return HttpResponse.json(this.rpcImpl(fn, body));
       }),
       // ---- PostgREST tables ----
       http.all(`${SUPABASE_URL}/rest/v1/:table`, ({ params, request }) => {
