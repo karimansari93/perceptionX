@@ -738,6 +738,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 cubeMonthFloor={cubeMonthFloor}
                 cubeScopeRows={cubeScopeRows}
                 cubePromptTypeRows={cubePromptTypeRows}
+                currentCompanyId={currentCompany?.id}
+                recencyData={recencyData}
+                recencyDataLoading={recencyDataLoading}
                 themesStatus={themesStatus}
                 streamError={streamError}
                 onRetry={retryFailedQueries}

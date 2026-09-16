@@ -234,6 +234,34 @@ export const normalizeAttributeId = (id: string | null | undefined): string | nu
   return null;
 };
 
+// Legacy v1 display names still stored on older prompts' prompt_theme, keyed
+// to the v1 id they meant (normalizeAttributeId then folds that into v2).
+const LEGACY_THEME_NAME_IDS: Record<string, string> = {
+  'mission & purpose': 'mission-purpose',
+  'rewards & recognition': 'rewards-recognition',
+  'social impact': 'social-impact',
+  'security & perks': 'security-perks',
+  'application process': 'application-process',
+  'candidate communication': 'candidate-communication',
+  'overall candidate experience': 'overall-candidate-experience',
+  'work-life balance': 'wellbeing-balance',
+  'career growth': 'career-opportunities',
+  'culture & values': 'company-culture',
+};
+
+/**
+ * Resolve an attribute DISPLAY name (what prompts store as prompt_theme) to
+ * its live v2 id: v2 names directly, legacy v1 names via their successor.
+ * null for unknown names.
+ */
+export const getAttributeIdByName = (name: string | null | undefined): string | null => {
+  const key = (name || '').trim().toLowerCase();
+  if (!key) return null;
+  const v2 = ATTRIBUTES.find(attr => attr.name.toLowerCase() === key);
+  if (v2) return v2.id;
+  return normalizeAttributeId(LEGACY_THEME_NAME_IDS[key]);
+};
+
 export const getAllAttributes = (): Attribute[] => {
   return ATTRIBUTES;
 };
