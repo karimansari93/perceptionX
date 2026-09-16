@@ -205,7 +205,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
                         isActive={activeSection === item.section}
                         onClick={() => handleSectionClick(item)}
                         aria-disabled={item.comingSoon || undefined}
-                        className={`w-full justify-start relative ${item.comingSoon ? "cursor-not-allowed opacity-60 hover:bg-transparent" : ""}`}
+                        className={`w-full justify-start relative [@media(max-height:740px)]:py-1.5 ${item.comingSoon ? "cursor-not-allowed opacity-60 hover:bg-transparent" : ""}`}
                       >
                         <item.icon className="h-4 w-4" />
                         <span className="text-sm">{item.title}</span>
@@ -220,15 +220,15 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
             </SidebarGroup>
           ))}
         </SidebarContent>
-        <SidebarFooter className="p-4 pt-2 flex flex-col gap-2">
+        <SidebarFooter className="p-4 pt-2 flex flex-col gap-2 [@media(max-height:740px)]:gap-1.5 [@media(max-height:740px)]:pb-3">
           {ASK_AI_ENABLED && (
             <button
               type="button"
               onClick={() => setWhatsNew({ open: true, step: 'form' })}
-              className="w-full rounded-xl border border-[#DB5E89]/[0.32] bg-gradient-to-br from-[#DB5E89]/[0.12] via-white via-[62%] to-[#0DBCBA]/[0.07] p-3 text-left transition-colors hover:border-[#DB5E89] flex items-center gap-3 [@media(max-height:660px)]:hidden"
+              className="w-full rounded-xl border border-[#DB5E89]/[0.32] bg-gradient-to-br from-[#DB5E89]/[0.12] via-white via-[62%] to-[#0DBCBA]/[0.07] p-3 text-left transition-colors hover:border-[#DB5E89] flex items-center gap-3 [@media(max-height:740px)]:p-2 [@media(max-height:660px)]:hidden"
             >
-              <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-[#13274F]/10 bg-white text-[#DB5E89]">
-                <Plug className="h-[18px] w-[18px]" />
+              <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-[#13274F]/10 bg-white text-[#DB5E89] [@media(max-height:740px)]:h-7 [@media(max-height:740px)]:w-7">
+                <Plug className="h-[18px] w-[18px] [@media(max-height:740px)]:h-4 [@media(max-height:740px)]:w-4" />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block whitespace-nowrap text-[13px] font-semibold leading-[1.2] text-[#13274F]">Set up AI integrations</span>
@@ -239,10 +239,10 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
           <button
             type="button"
             onClick={startWalkthrough}
-            className="[@media(max-height:740px)]:hidden group w-full text-left rounded-xl border border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/10 via-white to-[#13274F]/5 hover:from-[#0DBCBA]/15 hover:to-[#13274F]/10 hover:border-[#0DBCBA]/60 hover:shadow-md transition-all p-3 flex items-center gap-3"
+            className="group w-full text-left rounded-xl border border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/10 via-white to-[#13274F]/5 hover:from-[#0DBCBA]/15 hover:to-[#13274F]/10 hover:border-[#0DBCBA]/60 hover:shadow-md transition-all p-3 flex items-center gap-3 [@media(max-height:740px)]:p-2"
           >
-            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[#0DBCBA] text-white shadow-sm group-hover:scale-105 transition-transform">
-              <Compass className="h-5 w-5" />
+            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[#0DBCBA] text-white shadow-sm group-hover:scale-105 transition-transform [@media(max-height:740px)]:h-7 [@media(max-height:740px)]:w-7">
+              <Compass className="h-5 w-5 [@media(max-height:740px)]:h-4 [@media(max-height:740px)]:w-4" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-[#13274F] leading-tight">
@@ -257,10 +257,10 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
             <button
               type="button"
               onClick={() => setInviteModalOpen(true)}
-              className="[@media(max-height:740px)]:hidden group w-full text-left rounded-xl border border-pink/30 bg-gradient-to-br from-pink/10 via-white to-[#13274F]/5 hover:from-pink/15 hover:to-[#13274F]/10 hover:border-pink/60 hover:shadow-md transition-all p-3 flex items-center gap-3"
+              className="group w-full text-left rounded-xl border border-pink/30 bg-gradient-to-br from-pink/10 via-white to-[#13274F]/5 hover:from-pink/15 hover:to-[#13274F]/10 hover:border-pink/60 hover:shadow-md transition-all p-3 flex items-center gap-3 [@media(max-height:740px)]:p-2"
             >
-              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-pink text-white shadow-sm group-hover:scale-105 transition-transform">
-                <UserPlus className="h-5 w-5" />
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-pink text-white shadow-sm group-hover:scale-105 transition-transform [@media(max-height:740px)]:h-7 [@media(max-height:740px)]:w-7">
+                <UserPlus className="h-5 w-5 [@media(max-height:740px)]:h-4 [@media(max-height:740px)]:w-4" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-[#13274F] leading-tight">
