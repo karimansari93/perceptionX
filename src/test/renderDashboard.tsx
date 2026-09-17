@@ -33,7 +33,7 @@ export const seedSession = (session: object = F.session) => {
 };
 
 export interface RenderOptions {
-  route?: '/dashboard' | '/monitor';
+  route?: '/dashboard' | '/monitor' | '/dashboard/career-site';
   // Rendered inside the providers (next to the routes) — for tests that need
   // to drive a context action such as sign-out.
   probe?: ReactNode;
@@ -56,6 +56,13 @@ export const renderDashboard = ({ route = '/dashboard', probe = null }: RenderOp
                   <ProtectedRoute>
                     <SidebarProvider>
                       <Dashboard defaultGroup="dashboard" defaultSection="overview" />
+                    </SidebarProvider>
+                  </ProtectedRoute>
+                } />
+                <Route path="/dashboard/career-site" element={
+                  <ProtectedRoute>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="dashboard" defaultSection="careerSite" />
                     </SidebarProvider>
                   </ProtectedRoute>
                 } />
