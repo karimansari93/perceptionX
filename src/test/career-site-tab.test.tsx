@@ -60,44 +60,29 @@ const mount = (rpc: Record<string, () => unknown>) => {
 };
 
 describe('Career Site tab', () => {
-  it('names the detected career-site property', async () => {
+  // The populated assertions share one mount. Each render here is a full
+  // dashboard boot (auth, company, cube waves), so splitting them across a
+  // test apiece added enough parallel load to starve the slower suites.
+  it('reports the property, topic ownership and the actions derived from it', async () => {
     mount({
       get_career_site_overview: () => overview,
       get_career_site_gaps: () => gaps,
     });
-    expect(await screen.findByText('pepsicojobs.com', {}, { timeout: 30_000 })).toBeTruthy();
-  });
 
-  it('shows topic ownership as career site vs third party, not as sentiment', async () => {
-    mount({
-      get_career_site_overview: () => overview,
-      get_career_site_gaps: () => gaps,
-    });
-    await screen.findByText('pepsicojobs.com', {}, { timeout: 30_000 });
+    expect(await screen.findByText('pepsicojobs.com', {}, { timeout: 30_000 })).toBeTruthy();
+
+    // Ownership is reported as career site vs third party, never as sentiment.
     // compensation: 24/95 owned = 25%, 64/95 benchmark = 67%.
     await waitFor(() => expect(screen.getByText('25% vs 67%')).toBeTruthy());
     // application-process runs the other way: 39/56 = 70% vs 31/56 = 55%.
     expect(screen.getByText('70% vs 55%')).toBeTruthy();
-  });
 
-  it('raises a critical action on the topic third parties own', async () => {
-    mount({
-      get_career_site_overview: () => overview,
-      get_career_site_gaps: () => gaps,
-    });
-    await waitFor(
-      () => expect(screen.getByText(/Third parties own the answer on compensation/i)).toBeTruthy(),
-      { timeout: 30_000 },
-    );
+    // The topic third parties own becomes a critical action.
+    expect(screen.getByText(/Third parties own the answer on compensation/i)).toBeTruthy();
     expect(screen.getByText(/Losing the answer/i)).toBeTruthy();
-  });
 
-  it('separates job postings from durable content pages', async () => {
-    mount({
-      get_career_site_overview: () => overview,
-      get_career_site_gaps: () => gaps,
-    });
-    await waitFor(() => expect(screen.getByText(/Content pages \(1\)/)).toBeTruthy(), { timeout: 30_000 });
+    // Expiring job requisitions are kept out of the content-page inventory.
+    expect(screen.getByText(/Content pages \(1\)/)).toBeTruthy();
     expect(screen.getByText(/Job postings \(1\)/)).toBeTruthy();
   });
 
