@@ -586,10 +586,6 @@ GRANT EXECUTE ON FUNCTION public.get_career_site_gaps(uuid[], text[], uuid[], te
 REVOKE ALL ON FUNCTION public.get_career_site_passages(uuid[], text, date[], int) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_career_site_passages(uuid[], text, date[], int) TO authenticated, service_role;
 
--- Backfill through the throttled dirty queue rather than inline.
-INSERT INTO public.company_metrics_dirty (company_id)
-SELECT id FROM public.companies
-ON CONFLICT (company_id) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- 8. Page captures — what the preview pane renders
@@ -635,3 +631,6 @@ CREATE POLICY "Org members can read their captures"
   USING (company_id = ANY (public.accessible_company_ids(ARRAY[company_id])));
 
 -- Writes are service-role only: the capture edge function owns this table.
+
+-- Backfill via the throttled dirty queue, as the other cube migrations do.
+SELECT public.queue_all_companies_metrics_dirty();

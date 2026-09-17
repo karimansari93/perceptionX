@@ -28,12 +28,16 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 
-const FIRECRAWL_ENDPOINT = "https://api.firecrawl.dev/v1/scrape";
+const FIRECRAWL_ENDPOINT = "https://api.firecrawl.dev/v2/scrape";
 const CAPTURE_TIMEOUT_MS = 60_000;
 // A capture is a page snapshot, not a live view; re-fetching on every tab
 // visit would burn Firecrawl credits for markup that changes monthly at most.
 const CAPTURE_TTL_HOURS = 24 * 7;
 const MAX_HTML_BYTES = 4_000_000;
+// Matches CAPTURE_WIDTH in CareerSitePreview.tsx: the capture is measured and
+// scaled to fit at this width, so capturing at another one would place the
+// highlights against a layout the client never renders.
+const CAPTURE_VIEWPORT = { width: 1280, height: 720 };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -173,7 +177,12 @@ serve(async (req) => {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${firecrawlKey}` },
         body: JSON.stringify({
           url,
-          formats: ["rawHtml", "screenshot@fullPage"],
+          // v2 takes formats as objects; the v1 "screenshot@fullPage" string
+          // form is silently not a v2 format.
+          formats: [
+            { type: "rawHtml" },
+            { type: "screenshot", fullPage: true, viewport: CAPTURE_VIEWPORT },
+          ],
           onlyMainContent: false,
           waitFor: 3000,
           timeout: CAPTURE_TIMEOUT_MS - 5000,
