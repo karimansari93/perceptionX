@@ -1,3 +1,17 @@
+# app.perceptionx.ai is the logged-in dashboard. Nothing here is meant to be in
+# a search index — but crawling is allowed on purpose, because the thing that
+# keeps it out of the index is the `noindex` in index.html's <head>, and a
+# crawler that is blocked here can never read it. A Disallowed URL can still be
+# indexed from an external link, and then there is no way to remove it.
+#
+# So: allow everything, and let the meta tag do the work. If a route is ever
+# made genuinely public, it needs server-rendered HTML with its own
+# `index, follow` (see META_VARIANTS in vite.config.ts) — not a rule here.
+#
+# The link-preview crawlers are named explicitly for the same reason: they
+# respect Disallow and would otherwise render nothing at all for an /activate
+# or /onboarding unfurl.
+
 User-agent: Googlebot
 Allow: /
 
@@ -12,13 +26,3 @@ Allow: /
 
 User-agent: *
 Allow: /
-
-# Block access to authenticated pages
-Disallow: /dashboard
-Disallow: /monitor
-Disallow: /analyze
-Disallow: /usage
-Disallow: /account
-Disallow: /auth/callback
-
-Sitemap: https://app.perceptionx.ai/sitemap.xml
