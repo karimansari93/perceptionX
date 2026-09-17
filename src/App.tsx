@@ -257,6 +257,12 @@ const App = () => (
                       <Dashboard defaultGroup="dashboard" defaultSection="sources" />
                     </SidebarProvider>                </ProtectedRoute>
               } />
+              <Route path="/dashboard/career-site" element={
+                <ProtectedRoute>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="dashboard" defaultSection="careerSite" />
+                    </SidebarProvider>                </ProtectedRoute>
+              } />
               <Route path="/dashboard/competitors" element={
                 <ProtectedRoute>
                     <SidebarProvider>

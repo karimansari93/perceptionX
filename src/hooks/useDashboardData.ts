@@ -3245,5 +3245,10 @@ export const useDashboardData = () => {
     hydration, // per-family first-load progress for the branded loading screen
     prefetchLocationRollups, // intent prefetch for the location dropdown
     prefetchCompanyRollups, // intent prefetch for the company switcher
+    // Career Site tab reads the same cubes through its own hook, so it needs
+    // the resolved cube scope/location params rather than rebuilding them.
+    cubeParams,
+    cubeLocationKey,
+    scopeKey,
   };
 };
