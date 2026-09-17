@@ -16,22 +16,30 @@
     <meta name="author" content="PerceptionX" />
     <meta name="keywords" content="employer brand ai, sentiment analysis, AI insights, brand monitoring, reputation management, talent acquisition, employer branding" />
     <!--
-      app.perceptionx.ai is the logged-in dashboard: every route is behind
-      sign-in or a link token, and every one of them is served this same shell.
-      Indexing it advertises the whole domain under one title and description
-      for pages a crawler can never see the contents of, so the default is
-      noindex. `follow` stays so outbound links are still crawled, and
-      robots.txt deliberately allows crawling — a Disallow would stop Googlebot
-      reading this tag, which is what actually removes an already-indexed URL.
+      This is the DEFAULT shell, served to every route that doesn't have a rule
+      of its own — all of which are behind sign-in or a link token. Indexing
+      them advertises the whole domain under one title and description for
+      pages a crawler can never see the contents of, so the default is noindex.
+      `follow` stays so outbound links are still crawled, and robots.txt
+      deliberately allows crawling: a Disallow would stop Googlebot reading
+      this tag, which is what actually removes an already-indexed URL.
 
-      A route that is genuinely public needs server-rendered HTML with its own
-      title, description, canonical and an explicit `index, follow` that
-      overrides this (see META_VARIANTS in vite.config.ts for the mechanism).
-      A robots tag injected client-side after load is not reliable.
+      Exactly one page opts out: the site root, the public sign-in / create-
+      account page, which Netlify serves from home.html — built from this file
+      with `index, follow` (see META_VARIANTS in vite.config.ts, and the forced
+      rule at the top of public/_redirects). Noindex is the default rather than
+      the exception on purpose: a route that slips past a rule then fails
+      closed. Anything else made public needs its own pre-rendered variant —
+      a robots tag injected client-side after load is not reliable.
+
+      No canonical here, deliberately. This shell is served at /auth, /login
+      and every app route, so a canonical is either wrong for the URL being
+      served or — worse — points those noindex pages at the one page we want
+      indexed, and Google can carry the noindex across a canonical to its
+      target. home.html injects its own self-referential canonical instead.
     -->
     <meta name="robots" content="noindex, follow" />
     <meta name="googlebot" content="noindex, follow" />
-    <link rel="canonical" href="https://app.perceptionx.ai" />
 
     <!--
       Every tag below is an anchor as well as a default: the /onboarding and

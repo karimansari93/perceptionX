@@ -6,6 +6,17 @@
 # to pick up the fresh manifest.
 /assets/*  /assets/:splat  404
 
+# The site root is the only indexable URL on the domain: the public sign-in /
+# create-account page. index.html — the shell every other route falls through
+# to below — is `noindex`, so the root needs its own file to say otherwise.
+#
+# 200! and not 200: without the force, a rule is shadowed by a static file that
+# already exists at that path, and dist/index.html does exist at the root. The
+# bang is what makes this rule win. Same bundle either way, so a signed-in
+# visitor still lands on the dashboard exactly as before — only the meta
+# tags differ.
+/    /home.html   200!
+
 # Onboarding invites get onboarding.html — same app bundle, but with
 # project-setup meta tags so link previews don't show the sign-in copy even
 # when the crawler never executes JS. Generated at build time in vite.config.ts.

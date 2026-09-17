@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One URL, on purpose. The site root is the public sign-in / create-account
+  page and the only indexable page on app.perceptionx.ai; every other route is
+  behind sign-in or a link token and serves a `noindex` shell. Listing one of
+  those here would just report as "Submitted URL marked noindex" in Search
+  Console. If a route is ever made public, it needs a pre-rendered variant in
+  META_VARIANTS (vite.config.ts) before it belongs in this file.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://app.perceptionx.ai/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

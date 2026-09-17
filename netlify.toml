@@ -22,6 +22,15 @@
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
 
+# home.html is index.html with the public sign-in page's meta tags, served at
+# the site root (see public/_redirects). It references the same hashed chunks,
+# so it carries the same no-cache rule — a stale copy breaks chunk loading on
+# the one page every signed-out visitor lands on.
+[[headers]]
+  for = "/home.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
 # onboarding.html is index.html with onboarding meta tags (built in
 # vite.config.ts) — it references the same hashed chunks, so the same
 # no-cache rule applies.

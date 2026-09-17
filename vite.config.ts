@@ -20,11 +20,33 @@ interface MetaVariant {
   image?: string;
   imageAlt?: string;
   robots?: string;
-  /** Drop og:url and canonical, for a variant whose real URL is per-token. */
+  /**
+   * The variant's own public URL. Sets og:url and injects a self-referential
+   * canonical. Only meaningful for an indexable variant: index.html ships no
+   * canonical (see the comment there), so this is how the one page that IS
+   * indexed declares itself.
+   */
+  url?: string;
+  /** Drop og:url, for a variant whose real URL is per-token. */
   dropUrl?: boolean;
 }
 
 const META_VARIANTS: MetaVariant[] = [
+  {
+    // The one indexable page on the domain. Everything else is behind sign-in
+    // or a link token and inherits index.html's `noindex` — see public/_redirects,
+    // where the site root is forced to this file rather than to index.html.
+    //
+    // The direction matters: the default shell is the noindex one, so a route
+    // that slips past a rule fails closed (not indexed) rather than open. The
+    // cost of that choice is that this page needs its own rule to exist at all.
+    file: "home.html",
+    title: "PerceptionX — See How AI Describes Your Employer Brand",
+    description:
+      "Create a PerceptionX account to see how ChatGPT, Gemini, Claude and Perplexity answer the questions candidates ask about working at your company.",
+    robots: "index, follow",
+    url: "https://app.perceptionx.ai/",
+  },
   {
     file: "onboarding.html",
     title: "Project Setup — PerceptionX",
@@ -51,7 +73,8 @@ const META_VARIANTS: MetaVariant[] = [
     // is the sign-in route, and bounces anyone with a session to the dashboard
     // instead of to the link they were sent. Absent is correct: a client with
     // no og:url uses the URL it actually fetched. activate-meta.ts puts the
-    // real per-token URL back.
+    // real per-token URL back. (index.html ships no canonical any more, so the
+    // canonical half of this is a no-op kept as a guard.)
     dropUrl: true,
   },
 ];
@@ -76,6 +99,15 @@ function applyMeta(html: string, variant: MetaVariant): string {
   if (variant.robots) {
     out = set(out, /(<meta name="robots" content=")[^"]*(")/, variant.robots);
     out = set(out, /(<meta name="googlebot" content=")[^"]*(")/, variant.robots);
+  }
+  if (variant.url) {
+    out = set(out, /(<meta property="og:url" content=")[^"]*(")/, variant.url);
+    // Injected rather than rewritten: index.html deliberately carries no
+    // canonical, so there is no tag here to rewrite.
+    out = out.replace(
+      "</head>",
+      `  <link rel="canonical" href="${variant.url}" />\n  </head>`,
+    );
   }
   if (variant.dropUrl) {
     out = out.replace(/\s*<meta property="og:url" content="[^"]*" \/>/, "");
