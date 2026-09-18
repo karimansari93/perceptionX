@@ -55,6 +55,15 @@ const STEPS: WalkthroughStep[] = [
     route: '/dashboard',
   },
   {
+    target: '[data-tour="ask-ai"]',
+    title: 'Ask PerceptionX',
+    content:
+      'Ask a question in plain English, right from here. You get an answer built from your own dashboard data, with links to the pages the AI models are actually citing.',
+    placement: 'bottom',
+    disableBeacon: true,
+    route: '/dashboard',
+  },
+  {
     target: '[data-tour="score-row"]',
     title: 'Your EPS score',
     content:
@@ -137,6 +146,15 @@ const STEPS: WalkthroughStep[] = [
     placement: 'bottom',
     disableBeacon: true,
     disableScrolling: true,
+    route: '/dashboard/themes',
+  },
+  {
+    target: '[data-tour="themes-attributes-table"]',
+    title: 'Every attribute, side by side',
+    content:
+      'Sentiment, visibility, relevance and competitor gap for every attribute in one table, plus the sources behind each one. Search for an attribute, filter by group, category, source or model, and sort any column.',
+    placement: 'top',
+    disableBeacon: true,
     route: '/dashboard/themes',
   },
   {
