@@ -1301,7 +1301,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       {/* Attributes table — every attribute side by side on the metrics the
           matrix can't carry. Structure copies CompetitorsTab's "Card 3". */}
       {attributes.length > 0 && (
-        <Card className="shadow-sm border border-gray-200">
+        <Card className="shadow-sm border border-gray-200" data-tour="themes-attributes-table">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2 flex-wrap">
               <CardTitle className="text-base font-bold text-gray-800">Attributes</CardTitle>
