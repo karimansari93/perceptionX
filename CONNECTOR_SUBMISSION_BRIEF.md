@@ -5,7 +5,9 @@ Every value below is either taken from code in this repo or verified live agains
 server. Anything not in the code or docs is marked **MISSING** with what needs to be added or
 decided.
 
-Audited: 2026-09-21, branch `claude/charming-goldberg-mhkdd9`.
+Audited: 2026-09-21, branch `claude/charming-goldberg-mhkdd9`. Sections 5 and 6 also draw on
+read-only checks against the production database and on a live run of the connector, both dated
+2026-09-21 and noted where they apply.
 
 Primary sources:
 - `supabase/functions/mcp-server/` (index.ts, oauth.ts, http.ts): the server
@@ -212,18 +214,76 @@ Nothing in this codebase falls into a disqualifying category.
 | Tagline, max 55 chars | **MISSING** | Needs writing. The customer guide's sub-line, "Your employer brand data, in the chat window you already use", is 61 characters, so it is 6 over and needs a trim |
 | Description, max 2,000 chars | **MISSING** | Needs writing. Raw material exists in `docs/connect-your-ai-assistant.md` ("What you get", the example questions) and in the `PX_INTRO` constant in `instructions.ts`. Remember the house rules: percentages only, no raw counts, no competitor or prior-index names, no em dashes, and Andy signs off anything with a number |
 | 1 to 5 category tags | **MISSING** | Nothing in the repo maps to Anthropic's tag list. This is a decision for you. Read the directory's current tag options at submission time and pick from them rather than inventing labels; on function this connector is analytics and business intelligence, with an HR or recruiting angle |
-| Public documentation URL | **MISSING** | The content is written and good (`docs/connect-your-ai-assistant.md`, a full setup guide with ChatGPT and Claude walkthroughs, question tips and troubleshooting), but it is an unpublished markdown file in the repo. It needs to go live at a public HTTPS URL, for example a help article on the marketing site. No published connector documentation URL exists today |
-| Privacy policy URL | **EXISTS** | `https://www.perceptionx.ai/privacy`. Verified live today, returns `200` over HTTPS. The app links `https://perceptionx.ai/privacy`, which redirects to the `www` host (`src/pages/Auth.tsx:469`, `src/pages/Welcome.tsx:405`, `src/pages/ResetPassword.tsx:154`). Submit the `www` URL, and check the policy actually covers the connector's data flow, because I audited only that the page resolves, not its wording |
+| **Documentation** (required field) | **MISSING** | The content is written and good (`docs/connect-your-ai-assistant.md`, a full setup guide with ChatGPT and Claude walkthroughs, question tips and troubleshooting), but it is an unpublished markdown file in the repo. It needs to go live at a public HTTPS URL, for example a help article on the marketing site. No published connector documentation URL exists today. Note the portal's hint on this field: IT admins read this page when deciding whether to approve the connector, so it should state the read-only scope, the per-organization allowlist and how to disconnect. The existing draft already covers all three |
+| **Enterprise managed auth documentation** (optional field) | **MISSING, and optional** | Nothing in the repo documents an admin setup flow, so leave this blank on the first submission. If you want it later, the substance already exists: PerceptionX enables the organization server-side, each user then connects with their own PerceptionX login, the scope is read-only, and access can be revoked per token or per organization on request |
+| **Privacy policy** (required field) | **EXISTS** | `https://www.perceptionx.ai/privacy`. Verified live today, returns `200` over HTTPS. The app links `https://perceptionx.ai/privacy`, which redirects to the `www` host (`src/pages/Auth.tsx:469`, `src/pages/Welcome.tsx:405`, `src/pages/ResetPassword.tsx:154`). Submit the `www` URL, and check the policy actually covers the connector's data flow, because I audited only that the page resolves, not its wording |
 | Listing icon | **NEEDS A DECISION** | No icon is designated for this purpose. Candidates already in `public/logos/`: `P-Icon-Dark-large.png`, `P-Icon-Dark-medium.png`, `P-Icon-Dark-small.png`, `perceptionx-small.png`, `perceptionx-normal.png`, `PerceptionX-PrimaryLogo.png`. Check the portal's exact size and format requirement, then export to match. The square P mark is the right shape for an icon slot |
-| Support contact | **NEEDS A DECISION** | `team@perceptionx.ai` is the address the customer guide gives for connector problems and the sender address for transactional email, so it is the obvious choice. `karim@perceptionx.ai` is hardcoded as the admin allowlist in several places, but that is a personal address and not a support channel. Confirm `team@perceptionx.ai` is monitored |
-| Fully populated reviewer test account | **MISSING, and the biggest blocker** | No demo or sandbox organization exists in the repo or docs. `docs/mcp-server.md` already flags this as outstanding. A reviewer needs, in this order: (1) a demo organization with real-shaped measured data across at least two measured quarters, more than one market and more than one job function, otherwise most tools return `no_data` and the connector looks broken; (2) `mcp_enable_org` run for it, because without that row every request 401s; (3) a dedicated login that is an `organization_members` row of that org, because the consent page only lists organizations the user belongs to and that are enabled; (4) no 2FA and no sign-up step. Note the confidentiality issue: the demo org must not be a real client's data, so this is new seeded data, not a copy of Netflix or Ford |
+| **Support** (required field) | **NEEDS A DECISION** | `team@perceptionx.ai` is the address the customer guide gives for connector problems and the sender address for transactional email, so it is the obvious choice. `karim@perceptionx.ai` is hardcoded as the admin allowlist in several places, but that is a personal address and not a support channel. Confirm `team@perceptionx.ai` is monitored |
+| Fully populated reviewer test account | **EXISTS, but it reads live client data. Must be changed before submitting** | This was set up for the OpenAI submission and lives in the database, not the repo, which is why `docs/mcp-server.md` still lists it as outstanding. Two organizations are enabled and tagged for review: **PerceptionX Demo** (`a342c781`, note `openai-review-demo`) and **Pepsico** (`4cba160e`, note `openai-review + reviewer account`). A dedicated reviewer login exists, `openai-reviewer@perceptionx.ai`, created 2026-09-04, and it is a member of the **Pepsico** org. See the two problems below. Neither org is submission-ready as it stands |
 | Allowed link URIs for `ui/open-link` | **NONE FOUND** | No `ui/open-link`, elicitation or sampling capability anywhere in the codebase. The server declares only `capabilities: { tools: { listChanged: false } }`, so no tool opens a browser URL and the field should be empty. For completeness, the only PerceptionX domain a user's browser reaches during normal use is `app.perceptionx.ai`, via the OAuth consent redirect, which is the OAuth flow rather than `ui/open-link`. Separately, tool results do return third-party page URLs (customer-relevant pages on sites such as Glassdoor) as link data in `top_pages`, for the assistant to render as ordinary markdown links. Those are data, not server-opened links, and they are not a fixed allowlist |
+
+### The reviewer account: two problems
+
+Verified against the database on 2026-09-21.
+
+**Problem 1, and this is the serious one: the reviewer account is inside a real client's
+organization.** The `Pepsico` org (`4cba160e`) that `openai-reviewer@perceptionx.ai` belongs to is
+the live PepsiCo client account. It holds the real PepsiCo company profile, the same company id the
+PepsiCo pilot uses, with roughly two measured quarters of real collected data, and a real PepsiCo
+client contact is a member of the same org. Anything the reviewer account asks the connector returns
+live PepsiCo data, including verbatim AI answer texts through `get_responses` and `search_responses`.
+
+That is a client-confidentiality exposure, not a technical fault, and it applies to whichever
+directory the account is handed to. It should be fixed before the Anthropic submission regardless of
+what was done for OpenAI. The fix is to point the reviewer account at a non-client org and remove it
+from the client org.
+
+**Problem 2: the other org is not presentable.** `PerceptionX Demo` (`a342c781`) is the natural
+alternative but is not ready. It carries 54 company profiles that are mostly sales-demo and prospect
+names, many with single-digit response counts, and its most recent measured month is March 2026, so
+it is about six months stale and its periods stop well short of the current quarter. A reviewer
+exploring it would hit thin or empty results on most profiles and would see prospect company names.
+Its nominal owner login has never signed in.
+
+**Recommended fix, in order:** pick one brand, seed it with enough collected data to cover at least
+two measured quarters, more than one market and more than one job function, in an org that contains
+nothing else; run `mcp_enable_org` for it; move `openai-reviewer@perceptionx.ai` (or mint an
+equivalent Anthropic reviewer login) into that org and remove it from `Pepsico`; confirm no 2FA and
+no sign-up step. The allowlist and membership requirements are both hard gates: without the
+`mcp_org_settings` row every request 401s, and without the membership row the consent page shows the
+reviewer nothing to approve.
 
 ---
 
 ## 6. Pre-submission testing status
 
-**Partially evidenced. Two gaps to close before you submit.**
+**Every one of the 16 tools has now been exercised end to end, and the OAuth flow has a recorded
+production round trip. One narrow gap remains.**
+
+Two things were established during this audit rather than found in the repo, so they are not yet
+reflected in `docs/mcp-server.md`:
+
+- **The 5 tools the eval never covered were run today** through a real MCP client (this connector
+  added to a Claude Code session, authenticated against the Ford org): `get_responses`,
+  `search_responses`, `get_attribute_breakdown`, `get_competitors` and `compare_companies`. All five
+  returned `_coverage: found` with well-formed payloads, correct measured-quarter envelopes and
+  percentages leading. Combined with the 11 the eval covers, **all 16 tools are now confirmed working
+  end to end over MCP.** Worth folding into `run.ts` so it stays true automatically.
+- **The OAuth flow has completed in production.** `mcp_tokens` records an access and refresh pair
+  issued on 2026-09-20 to `openai-reviewer@perceptionx.ai` for a client registered by hosted client
+  metadata at `https://chatgpt.com/oauth/.../client.json`, with the access token used 20 minutes
+  later. So discovery, dynamic client identity, consent, code exchange and an authenticated tool call
+  all work against a real third-party host. The line in `docs/mcp-server.md` about OAuth not yet
+  being confirmed is out of date.
+
+**Remaining gap: refresh-token rotation has never run.** The refresh token from that round trip shows
+no use, and every other token on those orgs is a short-lived PAT that was revoked the same day. The
+rotation and family-revocation logic in `oauth.ts` is therefore untested in production, and it is the
+path a reviewer's session will hit after an hour. Worth forcing once: let an access token expire, or
+exercise the refresh grant directly, and confirm a new pair is issued and the old refresh token is
+rejected on replay.
+
+Original assessment of the harnesses follows.
 
 What exists:
 
@@ -234,22 +294,21 @@ What exists:
 | `scripts/mcp-eval/chat-eval.ts` | Answer-quality lint for the in-app chat, which shares the same tool layer | **Never run with credentials.** `docs/mcp-server.md` says so explicitly. The equivalent 7-question script was run by hand in the browser, 7 of 7 pass |
 | `questions.json` | 26 golden client-shaped questions with expected tool choices, doubling as the manual QA script | Used by Phase B and by hand |
 
-Gap 1: **5 of the 16 tools are never exercised by any automated harness.** `run.ts` calls 11 tools
+Gap 1, now closed by hand but still open in the harness: **5 of the 16 tools are not exercised by any
+automated harness.** `run.ts` calls 11 tools
 (`list_companies`, `get_company_overview`, `get_company_metrics`, `get_themes`,
 `get_model_breakdown`, `get_citations`, `get_attribute_themes`, `get_visibility`, `get_sources`,
 `get_competitor_landscape`, `get_trends`). It never calls **`get_responses`**, **`search_responses`**,
-**`get_attribute_breakdown`**, **`get_competitors`** or **`compare_companies`**. Anthropic's guidance
-is that every tool has been exercised end to end, so add these five to `run.ts` and re-run. That is a
-small, contained change to one script.
+**`get_attribute_breakdown`**, **`get_competitors`** or **`compare_companies`**. All five were run by
+hand during this audit and passed, so the submission claim holds today, but add them to `run.ts` so a
+future change cannot silently break a tool nothing tests. Small, contained change to one script.
 
-Gap 2: **no recorded end-to-end test of the OAuth flow itself.** The eval authenticates with a PAT,
-not an OAuth token (`MCP_TOKEN` in `run.ts`). The OAuth code is complete and the discovery documents
-are live, the customer guide describes the ChatGPT and Claude flows as working, and
-`docs/mcp-server.md` still carries the line "Revoke pilot PATs when OAuth is confirmed working",
-which reads as not yet confirmed. Nothing in the repo records a completed authorize, consent,
-code-exchange, refresh round trip from a real client. Since OAuth is exactly what a directory
-reviewer will do first, run it once against Claude as a custom connector or MCP Inspector, end to
-end including a token refresh and a revoke, and write the result into `docs/mcp-server.md`.
+Gap 2, largely closed: **the eval itself never exercises OAuth.** It authenticates with a PAT
+(`MCP_TOKEN` in `run.ts`), so the OAuth path is covered only by the one production round trip
+recorded above, not by anything repeatable. The flow demonstrably works against ChatGPT. It has not
+been demonstrated against Claude specifically, and refresh rotation is untested, per the gap above.
+Before submitting, add the connector to Claude once as a custom connector, complete the flow, and
+record it in `docs/mcp-server.md`, replacing the stale "when OAuth is confirmed working" line.
 
 There is also **no CI**. `.github/workflows/` does not exist, so none of the above runs automatically;
 `package.json` has `test` (vitest, frontend) and `lint`, and the Deno tests and evals are manual. Not a
@@ -258,9 +317,23 @@ a continuously verified one.
 
 ### Shortest path to submission-ready
 
-1. Build and seed the demo organization, enable it with `mcp_enable_org`, create the reviewer login (blocker).
-2. Publish the setup guide at a public HTTPS URL (blocker).
-3. Fix the three behavioural phrasings in `tools.ts` (`get_citations`, `get_competitor_landscape`, `get_attribute_themes`) and redeploy.
-4. Add the 5 missing tools to `run.ts` and re-run the live eval.
-5. Run the OAuth flow end to end once from Claude and record it.
-6. Write the name, tagline and description, choose the tags, export the icon, confirm the support address.
+1. **Move the reviewer account off the live PepsiCo org** and onto a seeded non-client org, enabled with
+   `mcp_enable_org` (blocker, and a confidentiality issue as well as a submission one).
+2. **Publish the setup guide** at a public HTTPS URL, for the required Documentation field (blocker).
+3. Fix the three behavioural phrasings in `tools.ts` (`get_citations`, `get_competitor_landscape`,
+   `get_attribute_themes`) and redeploy.
+4. Force one refresh-token rotation and confirm replay is rejected.
+5. Complete the OAuth flow once from Claude as a custom connector and record it in `docs/mcp-server.md`,
+   replacing the stale line about OAuth not being confirmed.
+6. Add the 5 hand-tested tools to `run.ts` so the coverage claim stays true, then re-run the live eval.
+7. Write the name, tagline and description, choose the tags, export the icon, confirm the support address.
+
+### Data quality note, separate from the submission
+
+While exercising `get_responses` I noticed two things a reviewer poking at that tool would also see,
+both upstream of the connector rather than faults in it. Raw answer texts carry leftover source
+markers from the collecting platform, including one visibly mangled inline token, and
+`competitors_mentioned` on that tool returns the uncanonicalized list, so it included car dealership
+names and one duplicated manufacturer. `get_competitors` and `get_competitor_landscape` canonicalize
+properly and showed neither problem. Flagging rather than changing, per the data rules. Worth a look
+before a reviewer reads raw answer texts, since it is the least polished surface in the tool set.
