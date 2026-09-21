@@ -891,6 +891,29 @@ function isEvergreenUrl(url: string): boolean {
     return true;
   }
 
+  // Dateless reference sites: employer-review networks, company directories,
+  // rankings, and salary/interview-prep libraries. Validated against the
+  // manual-review queue — these pages never carry a publication date, so score
+  // them evergreen instead of burning Firecrawl credits and parking them as
+  // not-found. Keep in sync with migration 20260714010000.
+  const datelessReferenceHosts = [
+    'gptw.com.br', 'kununu.com', 'comparably.com', 'ambitionbox.com',
+    'openwork.jp', 'zoominfo.com', 'f6s.com', 'ensun.io', 'bullfincher.io',
+    'jobsbyculture.com', 'startup.jobs', 'jobkorea.co.kr', 'levels.fyi',
+    'designgurus.io', 'cliffsnotes.com', 'scribd.com',
+  ];
+  if (datelessReferenceHosts.some(h => host === h || host.endsWith('.' + h))) return true;
+  // greatplacetowork.* / sortlist.* across all country TLDs
+  if (/(^|\.)greatplacetowork\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host)) return true;
+  if (/(^|\.)sortlist\.[a-z]{2,3}(\.[a-z]{2})?$/.test(host)) return true;
+  // jobplanet company profiles (its /contents/ news articles stay dated)
+  if (host.endsWith('jobplanet.co.kr') && path.startsWith('/companies')) return true;
+  // Google search-viewer permalinks; Chambers legal-directory rankings
+  if (host.endsWith('google.com') && path.startsWith('/searchviewer')) return true;
+  if (host.endsWith('chambers.com') && path.startsWith('/legal-rankings')) return true;
+  // Certification / best-workplace list pages on any host
+  if (/\/(certified-company|certified-companies|empresas-certificadas|beste-arbeitgeber|top-lists|toplijst|bestplaceswork)(\/|$)/.test(path)) return true;
+
   // Social media — only treat *profile/account* pages as evergreen. Individual
   // posts (Reddit comments, FB posts, IG photos, etc.) have real publication
   // dates that matter for recency scoring — don't mask them with evergreen.
