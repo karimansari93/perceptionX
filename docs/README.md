@@ -6,6 +6,7 @@ This directory contains all project documentation. Keep markdown and doc-related
 
 ### `/docs/guides/`
 **User-facing documentation** – setup and usage:
+- `DATA_ANALYST_ONBOARDING.md` – How data collection and the edge functions work (start here if you are new)
 - `CLIENT_SETUP_GUIDE.md` – New client organization setup
 - `QUICK_START_GUIDE.md` – Quick start
 - `ADMIN_SETUP.md` – Admin panel setup
