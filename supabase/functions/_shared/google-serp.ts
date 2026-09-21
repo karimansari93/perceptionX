@@ -19,6 +19,7 @@
 // SerpAPI calls stay param-free, byte-for-byte like the original functions.
 
 import { COUNTRY_NAME_TO_CODE } from "./countries.ts";
+import { isUsableCitationUrl, unwrapRedirectUrl } from "./citation-extraction.ts";
 
 export interface Citation {
   title?: string;
@@ -126,14 +127,24 @@ function renderTextBlocks(blocks: any[]): string {
 // nested in blocks. Deduped by URL. Handles both `link` and `url` naming.
 // `links` matters for Scrapingdog AI Mode: inline source links live in
 // per-block `links: [{anchor, link}]` (verified live 2026-07-08).
+//
+// Google hands many of these back as redirect wrappers
+// (www.google.com/url?sa=i&...&url=<real>&ved=...), so every URL is unwrapped
+// to its real destination BEFORE the dedupe check — several wrappers routinely
+// point at the same page, and deduping on the wrapper counted each one as a
+// separate citation for google.com. Wrappers whose target is an opaque token
+// (google.com/url?url=CAES...) or a search-UI surface (google.com/searchviewer)
+// have no source behind them and are dropped.
 function collectCitations(searchData: any, blocks: any[]): Citation[] {
   const citations: Citation[] = [];
   const seen = new Set<string>();
 
   const addRef = (ref: any) => {
     if (!ref || typeof ref !== "object") return;
-    const url = ref.link || ref.url || ref.href;
-    if (!url || seen.has(url)) return;
+    const rawUrl = ref.link || ref.url || ref.href;
+    if (!rawUrl || typeof rawUrl !== "string") return;
+    const url = unwrapRedirectUrl(rawUrl);
+    if (!isUsableCitationUrl(url) || seen.has(url)) return;
     seen.add(url);
     citations.push({
       title: ref.title || ref.name || ref.anchor || undefined,

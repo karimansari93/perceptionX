@@ -1,7 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts";
+import {
+  SOURCES_SECTION_REGEX,
+  normalizeCitationsForStorage,
+  unwrapRedirectUrl,
+} from "../_shared/citation-extraction.ts";
 
 // Attribute analysis service removed - focusing on ai-themes only
 
@@ -98,29 +102,12 @@ serve(async (req) => {
     }
 
     // Only persist citations with a valid url so DB and MVs (citation_url, recency) stay consistent.
-    // Unwrap translate.google.com redirects first so the stored URL and domain
-    // reflect the real source (glassdoor.com, etc.) rather than the translate wrapper.
-    const citationsForDb = (Array.isArray(finalCitations) ? finalCitations : [])
-      .filter((c: Citation) => c && typeof c.url === 'string' && c.url.trim().length > 0)
-      .map((c: Citation) => {
-        const url = unwrapTranslateUrl(c.url!.trim());
-        // If the URL was unwrapped, c.domain (if the caller passed one) now
-        // points to translate.google.com — recompute from the real URL.
-        const wasUnwrapped = url !== c.url!.trim();
-        let domain = wasUnwrapped ? undefined : c.domain;
-        if (!domain) {
-          try {
-            domain = new URL(url).hostname.replace('www.', '');
-          } catch {
-            domain = url;
-          }
-        }
-        return {
-          url,
-          domain,
-          title: c.title ?? `Source from ${domain}`,
-        };
-      });
+    // Unwrap Google redirect wrappers (translate.google.com, google.com/url?...&url=)
+    // first so the stored URL and domain reflect the real source (glassdoor.com,
+    // etc.); wrappers with no recoverable target are dropped, not stored as google.com.
+    const citationsForDb = normalizeCitationsForStorage(
+      (Array.isArray(finalCitations) ? finalCitations : []) as Citation[],
+    ).map(({ url, domain, title }) => ({ url, domain, title }));
 
     // Prepare data for insert
     const insertData: any = {
@@ -516,47 +503,13 @@ function detectEnhancedCompetitors(text: string, companyName: string): Competito
 }
 
 /**
- * Extracts the actual source URL from Google Translate URLs.
- * If the URL is a Google Translate URL, extracts the 'u' parameter value.
- * Otherwise, returns the original URL.
+ * Extracts the actual source URL from Google redirect wrappers
+ * (translate.google.com, google.com/url?...&url=, google.com/imgres).
+ * Returns the original URL when it isn't a wrapper.
  */
 function extractSourceUrl(url: string): string {
   if (!url || typeof url !== 'string') return url;
-  
-  try {
-    const urlObj = new URL(url.trim());
-    
-    // Check if this is a Google Translate URL
-    if (urlObj.hostname.includes('translate.google') || 
-        urlObj.hostname.includes('translate.googleusercontent')) {
-      // Extract the 'u' parameter which contains the actual source URL
-      const sourceUrl = urlObj.searchParams.get('u');
-      if (sourceUrl) {
-        // Decode the URL if it's encoded
-        try {
-          return decodeURIComponent(sourceUrl);
-        } catch {
-          return sourceUrl;
-        }
-      }
-    }
-    
-    // Not a Google Translate URL, return original
-    return url.trim();
-  } catch {
-    // If URL parsing fails, try to extract 'u' parameter manually
-    const uParamMatch = url.match(/[?&]u=([^&]+)/);
-    if (uParamMatch) {
-      try {
-        return decodeURIComponent(uParamMatch[1]);
-      } catch {
-        return uParamMatch[1];
-      }
-    }
-    
-    // Return original URL if we can't parse it
-    return url.trim();
-  }
+  return unwrapRedirectUrl(url);
 }
 
 // Enhanced citation extraction (same as test-prompt-openai) for better OpenAI citation detection
