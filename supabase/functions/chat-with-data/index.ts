@@ -28,6 +28,7 @@ import { buildSystemPrompt } from "./prompt.ts";
 import { getStarterQuestions } from "./starters.ts";
 import { getScopeOptions, normalizeScope, scopeNote } from "./scope.ts";
 import { collectCompetitors, collectSources } from "./sources.ts";
+import { statusLine } from "./status.ts";
 import type { SourceLink } from "./sources.ts";
 
 const MODEL = Deno.env.get('CLAUDE_MODEL') || 'claude-opus-5';
@@ -323,7 +324,7 @@ serve(async (req) => {
 
           // Keep thinking blocks intact: the assistant turn goes back verbatim.
           messages.push({ role: 'assistant', content: reply.content });
-          enqueue(sseEvent({ status: toolUses.map(t => toolLabels[t.name] || t.name).join(' + ') + '...' }));
+          enqueue(sseEvent({ status: statusLine(toolUses, toolLabels) }));
 
           // Every parallel tool_result returns in ONE user message; a failed
           // tool is an is_error result, never a dropped block.
