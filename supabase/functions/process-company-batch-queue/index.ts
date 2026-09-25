@@ -512,6 +512,9 @@ serve(async (req) => {
           .from("company_batch_queue")
           .update({
             phase: "llm_collection",
+            // Back to 'pending' so the self-chained call can claim the row
+            // straight away (see the llm_collection chunk update below).
+            status: "pending",
             total_prompts: finalPrompts.length,
             updated_at: new Date().toISOString(),
           })
@@ -703,6 +706,9 @@ serve(async (req) => {
           .from("company_batch_queue")
           .update({
             phase: "llm_collection",
+            // Back to 'pending' so the self-chained call can claim the row
+            // straight away instead of waiting ~5 min for the watchdog.
+            status: "pending",
             company_id: companyId,
             onboarding_id: onboarding.id,
             total_prompts: finalPrompts.length,
