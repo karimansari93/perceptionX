@@ -1,6 +1,7 @@
 // @ts-ignore: Deno.env and Deno imports are available in Deno runtime
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+import { claudeApiKeys, claudeFetch } from "../_shared/claude-keys.ts";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -16,18 +17,16 @@ serve(async (req) => {
       );
     }
 
-    const claudeApiKey = Deno.env.get('CLAUDE_API_KEY');
-    if (!claudeApiKey) {
+    if (claudeApiKeys().length === 0) {
       throw new Error('Claude API key not configured');
     }
 
     const prompt = `For the following text, extract all companies mentioned. For each company, list the themes or aspects discussed in relation to that company, and classify each theme as positive, negative, or neutral. Output as a JSON array with this structure: [{"company": "...", "themes": [{"theme": "...", "sentiment": "positive|negative|neutral"}]}]. Only include companies that are actually mentioned in the text. Return ONLY the JSON array, no other text.\n\nText:\n${text}`;
 
-    const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    const claudeResponse = await claudeFetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': claudeApiKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({

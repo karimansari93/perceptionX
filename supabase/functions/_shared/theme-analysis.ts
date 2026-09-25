@@ -21,10 +21,16 @@
 
 import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
 
-// @ts-ignore Deno global is available in the edge runtime.
-// Env var is CLAUDE_API_KEY (matches the existing test-prompt-claude function
-// — the platform's secret is stored under that name, not ANTHROPIC_API_KEY).
-const client = new Anthropic({ apiKey: Deno.env.get("CLAUDE_API_KEY") });
+import { withClaudeKey } from "./claude-keys.ts";
+
+// Keys come from CLAUDE_API_KEY / CLAUDE_API_KEY_NEXT (see claude-keys.ts);
+// one client per key so the handover doesn't rebuild a client per call.
+const clients = new Map<string, Anthropic>();
+const clientFor = (apiKey: string) => {
+  let c = clients.get(apiKey);
+  if (!c) clients.set(apiKey, c = new Anthropic({ apiKey }));
+  return c;
+};
 
 export interface AITheme {
   theme_name: string;
@@ -317,7 +323,7 @@ export async function analyzeThemes(
     const competitorLine = competitors.length > 0
       ? `\n\nOther companies detected in this response (extract competitor_themes ONLY for these): ${competitors.join(", ")}`
       : "\n\nNo other companies were detected; return an empty competitor_themes array.";
-    const response = await client.messages.create({
+    const response = await withClaudeKey<Anthropic.Message>((apiKey) => clientFor(apiKey).messages.create({
       model: "claude-haiku-4-5",
       max_tokens: 4096,
       system: [
@@ -340,7 +346,9 @@ export async function analyzeThemes(
           content: `Analyze this response about "${companyName}":\n\n"""\n${responseText}\n"""${competitorLine}`,
         },
       ],
-    });
+      // Non-streaming call: the SDK types can't pick that overload because
+      // this SDK version predates output_config, so pin the result type.
+    }) as Promise<Anthropic.Message>);
 
     // Structured outputs return as a single text block containing the JSON.
     const EMPTY: ThemeAnalysisResult = { themes: [], competitorThemes: [] };

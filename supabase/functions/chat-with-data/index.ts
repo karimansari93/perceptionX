@@ -21,6 +21,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk";
+import { claudeApiKeys, withClaudeKey } from "../_shared/claude-keys.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { anthropicTools, executeTool, genRequestId, toolLabels } from "../_shared/px-tools/mod.ts";
 import type { ToolContext } from "../_shared/px-tools/mod.ts";
@@ -178,8 +179,7 @@ serve(async (req) => {
 
     if (!message || typeof message !== 'string' || !message.trim()) return jsonResponse({ error: 'Message is required' }, 400);
 
-    const claudeApiKey = Deno.env.get('CLAUDE_API_KEY');
-    if (!claudeApiKey) return jsonResponse({ error: 'AI service not configured' }, 500);
+    if (claudeApiKeys().length === 0) return jsonResponse({ error: 'AI service not configured' }, 500);
 
     const { data: orgData } = await admin.from('organizations').select('name').eq('id', organizationId).single();
     const orgName = orgData?.name || 'Your Organization';
@@ -241,9 +241,8 @@ serve(async (req) => {
         : message.trim(),
     });
 
-    const client = new Anthropic({ apiKey: claudeApiKey });
+    const clientFor = (apiKey: string) => new Anthropic({ apiKey });
     let cancelled = false;
-    let current: ReturnType<typeof client.messages.stream> | null = null;
 
     const runAnalyst = async (ctrl: ReadableStreamDefaultController<Uint8Array>) => {
       const tStart = Date.now();
@@ -264,19 +263,6 @@ serve(async (req) => {
           log.rounds = round + 1;
           console.log(`[${requestId}] round ${round + 1}`);
 
-          const turn = client.messages.stream({
-            model: MODEL,
-            max_tokens: MAX_TOKENS,
-            thinking: { type: 'adaptive' },
-            output_config: { effort: EFFORT },
-            // tools → system → messages is the cache render order; the
-            // breakpoint on the system block caches both, and the prompt is
-            // byte-stable per org.
-            system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-            tools: anthropicTools as unknown as Anthropic.Tool[],
-            messages,
-          });
-          current = turn;
           // Text that arrives before a tool call in the same round is process
           // narration ("I'll pull the company list first"). Hold the first
           // stretch of each round's text back; drop it if a tool call starts,
@@ -291,16 +277,35 @@ serve(async (req) => {
             }
             held = '';
           };
-          turn.on('text', (delta: string) => {
-            if (narration) return;
-            held += delta;
-            if (held.length >= HOLD_CHARS) flushHeld();
-          });
-          turn.on('streamEvent', (ev: Anthropic.MessageStreamEvent) => {
-            if (ev.type === 'content_block_start' && ev.content_block.type === 'tool_use') { narration = true; held = ''; }
-          });
+          // A key handover (claude-keys.ts) only happens on a credit error,
+          // which Anthropic returns before anything streams, so a retry on the
+          // next key starts from a clean round.
+          const reply = await withClaudeKey(async (apiKey) => {
+            held = '';
+            narration = false;
+            const turn = clientFor(apiKey).messages.stream({
+              model: MODEL,
+              max_tokens: MAX_TOKENS,
+              thinking: { type: 'adaptive' },
+              output_config: { effort: EFFORT },
+              // tools → system → messages is the cache render order; the
+              // breakpoint on the system block caches both, and the prompt is
+              // byte-stable per org.
+              system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+              tools: anthropicTools as unknown as Anthropic.Tool[],
+              messages,
+            });
+            turn.on('text', (delta: string) => {
+              if (narration) return;
+              held += delta;
+              if (held.length >= HOLD_CHARS) flushHeld();
+            });
+            turn.on('streamEvent', (ev: Anthropic.MessageStreamEvent) => {
+              if (ev.type === 'content_block_start' && ev.content_block.type === 'tool_use') { narration = true; held = ''; }
+            });
 
-          const reply = await turn.finalMessage();
+            return await turn.finalMessage();
+          });
           flushHeld();
           log.input_tokens += reply.usage.input_tokens ?? 0;
           log.output_tokens += reply.usage.output_tokens ?? 0;
