@@ -41,9 +41,14 @@ serve(async (req) => {
     const body = await req.json();
     const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, company_id, for_index } = body;
     
-    // Handle citations from different LLMs
+    // Handle citations from different LLMs. These models return their own
+    // native citations (via `body.citations`), so we use those directly rather
+    // than scraping URLs from the response text. Claude in particular emits
+    // STRUCTURED citations (web_search_result_location) that never appear as
+    // inline URLs in the text, so omitting it here silently dropped every
+    // Claude citation and fell back to text extraction, which found nothing.
     let llmCitations = perplexityCitations || [];
-    if ((ai_model === 'google-ai-overviews' || ai_model === 'google-ai-mode' || ai_model === 'bing-copilot' || ai_model === 'openai') && body.citations) {
+    if ((ai_model === 'google-ai-overviews' || ai_model === 'google-ai-mode' || ai_model === 'bing-copilot' || ai_model === 'openai' || ai_model === 'claude') && body.citations) {
       llmCitations = body.citations;
     }
 

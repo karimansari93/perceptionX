@@ -740,35 +740,49 @@ serve(async (req) => {
 
         // Scope the prompt set to THIS job, not all of the company's prompts.
         // Otherwise sibling expand_setup jobs for the same company all fetch
-        // the full superset and do redundant work.
-        let promptQuery = supabase
-          .from("confirmed_prompts")
-          .select("id")
-          .eq("company_id", job.company_id)
-          .eq("is_active", true)
-          .order("id", { ascending: true });
+        // the full superset and do redundant work. Factory because pagination
+        // needs a fresh builder per page (builders are mutable).
+        const buildPromptQuery = () => {
+          let promptQuery = supabase
+            .from("confirmed_prompts")
+            .select("id")
+            .eq("company_id", job.company_id)
+            .eq("is_active", true)
+            .order("id", { ascending: true });
 
-        // Only filter by location when the job specifies one. `location` is
-        // NOT NULL on the queue row, but historical "Global (All Countries)"
-        // may not match the stored location_context, so leave un-filtered if
-        // that's the case.
-        if (job.location && job.location !== "Global (All Countries)") {
-          promptQuery = promptQuery.eq("location_context", job.location);
-        }
-        if (job.industry && job.industry !== "General") {
-          promptQuery = promptQuery.eq("industry_context", job.industry);
-        }
-        if (job.job_function) {
-          promptQuery = promptQuery.eq("job_function_context", job.job_function);
-        }
-        if (promptTypeFilter) {
-          promptQuery = promptQuery.in("prompt_type", promptTypeFilter);
-        }
+          // Only filter by location when the job specifies one. `location` is
+          // NOT NULL on the queue row, but historical "Global (All Countries)"
+          // may not match the stored location_context, so leave un-filtered if
+          // that's the case.
+          if (job.location && job.location !== "Global (All Countries)") {
+            promptQuery = promptQuery.eq("location_context", job.location);
+          }
+          if (job.industry && job.industry !== "General") {
+            promptQuery = promptQuery.eq("industry_context", job.industry);
+          }
+          if (job.job_function) {
+            promptQuery = promptQuery.eq("job_function_context", job.job_function);
+          }
+          if (promptTypeFilter) {
+            promptQuery = promptQuery.in("prompt_type", promptTypeFilter);
+          }
+          return promptQuery;
+        };
 
-        const { data: promptRows, error: promptErr } = await promptQuery;
-        if (promptErr) throw new Error(`Prompt fetch failed: ${promptErr.message}`);
-
-        const allPromptIds = promptRows?.map((r: any) => r.id) || [];
+        // Paginate past PostgREST's 1000-row cap — without this, companies
+        // with >1000 active prompts only ever collected the first 1000 (the
+        // batch cursor below runs over allPromptIds, so anything the fetch
+        // drops is never collected).
+        const PROMPT_PAGE = 1000;
+        const allPromptIds: string[] = [];
+        for (let page = 0; ; page++) {
+          const from = page * PROMPT_PAGE;
+          const { data: promptRows, error: promptErr } = await buildPromptQuery()
+            .range(from, from + PROMPT_PAGE - 1);
+          if (promptErr) throw new Error(`Prompt fetch failed: ${promptErr.message}`);
+          for (const r of promptRows || []) allPromptIds.push(r.id);
+          if (!promptRows || promptRows.length < PROMPT_PAGE) break;
+        }
         const totalPrompts = allPromptIds.length;
 
         if (totalPrompts === 0) {
@@ -802,10 +816,11 @@ serve(async (req) => {
             );
 
             // If the parent config carries a skip_if_collected_in_month value
-            // (set by the monthly-refresh cron), forward it so each prompt is
-            // only collected if it doesn't already have THIS MONTH's response
+            // ("YYYY-MM" from the monthly-refresh cron, or "YYYY-Qn" from the
+            // admin quarter recollect), forward it so each prompt is only
+            // collected if it doesn't already have a response IN THAT PERIOD
             // for the given model. Without this, skipExisting:true would skip
-            // any prompt that has *any* historical response and our monthly
+            // any prompt that has *any* historical response and our periodic
             // snapshots would never refresh.
             const skipIfCollectedInMonth: string | null =
               (config as any)?.skip_if_collected_in_month ?? null;
