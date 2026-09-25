@@ -72,6 +72,88 @@ type Props = {
 
 type Status = { todos: string[]; ready: boolean };
 
+type Rows = Record<string, CompanyReadiness | { error: string }>;
+
+const collectionDone = (r: CompanyReadiness) =>
+  r.active_jobs === 0 && r.active_prompts > 0 && r.responses > 0 && r.prompts_complete === r.active_prompts;
+
+const StatusCard = ({ title, ok, value, hint }: { title: string; ok: boolean; value: string; hint: string }) => (
+  <div className={`rounded-lg border p-3 ${ok ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50'}`}>
+    <div className="flex items-center justify-between gap-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
+      {ok ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-amber-600" />}
+    </div>
+    <p className={`mt-1 text-lg font-semibold ${ok ? 'text-emerald-800' : 'text-amber-800'}`}>{value}</p>
+    <p className="text-xs text-slate-600 mt-0.5">{hint}</p>
+  </div>
+);
+
+// The org's pre-flight checklist at a glance: one card per step, rolled up
+// across every company. The table below says which company needs what.
+const StatusCards = ({ companies, rows }: { companies: Company[]; rows: Rows }) => {
+  const loaded = companies
+    .map((c) => rows[c.id])
+    .filter((r): r is CompanyReadiness => !!r && !('error' in r));
+  const failed = companies.length - loaded.length;
+  const n = loaded.length;
+
+  const running = loaded.filter((r) => r.active_jobs > 0).length;
+  const notCollected = loaded.filter((r) => r.active_jobs === 0 && r.responses === 0).length;
+  const gaps = loaded.filter((r) => r.active_jobs === 0 && r.responses > 0 && !collectionDone(r)).length;
+  const collectionOk = running === 0 && notCollected === 0 && gaps === 0;
+  const collectionHint = running > 0
+    ? `${running} still running`
+    : [notCollected && `${notCollected} not collected yet`, gaps && `${gaps} missing answers, use Continue`]
+        .filter(Boolean).join(' · ') || 'Every active prompt answered on every model';
+
+  const sum = (f: (r: CompanyReadiness) => number) => loaded.reduce((a, r) => a + f(r), 0);
+  const themes = pct(sum((r) => r.themed), sum((r) => r.theme_eligible));
+  const recency = pct(sum((r) => r.urls_scored), sum((r) => r.urls));
+  const themeGaps = loaded.filter((r) => { const t = pct(r.themed, r.theme_eligible); return t !== null && t < THEMES_READY; }).length;
+  const recencyGaps = loaded.filter((r) => { const t = pct(r.urls_scored, r.urls); return t !== null && t < RECENCY_READY; }).length;
+  const refreshing = loaded.filter((r) => r.metrics_pending).length;
+  const allReady = failed === 0 && loaded.every((r) => statusOf(r).ready);
+
+  return (
+    <div className="space-y-2">
+      {allReady ? (
+        <Check ok>Ready for pre-flight: every check is complete.</Check>
+      ) : (
+        <p className="text-sm text-slate-600">
+          Not ready for pre-flight yet. Companies needing attention are listed first below.
+          {failed > 0 && <span className="text-red-600"> {failed} could not be checked.</span>}
+        </p>
+      )}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatusCard
+          title="Collection"
+          ok={collectionOk}
+          value={collectionOk ? 'Complete' : running > 0 ? 'Running' : `${n - notCollected - gaps} of ${n} done`}
+          hint={collectionHint}
+        />
+        <StatusCard
+          title="Themes"
+          ok={themeGaps === 0}
+          value={fmtPct(themes)}
+          hint={themeGaps === 0 ? 'Mentioned answers theme-analysed' : `${themeGaps} with gaps, run Analyze themes in Collection`}
+        />
+        <StatusCard
+          title="Recency"
+          ok={recencyGaps === 0}
+          value={fmtPct(recency)}
+          hint={recencyGaps === 0 ? 'Cited URLs scored' : `${recencyGaps} below ${RECENCY_READY * 100}%, queue a rescore in Recency`}
+        />
+        <StatusCard
+          title="Dashboard"
+          ok={refreshing === 0}
+          value={refreshing === 0 ? 'Up to date' : 'Refreshing'}
+          hint={refreshing === 0 ? 'Numbers reflect the latest data' : `${refreshing} companies refreshing, usually within minutes`}
+        />
+      </div>
+    </div>
+  );
+};
+
 const statusOf = (r: CompanyReadiness): Status => {
   const todos: string[] = [];
   const themes = pct(r.themed, r.theme_eligible);
@@ -87,7 +169,7 @@ const statusOf = (r: CompanyReadiness): Status => {
 };
 
 export const OrgReadinessPanel = ({ companies, renderActions, reloadKey = 0 }: Props) => {
-  const [rows, setRows] = useState<Record<string, CompanyReadiness | { error: string }>>({});
+  const [rows, setRows] = useState<Rows>({});
   const [loading, setLoading] = useState(false);
 
   const load = async () => {
@@ -142,11 +224,6 @@ export const OrgReadinessPanel = ({ companies, renderActions, reloadKey = 0 }: P
   }
 
   const allLoaded = companies.every((c) => rows[c.id]);
-  const todos = companies.flatMap((c) => {
-    const r = rows[c.id];
-    if (!r || 'error' in r) return [];
-    return statusOf(r).todos.map((t) => `${label(c, r)}: ${t}`);
-  });
 
   return (
     <Card className="border-none shadow-md">
@@ -166,18 +243,7 @@ export const OrgReadinessPanel = ({ companies, renderActions, reloadKey = 0 }: P
         </Button>
       </CardHeader>
       <CardContent className="space-y-4">
-        {allLoaded && (
-          todos.length === 0 ? (
-            <Check ok>Ready for pre-flight: every check below is complete.</Check>
-          ) : (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 space-y-1">
-              <p className="text-sm font-medium text-amber-800">To do before pre-flight ({todos.length})</p>
-              <ul className="list-disc pl-5 text-sm text-amber-800 max-h-48 overflow-y-auto">
-                {todos.map((t) => <li key={t}>{t}</li>)}
-              </ul>
-            </div>
-          )
-        )}
+        {allLoaded && <StatusCards companies={companies} rows={rows} />}
 
         <div className="overflow-x-auto">
           <Table>

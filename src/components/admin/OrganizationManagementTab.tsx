@@ -14,7 +14,6 @@ import { toast } from 'sonner';
 import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X, Star, ArrowRight } from 'lucide-react';
 import { OrgWorkspace } from './OrgWorkspace';
 import { OrgLogo, useOrgLogos } from './OrgLogo';
-import { AnalysisReadinessTab } from './AnalysisReadinessTab';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
 import { generatePdfThumbnail } from '@/utils/pdfThumbnail';
 
@@ -86,7 +85,6 @@ export const OrganizationManagementTab = () => {
   const [searchQuery, setSearchQuery] = useState('');
   // Platform-wide checks (collection running, theme backlog, rollup refresh
   // errors), formerly the Analysis Readiness tab. Loaded only when opened.
-  const [showPlatformStatus, setShowPlatformStatus] = useState(false);
   
   // Modals
   const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
@@ -1057,24 +1055,6 @@ export const OrganizationManagementTab = () => {
         </div>
       </div>
 
-      <Card className="border border-slate-200 shadow-sm bg-white">
-        <button
-          type="button"
-          onClick={() => setShowPlatformStatus((v) => !v)}
-          className="w-full flex items-center justify-between px-4 py-3 text-left"
-        >
-          <span className="text-sm font-medium text-slate-700">Platform status</span>
-          <span className="text-xs text-slate-500">
-            {showPlatformStatus ? 'Hide' : 'Show collection, theme and dashboard refresh status across all clients'}
-          </span>
-        </button>
-        {showPlatformStatus && (
-          <CardContent className="pt-0">
-            <AnalysisReadinessTab />
-          </CardContent>
-        )}
-      </Card>
-
       {/* Priority clients: bigger cards above the list */}
       {organizations.some((o) => o.is_priority) && (
         <div className="space-y-2">
@@ -1090,10 +1070,7 @@ export const OrganizationManagementTab = () => {
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-3 min-w-0">
                       <OrgLogo name={org.name} src={orgLogos[org.id]} size="lg" />
-                      <div className="min-w-0">
-                        <p className="font-semibold text-slate-900 truncate">{org.name}</p>
-                        {org.description && <p className="text-xs text-slate-500 truncate">{org.description}</p>}
-                      </div>
+                      <p className="font-semibold text-slate-900 truncate">{org.name}</p>
                     </div>
                     <button
                       type="button"
