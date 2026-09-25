@@ -1,24 +1,21 @@
 // Shared Google AI Overview / AI Mode fetching, provider-switched.
 //
-// Two edge functions (test-prompt-google-ai-overviews, test-prompt-google-ai-mode)
-// collect Google's AI Overview and AI Mode answers. Both return the same
-// { response, citations } shape that analyze-response / collect-company-responses
-// expect, so the provider is an implementation detail behind this module.
+// Provider selection, per surface (decided 2026-09-11 after a like-for-like
+// test: Scrapingdog's AI Mode payload carried ~2/3 of the references and ~1/2
+// of the distinct source domains SerpAPI returned for the same queries on the
+// same day, while its AI Overview capture was fine):
+//   1. GOOGLE_AI_MODE_PROVIDER / GOOGLE_AI_OVERVIEW_PROVIDER, when set
+//      ("serpapi" | "scrapingdog"), win for that surface.
+//   2. Else GOOGLE_SERP_PROVIDER, when set — the global override / rollback lever.
+//   3. Else the default for the surface:
+//        AI Mode      → serpapi     if SERP_API_KEY is configured, else scrapingdog
+//        AI Overviews → scrapingdog if SCRAPINGDOG_API_KEY is configured, else serpapi
 //
-// Provider selection:
-//   1. GOOGLE_SERP_PROVIDER env var, when set ("serpapi" | "scrapingdog"),
-//      always wins — this is the explicit rollback lever.
-//   2. Otherwise: scrapingdog if SCRAPINGDOG_API_KEY is configured (the
-//      2026-07 migration — SerpAPI plan lapsed), else serpapi.
-//
-// Localization: the prompt text is already in the target market's language
-// (translate-prompts handles that at generation time). Additionally, the
-// caller may pass the prompt's location_context; for Scrapingdog we resolve
-// it to a two-letter `country` code — verified (2026-07-13) to roughly double
-// AI Mode reference counts for Mexico/Thailand vs the default `us` geo.
-// SerpAPI calls stay param-free, byte-for-byte like the original functions.
+// Single source of truth; merges the 2026-08-04 (AI Mode unwrap/dedupe) and
+// 2026-08-05 (AI Overviews retry + stripGoogleMarkers) hotfix bundles.
 
 import { COUNTRY_NAME_TO_CODE } from "./countries.ts";
+import { isUsableCitationUrl, unwrapRedirectUrl } from "./citation-extraction.ts";
 
 export interface Citation {
   title?: string;
@@ -32,16 +29,26 @@ export interface SerpResult {
   citations: Citation[];
 }
 
-function provider(): string {
-  const explicit = (Deno.env.get("GOOGLE_SERP_PROVIDER") || "").toLowerCase();
-  if (explicit) return explicit;
-  return Deno.env.get("SCRAPINGDOG_API_KEY") ? "scrapingdog" : "serpapi";
+export type GoogleSurface = "ai_mode" | "ai_overview";
+
+function normalizeProvider(v: string | undefined): "serpapi" | "scrapingdog" | null {
+  const s = (v || "").trim().toLowerCase();
+  return s === "serpapi" || s === "scrapingdog" ? s : null;
 }
 
-// Free-text location_context ("Mexico", "the United Kingdom", "Burbank",
-// "Global (All Countries)") → lowercase ISO country code, or null when the
-// location isn't a country we know (cities, Global) — caller then omits the
-// param and Scrapingdog defaults to `us`.
+export function providerFor(surface: GoogleSurface): "serpapi" | "scrapingdog" {
+  const perSurface = normalizeProvider(
+    Deno.env.get(surface === "ai_mode" ? "GOOGLE_AI_MODE_PROVIDER" : "GOOGLE_AI_OVERVIEW_PROVIDER"),
+  );
+  if (perSurface) return perSurface;
+  const global = normalizeProvider(Deno.env.get("GOOGLE_SERP_PROVIDER"));
+  if (global) return global;
+  const hasSerp = !!Deno.env.get("SERP_API_KEY");
+  const hasDog = !!Deno.env.get("SCRAPINGDOG_API_KEY");
+  if (surface === "ai_mode") return hasSerp ? "serpapi" : "scrapingdog";
+  return hasDog ? "scrapingdog" : "serpapi";
+}
+
 export function locationToScrapingdogCountry(location: string | null | undefined): string | null {
   if (!location) return null;
   const trimmed = location.trim();
@@ -53,16 +60,6 @@ export function locationToScrapingdogCountry(location: string | null | undefined
   return code ? code.toLowerCase() : null;
 }
 
-// ---------------------------------------------------------------------------
-// Shared parsing helpers (tolerant to SerpAPI and Scrapingdog block shapes)
-// ---------------------------------------------------------------------------
-
-// Render one AI text_block to plain text. Handles both providers' shapes:
-// - paragraph:  { type, snippet | text }
-// - heading:    { type, snippet | text }
-// - list:       SerpAPI uses `list: [{title?, snippet}]`; Scrapingdog AI Mode
-//               uses `items: [{title?, snippet, text_blocks?}]`.
-// - table:      { table: { headers, rows } } (SerpAPI AI Mode)
 function renderTextBlock(block: any): string {
   if (!block || typeof block !== "object") return "";
   const text = block.snippet ?? block.text ?? "";
@@ -80,7 +77,6 @@ function renderTextBlock(block: any): string {
       if (listItems) {
         return listItems
           .map((item: any) => {
-            // A list item may nest its own text_blocks (Scrapingdog AI Mode).
             if (Array.isArray(item?.text_blocks)) {
               const nested = item.text_blocks
                 .map((tb: any) => tb?.snippet ?? tb?.text ?? "")
@@ -115,25 +111,39 @@ function renderTextBlock(block: any): string {
   }
 }
 
-function renderTextBlocks(blocks: any[]): string {
-  return blocks
-    .map(renderTextBlock)
-    .filter((t: string) => t && t.trim())
-    .join("\n\n");
+export function stripGoogleMarkers(text: string): string {
+  if (!text) return text;
+  let out = text;
+  out = out.replace(/write_to_target_document[A-Za-z0-9]*;/g, " ");
+  out = out.replace(/_[A-Za-z0-9_]{10,};/g, " ");
+  for (let i = 0; i < 3; i++) {
+    out = out.replace(/(?<=[^\s;0-9])[0-9]{1,3}[a-f]?;/g, " ");
+  }
+  out = out.replace(/[ \t]{2,}/g, " ");
+  out = out.replace(/ ([.,;:!?%)\]])/g, "$1");
+  out = out.replace(/([([]) /g, "$1");
+  return out;
 }
 
-// Collect citations from any references/sources/links array(s) at root or
-// nested in blocks. Deduped by URL. Handles both `link` and `url` naming.
-// `links` matters for Scrapingdog AI Mode: inline source links live in
-// per-block `links: [{anchor, link}]` (verified live 2026-07-08).
+function renderTextBlocks(blocks: any[]): string {
+  return stripGoogleMarkers(
+    blocks
+      .map(renderTextBlock)
+      .filter((t: string) => t && t.trim())
+      .join("\n\n"),
+  );
+}
+
 function collectCitations(searchData: any, blocks: any[]): Citation[] {
   const citations: Citation[] = [];
   const seen = new Set<string>();
 
   const addRef = (ref: any) => {
     if (!ref || typeof ref !== "object") return;
-    const url = ref.link || ref.url || ref.href;
-    if (!url || seen.has(url)) return;
+    const rawUrl = ref.link || ref.url || ref.href;
+    if (!rawUrl || typeof rawUrl !== "string") return;
+    const url = unwrapRedirectUrl(rawUrl);
+    if (!isUsableCitationUrl(url) || seen.has(url)) return;
     seen.add(url);
     citations.push({
       title: ref.title || ref.name || ref.anchor || undefined,
@@ -164,10 +174,6 @@ function collectCitations(searchData: any, blocks: any[]): Citation[] {
   return citations;
 }
 
-// ---------------------------------------------------------------------------
-// SerpAPI provider (original behaviour, preserved)
-// ---------------------------------------------------------------------------
-
 async function serpapiAiOverview(prompt: string): Promise<SerpResult> {
   const key = Deno.env.get("SERP_API_KEY");
   if (!key) {
@@ -178,7 +184,6 @@ async function serpapiAiOverview(prompt: string): Promise<SerpResult> {
     };
   }
 
-  // Step 1: regular Google search to get ai_overview.page_token
   let searchData: any;
   try {
     const res = await fetch(
@@ -203,7 +208,6 @@ async function serpapiAiOverview(prompt: string): Promise<SerpResult> {
     };
   }
 
-  // Step 2: fetch AI overview via page_token
   const res = await fetch(
     `https://serpapi.com/search?engine=google_ai_overview&page_token=${searchData.ai_overview.page_token}&api_key=${key}`,
   );
@@ -263,15 +267,6 @@ async function serpapiAiMode(prompt: string): Promise<SerpResult> {
   return { response: "No response generated", citations: [] };
 }
 
-// ---------------------------------------------------------------------------
-// Scrapingdog provider
-// ---------------------------------------------------------------------------
-
-// Scrapingdog surfaces AI Overviews two ways (docs: ai-overviews-result):
-//  - rendered inline: search response carries ai_overview.text_blocks +
-//    references directly — no second call (and no second credit) needed;
-//  - not rendered: ai_overview carries a fallback URL (google.com/async/...)
-//    to pass to the /google/ai_overview endpoint. It expires in ~2 minutes.
 function findScrapingdogAioUrl(searchData: any): string | null {
   const candidates = [
     searchData?.ai_overview?.url,
@@ -284,8 +279,43 @@ function findScrapingdogAioUrl(searchData: any): string | null {
   return null;
 }
 
-// Exported for the parity test harness (zz-temp-serp-parity) so acceptance
-// tests exercise this exact parsing code rather than a copy.
+// Scrapingdog's advance_search Google endpoint fails intermittently with a
+// 400 "Something went wrong, please try again" after ~15-25s (measured
+// 2026-09-25: 4 of 7 identical calls). Failed calls are not billed, so retry
+// them while there is time left in the edge-function budget. The deadline is
+// shared by every search in one AI Overviews call (a no-overview query searches
+// twice), leaving room for the overview fetch inside the 150s function limit.
+const SD_SEARCH_MAX_ATTEMPTS = 4;
+const SD_SEARCH_BUDGET_MS = 95_000;
+// A failing attempt takes up to ~25s; don't start one that can't finish in time.
+const SD_SEARCH_ATTEMPT_MS = 25_000;
+
+async function scrapingdogSearch(
+  url: string,
+  deadline: number,
+): Promise<{ ok: true; data: any } | { ok: false; message: string }> {
+  let message = "unexpected error";
+  for (let attempt = 1; attempt <= SD_SEARCH_MAX_ATTEMPTS; attempt++) {
+    let status = 0;
+    try {
+      const res = await fetch(url);
+      status = res.status;
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) return { ok: true, data };
+      message = data?.message || data?.error || `HTTP ${res.status}`;
+    } catch (e: any) {
+      message = e?.message || String(e);
+    }
+    // Bad key / no plan won't fix itself on retry.
+    if (status === 401 || status === 403) break;
+    const wait = 2000 * attempt;
+    if (attempt === SD_SEARCH_MAX_ATTEMPTS || Date.now() + wait + SD_SEARCH_ATTEMPT_MS > deadline) break;
+    console.warn(`[google-serp] scrapingdog search attempt ${attempt} failed (${status || "network"}: ${message}); retrying`);
+    await new Promise((r) => setTimeout(r, wait));
+  }
+  return { ok: false, message };
+}
+
 export async function scrapingdogAiOverview(prompt: string, country?: string | null): Promise<SerpResult> {
   const key = Deno.env.get("SCRAPINGDOG_API_KEY");
   if (!key) {
@@ -296,37 +326,49 @@ export async function scrapingdogAiOverview(prompt: string, country?: string | n
     };
   }
 
-  // Step 1: Google search to obtain the AI-overview URL. advance_search=true
-  // is REQUIRED — without it Scrapingdog omits the ai_overview block entirely
-  // (verified live 2026-07-08; costs 10 credits instead of 5).
   const countryParam = country ? `&country=${country}` : "";
+  const searchDeadline = Date.now() + SD_SEARCH_BUDGET_MS;
   let searchData: any;
-  try {
-    const res = await fetch(
+  let aioUrl: string | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const search = await scrapingdogSearch(
       `https://api.scrapingdog.com/google?api_key=${key}&query=${encodeURIComponent(prompt)}&advance_search=true${countryParam}`,
+      searchDeadline,
     );
-    searchData = await res.json();
-    if (!res.ok) {
+    if (!search.ok) {
       return {
-        response: `Google search API error: ${searchData?.message || searchData?.error || "unexpected error"}`,
+        response: `Google search API error: ${search.message}`,
         citations: [],
       };
     }
-  } catch (e: any) {
-    return { response: `Failed to fetch search results: ${e.message}`, citations: [] };
+    searchData = search.data;
+
+    if (Array.isArray(searchData?.ai_overview?.text_blocks)) {
+      return {
+        response: renderTextBlocks(searchData.ai_overview.text_blocks),
+        citations: collectCitations(searchData.ai_overview, searchData.ai_overview.text_blocks),
+      };
+    }
+
+    const sdLink = searchData?.ai_overview?.scrapingdog_link;
+    if (typeof sdLink === "string" && sdLink.trim()) {
+      aioUrl = null;
+      searchData._sdLink = /api_key=/.test(sdLink)
+        ? sdLink
+        : sdLink + (sdLink.includes("?") ? "&" : "?") + `api_key=${key}`;
+      break;
+    }
+    aioUrl = findScrapingdogAioUrl(searchData);
+    if (aioUrl) break;
   }
 
-  // Inline AI overview: content is already in the search response — done in
-  // one call (SerpAPI always needs two; this is Scrapingdog's cost edge).
-  if (Array.isArray(searchData?.ai_overview?.text_blocks)) {
-    return {
-      response: renderTextBlocks(searchData.ai_overview.text_blocks),
-      citations: collectCitations(searchData.ai_overview, searchData.ai_overview.text_blocks),
-    };
-  }
+  const fetchUrl: string | null = searchData?._sdLink
+    ? searchData._sdLink
+    : aioUrl
+    ? `https://api.scrapingdog.com/google/ai_overview?api_key=${key}&url=${encodeURIComponent(aioUrl)}`
+    : null;
 
-  const aioUrl = findScrapingdogAioUrl(searchData);
-  if (!aioUrl) {
+  if (!fetchUrl) {
     return {
       response:
         "No AI overview available for this query. This could be because the query is too specific or AI overviews are not available for this topic.",
@@ -334,26 +376,25 @@ export async function scrapingdogAiOverview(prompt: string, country?: string | n
     };
   }
 
-  // Step 2: fetch the AI overview via its URL (expires ~2 min).
-  const res = await fetch(
-    `https://api.scrapingdog.com/google/ai_overview?api_key=${key}&url=${encodeURIComponent(aioUrl)}`,
-  );
-  const data = await res.json();
-  if (!res.ok) {
-    return {
-      response: `Google AI Overview API error: ${data?.message || data?.error || "unexpected error"}`,
-      citations: [],
-    };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await new Promise((r) => setTimeout(r, attempt === 0 ? 5000 : 4000));
+    const res = await fetch(fetchUrl);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        response: `Google AI Overview API error: ${data?.message || data?.error || "unexpected error"}`,
+        citations: [],
+      };
+    }
+    const ao = data.ai_overview ?? data;
+    if (Array.isArray(ao?.text_blocks)) {
+      return {
+        response: renderTextBlocks(ao.text_blocks),
+        citations: collectCitations(ao, ao.text_blocks),
+      };
+    }
+    if (ao?.error) return { response: `AI Overview error: ${ao.error}`, citations: [] };
   }
-
-  const ao = data.ai_overview ?? data;
-  if (Array.isArray(ao?.text_blocks)) {
-    return {
-      response: renderTextBlocks(ao.text_blocks),
-      citations: collectCitations(ao, ao.text_blocks),
-    };
-  }
-  if (ao?.error) return { response: `AI Overview error: ${ao.error}`, citations: [] };
   return { response: "No response generated", citations: [] };
 }
 
@@ -394,15 +435,13 @@ export async function scrapingdogAiMode(prompt: string, country?: string | null)
   return { response: "No response generated", citations: [] };
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 export async function fetchGoogleAiOverview(
   prompt: string,
   locationContext?: string | null,
 ): Promise<SerpResult> {
-  return provider() === "scrapingdog"
+  const p = providerFor("ai_overview");
+  console.log(`[google-serp] ai_overview provider=${p}`);
+  return p === "scrapingdog"
     ? scrapingdogAiOverview(prompt, locationToScrapingdogCountry(locationContext))
     : serpapiAiOverview(prompt);
 }
@@ -411,7 +450,9 @@ export async function fetchGoogleAiMode(
   prompt: string,
   locationContext?: string | null,
 ): Promise<SerpResult> {
-  return provider() === "scrapingdog"
+  const p = providerFor("ai_mode");
+  console.log(`[google-serp] ai_mode provider=${p}`);
+  return p === "scrapingdog"
     ? scrapingdogAiMode(prompt, locationToScrapingdogCountry(locationContext))
     : serpapiAiMode(prompt);
 }

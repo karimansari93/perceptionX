@@ -73,3 +73,101 @@ export function unwrapTranslateUrl(url: string): string {
   }
   return url;
 }
+
+function isGoogleHost(hostname: string): boolean {
+  return /(^|\.)google\.[a-z.]{2,}$/i.test(hostname);
+}
+
+function redirectParamsFor(hostname: string, pathname: string): string[] {
+  if (/^translate\.google/i.test(hostname) || /^translate\.googleusercontent/i.test(hostname)) {
+    return ["u"];
+  }
+  if (!isGoogleHost(hostname)) return [];
+  const path = pathname.replace(/\/+$/, "").toLowerCase();
+  if (path === "/url") return ["url", "q"];
+  if (path === "/imgres") return ["imgrefurl", "imgurl"];
+  return [];
+}
+
+function unwrapOnce(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  for (const param of redirectParamsFor(parsed.hostname, parsed.pathname)) {
+    const target = parsed.searchParams.get(param);
+    if (target && /^https?:\/\//i.test(target)) {
+      return target.split("#:~:text=")[0];
+    }
+  }
+  return url;
+}
+
+/**
+ * Unwrap Google redirect wrappers (google.*\/url?q=, /imgres, translate.google)
+ * to the real source URL, following up to three nested wrappers.
+ */
+export function unwrapRedirectUrl(url: string): string {
+  if (!url || typeof url !== "string") return url;
+  let current = url.trim();
+  for (let i = 0; i < 3; i++) {
+    const next = unwrapOnce(current);
+    if (next === current) break;
+    current = next;
+  }
+  return current;
+}
+
+const GOOGLE_UI_PATHS = /^\/(url|imgres|search|searchviewer|viewer|translate|async|sorry|preferences|setprefs)(\/|$)/i;
+
+/** False for non-http(s) URLs and Google UI pages that aren't real sources. */
+export function isUsableCitationUrl(url: string): boolean {
+  if (!url || typeof url !== "string") return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (isGoogleHost(parsed.hostname) && GOOGLE_UI_PATHS.test(parsed.pathname)) return false;
+  return true;
+}
+
+export function domainOfUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Unwrap, filter and dedupe citations before they are stored, keeping the
+ * domain in step with the unwrapped URL.
+ */
+export function normalizeCitationsForStorage<T extends { url?: string; domain?: string; title?: string }>(
+  citations: T[] | null | undefined,
+): Array<T & { url: string; domain: string; title: string }> {
+  if (!Array.isArray(citations)) return [];
+  const out: Array<T & { url: string; domain: string; title: string }> = [];
+  const seen = new Set<string>();
+  for (const citation of citations) {
+    if (!citation || typeof citation.url !== "string") continue;
+    const original = citation.url.trim();
+    if (!original) continue;
+    const url = unwrapRedirectUrl(original);
+    if (!isUsableCitationUrl(url)) continue;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const wasUnwrapped = url !== original;
+    const domain = (!wasUnwrapped && citation.domain) || domainOfUrl(url);
+    const title = !citation.title || /^Source from /.test(citation.title)
+      ? `Source from ${domain}`
+      : citation.title;
+    out.push({ ...citation, url, domain, title });
+  }
+  return out;
+}
