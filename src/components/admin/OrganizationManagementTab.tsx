@@ -82,8 +82,6 @@ export const OrganizationManagementTab = () => {
   // Modals
   const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
   const [showAddUserModal, setShowAddUserModal] = useState(false);
-  const [showMembersModal, setShowMembersModal] = useState(false);
-  const [showReportsModal, setShowReportsModal] = useState(false);
   // Org whose teammates are being invited on behalf of one of its Super Admins
   const [inviteOrg, setInviteOrg] = useState<Organization | null>(null);
 
@@ -128,10 +126,10 @@ export const OrganizationManagementTab = () => {
   // Auto-fill the report title from org + quarter + year + region until the
   // admin manually edits it. e.g. "Netflix — Q2 2026 — EMEA".
   useEffect(() => {
-    if (!showReportsModal || !reportsOrg || titleEdited) return;
+    if (!reportsOrg || titleEdited) return;
     const tail = reportRegion ? ` — ${reportRegion}` : '';
     setReportTitle(`${reportsOrg.name} — Q${reportQuarter} ${reportYear}${tail}`);
-  }, [showReportsModal, reportsOrg, reportYear, reportQuarter, reportRegion, titleEdited]);
+  }, [reportsOrg, reportYear, reportQuarter, reportRegion, titleEdited]);
 
   const loadData = async () => {
     setLoading(true);
@@ -286,9 +284,7 @@ export const OrganizationManagementTab = () => {
       setSelectedUser('');
       setSelectedRole('member');
       loadData();
-      if (showMembersModal) {
-        loadOrgMembers(selectedOrg.id);
-      }
+      loadOrgMembers(selectedOrg.id);
     } catch (error) {
       console.error('Error adding user:', error);
       toast.error('Failed to add user to organization');
@@ -373,7 +369,6 @@ export const OrganizationManagementTab = () => {
     setEditingRegions(false);
     setDraftRegions([]);
     setNewRegionInput('');
-    setShowReportsModal(true);
     loadOrgReports(org.id);
   };
 
@@ -618,10 +613,19 @@ export const OrganizationManagementTab = () => {
     }
   };
 
+  // The Reports and Members workspace sections load their data when opened.
+  const openSection = searchParams.get('section');
+  useEffect(() => {
+    const org = openOrgId ? organizations.find((o) => o.id === openOrgId) : undefined;
+    if (!org) return;
+    if (openSection === 'reports' && reportsOrg?.id !== org.id) handleOpenReports(org);
+    if (openSection === 'members' && selectedOrg?.id !== org.id) handleViewMembers(org);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openOrgId, openSection, organizations]);
+
   const handleViewMembers = (org: Organization) => {
     setSelectedOrg(org);
     loadOrgMembers(org.id);
-    setShowMembersModal(true);
   };
 
   if (loading) {
@@ -636,6 +640,369 @@ export const OrganizationManagementTab = () => {
   }
 
   const openOrg = openOrgId ? organizations.find((o) => o.id === openOrgId) ?? null : null;
+
+  // Reports section of the org workspace (was a modal).
+  const reportsPanel = (
+    <div className="space-y-4">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-nightsky">
+              Custom Reports — <span className="text-pink">{reportsOrg?.name}</span>
+            </h2>
+            <p className="text-sm text-slate-500">
+              Upload PDF or PPTX reports. Members of {reportsOrg?.name} will see them under Analyze → Reports.
+            </p>
+          </div>
+
+          <div className="space-y-5">
+            {/* Upload form */}
+            <div className="space-y-3 rounded-md border border-slate-200 p-3">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-slate-600">Year *</Label>
+                  <Select value={String(reportYear)} onValueChange={(v) => setReportYear(Number(v))}>
+                    <SelectTrigger className="h-9 text-sm border-slate-200"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {YEAR_OPTIONS.map(y => (
+                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-slate-600">Quarter *</Label>
+                  <Select value={String(reportQuarter)} onValueChange={(v) => setReportQuarter(Number(v))}>
+                    <SelectTrigger className="h-9 text-sm border-slate-200"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {QUARTERS.map(q => (
+                        <SelectItem key={q} value={String(q)}>Q{q}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium text-slate-600">Region *</Label>
+                    <button
+                      type="button"
+                      onClick={handleStartEditRegions}
+                      className="text-[10px] text-pink hover:underline"
+                    >
+                      Edit regions
+                    </button>
+                  </div>
+                  {reportsOrg && reportsOrg.regions.length > 0 ? (
+                    <Select value={reportRegion} onValueChange={setReportRegion}>
+                      <SelectTrigger className="h-9 text-sm border-slate-200"><SelectValue placeholder="Select region" /></SelectTrigger>
+                      <SelectContent>
+                        {reportsOrg.regions.map(r => (
+                          <SelectItem key={r} value={r}>{r}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="h-9 px-2 flex items-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-md">
+                      No regions yet — click "Edit regions"
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Regions editor */}
+              {editingRegions && (
+                <div className="space-y-2 rounded-md border border-pink/30 bg-pink/5 p-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium text-slate-700">Edit regions for {reportsOrg?.name}</Label>
+                    <button
+                      type="button"
+                      onClick={() => setEditingRegions(false)}
+                      className="text-[11px] text-slate-500 hover:underline"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {draftRegions.length === 0 && (
+                      <span className="text-[11px] text-slate-400">No regions yet. Add one below.</span>
+                    )}
+                    {draftRegions.map(r => (
+                      <span key={r} className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-md px-2 py-0.5 text-xs text-slate-700">
+                        {r}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveRegionDraft(r)}
+                          className="text-slate-400 hover:text-red-500"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="e.g. APAC, NAM, EU, US-East..."
+                      value={newRegionInput}
+                      onChange={(e) => setNewRegionInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); handleAddRegionDraft(); }
+                      }}
+                      className="h-8 text-sm"
+                    />
+                    <Button type="button" size="sm" variant="outline" onClick={handleAddRegionDraft} className="h-8 text-xs">
+                      Add
+                    </Button>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleSaveRegions}
+                      disabled={savingRegions}
+                      className="h-7 text-xs bg-pink hover:bg-pink/90 text-white"
+                    >
+                      {savingRegions ? 'Saving…' : 'Save regions'}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-slate-600">Title *</Label>
+                <Input
+                  placeholder="e.g. Q1 2026 Talent Perception Report"
+                  value={reportTitle}
+                  onChange={(e) => { setReportTitle(e.target.value); setTitleEdited(true); }}
+                  className="border-slate-200 h-9 text-sm"
+                />
+                <p className="text-[10px] text-slate-400">Auto-generated from selectors above — edit if needed.</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-slate-600">File (PDF or PPTX) *</Label>
+                <Input
+                  type="file"
+                  accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                  onChange={(e) => setReportFile(e.target.files?.[0] || null)}
+                  className="border-slate-200 h-9 text-sm"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  onClick={handleUploadReport}
+                  disabled={uploading || !reportTitle.trim() || !reportFile}
+                  size="sm"
+                  className="bg-pink hover:bg-pink/90 text-white"
+                >
+                  <Upload className="h-3.5 w-3.5 mr-1.5" />
+                  {uploading ? 'Uploading…' : 'Upload report'}
+                </Button>
+              </div>
+            </div>
+
+            {/* Existing reports */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  Uploaded reports ({orgReports.length})
+                </h4>
+                {orgReports.some(r => !r.thumbnail_path && r.mime_type === PDF_MIME) && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleBackfillThumbnails}
+                    disabled={backfilling}
+                    className="h-7 text-[11px]"
+                  >
+                    {backfilling
+                      ? `Generating ${backfillProgress?.done ?? 0}/${backfillProgress?.total ?? 0}…`
+                      : 'Generate missing thumbnails'}
+                  </Button>
+                )}
+              </div>
+              {reportsLoading ? (
+                <div className="text-center py-6 text-sm text-slate-400">Loading…</div>
+              ) : orgReports.length === 0 ? (
+                <div className="text-center py-6 text-sm text-slate-400 border border-dashed border-slate-200 rounded-md">
+                  No reports uploaded yet
+                </div>
+              ) : (
+                <div className="rounded-md border border-slate-200 overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-slate-200 hover:bg-transparent bg-slate-50/80">
+                        <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Title</TableHead>
+                        <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Period</TableHead>
+                        <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Region</TableHead>
+                        <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Type</TableHead>
+                        <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Uploaded</TableHead>
+                        <TableHead className="h-9 px-3 text-right text-xs font-medium text-slate-600">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {orgReports.map(report => (
+                        <TableRow key={report.id} className="border-slate-200">
+                          <TableCell className="py-2 px-3 text-sm">
+                            {editingReportId === report.id ? (
+                              <Input
+                                value={editingTitle}
+                                onChange={(e) => setEditingTitle(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSaveRename(report);
+                                  if (e.key === 'Escape') setEditingReportId(null);
+                                }}
+                                autoFocus
+                                className="h-7 text-sm"
+                              />
+                            ) : (
+                              <span className="font-medium text-slate-800">{report.title}</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-2 px-3 text-xs text-slate-500">
+                            {report.period_year && report.period_quarter
+                              ? `Q${report.period_quarter} ${report.period_year}`
+                              : '—'}
+                          </TableCell>
+                          <TableCell className="py-2 px-3 text-xs text-slate-500">
+                            {report.region ?? '—'}
+                          </TableCell>
+                          <TableCell className="py-2 px-3 text-xs text-slate-500">
+                            {report.mime_type === PPTX_MIME ? 'PPTX' : 'PDF'}
+                          </TableCell>
+                          <TableCell className="py-2 px-3 text-xs text-slate-500">
+                            {new Date(report.created_at).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell className="py-2 px-3 text-right">
+                            <div className="flex gap-1 justify-end">
+                              {editingReportId === report.id ? (
+                                <>
+                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleSaveRename(report)}>
+                                    <Check className="h-3.5 w-3.5 text-green-600" />
+                                  </Button>
+                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditingReportId(null)}>
+                                    <X className="h-3.5 w-3.5 text-slate-500" />
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleStartRename(report)}>
+                                    <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                                  </Button>
+                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0 hover:bg-red-50" onClick={() => handleDeleteReport(report)}>
+                                    <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+
+          </div>
+    </div>
+  );
+
+  // Members section of the org workspace (was a modal).
+  const membersPanel = (
+    <div className="space-y-4">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-nightsky">Members</h2>
+            <p className="text-sm text-slate-500">
+              Members of {selectedOrg?.name}
+            </p>
+          </div>
+          <div className="space-y-4">
+            {orgMembers.length === 0 ? (
+              <div className="text-center py-8 text-nightsky/60">
+                <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No members in this organization yet</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Joined</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {orgMembers.map(member => (
+                    <TableRow key={member.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Mail className="h-4 w-4 text-nightsky/60" />
+                          {member.email}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={member.role === 'owner' ? 'default' : 'secondary'} className={
+                          member.role === 'owner' ? 'bg-pink' :
+                          member.role === 'admin' ? 'bg-teal' : 'bg-nightsky/20 text-nightsky'
+                        }>
+                          {member.role === 'admin' ? 'Super Admin' : member.role === 'owner' ? 'Owner' : 'Member'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-nightsky/60">
+                        {new Date(member.joined_at).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {member.role !== 'owner' && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-silver"
+                              onClick={() => handleChangeMemberRole(member.id, member.role === 'admin' ? 'member' : 'admin')}
+                            >
+                              {member.role === 'admin' ? 'Make Member' : 'Make Super Admin'}
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-nightsky/40 hover:text-red-600 hover:bg-red-50 px-2"
+                            onClick={() => handleRemoveMember(member)}
+                            title="Remove from organization"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+            <div className="flex justify-between pt-4">
+              <Button
+                onClick={() => {
+                  setShowAddUserModal(true);
+                }}
+                size="sm"
+                className="bg-teal hover:bg-teal/90"
+              >
+                <UserPlus className="h-4 w-4 mr-2" />
+                Add User
+              </Button>
+              <Button
+                onClick={() => selectedOrg && setInviteOrg(selectedOrg)}
+                size="sm"
+                variant="outline"
+                className="border-slate-200 text-slate-600"
+                title="Email invites attributed to one of this organization's Super Admins"
+              >
+                <Mail className="h-4 w-4 mr-2" />
+                Invite as admin
+              </Button>
+            </div>
+          </div>
+    </div>
+  );
+
   const openWorkspace = (org: Organization) => setSearchParams({ tab: 'organizations', org: org.id });
   const closeWorkspace = () => setSearchParams({ tab: 'organizations' });
 
@@ -645,10 +1012,8 @@ export const OrganizationManagementTab = () => {
         <OrgWorkspace
           org={openOrg}
           onBack={closeWorkspace}
-          onOpenReports={() => handleOpenReports(openOrg)}
-          onViewMembers={() => handleViewMembers(openOrg)}
-          onAddUser={() => { setSelectedOrg(openOrg); setShowAddUserModal(true); }}
-          onInvite={() => setInviteOrg(openOrg)}
+          reportsPanel={reportsPanel}
+          membersPanel={membersPanel}
         />
       ) : (
       <>
@@ -918,369 +1283,7 @@ export const OrganizationManagementTab = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Reports Modal */}
-      <Dialog open={showReportsModal} onOpenChange={setShowReportsModal}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle className="text-nightsky">
-              Custom Reports — <span className="text-pink">{reportsOrg?.name}</span>
-            </DialogTitle>
-            <DialogDescription>
-              Upload PDF or PPTX reports. Members of {reportsOrg?.name} will see them under Analyze → Reports.
-            </DialogDescription>
-          </DialogHeader>
 
-          <div className="space-y-5">
-            {/* Upload form */}
-            <div className="space-y-3 rounded-md border border-slate-200 p-3">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium text-slate-600">Year *</Label>
-                  <Select value={String(reportYear)} onValueChange={(v) => setReportYear(Number(v))}>
-                    <SelectTrigger className="h-9 text-sm border-slate-200"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {YEAR_OPTIONS.map(y => (
-                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium text-slate-600">Quarter *</Label>
-                  <Select value={String(reportQuarter)} onValueChange={(v) => setReportQuarter(Number(v))}>
-                    <SelectTrigger className="h-9 text-sm border-slate-200"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {QUARTERS.map(q => (
-                        <SelectItem key={q} value={String(q)}>Q{q}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-medium text-slate-600">Region *</Label>
-                    <button
-                      type="button"
-                      onClick={handleStartEditRegions}
-                      className="text-[10px] text-pink hover:underline"
-                    >
-                      Edit regions
-                    </button>
-                  </div>
-                  {reportsOrg && reportsOrg.regions.length > 0 ? (
-                    <Select value={reportRegion} onValueChange={setReportRegion}>
-                      <SelectTrigger className="h-9 text-sm border-slate-200"><SelectValue placeholder="Select region" /></SelectTrigger>
-                      <SelectContent>
-                        {reportsOrg.regions.map(r => (
-                          <SelectItem key={r} value={r}>{r}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <div className="h-9 px-2 flex items-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-md">
-                      No regions yet — click "Edit regions"
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Regions editor */}
-              {editingRegions && (
-                <div className="space-y-2 rounded-md border border-pink/30 bg-pink/5 p-3">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-medium text-slate-700">Edit regions for {reportsOrg?.name}</Label>
-                    <button
-                      type="button"
-                      onClick={() => setEditingRegions(false)}
-                      className="text-[11px] text-slate-500 hover:underline"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {draftRegions.length === 0 && (
-                      <span className="text-[11px] text-slate-400">No regions yet. Add one below.</span>
-                    )}
-                    {draftRegions.map(r => (
-                      <span key={r} className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded-md px-2 py-0.5 text-xs text-slate-700">
-                        {r}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveRegionDraft(r)}
-                          className="text-slate-400 hover:text-red-500"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="e.g. APAC, NAM, EU, US-East..."
-                      value={newRegionInput}
-                      onChange={(e) => setNewRegionInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') { e.preventDefault(); handleAddRegionDraft(); }
-                      }}
-                      className="h-8 text-sm"
-                    />
-                    <Button type="button" size="sm" variant="outline" onClick={handleAddRegionDraft} className="h-8 text-xs">
-                      Add
-                    </Button>
-                  </div>
-                  <div className="flex justify-end gap-2 pt-1">
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={handleSaveRegions}
-                      disabled={savingRegions}
-                      className="h-7 text-xs bg-pink hover:bg-pink/90 text-white"
-                    >
-                      {savingRegions ? 'Saving…' : 'Save regions'}
-                    </Button>
-                  </div>
-                </div>
-              )}
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-slate-600">Title *</Label>
-                <Input
-                  placeholder="e.g. Q1 2026 Talent Perception Report"
-                  value={reportTitle}
-                  onChange={(e) => { setReportTitle(e.target.value); setTitleEdited(true); }}
-                  className="border-slate-200 h-9 text-sm"
-                />
-                <p className="text-[10px] text-slate-400">Auto-generated from selectors above — edit if needed.</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-slate-600">File (PDF or PPTX) *</Label>
-                <Input
-                  type="file"
-                  accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                  onChange={(e) => setReportFile(e.target.files?.[0] || null)}
-                  className="border-slate-200 h-9 text-sm"
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  onClick={handleUploadReport}
-                  disabled={uploading || !reportTitle.trim() || !reportFile}
-                  size="sm"
-                  className="bg-pink hover:bg-pink/90 text-white"
-                >
-                  <Upload className="h-3.5 w-3.5 mr-1.5" />
-                  {uploading ? 'Uploading…' : 'Upload report'}
-                </Button>
-              </div>
-            </div>
-
-            {/* Existing reports */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  Uploaded reports ({orgReports.length})
-                </h4>
-                {orgReports.some(r => !r.thumbnail_path && r.mime_type === PDF_MIME) && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={handleBackfillThumbnails}
-                    disabled={backfilling}
-                    className="h-7 text-[11px]"
-                  >
-                    {backfilling
-                      ? `Generating ${backfillProgress?.done ?? 0}/${backfillProgress?.total ?? 0}…`
-                      : 'Generate missing thumbnails'}
-                  </Button>
-                )}
-              </div>
-              {reportsLoading ? (
-                <div className="text-center py-6 text-sm text-slate-400">Loading…</div>
-              ) : orgReports.length === 0 ? (
-                <div className="text-center py-6 text-sm text-slate-400 border border-dashed border-slate-200 rounded-md">
-                  No reports uploaded yet
-                </div>
-              ) : (
-                <div className="rounded-md border border-slate-200 overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-slate-200 hover:bg-transparent bg-slate-50/80">
-                        <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Title</TableHead>
-                        <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Period</TableHead>
-                        <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Region</TableHead>
-                        <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Type</TableHead>
-                        <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Uploaded</TableHead>
-                        <TableHead className="h-9 px-3 text-right text-xs font-medium text-slate-600">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {orgReports.map(report => (
-                        <TableRow key={report.id} className="border-slate-200">
-                          <TableCell className="py-2 px-3 text-sm">
-                            {editingReportId === report.id ? (
-                              <Input
-                                value={editingTitle}
-                                onChange={(e) => setEditingTitle(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleSaveRename(report);
-                                  if (e.key === 'Escape') setEditingReportId(null);
-                                }}
-                                autoFocus
-                                className="h-7 text-sm"
-                              />
-                            ) : (
-                              <span className="font-medium text-slate-800">{report.title}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="py-2 px-3 text-xs text-slate-500">
-                            {report.period_year && report.period_quarter
-                              ? `Q${report.period_quarter} ${report.period_year}`
-                              : '—'}
-                          </TableCell>
-                          <TableCell className="py-2 px-3 text-xs text-slate-500">
-                            {report.region ?? '—'}
-                          </TableCell>
-                          <TableCell className="py-2 px-3 text-xs text-slate-500">
-                            {report.mime_type === PPTX_MIME ? 'PPTX' : 'PDF'}
-                          </TableCell>
-                          <TableCell className="py-2 px-3 text-xs text-slate-500">
-                            {new Date(report.created_at).toLocaleDateString()}
-                          </TableCell>
-                          <TableCell className="py-2 px-3 text-right">
-                            <div className="flex gap-1 justify-end">
-                              {editingReportId === report.id ? (
-                                <>
-                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleSaveRename(report)}>
-                                    <Check className="h-3.5 w-3.5 text-green-600" />
-                                  </Button>
-                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setEditingReportId(null)}>
-                                    <X className="h-3.5 w-3.5 text-slate-500" />
-                                  </Button>
-                                </>
-                              ) : (
-                                <>
-                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => handleStartRename(report)}>
-                                    <Pencil className="h-3.5 w-3.5 text-slate-500" />
-                                  </Button>
-                                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0 hover:bg-red-50" onClick={() => handleDeleteReport(report)}>
-                                    <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                                  </Button>
-                                </>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <Button onClick={() => setShowReportsModal(false)} variant="outline" className="border-silver">
-                Close
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* View Members Modal */}
-      <Dialog open={showMembersModal} onOpenChange={setShowMembersModal}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-nightsky">Organization Members</DialogTitle>
-            <DialogDescription>
-              Members of {selectedOrg?.name}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {orgMembers.length === 0 ? (
-              <div className="text-center py-8 text-nightsky/60">
-                <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>No members in this organization yet</p>
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Joined</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {orgMembers.map(member => (
-                    <TableRow key={member.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Mail className="h-4 w-4 text-nightsky/60" />
-                          {member.email}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={member.role === 'owner' ? 'default' : 'secondary'} className={
-                          member.role === 'owner' ? 'bg-pink' :
-                          member.role === 'admin' ? 'bg-teal' : 'bg-nightsky/20 text-nightsky'
-                        }>
-                          {member.role === 'admin' ? 'Super Admin' : member.role === 'owner' ? 'Owner' : 'Member'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-nightsky/60">
-                        {new Date(member.joined_at).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {member.role !== 'owner' && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="border-silver"
-                              onClick={() => handleChangeMemberRole(member.id, member.role === 'admin' ? 'member' : 'admin')}
-                            >
-                              {member.role === 'admin' ? 'Make Member' : 'Make Super Admin'}
-                            </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-nightsky/40 hover:text-red-600 hover:bg-red-50 px-2"
-                            onClick={() => handleRemoveMember(member)}
-                            title="Remove from organization"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-            <div className="flex justify-between pt-4">
-              <Button
-                onClick={() => {
-                  setShowAddUserModal(true);
-                }}
-                size="sm"
-                className="bg-teal hover:bg-teal/90"
-              >
-                <UserPlus className="h-4 w-4 mr-2" />
-                Add User
-              </Button>
-              <Button
-                onClick={() => setShowMembersModal(false)}
-                variant="outline"
-                className="border-silver"
-              >
-                Close
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

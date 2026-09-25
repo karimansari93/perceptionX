@@ -1,7 +1,8 @@
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Eye, FileText, Mail, UserPlus } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { OrganizationDataDetail } from './OrganizationDataDetail';
 import { CompanyBatchTab } from './CompanyBatchTab';
 import { ActivateTab } from './ActivateTab';
@@ -16,6 +17,8 @@ const SECTIONS = [
   { id: 'collection', label: 'Collection' },
   { id: 'health', label: 'Data health' },
   { id: 'recency', label: 'Recency' },
+  { id: 'members', label: 'Members' },
+  { id: 'reports', label: 'Reports' },
   { id: 'activate', label: 'Activate' },
 ] as const;
 type Section = (typeof SECTIONS)[number]['id'];
@@ -23,13 +26,12 @@ type Section = (typeof SECTIONS)[number]['id'];
 type Props = {
   org: { id: string; name: string; description?: string | null };
   onBack: () => void;
-  onOpenReports: () => void;
-  onViewMembers: () => void;
-  onAddUser: () => void;
-  onInvite: () => void;
+  /** Rendered by OrganizationManagementTab, which owns their state and dialogs. */
+  reportsPanel: ReactNode;
+  membersPanel: ReactNode;
 };
 
-export const OrgWorkspace = ({ org, onBack, onOpenReports, onViewMembers, onAddUser, onInvite }: Props) => {
+export const OrgWorkspace = ({ org, onBack, reportsPanel, membersPanel }: Props) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const raw = searchParams.get('section');
   const section: Section = SECTIONS.some((s) => s.id === raw) ? (raw as Section) : 'data';
@@ -53,30 +55,6 @@ export const OrgWorkspace = ({ org, onBack, onOpenReports, onViewMembers, onAddU
             <h1 className="text-2xl font-headline font-bold text-slate-900">{org.name}</h1>
             {org.description && <p className="text-sm text-slate-500 mt-0.5">{org.description}</p>}
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            <Button onClick={onOpenReports} size="sm" variant="outline" className="border-slate-200 text-slate-600 h-8 text-xs">
-              <FileText className="h-3.5 w-3.5 mr-1" />
-              Reports
-            </Button>
-            <Button onClick={onViewMembers} size="sm" variant="outline" className="border-slate-200 text-slate-600 h-8 text-xs">
-              <Eye className="h-3.5 w-3.5 mr-1" />
-              Members
-            </Button>
-            <Button onClick={onAddUser} size="sm" variant="outline" className="border-slate-200 text-slate-600 h-8 text-xs">
-              <UserPlus className="h-3.5 w-3.5 mr-1" />
-              Add user
-            </Button>
-            <Button
-              onClick={onInvite}
-              size="sm"
-              variant="outline"
-              className="border-slate-200 text-slate-600 h-8 text-xs"
-              title="Email invites attributed to one of this organization's Super Admins"
-            >
-              <Mail className="h-3.5 w-3.5 mr-1" />
-              Invite as admin
-            </Button>
-          </div>
         </div>
 
         <Tabs value={section} onValueChange={setSection}>
@@ -94,6 +72,8 @@ export const OrgWorkspace = ({ org, onBack, onOpenReports, onViewMembers, onAddU
       {section === 'collection' && <CompanyBatchTab lockedOrganizationId={org.id} />}
       {section === 'health' && <DataHealthTab organizationId={org.id} />}
       {section === 'recency' && <RecencyCoverageTab organizationId={org.id} />}
+      {section === 'members' && membersPanel}
+      {section === 'reports' && reportsPanel}
       {section === 'activate' && <ActivateTab organizationId={org.id} />}
     </div>
   );

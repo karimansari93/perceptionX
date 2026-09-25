@@ -56,9 +56,11 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
         {/* Logo/Header */}
         <div className="p-4 border-b border-slate-200">
           <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center">
-              <span className="text-sm font-semibold text-slate-600">pX</span>
-            </div>
+            <img
+              src="/logos/PinkBadge.png"
+              alt="PerceptionX"
+              className="w-9 h-9 rounded-lg object-cover"
+            />
             <div>
               <h1 className="text-sm font-headline font-semibold text-slate-800">PerceptionX</h1>
               <p className="text-xs text-slate-500">Admin</p>
