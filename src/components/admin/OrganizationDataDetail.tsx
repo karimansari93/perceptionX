@@ -54,6 +54,8 @@ interface OrganizationDataDetailProps {
   org: Organization;
   onBack: () => void;
   onViewCompany?: (company: OrgCompany) => void;
+  /** Hide the back button and title when rendered inside OrgWorkspace. */
+  hideHeader?: boolean;
 }
 
 function statusBadgeVariant(
@@ -68,7 +70,7 @@ function statusBadgeVariant(
   return promptsWithFullCoverage === promptCount ? 'default' : 'outline';
 }
 
-export const OrganizationDataDetail = ({ org, onBack, onViewCompany }: OrganizationDataDetailProps) => {
+export const OrganizationDataDetail = ({ org, onBack, onViewCompany, hideHeader }: OrganizationDataDetailProps) => {
   const [companies, setCompanies] = useState<OrgCompany[]>([]);
   const [countries, setCountries] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -266,19 +268,23 @@ export const OrganizationDataDetail = ({ org, onBack, onViewCompany }: Organizat
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <Button onClick={onBack} variant="ghost" className="text-nightsky/70 hover:text-nightsky -ml-2">
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Organizations
-        </Button>
-      </div>
+      {!hideHeader && (
+        <>
+          <div className="flex items-center justify-between">
+            <Button onClick={onBack} variant="ghost" className="text-nightsky/70 hover:text-nightsky -ml-2">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Organizations
+            </Button>
+          </div>
 
-      <div>
-        <h1 className="text-3xl font-headline font-bold text-nightsky">{org.name}</h1>
-        {org.description && (
-          <p className="text-nightsky/60 mt-1">{org.description}</p>
-        )}
-      </div>
+          <div>
+            <h1 className="text-3xl font-headline font-bold text-nightsky">{org.name}</h1>
+            {org.description && (
+              <p className="text-nightsky/60 mt-1">{org.description}</p>
+            )}
+          </div>
+        </>
+      )}
 
       {countries.length > 0 && (
         <Card className="border-none shadow-md">

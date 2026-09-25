@@ -36,10 +36,15 @@ type Organization = {
 // Component
 // ---------------------------------------------------------------------------
 
-export const CompanyBatchTab = () => {
+type CompanyBatchTabProps = {
+  /** When set (inside OrgWorkspace), actions are scoped to this org and the org picker is hidden. */
+  lockedOrganizationId?: string;
+};
+
+export const CompanyBatchTab = ({ lockedOrganizationId }: CompanyBatchTabProps = {}) => {
   const [mode, setMode] = useState<BatchMode>("idle");
   const [orgMode, setOrgMode] = useState<"existing_org" | "new_org">("existing_org");
-  const [organizationId, setOrganizationId] = useState("");
+  const [organizationId, setOrganizationId] = useState(lockedOrganizationId ?? "");
   const [newOrgName, setNewOrgName] = useState("");
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [recentResults, setRecentResults] = useState<any[]>([]);
@@ -98,7 +103,8 @@ export const CompanyBatchTab = () => {
 
   return (
     <div className="space-y-6">
-      {/* Step 1: Organization selector — always visible */}
+      {/* Step 1: Organization selector — hidden when the org is fixed */}
+      {!lockedOrganizationId && (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -149,6 +155,7 @@ export const CompanyBatchTab = () => {
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* Step 2: Action selector — shown when org is selected and mode is idle */}
       {orgMode === "existing_org" && organizationId && mode === "idle" && (
@@ -190,7 +197,8 @@ export const CompanyBatchTab = () => {
         />
       )}
 
-      {/* Bottom: Recent Results (always visible) */}
+      {/* Bottom: Recent Results — platform-wide, so hidden inside a single org's workspace */}
+      {!lockedOrganizationId && (
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Recent Results</CardTitle>
@@ -241,6 +249,7 @@ export const CompanyBatchTab = () => {
           </Table>
         </CardContent>
       </Card>
+      )}
     </div>
   );
 };

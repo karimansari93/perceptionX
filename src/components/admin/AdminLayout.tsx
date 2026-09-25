@@ -6,14 +6,12 @@ import {
   Briefcase,
   LogOut,
   Trophy,
-  Layers,
   Clock,
   Tags,
   LayoutDashboard,
   Send,
   HeartPulse,
-  ClipboardCheck,
-  Megaphone
+  ClipboardCheck
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -32,17 +30,29 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
     navigate('/auth');
   };
 
-  const navItems = [
-    { id: 'organizations', label: 'Organizations', icon: Briefcase },
-    { id: 'analysis-readiness', label: 'Analysis Readiness', icon: ClipboardCheck },
-    { id: 'data-health', label: 'Data Health', icon: HeartPulse },
-    { id: 'users', label: 'Users', icon: Users },
-    { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy },
-    { id: 'company-batch', label: 'Company Batch', icon: Layers },
-    { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock },
-    { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags },
-    { id: 'onboarding-forms', label: 'Onboarding Forms', icon: Send },
-    { id: 'activate', label: 'Activate', icon: Megaphone }
+  // Per-client tools (collection, Activate, members, reports) live inside the
+  // org workspace (Organizations → Open), so the sidebar only carries entry
+  // points and platform-wide tools. ?tab=company-batch and ?tab=activate still
+  // resolve for old links.
+  const navGroups = [
+    {
+      label: 'Clients',
+      items: [
+        { id: 'organizations', label: 'Organizations', icon: Briefcase },
+        { id: 'onboarding-forms', label: 'Onboarding Forms', icon: Send },
+      ],
+    },
+    {
+      label: 'Platform',
+      items: [
+        { id: 'analysis-readiness', label: 'Analysis Readiness', icon: ClipboardCheck },
+        { id: 'data-health', label: 'Data Health', icon: HeartPulse },
+        { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock },
+        { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags },
+        { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy },
+        { id: 'users', label: 'Users', icon: Users },
+      ],
+    },
   ];
 
   return (
@@ -64,27 +74,34 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-2">
-          <div className="space-y-0.5">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => onTabChange(item.id)}
-                  className={`
-                    w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-left transition-colors
-                    ${isActive
-                      ? 'bg-slate-100 text-slate-900'
-                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'
-                    }
-                  `}
-                >
-                  <Icon className={`h-4 w-4 flex-shrink-0 ${isActive ? 'text-slate-700' : 'text-slate-500'}`} />
-                  <span className="text-sm font-medium truncate">{item.label}</span>
-                </button>
-              );
-            })}
+          <div className="space-y-4">
+            {navGroups.map((group) => (
+              <div key={group.label} className="space-y-0.5">
+                <p className="px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  {group.label}
+                </p>
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => onTabChange(item.id)}
+                      className={`
+                        w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-left transition-colors
+                        ${isActive
+                          ? 'bg-slate-100 text-slate-900'
+                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'
+                        }
+                      `}
+                    >
+                      <Icon className={`h-4 w-4 flex-shrink-0 ${isActive ? 'text-slate-700' : 'text-slate-500'}`} />
+                      <span className="text-sm font-medium truncate">{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         </nav>
 

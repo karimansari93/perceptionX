@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -11,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X } from 'lucide-react';
-import { OrganizationDataDetail } from './OrganizationDataDetail';
+import { OrgWorkspace } from './OrgWorkspace';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
 import { generatePdfThumbnail } from '@/utils/pdfThumbnail';
 
@@ -66,7 +67,10 @@ export const OrganizationManagementTab = () => {
   const [filteredOrganizations, setFilteredOrganizations] = useState<Organization[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
-  const [selectedOrgForData, setSelectedOrgForData] = useState<Organization | null>(null);
+  // The open org lives in the URL (?org=) so refresh and links keep the admin
+  // inside that client's workspace.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openOrgId = searchParams.get('org');
   const [orgMembers, setOrgMembers] = useState<OrganizationMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -627,21 +631,23 @@ export const OrganizationManagementTab = () => {
     );
   }
 
-  if (selectedOrgForData) {
-    return (
-      <OrganizationDataDetail
-        org={{
-          id: selectedOrgForData.id,
-          name: selectedOrgForData.name,
-          description: selectedOrgForData.description ?? undefined,
-        }}
-        onBack={() => setSelectedOrgForData(null)}
-      />
-    );
-  }
+  const openOrg = openOrgId ? organizations.find((o) => o.id === openOrgId) ?? null : null;
+  const openWorkspace = (org: Organization) => setSearchParams({ tab: 'organizations', org: org.id });
+  const closeWorkspace = () => setSearchParams({ tab: 'organizations' });
 
   return (
     <div className="space-y-4">
+      {openOrg ? (
+        <OrgWorkspace
+          org={openOrg}
+          onBack={closeWorkspace}
+          onOpenReports={() => handleOpenReports(openOrg)}
+          onViewMembers={() => handleViewMembers(openOrg)}
+          onAddUser={() => { setSelectedOrg(openOrg); setShowAddUserModal(true); }}
+          onInvite={() => setInviteOrg(openOrg)}
+        />
+      ) : (
+      <>
       {/* Header - compact */}
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -720,7 +726,13 @@ export const OrganizationManagementTab = () => {
                       <TableCell className="py-2 px-3 text-sm">
                         <div className="flex items-center gap-2">
                           <Briefcase className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />
-                          <span className="font-medium text-slate-800">{org.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => openWorkspace(org)}
+                            className="font-medium text-slate-800 hover:text-pink hover:underline text-left"
+                          >
+                            {org.name}
+                          </button>
                         </div>
                       </TableCell>
                       <TableCell className="py-2 px-3 text-xs font-mono text-slate-500">{org.id}</TableCell>
@@ -742,35 +754,9 @@ export const OrganizationManagementTab = () => {
                       </TableCell>
                       <TableCell className="py-2 px-3 text-right">
                         <div className="flex gap-1.5 justify-end flex-wrap">
-                          <Button onClick={() => setSelectedOrgForData(org)} size="sm" className="bg-pink hover:bg-pink/90 text-white h-7 text-xs">
+                          <Button onClick={() => openWorkspace(org)} size="sm" className="bg-pink hover:bg-pink/90 text-white h-7 text-xs">
                             <Database className="h-3.5 w-3.5 mr-1" />
-                            Manage data
-                          </Button>
-                          <Button onClick={() => handleOpenReports(org)} size="sm" variant="outline" className="border-slate-200 text-slate-600 h-7 text-xs">
-                            <FileText className="h-3.5 w-3.5 mr-1" />
-                            Reports
-                          </Button>
-                          <Button onClick={() => handleViewMembers(org)} size="sm" variant="outline" className="border-slate-200 text-slate-600 h-7 text-xs">
-                            <Eye className="h-3.5 w-3.5 mr-1" />
-                            View Members
-                          </Button>
-                          <Button
-                            onClick={() => { setSelectedOrg(org); setShowAddUserModal(true); }}
-                            size="sm"
-                            className="bg-teal hover:bg-teal/90 text-white h-7 text-xs"
-                          >
-                            <UserPlus className="h-3.5 w-3.5 mr-1" />
-                            Add User
-                          </Button>
-                          <Button
-                            onClick={() => setInviteOrg(org)}
-                            size="sm"
-                            variant="outline"
-                            className="border-slate-200 text-slate-600 h-7 text-xs"
-                            title="Email invites attributed to one of this organization's Super Admins"
-                          >
-                            <Mail className="h-3.5 w-3.5 mr-1" />
-                            Invite as admin
+                            Open
                           </Button>
                         </div>
                       </TableCell>
@@ -782,6 +768,9 @@ export const OrganizationManagementTab = () => {
           )}
         </CardContent>
       </Card>
+
+      </>
+      )}
 
       {/* Invite teammates on behalf of one of the org's Super Admins */}
       <InviteTeammatesModal
