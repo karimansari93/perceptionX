@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { corsHeaders } from "../_shared/cors.ts"
+import { claudeApiKeys, claudeFetch } from "../_shared/claude-keys.ts"
 
 // TODO [12.11]: In-memory rate limiter is non-functional — Deno edge function state is not
 // shared across invocations or instances, so each cold start gets a fresh counter.
@@ -75,9 +76,7 @@ serve(async (req) => {
       throw new Error('Prompt is required');
     }
 
-    const claudeApiKey = Deno.env.get('CLAUDE_API_KEY')
-
-    if (!claudeApiKey) {
+    if (claudeApiKeys().length === 0) {
       console.error('CLAUDE_API_KEY not found in environment variables');
       throw new Error('Claude API key not configured')
     }
@@ -118,11 +117,10 @@ serve(async (req) => {
 
     console.log('Claude request body:', JSON.stringify(requestBody, null, 2));
 
-    const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+    const claudeResponse = await claudeFetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': claudeApiKey,
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify(requestBody)
