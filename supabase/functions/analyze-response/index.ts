@@ -265,6 +265,25 @@ serve(async (req) => {
         console.warn('Error triggering AI thematic analysis:', analysisError);
       }
 
+      // Score recency for this response's sources as soon as it lands, so a
+      // collection run no longer needs a separate rescore from Recency
+      // Coverage. extract-recency-scores checks url_recency_cache first, so
+      // only never-seen URLs cost a fetch; any it can't resolve (rate limit,
+      // timeout) stay uncached and the Recency Coverage rescore still picks
+      // them up. waitUntil keeps the isolate alive until the call is sent.
+      const recencyCitations = citationsForDb.map((c) => ({ url: c.url, domain: c.domain, title: c.title }));
+      if (recencyCitations.length > 0) {
+        const recencyPromise = supabase.functions
+          .invoke('extract-recency-scores', { body: { citations: recencyCitations } })
+          .catch((error) => console.warn('Failed to trigger recency scoring:', error));
+        try {
+          // @ts-ignore — EdgeRuntime is provided by the Supabase Deno runtime
+          (globalThis as any).EdgeRuntime?.waitUntil(recencyPromise);
+        } catch {
+          // Not available locally; the invoke above is already in flight.
+        }
+      }
+
       return new Response(
         JSON.stringify({
           success: true,
