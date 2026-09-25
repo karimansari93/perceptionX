@@ -605,7 +605,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     for (const r of streamInScope) {
       const cp: any = r.confirmed_prompts;
       const attrId = normalizeAttributeId(cp?.attribute_id) ?? getAttributeIdByName(cp?.prompt_theme);
-      if (!attrId || isExcludedAiModel(r.ai_model)) continue;
+      if (!attrId || isExcludedAiModel(r.ai_model, r.response_month)) continue;
       let agg = out.get(attrId);
       if (!agg) {
         agg = { domainCounts: new Map(), models: new Set(), recencySum: 0, recencyN: 0 };
