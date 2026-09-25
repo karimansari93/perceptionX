@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useAdminCompanyCollection } from '@/hooks/useAdminCompanyCollection';
 import { OrgReadinessPanel } from './OrgReadinessPanel';
-import { coverageLabel, EXPECTED_MODELS_PER_PROMPT } from '@/utils/collectionCoverage';
+import { coverageLabel } from '@/utils/collectionCoverage';
 import {
   Dialog,
   DialogContent,
@@ -49,6 +49,10 @@ export interface OrgCompany {
   response_count: number;
   /** Prompts that have >= 5 model responses each (required for Completed) */
   prompts_with_full_coverage: number;
+  /** Models collected in the company's latest month — what "complete" is judged against */
+  expected_models: string[];
+  /** Latest collection month (YYYY-MM-DD), or null if never collected */
+  latest_month: string | null;
 }
 
 interface OrganizationDataDetailProps {
@@ -124,13 +128,13 @@ export const OrganizationDataDetail = ({ org, onBack, onViewCompany, hideHeader 
         // multi-market companies exceeds it and the counts under-report.
         supabase
           .from('confirmed_prompts')
-          .select('company_id, id')
+          .select('company_id, id, location_context')
           .eq('is_active', true)
           .in('company_id', companyIds)
           .range(0, 49999),
         supabase
           .from('prompt_responses')
-          .select('company_id, confirmed_prompt_id')
+          .select('company_id, confirmed_prompt_id, ai_model, response_month')
           .in('company_id', companyIds)
           .range(0, 99999),
       ]);
@@ -151,9 +155,18 @@ export const OrganizationDataDetail = ({ org, onBack, onViewCompany, hideHeader 
         }
       });
 
+      // Markets come from the prompts themselves (location_context): that is
+      // every market a company is tracked in, whichever flow created it.
+      // user_onboarding.country only exists for Company Batch setups and holds
+      // one market, so it's the fallback for companies without prompts.
+      const marketsByCompany = new Map<string, Set<string>>();
       const promptCountByCompany = new Map<string, number>();
       const promptIdsByCompany = new Map<string, Set<string>>();
-      (promptsRes.data || []).forEach((row: { company_id?: string; id?: string }) => {
+      (promptsRes.data || []).forEach((row: { company_id?: string; id?: string; location_context?: string | null }) => {
+        if (row.company_id && row.location_context) {
+          if (!marketsByCompany.has(row.company_id)) marketsByCompany.set(row.company_id, new Set());
+          marketsByCompany.get(row.company_id)!.add(row.location_context);
+        }
         if (row.company_id) {
           promptCountByCompany.set(row.company_id, (promptCountByCompany.get(row.company_id) ?? 0) + 1);
           if (row.id) {
@@ -162,24 +175,44 @@ export const OrganizationDataDetail = ({ org, onBack, onViewCompany, hideHeader 
           }
         }
       });
+      // "Complete" is judged on the company's latest collection month, against
+      // the models actually collected that month — not a fixed model count,
+      // which went stale whenever the collected model set changed.
+      type ResponseRow = { company_id?: string; confirmed_prompt_id?: string; ai_model?: string; response_month?: string | null };
+      const responseRows = (responsesRes.data || []) as ResponseRow[];
       const responseCountByCompany = new Map<string, number>();
-      const responseCountByPrompt = new Map<string, number>();
-      (responsesRes.data || []).forEach((row: { company_id?: string; confirmed_prompt_id?: string }) => {
-        if (row.company_id) {
-          responseCountByCompany.set(row.company_id, (responseCountByCompany.get(row.company_id) ?? 0) + 1);
-          if (row.confirmed_prompt_id) {
-            const key = `${row.company_id}:${row.confirmed_prompt_id}`;
-            responseCountByPrompt.set(key, (responseCountByPrompt.get(key) ?? 0) + 1);
-          }
+      const latestMonthByCompany = new Map<string, string>();
+      for (const row of responseRows) {
+        if (!row.company_id) continue;
+        responseCountByCompany.set(row.company_id, (responseCountByCompany.get(row.company_id) ?? 0) + 1);
+        const m = row.response_month;
+        if (m && (!latestMonthByCompany.has(row.company_id) || m > latestMonthByCompany.get(row.company_id)!)) {
+          latestMonthByCompany.set(row.company_id, m);
         }
-      });
+      }
+      const modelsByCompany = new Map<string, Set<string>>();
+      const modelsByPrompt = new Map<string, Set<string>>();
+      for (const row of responseRows) {
+        if (!row.company_id || !row.ai_model || row.response_month !== latestMonthByCompany.get(row.company_id)) continue;
+        if (!modelsByCompany.has(row.company_id)) modelsByCompany.set(row.company_id, new Set());
+        modelsByCompany.get(row.company_id)!.add(row.ai_model);
+        if (row.confirmed_prompt_id) {
+          const key = `${row.company_id}:${row.confirmed_prompt_id}`;
+          if (!modelsByPrompt.has(key)) modelsByPrompt.set(key, new Set());
+          modelsByPrompt.get(key)!.add(row.ai_model);
+        }
+      }
 
       const promptsWithFullCoverageByCompany = new Map<string, number>();
       promptIdsByCompany.forEach((promptIds, companyId) => {
+        const expected = modelsByCompany.get(companyId);
         let full = 0;
-        promptIds.forEach((pid) => {
-          if ((responseCountByPrompt.get(`${companyId}:${pid}`) ?? 0) >= EXPECTED_MODELS_PER_PROMPT) full++;
-        });
+        if (expected && expected.size > 0) {
+          promptIds.forEach((pid) => {
+            const got = modelsByPrompt.get(`${companyId}:${pid}`);
+            if (got && [...expected].every((m) => got.has(m))) full++;
+          });
+        }
         promptsWithFullCoverageByCompany.set(companyId, full);
       });
 
@@ -194,17 +227,23 @@ export const OrganizationDataDetail = ({ org, onBack, onViewCompany, hideHeader 
           industry: row.industry,
           industries: Array.from(industriesMap.get(row.id) || (row.industry ? [row.industry] : [])),
           organization_id: org.id,
-          country: countryByCompany.get(row.id) ?? null,
+          country: marketsByCompany.has(row.id)
+            ? Array.from(marketsByCompany.get(row.id)!).sort().join(', ')
+            : countryByCompany.get(row.id) ?? null,
           data_collection_status: row.data_collection_status ?? null,
           last_updated: row.updated_at ?? null,
           prompt_count: promptCount,
           response_count: responseCount,
           prompts_with_full_coverage: promptsWithFullCoverage,
+          expected_models: Array.from(modelsByCompany.get(row.id) ?? []).sort(),
+          latest_month: latestMonthByCompany.get(row.id) ?? null,
         };
       });
 
       setCompanies(list);
-      setCountries(Array.from(countrySet).sort());
+      const allMarkets = new Set<string>(countrySet);
+      marketsByCompany.forEach((ms) => ms.forEach((m) => allMarkets.add(m)));
+      setCountries(Array.from(allMarkets).sort());
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       const details = e && typeof e === 'object' && 'message' in e ? (e as { message?: string }).message : msg;
@@ -362,7 +401,7 @@ export const OrganizationDataDetail = ({ org, onBack, onViewCompany, hideHeader 
                           )}
                           title={
                             company.prompt_count > 0
-                              ? `${company.prompts_with_full_coverage}/${company.prompt_count} prompts have 5 model responses each`
+                              ? `${company.prompts_with_full_coverage}/${company.prompt_count} prompts have a response from every model collected in ${company.latest_month?.slice(0, 7) ?? 'the latest month'} (${company.expected_models.join(', ') || 'none yet'})`
                               : 'No active prompts'
                           }
                         >
