@@ -116,7 +116,12 @@ const IssueBadge = ({ kind, count }: { kind: string; count?: number }) => {
   );
 };
 
-export const DataHealthTab = () => {
+type DataHealthTabProps = {
+  /** When set (inside OrgWorkspace), opens straight into this org's drilldown. */
+  organizationId?: string;
+};
+
+export const DataHealthTab = ({ organizationId }: DataHealthTabProps = {}) => {
   const [orgs, setOrgs] = useState<OrgHealthRow[]>([]);
   const [mvStatus, setMvStatus] = useState<MvStatusRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -138,8 +143,13 @@ export const DataHealthTab = () => {
       ]);
       if (overviewRes.error) throw overviewRes.error;
       if (mvRes.error) throw mvRes.error;
-      setOrgs((overviewRes.data as unknown as OrgHealthRow[]) || []);
+      const loadedOrgs = (overviewRes.data as unknown as OrgHealthRow[]) || [];
+      setOrgs(loadedOrgs);
       setMvStatus((mvRes.data as unknown as MvStatusRow[]) || []);
+      if (organizationId) {
+        const own = loadedOrgs.find((o) => o.organization_id === organizationId);
+        if (own) openOrg(own);
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`Failed to load data health: ${msg}`);
@@ -223,22 +233,28 @@ export const DataHealthTab = () => {
     );
   }
 
+  if (organizationId && !selectedOrg) {
+    return <p className="text-sm text-slate-500">No prompts or collected data for this client yet.</p>;
+  }
+
   // ---------------------------------------------------------------- drilldown
   if (selectedOrg) {
     const totalIssues = visibleCombos.reduce((n, c) => n + c.issues.length, 0);
     return (
       <div className="space-y-4">
-        <Button
-          onClick={() => {
-            setSelectedOrg(null);
-            setCombos([]);
-          }}
-          variant="ghost"
-          className="text-slate-600 hover:text-slate-900 -ml-2"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to organizations
-        </Button>
+        {!organizationId && (
+          <Button
+            onClick={() => {
+              setSelectedOrg(null);
+              setCombos([]);
+            }}
+            variant="ghost"
+            className="text-slate-600 hover:text-slate-900 -ml-2"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to organizations
+          </Button>
+        )}
 
         <div className="flex items-end justify-between flex-wrap gap-3">
           <div>

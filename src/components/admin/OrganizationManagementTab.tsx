@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X } from 'lucide-react';
 import { OrgWorkspace } from './OrgWorkspace';
+import { AnalysisReadinessTab } from './AnalysisReadinessTab';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
 import { generatePdfThumbnail } from '@/utils/pdfThumbnail';
 
@@ -74,6 +75,9 @@ export const OrganizationManagementTab = () => {
   const [orgMembers, setOrgMembers] = useState<OrganizationMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  // Platform-wide checks (collection running, theme backlog, rollup refresh
+  // errors), formerly the Analysis Readiness tab. Loaded only when opened.
+  const [showPlatformStatus, setShowPlatformStatus] = useState(false);
   
   // Modals
   const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
@@ -665,6 +669,24 @@ export const OrganizationManagementTab = () => {
           </Button>
         </div>
       </div>
+
+      <Card className="border border-slate-200 shadow-sm bg-white">
+        <button
+          type="button"
+          onClick={() => setShowPlatformStatus((v) => !v)}
+          className="w-full flex items-center justify-between px-4 py-3 text-left"
+        >
+          <span className="text-sm font-medium text-slate-700">Platform status</span>
+          <span className="text-xs text-slate-500">
+            {showPlatformStatus ? 'Hide' : 'Show collection, theme and dashboard refresh status across all clients'}
+          </span>
+        </button>
+        {showPlatformStatus && (
+          <CardContent className="pt-0">
+            <AnalysisReadinessTab />
+          </CardContent>
+        )}
+      </Card>
 
       {/* Search - compact */}
       <Card className="border border-slate-200 shadow-sm bg-white">

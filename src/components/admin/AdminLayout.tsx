@@ -6,12 +6,9 @@ import {
   Briefcase,
   LogOut,
   Trophy,
-  Clock,
   Tags,
   LayoutDashboard,
-  Send,
-  HeartPulse,
-  ClipboardCheck
+  Send
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -30,10 +27,10 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
     navigate('/auth');
   };
 
-  // Per-client tools (collection, Activate, members, reports) live inside the
-  // org workspace (Organizations → Open), so the sidebar only carries entry
-  // points and platform-wide tools. ?tab=company-batch and ?tab=activate still
-  // resolve for old links.
+  // Per-client tools (collection, data health, recency, Activate, members,
+  // reports) live inside the org workspace (Organizations → Open); platform
+  // status sits at the top of the Organizations list. Old ?tab= links for the
+  // moved tools still resolve.
   const navGroups = [
     {
       label: 'Clients',
@@ -46,9 +43,6 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
     {
       label: 'Platform',
       items: [
-        { id: 'analysis-readiness', label: 'Analysis Readiness', icon: ClipboardCheck },
-        { id: 'data-health', label: 'Data Health', icon: HeartPulse },
-        { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock },
         { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags },
         { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy },
       ],

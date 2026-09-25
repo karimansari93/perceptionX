@@ -62,8 +62,13 @@ interface CoverageRow {
 
 type View = 'overview' | 'drilldown' | 'manual';
 
-export const RecencyCoverageTab = () => {
-  const [view, setView] = useState<View>('overview');
+type RecencyCoverageTabProps = {
+  /** When set (inside OrgWorkspace), opens straight into this org's drilldown. */
+  organizationId?: string;
+};
+
+export const RecencyCoverageTab = ({ organizationId }: RecencyCoverageTabProps = {}) => {
+  const [view, setView] = useState<View>(organizationId ? 'drilldown' : 'overview');
   const [rows, setRows] = useState<CoverageRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -84,7 +89,11 @@ export const RecencyCoverageTab = () => {
       toast.error(`Failed to load coverage: ${error.message}`);
       setRows([]);
     } else {
-      setRows((data as unknown as CoverageRow[]) || []);
+      const loaded = (data as unknown as CoverageRow[]) || [];
+      setRows(loaded);
+      if (organizationId) {
+        setSelectedOrg(loaded.find((r) => r.organization_id === organizationId) ?? null);
+      }
     }
     setLoading(false);
   };
@@ -124,11 +133,27 @@ export const RecencyCoverageTab = () => {
     !!refreshState?.requested_at &&
     (!refreshState.last_finished || refreshState.requested_at > refreshState.last_finished);
 
+  if (organizationId && loading) {
+    return (
+      <div className="p-8 flex justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  if (organizationId && !selectedOrg) {
+    return (
+      <p className="text-sm text-slate-500">
+        No cited sources for this client in the recency list yet. The list rebuilds hourly after collection.
+      </p>
+    );
+  }
+
   if (view === 'drilldown' && selectedOrg) {
     return (
       <OrgDrillDown
         org={selectedOrg}
-        onBack={() => {
+        onBack={organizationId ? undefined : () => {
           setView('overview');
           setSelectedOrg(null);
         }}
@@ -315,7 +340,8 @@ const OrgDrillDown = ({
   onOpenManual,
 }: {
   org: CoverageRow;
-  onBack: () => void;
+  /** Omitted inside OrgWorkspace, where there is no list to go back to. */
+  onBack?: () => void;
   onOpenManual: () => void;
 }) => {
   const [missing, setMissing] = useState<string[]>([]);
@@ -550,10 +576,12 @@ const OrgDrillDown = ({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={onBack}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
+          {onBack && (
+            <Button variant="ghost" size="sm" onClick={onBack}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Button>
+          )}
           <div>
             <h2 className="text-xl font-semibold text-slate-800">
               {org.organization_name}

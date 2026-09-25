@@ -5,6 +5,8 @@ import { ArrowLeft, Eye, FileText, Mail, UserPlus } from 'lucide-react';
 import { OrganizationDataDetail } from './OrganizationDataDetail';
 import { CompanyBatchTab } from './CompanyBatchTab';
 import { ActivateTab } from './ActivateTab';
+import { DataHealthTab } from './DataHealthTab';
+import { RecencyCoverageTab } from './RecencyCoverageTab';
 
 // Everything an admin does for ONE client lives here, so the sidebar only
 // carries platform-wide tools. The section is kept in the URL (?section=)
@@ -12,6 +14,8 @@ import { ActivateTab } from './ActivateTab';
 const SECTIONS = [
   { id: 'data', label: 'Companies & data' },
   { id: 'collection', label: 'Collection' },
+  { id: 'health', label: 'Data health' },
+  { id: 'recency', label: 'Recency' },
   { id: 'activate', label: 'Activate' },
 ] as const;
 type Section = (typeof SECTIONS)[number]['id'];
@@ -88,6 +92,8 @@ export const OrgWorkspace = ({ org, onBack, onOpenReports, onViewMembers, onAddU
 
       {section === 'data' && <OrganizationDataDetail org={org} onBack={onBack} hideHeader />}
       {section === 'collection' && <CompanyBatchTab lockedOrganizationId={org.id} />}
+      {section === 'health' && <DataHealthTab organizationId={org.id} />}
+      {section === 'recency' && <RecencyCoverageTab organizationId={org.id} />}
       {section === 'activate' && <ActivateTab organizationId={org.id} />}
     </div>
   );
