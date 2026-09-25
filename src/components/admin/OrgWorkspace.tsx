@@ -1,22 +1,22 @@
+import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { ReactNode } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { OrganizationDataDetail } from './OrganizationDataDetail';
+import { OrgCompaniesPanel } from './OrgCompaniesPanel';
 import { CompanyBatchTab } from './CompanyBatchTab';
 import { ActivateTab } from './ActivateTab';
-import { DataHealthTab } from './DataHealthTab';
 import { RecencyCoverageTab } from './RecencyCoverageTab';
 import { OrgLogo } from './OrgLogo';
+import { WorkspaceActionsSlot } from './WorkspaceActions';
 
 // Everything an admin does for ONE client lives here, so the sidebar only
 // carries platform-wide tools. The section is kept in the URL (?section=)
 // next to ?org= so refresh and shared links land in the same place.
 const SECTIONS = [
-  { id: 'data', label: 'Companies & data' },
+  { id: 'companies', label: 'Companies' },
   { id: 'collection', label: 'Collection' },
-  { id: 'health', label: 'Data health' },
   { id: 'recency', label: 'Recency' },
   { id: 'members', label: 'Members' },
   { id: 'reports', label: 'Reports' },
@@ -35,8 +35,10 @@ type Props = {
 
 export const OrgWorkspace = ({ org, logoSrc, onBack, reportsPanel, membersPanel }: Props) => {
   const [searchParams, setSearchParams] = useSearchParams();
+  // Right end of the tab bar; sections portal their buttons into it.
+  const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const raw = searchParams.get('section');
-  const section: Section = SECTIONS.some((s) => s.id === raw) ? (raw as Section) : 'data';
+  const section: Section = SECTIONS.some((s) => s.id === raw) ? (raw as Section) : 'companies';
 
   const setSection = (next: string) => {
     const params = new URLSearchParams(searchParams);
@@ -62,24 +64,29 @@ export const OrgWorkspace = ({ org, logoSrc, onBack, reportsPanel, membersPanel 
           </div>
         </div>
 
-        <Tabs value={section} onValueChange={setSection}>
-          <TabsList>
-            {SECTIONS.map((s) => (
-              <TabsTrigger key={s.id} value={s.id}>
-                {s.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Tabs value={section} onValueChange={setSection}>
+            <TabsList>
+              {SECTIONS.map((s) => (
+                <TabsTrigger key={s.id} value={s.id}>
+                  {s.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          <div ref={setActionsSlot} className="flex flex-wrap items-center gap-2 empty:hidden" />
+        </div>
       </div>
 
-      {section === 'data' && <OrganizationDataDetail org={org} onBack={onBack} hideHeader />}
+      <WorkspaceActionsSlot.Provider value={actionsSlot}>
+
+      {section === 'companies' && <OrgCompaniesPanel organizationId={org.id} />}
       {section === 'collection' && <CompanyBatchTab lockedOrganizationId={org.id} />}
-      {section === 'health' && <DataHealthTab organizationId={org.id} />}
       {section === 'recency' && <RecencyCoverageTab organizationId={org.id} />}
       {section === 'members' && membersPanel}
       {section === 'reports' && reportsPanel}
       {section === 'activate' && <ActivateTab organizationId={org.id} />}
+      </WorkspaceActionsSlot.Provider>
     </div>
   );
 };

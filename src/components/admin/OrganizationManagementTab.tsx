@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X, Star, ArrowRight } from 'lucide-react';
 import { OrgWorkspace } from './OrgWorkspace';
 import { OrgLogo, useOrgLogos } from './OrgLogo';
+import { WorkspaceActions } from './WorkspaceActions';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
 import { generatePdfThumbnail } from '@/utils/pdfThumbnail';
 
@@ -996,7 +997,7 @@ export const OrganizationManagementTab = () => {
                 </TableBody>
               </Table>
             )}
-            <div className="flex justify-between pt-4">
+            <WorkspaceActions fallbackClassName="flex justify-between pt-4">
               <Button
                 onClick={() => {
                   setShowAddUserModal(true);
@@ -1017,7 +1018,7 @@ export const OrganizationManagementTab = () => {
                 <Mail className="h-4 w-4 mr-2" />
                 Invite as admin
               </Button>
-            </div>
+            </WorkspaceActions>
           </div>
     </div>
   );

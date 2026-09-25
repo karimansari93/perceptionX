@@ -1,3 +1,4 @@
+import { WorkspaceActions } from './WorkspaceActions';
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -160,9 +161,9 @@ export const CompanyBatchTab = ({ lockedOrganizationId }: CompanyBatchTabProps =
       {/* Step 2: Action selector — shown when org is selected and mode is idle */}
       {orgMode === "existing_org" && organizationId && mode === "idle" && (
         <>
-          <div className="flex justify-end">
+          <WorkspaceActions fallbackClassName="flex justify-end">
             <ResumeStuckButton organizationId={organizationId} />
-          </div>
+          </WorkspaceActions>
           <ActionSelector onSelect={handleActionSelect} />
         </>
       )}

@@ -1,3 +1,4 @@
+import { WorkspaceActions } from './WorkspaceActions';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -266,10 +267,12 @@ export const DataHealthTab = ({ organizationId }: DataHealthTabProps = {}) => {
               combos · last collected {fmtDate(selectedOrg.latest_collected)}
             </p>
           </div>
-          <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
-            <Switch checked={issuesOnly} onCheckedChange={setIssuesOnly} />
-            Issues only
-          </label>
+          <WorkspaceActions>
+            <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+              <Switch checked={issuesOnly} onCheckedChange={setIssuesOnly} />
+              Issues only
+            </label>
+          </WorkspaceActions>
         </div>
 
         <Card className="border-slate-200">

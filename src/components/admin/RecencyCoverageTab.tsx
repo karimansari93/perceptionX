@@ -1,3 +1,4 @@
+import { WorkspaceActions } from './WorkspaceActions';
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -595,14 +596,16 @@ const OrgDrillDown = ({
             </p>
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onOpenManual}
-          disabled={nullScored.length === 0}
-        >
-          Manual review queue ({nullScored.length})
-        </Button>
+        <WorkspaceActions>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpenManual}
+            disabled={nullScored.length === 0}
+          >
+            Manual review queue ({nullScored.length})
+          </Button>
+        </WorkspaceActions>
       </div>
 
       {loading ? (
