@@ -527,6 +527,16 @@ BEGIN
     PERFORM cron.unschedule('suggest-entity-canonicalization');
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
+-- Prod-only predecessor (migrations 20260805080754 / 20260805081723, not in
+-- this repo): auto_apply_entity_suggestions applied every LLM suggestion at
+-- confidence >= 0.9 with no client-name protection. Its drain job was already
+-- inactive; remove it so nothing applies suggestions outside
+-- apply_auto_canonicalization. The RPC is left in place, unused.
+DO $$
+BEGIN
+    PERFORM cron.unschedule('auto-apply-entity-suggestions');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 DO $$
 BEGIN
     PERFORM cron.unschedule('entity-canonicalization-tick');
