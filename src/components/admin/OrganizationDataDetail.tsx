@@ -17,6 +17,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useAdminCompanyCollection } from '@/hooks/useAdminCompanyCollection';
+import { OrgReadinessPanel } from './OrgReadinessPanel';
 import { coverageLabel, EXPECTED_MODELS_PER_PROMPT } from '@/utils/collectionCoverage';
 import {
   Dialog,
@@ -285,6 +286,8 @@ export const OrganizationDataDetail = ({ org, onBack, onViewCompany, hideHeader 
           </div>
         </>
       )}
+
+      <OrgReadinessPanel companies={companies.map((c) => ({ id: c.id, name: c.name }))} />
 
       {countries.length > 0 && (
         <Card className="border-none shadow-md">

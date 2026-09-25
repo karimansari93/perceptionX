@@ -89,17 +89,40 @@ export const RecencyCoverageTab = () => {
     setLoading(false);
   };
 
+  // The rebuild takes over a minute — far past the 8s statement timeout the
+  // browser's role runs under — so it happens in pg_cron
+  // (recency_coverage_refresh_tick: hourly, and within ~5 min of a request).
+  const [refreshState, setRefreshState] = useState<{
+    last_finished: string | null;
+    last_started: string | null;
+    requested_at: string | null;
+    last_error: string | null;
+  } | null>(null);
+
+  const loadRefreshState = async () => {
+    const { data } = await supabase.rpc('get_recency_coverage_refresh_state' as any);
+    setRefreshState((data as any) ?? null);
+  };
+
+  useEffect(() => {
+    loadRefreshState();
+  }, []);
+
   const refreshMvs = async () => {
     setRefreshing(true);
-    const { error } = await supabase.rpc('refresh_organization_recency_coverage' as any);
+    const { data, error } = await supabase.rpc('request_recency_coverage_refresh' as any);
     if (error) {
-      toast.error(`Refresh failed: ${error.message}`);
+      toast.error(`Could not queue the rebuild: ${error.message}`);
     } else {
-      toast.success('Coverage refreshed');
-      await loadCoverage();
+      setRefreshState((data as any) ?? null);
+      toast.success('Rebuild queued. The list updates within about 5 minutes; reload this page then.');
     }
     setRefreshing(false);
   };
+
+  const rebuildPending =
+    !!refreshState?.requested_at &&
+    (!refreshState.last_finished || refreshState.requested_at > refreshState.last_finished);
 
   if (view === 'drilldown' && selectedOrg) {
     return (
@@ -131,6 +154,14 @@ export const RecencyCoverageTab = () => {
           <p className="text-sm text-slate-500">
             Per-organization coverage of URL recency scoring across all citation sources.
           </p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {rebuildPending
+              ? 'Rebuild queued. Reload in a few minutes.'
+              : refreshState?.last_finished
+                ? `List rebuilt ${new Date(refreshState.last_finished).toLocaleString()} (rebuilds hourly).`
+                : 'List rebuilds hourly.'}
+            {refreshState?.last_error ? ` Last rebuild error: ${refreshState.last_error}` : ''}
+          </p>
         </div>
         <Button
           onClick={refreshMvs}
@@ -143,7 +174,7 @@ export const RecencyCoverageTab = () => {
           ) : (
             <RefreshCw className="h-4 w-4 mr-2" />
           )}
-          Refresh
+          Rebuild list
         </Button>
       </div>
 
