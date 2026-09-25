@@ -1,3 +1,4 @@
+import { WorkspaceActions } from './WorkspaceActions';
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -62,8 +63,13 @@ interface CoverageRow {
 
 type View = 'overview' | 'drilldown' | 'manual';
 
-export const RecencyCoverageTab = () => {
-  const [view, setView] = useState<View>('overview');
+type RecencyCoverageTabProps = {
+  /** When set (inside OrgWorkspace), opens straight into this org's drilldown. */
+  organizationId?: string;
+};
+
+export const RecencyCoverageTab = ({ organizationId }: RecencyCoverageTabProps = {}) => {
+  const [view, setView] = useState<View>(organizationId ? 'drilldown' : 'overview');
   const [rows, setRows] = useState<CoverageRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -84,28 +90,71 @@ export const RecencyCoverageTab = () => {
       toast.error(`Failed to load coverage: ${error.message}`);
       setRows([]);
     } else {
-      setRows((data as unknown as CoverageRow[]) || []);
+      const loaded = (data as unknown as CoverageRow[]) || [];
+      setRows(loaded);
+      if (organizationId) {
+        setSelectedOrg(loaded.find((r) => r.organization_id === organizationId) ?? null);
+      }
     }
     setLoading(false);
   };
 
+  // The rebuild takes over a minute — far past the 8s statement timeout the
+  // browser's role runs under — so it happens in pg_cron
+  // (recency_coverage_refresh_tick: hourly, and within ~5 min of a request).
+  const [refreshState, setRefreshState] = useState<{
+    last_finished: string | null;
+    last_started: string | null;
+    requested_at: string | null;
+    last_error: string | null;
+  } | null>(null);
+
+  const loadRefreshState = async () => {
+    const { data } = await supabase.rpc('get_recency_coverage_refresh_state' as any);
+    setRefreshState((data as any) ?? null);
+  };
+
+  useEffect(() => {
+    loadRefreshState();
+  }, []);
+
   const refreshMvs = async () => {
     setRefreshing(true);
-    const { error } = await supabase.rpc('refresh_organization_recency_coverage' as any);
+    const { data, error } = await supabase.rpc('request_recency_coverage_refresh' as any);
     if (error) {
-      toast.error(`Refresh failed: ${error.message}`);
+      toast.error(`Could not queue the rebuild: ${error.message}`);
     } else {
-      toast.success('Coverage refreshed');
-      await loadCoverage();
+      setRefreshState((data as any) ?? null);
+      toast.success('Rebuild queued. The list updates within about 5 minutes; reload this page then.');
     }
     setRefreshing(false);
   };
+
+  const rebuildPending =
+    !!refreshState?.requested_at &&
+    (!refreshState.last_finished || refreshState.requested_at > refreshState.last_finished);
+
+  if (organizationId && loading) {
+    return (
+      <div className="p-8 flex justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  if (organizationId && !selectedOrg) {
+    return (
+      <p className="text-sm text-slate-500">
+        No cited sources for this client in the recency list yet. The list rebuilds hourly after collection.
+      </p>
+    );
+  }
 
   if (view === 'drilldown' && selectedOrg) {
     return (
       <OrgDrillDown
         org={selectedOrg}
-        onBack={() => {
+        onBack={organizationId ? undefined : () => {
           setView('overview');
           setSelectedOrg(null);
         }}
@@ -131,6 +180,14 @@ export const RecencyCoverageTab = () => {
           <p className="text-sm text-slate-500">
             Per-organization coverage of URL recency scoring across all citation sources.
           </p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {rebuildPending
+              ? 'Rebuild queued. Reload in a few minutes.'
+              : refreshState?.last_finished
+                ? `List rebuilt ${new Date(refreshState.last_finished).toLocaleString()} (rebuilds hourly).`
+                : 'List rebuilds hourly.'}
+            {refreshState?.last_error ? ` Last rebuild error: ${refreshState.last_error}` : ''}
+          </p>
         </div>
         <Button
           onClick={refreshMvs}
@@ -143,7 +200,7 @@ export const RecencyCoverageTab = () => {
           ) : (
             <RefreshCw className="h-4 w-4 mr-2" />
           )}
-          Refresh
+          Rebuild list
         </Button>
       </div>
 
@@ -284,7 +341,8 @@ const OrgDrillDown = ({
   onOpenManual,
 }: {
   org: CoverageRow;
-  onBack: () => void;
+  /** Omitted inside OrgWorkspace, where there is no list to go back to. */
+  onBack?: () => void;
   onOpenManual: () => void;
 }) => {
   const [missing, setMissing] = useState<string[]>([]);
@@ -519,10 +577,12 @@ const OrgDrillDown = ({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={onBack}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
+          {onBack && (
+            <Button variant="ghost" size="sm" onClick={onBack}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Button>
+          )}
           <div>
             <h2 className="text-xl font-semibold text-slate-800">
               {org.organization_name}
@@ -536,14 +596,16 @@ const OrgDrillDown = ({
             </p>
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onOpenManual}
-          disabled={nullScored.length === 0}
-        >
-          Manual review queue ({nullScored.length})
-        </Button>
+        <WorkspaceActions>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpenManual}
+            disabled={nullScored.length === 0}
+          >
+            Manual review queue ({nullScored.length})
+          </Button>
+        </WorkspaceActions>
       </div>
 
       {loading ? (

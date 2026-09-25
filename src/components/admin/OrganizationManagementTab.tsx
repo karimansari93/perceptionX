@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -10,8 +11,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X } from 'lucide-react';
-import { OrganizationDataDetail } from './OrganizationDataDetail';
+import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X, Star, ArrowRight } from 'lucide-react';
+import { OrgWorkspace } from './OrgWorkspace';
+import { OrgLogo, useOrgLogos } from './OrgLogo';
+import { WorkspaceActions } from './WorkspaceActions';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
 import { generatePdfThumbnail } from '@/utils/pdfThumbnail';
 
@@ -44,9 +47,16 @@ interface Organization {
   description: string | null;
   created_at: string;
   regions: string[];
+  logo_url?: string | null;
   member_count?: number;
   company_count?: number;
+  /** Priority client (e.g. quarterly reports): pinned as a card above the list. */
+  is_priority?: boolean;
 }
+
+// Priority clients first, then newest first (the order the query returns).
+const byPriority = (a: Organization, b: Organization) =>
+  Number(!!b.is_priority) - Number(!!a.is_priority);
 
 interface User {
   id: string;
@@ -66,16 +76,20 @@ export const OrganizationManagementTab = () => {
   const [filteredOrganizations, setFilteredOrganizations] = useState<Organization[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
-  const [selectedOrgForData, setSelectedOrgForData] = useState<Organization | null>(null);
+  const orgLogos = useOrgLogos(organizations);
+  // The open org lives in the URL (?org=) so refresh and links keep the admin
+  // inside that client's workspace.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openOrgId = searchParams.get('org');
   const [orgMembers, setOrgMembers] = useState<OrganizationMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  // Platform-wide checks (collection running, theme backlog, rollup refresh
+  // errors), formerly the Analysis Readiness tab. Loaded only when opened.
   
   // Modals
   const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
   const [showAddUserModal, setShowAddUserModal] = useState(false);
-  const [showMembersModal, setShowMembersModal] = useState(false);
-  const [showReportsModal, setShowReportsModal] = useState(false);
   // Org whose teammates are being invited on behalf of one of its Super Admins
   const [inviteOrg, setInviteOrg] = useState<Organization | null>(null);
 
@@ -120,10 +134,10 @@ export const OrganizationManagementTab = () => {
   // Auto-fill the report title from org + quarter + year + region until the
   // admin manually edits it. e.g. "Netflix — Q2 2026 — EMEA".
   useEffect(() => {
-    if (!showReportsModal || !reportsOrg || titleEdited) return;
+    if (!reportsOrg || titleEdited) return;
     const tail = reportRegion ? ` — ${reportRegion}` : '';
     setReportTitle(`${reportsOrg.name} — Q${reportQuarter} ${reportYear}${tail}`);
-  }, [showReportsModal, reportsOrg, reportYear, reportQuarter, reportRegion, titleEdited]);
+  }, [reportsOrg, reportYear, reportQuarter, reportRegion, titleEdited]);
 
   const loadData = async () => {
     setLoading(true);
@@ -139,12 +153,14 @@ export const OrganizationManagementTab = () => {
       // Load member counts
       const { data: membersData } = await supabase
         .from('organization_members')
-        .select('organization_id');
+        .select('organization_id')
+        .range(0, 49999);
 
       // Load company counts
       const { data: companiesData } = await supabase
         .from('organization_companies')
-        .select('organization_id');
+        .select('organization_id')
+        .range(0, 49999);
 
       // Calculate counts
       const orgsWithCounts = (orgsData || []).map(org => ({
@@ -152,7 +168,7 @@ export const OrganizationManagementTab = () => {
         regions: (org as any).regions ?? [],
         member_count: (membersData || []).filter(m => m.organization_id === org.id).length,
         company_count: (companiesData || []).filter(c => c.organization_id === org.id).length
-      }));
+      })).sort(byPriority);
 
       setOrganizations(orgsWithCounts);
       setFilteredOrganizations(orgsWithCounts);
@@ -174,6 +190,16 @@ export const OrganizationManagementTab = () => {
     }
   };
 
+  const togglePriority = async (org: Organization) => {
+    const next = !org.is_priority;
+    const { error } = await supabase.rpc('set_organization_priority' as never, { p_org: org.id, p_is_priority: next } as never);
+    if (error) {
+      toast.error(`Could not update ${org.name}: ${error.message}`);
+      return;
+    }
+    setOrganizations((prev) => prev.map((o) => (o.id === org.id ? { ...o, is_priority: next } : o)).sort(byPriority));
+  };
+
   const filterOrganizations = () => {
     if (!searchQuery) {
       setFilteredOrganizations(organizations);
@@ -184,7 +210,7 @@ export const OrganizationManagementTab = () => {
     const filtered = organizations.filter(org =>
       org.name.toLowerCase().includes(query) ||
       (org.description && org.description.toLowerCase().includes(query))
-    );
+    ).sort(byPriority);
     setFilteredOrganizations(filtered);
   };
 
@@ -278,9 +304,7 @@ export const OrganizationManagementTab = () => {
       setSelectedUser('');
       setSelectedRole('member');
       loadData();
-      if (showMembersModal) {
-        loadOrgMembers(selectedOrg.id);
-      }
+      loadOrgMembers(selectedOrg.id);
     } catch (error) {
       console.error('Error adding user:', error);
       toast.error('Failed to add user to organization');
@@ -365,7 +389,6 @@ export const OrganizationManagementTab = () => {
     setEditingRegions(false);
     setDraftRegions([]);
     setNewRegionInput('');
-    setShowReportsModal(true);
     loadOrgReports(org.id);
   };
 
@@ -610,10 +633,19 @@ export const OrganizationManagementTab = () => {
     }
   };
 
+  // The Reports and Members workspace sections load their data when opened.
+  const openSection = searchParams.get('section');
+  useEffect(() => {
+    const org = openOrgId ? organizations.find((o) => o.id === openOrgId) : undefined;
+    if (!org) return;
+    if (openSection === 'reports' && reportsOrg?.id !== org.id) handleOpenReports(org);
+    if (openSection === 'members' && selectedOrg?.id !== org.id) handleViewMembers(org);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openOrgId, openSection, organizations]);
+
   const handleViewMembers = (org: Organization) => {
     setSelectedOrg(org);
     loadOrgMembers(org.id);
-    setShowMembersModal(true);
   };
 
   if (loading) {
@@ -627,297 +659,19 @@ export const OrganizationManagementTab = () => {
     );
   }
 
-  if (selectedOrgForData) {
-    return (
-      <OrganizationDataDetail
-        org={{
-          id: selectedOrgForData.id,
-          name: selectedOrgForData.name,
-          description: selectedOrgForData.description ?? undefined,
-        }}
-        onBack={() => setSelectedOrgForData(null)}
-      />
-    );
-  }
+  const openOrg = openOrgId ? organizations.find((o) => o.id === openOrgId) ?? null : null;
 
-  return (
+  // Reports section of the org workspace (was a modal).
+  const reportsPanel = (
     <div className="space-y-4">
-      {/* Header - compact */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-headline font-semibold text-slate-800">Organizations</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Manage your organizations and their members</p>
-        </div>
-        <div className="flex gap-2">
-          <Button onClick={loadData} variant="outline" size="sm" className="border-slate-200 text-slate-600">
-            <RefreshCw className="h-4 w-4 mr-1.5" />
-            Refresh
-          </Button>
-          <Button onClick={() => setShowCreateOrgModal(true)} size="sm" className="bg-pink hover:bg-pink/90 text-white">
-            <Plus className="h-4 w-4 mr-1.5" />
-            Create Organization
-          </Button>
-        </div>
-      </div>
-
-      {/* Search - compact */}
-      <Card className="border border-slate-200 shadow-sm bg-white">
-        <CardContent className="py-4">
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium text-slate-600">Search Organizations</Label>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input
-                placeholder="Search by name or description..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="border-slate-200 h-9 pl-9 text-sm"
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Organizations Table - focus on data */}
-      <Card className="border border-slate-200 shadow-sm bg-white">
-        <CardHeader className="py-3">
-          <CardTitle className="text-sm font-medium text-slate-700">
-            {filteredOrganizations.length} {filteredOrganizations.length === 1 ? 'Organization' : 'Organizations'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
-          {filteredOrganizations.length === 0 ? (
-            <div className="text-center py-10">
-              <Briefcase className="h-12 w-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-sm font-medium text-slate-700 mb-1">No organizations found</p>
-              <p className="text-xs text-slate-500 mb-3">
-                {searchQuery ? 'Try adjusting your search' : 'Create your first organization to get started'}
-              </p>
-              {!searchQuery && (
-                <Button onClick={() => setShowCreateOrgModal(true)} size="sm" className="bg-pink hover:bg-pink/90 text-white">
-                  <Plus className="h-4 w-4 mr-1.5" />
-                  Create Organization
-                </Button>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-md border border-slate-200 overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-slate-200 hover:bg-transparent bg-slate-50/80">
-                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Organization Name</TableHead>
-                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Organization ID</TableHead>
-                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Description</TableHead>
-                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Members</TableHead>
-                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Companies</TableHead>
-                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Created</TableHead>
-                    <TableHead className="h-9 px-3 text-right text-xs font-medium text-slate-600">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredOrganizations.map(org => (
-                    <TableRow key={org.id} className="border-slate-200">
-                      <TableCell className="py-2 px-3 text-sm">
-                        <div className="flex items-center gap-2">
-                          <Briefcase className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />
-                          <span className="font-medium text-slate-800">{org.name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="py-2 px-3 text-xs font-mono text-slate-500">{org.id}</TableCell>
-                      <TableCell className="py-2 px-3 text-sm text-slate-600 max-w-[200px] truncate">
-                        {org.description || '—'}
-                      </TableCell>
-                      <TableCell className="py-2 px-3">
-                        <Badge variant="outline" className="border-slate-200 text-slate-600 bg-slate-50 text-xs font-normal">
-                          {org.member_count || 0}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="py-2 px-3">
-                        <Badge variant="outline" className="border-slate-200 text-slate-600 bg-slate-50 text-xs font-normal">
-                          {org.company_count || 0}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="py-2 px-3 text-xs text-slate-500">
-                        {new Date(org.created_at).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell className="py-2 px-3 text-right">
-                        <div className="flex gap-1.5 justify-end flex-wrap">
-                          <Button onClick={() => setSelectedOrgForData(org)} size="sm" className="bg-pink hover:bg-pink/90 text-white h-7 text-xs">
-                            <Database className="h-3.5 w-3.5 mr-1" />
-                            Manage data
-                          </Button>
-                          <Button onClick={() => handleOpenReports(org)} size="sm" variant="outline" className="border-slate-200 text-slate-600 h-7 text-xs">
-                            <FileText className="h-3.5 w-3.5 mr-1" />
-                            Reports
-                          </Button>
-                          <Button onClick={() => handleViewMembers(org)} size="sm" variant="outline" className="border-slate-200 text-slate-600 h-7 text-xs">
-                            <Eye className="h-3.5 w-3.5 mr-1" />
-                            View Members
-                          </Button>
-                          <Button
-                            onClick={() => { setSelectedOrg(org); setShowAddUserModal(true); }}
-                            size="sm"
-                            className="bg-teal hover:bg-teal/90 text-white h-7 text-xs"
-                          >
-                            <UserPlus className="h-3.5 w-3.5 mr-1" />
-                            Add User
-                          </Button>
-                          <Button
-                            onClick={() => setInviteOrg(org)}
-                            size="sm"
-                            variant="outline"
-                            className="border-slate-200 text-slate-600 h-7 text-xs"
-                            title="Email invites attributed to one of this organization's Super Admins"
-                          >
-                            <Mail className="h-3.5 w-3.5 mr-1" />
-                            Invite as admin
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Invite teammates on behalf of one of the org's Super Admins */}
-      <InviteTeammatesModal
-        open={inviteOrg !== null}
-        onOpenChange={(next) => { if (!next) setInviteOrg(null); }}
-        orgs={inviteOrg ? [{ organization_id: inviteOrg.id, organization_name: inviteOrg.name }] : []}
-        allowSendOnBehalf
-      />
-
-      {/* Create Organization Modal */}
-      <Dialog open={showCreateOrgModal} onOpenChange={setShowCreateOrgModal}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-nightsky">Create New Organization</DialogTitle>
-            <DialogDescription>Add a new organization to your system</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label className="text-nightsky">Organization Name *</Label>
-              <Input
-                placeholder="Enter organization name"
-                value={orgName}
-                onChange={(e) => setOrgName(e.target.value)}
-                className="border-silver"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-nightsky">Description</Label>
-              <Textarea
-                placeholder="Enter organization description (optional)"
-                value={orgDescription}
-                onChange={(e) => setOrgDescription(e.target.value)}
-                rows={3}
-                className="border-silver"
-              />
-            </div>
-            <div className="flex gap-2 justify-end pt-4">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setShowCreateOrgModal(false);
-                  setOrgName('');
-                  setOrgDescription('');
-                }}
-                className="border-silver"
-              >
-                Cancel
-              </Button>
-              <Button 
-                onClick={handleCreateOrg} 
-                disabled={creating || !orgName.trim()}
-                className="bg-pink hover:bg-pink/90"
-              >
-                {creating ? 'Creating...' : 'Create Organization'}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add User Modal */}
-      <Dialog open={showAddUserModal} onOpenChange={setShowAddUserModal}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-nightsky">Add User to Organization</DialogTitle>
-            <DialogDescription>
-              Add a user to {selectedOrg?.name}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label className="text-nightsky">User *</Label>
-              <Select value={selectedUser} onValueChange={setSelectedUser}>
-                <SelectTrigger className="border-silver">
-                  <SelectValue placeholder="Select a user" />
-                </SelectTrigger>
-                <SelectContent>
-                  {users.map(user => (
-                    <SelectItem key={user.id} value={user.id}>
-                      <div className="flex items-center gap-2">
-                        <Mail className="h-4 w-4 text-nightsky/60" />
-                        {user.email}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-nightsky">Role *</Label>
-              <Select value={selectedRole} onValueChange={(value: any) => setSelectedRole(value)}>
-                <SelectTrigger className="border-silver">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="member">Member</SelectItem>
-                  <SelectItem value="admin">Super Admin (can invite team)</SelectItem>
-                  <SelectItem value="owner">Owner</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex gap-2 justify-end pt-4">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setShowAddUserModal(false);
-                  setSelectedUser('');
-                  setSelectedRole('member');
-                }}
-                className="border-silver"
-              >
-                Cancel
-              </Button>
-              <Button 
-                onClick={handleAddUser} 
-                disabled={adding || !selectedUser}
-                className="bg-teal hover:bg-teal/90"
-              >
-                {adding ? 'Adding...' : 'Add User'}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Reports Modal */}
-      <Dialog open={showReportsModal} onOpenChange={setShowReportsModal}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle className="text-nightsky">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-nightsky">
               Custom Reports — <span className="text-pink">{reportsOrg?.name}</span>
-            </DialogTitle>
-            <DialogDescription>
+            </h2>
+            <p className="text-sm text-slate-500">
               Upload PDF or PPTX reports. Members of {reportsOrg?.name} will see them under Analyze → Reports.
-            </DialogDescription>
-          </DialogHeader>
+            </p>
+          </div>
 
           <div className="space-y-5">
             {/* Upload form */}
@@ -1166,24 +920,19 @@ export const OrganizationManagementTab = () => {
               )}
             </div>
 
-            <div className="flex justify-end pt-2">
-              <Button onClick={() => setShowReportsModal(false)} variant="outline" className="border-silver">
-                Close
-              </Button>
-            </div>
           </div>
-        </DialogContent>
-      </Dialog>
+    </div>
+  );
 
-      {/* View Members Modal */}
-      <Dialog open={showMembersModal} onOpenChange={setShowMembersModal}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-nightsky">Organization Members</DialogTitle>
-            <DialogDescription>
+  // Members section of the org workspace (was a modal).
+  const membersPanel = (
+    <div className="space-y-4">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-nightsky">Members</h2>
+            <p className="text-sm text-slate-500">
               Members of {selectedOrg?.name}
-            </DialogDescription>
-          </DialogHeader>
+            </p>
+          </div>
           <div className="space-y-4">
             {orgMembers.length === 0 ? (
               <div className="text-center py-8 text-nightsky/60">
@@ -1248,7 +997,7 @@ export const OrganizationManagementTab = () => {
                 </TableBody>
               </Table>
             )}
-            <div className="flex justify-between pt-4">
+            <WorkspaceActions fallbackClassName="flex justify-between pt-4">
               <Button
                 onClick={() => {
                   setShowAddUserModal(true);
@@ -1260,16 +1009,331 @@ export const OrganizationManagementTab = () => {
                 Add User
               </Button>
               <Button
-                onClick={() => setShowMembersModal(false)}
+                onClick={() => selectedOrg && setInviteOrg(selectedOrg)}
+                size="sm"
                 variant="outline"
+                className="border-slate-200 text-slate-600"
+                title="Email invites attributed to one of this organization's Super Admins"
+              >
+                <Mail className="h-4 w-4 mr-2" />
+                Invite as admin
+              </Button>
+            </WorkspaceActions>
+          </div>
+    </div>
+  );
+
+  const openWorkspace = (org: Organization) => setSearchParams({ tab: 'organizations', org: org.id });
+  const closeWorkspace = () => setSearchParams({ tab: 'organizations' });
+
+  return (
+    <div className="space-y-4">
+      {openOrg ? (
+        <OrgWorkspace
+          org={openOrg}
+          logoSrc={orgLogos[openOrg.id]}
+          onBack={closeWorkspace}
+          reportsPanel={reportsPanel}
+          membersPanel={membersPanel}
+        />
+      ) : (
+      <>
+      {/* Header - compact */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-headline font-semibold text-slate-800">Organizations</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Manage your organizations and their members</p>
+        </div>
+        <div className="flex gap-2">
+          <Button onClick={loadData} variant="outline" size="sm" className="border-slate-200 text-slate-600">
+            <RefreshCw className="h-4 w-4 mr-1.5" />
+            Refresh
+          </Button>
+          <Button onClick={() => setShowCreateOrgModal(true)} size="sm" className="bg-pink hover:bg-pink/90 text-white">
+            <Plus className="h-4 w-4 mr-1.5" />
+            Create Organization
+          </Button>
+        </div>
+      </div>
+
+      {/* Priority clients: bigger cards above the list */}
+      {organizations.some((o) => o.is_priority) && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Priority clients</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {organizations.filter((o) => o.is_priority).map((org) => (
+              <Card
+                key={org.id}
+                className="border border-slate-200 shadow-sm bg-white hover:border-pink/50 hover:shadow-md transition-all cursor-pointer"
+                onClick={() => openWorkspace(org)}
+              >
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <OrgLogo name={org.name} src={orgLogos[org.id]} size="lg" />
+                      <p className="font-semibold text-slate-900 truncate">{org.name}</p>
+                    </div>
+                    <button
+                      type="button"
+                      title="Remove from priority clients"
+                      onClick={(e) => { e.stopPropagation(); togglePriority(org); }}
+                      className="text-pink hover:text-pink/70"
+                    >
+                      <Star className="h-4 w-4 fill-current" />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>{org.company_count || 0} companies · {org.member_count || 0} members</span>
+                    <span className="inline-flex items-center gap-1 text-pink font-medium">
+                      Open <ArrowRight className="h-3.5 w-3.5" />
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Search - compact */}
+      <Card className="border border-slate-200 shadow-sm bg-white">
+        <CardContent className="py-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium text-slate-600">Search Organizations</Label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <Input
+                placeholder="Search by name or description..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="border-slate-200 h-9 pl-9 text-sm"
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Organizations Table - focus on data */}
+      <Card className="border border-slate-200 shadow-sm bg-white">
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm font-medium text-slate-700">
+            {filteredOrganizations.length} {filteredOrganizations.length === 1 ? 'Organization' : 'Organizations'}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {filteredOrganizations.length === 0 ? (
+            <div className="text-center py-10">
+              <Briefcase className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-sm font-medium text-slate-700 mb-1">No organizations found</p>
+              <p className="text-xs text-slate-500 mb-3">
+                {searchQuery ? 'Try adjusting your search' : 'Create your first organization to get started'}
+              </p>
+              {!searchQuery && (
+                <Button onClick={() => setShowCreateOrgModal(true)} size="sm" className="bg-pink hover:bg-pink/90 text-white">
+                  <Plus className="h-4 w-4 mr-1.5" />
+                  Create Organization
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-md border border-slate-200 overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-200 hover:bg-transparent bg-slate-50/80">
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Organization Name</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Organization ID</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Description</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Members</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Companies</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Created</TableHead>
+                    <TableHead className="h-9 px-3 text-right text-xs font-medium text-slate-600">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredOrganizations.map(org => (
+                    <TableRow key={org.id} className="border-slate-200">
+                      <TableCell className="py-2 px-3 text-sm">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            title={org.is_priority ? 'Remove from priority clients' : 'Mark as a priority client'}
+                            onClick={() => togglePriority(org)}
+                            className={org.is_priority ? 'text-pink' : 'text-slate-300 hover:text-pink'}
+                          >
+                            <Star className={`h-3.5 w-3.5 ${org.is_priority ? 'fill-current' : ''}`} />
+                          </button>
+                          <OrgLogo name={org.name} src={orgLogos[org.id]} size="sm" />
+                          <button
+                            type="button"
+                            onClick={() => openWorkspace(org)}
+                            className="font-medium text-slate-800 hover:text-pink hover:underline text-left"
+                          >
+                            {org.name}
+                          </button>
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-xs font-mono text-slate-500">{org.id}</TableCell>
+                      <TableCell className="py-2 px-3 text-sm text-slate-600 max-w-[200px] truncate">
+                        {org.description || '—'}
+                      </TableCell>
+                      <TableCell className="py-2 px-3">
+                        <Badge variant="outline" className="border-slate-200 text-slate-600 bg-slate-50 text-xs font-normal">
+                          {org.member_count || 0}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="py-2 px-3">
+                        <Badge variant="outline" className="border-slate-200 text-slate-600 bg-slate-50 text-xs font-normal">
+                          {org.company_count || 0}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-xs text-slate-500">
+                        {new Date(org.created_at).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="py-2 px-3 text-right">
+                        <div className="flex gap-1.5 justify-end flex-wrap">
+                          <Button onClick={() => openWorkspace(org)} size="sm" className="bg-pink hover:bg-pink/90 text-white h-7 text-xs">
+                            <Database className="h-3.5 w-3.5 mr-1" />
+                            Open
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      </>
+      )}
+
+      {/* Invite teammates on behalf of one of the org's Super Admins */}
+      <InviteTeammatesModal
+        open={inviteOrg !== null}
+        onOpenChange={(next) => { if (!next) setInviteOrg(null); }}
+        orgs={inviteOrg ? [{ organization_id: inviteOrg.id, organization_name: inviteOrg.name }] : []}
+        allowSendOnBehalf
+      />
+
+      {/* Create Organization Modal */}
+      <Dialog open={showCreateOrgModal} onOpenChange={setShowCreateOrgModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-nightsky">Create New Organization</DialogTitle>
+            <DialogDescription>Add a new organization to your system</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-nightsky">Organization Name *</Label>
+              <Input
+                placeholder="Enter organization name"
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+                className="border-silver"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-nightsky">Description</Label>
+              <Textarea
+                placeholder="Enter organization description (optional)"
+                value={orgDescription}
+                onChange={(e) => setOrgDescription(e.target.value)}
+                rows={3}
+                className="border-silver"
+              />
+            </div>
+            <div className="flex gap-2 justify-end pt-4">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowCreateOrgModal(false);
+                  setOrgName('');
+                  setOrgDescription('');
+                }}
                 className="border-silver"
               >
-                Close
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleCreateOrg} 
+                disabled={creating || !orgName.trim()}
+                className="bg-pink hover:bg-pink/90"
+              >
+                {creating ? 'Creating...' : 'Create Organization'}
               </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Add User Modal */}
+      <Dialog open={showAddUserModal} onOpenChange={setShowAddUserModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-nightsky">Add User to Organization</DialogTitle>
+            <DialogDescription>
+              Add a user to {selectedOrg?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-nightsky">User *</Label>
+              <Select value={selectedUser} onValueChange={setSelectedUser}>
+                <SelectTrigger className="border-silver">
+                  <SelectValue placeholder="Select a user" />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map(user => (
+                    <SelectItem key={user.id} value={user.id}>
+                      <div className="flex items-center gap-2">
+                        <Mail className="h-4 w-4 text-nightsky/60" />
+                        {user.email}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-nightsky">Role *</Label>
+              <Select value={selectedRole} onValueChange={(value: any) => setSelectedRole(value)}>
+                <SelectTrigger className="border-silver">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="member">Member</SelectItem>
+                  <SelectItem value="admin">Super Admin (can invite team)</SelectItem>
+                  <SelectItem value="owner">Owner</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex gap-2 justify-end pt-4">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowAddUserModal(false);
+                  setSelectedUser('');
+                  setSelectedRole('member');
+                }}
+                className="border-silver"
+              >
+                Cancel
+              </Button>
+              <Button 
+                onClick={handleAddUser} 
+                disabled={adding || !selectedUser}
+                className="bg-teal hover:bg-teal/90"
+              >
+                {adding ? 'Adding...' : 'Add User'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+
     </div>
   );
 };

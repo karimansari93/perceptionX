@@ -14,6 +14,7 @@ import { generateAndInsertPrompts, ProgressInfo } from '@/hooks/usePromptsLogic'
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { validateEmail, sanitizeInput, logger } from '@/lib/utils';
 import { useMetaTags } from '@/hooks/useMetaTags';
+import { fetchIsPlatformAdmin } from '@/lib/platformAdmin';
 
 // Google Material Button component
 const GoogleMaterialButton = ({ onClick, loading, mode }) => (
@@ -109,15 +110,15 @@ const Auth = () => {
         return;
       }
 
-      // If admin, go straight to admin panel
-      const adminEmails = ['karim@perceptionx.ai'];
-      if (adminEmails.includes(user.email?.toLowerCase() || '')) {
-        navigate('/admin');
-        return;
-      }
-
-      // Onboarding flow retired — admin-provisioned users go straight to dashboard.
-      navigate('/dashboard', { state: { onboardingData, userId: user.id } });
+      // Platform admins go straight to the admin panel.
+      fetchIsPlatformAdmin(user.id).then((isAdmin) => {
+        if (isAdmin) {
+          navigate('/admin');
+          return;
+        }
+        // Onboarding flow retired — admin-provisioned users go straight to dashboard.
+        navigate('/dashboard', { state: { onboardingData, userId: user.id } });
+      });
     }
   }, [user, authLoading, navigate, onboardingData, redirectTo]);
 
@@ -183,9 +184,8 @@ const Auth = () => {
           return;
         }
 
-        // If admin, go straight to admin
-        const adminEmails = ['karim@perceptionx.ai'];
-        if (adminEmails.includes((data.user.email || '').toLowerCase())) {
+        // Platform admins go straight to the admin panel.
+        if (await fetchIsPlatformAdmin(data.user.id)) {
           navigate('/admin');
           return;
         }

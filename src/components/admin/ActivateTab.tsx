@@ -66,9 +66,14 @@ interface EntityOption {
 
 const AUDIENCES: ActivateAudience[] = ['employee', 'candidate', 'alumni'];
 
-export const ActivateTab = () => {
+type ActivateTabProps = {
+  /** When set (inside OrgWorkspace), the tab is fixed to this org and hides its picker. */
+  organizationId?: string;
+};
+
+export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
   const [orgs, setOrgs] = useState<OrgOption[]>([]);
-  const [orgId, setOrgId] = useState<string>('');
+  const [orgId, setOrgId] = useState<string>(organizationId ?? '');
   const [settings, setSettings] = useState<ActivateOrgSettings | null>(null);
   const [branding, setBranding] = useState<ActivateBrandingRow | null>(null);
   const [links, setLinks] = useState<ActivateLink[]>([]);
@@ -80,6 +85,7 @@ export const ActivateTab = () => {
   const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
+    if (organizationId) return;
     (async () => {
       const { data } = await supabase.from('organizations').select('id, name').order('name');
       setOrgs(data ?? []);
@@ -170,6 +176,7 @@ export const ActivateTab = () => {
             corpus we measure.
           </p>
         </div>
+        {!organizationId && (
         <Select value={orgId} onValueChange={setOrgId}>
           <SelectTrigger className="w-56">
             <SelectValue placeholder="Select organization" />
@@ -182,6 +189,7 @@ export const ActivateTab = () => {
             ))}
           </SelectContent>
         </Select>
+        )}
       </div>
 
       {!orgId ? (

@@ -4,6 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { logger } from '@/lib/utils';
 import { consumeReturnTo } from '@/lib/returnTo';
+import { fetchIsPlatformAdmin } from '@/lib/platformAdmin';
 
 const AuthCallback = () => {
   const navigate = useNavigate();
@@ -25,8 +26,7 @@ const AuthCallback = () => {
             return;
           }
 
-          const adminEmails = ['karim@perceptionx.ai'];
-          if (adminEmails.includes(session.user.email?.toLowerCase() || '')) {
+          if (await fetchIsPlatformAdmin(session.user.id)) {
             setTimeout(() => navigate('/admin'), 0);
             return;
           }

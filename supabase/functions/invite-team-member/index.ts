@@ -42,13 +42,6 @@ const corsHeaders = {
  *     "X invited you" email), otherwise Supabase's built-in invite email.
  */
 
-// Keep in sync with is_admin() in the DB and ADMIN_EMAILS in the frontend.
-const PLATFORM_ADMIN_EMAILS = [
-  "admin@perceptionx.com",
-  "karim@perceptionx.com",
-  "karim@perceptionx.ai",
-];
-
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Durable, URL-safe invite token (256 bits of entropy). Embedded in the
@@ -102,8 +95,15 @@ serve(async (req) => {
     }
 
     // --- Authorize: Super Admin of this org, or platform admin ----------
-    const callerEmail = caller.email.toLowerCase();
-    const isPlatformAdmin = PLATFORM_ADMIN_EMAILS.includes(callerEmail);
+    // Platform admin = user_roles.role 'admin', the same rule as is_admin() in
+    // the DB and the admin panel; granted from the admin Users tab.
+    const { data: platformRole } = await admin
+      .from("user_roles")
+      .select("user_id")
+      .eq("user_id", caller.id)
+      .eq("role", "admin")
+      .maybeSingle();
+    const isPlatformAdmin = !!platformRole;
 
     const { data: callerMembership } = await admin
       .from("organization_members")

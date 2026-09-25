@@ -16,13 +16,28 @@
 
 // Models excluded from every client-facing calculation, by filter — their
 // rows stay in the DB as the audit trail for previously published numbers.
-export const EXCLUDED_AI_MODELS = ['claude', 'gemini', 'deepseek'];
+export const EXCLUDED_AI_MODELS = ['gemini', 'deepseek'];
+
+// Claude counts from this response month on (decision 2026-09-25); earlier
+// months stay excluded so already-reported figures don't restate. Mirrors
+// public.is_published_model() in the database — change them together.
+export const CLAUDE_PUBLISHED_FROM = '2026-09-01';
 
 // PostgREST value for `.not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)`.
 export const EXCLUDED_AI_MODELS_FILTER = `(${EXCLUDED_AI_MODELS.join(',')})`;
 
-export const isExcludedAiModel = (model: string | null | undefined): boolean =>
-  !!model && EXCLUDED_AI_MODELS.includes(model.toLowerCase());
+export const isExcludedAiModel = (
+  model: string | null | undefined,
+  responseMonth?: string | null,
+): boolean => {
+  if (!model) return false;
+  const m = model.toLowerCase();
+  if (EXCLUDED_AI_MODELS.includes(m)) return true;
+  // Without a month we can't tell which side of the cutoff a Claude row is
+  // on; excluding it keeps us on the conservative (previously published) side.
+  if (m === 'claude') return !responseMonth || responseMonth.slice(0, 10) < CLAUDE_PUBLISHED_FROM;
+  return false;
+};
 
 /** positive / (positive + negative); null when there are no polarized themes. */
 export const sentimentRatioV2 = (positive: number, negative: number): number | null => {

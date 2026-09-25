@@ -41,9 +41,14 @@ serve(async (req) => {
     const body = await req.json();
     const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, company_id, for_index } = body;
     
-    // Handle citations from different LLMs
+    // Handle citations from different LLMs. These models return their own
+    // native citations (via `body.citations`), so we use those directly rather
+    // than scraping URLs from the response text. Claude in particular emits
+    // STRUCTURED citations (web_search_result_location) that never appear as
+    // inline URLs in the text, so omitting it here silently dropped every
+    // Claude citation and fell back to text extraction, which found nothing.
     let llmCitations = perplexityCitations || [];
-    if ((ai_model === 'google-ai-overviews' || ai_model === 'google-ai-mode' || ai_model === 'bing-copilot' || ai_model === 'openai') && body.citations) {
+    if ((ai_model === 'google-ai-overviews' || ai_model === 'google-ai-mode' || ai_model === 'bing-copilot' || ai_model === 'openai' || ai_model === 'claude') && body.citations) {
       llmCitations = body.citations;
     }
 
@@ -263,6 +268,25 @@ serve(async (req) => {
       } catch (analysisError) {
         // Log error but don't fail the response storage
         console.warn('Error triggering AI thematic analysis:', analysisError);
+      }
+
+      // Score recency for this response's sources as soon as it lands, so a
+      // collection run no longer needs a separate rescore from Recency
+      // Coverage. extract-recency-scores checks url_recency_cache first, so
+      // only never-seen URLs cost a fetch; any it can't resolve (rate limit,
+      // timeout) stay uncached and the Recency Coverage rescore still picks
+      // them up. waitUntil keeps the isolate alive until the call is sent.
+      const recencyCitations = citationsForDb.map((c) => ({ url: c.url, domain: c.domain, title: c.title }));
+      if (recencyCitations.length > 0) {
+        const recencyPromise = supabase.functions
+          .invoke('extract-recency-scores', { body: { citations: recencyCitations } })
+          .catch((error) => console.warn('Failed to trigger recency scoring:', error));
+        try {
+          // @ts-ignore — EdgeRuntime is provided by the Supabase Deno runtime
+          (globalThis as any).EdgeRuntime?.waitUntil(recencyPromise);
+        } catch {
+          // Not available locally; the invoke above is already in flight.
+        }
       }
 
       return new Response(
