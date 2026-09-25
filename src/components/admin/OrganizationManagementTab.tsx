@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X } from 'lucide-react';
+import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X, Star, ArrowRight } from 'lucide-react';
 import { OrgWorkspace } from './OrgWorkspace';
 import { AnalysisReadinessTab } from './AnalysisReadinessTab';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
@@ -48,7 +48,13 @@ interface Organization {
   regions: string[];
   member_count?: number;
   company_count?: number;
+  /** Priority client (e.g. quarterly reports): pinned as a card above the list. */
+  is_priority?: boolean;
 }
+
+// Priority clients first, then newest first (the order the query returns).
+const byPriority = (a: Organization, b: Organization) =>
+  Number(!!b.is_priority) - Number(!!a.is_priority);
 
 interface User {
   id: string;
@@ -145,12 +151,14 @@ export const OrganizationManagementTab = () => {
       // Load member counts
       const { data: membersData } = await supabase
         .from('organization_members')
-        .select('organization_id');
+        .select('organization_id')
+        .range(0, 49999);
 
       // Load company counts
       const { data: companiesData } = await supabase
         .from('organization_companies')
-        .select('organization_id');
+        .select('organization_id')
+        .range(0, 49999);
 
       // Calculate counts
       const orgsWithCounts = (orgsData || []).map(org => ({
@@ -158,7 +166,7 @@ export const OrganizationManagementTab = () => {
         regions: (org as any).regions ?? [],
         member_count: (membersData || []).filter(m => m.organization_id === org.id).length,
         company_count: (companiesData || []).filter(c => c.organization_id === org.id).length
-      }));
+      })).sort(byPriority);
 
       setOrganizations(orgsWithCounts);
       setFilteredOrganizations(orgsWithCounts);
@@ -180,6 +188,16 @@ export const OrganizationManagementTab = () => {
     }
   };
 
+  const togglePriority = async (org: Organization) => {
+    const next = !org.is_priority;
+    const { error } = await supabase.rpc('set_organization_priority' as never, { p_org: org.id, p_is_priority: next } as never);
+    if (error) {
+      toast.error(`Could not update ${org.name}: ${error.message}`);
+      return;
+    }
+    setOrganizations((prev) => prev.map((o) => (o.id === org.id ? { ...o, is_priority: next } : o)).sort(byPriority));
+  };
+
   const filterOrganizations = () => {
     if (!searchQuery) {
       setFilteredOrganizations(organizations);
@@ -190,7 +208,7 @@ export const OrganizationManagementTab = () => {
     const filtered = organizations.filter(org =>
       org.name.toLowerCase().includes(query) ||
       (org.description && org.description.toLowerCase().includes(query))
-    );
+    ).sort(byPriority);
     setFilteredOrganizations(filtered);
   };
 
@@ -1053,6 +1071,45 @@ export const OrganizationManagementTab = () => {
         )}
       </Card>
 
+      {/* Priority clients: bigger cards above the list */}
+      {organizations.some((o) => o.is_priority) && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Priority clients</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {organizations.filter((o) => o.is_priority).map((org) => (
+              <Card
+                key={org.id}
+                className="border border-slate-200 shadow-sm bg-white hover:border-pink/50 hover:shadow-md transition-all cursor-pointer"
+                onClick={() => openWorkspace(org)}
+              >
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-900 truncate">{org.name}</p>
+                      {org.description && <p className="text-xs text-slate-500 truncate">{org.description}</p>}
+                    </div>
+                    <button
+                      type="button"
+                      title="Remove from priority clients"
+                      onClick={(e) => { e.stopPropagation(); togglePriority(org); }}
+                      className="text-pink hover:text-pink/70"
+                    >
+                      <Star className="h-4 w-4 fill-current" />
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>{org.company_count || 0} companies · {org.member_count || 0} members</span>
+                    <span className="inline-flex items-center gap-1 text-pink font-medium">
+                      Open <ArrowRight className="h-3.5 w-3.5" />
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Search - compact */}
       <Card className="border border-slate-200 shadow-sm bg-white">
         <CardContent className="py-4">
@@ -1112,7 +1169,14 @@ export const OrganizationManagementTab = () => {
                     <TableRow key={org.id} className="border-slate-200">
                       <TableCell className="py-2 px-3 text-sm">
                         <div className="flex items-center gap-2">
-                          <Briefcase className="h-3.5 w-3.5 text-slate-400 flex-shrink-0" />
+                          <button
+                            type="button"
+                            title={org.is_priority ? 'Remove from priority clients' : 'Mark as a priority client'}
+                            onClick={() => togglePriority(org)}
+                            className={org.is_priority ? 'text-pink' : 'text-slate-300 hover:text-pink'}
+                          >
+                            <Star className={`h-3.5 w-3.5 ${org.is_priority ? 'fill-current' : ''}`} />
+                          </button>
                           <button
                             type="button"
                             onClick={() => openWorkspace(org)}
