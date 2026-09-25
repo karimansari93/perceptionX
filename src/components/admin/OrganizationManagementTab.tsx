@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X, Star, ArrowRight } from 'lucide-react';
 import { OrgWorkspace } from './OrgWorkspace';
+import { OrgLogo, useOrgLogos } from './OrgLogo';
 import { AnalysisReadinessTab } from './AnalysisReadinessTab';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
 import { generatePdfThumbnail } from '@/utils/pdfThumbnail';
@@ -46,6 +47,7 @@ interface Organization {
   description: string | null;
   created_at: string;
   regions: string[];
+  logo_url?: string | null;
   member_count?: number;
   company_count?: number;
   /** Priority client (e.g. quarterly reports): pinned as a card above the list. */
@@ -74,6 +76,7 @@ export const OrganizationManagementTab = () => {
   const [filteredOrganizations, setFilteredOrganizations] = useState<Organization[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
+  const orgLogos = useOrgLogos(organizations);
   // The open org lives in the URL (?org=) so refresh and links keep the admin
   // inside that client's workspace.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1029,6 +1032,7 @@ export const OrganizationManagementTab = () => {
       {openOrg ? (
         <OrgWorkspace
           org={openOrg}
+          logoSrc={orgLogos[openOrg.id]}
           onBack={closeWorkspace}
           reportsPanel={reportsPanel}
           membersPanel={membersPanel}
@@ -1084,9 +1088,12 @@ export const OrganizationManagementTab = () => {
               >
                 <CardContent className="p-4 space-y-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="font-semibold text-slate-900 truncate">{org.name}</p>
-                      {org.description && <p className="text-xs text-slate-500 truncate">{org.description}</p>}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <OrgLogo name={org.name} src={orgLogos[org.id]} size="lg" />
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-900 truncate">{org.name}</p>
+                        {org.description && <p className="text-xs text-slate-500 truncate">{org.description}</p>}
+                      </div>
                     </div>
                     <button
                       type="button"
@@ -1177,6 +1184,7 @@ export const OrganizationManagementTab = () => {
                           >
                             <Star className={`h-3.5 w-3.5 ${org.is_priority ? 'fill-current' : ''}`} />
                           </button>
+                          <OrgLogo name={org.name} src={orgLogos[org.id]} size="sm" />
                           <button
                             type="button"
                             onClick={() => openWorkspace(org)}

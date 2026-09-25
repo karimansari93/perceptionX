@@ -8,6 +8,7 @@ import { CompanyBatchTab } from './CompanyBatchTab';
 import { ActivateTab } from './ActivateTab';
 import { DataHealthTab } from './DataHealthTab';
 import { RecencyCoverageTab } from './RecencyCoverageTab';
+import { OrgLogo } from './OrgLogo';
 
 // Everything an admin does for ONE client lives here, so the sidebar only
 // carries platform-wide tools. The section is kept in the URL (?section=)
@@ -25,13 +26,14 @@ type Section = (typeof SECTIONS)[number]['id'];
 
 type Props = {
   org: { id: string; name: string; description?: string | null };
+  logoSrc?: string;
   onBack: () => void;
   /** Rendered by OrganizationManagementTab, which owns their state and dialogs. */
   reportsPanel: ReactNode;
   membersPanel: ReactNode;
 };
 
-export const OrgWorkspace = ({ org, onBack, reportsPanel, membersPanel }: Props) => {
+export const OrgWorkspace = ({ org, logoSrc, onBack, reportsPanel, membersPanel }: Props) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const raw = searchParams.get('section');
   const section: Section = SECTIONS.some((s) => s.id === raw) ? (raw as Section) : 'data';
@@ -51,9 +53,12 @@ export const OrgWorkspace = ({ org, onBack, reportsPanel, membersPanel }: Props)
         </Button>
 
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-headline font-bold text-slate-900">{org.name}</h1>
-            {org.description && <p className="text-sm text-slate-500 mt-0.5">{org.description}</p>}
+          <div className="flex items-center gap-3">
+            <OrgLogo name={org.name} src={logoSrc} size="lg" />
+            <div>
+              <h1 className="text-2xl font-headline font-bold text-slate-900">{org.name}</h1>
+              {org.description && <p className="text-sm text-slate-500 mt-0.5">{org.description}</p>}
+            </div>
           </div>
         </div>
 
