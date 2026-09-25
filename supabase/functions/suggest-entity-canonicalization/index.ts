@@ -10,15 +10,15 @@
 //      new canonical, or flag as non-entity.
 //
 // Every result lands in entity_alias_suggestions. With autoQueue (default),
-// safe results also get auto_method set, and the off-peak
-// apply_auto_canonicalization() cron applies them without review:
+// safe results also get auto_method set, and entity_canonicalization_tick()
+// (event-driven: runs after new responses land) applies them without review:
 //   - rule roll-ups;
 //   - LLM decisions at confidence >= 0.95 (historical admin agreement ~95%+),
 //     minus new canonicals that look like an unproven roll-up.
 // Names belonging to tracked companies (clients, their divisions, everything
 // we measure) are never auto-queued: they stay pending for manual review.
 //
-// Candidates come from the request body (`variants`, sent by the cron tick,
+// Candidates come from the request body (`variants`, sent by the SQL tick,
 // which computes them without a statement timeout) or from
 // find_unmapped_competitor_variants for scoped admin runs.
 // =============================================================================

@@ -45,7 +45,7 @@ type Suggestion = {
   created_at: string;
   resolved_canonical_id?: string | null;
   resolved_at?: string | null;
-  // Set by the nightly job when the row is safe to apply without review.
+  // Set by the automatic job when the row is safe to apply without review.
   // Pending + set = queued; approved + set = grouped automatically.
   auto_method?: "auto_rule" | "auto_llm" | null;
 };
@@ -154,7 +154,7 @@ export const EntityCanonicalizationTab = () => {
       if (resolvedFilter === "manual") resolvedQuery = resolvedQuery.is("auto_method", null);
 
       const [s, r, c, a, q] = await Promise.all([
-        // Manual queue only: rows the nightly job will apply are counted below.
+        // Manual queue only: rows the automatic job will apply are counted below.
         supabase
           .from("entity_alias_suggestions")
           .select("*")
@@ -275,7 +275,7 @@ export const EntityCanonicalizationTab = () => {
       if (error) throw error;
       const auto = (data?.auto_rule ?? 0) + (data?.auto_llm ?? 0);
       toast.success(
-        `Processed ${data?.processed ?? 0} new variants: ${auto} queued for automatic grouping tonight, ${data?.manual ?? 0} need review`
+        `Processed ${data?.processed ?? 0} new variants: ${auto} queued for automatic grouping (applied within 5 minutes), ${data?.manual ?? 0} need review`
       );
       await loadAll();
     } catch (e: unknown) {
@@ -806,12 +806,12 @@ export const EntityCanonicalizationTab = () => {
             <CardDescription>
               Merge competitor and source variants (Glassdoor.com / Glassdoor.ie, Disney / Disney+ Hotstar) into single canonical entries.
               <br />
-              Runs automatically every night (21:00 to 05:00 UTC). Obvious competitor variants are grouped
+              Runs automatically after new responses are collected. Obvious competitor variants are grouped
               without review; client names and their divisions always stay in Pending for you.
               {queuedCount > 0 && (
                 <>
                   {" "}
-                  <span className="font-medium">{queuedCount} queued for tonight.</span>
+                  <span className="font-medium">{queuedCount} queued, applied within 5 minutes.</span>
                 </>
               )}
             </CardDescription>
