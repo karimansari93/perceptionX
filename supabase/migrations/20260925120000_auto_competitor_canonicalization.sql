@@ -27,7 +27,8 @@
 --   4. Runs when new responses land, not on a clock: a trigger on
 --      prompt_responses marks new competitor data, and a 5-minute check
 --      (one single-row read when idle) processes it once the collection has
---      been quiet for 30 minutes. The existing backlog drains continuously
+--      been quiet for 30 minutes. The existing backlog (9,441 names with 2+
+--      mentions, ~32 ticks of 300) drains continuously
 --      until empty. Replaces the nightly suggest-entity-canonicalization job.
 --
 -- Undo: any auto-resolved row can be reopened from the Resolved section of
@@ -35,12 +36,20 @@
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- 1. find_unmapped_competitor_variants (identical to 20260606000001)
+-- 1. find_unmapped_competitor_variants (20260606000001 + p_min_mentions)
+--
+-- Names mentioned once are skipped: on 2026-09-25 they were 63% of the
+-- 25,466 ungrouped names but only 2.9% of all competitor mentions. One that
+-- is mentioned again in a later collection becomes eligible automatically.
 -- -----------------------------------------------------------------------------
+-- Drop the 3-arg version (if an environment has it) so calls stay unambiguous.
+DROP FUNCTION IF EXISTS public.find_unmapped_competitor_variants(int, uuid, uuid);
+
 CREATE OR REPLACE FUNCTION public.find_unmapped_competitor_variants(
     p_limit           int     DEFAULT 50,
     p_organization_id uuid    DEFAULT NULL,
-    p_company_id      uuid    DEFAULT NULL
+    p_company_id      uuid    DEFAULT NULL,
+    p_min_mentions    int     DEFAULT 2
 )
 RETURNS TABLE (
     raw_alias        text,
@@ -104,12 +113,13 @@ BEGIN
            ON sug.normalized_alias = d.norm
     WHERE ea.id  IS NULL
       AND sug.id IS NULL
+      AND d.total >= GREATEST(p_min_mentions, 1)
     ORDER BY d.total DESC, d.raw
     LIMIT GREATEST(p_limit, 1);
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.find_unmapped_competitor_variants(int, uuid, uuid)
+GRANT EXECUTE ON FUNCTION public.find_unmapped_competitor_variants(int, uuid, uuid, int)
     TO authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
