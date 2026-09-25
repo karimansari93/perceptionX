@@ -7,7 +7,9 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Users, RefreshCw, Mail, Building2, Briefcase, Calendar, Search } from 'lucide-react';
+import { Users, RefreshCw, Mail, Building2, Briefcase, Calendar, Search, ShieldCheck } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { clearPlatformAdminCache } from '@/lib/platformAdmin';
 
 interface UserRow {
   id: string;
@@ -25,6 +27,11 @@ export const UsersTab = () => {
   const [filteredUsers, setFilteredUsers] = useState<UserRow[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  // Platform admins (user_roles.role = 'admin'): who can open /admin and see
+  // every client's data. Granted and revoked here via set_platform_admin.
+  const [adminIds, setAdminIds] = useState<Set<string>>(new Set());
+  const [savingAdminId, setSavingAdminId] = useState<string | null>(null);
+  const { user: currentUser } = useAuth();
 
   useEffect(() => {
     loadUsers();
@@ -73,12 +80,38 @@ export const UsersTab = () => {
       });
 
       setUsers(usersWithOrgs);
+
+      const { data: admins, error: adminsError } = await supabase.rpc('list_platform_admins' as never);
+      if (adminsError) throw adminsError;
+      setAdminIds(new Set(((admins as unknown as { user_id: string }[]) || []).map((a) => a.user_id)));
     } catch (error) {
       console.error('Error loading users:', error);
       toast.error('Failed to load users');
     } finally {
       setLoading(false);
     }
+  };
+
+  const setPlatformAdmin = async (user: UserRow, makeAdmin: boolean) => {
+    const prompt = makeAdmin
+      ? `Make ${user.email} a platform admin? They will be able to open the admin panel and see every client's data.`
+      : `Remove platform admin access from ${user.email}?`;
+    if (!window.confirm(prompt)) return;
+    setSavingAdminId(user.id);
+    const { error } = await supabase.rpc('set_platform_admin' as never, { p_user_id: user.id, p_is_admin: makeAdmin } as never);
+    setSavingAdminId(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    clearPlatformAdminCache();
+    setAdminIds((prev) => {
+      const next = new Set(prev);
+      if (makeAdmin) next.add(user.id);
+      else next.delete(user.id);
+      return next;
+    });
+    toast.success(makeAdmin ? `${user.email} is now a platform admin` : `${user.email} is no longer a platform admin`);
   };
 
   const filterUsers = () => {
@@ -113,7 +146,7 @@ export const UsersTab = () => {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-headline font-semibold text-slate-800">Users</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Manage user accounts and permissions</p>
+          <p className="text-sm text-slate-500 mt-0.5">Everyone with an account. Platform admins can open this admin panel and see every client.</p>
         </div>
         <Button onClick={loadUsers} variant="outline" size="sm" className="border-slate-200 text-slate-600">
           <RefreshCw className="h-4 w-4 mr-1.5" />
@@ -210,6 +243,7 @@ export const UsersTab = () => {
                     <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Email</TableHead>
                     <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Organizations</TableHead>
                     <TableHead className="h-9 px-3 text-xs font-medium text-slate-600">Joined</TableHead>
+                    <TableHead className="h-9 px-3 text-xs font-medium text-slate-600 text-right">Platform admin</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -248,6 +282,37 @@ export const UsersTab = () => {
                             <Calendar className="h-3.5 w-3.5" />
                             {new Date(user.created_at).toLocaleDateString()}
                           </div>
+                        </TableCell>
+                        <TableCell className="py-2 px-3 text-right">
+                          {adminIds.has(user.id) ? (
+                            <div className="flex items-center justify-end gap-2">
+                              <Badge className="bg-teal/10 text-teal border-teal/30 text-xs font-normal" variant="outline">
+                                <ShieldCheck className="h-3 w-3 mr-1" />
+                                Admin
+                              </Badge>
+                              {user.id !== currentUser?.id && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-xs text-slate-500"
+                                  disabled={savingAdminId === user.id}
+                                  onClick={() => setPlatformAdmin(user, false)}
+                                >
+                                  Remove
+                                </Button>
+                              )}
+                            </div>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs border-slate-200 text-slate-600"
+                              disabled={savingAdminId === user.id}
+                              onClick={() => setPlatformAdmin(user, true)}
+                            >
+                              Make admin
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     );

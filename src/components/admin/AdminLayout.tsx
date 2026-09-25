@@ -40,6 +40,7 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
       items: [
         { id: 'organizations', label: 'Organizations', icon: Briefcase },
         { id: 'onboarding-forms', label: 'Onboarding Forms', icon: Send },
+        { id: 'users', label: 'Users', icon: Users },
       ],
     },
     {
@@ -50,7 +51,6 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
         { id: 'recency-coverage', label: 'Recency Coverage', icon: Clock },
         { id: 'entity-canonicalization', label: 'Data Cleanup', icon: Tags },
         { id: 'visibility-rankings', label: 'Visibility Rankings', icon: Trophy },
-        { id: 'users', label: 'Users', icon: Users },
       ],
     },
   ];

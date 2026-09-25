@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useIsPlatformAdmin } from '@/lib/platformAdmin';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertTriangle } from 'lucide-react';
@@ -8,23 +7,10 @@ interface AdminRouteProps {
   children: React.ReactNode;
 }
 
-const ADMIN_EMAILS = ['karim@perceptionx.ai'];
-
 export default function AdminRoute({ children }: AdminRouteProps) {
-  const { user } = useAuth();
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const { isAdmin, loading } = useIsPlatformAdmin();
 
-  useEffect(() => {
-    if (!user) {
-      setIsAdmin(false);
-      return;
-    }
-
-    const isUserAdmin = ADMIN_EMAILS.includes(user.email?.toLowerCase() || '');
-    setIsAdmin(isUserAdmin);
-  }, [user]);
-
-  if (isAdmin === null) {
+  if (loading) {
     return <LoadingScreen />;
   }
 

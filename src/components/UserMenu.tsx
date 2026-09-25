@@ -13,12 +13,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/components/ui/sidebar';
 import { useNavigate, Link } from 'react-router-dom';
 import { getEmailDomainFavicon } from '@/utils/citationUtils';
+import { useIsPlatformAdmin } from '@/lib/platformAdmin';
 
 // Keep in sync with AdminRoute.tsx / CompanyContext.tsx
-const ADMIN_EMAILS = ['karim@perceptionx.ai'];
 
 export default function UserMenu() {
   const { user, signOut } = useAuth();
+  const { isAdmin } = useIsPlatformAdmin();
   const sidebar = useSidebar(); // Always call the hook
 
   const handleSignOut = async () => {
@@ -55,7 +56,7 @@ export default function UserMenu() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-56" align="end" forceMount>
-        {ADMIN_EMAILS.includes(user.email?.toLowerCase() || '') && (
+        {isAdmin && (
           <>
             <DropdownMenuItem asChild>
               <Link to="/admin">

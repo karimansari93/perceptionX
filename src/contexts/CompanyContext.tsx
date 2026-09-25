@@ -6,6 +6,7 @@ import { readStarredView } from '@/hooks/useStarredView';
 import { defaultCompanyFromUser } from '@/hooks/useProfileSetup';
 import type { User } from '@supabase/supabase-js';
 import { toast } from 'sonner';
+import { fetchIsPlatformAdmin } from '@/lib/platformAdmin';
 
 export interface Company {
   id: string;
@@ -67,13 +68,6 @@ export const useCompany = () => {
   return context;
 };
 
-// Admin emails - should match AdminRoute.tsx
-const ADMIN_EMAILS = ['karim@perceptionx.ai'];
-
-const isAdminUser = (email: string | undefined): boolean => {
-  if (!email) return false;
-  return ADMIN_EMAILS.includes(email.toLowerCase());
-};
 
 // Pick the company the user will actually land on, BEFORE the first data
 // fetch. This mirrors LocationFilter's post-mount reconcile policy (starred
@@ -137,6 +131,17 @@ const pickInitialCompany = (
 
 export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading: authLoading } = useAuth();
+  // Platform admins can open any company; resolved from user_roles via is_admin().
+  const [platformAdmin, setPlatformAdmin] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchIsPlatformAdmin(user?.id).then((v) => {
+      if (!cancelled) setPlatformAdmin(v);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
   const [currentCompany, setCurrentCompany] = useState<Company | null>(null);
   const [userCompanies, setUserCompanies] = useState<Company[]>([]);
   const [userMemberships, setUserMemberships] = useState<CompanyMembership[]>([]);
@@ -394,7 +399,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       // Admins can switch to companies outside their own org memberships
       // (e.g. from /admin) — fetch the row directly. Industries and the org
       // link ride the same query instead of two follow-up round-trips.
-      if (!company && user && isAdminUser(user.email)) {
+      if (!company && user && (await fetchIsPlatformAdmin(user.id))) {
         const { data: companyData } = await supabase
           .from('companies')
           .select('id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by, company_industries(industry), organization_companies(organization_id)')
@@ -450,13 +455,13 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const isOwnerOrAdmin = useMemo(() => {
     // Admins always have admin access
-    if (user && isAdminUser(user.email)) {
+    if (user && platformAdmin) {
       return true;
     }
     if (!currentCompany) return false;
     const membership = userMemberships.find(m => m.company_id === currentCompany.id);
     return membership?.role === 'owner' || membership?.role === 'admin';
-  }, [currentCompany, userMemberships, user]);
+  }, [currentCompany, userMemberships, user, platformAdmin]);
 
   // Memoized (all members are state or useCallback/useMemo values) so a
   // provider render doesn't hand every useCompany consumer a fresh object —
