@@ -35,14 +35,19 @@ const ALL_PROMPT_TYPES = [
   { id: "discovery", label: "Discovery" },
 ] as const;
 
+// Default-checked set mirrors RecollectPanel and DEFAULT_MODELS in
+// process-company-batch-queue, so a new company is collected on the same
+// models as every other client.
 const ALL_MODELS = [
-  { id: "openai", label: "OpenAI" },
-  { id: "perplexity", label: "Perplexity" },
-  { id: "google-ai-overviews", label: "Google AI Overviews" },
-  { id: "google-ai-mode", label: "Google AI Mode" },
-  { id: "deepseek", label: "DeepSeek" },
-  { id: "gemini", label: "Gemini" },
+  { id: "openai", label: "OpenAI", default: true },
+  { id: "perplexity", label: "Perplexity", default: true },
+  { id: "google-ai-overviews", label: "Google AI Overviews", default: true },
+  { id: "google-ai-mode", label: "Google AI Mode", default: true },
+  { id: "claude", label: "Claude", default: true },
+  { id: "deepseek", label: "DeepSeek", default: false },
+  { id: "gemini", label: "Gemini", default: false },
 ] as const;
+const DEFAULT_MODEL_IDS: string[] = ALL_MODELS.filter((m) => m.default).map((m) => m.id);
 
 const COUNTRY_SUGGESTIONS = [
   "United States", "United Kingdom", "Canada", "Australia", "Germany",
@@ -98,13 +103,10 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
   const [selectedPromptTypes, setSelectedPromptTypes] = useState<string[]>(
     ALL_PROMPT_TYPES.map((p) => p.id),
   );
-  const [selectedModels, setSelectedModels] = useState<string[]>(
-    ALL_MODELS.map((m) => m.id),
-  );
+  const [selectedModels, setSelectedModels] = useState<string[]>(DEFAULT_MODEL_IDS);
 
   useEffect(() => {
     loadIndustries();
-    loadConfiguration();
   }, []);
 
   useEffect(() => {
@@ -137,28 +139,6 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
     }
   };
 
-  const loadConfiguration = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data } = await supabase
-      .from("company_batch_configs")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (data) {
-      setConfigId(data.id);
-      setCompanyName(data.company_name || "");
-      setTargetLocations(data.target_locations || []);
-      setTargetIndustries(data.target_industries || []);
-      setTargetJobFunctions(data.target_job_functions || []);
-      loadQueueForConfig(data.id);
-    }
-  };
-
   const loadQueue = async () => {
     if (!configId) return;
     loadQueueForConfig(configId);
@@ -177,11 +157,13 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
     }
   };
 
-  const saveConfiguration = async () => {
+  // Each visit starts a fresh config: it is created on the first save and
+  // returned so callers can use it before React state updates.
+  const saveConfiguration = async (models?: string[]): Promise<string | null> => {
     setSaving(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) return null;
 
       const payload = {
         user_id: user.id,
@@ -192,16 +174,22 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
         target_locations: targetLocations,
         target_industries: targetIndustries,
         target_job_functions: targetJobFunctions,
+        // Persisted so watchdog re-kicks (empty body) keep the chosen models.
+        ...(models ? { models } : {}),
       };
 
       if (configId) {
-        await supabase.from("company_batch_configs").update(payload).eq("id", configId);
-      } else {
-        const { data } = await supabase.from("company_batch_configs").insert(payload).select("id").single();
-        if (data) setConfigId(data.id);
+        const { error } = await supabase.from("company_batch_configs").update(payload).eq("id", configId);
+        if (error) throw error;
+        return configId;
       }
+      const { data, error } = await supabase.from("company_batch_configs").insert(payload).select("id").single();
+      if (error) throw error;
+      setConfigId(data.id);
+      return data.id;
     } catch (err: any) {
       console.error("Save config error:", err);
+      return null;
     } finally {
       setSaving(false);
     }
@@ -213,8 +201,8 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
     if (targetLocations.length === 0) { toast.error("At least one location is required"); return; }
     if (targetIndustries.length === 0) { toast.error("At least one industry is required"); return; }
 
-    await saveConfiguration();
-    if (!configId) { toast.error("Failed to save configuration"); return; }
+    const savedConfigId = await saveConfiguration();
+    if (!savedConfigId) { toast.error("Failed to save configuration"); return; }
 
     addLog(`Generating queue for ${companyName}...`);
 
@@ -222,10 +210,10 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
     for (const loc of targetLocations) {
       for (const ind of targetIndustries) {
         if (targetJobFunctions.length === 0) {
-          jobs.push({ config_id: configId, company_name: companyName, location: loc, industry: ind, job_function: null, status: "pending", phase: "setup" });
+          jobs.push({ config_id: savedConfigId, company_name: companyName, location: loc, industry: ind, job_function: null, status: "pending", phase: "setup" });
         } else {
           for (const jf of targetJobFunctions) {
-            jobs.push({ config_id: configId, company_name: companyName, location: loc, industry: ind, job_function: jf, status: "pending", phase: "setup" });
+            jobs.push({ config_id: savedConfigId, company_name: companyName, location: loc, industry: ind, job_function: jf, status: "pending", phase: "setup" });
           }
         }
       }
@@ -235,7 +223,7 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
     const { data: existing } = await supabase
       .from("company_batch_queue")
       .select("company_name, location, industry, job_function, status")
-      .eq("config_id", configId)
+      .eq("config_id", savedConfigId)
       .neq("status", "failed");
 
     const existingKeys = new Set(
@@ -261,7 +249,7 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
 
     addLog(`Created ${newJobs.length} queue items (${jobs.length - newJobs.length} duplicates skipped).`);
     toast.success(`${newJobs.length} queue items created`);
-    await loadQueue();
+    await loadQueueForConfig(savedConfigId);
   };
 
   const startCollection = () => {
@@ -272,10 +260,11 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
   const runCollection = async (promptTypes: string[], models: string[]) => {
     if (!configId) return;
     setProcessing(true);
+    await saveConfiguration(models);
     const allTypes = promptTypes.length === ALL_PROMPT_TYPES.length;
-    const allModels = models.length === ALL_MODELS.length;
+    const allModels = models.length === DEFAULT_MODEL_IDS.length && DEFAULT_MODEL_IDS.every((m) => models.includes(m));
     addLog(
-      `Starting collection (${allTypes ? "all prompt types" : `types: ${promptTypes.join(", ")}`}; ${allModels ? "all models" : `models: ${models.join(", ")}`})...`,
+      `Starting collection (${allTypes ? "all prompt types" : `types: ${promptTypes.join(", ")}`}; ${allModels ? "standard models" : `models: ${models.join(", ")}`})...`,
     );
 
     const { error } = await supabase.functions.invoke("process-company-batch-queue", {
@@ -620,9 +609,10 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
             <AlertDialogTitle>Run for all prompt types and models?</AlertDialogTitle>
             <AlertDialogDescription>
               This will collect responses across all prompt types
-              (informational, experience, competitive, discovery) and all
-              models (OpenAI, Perplexity, Google AI Overviews, Google AI Mode,
-              DeepSeek, Gemini). Choose "Customize" to pick a subset.
+              (informational, experience, competitive, discovery) on the
+              standard models (OpenAI, Perplexity, Google AI Overviews, Google
+              AI Mode, Claude). Choose "Customize" to add DeepSeek or Gemini
+              or pick a subset.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -639,7 +629,7 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
                 setConfirmStartOpen(false);
                 runCollection(
                   ALL_PROMPT_TYPES.map((p) => p.id),
-                  ALL_MODELS.map((m) => m.id),
+                  DEFAULT_MODEL_IDS,
                 );
               }}
             >
