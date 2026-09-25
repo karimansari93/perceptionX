@@ -326,11 +326,15 @@ BEGIN
 
     -- One scan of prompt_responses for every touched normalized key. Exact
     -- normalized-token match is what canonicalize_competitor_list joins on.
+    -- Only rows containing a newly aliased token can change: the variants
+    -- themselves plus the names of canonicals created in this run. Existing
+    -- parents ("toyota") are already canonical wherever they appear, so
+    -- including them rewrote ~66k unchanged rows per run.
     SELECT array_agg(DISTINCT k) INTO v_norms
     FROM (
         SELECT normalized_alias AS k FROM _auto_canon WHERE canonical_id IS NOT NULL
         UNION
-        SELECT canonical_norm FROM _auto_canon WHERE canonical_id IS NOT NULL
+        SELECT ce.normalized_name FROM public.canonical_entities ce WHERE ce.id = ANY (v_new_ids)
     ) t;
 
     IF v_norms IS NOT NULL THEN
