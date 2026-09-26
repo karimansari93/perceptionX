@@ -45,6 +45,9 @@ type Suggestion = {
   created_at: string;
   resolved_canonical_id?: string | null;
   resolved_at?: string | null;
+  // Set by the automatic job when the row is safe to apply without review.
+  // Pending + set = queued; approved + set = grouped automatically.
+  auto_method?: "auto_rule" | "auto_llm" | null;
 };
 
 type Canonical = {
@@ -65,6 +68,7 @@ type Alias = {
 };
 
 type Section = "pending" | "resolved" | "canonicals" | "aliases";
+type ResolvedFilter = "all" | "auto" | "manual";
 
 export const EntityCanonicalizationTab = () => {
   const [section, setSection] = useState<Section>("pending");
@@ -76,6 +80,8 @@ export const EntityCanonicalizationTab = () => {
   const [runningJob, setRunningJob] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
+  const [resolvedFilter, setResolvedFilter] = useState<ResolvedFilter>("all");
+  const [queuedCount, setQueuedCount] = useState(0);
 
   const [editing, setEditing] = useState<Suggestion | null>(null);
   const [editCanonical, setEditCanonical] = useState("");
@@ -140,19 +146,23 @@ export const EntityCanonicalizationTab = () => {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [s, r, c, a] = await Promise.all([
+      let resolvedQuery = supabase
+        .from("entity_alias_suggestions")
+        .select("*")
+        .in("status", ["approved", "rejected", "merged_into_existing"]);
+      if (resolvedFilter === "auto") resolvedQuery = resolvedQuery.not("auto_method", "is", null);
+      if (resolvedFilter === "manual") resolvedQuery = resolvedQuery.is("auto_method", null);
+
+      const [s, r, c, a, q] = await Promise.all([
+        // Manual queue only: rows the automatic job will apply are counted below.
         supabase
           .from("entity_alias_suggestions")
           .select("*")
           .eq("status", "pending")
+          .is("auto_method", null)
           .order("mention_count", { ascending: false })
           .limit(500),
-        supabase
-          .from("entity_alias_suggestions")
-          .select("*")
-          .in("status", ["approved", "rejected", "merged_into_existing"])
-          .order("resolved_at", { ascending: false })
-          .limit(500),
+        resolvedQuery.order("resolved_at", { ascending: false }).limit(500),
         supabase
           .from("canonical_entities")
           .select("*")
@@ -163,6 +173,11 @@ export const EntityCanonicalizationTab = () => {
           .select("*")
           .order("created_at", { ascending: false })
           .limit(1000),
+        supabase
+          .from("entity_alias_suggestions")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "pending")
+          .not("auto_method", "is", null),
       ]);
       if (s.error) throw s.error;
       if (r.error) throw r.error;
@@ -172,6 +187,7 @@ export const EntityCanonicalizationTab = () => {
       setResolved((r.data ?? []) as Suggestion[]);
       setCanonicals((c.data ?? []) as Canonical[]);
       setAliases((a.data ?? []) as Alias[]);
+      setQueuedCount(q.count ?? 0);
     } catch (e: unknown) {
       toast.error("Failed to load: " + fmtError(e));
     } finally {
@@ -181,7 +197,8 @@ export const EntityCanonicalizationTab = () => {
 
   useEffect(() => {
     loadAll();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedFilter]);
 
   // Fetch organizations + companies for the job-scope dropdowns.
   useEffect(() => {
@@ -256,7 +273,10 @@ export const EntityCanonicalizationTab = () => {
         { body }
       );
       if (error) throw error;
-      toast.success(`Processed ${data?.processed ?? 0} new variants`);
+      const auto = (data?.auto_rule ?? 0) + (data?.auto_llm ?? 0);
+      toast.success(
+        `Processed ${data?.processed ?? 0} new variants: ${auto} queued for automatic grouping (applied within 5 minutes), ${data?.manual ?? 0} need review`
+      );
       await loadAll();
     } catch (e: unknown) {
       toast.error("Job failed: " + fmtError(e));
@@ -361,6 +381,7 @@ export const EntityCanonicalizationTab = () => {
           status: "approved",
           resolved_canonical_id: canonical.id,
           resolved_at: new Date().toISOString(),
+          auto_method: null,
         })
         .eq("id", s.id);
       if (updateErr) throw updateErr;
@@ -594,6 +615,7 @@ export const EntityCanonicalizationTab = () => {
           resolved_canonical_id: null,
           resolved_at: null,
           resolved_by: null,
+          auto_method: null,
         })
         .eq("normalized_alias", a.normalized_alias);
       toast.success("Alias deleted");
@@ -619,6 +641,7 @@ export const EntityCanonicalizationTab = () => {
           resolved_canonical_id: null,
           resolved_at: null,
           resolved_by: null,
+          auto_method: null,
         })
         .eq("id", s.id);
       if (updateErr) throw updateErr;
@@ -634,7 +657,7 @@ export const EntityCanonicalizationTab = () => {
     try {
       const { error } = await supabase
         .from("entity_alias_suggestions")
-        .update({ status: "rejected", resolved_at: new Date().toISOString() })
+        .update({ status: "rejected", resolved_at: new Date().toISOString(), auto_method: null })
         .eq("id", s.id);
       if (error) throw error;
       toast.success("Rejected");
@@ -683,7 +706,7 @@ export const EntityCanonicalizationTab = () => {
       const ids = targets.map((t) => t.id);
       const { error } = await supabase
         .from("entity_alias_suggestions")
-        .update({ status: "rejected", resolved_at: new Date().toISOString() })
+        .update({ status: "rejected", resolved_at: new Date().toISOString(), auto_method: null })
         .in("id", ids);
       if (error) throw error;
       toast.success(`Rejected ${ids.length}`);
@@ -782,6 +805,15 @@ export const EntityCanonicalizationTab = () => {
             <CardTitle>Data Cleanup</CardTitle>
             <CardDescription>
               Merge competitor and source variants (Glassdoor.com / Glassdoor.ie, Disney / Disney+ Hotstar) into single canonical entries.
+              <br />
+              Runs automatically after new responses are collected. Obvious competitor variants are grouped
+              without review; client names and their divisions always stay in Pending for you.
+              {queuedCount > 0 && (
+                <>
+                  {" "}
+                  <span className="font-medium">{queuedCount} queued, applied within 5 minutes.</span>
+                </>
+              )}
             </CardDescription>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -933,6 +965,8 @@ export const EntityCanonicalizationTab = () => {
             <ResolvedTable
               rows={filteredResolved}
               canonicals={canonicals}
+              filter={resolvedFilter}
+              setFilter={setResolvedFilter}
               onReopen={reopenSuggestion}
               onEdit={(s) => {
                 setEditing(s);
@@ -1430,11 +1464,15 @@ const PendingTable = ({
 const ResolvedTable = ({
   rows,
   canonicals,
+  filter,
+  setFilter,
   onReopen,
   onEdit,
 }: {
   rows: Suggestion[];
   canonicals: Canonical[];
+  filter: ResolvedFilter;
+  setFilter: (f: ResolvedFilter) => void;
   onReopen: (s: Suggestion) => void;
   onEdit: (s: Suggestion) => void;
 }) => {
@@ -1444,14 +1482,40 @@ const ResolvedTable = ({
     return m;
   }, [canonicals]);
 
+  const filterBar = (
+    <div className="flex items-center gap-2 mb-3">
+      <span className="text-xs text-slate-500">Show:</span>
+      {(["all", "auto", "manual"] as const).map((f) => (
+        <Button
+          key={f}
+          size="sm"
+          variant={filter === f ? "default" : "outline"}
+          onClick={() => setFilter(f)}
+        >
+          {f === "all" ? "All" : f === "auto" ? "Grouped automatically" : "Resolved by hand"}
+        </Button>
+      ))}
+      {filter === "auto" && (
+        <span className="text-xs text-slate-500">
+          Spot-check these. Reopen undoes a grouping and moves it to Pending.
+        </span>
+      )}
+    </div>
+  );
+
   if (rows.length === 0) {
     return (
-      <div className="text-center py-8 text-sm text-slate-500">
-        No resolved suggestions yet. Approved or rejected items show up here.
-      </div>
+      <>
+        {filterBar}
+        <div className="text-center py-8 text-sm text-slate-500">
+          No resolved suggestions yet. Approved or rejected items show up here.
+        </div>
+      </>
     );
   }
   return (
+    <>
+    {filterBar}
     <Table>
       <TableHeader>
         <TableRow>
@@ -1493,6 +1557,15 @@ const ResolvedTable = ({
                 >
                   {s.status}
                 </Badge>
+                {s.auto_method && (
+                  <Badge
+                    variant="outline"
+                    className="ml-1"
+                    title={s.llm_rationale ?? undefined}
+                  >
+                    {s.auto_method === "auto_rule" ? "Auto (rule)" : "Auto (AI)"}
+                  </Badge>
+                )}
               </TableCell>
               <TableCell className="text-right">{s.mention_count}</TableCell>
               <TableCell className="text-xs text-slate-500">
@@ -1524,6 +1597,7 @@ const ResolvedTable = ({
         })}
       </TableBody>
     </Table>
+    </>
   );
 };
 
