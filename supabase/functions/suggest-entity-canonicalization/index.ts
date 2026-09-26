@@ -243,7 +243,13 @@ function toRow(
     if (isNonEntity) {
       // Never hide something that is already a real, active canonical.
       auto = !ctx.index.has(c.normalized_alias);
-    } else if (s.canonical_name && !isProtected(s.canonical_name, ctx.stems)) {
+    } else if (
+      s.canonical_name &&
+      !isProtected(s.canonical_name, ctx.stems) &&
+      // The alias index can resolve an unprotected LLM name ("YouTube") onto a
+      // protected canonical ("Google"): check where it actually lands.
+      !isProtected(target?.canonical_name, ctx.stems)
+    ) {
       if (target) {
         auto = true; // maps onto an existing active canonical
       } else if (s.decision === "new_canonical") {

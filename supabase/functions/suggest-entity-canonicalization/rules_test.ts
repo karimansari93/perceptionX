@@ -60,7 +60,7 @@ Deno.test("leaves real sub-brands and finance arms for the LLM / review", () => 
 const tracked = [
   "CSL Behring", "CSL Limited", "CSL Seqirus", "CSL Vifor", "Ford", "Ford Credit",
   "Ford Business Solutions", "Netflix", "Netflix Animation Studios", "Straumann Group", "DU",
-  "EY", "Lincoln", "Google", "Capital Group", "Netflix House",
+  "EY", "Lincoln", "Google", "Capital Group", "Netflix House", "Warner Bros Discovery",
 ];
 const stems = buildProtectedStems(tracked);
 
@@ -70,7 +70,8 @@ Deno.test("client names and their divisions are protected", () => {
       "CSL Behring", "CSL Behring Australia", "Csl", "CSL Plasma", "Seqirus", "Vifor Pharma",
       "Vifor Pharma Deutschland", "Behring", "Ford Credit", "Ford Motor Credit Company",
       "Ford Otosan", "Netflix Korea", "Straumann", "DU", "EY", "Lincoln Electric",
-      "Google Germany", "Capital Group", "Netflix House",
+      "Google Germany", "Capital Group", "Netflix House", "YouTube (Google)",
+      "Warner Bros. Discovery", "Alphabet / Google",
     ]
   ) assertEquals(isProtected(v, stems), true, v);
 });

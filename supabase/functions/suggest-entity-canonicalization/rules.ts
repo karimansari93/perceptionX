@@ -173,13 +173,24 @@ export function buildProtectedStems(companyNames: string[]): Set<string> {
   return stems;
 }
 
+/**
+ * Word form used only for protection matching: punctuation becomes spaces,
+ * so "Warner Bros. Discovery" matches "Warner Bros Discovery" and
+ * "YouTube (Google)" contains "google".
+ */
+function words(input: string): string {
+  return normalize(input).replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
+}
+
 /** True when any protected stem appears in the name as whole words. */
 export function isProtected(name: string | null | undefined, stems: Set<string>): boolean {
   if (!name) return false;
-  const n = normalize(name);
+  const n = words(name);
   if (!n) return false;
   const padded = ` ${n} `;
-  for (const s of stems) {
+  for (const raw of stems) {
+    const s = words(raw);
+    if (!s) continue;
     if (s === n) return true;
     if (s.length >= 3 && padded.includes(` ${s} `)) return true;
   }
