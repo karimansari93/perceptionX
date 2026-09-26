@@ -158,7 +158,7 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_model_breakdown',
     progressLabel: 'Analyzing by AI platform',
-    description: `How each tracked AI platform (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode) perceives the company in the latest measured quarter(s): visibility % and positive-sentiment % per platform. Useful for 'which platform mentions us least / is least favorable'. ${PERIOD_SHARE_NOTE}`,
+    description: `How each tracked AI platform (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode, and Claude from September 2026) perceives the company in the latest measured quarter(s): visibility % and positive-sentiment % per platform. Useful for 'which platform mentions us least / is least favorable'. ${PERIOD_SHARE_NOTE}`,
     input_schema: {
       type: 'object',
       properties: { company_id: companyIdProp, quarters_back: quartersBackProp(1), include_siblings: includeSiblingsProp },
@@ -202,7 +202,7 @@ export const PX_TOOLS: PxToolDef[] = [
   {
     name: 'get_visibility',
     progressLabel: 'Measuring visibility',
-    description: "Visibility = % of AI answers that mention the company by name. Filter by market and/or job function and get the series by measured quarter with the change in points vs the previous measured period; set by_model=true to split by AI platform (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode) or by_job_function=true to split by job function. Use for 'how visible are we in Japan?', 'is our visibility improving?', 'which AI platform mentions us least?', 'which job functions see us least?'. Numbers match the dashboard rollups. " + PERIOD_SHARE_NOTE,
+    description: "Visibility = % of AI answers that mention the company by name. Filter by market and/or job function and get the series by measured quarter with the change in points vs the previous measured period; set by_model=true to split by AI platform (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode, and Claude from September 2026) or by_job_function=true to split by job function. Use for 'how visible are we in Japan?', 'is our visibility improving?', 'which AI platform mentions us least?', 'which job functions see us least?'. Numbers match the dashboard rollups. " + PERIOD_SHARE_NOTE,
     input_schema: {
       type: 'object',
       properties: {

@@ -11,7 +11,7 @@
 // elsewhere; import it.
 
 export const PX_INTRO =
-  'PerceptionX tracks how consumer AI platforms (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode) describe this organization as an employer — visibility, sentiment, themes, cited sources, and competitors, by market.';
+  'PerceptionX tracks how consumer AI platforms (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode, and Claude from September 2026) describe this organization as an employer: visibility, sentiment, themes, cited sources, and competitors, by market.';
 
 export const PX_RULES: readonly string[] = [
   "Answer ONLY from tool results. Never fill gaps with general knowledge about the company — if a tool didn't return it, say the data isn't tracked yet.",
