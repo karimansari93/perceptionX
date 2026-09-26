@@ -7,7 +7,7 @@ import { Loader2, CheckCircle2, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { supabase } from "@/integrations/supabase/client";
 import { useCompetitorBenchmarks } from "@/hooks/useCompetitorBenchmarks";
-import { useMarketScores, MarketScoreRow } from "@/hooks/useMarketScores";
+import { useMarketPeerStats } from "@/hooks/useMarketScores";
 import {
   getPositionLabel,
   PositionLabel,
@@ -98,31 +98,6 @@ function companyLabel(_l: string) {
   return "your score";
 }
 
-function computePeerRanges(rows: MarketScoreRow[], targetCompany: string) {
-  const peers = rows.filter((r) => r.company_name !== targetCompany);
-  const range = (key: "visibility_pct" | "sentiment_pct" | "relevance_pct") => {
-    const vals = peers
-      .map((p) => p[key])
-      .filter((v): v is number => v !== null && Number.isFinite(v));
-    if (vals.length === 0) return { min: null as number | null, max: null as number | null };
-    return { min: Math.min(...vals), max: Math.max(...vals) };
-  };
-  // Per-peer EPS using the same dashboard formula, all from MV values.
-  const epsVals = peers
-    .map((p) => {
-      if (p.sentiment_pct === null || p.visibility_pct === null || p.relevance_pct === null) return null;
-      return p.sentiment_pct * 0.5 + p.visibility_pct * 0.3 + p.relevance_pct * 0.2;
-    })
-    .filter((v): v is number => v !== null && Number.isFinite(v));
-  const epsRange =
-    epsVals.length > 0 ? { min: Math.min(...epsVals), max: Math.max(...epsVals) } : { min: null, max: null };
-  return {
-    eps: epsRange,
-    sentiment: range("sentiment_pct"),
-    visibility: range("visibility_pct"),
-    relevance: range("relevance_pct"),
-  };
-}
 
 function fmtPct(v: number, decimals = 1): string {
   return `${v.toFixed(decimals)}%`;
@@ -223,8 +198,8 @@ export function EpsDrilldownSheet({
 }: EpsDrilldownSheetProps) {
   const marketName = marketNameFromLocation(market);
   const { data, loading, error } = useCompetitorBenchmarks(companyName, marketName);
-  const { data: marketRows } = useMarketScores(marketName);
-  const peerRanges = computePeerRanges(marketRows, companyName);
+  // Anonymous peer ranges and averages only; other companies are never named.
+  const { data: peerRanges } = useMarketPeerStats(companyName, marketName);
 
   const sentimentGap =
     liveSentiment !== null && data && data.sentiment_peer_avg !== null && !Number.isNaN(data.sentiment_peer_avg)
@@ -573,7 +548,7 @@ Hard rules:
         {/* SECTION 3 — sentiment vs other companies in market */}
         <section className={`mb-8 ${revealClass(3)}`}>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">
-            Sentiment vs other companies{marketName ? ` in ${marketName}` : ""}
+            Sentiment vs peers{marketName ? ` in ${marketName}` : ""}
           </h3>
 
           {(() => {
@@ -584,16 +559,9 @@ Hard rules:
                 </div>
               );
             }
-            const peers = marketRows
-              .filter((r) => r.company_name !== companyName && r.sentiment_pct !== null)
-              .map((r) => ({
-                name: r.company_name,
-                pct: r.sentiment_pct as number,
-                delta: (r.sentiment_pct as number) - liveSentiment,
-              }))
-              .sort((a, b) => b.delta - a.delta);
-
-            if (peers.length === 0) {
+            const values = peerRanges.sentiment.values;
+            const avg = peerRanges.sentiment.avg;
+            if (values.length === 0 || avg === null) {
               return (
                 <div className="rounded-xl border border-dashed p-4 text-sm text-gray-500">
                   Not enough data yet for this market.
@@ -601,29 +569,37 @@ Hard rules:
               );
             }
 
+            const delta = liveSentiment - avg;
+            const inLine = Math.abs(delta) < 1;
+            const higherThan = values.filter((v) => v < liveSentiment).length;
+            const colorClass = inLine ? "text-gray-600" : delta > 0 ? "text-[#0DBCBA]" : "text-[#DB5E89]";
+            const deltaText = inLine
+              ? "In line with the peer average"
+              : `${delta > 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)} points vs the peer average`;
+
             return (
               <div className="divide-y rounded-xl border bg-white">
-                {peers.map((peer) => {
-                  const absDelta = Math.abs(peer.delta);
-                  const inLine = absDelta < 1;
-                  const peerHigher = peer.delta > 0;
-                  const colorClass = inLine
-                    ? "text-gray-600"
-                    : peerHigher
-                      ? "text-[#0DBCBA]"
-                      : "text-[#DB5E89]";
-                  const text = inLine
-                    ? `in line`
-                    : peerHigher
-                      ? `+${absDelta.toFixed(1)}% vs you`
-                      : `−${absDelta.toFixed(1)}% vs you`;
-                  return (
-                    <div key={peer.name} className="flex items-center justify-between gap-3 px-4 py-3">
-                      <div className="text-sm text-gray-900 truncate">{peer.name}</div>
-                      <span className={`text-sm font-medium shrink-0 ${colorClass}`}>{text}</span>
-                    </div>
-                  );
-                })}
+                <div className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="text-sm text-gray-900">Your sentiment</div>
+                  <span className="text-sm font-semibold text-gray-900">{liveSentiment.toFixed(0)}%</span>
+                </div>
+                <div className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="text-sm text-gray-900">Peer average</div>
+                  <span className="text-sm font-medium text-gray-700">
+                    {avg.toFixed(0)}%
+                    {peerRanges.sentiment.min !== null && peerRanges.sentiment.max !== null && (
+                      <span className="text-gray-500 font-normal">
+                        {" "}(range {peerRanges.sentiment.min.toFixed(0)}–{peerRanges.sentiment.max.toFixed(0)}%)
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className={`text-sm font-medium ${colorClass}`}>{deltaText}</div>
+                  <span className="text-sm text-gray-600 shrink-0">
+                    Higher than {higherThan} of {values.length} peers
+                  </span>
+                </div>
               </div>
             );
           })()}

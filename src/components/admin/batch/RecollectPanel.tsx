@@ -193,6 +193,11 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
       toast.error("Select at least one company");
       return;
     }
+    // Continue what was collected: pre-tick the models these companies were
+    // already collected on this month, so a fill never adds a new model. A
+    // month with nothing collected yet starts from the standard set.
+    const collectedModels = new Set(selectedList.flatMap((c) => c.models));
+    setSelectedModels(collectedModels.size > 0 ? collectedModels : new Set(DEFAULT_MODEL_IDS));
     setConfirmOpen(true);
   };
 
@@ -420,8 +425,8 @@ export const RecollectPanel = ({ organizationId, onBack }: Props) => {
             <DialogTitle>Confirm models to collect</DialogTitle>
             <DialogDescription>
               Recollecting {monthLabel(month)} for {selectedList.length} compan
-              {selectedList.length === 1 ? "y" : "ies"}. Responses will be collected
-              for the models checked below.
+              {selectedList.length === 1 ? "y" : "ies"}. Pre-ticked: the models already collected
+              this month, so only their missing answers are filled.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 py-1">

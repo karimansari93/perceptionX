@@ -25,7 +25,7 @@
 // payload is the only place honesty can live.
 
 import {
-  changeBlock, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER,
+  changeBlock, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER, CLAUDE_PUBLISHED_OR,
   labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta, rate1, sentimentPct,
   sortQuarters, toQuarterly, topPagesByDomain, pageEntry, PAGES_UNAVAILABLE_NOTE,
 } from './helpers.ts';
@@ -296,6 +296,7 @@ export async function getAttributeThemes(
       .in('company_id', r.scope.companyIds)
       .eq('attribute_id', attributeId)
       .not('prompt_responses.ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
+      .or(CLAUDE_PUBLISHED_OR, { referencedTable: 'prompt_responses' })
       .in('prompt_responses.response_month', r.months)
       .order('created_at', { ascending: false })
       .limit(40);

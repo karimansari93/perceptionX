@@ -22,7 +22,7 @@
 // answer texts, newest first) — periods on those are bare quarter labels.
 
 import {
-  buildMeta, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER,
+  buildMeta, coverageFound, coverageNoData, coveragePartial, EXCLUDED_AI_MODELS_FILTER, CLAUDE_PUBLISHED_OR,
   extractSnippet, labelQuarter, METHODOLOGY_NOTES, monthToQuarter, pct, pointsDelta,
   quartersOfMonths, sentimentPct, sortQuarters, topPagesByDomain, PAGES_UNAVAILABLE_NOTE,
 } from './helpers.ts';
@@ -684,6 +684,7 @@ export async function getResponses(
     `)
     .eq('company_id', companyId)
     .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
+    .or(CLAUDE_PUBLISHED_OR)
     .order('tested_at', { ascending: false })
     .limit(promptType || aiModel || sentimentFilter ? maxLimit * 4 : maxLimit);
 
@@ -760,6 +761,7 @@ export async function searchResponses(ctx: ToolContext, companyId: string, keywo
     `)
     .eq('company_id', companyId)
     .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
+    .or(CLAUDE_PUBLISHED_OR)
     .ilike('response_text', `%${keyword}%`)
     .order('tested_at', { ascending: false })
     .limit(maxLimit);

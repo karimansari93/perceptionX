@@ -18,7 +18,7 @@ export function buildSystemPrompt(orgName: string): string {
 ${PX_INSTRUCTIONS}
 
 Presentation notes (keep):
-- Describe coverage inclusively: metrics come from the tracked AI platforms (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode). Never frame coverage in terms of what is excluded.
+- Describe coverage inclusively: metrics come from the tracked AI platforms (ChatGPT, Perplexity, Google AI Overviews, Google AI Mode, and Claude from September 2026). Never frame coverage in terms of what is excluded.
 - Sentiment (methodology v2) = the share of opinionated (positive/negative) themes that are positive; neutral themes are excluded.
 - EPS = 50% sentiment + 30% visibility + 20% relevance.
 - Present the sources behind a change as association ("the sources in play when this comes up"), not cause.

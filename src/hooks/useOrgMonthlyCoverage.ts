@@ -6,8 +6,10 @@ import { supabase } from '@/integrations/supabase/client';
  *
  * "Health" here = did we collect the full scope of prompts for the period?
  *   - Expected scope = every is_active confirmed_prompt for the company (now).
- *   - Covered        = that prompt has >=1 response in the month (any model).
- *   - Missing        = active prompts with zero responses in the month.
+ *   - Month models   = the models the company was collected on that month.
+ *   - Covered        = that prompt has a response from every month model.
+ *   - Missing        = active prompts lacking any of them (all prompts when
+ *                      the company has nothing in the month yet).
  *
  * Bucketing uses prompt_responses.response_month (first-of-month date).
  * Deliberately MONTH-grain even though the user-facing dashboard groups by
@@ -31,6 +33,8 @@ export type CompanyCoverage = {
   // The active prompt ids with no response this month — handed straight to
   // the "Recollect missing" action.
   missingPromptIds: string[];
+  // Models with at least one response from this company in the month.
+  models: string[];
 };
 
 const PAGE_SIZE = 1000;
@@ -110,7 +114,9 @@ export function useOrgMonthlyCoverage(organizationId: string, month: string) {
 
       // 4. Prompt ids that already have a response in this month (paginated).
       const { start, end } = monthBounds(month);
-      const collected = new Set<string>();
+      // prompt id → models answered this month; company id → models used.
+      const collected = new Map<string, Set<string>>();
+      const modelsByCompany = new Map<string, Set<string>>();
       {
         let page = 0;
         let chunk: any[] | null;
@@ -119,7 +125,7 @@ export function useOrgMonthlyCoverage(organizationId: string, month: string) {
           const to = from + PAGE_SIZE - 1;
           const { data, error: rErr } = await supabase
             .from('prompt_responses')
-            .select('confirmed_prompt_id')
+            .select('confirmed_prompt_id, company_id, ai_model')
             .in('company_id', companyIds)
             .gte('response_month', start)
             .lt('response_month', end)
@@ -129,7 +135,12 @@ export function useOrgMonthlyCoverage(organizationId: string, month: string) {
             .range(from, to);
           if (rErr) throw rErr;
           chunk = data ?? [];
-          for (const r of chunk) collected.add(r.confirmed_prompt_id);
+          for (const r of chunk) {
+            if (!collected.has(r.confirmed_prompt_id)) collected.set(r.confirmed_prompt_id, new Set());
+            collected.get(r.confirmed_prompt_id)!.add(r.ai_model);
+            if (!modelsByCompany.has(r.company_id)) modelsByCompany.set(r.company_id, new Set());
+            modelsByCompany.get(r.company_id)!.add(r.ai_model);
+          }
           page++;
         } while (chunk && chunk.length === PAGE_SIZE);
       }
@@ -138,7 +149,11 @@ export function useOrgMonthlyCoverage(organizationId: string, month: string) {
       const result: CompanyCoverage[] = (companyData || [])
         .map((c: any) => {
           const active = activeByCompany.get(c.id) || [];
-          const missingPromptIds = active.filter((id) => !collected.has(id));
+          const models = [...(modelsByCompany.get(c.id) ?? [])].sort();
+          const missingPromptIds = active.filter((id) => {
+            const got = collected.get(id);
+            return !got || models.some((m) => !got.has(m));
+          });
           const locs = locationsByCompany.get(c.id);
           let countries: string[] = [];
           if (locs && locs.size > 0) {
@@ -157,6 +172,7 @@ export function useOrgMonthlyCoverage(organizationId: string, month: string) {
             coveredCount: active.length - missingPromptIds.length,
             missingCount: missingPromptIds.length,
             missingPromptIds,
+            models,
           };
         })
         .filter((c) => c.activeCount > 0)

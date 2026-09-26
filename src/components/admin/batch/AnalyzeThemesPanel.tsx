@@ -1,30 +1,28 @@
-import { useState, useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { Loader2, Play, CheckCircle2, AlertCircle, X } from "lucide-react";
+import { Loader2, Play, CheckCircle2, X } from "lucide-react";
 import { CompanyMultiSelect } from "./CompanyMultiSelect";
 
-// ai-thematic-analysis-bulk processes responses at ~3/sec (batchSize=3 + 1s
-// delay between batches) and has the 150s edge timeout. Keep each chunk small
-// enough that even a slow OpenAI day stays under the timeout. 40 responses
-// ≈ 14 internal batches ≈ ~45-70s wall clock.
-const CHUNK_SIZE = 40;
+// Theme gap-fill runs on the server: the panel queues a request
+// (request_theme_gap_fill) and theme_gap_tick works through it every minute,
+// so closing the tab doesn't stop it.
 
-type CompanyProgress = {
-  status: "pending" | "fetching" | "processing" | "done" | "error";
-  error?: string;
-  totalMissing?: number;
-  processed?: number;
-  themesCreated?: number;
-  chunksDone?: number;
-  chunksTotal?: number;
+type GapRequest = {
+  id: string;
+  company_ids: string[];
+  response_month: string | null;
+  status: "pending" | "running" | "done" | "cancelled";
+  sent_count: number;
+  created_at: string;
+  finished_at: string | null;
+  last_error: string | null;
+  remaining: number | null;
 };
 
 type Props = {
@@ -32,269 +30,95 @@ type Props = {
   onBack: () => void;
 };
 
+const monthLabel = (iso: string | null) =>
+  iso
+    ? new Date(iso).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" })
+    : "All months";
+
 export const AnalyzeThemesPanel = ({ organizationId, onBack }: Props) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [companyNames, setCompanyNames] = useState<Map<string, string>>(new Map());
-  const [companyProgress, setCompanyProgress] = useState<Map<string, CompanyProgress>>(new Map());
-
-  // Scope knobs
   const [onlyMonth, setOnlyMonth] = useState<string>(""); // "YYYY-MM" or ""
-  const [clearExisting, setClearExisting] = useState(false);
+  const [queueing, setQueueing] = useState(false);
+  const [requests, setRequests] = useState<GapRequest[]>([]);
+  const [names, setNames] = useState<Map<string, string>>(new Map());
 
-  const [processing, setProcessing] = useState(false);
-  const cancelledRef = useRef(false);
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.rpc("get_theme_gap_requests" as never, { p_org: organizationId } as never);
+    if (error) return;
+    const rows = ((data ?? []) as unknown as GapRequest[]);
+    setRequests(rows);
+    const ids = [...new Set(rows.flatMap((r) => r.company_ids))];
+    if (ids.length > 0) {
+      const { data: companies } = await supabase.from("companies").select("id, name").in("id", ids);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setNames(new Map((companies ?? []).map((c: any) => [c.id, c.name])));
+    }
+  }, [organizationId]);
 
-  const handleAnalyze = async () => {
+  const active = requests.some((r) => r.status === "pending" || r.status === "running");
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Poll while something is running.
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(load, 10000);
+    return () => clearInterval(t);
+  }, [active, load]);
+
+  const handleQueue = async () => {
     if (selectedIds.length === 0) {
       toast.error("Select at least one company");
       return;
     }
-
-    setProcessing(true);
-    cancelledRef.current = false;
-
-    // Fetch names for display
-    const { data: companyRows } = await supabase
-      .from("companies")
-      .select("id, name")
-      .in("id", selectedIds);
-    const nameMap = new Map((companyRows || []).map((c: any) => [c.id, c.name]));
-    setCompanyNames(nameMap);
-
-    // Init progress
-    const initial = new Map<string, CompanyProgress>();
-    selectedIds.forEach((id) => initial.set(id, { status: "pending" }));
-    setCompanyProgress(initial);
-
-    // Compute month window if user picked one
-    let monthStart: string | null = null;
-    let monthEnd: string | null = null;
-    if (onlyMonth && /^\d{4}-\d{2}$/.test(onlyMonth)) {
-      const [y, m] = onlyMonth.split("-").map(Number);
-      monthStart = new Date(Date.UTC(y, m - 1, 1)).toISOString();
-      monthEnd = new Date(Date.UTC(y, m, 1)).toISOString();
+    if (onlyMonth && !/^\d{4}-\d{2}$/.test(onlyMonth)) {
+      toast.error("Pick a valid month");
+      return;
     }
-
-    let succeeded = 0;
-    let failed = 0;
-
-    for (const companyId of selectedIds) {
-      if (cancelledRef.current) break;
-
-      const name = nameMap.get(companyId) || companyId;
-      setCompanyProgress((prev) => {
-        const next = new Map(prev);
-        next.set(companyId, { status: "fetching" });
-        return next;
-      });
-
-      try {
-        // Two-pass fetch so we only send genuinely un-themed responses to the
-        // edge function. An earlier attempt used PostgREST's embedded-resource
-        // filter `ai_themes!left(id)` + `.is("ai_themes.id", null)` — that
-        // filters the EMBEDDED rows, not the PARENT responses, so it silently
-        // returned every response and we wasted hours skip-checking inside
-        // the edge function.
-        //
-        // Pass 1: collect the set of response_ids that already have at least
-        //         one ai_themes row for this company. ai_themes carries
-        //         company_id directly (100% populated, indexed via
-        //         idx_ai_themes_company_id), so we filter on it instead of
-        //         joining through prompt_responses — the embedded-join path
-        //         was timing out at ~260k themes.
-        // Pass 2: fetch prompt_responses for this company, client-side exclude
-        //         any id present in that set.
-        //
-        // When clearExisting is on, skip pass 1 entirely — the edge function
-        // will wipe existing themes and re-analyze every response.
-        const PAGE = 1000;
-        const themedIds = new Set<string>();
-
-        if (!clearExisting) {
-          let page2Offset = 0;
-          for (;;) {
-            if (cancelledRef.current) break;
-            const { data: themedPage, error: themedErr } = await supabase
-              .from("ai_themes")
-              .select("response_id")
-              .eq("company_id", companyId)
-              .range(page2Offset, page2Offset + PAGE - 1);
-            if (themedErr) throw new Error(`themed lookup failed: ${themedErr.message}`);
-            for (const row of themedPage || []) {
-              themedIds.add((row as any).response_id);
-            }
-            if (!themedPage || themedPage.length < PAGE) break;
-            page2Offset += PAGE;
-          }
-        }
-
-        if (cancelledRef.current) break;
-
-        // Now fetch prompt_responses and exclude already-themed ids client-side.
-        let q = supabase
-          .from("prompt_responses")
-          .select("id, response_text", { count: "exact" })
-          .eq("company_id", companyId)
-          .not("for_index", "is", true)
-          .not("response_text", "is", null);
-
-        if (monthStart && monthEnd) {
-          q = q.gte("tested_at", monthStart).lt("tested_at", monthEnd);
-        }
-
-        let from = 0;
-        let all: { id: string; response_text: string }[] = [];
-        for (;;) {
-          if (cancelledRef.current) break;
-          const { data: page, error } = await q.range(from, from + PAGE - 1);
-          if (error) throw new Error(error.message);
-          const rows = (page || [])
-            .filter((r: any) =>
-              r.response_text &&
-              r.response_text.length > 100 &&
-              !themedIds.has(r.id),
-            )
-            .map((r: any) => ({ id: r.id, response_text: r.response_text }));
-          all = all.concat(rows);
-          if (!page || page.length < PAGE) break;
-          from += PAGE;
-        }
-
-        if (cancelledRef.current) break;
-
-        if (all.length === 0) {
-          setCompanyProgress((prev) => {
-            const next = new Map(prev);
-            next.set(companyId, { status: "done", totalMissing: 0, themesCreated: 0 });
-            return next;
-          });
-          succeeded++;
-          continue;
-        }
-
-        const totalMissing = all.length;
-        const chunksTotal = Math.ceil(totalMissing / CHUNK_SIZE);
-        setCompanyProgress((prev) => {
-          const next = new Map(prev);
-          next.set(companyId, {
-            status: "processing",
-            totalMissing,
-            processed: 0,
-            themesCreated: 0,
-            chunksDone: 0,
-            chunksTotal,
-          });
-          return next;
-        });
-
-        let themesCreated = 0;
-        let processed = 0;
-        const errors: string[] = [];
-
-        for (let i = 0; i < all.length; i += CHUNK_SIZE) {
-          if (cancelledRef.current) break;
-          const chunk = all.slice(i, i + CHUNK_SIZE);
-
-          const { data, error } = await supabase.functions.invoke("ai-thematic-analysis-bulk", {
-            body: {
-              responses: chunk.map((r) => ({
-                response_id: r.id,
-                response_text: r.response_text,
-              })),
-              company_name: name,
-              clear_existing: clearExisting,
-            },
-          });
-
-          if (error) {
-            errors.push(error.message);
-          } else if (data?.success === false || data?.error) {
-            errors.push(data?.error || "Unknown error");
-          } else {
-            // Edge function returns summary totals — shapes vary slightly, be liberal.
-            const s = data?.summary || data?.results?.summary || {};
-            themesCreated += Number(s.total_themes_created ?? s.totalThemesCreated ?? 0);
-            processed += chunk.length;
-          }
-
-          const chunksDone = Math.floor(i / CHUNK_SIZE) + 1;
-          setCompanyProgress((prev) => {
-            const next = new Map(prev);
-            next.set(companyId, {
-              status: "processing",
-              totalMissing,
-              processed,
-              themesCreated,
-              chunksDone,
-              chunksTotal,
-            });
-            return next;
-          });
-        }
-
-        if (cancelledRef.current) break;
-
-        setCompanyProgress((prev) => {
-          const next = new Map(prev);
-          next.set(companyId, {
-            status: errors.length > 0 ? "done" : "done",
-            totalMissing,
-            processed,
-            themesCreated,
-            chunksDone: chunksTotal,
-            chunksTotal,
-            error: errors.length > 0 ? `${errors.length} chunk error(s).` : undefined,
-          });
-          return next;
-        });
-        succeeded++;
-      } catch (err: any) {
-        failed++;
-        setCompanyProgress((prev) => {
-          const next = new Map(prev);
-          next.set(companyId, { status: "error", error: err.message });
-          return next;
-        });
-      }
+    setQueueing(true);
+    const { error } = await supabase.rpc("request_theme_gap_fill" as never, {
+      p_org: organizationId,
+      p_company_ids: selectedIds,
+      p_month: onlyMonth ? `${onlyMonth}-01` : null,
+    } as never);
+    setQueueing(false);
+    if (error) {
+      toast.error(`Could not queue theme analysis: ${error.message}`);
+      return;
     }
-
-    setProcessing(false);
-
-    if (cancelledRef.current) {
-      toast.info("Cancelled.");
-    } else if (failed === 0) {
-      toast.success(`Theme analysis complete: ${succeeded} compan${succeeded === 1 ? "y" : "ies"} processed.`);
-    } else {
-      toast.warning(`Theme analysis: ${succeeded} succeeded, ${failed} failed.`);
-    }
+    toast.success("Theme analysis queued. It runs in the background; you can close this tab.");
+    load();
   };
 
-  const handleCancel = () => {
-    cancelledRef.current = true;
-    toast.info("Cancelling after current chunk finishes...");
+  const handleCancel = async (id: string) => {
+    const { error } = await supabase.rpc("cancel_theme_gap_fill" as never, { p_request_id: id } as never);
+    if (error) toast.error(error.message);
+    else load();
   };
 
-  const completedCount = [...companyProgress.values()].filter((p) => p.status === "done").length;
-  const totalCount = companyProgress.size;
+  const companyList = (ids: string[]) => {
+    const labels = ids.map((id) => names.get(id) ?? "…");
+    const unique = [...new Set(labels)];
+    return unique.length <= 3 ? unique.join(", ") : `${unique.slice(0, 3).join(", ")} +${unique.length - 3} more`;
+  };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={onBack} disabled={processing}>
+        <Button variant="ghost" size="sm" onClick={onBack}>
           Back
         </Button>
         <h3 className="font-semibold">Analyze Themes</h3>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* LEFT: Company selection */}
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Select Companies</CardTitle>
             <CardDescription>
-              Run AI theme extraction on responses that don't have themes yet.
-              Useful when a prior collection run skipped or failed on theme
-              analysis and metrics are being computed on half the data.
+              Fill theme gaps: answers that mention the company but were never theme-analysed.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -306,118 +130,80 @@ export const AnalyzeThemesPanel = ({ organizationId, onBack }: Props) => {
           </CardContent>
         </Card>
 
-        {/* RIGHT: Scope + options */}
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Scope</CardTitle>
-            <CardDescription>
-              By default, only responses that currently have zero themes are
-              processed. Flip the second toggle to force a re-analysis.
-            </CardDescription>
+            <CardDescription>Optionally limit to one collection month.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label className="text-sm">Only responses from this month (optional)</Label>
+            <div className="rounded-md border p-3 space-y-2">
+              <Label className="text-sm">Only this month</Label>
               <Input
                 type="month"
                 value={onlyMonth}
                 onChange={(e) => setOnlyMonth(e.target.value)}
                 className="max-w-xs"
-                disabled={processing}
               />
-              <p className="text-xs text-muted-foreground">
-                Leave blank to process every response missing themes across all months. Pick a month (e.g. <span className="font-mono">April 2026</span>) to scope to that month only.
-              </p>
+              <p className="text-xs text-muted-foreground">Leave blank to fill gaps in every month.</p>
             </div>
-
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div className="space-y-0.5">
-                <Label className="text-sm">Clear existing themes and re-analyze</Label>
-                <p className="text-xs text-muted-foreground">
-                  Off = fill gaps only (recommended). On = wipe and re-extract every response — expensive + overwrites existing data.
-                </p>
-              </div>
-              <Switch checked={clearExisting} onCheckedChange={setClearExisting} disabled={processing} />
-            </div>
+            <p className="text-xs text-muted-foreground">
+              Runs on the server, about 40 answers per company per minute. Safe to close the tab.
+            </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Action buttons */}
       <div className="flex gap-2">
-        <Button onClick={handleAnalyze} disabled={processing || selectedIds.length === 0}>
-          {processing ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Play className="h-4 w-4 mr-2" />
-          )}
-          {processing
-            ? `Processing ${completedCount}/${totalCount}...`
-            : `Analyze themes for ${selectedIds.length} compan${selectedIds.length === 1 ? "y" : "ies"}`}
+        <Button onClick={handleQueue} disabled={queueing || selectedIds.length === 0}>
+          {queueing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
+          Analyze themes for {selectedIds.length} compan{selectedIds.length === 1 ? "y" : "ies"}
         </Button>
-        {processing && (
-          <Button variant="outline" onClick={handleCancel}>
-            <X className="h-4 w-4 mr-2" />
-            Cancel
-          </Button>
-        )}
       </div>
 
-      {/* Progress display */}
-      {companyProgress.size > 0 && (
+      {requests.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Progress</CardTitle>
+            <CardTitle className="text-sm">Runs in the last 7 days</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="max-h-[400px] overflow-y-auto">
-              <div className="divide-y">
-                {selectedIds.map((id) => {
-                  const p = companyProgress.get(id);
-                  if (!p) return null;
-
-                  const pct =
-                    p.chunksTotal && p.chunksTotal > 0
-                      ? ((p.chunksDone || 0) / p.chunksTotal) * 100
-                      : undefined;
-
-                  return (
-                    <div key={id} className="px-4 py-3 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">
-                          {companyNames.get(id) || id.slice(0, 8) + "..."}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          {typeof p.totalMissing === "number" && (
-                            <span className="text-xs text-muted-foreground">
-                              {p.processed ?? 0}/{p.totalMissing} responses
-                              {typeof p.themesCreated === "number" && p.themesCreated > 0 && (
-                                <> · {p.themesCreated} themes</>
-                              )}
-                            </span>
-                          )}
-                          <Badge
-                            variant={
-                              p.status === "done" ? "secondary" :
-                              p.status === "error" ? "destructive" :
-                              p.status === "processing" || p.status === "fetching" ? "default" : "outline"
-                            }
-                            className={p.status === "done" ? "bg-green-100 text-green-800" : ""}
-                          >
-                            {p.status === "done" && <CheckCircle2 className="h-3 w-3 mr-1" />}
-                            {p.status === "error" && <AlertCircle className="h-3 w-3 mr-1" />}
-                            {p.status}
-                          </Badge>
-                        </div>
+            <div className="divide-y">
+              {requests.map((r) => {
+                const running = r.status === "pending" || r.status === "running";
+                return (
+                  <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{companyList(r.company_ids)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {monthLabel(r.response_month)} · started {new Date(r.created_at).toLocaleString()}
+                        {r.sent_count > 0 && ` · ${r.sent_count} answers sent`}
+                        {running && r.remaining !== null && ` · ${r.remaining} still without themes`}
                       </div>
-                      {p.status === "processing" && pct !== undefined && (
-                        <Progress value={pct} className="h-1.5" />
-                      )}
-                      {p.error && <p className="text-xs text-destructive">{p.error}</p>}
+                      {r.last_error && <div className="text-xs text-destructive">{r.last_error}</div>}
                     </div>
-                  );
-                })}
-              </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {running ? (
+                        <>
+                          <Badge>
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                            {r.status === "pending" ? "Queued" : "Running"}
+                          </Badge>
+                          <Button size="sm" variant="outline" className="h-7" onClick={() => handleCancel(r.id)}>
+                            <X className="h-3.5 w-3.5 mr-1" />
+                            Cancel
+                          </Button>
+                        </>
+                      ) : r.status === "done" ? (
+                        <Badge variant="secondary" className="bg-green-100 text-green-800">
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Done
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">Cancelled</Badge>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>

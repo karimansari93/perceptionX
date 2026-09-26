@@ -17,7 +17,6 @@ import { ActionSelector, type BatchAction } from "./batch/ActionSelector";
 import { RecollectPanel } from "./batch/RecollectPanel";
 import { ExpandCoveragePanel } from "./batch/ExpandCoveragePanel";
 import { BulkExpandPanel } from "./batch/BulkExpandPanel";
-import { CollectModelPanel } from "./batch/CollectModelPanel";
 import { AnalyzeThemesPanel } from "./batch/AnalyzeThemesPanel";
 import { NewCompanyPanel } from "./batch/NewCompanyPanel";
 import { ResumeStuckButton } from "./batch/ResumeStuckButton";
@@ -26,7 +25,7 @@ import { ResumeStuckButton } from "./batch/ResumeStuckButton";
 // Types
 // ---------------------------------------------------------------------------
 
-type BatchMode = "idle" | "recollect" | "expand" | "bulk_expand" | "collect_model" | "analyze_themes" | "new_company" | "new_org";
+type BatchMode = "idle" | "recollect" | "expand" | "bulk_expand" | "analyze_themes" | "new_company" | "new_org";
 
 type Organization = {
   id: string;
@@ -181,9 +180,6 @@ export const CompanyBatchTab = ({ lockedOrganizationId }: CompanyBatchTabProps =
         <BulkExpandPanel organizationId={organizationId} onBack={handleBack} />
       )}
 
-      {mode === "collect_model" && (
-        <CollectModelPanel organizationId={organizationId} onBack={handleBack} />
-      )}
 
       {mode === "analyze_themes" && (
         <AnalyzeThemesPanel organizationId={organizationId} onBack={handleBack} />
