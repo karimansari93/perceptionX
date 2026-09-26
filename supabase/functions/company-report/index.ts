@@ -108,6 +108,34 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 );
 
+// Published-model rule, mirroring public.is_published_model: Gemini and
+// DeepSeek never count; Claude counts from the 2026-09 response month on.
+const CLAUDE_PUBLISHED_FROM = '2026-09-01';
+// deno-lint-ignore no-explicit-any
+const isPublishedResponse = (r: any) =>
+  r.ai_model !== 'claude' || String(r.response_month ?? '') >= CLAUDE_PUBLISHED_FROM;
+
+// Reports run with the service role, so the caller must be a platform admin
+// or a member of an organization that holds every requested company.
+async function callerCanAccess(req: Request, companyIds: string[]): Promise<boolean> {
+  const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
+  if (!token) return false;
+  if (token === (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')) return true;
+  const { data: { user } } = await supabase.auth.getUser(token);
+  if (!user) return false;
+  const { data: admin } = await supabase
+    .from('user_roles').select('user_id').eq('user_id', user.id).eq('role', 'admin').maybeSingle();
+  if (admin) return true;
+  const { data: memberships } = await supabase
+    .from('organization_members').select('organization_id').eq('user_id', user.id);
+  const orgIds = (memberships ?? []).map((m) => m.organization_id);
+  if (orgIds.length === 0) return false;
+  const { data: links } = await supabase
+    .from('organization_companies').select('company_id').in('organization_id', orgIds).in('company_id', companyIds);
+  const allowed = new Set((links ?? []).map((l) => l.company_id));
+  return companyIds.every((id) => allowed.has(id));
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -121,6 +149,13 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({ error: "companyIds array is required" }),
         { status: 400, headers: corsHeaders }
+      );
+    }
+
+    if (!(await callerCanAccess(req, companyIds))) {
+      return new Response(
+        JSON.stringify({ error: "Not allowed to access these companies" }),
+        { status: 403, headers: corsHeaders }
       );
     }
 
@@ -185,7 +220,7 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
     }
 
     // Get all responses for this company using company_id
-    const { data: responses, error: responsesError } = await supabase
+    const { data: fetchedResponses, error: responsesError } = await supabase
       .from('prompt_responses')
       .select(`
         *,
@@ -196,8 +231,9 @@ async function generateCompanyReport(companyId: string): Promise<CompanyReportDa
       `)
       .eq('company_id', companyId)
       // Methodology v2: excluded models never enter client-facing calculations
-      .not('ai_model', 'in', '(claude,gemini,deepseek)')
+      .not('ai_model', 'in', '(gemini,deepseek)')
       .order('created_at', { ascending: false });
+    const responses = fetchedResponses?.filter(isPublishedResponse);
 
     if (responsesError || !responses || responses.length === 0) {
       console.error('Error fetching responses:', responsesError);

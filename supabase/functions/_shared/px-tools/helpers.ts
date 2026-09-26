@@ -47,9 +47,14 @@ export function coveragePartial(note: string, meta: Record<string, unknown> = {}
 // DB as an internal audit trail and are filtered out of every read below.
 // Presentation rule (client feedback, Aug 2026): payloads say what's
 // INCLUDED, never what's excluded.
-export const EXCLUDED_AI_MODELS = ['claude', 'gemini', 'deepseek'];
-export const EXCLUDED_AI_MODELS_FILTER = '(claude,gemini,deepseek)';
-export const TRACKED_PLATFORMS = 'ChatGPT, Perplexity, Google AI Overviews, and Google AI Mode';
+// Mirrors public.is_published_model: Gemini and DeepSeek never count; Claude
+// counts from the 2026-09 response month on. Reads apply both
+// EXCLUDED_AI_MODELS_FILTER and CLAUDE_PUBLISHED_OR.
+export const EXCLUDED_AI_MODELS = ['gemini', 'deepseek'];
+export const EXCLUDED_AI_MODELS_FILTER = '(gemini,deepseek)';
+export const CLAUDE_PUBLISHED_FROM = '2026-09-01';
+export const CLAUDE_PUBLISHED_OR = `ai_model.neq.claude,response_month.gte.${CLAUDE_PUBLISHED_FROM}`;
+export const TRACKED_PLATFORMS = 'ChatGPT, Perplexity, Google AI Overviews, Google AI Mode, and Claude (from September 2026)';
 
 // One-line methodology notes embedded in result envelopes. Self-caveating
 // payloads are the contract: any host model must be able to quote these
