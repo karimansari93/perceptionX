@@ -2,6 +2,8 @@ import { ArrowUp, History, MessageSquare } from 'lucide-react';
 import { useCallback, useState, KeyboardEvent } from 'react';
 import type { ChatConversation, ChatScope, ScopeOptions } from '@/services/chatService';
 import { BrandLogo, ScopePickers, scopeSummary } from './ChatScopeBar';
+import { AttachButton, DraftAttachments, dropRing, useFileDraft } from './ChatAttachments';
+import { DEFAULT_FILE_QUESTION } from '@/lib/chatAttachments';
 import { cn } from '@/lib/utils';
 
 interface ChatWelcomeProps {
@@ -11,7 +13,7 @@ interface ChatWelcomeProps {
   scopeOptions: ScopeOptions | null;
   onScopeChange: (scope: ChatScope) => void;
   recent: ChatConversation[];
-  onSend: (question: string) => void;
+  onSend: (question: string, files?: File[]) => void;
   onOpenConversation: (id: string) => void;
   onOpenList: () => void;
   disabled?: boolean;
@@ -44,7 +46,14 @@ export function ChatWelcome({
   recent, onSend, onOpenConversation, onOpenList, disabled,
 }: ChatWelcomeProps) {
   const [draft, setDraft] = useState('');
-  const send = useCallback((q: string) => { const t = q.trim(); if (!t || disabled) return; onSend(t); setDraft(''); }, [onSend, disabled]);
+  const attach = useFileDraft();
+  const send = useCallback((q: string) => {
+    const t = q.trim() || (attach.files.length ? DEFAULT_FILE_QUESTION : '');
+    if (!t || disabled) return;
+    onSend(t, attach.files);
+    setDraft('');
+    attach.clear();
+  }, [onSend, disabled, attach]);
   const onKey = useCallback((e: KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') { e.preventDefault(); send(draft); } }, [send, draft]);
   const brand = companyName || scope.company || 'your organisation';
 
@@ -63,22 +72,24 @@ export function ChatWelcome({
         </div>
 
         {/* Composer card */}
-        <div className="rounded-2xl border border-gray-200 bg-white px-[18px] pt-4 pb-[14px]">
+        <div {...attach.dropProps} className={cn('rounded-2xl border border-gray-200 bg-white px-[18px] pt-4 pb-[14px] transition-shadow', dropRing(attach.dragging))}>
+          <DraftAttachments files={attach.files} onRemove={attach.remove} />
           <input
             value={draft}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={onKey}
-            placeholder="Ask about anything…"
+            placeholder={attach.files.length ? 'Ask about these files, or send to get the key insights' : 'Ask about anything, or attach a survey or report to compare…'}
             disabled={disabled}
             className="w-full border-0 bg-transparent px-0 pt-0.5 pb-3 text-[15px] text-[#13274F] placeholder:text-gray-400 focus:outline-none"
           />
           <div className="flex flex-wrap items-center gap-2">
+            <AttachButton onFiles={attach.add} disabled={disabled} count={attach.files.length} />
             <ScopePickers scope={scope} options={scopeOptions} onChange={onScopeChange} disabled={disabled} variant="chip" />
             <div className="flex-1" />
             <button
               type="button"
               onClick={() => send(draft)}
-              disabled={disabled || !draft.trim()}
+              disabled={disabled || (!draft.trim() && !attach.files.length)}
               aria-label="Send"
               className="flex h-[34px] w-[34px] items-center justify-center rounded-full bg-[#13274F] text-white transition-colors hover:bg-[#183056] disabled:opacity-40"
             >

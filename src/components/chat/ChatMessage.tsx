@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { Favicon } from '@/components/ui/favicon';
 import { competitorDomain } from '@/utils/citationUtils';
 import type { ChatMessage as ChatMessageType } from '@/services/chatService';
+import { AttachmentChip } from './ChatAttachments';
 import {
   BlockSkeleton, ContributionBars, FollowUps, PX_BLOCK, SourcePills, StatTiles,
   deltaClass, extractContext, isDeltaText, parseBlock,
@@ -317,7 +318,12 @@ export function ChatMessage({ message, onAsk }: ChatMessageProps) {
 
   if (isUser) {
     return (
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end gap-1.5">
+        {!!message.attachments?.length && (
+          <div className="flex max-w-[80%] flex-wrap justify-end gap-1.5">
+            {message.attachments.map(a => <AttachmentChip key={a.id} name={a.file_name} size={a.size_bytes} attachment={a} />)}
+          </div>
+        )}
         <div className="max-w-[80%] rounded-2xl bg-[#f4f4f5] px-4 py-3 text-[14.5px] text-[#13274F]">
           {message.content}
         </div>

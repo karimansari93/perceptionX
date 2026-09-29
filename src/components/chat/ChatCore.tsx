@@ -9,6 +9,8 @@ import type { ChatConversation, ChatScope } from '@/services/chatService';
 import { ChatMessage } from './ChatMessage';
 import { ChatWelcome, conversationMeta, relativeAge } from './ChatWelcome';
 import { ScopePickers, scopeSummary, useScopeOptions } from './ChatScopeBar';
+import { AttachButton, DraftAttachments, dropRing, useFileDraft } from './ChatAttachments';
+import { DEFAULT_FILE_QUESTION } from '@/lib/chatAttachments';
 import { cn } from '@/lib/utils';
 
 export type ChatView = 'new' | 'thread' | 'list';
@@ -69,7 +71,7 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
   const view: ChatView = showList ? 'list' : messages.length === 0 && !currentConversationId ? 'new' : 'thread';
   useEffect(() => { onViewChange?.(view); }, [view, onViewChange]);
 
-  const send = useCallback((text: string) => { setShowList(false); sendMessage(text, scopeRef.current); }, [sendMessage]);
+  const send = useCallback((text: string, files: File[] = []) => { setShowList(false); sendMessage(text, scopeRef.current, files); }, [sendMessage]);
   const openConversation = useCallback((id: string) => {
     setShowList(false);
     const c = conversations.find(x => x.id === id);
@@ -180,7 +182,8 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
             <div className="flex items-center gap-3 text-sm text-[#dc2626]">
               <AlertTriangle className="h-4 w-4 flex-shrink-0" />
               <span>{error}</span>
-              {messages.length > 0 && messages[messages.length - 1].role === 'user' && (
+              {messages.length > 0 && messages[messages.length - 1].role === 'user'
+                && !messages[messages.length - 1].attachments?.some(a => !a.storage_path) && (
                 <button type="button" onClick={() => send(messages[messages.length - 1].content)} className={pillClass}>Retry</button>
               )}
             </div>
@@ -209,44 +212,55 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
 // round send.
 function ThreadComposer({ scope, options, onScopeChange, onSend, onStop, isLoading }: {
   scope: ChatScope; options: ReturnType<typeof useScopeOptions>['options'];
-  onScopeChange: (s: ChatScope) => void; onSend: (q: string) => void; onStop: () => void; isLoading: boolean;
+  onScopeChange: (s: ChatScope) => void; onSend: (q: string, files?: File[]) => void; onStop: () => void; isLoading: boolean;
 }) {
   const [draft, setDraft] = useState('');
-  const submit = useCallback(() => { const t = draft.trim(); if (!t || isLoading) return; onSend(t); setDraft(''); }, [draft, isLoading, onSend]);
+  const attach = useFileDraft();
+  const submit = useCallback(() => {
+    const t = draft.trim() || (attach.files.length ? DEFAULT_FILE_QUESTION : '');
+    if (!t || isLoading) return;
+    onSend(t, attach.files);
+    setDraft('');
+    attach.clear();
+  }, [draft, isLoading, onSend, attach]);
   const onKey = useCallback((e: KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }, [submit]);
   return (
-    <div className="mx-auto flex max-w-[760px] items-center gap-2.5 rounded-2xl border border-gray-200 bg-white px-[14px] py-3">
-      <Popover>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            title="Change the scope for the next question"
-            className="flex-none truncate rounded-lg border border-[#13274F]/[0.12] bg-[#13274F]/[0.03] px-2 py-[3px] text-[11px] text-[#13274F] hover:border-[#DB5E89] max-w-[280px]"
-          >
-            {scopeSummary(scope)}
+    <div {...attach.dropProps} className={cn('mx-auto max-w-[760px] rounded-2xl border border-gray-200 bg-white px-[14px] py-3 transition-shadow', dropRing(attach.dragging))}>
+      <DraftAttachments files={attach.files} onRemove={attach.remove} />
+      <div className="flex items-center gap-2.5">
+        <AttachButton onFiles={attach.add} disabled={isLoading} count={attach.files.length} />
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              title="Change the scope for the next question"
+              className="flex-none truncate rounded-lg border border-[#13274F]/[0.12] bg-[#13274F]/[0.03] px-2 py-[3px] text-[11px] text-[#13274F] hover:border-[#DB5E89] max-w-[280px]"
+            >
+              {scopeSummary(scope)}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-auto max-w-[420px] p-3">
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#DB5E89]">Ask about</div>
+            <ScopePickers scope={scope} options={options} onChange={onScopeChange} variant="chip" />
+          </PopoverContent>
+        </Popover>
+        <input
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={onKey}
+          placeholder={attach.files.length ? 'Ask about these files' : 'Ask a follow-up'}
+          className="min-w-0 flex-1 border-0 bg-transparent text-[14.5px] text-[#13274F] placeholder:text-gray-400 focus:outline-none"
+        />
+        {isLoading ? (
+          <button type="button" onClick={onStop} aria-label="Stop" className="flex h-8 w-8 flex-none items-center justify-center rounded-full border border-red-200 text-red-500 hover:bg-red-50">
+            <span className="h-3 w-3 rounded-[2px] bg-current" />
           </button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-auto max-w-[420px] p-3">
-          <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[#DB5E89]">Ask about</div>
-          <ScopePickers scope={scope} options={options} onChange={onScopeChange} variant="chip" />
-        </PopoverContent>
-      </Popover>
-      <input
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onKeyDown={onKey}
-        placeholder="Ask a follow-up"
-        className="min-w-0 flex-1 border-0 bg-transparent text-[14.5px] text-[#13274F] placeholder:text-gray-400 focus:outline-none"
-      />
-      {isLoading ? (
-        <button type="button" onClick={onStop} aria-label="Stop" className="flex h-8 w-8 flex-none items-center justify-center rounded-full border border-red-200 text-red-500 hover:bg-red-50">
-          <span className="h-3 w-3 rounded-[2px] bg-current" />
-        </button>
-      ) : (
-        <button type="button" onClick={submit} disabled={!draft.trim()} aria-label="Send" className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-[#13274F] text-white transition-colors hover:bg-[#183056] disabled:opacity-40">
-          <ArrowUp className="h-4 w-4" />
-        </button>
-      )}
+        ) : (
+          <button type="button" onClick={submit} disabled={!draft.trim() && !attach.files.length} aria-label="Send" className="flex h-8 w-8 flex-none items-center justify-center rounded-full bg-[#13274F] text-white transition-colors hover:bg-[#183056] disabled:opacity-40">
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
