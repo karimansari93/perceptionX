@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -11,6 +11,7 @@ import {
   Send
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCompany } from '@/contexts/CompanyContext';
 import { ViewDashboardDialog } from './ViewDashboardDialog';
 
 interface AdminLayoutProps {
@@ -23,6 +24,13 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
   const { signOut } = useAuth();
   const navigate = useNavigate();
   const [showDashboardPicker, setShowDashboardPicker] = useState(false);
+  const { clearViewAsOrganization } = useCompany();
+
+  // Coming back to admin ends "view dashboard as organization".
+  useEffect(() => {
+    clearViewAsOrganization();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSignOut = async () => {
     await signOut();

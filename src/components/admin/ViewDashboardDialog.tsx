@@ -27,7 +27,7 @@ interface ViewDashboardDialogProps {
 // so they can demo the product without hunting through the company dropdown.
 export const ViewDashboardDialog = ({ open, onOpenChange }: ViewDashboardDialogProps) => {
   const navigate = useNavigate();
-  const { switchCompany } = useCompany();
+  const { viewAsOrganization } = useCompany();
   const [orgs, setOrgs] = useState<OrgOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [openingId, setOpeningId] = useState<string | null>(null);
@@ -64,22 +64,11 @@ export const ViewDashboardDialog = ({ open, onOpenChange }: ViewDashboardDialogP
     setOpeningId(org.id);
     setError(null);
     try {
-      const { data, error: err } = await supabase
-        .from('organization_companies')
-        .select('companies(id, name, country)')
-        .eq('organization_id', org.id);
-      if (err) throw err;
-
-      const companies = (data ?? [])
-        .map(row => (Array.isArray(row.companies) ? row.companies[0] : row.companies))
-        .filter(Boolean) as { id: string; name: string; country: string | null }[];
-      if (companies.length === 0) {
+      const ok = await viewAsOrganization(org.id);
+      if (!ok) {
         setError(`${org.name} has no companies yet`);
         return;
       }
-
-      const target = companies.find(c => c.country === 'US') ?? companies[0];
-      await switchCompany(target.id);
       onOpenChange(false);
       navigate('/dashboard');
     } catch (e) {

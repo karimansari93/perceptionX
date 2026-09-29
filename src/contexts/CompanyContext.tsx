@@ -44,7 +44,11 @@ interface CompanyContextType {
   refreshCompanies: () => Promise<void>;
   setAsDefaultCompany: (companyId: string) => Promise<void>;
   isOwnerOrAdmin: boolean;
+  viewAsOrganization: (orgId: string) => Promise<boolean>;
+  clearViewAsOrganization: () => Promise<void>;
 }
+
+const VIEW_AS_ORG_KEY = 'px_view_as_org';
 
 export const CompanyContext = createContext<CompanyContextType | undefined>(undefined);
 
@@ -63,6 +67,8 @@ export const useCompany = () => {
       refreshCompanies: async () => {},
       setAsDefaultCompany: async () => {},
       isOwnerOrAdmin: false,
+      viewAsOrganization: async () => false,
+      clearViewAsOrganization: async () => {},
     };
   }
   return context;
@@ -142,6 +148,17 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       cancelled = true;
     };
   }, [user?.id]);
+  // Organization a platform admin is currently viewing the dashboard as.
+  // Survives a page refresh (sessionStorage) but never a new tab/session.
+  const viewAsOrgRef = useRef<{ userId: string; orgId: string } | null>(null);
+  if (viewAsOrgRef.current === null) {
+    try {
+      const raw = sessionStorage.getItem(VIEW_AS_ORG_KEY);
+      if (raw) viewAsOrgRef.current = JSON.parse(raw);
+    } catch {
+      /* storage unavailable: no override */
+    }
+  }
   const [currentCompany, setCurrentCompany] = useState<Company | null>(null);
   const [userCompanies, setUserCompanies] = useState<Company[]>([]);
   const [userMemberships, setUserMemberships] = useState<CompanyMembership[]>([]);
@@ -186,24 +203,42 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       // memberships → orgs → org companies → company details + industries.
       // This used to be 1 + 3×N sequential round-trips (per organization),
       // which delayed dashboard mount by several seconds on login.
-      const { data: orgMemberships, error: orgError } = await supabase
-        .from('organization_members')
-        .select(`
+      const orgSelect = `
+          id,
+          name,
+          organization_companies(
+            companies(
+              id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by,
+              company_industries(industry)
+            )
+          )
+        `;
+
+      // Platform admin "view as organization" (admin demo mode): scope the
+      // dashboard to that one organization's companies instead of the admin's
+      // own memberships. Only honoured for verified platform admins.
+      const viewAsOrgId = viewAsOrgRef.current?.userId === user.id ? viewAsOrgRef.current.orgId : null;
+      let orgMemberships: any[] | null = null;
+      let orgError: any = null;
+      if (viewAsOrgId && (await fetchIsPlatformAdmin(user.id))) {
+        const res = await supabase.from('organizations').select(orgSelect).eq('id', viewAsOrgId).maybeSingle();
+        orgError = res.error;
+        orgMemberships = res.data
+          ? [{ organization_id: viewAsOrgId, role: 'admin', is_default: false, organizations: res.data }]
+          : [];
+      } else {
+        const res = await supabase
+          .from('organization_members')
+          .select(`
           organization_id,
           role,
           is_default,
-          organizations!inner(
-            id,
-            name,
-            organization_companies(
-              companies(
-                id, name, industry, country, company_size, competitors, settings, created_at, updated_at, created_by,
-                company_industries(industry)
-              )
-            )
-          )
+          organizations!inner(${orgSelect})
         `)
-        .eq('user_id', user.id);
+          .eq('user_id', user.id);
+        orgMemberships = res.data as any[] | null;
+        orgError = res.error;
+      }
       // Organization id for dashboard error reports (src/lib/observability.ts).
       setObservabilityContext({ organizationId: (orgMemberships as any)?.[0]?.organization_id ?? null });
 
@@ -437,6 +472,41 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [userCompanies, fetchUserCompanies, user?.id]);
 
+  const setViewAs = (value: { userId: string; orgId: string } | null) => {
+    viewAsOrgRef.current = value;
+    try {
+      if (value) sessionStorage.setItem(VIEW_AS_ORG_KEY, JSON.stringify(value));
+      else sessionStorage.removeItem(VIEW_AS_ORG_KEY);
+    } catch {
+      /* storage unavailable: override lasts until reload */
+    }
+  };
+
+  // Platform admins: load the dashboard as a whole organization. The company
+  // dropdown then lists that organization's companies. Returns false if the
+  // organization has no companies (nothing is changed in that case).
+  const viewAsOrganization = useCallback(async (orgId: string): Promise<boolean> => {
+    if (!user) return false;
+    const previous = viewAsOrgRef.current;
+    setViewAs({ userId: user.id, orgId });
+    const companies = await fetchUserCompanies();
+    if (companies.length === 0) {
+      setViewAs(previous);
+      await fetchUserCompanies();
+      return false;
+    }
+    const target = companies.find(c => c.country === 'US') ?? companies[0];
+    setCurrentCompany(target);
+    return true;
+  }, [user, fetchUserCompanies]);
+
+  // Back to the admin's own organizations (called when returning to /admin).
+  const clearViewAsOrganization = useCallback(async () => {
+    if (!viewAsOrgRef.current) return;
+    setViewAs(null);
+    await fetchUserCompanies();
+  }, [fetchUserCompanies]);
+
   const refreshCompanies = useCallback(async () => {
     await fetchUserCompanies();
   }, [fetchUserCompanies]);
@@ -474,8 +544,12 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     switchCompany,
     refreshCompanies,
     setAsDefaultCompany,
-    isOwnerOrAdmin
+    isOwnerOrAdmin,
+    viewAsOrganization,
+    clearViewAsOrganization
   }), [
+    viewAsOrganization,
+    clearViewAsOrganization,
     currentCompany,
     userCompanies,
     userMemberships,
