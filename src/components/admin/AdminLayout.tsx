@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -11,6 +11,8 @@ import {
   Send
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useCompany } from '@/contexts/CompanyContext';
+import { ViewDashboardDialog } from './ViewDashboardDialog';
 
 interface AdminLayoutProps {
   children: ReactNode;
@@ -21,6 +23,14 @@ interface AdminLayoutProps {
 export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutProps) => {
   const { signOut } = useAuth();
   const navigate = useNavigate();
+  const [showDashboardPicker, setShowDashboardPicker] = useState(false);
+  const { clearViewAsOrganization } = useCompany();
+
+  // Coming back to admin ends "view dashboard as organization".
+  useEffect(() => {
+    clearViewAsOrganization();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSignOut = async () => {
     await signOut();
@@ -104,7 +114,7 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
         {/* Sign Out */}
         <div className="p-3 border-t border-slate-200 space-y-2">
           <Button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => setShowDashboardPicker(true)}
             variant="outline"
             size="sm"
             className="w-full border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-800"
@@ -123,6 +133,8 @@ export const AdminLayout = ({ children, activeTab, onTabChange }: AdminLayoutPro
           </Button>
         </div>
       </aside>
+
+      <ViewDashboardDialog open={showDashboardPicker} onOpenChange={setShowDashboardPicker} />
 
       {/* Main Content - more room for data */}
       <main className="flex-1 overflow-y-auto min-w-0">
