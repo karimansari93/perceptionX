@@ -48,7 +48,7 @@ serve(async (req) => {
     // inline URLs in the text, so omitting it here silently dropped every
     // Claude citation and fell back to text extraction, which found nothing.
     let llmCitations = perplexityCitations || [];
-    if ((ai_model === 'google-ai-overviews' || ai_model === 'google-ai-mode' || ai_model === 'bing-copilot' || ai_model === 'openai' || ai_model === 'claude') && body.citations) {
+    if ((ai_model === 'google-ai-overviews' || ai_model === 'google-ai-mode' || ai_model === 'bing-copilot' || ai_model === 'openai' || ai_model === 'claude' || ai_model === 'deepseek') && body.citations) {
       llmCitations = body.citations;
     }
 
