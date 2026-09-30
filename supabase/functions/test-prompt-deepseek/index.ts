@@ -46,7 +46,10 @@ serve(async (req) => {
       : PRIMARY_MODEL;
     const maxTokens = typeof requestedMaxTokens === 'number' && requestedMaxTokens > 0
       ? requestedMaxTokens
-      : 1500;
+      // Much higher than test-prompt-claude's 1500: deepseek-flash spends
+      // output tokens on thinking and search rounds before it answers, and at
+      // 1500 every test answer was cut off mid-sentence.
+      : 8000;
 
     const requestBody: Record<string, any> = {
       model,
@@ -65,6 +68,7 @@ serve(async (req) => {
         name: "web_search",
         // Same cap as test-prompt-claude: each extra search round re-bills the
         // retrieved pages as input tokens for little extra citation coverage.
+        // DeepSeek treats it loosely (4 searches seen in testing).
         max_uses: 3
       }];
       requestBody.system = "You are a research assistant. Use the web_search tool to find current, factual information before answering, and ground your answer in the sources you find. Always cite the sources you used.";
@@ -109,7 +113,15 @@ serve(async (req) => {
 
     const contentArray = data.content || [];
 
+    // DeepSeek narrates between search rounds ("let me search..."), which the
+    // DeepSeek app never shows. Keep only the text after the last search
+    // result, i.e. the final answer; citations still come from every block.
+    let lastSearchIdx = -1;
+    contentArray.forEach((block: any, i: number) => {
+      if (block?.type === 'web_search_tool_result') lastSearchIdx = i;
+    });
     const response = contentArray
+      .slice(lastSearchIdx + 1)
       .filter((block: any) => block.type === 'text' && typeof block.text === 'string')
       .map((block: any) => block.text)
       .join('')
@@ -117,12 +129,16 @@ serve(async (req) => {
 
     const citations = extractDeepSeekCitations(contentArray);
     console.log(`Extracted ${citations.length} DeepSeek citations`);
+    if (data.stop_reason === 'max_tokens') {
+      console.warn('DeepSeek response truncated at max_tokens');
+    }
 
     const responseBody: Record<string, any> = {
       response,
       citations,
       webSearchEnabled: enableWebSearch,
       model: data.model,
+      stopReason: data.stop_reason,
       usage: data.usage,
     };
 
