@@ -86,3 +86,29 @@ describe('new-chat composer with files', () => {
     expect(screen.getByLabelText('Send')).toBeDisabled();
   });
 });
+
+describe('overview chat box with files', () => {
+  it('hands the files to the chat page with the question', async () => {
+    vi.resetModules();
+    const navigate = vi.fn();
+    vi.doMock('react-router-dom', async (orig) => ({ ...(await orig<typeof import('react-router-dom')>()), useNavigate: () => navigate }));
+    vi.doMock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: null }) }));
+    vi.doMock('@/contexts/CompanyContext', () => ({ useCompany: () => ({ currentCompany: { name: 'Acme', organization_id: 'org-1' } }) }));
+    vi.doMock('@/hooks/useStarterQuestions', () => ({ useStarterQuestions: () => ({ starters: [], isLoading: false }) }));
+    vi.doMock('@/components/chat/ChatScopeBar', () => ({
+      BrandLogo: () => null, ScopePickers: () => null, useScopeOptions: () => ({ options: null }),
+    }));
+    const { AskAiHero } = await import('@/components/chat/AskAiHero');
+    const { peekHandoverFiles } = await import('@/lib/chatHandover');
+    const { DEFAULT_FILE_QUESTION: defaultQ } = await import('@/lib/chatAttachments');
+
+    render(<AskAiHero companyName="Acme" />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file('q2 survey.xlsx', 2048)] } });
+    expect(screen.getByText('q2 survey.xlsx')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Ask PerceptionX'));
+    expect(navigate).toHaveBeenCalledWith('/chat', { state: { question: defaultQ, scope: expect.anything() } });
+    expect(peekHandoverFiles().map(f => f.name)).toEqual(['q2 survey.xlsx']);
+  });
+});

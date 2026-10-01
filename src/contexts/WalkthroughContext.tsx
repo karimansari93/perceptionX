@@ -55,6 +55,15 @@ const STEPS: WalkthroughStep[] = [
     route: '/dashboard',
   },
   {
+    target: '[data-tour="ask-ai"]',
+    title: 'Ask PerceptionX',
+    content:
+      'Ask anything about how AI describes you to candidates, for any market or job function. Attach a PDF, Excel or CSV file, such as an internal engagement survey, and the analyst compares it with your PerceptionX data. Files are private to you.',
+    placement: 'bottom',
+    disableBeacon: true,
+    route: '/dashboard',
+  },
+  {
     target: '[data-tour="score-row"]',
     title: 'Your EPS score',
     content:

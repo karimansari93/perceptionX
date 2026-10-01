@@ -20,6 +20,8 @@ interface ChatCoreProps {
   initialQuestion?: string | null;
   /** The dashboard filters the handed-over question was asked under. */
   initialScope?: ChatScope | null;
+  /** Files attached to the handed-over question in the overview chat box. */
+  initialFiles?: File[];
   /** Identifies the navigation that carried the question (sent once per key). */
   handoverKey?: string;
   onInitialQuestionSent?: () => void;
@@ -36,7 +38,7 @@ const pillClass = 'inline-flex h-[30px] items-center gap-1.5 rounded-full border
 
 // The three views of Ask AI (design handoff): the new-chat page, the answer
 // page (a thread), and the chats list.
-export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitialQuestionSent, onViewChange }: ChatCoreProps) {
+export function ChatCore({ initialQuestion, initialScope, initialFiles, handoverKey, onInitialQuestionSent, onViewChange }: ChatCoreProps) {
   const { currentCompany } = useCompany();
   const { user } = useAuth();
   const {
@@ -114,7 +116,7 @@ export function ChatCore({ initialQuestion, initialScope, handoverKey, onInitial
     sentHandovers.add(token);
     startNewConversation();
     setTimeout(() => {
-      sendMessage(q, scopeRef.current);
+      sendMessage(q, scopeRef.current, initialFiles ?? []);
       onInitialQuestionSent?.();
     }, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
