@@ -368,7 +368,8 @@ serve(async (req) => {
                       modelName === "google-ai-overviews" ||
                       modelName === "google-ai-mode" ||
                       modelName === "bing-copilot" ||
-                      modelName === "claude"
+                      modelName === "claude" ||
+                      modelName === "deepseek"
                         ? citations
                         : null,
                     confirmed_prompt_id: prompt.id,
