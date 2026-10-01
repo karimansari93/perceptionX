@@ -3,13 +3,14 @@ import { corsHeaders } from "../_shared/cors.ts"
 import { claudeApiKeys, claudeFetch } from "../_shared/claude-keys.ts"
 
 // Default model: Sonnet is what claude.ai serves consumer users, so for GEO
-// measurement we pin the current Sonnet (claude-sonnet-5) — same rationale as
-// test-prompt-openai tracking ChatGPT's live default (gpt-5.5). Citations only
-// mean something if they reflect what real Claude users see.
-const PRIMARY_MODEL = 'claude-sonnet-5'
+// measurement we pin the current Sonnet (claude-sonnet-5-5) — same rationale as
+// test-prompt-openai tracking ChatGPT's live default (gpt-5.6-sol). Citations
+// only mean something if they reflect what real Claude users see. Keep in step
+// with MODEL in claude-batch-collector.
+const PRIMARY_MODEL = 'claude-sonnet-5-5'
 // Tried in order if the primary is rejected (e.g. future deprecation) so
 // collection degrades gracefully instead of failing outright.
-const MODEL_FALLBACKS = ['claude-sonnet-4-5', 'claude-sonnet-4-20250514']
+const MODEL_FALLBACKS = ['claude-sonnet-5', 'claude-sonnet-4-5']
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
