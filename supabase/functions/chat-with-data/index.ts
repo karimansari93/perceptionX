@@ -72,13 +72,19 @@ async function authenticateAndAuthorize(
   if (authError || !user) return jsonResponse({ error: 'Invalid authentication' }, 401);
 
   // The caller names the organization for routing; membership is verified
-  // against the token's user, never trusted from the body.
-  const { data: membership, error: memberError } = await admin
-    .from('organization_members')
-    .select('id')
-    .eq('organization_id', organizationId)
-    .eq('user_id', user.id)
-    .maybeSingle();
+  // against the token's user, never trusted from the body. Platform admins
+  // (user_roles.role 'admin', the rule behind is_admin() and the dashboard's
+  // "view as organization") pass for any existing organization.
+  const [{ data: membership, error: memberError }, { data: platformRole }] = await Promise.all([
+    admin.from('organization_members').select('id')
+      .eq('organization_id', organizationId).eq('user_id', user.id).maybeSingle(),
+    admin.from('user_roles').select('user_id')
+      .eq('user_id', user.id).eq('role', 'admin').maybeSingle(),
+  ]);
+  if (!membership && platformRole) {
+    const { data: org } = await admin.from('organizations').select('id').eq('id', organizationId).maybeSingle();
+    if (org) return { userId: user.id };
+  }
   if (memberError || !membership) return jsonResponse({ error: 'You do not have access to this organization' }, 403);
 
   return { userId: user.id };
