@@ -10,6 +10,8 @@ import {
   listConversations,
   loadConversationMessages,
   saveMessage,
+  uploadAttachments,
+  loadConversationAttachments,
   updateConversationTitle,
   deleteConversation as deleteConversationService,
 } from '@/services/chatService';
@@ -66,8 +68,18 @@ export function useChat() {
       cancelStream();
       setIsLoading(true);
       setError(null);
-      const msgs = await loadConversationMessages(conversationId);
-      setMessages(msgs);
+      const [msgs, attachments] = await Promise.all([
+        loadConversationMessages(conversationId),
+        loadConversationAttachments(conversationId).catch(err => {
+          console.error('Failed to load attachments:', err);
+          return [];
+        }),
+      ]);
+      // Each question shows the files it carried.
+      setMessages(msgs.map(m => {
+        const files = attachments.filter(a => a.message_id && a.message_id === m.id);
+        return files.length ? { ...m, attachments: files } : m;
+      }));
       setCurrentConversationId(conversationId);
     } catch (err: any) {
       console.error('Failed to load conversation:', err);
@@ -104,15 +116,20 @@ export function useChat() {
 
   // Send a message, under the dashboard scope (company / market / function)
   // the user has set — shown as chips on the question and applied by the
-  // analyst as tool filters.
-  const sendMessage = useCallback(async (text: string, scope?: ChatScope | null) => {
+  // analyst as tool filters — with any files the user attached to it.
+  const sendMessage = useCallback(async (text: string, scope?: ChatScope | null, files: File[] = []) => {
     if (!text.trim() || isLoading || !organizationId) return;
 
     setError(null);
     setIsLoading(true);
 
-    // Add user message to the UI
-    const userMessage: ChatMessage = { role: 'user', content: text.trim(), ...(scope ? { scope } : {}) };
+    // Add user message to the UI (files show as chips until they are uploaded)
+    const pendingFiles = files.map((f, i) => ({
+      id: `pending-${i}`, message_id: null, storage_path: '', file_name: f.name, mime_type: f.type, size_bytes: f.size,
+    }));
+    const userMessage: ChatMessage = {
+      role: 'user', content: text.trim(), ...(scope ? { scope } : {}), ...(files.length ? { attachments: pendingFiles } : {}),
+    };
     const currentMessages = [...messages, userMessage];
     setMessages(currentMessages);
 
@@ -133,16 +150,34 @@ export function useChat() {
     }
 
     // Save user message to DB
+    let userMessageId: string | null = null;
     try {
-      await saveMessage(conversationId, 'user', text.trim());
+      userMessageId = (await saveMessage(conversationId, 'user', text.trim())).id ?? null;
     } catch (err) {
       console.error('Failed to save user message:', err);
     }
 
     // Add streaming assistant message placeholder (it carries the scope it
     // answers under, for the SCOPE row).
-    const assistantMessage: ChatMessage = { role: 'assistant', content: '', isStreaming: true, ...(scope ? { scope } : {}) };
+    const assistantMessage: ChatMessage = {
+      role: 'assistant', content: '', isStreaming: true, ...(scope ? { scope } : {}),
+      ...(files.length ? { statusText: files.length === 1 ? 'Uploading your file...' : `Uploading your ${files.length} files...` } : {}),
+    };
     setMessages([...currentMessages, assistantMessage]);
+
+    // Upload the files before asking: the analyst reads them from storage.
+    if (files.length) {
+      try {
+        const uploaded = await uploadAttachments(organizationId, conversationId, userMessageId, files);
+        setMessages(prev => prev.map(m => (m === userMessage ? { ...m, attachments: uploaded } : m)));
+      } catch (err: any) {
+        console.error('Attachment upload failed:', err);
+        setError(err.message || 'Failed to upload your files');
+        setMessages(prev => prev.filter(m => m !== assistantMessage));
+        setIsLoading(false);
+        return;
+      }
+    }
 
     try {
       // Build history excluding the current user message (it's sent

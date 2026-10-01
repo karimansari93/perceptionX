@@ -7,6 +7,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { ASK_AI_TITLE } from '@/lib/askAi';
 import type { ChatScope } from '@/services/chatService';
+import { clearHandoverFiles, peekHandoverFiles } from '@/lib/chatHandover';
 
 const CRUMB: Record<ChatView, string> = { new: 'New chat', thread: 'Chats', list: 'Chats' };
 
@@ -28,8 +29,11 @@ function ChatContent() {
   // The router entry that carried the question: ChatCore sends each
   // (entry, question) pair once, even across remounts or dev hot reloads.
   const [handoverKey] = useState(() => location.key);
+  // Files attached in the overview's chat box, sent with the handed-over question.
+  const [initialFiles] = useState<File[]>(() => (initialQuestion ? peekHandoverFiles() : []));
   const handleSent = useCallback(() => {
     setInitialQuestion(null);
+    clearHandoverFiles();
     navigate('/chat', { replace: true, state: null });
   }, [navigate]);
 
@@ -51,6 +55,7 @@ function ChatContent() {
           <ChatCore
             initialQuestion={initialQuestion}
             initialScope={initialScope}
+            initialFiles={initialFiles}
             handoverKey={handoverKey}
             onInitialQuestionSent={handleSent}
             onViewChange={setView}

@@ -1,4 +1,18 @@
 import { supabase } from '@/integrations/supabase/client';
+import { contentTypeFor, storageSafeName } from '@/lib/chatAttachments';
+
+export const ATTACHMENT_BUCKET = 'chat-attachments';
+
+// A file attached to a question (chat_attachments row). Private to the user
+// who uploaded it; the analyst reads it for every turn of its conversation.
+export interface ChatAttachment {
+  id: string;
+  message_id: string | null;
+  storage_path: string;
+  file_name: string;
+  mime_type: string;
+  size_bytes: number;
+}
 
 // A page the tools returned for an assistant turn (the `sources` SSE event):
 // the only URLs the analyst is allowed to link, so the UI renders them from
@@ -43,6 +57,7 @@ export interface ChatMessage {
   sources?: SourceLink[];
   competitors?: string[];
   scope?: ChatScope;
+  attachments?: ChatAttachment[];
 }
 
 export type StreamChunk =
@@ -316,11 +331,84 @@ export async function updateConversationTitle(
 }
 
 /**
- * Delete a conversation and all its messages.
+ * Upload files for a question: each goes to
+ * {org}/{user}/{conversation}/{uuid}-{name} in the private bucket, then gets
+ * its chat_attachments row. A file whose row cannot be written is removed
+ * again. Throws on the first failure, naming the file.
+ */
+export async function uploadAttachments(
+  organizationId: string,
+  conversationId: string,
+  messageId: string | null,
+  files: File[],
+): Promise<ChatAttachment[]> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  const uploaded: ChatAttachment[] = [];
+  for (const file of files) {
+    const contentType = contentTypeFor(file.name);
+    if (!contentType) throw new Error(`${file.name} is not a PDF, Excel or CSV file.`);
+    const path = `${organizationId}/${user.id}/${conversationId}/${crypto.randomUUID()}-${storageSafeName(file.name)}`;
+    const { error: upError } = await supabase.storage.from(ATTACHMENT_BUCKET).upload(path, file, { contentType, upsert: false });
+    if (upError) throw new Error(`Couldn't upload ${file.name}: ${upError.message}`);
+
+    const { data, error } = await supabase
+      .from('chat_attachments' as any)
+      .insert({
+        conversation_id: conversationId,
+        message_id: messageId,
+        organization_id: organizationId,
+        user_id: user.id,
+        storage_path: path,
+        file_name: file.name,
+        mime_type: contentType,
+        size_bytes: file.size,
+      })
+      .select('id, message_id, storage_path, file_name, mime_type, size_bytes')
+      .single();
+    if (error || !data) {
+      await supabase.storage.from(ATTACHMENT_BUCKET).remove([path]);
+      throw new Error(`Couldn't save ${file.name}: ${error?.message ?? 'unknown error'}`);
+    }
+    uploaded.push(data as unknown as ChatAttachment);
+  }
+  return uploaded;
+}
+
+/** The files attached anywhere in a conversation, oldest first. */
+export async function loadConversationAttachments(conversationId: string): Promise<ChatAttachment[]> {
+  const { data, error } = await supabase
+    .from('chat_attachments' as any)
+    .select('id, message_id, storage_path, file_name, mime_type, size_bytes')
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data || []) as unknown as ChatAttachment[];
+}
+
+/** A short-lived link that downloads an attached file under its own name. */
+export async function attachmentDownloadUrl(attachment: Pick<ChatAttachment, 'storage_path' | 'file_name'>): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from(ATTACHMENT_BUCKET)
+    .createSignedUrl(attachment.storage_path, 60, { download: attachment.file_name });
+  if (error || !data?.signedUrl) throw new Error(error?.message || 'Could not open the file');
+  return data.signedUrl;
+}
+
+/**
+ * Delete a conversation and all its messages. Its attached files are removed
+ * from storage first (their rows go with the conversation).
  */
 export async function deleteConversation(
   conversationId: string
 ): Promise<void> {
+  const attachments = await loadConversationAttachments(conversationId).catch(() => [] as ChatAttachment[]);
+  if (attachments.length) {
+    const { error: rmError } = await supabase.storage.from(ATTACHMENT_BUCKET).remove(attachments.map(a => a.storage_path));
+    if (rmError) throw new Error(`Couldn't delete the conversation's files: ${rmError.message}`);
+  }
+
   const { error } = await supabase
     .from('chat_conversations')
     .delete()

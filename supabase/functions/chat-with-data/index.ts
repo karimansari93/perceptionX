@@ -15,7 +15,9 @@
 //     scope options for the chat's scope bar (action: "scope");
 //   * the question scope (body.scope: company / location / jobFunction from
 //     the dashboard filters) appended to the user turn as an explicit
-//     filter instruction — see scope.ts.
+//     filter instruction — see scope.ts;
+//   * the files the user attached to the conversation (PDF, Excel, CSV),
+//     read from the private chat-attachments bucket — see attachments.ts.
 // Read-only: nothing here writes customer data.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -30,6 +32,7 @@ import { getStarterQuestions } from "./starters.ts";
 import { getScopeOptions, normalizeScope, scopeNote } from "./scope.ts";
 import { collectCompetitors, collectSources } from "./sources.ts";
 import type { SourceLink } from "./sources.ts";
+import { attachmentBlocks, loadAttachments, planAttachments, withAttachments } from "./attachments.ts";
 
 const MODEL = Deno.env.get('CLAUDE_MODEL') || 'claude-opus-5';
 const EFFORT = (Deno.env.get('CLAUDE_EFFORT') || 'high') as 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -69,13 +72,19 @@ async function authenticateAndAuthorize(
   if (authError || !user) return jsonResponse({ error: 'Invalid authentication' }, 401);
 
   // The caller names the organization for routing; membership is verified
-  // against the token's user, never trusted from the body.
-  const { data: membership, error: memberError } = await admin
-    .from('organization_members')
-    .select('id')
-    .eq('organization_id', organizationId)
-    .eq('user_id', user.id)
-    .maybeSingle();
+  // against the token's user, never trusted from the body. Platform admins
+  // (user_roles.role 'admin', the rule behind is_admin() and the dashboard's
+  // "view as organization") pass for any existing organization.
+  const [{ data: membership, error: memberError }, { data: platformRole }] = await Promise.all([
+    admin.from('organization_members').select('id')
+      .eq('organization_id', organizationId).eq('user_id', user.id).maybeSingle(),
+    admin.from('user_roles').select('user_id')
+      .eq('user_id', user.id).eq('role', 'admin').maybeSingle(),
+  ]);
+  if (!membership && platformRole) {
+    const { data: org } = await admin.from('organizations').select('id').eq('id', organizationId).maybeSingle();
+    if (org) return { userId: user.id };
+  }
   if (memberError || !membership) return jsonResponse({ error: 'You do not have access to this organization' }, 403);
 
   return { userId: user.id };
@@ -123,6 +132,7 @@ interface RequestLog {
   duration_ms: number;
   status: 'ok' | 'refusal' | 'rate_limited' | 'error';
   error: string | null;
+  attachment_count: number;
 }
 
 // The finished answer goes into the thread from here, not from the browser:
@@ -199,6 +209,7 @@ serve(async (req) => {
       duration_ms: 0,
       status: 'ok',
       error: null,
+      attachment_count: 0,
     };
 
     const streamHeaders = {
@@ -258,6 +269,18 @@ serve(async (req) => {
       };
 
       try {
+        // Files attached to this conversation (only the caller's own rows).
+        if (log.conversation_id) {
+          const prepared = await loadAttachments(admin, log.conversation_id, auth.userId, requestId,
+            (n) => enqueue(sseEvent({ status: n === 1 ? 'Reading your file...' : `Reading your ${n} files...` })));
+          if (prepared.length) {
+            log.attachment_count = prepared.length;
+            const blocks = attachmentBlocks(planAttachments(prepared));
+            messages.splice(0, messages.length, ...withAttachments(messages, blocks));
+            console.log(`[${requestId}] attachments=${prepared.length}`);
+          }
+        }
+
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           if (cancelled) break;
           log.rounds = round + 1;

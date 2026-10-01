@@ -7,6 +7,9 @@ import { useStarterQuestions } from '@/hooks/useStarterQuestions';
 import { ASK_AI_ENABLED, greetingFor } from '@/lib/askAi';
 import type { ChatScope } from '@/services/chatService';
 import { BrandLogo, ScopePickers, useScopeOptions } from './ChatScopeBar';
+import { AttachButton, DraftAttachments, dropRing, useFileDraft } from './ChatAttachments';
+import { DEFAULT_FILE_QUESTION } from '@/lib/chatAttachments';
+import { setHandoverFiles } from '@/lib/chatHandover';
 import { cn } from '@/lib/utils';
 
 interface AskAiHeroProps {
@@ -50,11 +53,14 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
   const onScopeChange = useCallback((s: ChatScope) => { touchedRef.current = true; setScope(s); }, []);
   const { options } = useScopeOptions(organizationId, scope.company);
 
+  const attach = useFileDraft();
   const ask = useCallback((question: string) => {
-    const q = question.trim();
+    const q = question.trim() || (attach.files.length ? DEFAULT_FILE_QUESTION : '');
     if (!q) return;
+    setHandoverFiles(attach.files);
+    attach.clear();
     navigate('/chat', { state: { question: q, scope } });
-  }, [navigate, scope]);
+  }, [navigate, scope, attach]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') { e.preventDefault(); ask(value); }
@@ -76,7 +82,8 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
   return (
     <section
       data-tour="ask-ai"
-      className="flex-shrink-0 rounded-2xl border border-[#0DBCBA]/[0.28] px-[22px] pt-5 pb-[18px] animate-in fade-in slide-in-from-bottom-2 duration-300"
+      {...attach.dropProps}
+      className={cn('flex-shrink-0 rounded-2xl border border-[#0DBCBA]/[0.28] px-[22px] pt-5 pb-[18px] animate-in fade-in slide-in-from-bottom-2 duration-300', dropRing(attach.dragging))}
       style={{ background: 'radial-gradient(120% 130% at 100% 0%, rgba(216,239,240,.75), rgba(236,248,248,.5) 40%, #fff 72%)' }}
     >
       {/* Greeting row */}
@@ -97,13 +104,15 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
       </div>
 
       {/* Composer */}
+      <DraftAttachments files={attach.files} onRemove={attach.remove} />
       <div className="flex items-center gap-2.5">
+        <AttachButton onFiles={attach.add} count={attach.files.length} />
         <input
           ref={inputRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask about anything…"
+          placeholder={attach.files.length ? 'Ask about these files, or send to get the key insights' : 'Ask about anything, or attach a survey or report to compare…'}
           className="h-[46px] flex-1 rounded-xl border-[1.5px] border-[#13274F]/35 bg-white px-[15px] text-[15px] text-[#13274F] shadow-[0_1px_2px_rgba(19,39,79,.06)] placeholder:text-gray-400 focus:border-[#13274F] focus:outline-none"
         />
         <button
@@ -111,7 +120,7 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
           onClick={() => ask(value)}
           aria-label="Ask PerceptionX"
           className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-[#13274F] text-white transition-colors hover:bg-[#183056] disabled:opacity-40"
-          disabled={!value.trim()}
+          disabled={!value.trim() && !attach.files.length}
         >
           <ArrowRight className="h-[18px] w-[18px]" />
         </button>
