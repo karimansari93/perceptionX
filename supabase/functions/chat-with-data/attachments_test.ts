@@ -77,7 +77,7 @@ Deno.test('csvText: strips BOM and normalises line ends', () => {
 });
 
 Deno.test('spreadsheetText: every non-empty sheet as CSV with its name', async () => {
-  const XLSX = await import('../_shared/vendor/xlsx-0.20.3.mjs');
+  const XLSX = await import('npm:@e965/xlsx@0.20.3');
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Question', 'Favourable'], ['Career growth', '61%'], ['Pay', '48%']]), 'Engagement');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([]), 'Empty');

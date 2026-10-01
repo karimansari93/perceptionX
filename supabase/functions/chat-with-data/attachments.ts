@@ -75,10 +75,11 @@ export function sheetBlock(name: string, csv: string): string {
 // deno-lint-ignore no-explicit-any
 let xlsxModule: any = null;
 async function xlsx() {
-  // SheetJS 0.20.3, vendored from cdn.sheetjs.com (Apache-2.0): the npm
-  // "xlsx" package is frozen at 0.18.5, which has known parsing
-  // vulnerabilities, and these are user files.
-  xlsxModule ??= await import('../_shared/vendor/xlsx-0.20.3.mjs');
+  // SheetJS 0.20.3 (Apache-2.0). The npm "xlsx" package is frozen at 0.18.5,
+  // which has known parsing vulnerabilities, and these are user files.
+  // @e965/xlsx@0.20.3 republishes the official build; its xlsx.mjs is
+  // byte-identical to cdn.sheetjs.com/xlsx-0.20.3 (sha256 1a0fb062...77db).
+  xlsxModule ??= await import('npm:@e965/xlsx@0.20.3');
   return xlsxModule;
 }
 
@@ -94,7 +95,7 @@ export async function spreadsheetText(bytes: Uint8Array): Promise<string> {
 }
 
 export function csvText(bytes: Uint8Array): string {
-  const text = new TextDecoder('utf-8').decode(bytes).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   return text.trim() ? text : '[The CSV file is empty.]';
 }
 
