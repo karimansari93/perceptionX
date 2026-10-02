@@ -1,5 +1,4 @@
 // Admin surface for Amplify (formerly Activate; the link router) — spec: docs/ACTIVATE_LINK_ROUTER.md
-//  - consent gate: links are not mintable until client consent is recorded here
 //  - mint tokenized links (label + audience + optional prefills). Links do not
 //    expire — each one has an on/off switch instead, so a link already printed
 //    or sitting in an email footer can be paused and brought back on the same
@@ -10,7 +9,7 @@
 //  - read-only routes overview; route curation stays manual (SQL), on purpose
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Copy, Link2, ShieldCheck, Trash2 } from 'lucide-react';
+import { Copy, Link2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -39,14 +38,11 @@ import {
   ActivateBrandingRow,
   ActivateLink,
   ActivateLinkStats,
-  ActivateOrgSettings,
   activateLinkFor,
-  confirmActivateConsent,
   countryName,
   createActivateLink,
   getActivateBranding,
   getActivateLinkStats,
-  getActivateOrgSettings,
   listActivateLinks,
   listActivateRoutes,
   saveActivateBranding,
@@ -74,14 +70,12 @@ type ActivateTabProps = {
 export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
   const [orgs, setOrgs] = useState<OrgOption[]>([]);
   const [orgId, setOrgId] = useState<string>(organizationId ?? '');
-  const [settings, setSettings] = useState<ActivateOrgSettings | null>(null);
   const [branding, setBranding] = useState<ActivateBrandingRow | null>(null);
   const [links, setLinks] = useState<ActivateLink[]>([]);
   const [stats, setStats] = useState<Record<string, ActivateLinkStats>>({});
   const [routes, setRoutes] = useState<ActivateAdminRoute[]>([]);
   const [entities, setEntities] = useState<EntityOption[]>([]);
   const [loading, setLoading] = useState(false);
-  const [consentOpen, setConsentOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
@@ -97,9 +91,8 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
     if (!orgId) return;
     setLoading(true);
     try {
-      const [orgSettings, orgBranding, orgLinks, orgStats, orgRoutes, entityRows] =
+      const [orgBranding, orgLinks, orgStats, orgRoutes, entityRows] =
         await Promise.all([
-          getActivateOrgSettings(orgId),
           getActivateBranding(orgId),
           listActivateLinks(orgId),
           getActivateLinkStats(orgId),
@@ -109,7 +102,6 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
             .select('companies(id, name)')
             .eq('organization_id', orgId),
         ]);
-      setSettings(orgSettings);
       setBranding(orgBranding);
       setLinks(orgLinks);
       setStats(Object.fromEntries(orgStats.map((s) => [s.link_id, s])));
@@ -132,7 +124,6 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
     refresh();
   }, [refresh]);
 
-  const consented = Boolean(settings?.consent_confirmed_at);
   const entityName = useMemo(
     () => Object.fromEntries(entities.map((e) => [e.id, e.name])),
     [entities],
@@ -196,35 +187,6 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
         <p className="text-sm text-muted-foreground">Pick an organization to get started.</p>
       ) : (
         <>
-          {/* Consent gate */}
-          <div
-            className={`rounded-lg border p-4 flex items-start justify-between gap-4 ${
-              consented ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50/50'
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              <ShieldCheck
-                className={`h-5 w-5 mt-0.5 ${consented ? 'text-emerald-600' : 'text-amber-600'}`}
-              />
-              <div>
-                <p className="text-sm font-medium">
-                  {consented
-                    ? `Client consent recorded ${new Date(settings!.consent_confirmed_at!).toLocaleDateString()}`
-                    : 'Client consent not recorded — links cannot be created yet'}
-                </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {settings?.consent_note ??
-                    'Amplify reaches the client’s employees directly. Record consent once the client has explicitly agreed.'}
-                </p>
-              </div>
-            </div>
-            {!consented && (
-              <Button size="sm" variant="outline" onClick={() => setConsentOpen(true)}>
-                Record consent
-              </Button>
-            )}
-          </div>
-
           {/* Branding */}
           <BrandingCard
             orgId={orgId}
@@ -237,7 +199,7 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold">Links</h3>
-              <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!consented}>
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
                 <Link2 className="h-4 w-4 mr-1.5" />
                 New link
               </Button>
@@ -246,7 +208,7 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : links.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No links yet{consented ? '' : ' — record consent first'}.
+                No links yet.
               </p>
             ) : (
               <div className="rounded-lg border divide-y">
@@ -274,22 +236,6 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
           <RoutesOverview routes={routes} entityName={entityName} />
         </>
       )}
-
-      <ConsentDialog
-        open={consentOpen}
-        onOpenChange={setConsentOpen}
-        orgName={orgs.find((o) => o.id === orgId)?.name ?? ''}
-        onConfirm={async (note) => {
-          try {
-            await confirmActivateConsent(orgId, note);
-            toast.success('Consent recorded — links can now be created');
-            setConsentOpen(false);
-            refresh();
-          } catch {
-            toast.error('Could not record consent');
-          }
-        }}
-      />
 
       <CreateLinkDialog
         open={createOpen}
@@ -879,62 +825,6 @@ function RoutesOverview({
   );
 }
 
-function ConsentDialog({
-  open,
-  onOpenChange,
-  orgName,
-  onConfirm,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  orgName: string;
-  onConfirm: (note: string) => Promise<void>;
-}) {
-  const [note, setNote] = useState('');
-  const [saving, setSaving] = useState(false);
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Record client consent</DialogTitle>
-          <DialogDescription>
-            Confirm that {orgName} has explicitly agreed to Activate reaching their employees and
-            candidates. This unlocks link creation for the org.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-2">
-          <Label htmlFor="consent-note">Who agreed, and when? (kept on record)</Label>
-          <Input
-            id="consent-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="e.g. Elise confirmed via email 2026-08-14"
-          />
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            disabled={saving || note.trim().length === 0}
-            onClick={async () => {
-              setSaving(true);
-              try {
-                await onConfirm(note.trim());
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            <Check className="h-4 w-4 mr-1.5" />
-            Record consent
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function CreateLinkDialog({
   open,
   onOpenChange,
@@ -973,11 +863,7 @@ function CreateLinkDialog({
       onCreated(link);
     } catch (e) {
       const message = e instanceof Error ? e.message : '';
-      toast.error(
-        message.includes('consent_required')
-          ? 'Client consent has to be recorded before links can be created'
-          : 'Could not create the link',
-      );
+      toast.error(message ? `Could not create the link: ${message}` : 'Could not create the link');
     } finally {
       setSaving(false);
     }

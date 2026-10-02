@@ -21,9 +21,12 @@ export function shareSubdomain(hostname) {
   return RESERVED_SUBDOMAINS.has(sub) ? null : sub;
 }
 
-/** A share-host path that is a link token: one segment, token alphabet. */
+/**
+ * A share-host path that is a link token: one segment, token alphabet. New
+ * links get 6-character codes; older ones are 22+ characters and still work.
+ */
 export function tokenFromSharePath(pathname) {
-  const m = /^\/([A-Za-z0-9_-]{20,64})\/?$/.exec(pathname);
+  const m = /^\/([A-Za-z0-9_-]{6,64})\/?$/.exec(pathname);
   return m ? m[1] : null;
 }
 
