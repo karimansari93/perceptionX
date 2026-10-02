@@ -1,4 +1,18 @@
-# PerceptionX Activate — Link Router
+# PerceptionX Amplify (formerly Activate) — Link Router
+
+> **Renamed 2026-10-02: Activate is now Amplify** in everything people see.
+> Tables, RPCs, file names and the `/activate/` path keep the old name so
+> nothing already handed out breaks.
+>
+> **Private share hosts.** A client can have its own address,
+> `https://<sub>.perceptionx.ai/<token>` (CSL: `csl.perceptionx.ai`), set as
+> `activate_branding.link_subdomain` in the admin Branding card.
+> `netlify/edge-functions/amplify-host.ts` serves only that client's tokens
+> there; the root and every other path are a bare 404, and every response
+> carries `X-Robots-Tag: noindex`. Without a subdomain, copied links are
+> `app.perceptionx.ai/amplify/<token>`. To turn a host on: add the subdomain to
+> the Netlify site's domains, point DNS (CNAME) at the site, then set the
+> subdomain in the Branding card.
 
 ## What this is
 

@@ -97,6 +97,9 @@ export async function activatePreview(token) {
       logo_domain: data.logo_domain ?? null,
       primary_color: data.primary_color || '#13274F',
       accent_color: data.accent_color || '#F59E0B',
+      // The client's share host (csl -> csl.perceptionx.ai). amplify-host.ts
+      // refuses a token on any other client's host.
+      link_subdomain: typeof data.link_subdomain === 'string' ? data.link_subdomain : null,
       },
     };
   } catch {
@@ -104,7 +107,7 @@ export async function activatePreview(token) {
   }
 }
 
-/** The token from /activate/<token> or /activate-og/<token>.png. */
+/** The token from /activate/<token>, /amplify/<token> or /activate-og/<token>.png. */
 export function tokenFromPath(url) {
   const { pathname } = new URL(url);
   const token = pathname.split('/').filter(Boolean)[1] ?? '';

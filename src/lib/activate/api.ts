@@ -12,6 +12,7 @@
 // the localized casts in here — keep them in this file only.
 
 import { supabase } from '@/integrations/supabase/client';
+import { SHARE_DOMAIN } from './host';
 
 export type ActivateAudience = 'employee' | 'candidate' | 'alumni';
 
@@ -24,6 +25,8 @@ export interface ActivateOrgBranding {
   logo_domain: string | null;
   /** Optional campaign banner above the avatar on the welcome screen. */
   banner_url: string | null;
+  /** Optional hero photo behind the top of the page, duotoned in brand colours. */
+  hero_image_url?: string | null;
   /** Client typography. Name + file -> @font-face; name alone -> Google Fonts. */
   heading_font: string | null;
   body_font: string | null;
@@ -155,8 +158,14 @@ const rpc = (name: string, args: Record<string, unknown>) =>
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const table = (name: string) => supabase.from(name as any) as any;
 
-export function activateLinkFor(token: string): string {
-  return `${window.location.origin}/activate/${token}`;
+/**
+ * The link to hand out. With a share subdomain set on the client's branding it
+ * is https://<sub>.perceptionx.ai/<token>; otherwise the app-host
+ * /amplify/<token>. Old /activate/<token> links keep working either way.
+ */
+export function activateLinkFor(token: string, linkSubdomain?: string | null): string {
+  if (linkSubdomain) return `https://${linkSubdomain}.${SHARE_DOMAIN}/${token}`;
+  return `${window.location.origin}/amplify/${token}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -512,12 +521,15 @@ export interface ActivateBrandingRow {
   logo_url: string | null;
   logo_domain: string | null;
   banner_url: string | null;
+  hero_image_url?: string | null;
   heading_font: string | null;
   body_font: string | null;
   heading_font_url: string | null;
   body_font_url: string | null;
   primary_color: string;
   accent_color: string;
+  /** Share host: 'csl' -> csl.perceptionx.ai/<token>. Null = app-host links. */
+  link_subdomain?: string | null;
 }
 
 export const ACTIVATE_ASSET_BUCKET = 'activate-branding';
@@ -528,7 +540,7 @@ const MAX_ASSET_BYTES = 2 * 1024 * 1024;
  * org and stamped, so replacing an asset never collides with a cached copy of
  * the old one. Admin-only by storage policy.
  */
-export type ActivateAssetKind = 'logo' | 'banner' | 'heading-font' | 'body-font';
+export type ActivateAssetKind = 'logo' | 'banner' | 'hero' | 'heading-font' | 'body-font';
 
 const FONT_EXTENSIONS = ['woff2', 'woff', 'ttf', 'otf'];
 
@@ -569,9 +581,9 @@ export async function uploadActivateAsset(
 
 export async function getActivateBranding(orgId: string): Promise<ActivateBrandingRow | null> {
   const { data, error } = await table('activate_branding')
-    .select(
-      'org_id, display_name, tagline, blurb, logo_url, logo_domain, banner_url, heading_font, body_font, heading_font_url, body_font_url, primary_color, accent_color',
-    )
+    // '*' rather than a column list so the tab still loads on a database that
+    // hasn't had link_subdomain added yet.
+    .select('*')
     .eq('org_id', orgId)
     .maybeSingle();
   if (error) throw error;
@@ -590,6 +602,10 @@ export async function saveActivateBranding(row: ActivateBrandingRow): Promise<vo
     body_font: row.body_font || null,
     heading_font_url: row.heading_font_url || null,
     body_font_url: row.body_font_url || null,
+    ...('hero_image_url' in row ? { hero_image_url: row.hero_image_url || null } : {}),
+    ...('link_subdomain' in row
+      ? { link_subdomain: row.link_subdomain?.trim().toLowerCase() || null }
+      : {}),
   });
   if (error) throw error;
 }

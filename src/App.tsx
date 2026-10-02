@@ -28,6 +28,7 @@ import { AlertTriangle, RefreshCw, Home } from "lucide-react";
 import { Suspense, useEffect } from "react";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import Hotjar from "@hotjar/browser";
+import { isShareHost } from "@/lib/activate/host";
 
 const Dashboard = lazyWithRetry(() => import("./pages/Dashboard"));
 const NotFound = lazyWithRetry(() => import("./pages/NotFound"));
@@ -57,6 +58,17 @@ initObservability();
 // Retry policy + QueryCache error hook live in src/lib/queryClient.ts,
 // shared with the regression tests.
 const queryClient = createQueryClient();
+
+// A client share host (csl.perceptionx.ai) serves only Amplify links at
+// /<token>; the dashboard, sign-in and every other route don't exist there.
+// netlify/edge-functions/amplify-host.ts enforces the same on the server.
+const SHARE_HOST = isShareHost();
+
+const ShareHostNotFound = () => (
+  <div className="min-h-screen flex items-center justify-center bg-white">
+    <p className="text-gray-500">This link isn't available.</p>
+  </div>
+);
 
 // Warm starts: persist the SMALL dashboard fetch families (rollups, prompts,
 // scope stats, location rollups) so reopening the app paints the last-seen
@@ -208,6 +220,12 @@ const App = () => (
               <Toaster />
               <Sonner />
               <Suspense fallback={<LoadingScreen />}>
+              {SHARE_HOST ? (
+              <Routes>
+                <Route path="/:token" element={<Activate />} />
+                <Route path="*" element={<ShareHostNotFound />} />
+              </Routes>
+              ) : (
               <Routes>
               <Route path="/" element={<Auth />} />
               <Route path="/auth" element={<Auth />} />
@@ -220,7 +238,9 @@ const App = () => (
               {/* Client onboarding — public, authenticated by invite token only.
                   Ranks below the static /onboarding redirects below in React Router. */}
               <Route path="/onboarding/:token" element={<Onboarding />} />
-              {/* Activate link router — public, authenticated by link token only */}
+              {/* Amplify link router (formerly Activate) — public, authenticated by
+                  link token only. /activate/ links are already out, so both work. */}
+              <Route path="/amplify/:token" element={<Activate />} />
               <Route path="/activate/:token" element={<Activate />} />
 
               {/* Admin routes - no onboarding guard */}
@@ -335,6 +355,7 @@ const App = () => (
               } />
               <Route path="*" element={<NotFound />} />
             </Routes>
+              )}
             </Suspense>
             </CompanyProvider>
           </AuthProvider>

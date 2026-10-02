@@ -1,4 +1,4 @@
-// Admin surface for Activate (link router) — spec: docs/ACTIVATE_LINK_ROUTER.md
+// Admin surface for Amplify (formerly Activate; the link router) — spec: docs/ACTIVATE_LINK_ROUTER.md
 //  - consent gate: links are not mintable until client consent is recorded here
 //  - mint tokenized links (label + audience + optional prefills). Links do not
 //    expire — each one has an on/off switch instead, so a link already printed
@@ -122,7 +122,7 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
           .sort((a: EntityOption, b: EntityOption) => a.name.localeCompare(b.name)),
       );
     } catch (e) {
-      toast.error('Could not load Activate data');
+      toast.error('Could not load Amplify data');
     } finally {
       setLoading(false);
     }
@@ -139,8 +139,8 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
   );
 
   const copyLink = async (link: ActivateLink) => {
-    await navigator.clipboard.writeText(activateLinkFor(link.token));
-    toast.success('Activate link copied');
+    await navigator.clipboard.writeText(activateLinkFor(link.token, branding?.link_subdomain));
+    toast.success('Amplify link copied');
   };
 
   const setEnabled = async (link: ActivateLink, enabled: boolean) => {
@@ -169,7 +169,7 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold">Activate</h2>
+          <h2 className="text-lg font-semibold">Amplify</h2>
           <p className="text-sm text-muted-foreground">
             Shareable links that route employees and candidates to the platforms feeding AI
             answers in their market. Send to whole cohorts — hand-picked recipients bias the
@@ -214,7 +214,7 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {settings?.consent_note ??
-                    'Activate reaches the client’s employees directly. Record consent once the client has explicitly agreed.'}
+                    'Amplify reaches the client’s employees directly. Record consent once the client has explicitly agreed.'}
                 </p>
               </div>
             </div>
@@ -300,7 +300,7 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
         onCreated={(link) => {
           setCreateOpen(false);
           refresh();
-          navigator.clipboard.writeText(activateLinkFor(link.token)).then(
+          navigator.clipboard.writeText(activateLinkFor(link.token, branding?.link_subdomain)).then(
             () => toast.success('Link created and copied to clipboard'),
             () => toast.success('Link created'),
           );
@@ -364,6 +364,7 @@ function BrandingCard({
       const patch: Partial<ActivateBrandingRow> =
         kind === 'logo' ? { logo_url: url }
         : kind === 'banner' ? { banner_url: url }
+        : kind === 'hero' ? { hero_image_url: url }
         : kind === 'heading-font' ? { heading_font_url: url }
         : { body_font_url: url };
       set(patch);
@@ -476,6 +477,27 @@ function BrandingCard({
             </div>
           </div>
           <div className="space-y-1.5">
+            <Label htmlFor="b-subdomain">Link subdomain</Label>
+            <div className="flex items-center gap-1.5 text-sm">
+              <span className="text-muted-foreground">https://</span>
+              <Input
+                id="b-subdomain"
+                className="max-w-[12rem]"
+                placeholder="csl"
+                value={form.link_subdomain ?? ''}
+                onChange={(e) =>
+                  set({ link_subdomain: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })
+                }
+              />
+              <span className="text-muted-foreground">.perceptionx.ai/&lt;code&gt;</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Copied links use this private address once it is set. The subdomain must also be
+              added to the site's domains in Netlify. Leave empty for app.perceptionx.ai/amplify/
+              links.
+            </p>
+          </div>
+          <div className="space-y-1.5">
             <Label htmlFor="b-tagline">Tagline</Label>
             <Input
               id="b-tagline"
@@ -483,6 +505,60 @@ function BrandingCard({
               onChange={(e) => set({ tagline: e.target.value || null })}
               placeholder="e.g. Global biotech · 32,000 people · 35 countries"
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="b-hero">Hero photo (optional)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="b-hero"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                disabled={uploading === 'hero'}
+                onChange={(e) => upload('hero', e.target.files?.[0])}
+                className="cursor-pointer file:mr-2 file:cursor-pointer file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
+              />
+              {form.hero_image_url && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => set({ hero_image_url: null })}
+                  title="Remove hero photo"
+                >
+                  <Trash2 className="h-4 w-4 text-muted-foreground" />
+                </Button>
+              )}
+            </div>
+            {uploading === 'hero' && (
+              <p className="text-[11px] text-muted-foreground">Uploading…</p>
+            )}
+            {form.hero_image_url ? (
+              <div
+                className="relative h-28 overflow-hidden rounded-lg border"
+                style={{ background: form.primary_color }}
+              >
+                {/* Same treatment as the page: greyscale photo, brand colour through it. */}
+                <img
+                  src={form.hero_image_url}
+                  alt=""
+                  className="absolute inset-0 h-full w-full object-cover"
+                  style={{ filter: 'grayscale(1) contrast(1.05)', mixBlendMode: 'luminosity', opacity: 0.34 }}
+                />
+                <div
+                  className="absolute inset-0"
+                  style={{
+                    background: `linear-gradient(to bottom, transparent 35%, ${form.primary_color})`,
+                  }}
+                />
+                <p className="absolute bottom-1.5 w-full text-center text-[11px] text-white/80">
+                  Preview: toned into the brand colours on the page
+                </p>
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">
+                A photo of the client's people or workplace. Landscape JPG or WebP, 2 MB max. It is
+                toned into the brand colours so text always stays readable.
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="b-banner">Campaign banner (optional)</Label>
@@ -615,7 +691,7 @@ function BrandingCard({
           </div>
           <p className="text-xs text-muted-foreground">
             Text on the canvas auto-flips between white and navy for contrast, so any pair of
-            colors stays readable. Save, then reload an open Activate link to see it.
+            colors stays readable. Save, then reload an open Amplify link to see it.
           </p>
           <div className="flex justify-end">
             <Button size="sm" onClick={save} disabled={saving}>
@@ -911,7 +987,7 @@ function CreateLinkDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New Activate link</DialogTitle>
+          <DialogTitle>New Amplify link</DialogTitle>
           <DialogDescription>
             Label links by cohort ("DE plasma ops"), not by person — per-person links turn the
             funnel into individual monitoring, which the k-anonymity floor is there to prevent.

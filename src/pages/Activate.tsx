@@ -1,4 +1,5 @@
-// Public Activate page at /activate/:token — authenticated by the link token
+// Public Amplify page (formerly Activate) at /amplify/:token, /activate/:token,
+// or /:token on a client share host (csl.perceptionx.ai) — authenticated by the link token
 // alone (no login). The recipient declares country + entity (two taps, no
 // inference) and gets the review platforms that feed AI answers about their
 // employer in their market. We route; we never script — copy stays
@@ -204,6 +205,59 @@ function onColor(hex: string): string {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.45 ? '#13274F' : '#FFFFFF';
 }
 
+const relLum = ([r, g, b]: number[]) => {
+  const ch = (c: number) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+};
+const hexRgb = (hex: string): number[] | null => {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const v = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
+  return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16));
+};
+const contrast = (a: number[], b: number[]) => {
+  const [x, y] = [relLum(a), relLum(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+};
+
+/** Strongest the hero photo may show; .34 on a dark brand colour. */
+const HERO_MAX = 0.34;
+
+/**
+ * How strongly the hero photo may show through on this primary, as an opacity.
+ *
+ * The photo can only ever pull the canvas toward the ink's opposite (a white
+ * patch under white ink, a black patch under dark ink), so this assumes the
+ * worst pixel and finds the most photo the ink colour can take while keeping
+ * AA (4.5:1). A primary already under AA (a mid blue, a bright red) may lose at
+ * most a tenth of what it has; on those the photo is subtler, on dark brands it
+ * is at full strength.
+ */
+function heroStrength(primary: string): number {
+  const p = hexRgb(primary);
+  if (!p) return 0;
+  const ink = hexRgb(onColor(primary))!;
+  // Light ink is threatened by the photo's whites, dark ink by its blacks.
+  const worst = relLum(ink) > 0.5 ? [255, 255, 255] : [0, 0, 0];
+  const base = contrast(p, ink);
+  const floor = base >= 4.5 ? 4.5 : base * 0.9;
+  // The hero's own top wash covers 10% of the photo with primary.
+  const at = (o: number) =>
+    contrast(p.map((c, i) => c * (1 - o * 0.9) + worst[i] * o * 0.9), ink);
+  if (at(HERO_MAX) >= floor) return HERO_MAX;
+  let lo = 0;
+  let hi = HERO_MAX;
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2;
+    if (at(mid) >= floor) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -240,7 +294,7 @@ export default function Activate() {
   // previewCopy() in netlify/lib/activate-card.js is the canonical wording.
   const branded = load.kind === 'ready' ? load.config.org : null;
   useMetaTags({
-    title: branded ? branded.display_name : 'Activate',
+    title: branded ? branded.display_name : 'Amplify',
     ogTitle: branded
       ? `Join the online conversation about ${branded.display_name}`
       : 'Join the online conversation about where you work',
@@ -395,7 +449,12 @@ export default function Activate() {
   };
 
   return (
-    <Canvas primary={org.primary_color} accent={org.accent_color} fonts={org}>
+    <Canvas
+      primary={org.primary_color}
+      accent={org.accent_color}
+      fonts={org}
+      heroUrl={org.hero_image_url}
+    >
       <main
         aria-live="polite"
         className="relative z-[1] mx-auto flex min-h-screen w-full max-w-[460px] flex-col items-center gap-4 px-[22px] pb-11 pt-16 md:px-8 md:pt-28"
@@ -572,11 +631,14 @@ function Canvas({
   primary,
   accent,
   fonts,
+  heroUrl,
   children,
 }: {
   primary: string;
   accent: string;
   fonts?: ClientFontConfig;
+  /** Optional photo behind the top of the page, toned into the brand colours. */
+  heroUrl?: string | null;
   children: ReactNode;
 }) {
   const vars = {
@@ -593,6 +655,7 @@ function Canvas({
     <div style={vars} className="act-canvas relative min-h-screen overflow-hidden">
       <ClientFonts fonts={fonts} />
       <style>{activateCss}</style>
+      {heroUrl && <HeroPhoto url={heroUrl} strength={heroStrength(primary)} />}
       {children}
     </div>
   );
@@ -674,6 +737,30 @@ function PoweredBy({ onDark }: { onDark: boolean }) {
 }
 
 /** Client campaign artwork; hides itself if the URL fails to load. */
+/**
+ * The client's hero photo, duotoned: greyscale, with the brand primary showing
+ * through it, the accent glow laid on top, and a fade into the plain primary
+ * before the content below. Toning rather than showing the photo raw is what
+ * lets any photo sit on any client colour; heroStrength() sets how much shows
+ * so the page's computed ink colour keeps its contrast over the worst pixel.
+ * Decorative only, so no alt text; a broken URL just leaves the plain canvas.
+ */
+function HeroPhoto({ url, strength }: { url: string; strength: number }) {
+  const [failed, setFailed] = useState(false);
+  if (failed || strength <= 0.02) return null;
+  return (
+    <div className="act-hero" aria-hidden>
+      <img
+        src={url}
+        alt=""
+        className="act-hero-img"
+        style={{ opacity: strength }}
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
+}
+
 function Banner({ url }: { url: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) return null;
@@ -1656,6 +1743,36 @@ const activateCss = `
 
 /* Campaign banner. Rounded card so client artwork with its own background
    colour sits cleanly on the brand canvas, whatever its aspect ratio. */
+.act-hero {
+  position: absolute; inset: 0 0 auto 0; height: min(78vh, 720px);
+  pointer-events: none; overflow: hidden;
+  /* No z-index: a stacking context here would isolate the photo, and the
+     luminosity blend would have no brand colour under it to blend with. */
+}
+.act-hero-img {
+  width: 100%; height: 100%; object-fit: cover; object-position: center 30%;
+  /* Greyscale + luminosity blend over the primary canvas = a duotone in the
+     client's own colour. Opacity is the contrast budget: keep it low. */
+  filter: grayscale(1) contrast(1.08);
+  mix-blend-mode: luminosity;
+  /* opacity is set inline by heroStrength(): the contrast budget. */
+  animation: act-hero-drift 24s ease-in-out infinite alternate;
+}
+.act-hero::after {
+  /* Accent glow from the top, then a fade into the plain primary so the
+     cards and questions below sit on the exact brand colour. */
+  content: ''; position: absolute; inset: 0;
+  background:
+    radial-gradient(120% 70% at 50% -10%,
+      color-mix(in oklab, var(--activate-accent) 45%, transparent), transparent 60%),
+    linear-gradient(to bottom,
+      color-mix(in srgb, var(--activate-primary) 10%, transparent) 0%,
+      color-mix(in srgb, var(--activate-primary) 35%, transparent) 55%,
+      var(--activate-primary) 100%);
+}
+@keyframes act-hero-drift { from { transform: scale(1.04); } to { transform: scale(1.12) translateY(-1.5%); } }
+@media (prefers-reduced-motion: reduce) { .act-hero-img { animation: none; transform: scale(1.04); } }
+
 .act-banner {
   width: 100%; max-height: 96px; object-fit: contain;
   border-radius: 18px; overflow: hidden;
