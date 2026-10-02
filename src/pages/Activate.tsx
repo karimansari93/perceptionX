@@ -240,7 +240,8 @@ function heroStrength(primary: string): number {
   const p = hexRgb(primary);
   if (!p) return 0;
   const ink = hexRgb(onColor(primary))!;
-  const worst = relLum(ink) > 0.5 ? [0, 0, 0] : [255, 255, 255];
+  // Light ink is threatened by the photo's whites, dark ink by its blacks.
+  const worst = relLum(ink) > 0.5 ? [255, 255, 255] : [0, 0, 0];
   const base = contrast(p, ink);
   const floor = base >= 4.5 ? 4.5 : base * 0.9;
   // The hero's own top wash covers 10% of the photo with primary.
