@@ -365,13 +365,9 @@ export default function Activate() {
   }, [step, load.kind]);
 
   if (load.kind === 'loading') {
-    return (
-      <Canvas primary="#13274F" accent="#DB5E89">
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="act-spinner" role="status" aria-label="Opening" />
-        </div>
-      </Canvas>
-    );
+    // Neutral on purpose: the client's colours aren't known yet, and the page
+    // must never open in PerceptionX's own navy and pink first.
+    return <AmplifyLoading />;
   }
 
   if (load.kind === 'invalid') {
@@ -624,6 +620,31 @@ function ClientFonts({ fonts }: { fonts?: ClientFontConfig }) {
       {googleHref && <link rel="stylesheet" href={googleHref} />}
       {faces.length > 0 && <style>{faces.join('')}</style>}
     </>
+  );
+}
+
+/**
+ * What an Amplify link shows before the client's branding arrives: a plain
+ * white page with a faint grey spinner, so nothing on screen is PerceptionX's.
+ * The spinner waits a beat before appearing, so a fast load is just white
+ * followed by the client's page.
+ */
+function AmplifyLoading() {
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center"
+      style={{ background: '#FFFFFF' }}
+    >
+      <style>{`
+        .amp-load { width: 30px; height: 30px; border-radius: 50%;
+          border: 2.5px solid rgba(0,0,0,.08); border-top-color: rgba(0,0,0,.28);
+          opacity: 0; animation: amp-load-in 200ms ease 400ms forwards, amp-load-spin 800ms linear infinite; }
+        @keyframes amp-load-in { to { opacity: 1; } }
+        @keyframes amp-load-spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) { .amp-load { animation: amp-load-in 200ms ease 400ms forwards; } }
+      `}</style>
+      <div className="amp-load" role="status" aria-label="Opening" />
+    </div>
   );
 }
 
