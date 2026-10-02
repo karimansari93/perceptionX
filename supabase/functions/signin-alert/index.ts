@@ -1,8 +1,8 @@
 // signin-alert: posts "X signed in" to the #users Slack channel.
 //
 // Called only by the notify_signin_slack() trigger on auth.users (service
-// role key from vault). The trigger decides who counts (the founders' and
-// Rodrigo's own accounts are skipped there); this function looks up the
+// role key from vault). The trigger decides who counts (internal, demo and
+// AI-reviewer accounts are skipped there); this function looks up the
 // person's name and organizations and formats the message.
 //
 // Slack webhook: SIGNIN_ALERTS_SLACK_WEBHOOK, else INVITE_ALERTS_SLACK_WEBHOOK

@@ -77,3 +77,7 @@ drop trigger if exists on_auth_user_signed_in on auth.users;
 create trigger on_auth_user_signed_in
   after update of last_sign_in_at on auth.users
   for each row execute function public.notify_signin_slack();
+
+-- Internal helpers: not callable from the app.
+revoke execute on function public.is_internal_signin_email(text) from public, anon, authenticated;
+revoke execute on function public.notify_signin_slack() from public, anon, authenticated;
