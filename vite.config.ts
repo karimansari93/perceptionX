@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 
 // Emits the static per-route HTML variants: index.html with different meta
-// tags, served by Netlify for /onboarding/* and /activate/* (see
+// tags, served by Netlify for /onboarding/*, /amplify/* and /activate/* (see
 // public/_redirects) so a link-preview crawler that never executes JS gets copy
 // about the page it was actually sent, rather than the dashboard sign-in copy.
 //
@@ -64,7 +64,7 @@ const META_VARIANTS: MetaVariant[] = [
     description:
       "See where people are already talking about working there, and where your experience would count.",
     image: "https://app.perceptionx.ai/logos/activate-og.png",
-    imageAlt: "PerceptionX Activate",
+    imageAlt: "PerceptionX Amplify",
     // Activate URLs carry a link token. They are meant to be shared, never
     // indexed — a token in a search result is a link nobody chose to hand out.
     robots: "noindex, nofollow",

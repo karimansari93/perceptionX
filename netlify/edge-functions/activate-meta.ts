@@ -1,4 +1,5 @@
-// Personalizes the link preview for an Activate link: /activate/<token>
+// Personalizes the link preview for an Amplify link: /amplify/<token> (and the
+// original /activate/<token> links, which keep working)
 //
 // Runs before Netlify's redirect chain, which serves activate.html (index.html
 // with generic Activate meta, built in vite.config.ts). Without this the SPA
@@ -61,35 +62,26 @@ function withLinkUrl(html: string, linkUrl: string): string {
   );
 }
 
-export default async (request: Request, context: { next: () => Promise<Response> }) => {
-  const response = await context.next();
-
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.includes("text/html")) return response;
-
-  // /activate/<token> — anything else (e.g. a bare /activate) stays generic.
-  const token = tokenFromPath(request.url);
-  if (!token) return response;
-
-  const origin = new URL(request.url).origin;
-  const linkUrl = `${origin}/activate/${encodeURIComponent(token)}`;
-
-  let branding: Awaited<ReturnType<typeof activatePreview>>["branding"] = null;
-  let reason = "error";
-  try {
-    ({ branding, reason } = await activatePreview(token));
-  } catch {
-    reason = "error";
-  }
+/**
+ * The page's HTML, personalized for one token's branding (or left generic when
+ * there is none). Shared with amplify-host.ts, which serves the same page at
+ * https://<client>.perceptionx.ai/<token> — there the shell is index.html, so
+ * robots and any inherited og:url are reset here rather than trusted.
+ */
+export function personalizeAmplifyHtml(
+  source: string,
+  branding: Awaited<ReturnType<typeof activatePreview>>["branding"],
+  { origin, token, linkUrl }: { origin: string; token: string; linkUrl: string },
+): string {
+  let html = source
+    .replace(/\s*<meta property="og:url" content="[^"]*" \/>/, "")
+    .replace(/\s*<link rel="canonical" href="[^"]*" \/>/, "");
+  html = set(html, /(<meta name="robots" content=")[^"]*(")/, "noindex, nofollow");
+  html = set(html, /(<meta name="googlebot" content=")[^"]*(")/, "noindex, nofollow");
 
   // No branding still gets the right URL — the generic preview is a fallback,
   // not a reason to point the card at the wrong page.
-  if (!branding) {
-    return withReason(
-      htmlResponse(response, withLinkUrl(await response.text(), linkUrl)),
-      reason,
-    );
-  }
+  if (!branding) return withLinkUrl(html, linkUrl);
 
   const name = escapeHtml(branding.display_name);
   const { title, description } = previewCopy(name);
@@ -97,8 +89,7 @@ export default async (request: Request, context: { next: () => Promise<Response>
   // deploys preview themselves rather than production.
   const card = `${origin}/activate-og/${encodeURIComponent(token)}.png`;
 
-  let html = (await response.text())
-    .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`);
+  html = html.replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`);
   html = set(html, /(<meta name="description" content=")[^"]*(")/, description);
   html = set(html, /(<meta property="og:title" content=")[^"]*(")/, title);
   html = set(html, /(<meta property="og:description" content=")[^"]*(")/, description);
@@ -109,14 +100,42 @@ export default async (request: Request, context: { next: () => Promise<Response>
   html = set(
     html,
     /(<meta property="og:image:alt" content=")[^"]*(")/,
-    `${name} — PerceptionX Activate`,
+    `${name} — PerceptionX Amplify`,
   );
   html = withLinkUrl(html, linkUrl);
   // og:site_name is the client's, not ours: an employee is being sent this by
   // their own employer, and the attribution line under the card should say so.
-  html = set(html, /(<meta property="og:site_name" content=")[^"]*(")/, name);
+  return set(html, /(<meta property="og:site_name" content=")[^"]*(")/, name);
+}
 
-  return withReason(htmlResponse(response, html), "ok");
+export default async (request: Request, context: { next: () => Promise<Response> }) => {
+  const response = await context.next();
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/html")) return response;
+
+  // /activate/<token> or /amplify/<token> — anything else (e.g. a bare
+  // /amplify) stays generic.
+  const token = tokenFromPath(request.url);
+  if (!token) return response;
+
+  const url = new URL(request.url);
+  const origin = url.origin;
+  // Keep whichever prefix the link was minted with: old /activate/ links are
+  // already out in emails and footers.
+  const prefix = url.pathname.startsWith("/amplify/") ? "amplify" : "activate";
+  const linkUrl = `${origin}/${prefix}/${encodeURIComponent(token)}`;
+
+  let branding: Awaited<ReturnType<typeof activatePreview>>["branding"] = null;
+  let reason = "error";
+  try {
+    ({ branding, reason } = await activatePreview(token));
+  } catch {
+    reason = "error";
+  }
+
+  const html = personalizeAmplifyHtml(await response.text(), branding, { origin, token, linkUrl });
+  return withReason(htmlResponse(response, html), branding ? "ok" : reason);
 };
 
-export const config = { path: "/activate/*" };
+export const config = { path: ["/activate/*", "/amplify/*"] };

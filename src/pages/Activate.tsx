@@ -1,4 +1,5 @@
-// Public Activate page at /activate/:token — authenticated by the link token
+// Public Amplify page (formerly Activate) at /amplify/:token, /activate/:token,
+// or /:token on a client share host (csl.perceptionx.ai) — authenticated by the link token
 // alone (no login). The recipient declares country + entity (two taps, no
 // inference) and gets the review platforms that feed AI answers about their
 // employer in their market. We route; we never script — copy stays
@@ -240,7 +241,7 @@ export default function Activate() {
   // previewCopy() in netlify/lib/activate-card.js is the canonical wording.
   const branded = load.kind === 'ready' ? load.config.org : null;
   useMetaTags({
-    title: branded ? branded.display_name : 'Activate',
+    title: branded ? branded.display_name : 'Amplify',
     ogTitle: branded
       ? `Join the online conversation about ${branded.display_name}`
       : 'Join the online conversation about where you work',

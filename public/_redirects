@@ -22,8 +22,12 @@
 # when the crawler never executes JS. Generated at build time in vite.config.ts.
 /onboarding/*  /onboarding.html  200
 
-# Activate links get activate.html for the same reason — the static floor under
-# netlify/edge-functions/activate-meta.ts, which personalizes it per token.
+# Amplify links (formerly Activate) get activate.html for the same reason — the
+# static floor under netlify/edge-functions/activate-meta.ts, which personalizes
+# it per token. /activate/* stays: those links are already out in the world.
+# Client share hosts (https://<client>.perceptionx.ai/<token>) never reach this
+# file's page rules: netlify/edge-functions/amplify-host.ts answers them.
+/amplify/*   /activate.html  200
 /activate/*  /activate.html  200
 
 # The per-token share card is drawn by netlify/edge-functions/activate-og.ts,

@@ -20,7 +20,7 @@ const SECTIONS = [
   { id: 'recency', label: 'Recency' },
   { id: 'members', label: 'Members' },
   { id: 'reports', label: 'Reports' },
-  { id: 'activate', label: 'Activate' },
+  { id: 'activate', label: 'Amplify' },
 ] as const;
 type Section = (typeof SECTIONS)[number]['id'];
 
