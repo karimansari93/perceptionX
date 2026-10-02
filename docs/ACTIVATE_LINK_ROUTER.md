@@ -194,14 +194,18 @@ on revives every copy already in circulation. `expires_at` survives for a
 genuinely time-boxed campaign (`p_expires_days` on the create RPC) and is NULL
 otherwise.
 
-## Consent gate
+## Consent gate (removed 2026-10-02)
 
-**No link is mintable for an org until client consent is recorded.** The
-create-link RPC refuses (`consent_required`) while
-`activate_org_settings.consent_confirmed_at` is NULL; an admin records consent
-explicitly (who/when/note). CSL is seeded *unconfirmed* — the Andy → Elise
-conversation has to happen before the first real link exists. The build and the
-DACH internal review can proceed in parallel with that.
+There is no consent gate any more. We work with clients directly and the link
+is theirs to share, so an admin can create a link at any time. The
+`activate_org_settings.consent_*` columns are kept so recorded history isn't
+lost, but nothing reads them.
+
+## Link codes
+
+New links get 6-character codes from `abcdefghjkmnpqrstuvwxyz23456789` (no
+look-alikes), about 887 million possibilities, e.g. `csl.perceptionx.ai/k7m2qx`.
+Older 22-character codes keep working.
 
 ## Verified routing seed data
 
