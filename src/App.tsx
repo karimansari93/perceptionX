@@ -64,6 +64,19 @@ const queryClient = createQueryClient();
 // netlify/edge-functions/amplify-host.ts enforces the same on the server.
 const SHARE_HOST = isShareHost();
 
+// Amplify links open on the client's brand, so the app's own PerceptionX
+// loading screen never shows on them, only a neutral white one. Amplify pages
+// are always entry points, so the first URL is the one that counts.
+const AMPLIFY_ENTRY =
+  SHARE_HOST ||
+  (typeof window !== "undefined" && /^\/(amplify|activate)\//.test(window.location.pathname));
+
+// Plain white, matching AmplifyLoading in src/pages/Activate.tsx. Kept inline
+// here because that module is the lazy chunk this fallback is waiting for.
+const AmplifyLoadingFallback = () => (
+  <div className="min-h-screen" style={{ background: "#FFFFFF" }} />
+);
+
 const ShareHostNotFound = () => (
   <div className="min-h-screen flex items-center justify-center bg-white">
     <p className="text-gray-500">This link isn't available.</p>
@@ -219,7 +232,7 @@ const App = () => (
             <CompanyProvider>
               <Toaster />
               <Sonner />
-              <Suspense fallback={<LoadingScreen />}>
+              <Suspense fallback={AMPLIFY_ENTRY ? <AmplifyLoadingFallback /> : <LoadingScreen />}>
               {SHARE_HOST ? (
               <Routes>
                 <Route path="/:token" element={<Activate />} />
