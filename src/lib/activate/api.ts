@@ -25,6 +25,8 @@ export interface ActivateOrgBranding {
   logo_domain: string | null;
   /** Optional campaign banner above the avatar on the welcome screen. */
   banner_url: string | null;
+  /** Optional hero photo behind the top of the page, duotoned in brand colours. */
+  hero_image_url?: string | null;
   /** Client typography. Name + file -> @font-face; name alone -> Google Fonts. */
   heading_font: string | null;
   body_font: string | null;
@@ -519,6 +521,7 @@ export interface ActivateBrandingRow {
   logo_url: string | null;
   logo_domain: string | null;
   banner_url: string | null;
+  hero_image_url?: string | null;
   heading_font: string | null;
   body_font: string | null;
   heading_font_url: string | null;
@@ -537,7 +540,7 @@ const MAX_ASSET_BYTES = 2 * 1024 * 1024;
  * org and stamped, so replacing an asset never collides with a cached copy of
  * the old one. Admin-only by storage policy.
  */
-export type ActivateAssetKind = 'logo' | 'banner' | 'heading-font' | 'body-font';
+export type ActivateAssetKind = 'logo' | 'banner' | 'hero' | 'heading-font' | 'body-font';
 
 const FONT_EXTENSIONS = ['woff2', 'woff', 'ttf', 'otf'];
 
@@ -599,6 +602,7 @@ export async function saveActivateBranding(row: ActivateBrandingRow): Promise<vo
     body_font: row.body_font || null,
     heading_font_url: row.heading_font_url || null,
     body_font_url: row.body_font_url || null,
+    ...('hero_image_url' in row ? { hero_image_url: row.hero_image_url || null } : {}),
     ...('link_subdomain' in row
       ? { link_subdomain: row.link_subdomain?.trim().toLowerCase() || null }
       : {}),

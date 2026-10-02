@@ -364,6 +364,7 @@ function BrandingCard({
       const patch: Partial<ActivateBrandingRow> =
         kind === 'logo' ? { logo_url: url }
         : kind === 'banner' ? { banner_url: url }
+        : kind === 'hero' ? { hero_image_url: url }
         : kind === 'heading-font' ? { heading_font_url: url }
         : { body_font_url: url };
       set(patch);
@@ -504,6 +505,60 @@ function BrandingCard({
               onChange={(e) => set({ tagline: e.target.value || null })}
               placeholder="e.g. Global biotech · 32,000 people · 35 countries"
             />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="b-hero">Hero photo (optional)</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="b-hero"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                disabled={uploading === 'hero'}
+                onChange={(e) => upload('hero', e.target.files?.[0])}
+                className="cursor-pointer file:mr-2 file:cursor-pointer file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
+              />
+              {form.hero_image_url && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => set({ hero_image_url: null })}
+                  title="Remove hero photo"
+                >
+                  <Trash2 className="h-4 w-4 text-muted-foreground" />
+                </Button>
+              )}
+            </div>
+            {uploading === 'hero' && (
+              <p className="text-[11px] text-muted-foreground">Uploading…</p>
+            )}
+            {form.hero_image_url ? (
+              <div
+                className="relative h-28 overflow-hidden rounded-lg border"
+                style={{ background: form.primary_color }}
+              >
+                {/* Same treatment as the page: greyscale photo, brand colour through it. */}
+                <img
+                  src={form.hero_image_url}
+                  alt=""
+                  className="absolute inset-0 h-full w-full object-cover"
+                  style={{ filter: 'grayscale(1) contrast(1.05)', mixBlendMode: 'luminosity', opacity: 0.34 }}
+                />
+                <div
+                  className="absolute inset-0"
+                  style={{
+                    background: `linear-gradient(to bottom, transparent 35%, ${form.primary_color})`,
+                  }}
+                />
+                <p className="absolute bottom-1.5 w-full text-center text-[11px] text-white/80">
+                  Preview: toned into the brand colours on the page
+                </p>
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">
+                A photo of the client's people or workplace. Landscape JPG or WebP, 2 MB max. It is
+                toned into the brand colours so text always stays readable.
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="b-banner">Campaign banner (optional)</Label>
