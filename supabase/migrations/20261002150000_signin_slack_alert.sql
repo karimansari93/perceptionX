@@ -3,9 +3,8 @@
 -- accounts such as karim@ford.com and karim+anything@...).
 --
 -- Fires on auth.users.last_sign_in_at, which Supabase Auth sets on every real
--- sign-in (password, Google button, Google One Tap) and not on token refresh,
--- so one sign-in means one message. A second change within 10 minutes is
--- skipped so an OAuth round trip can't double-post.
+-- sign-in and not on token refresh, so one sign-in means one message. A
+-- second change within 10 minutes is skipped to avoid double posts.
 --
 -- Fire-and-forget via pg_net to the signin-alert edge function. Any failure
 -- is swallowed: a Slack problem must never block a sign-in.
@@ -61,8 +60,7 @@ begin
       ),
       body := jsonb_build_object(
         'user_id', new.id,
-        'first_sign_in', old.last_sign_in_at is null,
-        'provider', new.raw_app_meta_data->>'provider'
+        'first_sign_in', old.last_sign_in_at is null
       )
     );
   exception when others then

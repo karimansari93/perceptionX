@@ -14,8 +14,6 @@ import { corsHeaders } from "../_shared/cors.ts";
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-const PROVIDERS: Record<string, string> = { email: 'Email and password', google: 'Google' };
-
 // The gateway has already verified the JWT signature; only the service role may call this.
 const isServiceRole = (token: string) => {
   try {
@@ -36,7 +34,7 @@ serve(async (req) => {
   const webhook = Deno.env.get('SIGNIN_ALERTS_SLACK_WEBHOOK') || Deno.env.get('INVITE_ALERTS_SLACK_WEBHOOK');
   if (!webhook) return json({ ok: true, skipped: 'no webhook configured' });
 
-  let body: { user_id?: string; first_sign_in?: boolean; provider?: string };
+  let body: { user_id?: string; first_sign_in?: boolean };
   try { body = await req.json(); } catch { return json({ error: 'invalid json' }, 400); }
   if (!body.user_id) return json({ error: 'user_id is required' }, 400);
 
@@ -52,7 +50,6 @@ serve(async (req) => {
 
   const name = (profile as any)?.full_name || (user.user_metadata as any)?.full_name || user.email || user.id;
   const orgs = (memberships ?? []).map((m: any) => m.organizations?.name).filter(Boolean).join(', ') || 'No organization';
-  const method = PROVIDERS[body.provider ?? ''] ?? body.provider ?? 'Unknown';
   const title = body.first_sign_in ? '🆕 First sign-in to PerceptionX' : '👋 Sign-in to PerceptionX';
 
   try {
@@ -69,7 +66,6 @@ serve(async (req) => {
               { type: 'mrkdwn', text: `*Who*\n${name}` },
               { type: 'mrkdwn', text: `*Email*\n${user.email ?? '—'}` },
               { type: 'mrkdwn', text: `*Organization*\n${orgs}` },
-              { type: 'mrkdwn', text: `*Signed in with*\n${method}` },
             ],
           },
         ],
