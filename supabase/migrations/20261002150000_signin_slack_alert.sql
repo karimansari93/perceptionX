@@ -1,6 +1,7 @@
 -- Post to the #users Slack channel whenever someone signs in to the app,
--- except Karim, Andy and Rodrigo (including Karim's client-domain test
--- accounts such as karim@ford.com and karim+anything@...).
+-- except Karim, Andy, Rodrigo (including Karim's client-domain test accounts
+-- such as karim@ford.com and karim+anything@...) and the shared demo and
+-- AI-reviewer accounts.
 --
 -- Fires on auth.users.last_sign_in_at, which Supabase Auth sets on every real
 -- sign-in and not on token refresh, so one sign-in means one message. A
@@ -25,6 +26,8 @@ as $$
     -- Rodrigo
     or lower(p_email) = 'rodrigo.furusawa@gmail.com'
     or lower(p_email) like 'rodrigo%@perceptionx.ai'
+    -- Shared demo and AI-reviewer accounts
+    or lower(p_email) in ('demo@perceptionx.ai', 'anthropic-reviewer@perceptionx.ai', 'openai-reviewer@perceptionx.ai')
 $$;
 
 create or replace function public.notify_signin_slack()
