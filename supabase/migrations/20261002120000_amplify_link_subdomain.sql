@@ -62,7 +62,15 @@ $$;
 
 grant execute on function public.activate_preview_by_token(text) to anon, authenticated;
 
--- CSL is the first client on a share host.
-update public.activate_branding
-set link_subdomain = 'csl'
-where org_id = 'ebbe52ed-0c8e-4d5b-9526-67496e09c6b4';
+-- First clients on share hosts. Each host also has to be added to the Netlify
+-- site's domains before its links resolve.
+update public.activate_branding b
+set link_subdomain = v.sub
+from (values
+  ('ebbe52ed-0c8e-4d5b-9526-67496e09c6b4'::uuid, 'csl'),          -- CSL
+  ('4cba160e-dc70-41b6-9158-b36a336c6874'::uuid, 'pepsico'),      -- PepsiCo
+  ('0af791f6-db6e-4063-95c4-71cd31f8779a'::uuid, 'ford'),         -- Ford
+  ('11ce6833-abe0-496b-8ffb-544a6e0cacc1'::uuid, 'thermofisher'), -- Thermo Fisher Scientific
+  ('03388b70-2563-497c-8043-2b3340823608'::uuid, 'netflix')       -- Netflix
+) as v(org_id, sub)
+where b.org_id = v.org_id;
