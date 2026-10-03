@@ -286,9 +286,34 @@ function findScrapingdogAioUrl(searchData: any): string | null {
 // shared by every search in one AI Overviews call (a no-overview query searches
 // twice), leaving room for the overview fetch inside the 150s function limit.
 const SD_SEARCH_MAX_ATTEMPTS = 4;
-const SD_SEARCH_BUDGET_MS = 95_000;
+const SD_SEARCH_BUDGET_MS = 85_000;
 // A failing attempt takes up to ~25s; don't start one that can't finish in time.
 const SD_SEARCH_ATTEMPT_MS = 25_000;
+// Whole AI Overviews call, measured from its start (jitter included). The
+// caller (collect-company-responses) must still run analyze-response inside
+// its own 150s limit, so stay near the pre-backoff worst case (~105s): a 140s
+// budget raised collector timeouts from ~2% to ~10% and failed queue jobs.
+const SD_TOTAL_BUDGET_MS = 100_000;
+
+// Scrapingdog answers "Too many requests, please wait for sometime." when we
+// exceed the plan's concurrency (2026-10-03 Ford run: ~1,650 of these in 3h).
+// Retrying after 2s keeps the overload going, so a rate-limited call waits
+// much longer, with jitter so parallel workers don't retry in lockstep.
+// Both knobs are env-tunable without a code change.
+function envMs(name: string, fallback: number): number {
+  const n = Number(Deno.env.get(name));
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function isRateLimited(status: number, message: string): boolean {
+  return status === 429 || /too many requests/i.test(message);
+}
+
+function retryWaitMs(status: number, message: string, attempt: number): number {
+  if (!isRateLimited(status, message)) return 2000 * attempt;
+  const base = envMs("SCRAPINGDOG_RATE_LIMIT_BACKOFF_MS", 15_000);
+  return base * attempt + Math.random() * base;
+}
 
 async function scrapingdogSearch(
   url: string,
@@ -308,7 +333,7 @@ async function scrapingdogSearch(
     }
     // Bad key / no plan won't fix itself on retry.
     if (status === 401 || status === 403) break;
-    const wait = 2000 * attempt;
+    const wait = retryWaitMs(status, message, attempt);
     if (attempt === SD_SEARCH_MAX_ATTEMPTS || Date.now() + wait + SD_SEARCH_ATTEMPT_MS > deadline) break;
     console.warn(`[google-serp] scrapingdog search attempt ${attempt} failed (${status || "network"}: ${message}); retrying`);
     await new Promise((r) => setTimeout(r, wait));
@@ -327,7 +352,11 @@ export async function scrapingdogAiOverview(prompt: string, country?: string | n
   }
 
   const countryParam = country ? `&country=${country}` : "";
-  const searchDeadline = Date.now() + SD_SEARCH_BUDGET_MS;
+  const startedAt = Date.now();
+  // Spread out calls that a collection chunk fires at the same instant.
+  const startJitter = Math.random() * envMs("SCRAPINGDOG_START_JITTER_MS", 5_000);
+  if (startJitter > 0) await new Promise((r) => setTimeout(r, startJitter));
+  const searchDeadline = startedAt + SD_SEARCH_BUDGET_MS;
   let searchData: any;
   let aioUrl: string | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -376,13 +405,28 @@ export async function scrapingdogAiOverview(prompt: string, country?: string | n
     };
   }
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    await new Promise((r) => setTimeout(r, attempt === 0 ? 5000 : 4000));
+  const fetchDeadline = startedAt + SD_TOTAL_BUDGET_MS;
+  let notReadyPolls = 0;
+  let rateLimitRetries = 0;
+  let wait = 5000;
+  while (true) {
+    await new Promise((r) => setTimeout(r, wait));
     const res = await fetch(fetchUrl);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      const message = data?.message || data?.error || "unexpected error";
+      // A rate-limited fetch is retried after a long wait while time allows;
+      // any other error, or running out of time, is reported as before.
+      if (isRateLimited(res.status, String(message)) && rateLimitRetries < 2) {
+        rateLimitRetries++;
+        wait = retryWaitMs(res.status, String(message), rateLimitRetries);
+        if (Date.now() + wait + SD_SEARCH_ATTEMPT_MS <= fetchDeadline) {
+          console.warn(`[google-serp] scrapingdog overview fetch rate-limited; retrying in ${Math.round(wait / 1000)}s`);
+          continue;
+        }
+      }
       return {
-        response: `Google AI Overview API error: ${data?.message || data?.error || "unexpected error"}`,
+        response: `Google AI Overview API error: ${message}`,
         citations: [],
       };
     }
@@ -394,6 +438,9 @@ export async function scrapingdogAiOverview(prompt: string, country?: string | n
       };
     }
     if (ao?.error) return { response: `AI Overview error: ${ao.error}`, citations: [] };
+    // Overview not ready yet: poll once more after 4s, as before.
+    if (++notReadyPolls >= 2) break;
+    wait = 4000;
   }
   return { response: "No response generated", citations: [] };
 }
