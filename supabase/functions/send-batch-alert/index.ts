@@ -11,8 +11,10 @@ import { corsHeaders } from "../_shared/cors.ts";
  *
  * Body shape:
  *   {
- *     "event": "stuck_jobs_reset" | "config_completed" | "config_failed"
- *            | "monthly_refresh_started" | "custom",
+ *     "event": "run_started" | "run_progress" | "run_job_failed"
+ *            | "provider_issue" | "run_finished"
+ *            | "monthly_refresh_started" | "custom"
+ *            (older: "stuck_jobs_reset" | "config_completed" | "config_failed"),
  *     "title"?: string,       // overrides the default title for this event
  *     "text"?: string,        // free-form body text
  *     "fields"?: { label: string; value: string }[]  // optional key/value rows
@@ -31,6 +33,11 @@ type AlertBody = {
 };
 
 const DEFAULT_TITLES: Record<string, string> = {
+  run_started: "🚀 Collection run started",
+  run_progress: "⏳ Collection run in progress",
+  run_job_failed: "🔴 Collection job failed",
+  provider_issue: "🟠 Data provider issue",
+  run_finished: "✅ Collection run finished",
   stuck_jobs_reset: "⚠️ Batch watchdog: reset stranded jobs",
   config_completed: "✅ Batch config completed",
   config_failed: "❌ Batch config failed",
@@ -98,7 +105,7 @@ serve(async (req) => {
       elements: [
         {
           type: "mrkdwn",
-          text: `event: \`${body.event}\` · ${new Date().toISOString()}`,
+          text: `PerceptionX Data Collector · ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`,
         },
       ],
     });
