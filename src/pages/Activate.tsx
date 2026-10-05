@@ -38,6 +38,7 @@ import {
   affinityTagFor,
   ActivateHighlight,
   ActivateRoute,
+  availableChannels,
   COUNTRY_CODES,
   countryInSentence,
   countryName,
@@ -411,6 +412,8 @@ export default function Activate() {
   // events key on.
   const entityCompanyId =
     selectedEntity && market ? entityCompanyIdFor(selectedEntity, market) : null;
+  // Only the kinds of place that have something to show here are ever offered.
+  const available = market ? availableChannels(config.routes, market, entityCompanyId) : [];
 
   const declareMarket = (code: string) => {
     setMarket(code);
@@ -447,10 +450,17 @@ export default function Activate() {
         functionId: fn,
       });
     }
-    setStep('willing');
+    // With only one kind of place on offer there is nothing to choose between.
+    if (available.length <= 1) {
+      setChannels([]);
+      setStep('routes');
+    } else {
+      setStep('willing');
+    }
   };
 
-  const declareWilling = (picked: ActivateChannel[]) => {
+  const declareWilling = (rawPicked: ActivateChannel[]) => {
+    const picked = rawPicked.filter((c) => available.includes(c));
     setChannels(picked);
     if (picked.length > 0) {
       logActivateEvent(token!, sessionId, 'profile_declared', {
@@ -529,6 +539,7 @@ export default function Activate() {
           {step === 'willing' && (
             <WillingStep
               org={org}
+              available={available}
               initial={channels}
               onDone={declareWilling}
               onBack={() => setStep('profile')}
@@ -945,18 +956,23 @@ const WILLING_OPTIONS: Array<{ id: ActivateChannel; label: string; note: string 
  */
 function WillingStep({
   org,
+  available,
   initial,
   onDone,
   onBack,
   headingRef,
 }: {
   org: ActivateConfig['org'];
+  /** Only the kinds of place that have something to show for this country. */
+  available: ActivateChannel[];
   initial: ActivateChannel[];
   onDone: (picked: ActivateChannel[]) => void;
   onBack: () => void;
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
-  const [picked, setPicked] = useState<ActivateChannel[]>(initial);
+  const [picked, setPicked] = useState<ActivateChannel[]>(() =>
+    initial.filter((c) => available.includes(c)),
+  );
   const toggle = (id: ActivateChannel) =>
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
@@ -971,7 +987,7 @@ function WillingStep({
       </p>
 
       <div className="flex w-full flex-col gap-2.5">
-        {WILLING_OPTIONS.map((o) => (
+        {WILLING_OPTIONS.filter((o) => available.includes(o.id)).map((o) => (
           <button
             key={o.id}
             onClick={() => toggle(o.id)}
