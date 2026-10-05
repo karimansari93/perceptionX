@@ -38,6 +38,7 @@ import {
   affinityTagFor,
   ActivateHighlight,
   ActivateRoute,
+  COUNTRY_CODES,
   countryInSentence,
   countryName,
   entitiesForMarket,
@@ -1034,19 +1035,20 @@ function CountryStep({
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
   const byName = (a: string, b: string) => countryName(a).localeCompare(countryName(b));
-  // Only countries the org actually has routes for are offered — a country
-  // outside the client's footprint has nothing to show. Measured markets
-  // first, then the known-platform fallbacks, each alphabetical.
+  // Every country is on offer: a country without its own routes falls back to
+  // the global defaults. The org's own markets (measured first, then the
+  // known-platform fallbacks) are listed up front as shortcuts; typing
+  // searches the full list, measured markets first.
   const ordered = [
     ...markets.filter((c) => measured.includes(c)).sort(byName),
     ...markets.filter((c) => !measured.includes(c)).sort(byName),
   ];
+  const others = COUNTRY_CODES.filter((c) => !markets.includes(c)).sort(byName);
   const shown = q
-    ? ordered.filter((c) => countryName(c).toLowerCase().includes(q) || c.toLowerCase() === q)
+    ? [...ordered, ...others]
+        .filter((c) => countryName(c).toLowerCase().includes(q) || c.toLowerCase() === q)
+        .slice(0, 30)
     : ordered;
-  // A handful of markets reads faster as a plain list; the filter box only
-  // earns its place once the list is long enough to scroll.
-  const searchable = ordered.length > 8;
 
   return (
     <>
@@ -1058,20 +1060,21 @@ function CountryStep({
         Where are you based?
       </h2>
 
-      {searchable && (
-        <label className="act-search w-full">
-          <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter countries"
-            aria-label="Filter countries"
-          />
-        </label>
-      )}
+      <label className="act-search w-full">
+        <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search countries"
+          aria-label="Search countries"
+        />
+      </label>
 
       <div className="flex w-full flex-col gap-2" role="listbox" aria-label="Countries">
-        {shown.length === 0 && (
+        {q === '' && shown.length === 0 && (
+          <p className="act-search-hint">Start typing to find your country.</p>
+        )}
+        {q !== '' && shown.length === 0 && (
           <p className="act-search-hint">No matches — try another spelling.</p>
         )}
         {shown.map((code) => (

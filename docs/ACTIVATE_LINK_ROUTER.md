@@ -78,11 +78,10 @@ It ships with the cohort-measurement phase.
 
 Self-declared, two taps, no inference:
 
-1. **Where are you based?** Country selector listing only the markets the org
-   has routes for (measured first, then known-platform fallbacks; a filter box
-   appears once the list is long enough to scroll — since 2026-08-24 the full
-   ISO list is no longer offered, because a country without routes had nothing
-   to show).
+1. **Where are you based?** Country selector offering every country. The
+   org's own markets (measured first, then known-platform fallbacks) are listed
+   up front as shortcuts; typing searches the full ISO list. A country with no
+   routes of its own resolves to the global default (tier 3).
 2. **Which part of {company}?** The org's entities plus "Not sure". Skipped
    entirely — auto-declared — when the org has a single named entity
    (GoFundMe, Cloudera).
