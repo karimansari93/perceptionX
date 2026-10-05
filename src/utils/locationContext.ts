@@ -13,8 +13,15 @@
 import { COUNTRY_NAMES } from '@/lib/marketName';
 import { getCountryFlag } from '@/utils/countryFlags';
 import { GLOBAL_LIKE } from '@/utils/locations';
+import {
+  REGIONS,
+  isRegionKey,
+  regionForCountryCode,
+  regionFromKey,
+  regionKey,
+} from '@/utils/regions';
 
-export type LocationIconKind = 'flag' | 'pin' | 'globe';
+export type LocationIconKind = 'flag' | 'pin' | 'globe' | 'region';
 
 // Reserved canonical key for the "General" entry: prompts run with NO location
 // (legacy prompts, before we started tagging every prompt with a location).
@@ -38,7 +45,14 @@ export interface LocationEntry {
   flagCode: string | null; // ISO code when resolvable, for flag rendering
   rawValues: string[];
   companyIds: string[];
+  // Region entries only: the canonical keys of the member countries the
+  // region unions ("brazil", "mexico", …). A response/row matches a region
+  // when its own location key is one of these. Absent on country/city rows.
+  memberKeys?: string[];
 }
+
+// Whether a canonical key names a region entry (see utils/regions.ts).
+export const isRegionLocationKey = isRegionKey;
 
 // Reverse lookup: lowercased country name → ISO code (e.g. "united states" → "US").
 const NAME_TO_CODE: Record<string, string> = Object.entries(COUNTRY_NAMES).reduce(
@@ -78,6 +92,9 @@ export const canonicalizeLocationContext = (
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed || GLOBAL_LIKE.has(trimmed)) return null;
+  // Region keys ("region:latin-america") are already canonical: they are
+  // stored as-is by the saved view / profile focus and must round-trip.
+  if (isRegionKey(trimmed)) return trimmed.toLowerCase();
 
   const stripped = stripLeadingThe(trimmed);
   if (!stripped || GLOBAL_LIKE.has(stripped)) return null;
@@ -110,7 +127,28 @@ export const locationIconKind = (raw: string): LocationIconKind => {
 // Title-case fallback label for a canonical key with no matching entry (e.g. a
 // starred location for a company that no longer has it).
 export const labelForCanonicalKey = (key: string): string =>
-  key.replace(/\b\w/g, (c) => c.toUpperCase());
+  regionFromKey(key)?.label ?? key.replace(/\b\w/g, (c) => c.toUpperCase());
+
+// THE match rule between the active selection and a response/row/prompt's
+// own location key (as produced by resolveResponseLocationKey):
+//  - no selection → everything matches;
+//  - "General" → only untagged rows of countryless profiles (key === null);
+//  - a region → any member country of the region;
+//  - a country/city → that exact key.
+// `entry` is the selection's dropdown entry (null when the key doesn't
+// resolve in this scope, in which case callers decide the fallback).
+export const makeLocationMatcher = (
+  selectedKey: string | null | undefined,
+  entry: Pick<LocationEntry, 'memberKeys'> | null | undefined
+): ((key: string | null) => boolean) => {
+  if (!selectedKey) return () => true;
+  if (selectedKey === GENERAL_KEY) return (key) => key === null;
+  if (isRegionKey(selectedKey)) {
+    const members = new Set(entry?.memberKeys ?? []);
+    return (key) => key !== null && members.has(key);
+  }
+  return (key) => key === selectedKey;
+};
 
 type ResponseLike = {
   company_id?: string | null;
@@ -300,6 +338,40 @@ export const buildLocationOptions = (
   });
 
   options.sort((a, b) => a.label.localeCompare(b.label));
+
+  // Region entries: one per world region with at least TWO tracked countries
+  // in this scope (a one-country region would duplicate the country row).
+  // Each is the plain union of its member countries' spellings and owned
+  // profiles, so every downstream filter and rollup query treats it exactly
+  // like a country with more spellings. Cities/states ("Burbank") carry no
+  // country, so they never join a region. Listed first: the broadest views
+  // sit above the countries they contain.
+  const regionMembers = new Map<string, LocationEntry[]>();
+  for (const entry of options) {
+    const region = regionForCountryCode(entry.flagCode);
+    if (!region) continue;
+    const list = regionMembers.get(region.id) ?? [];
+    list.push(entry);
+    regionMembers.set(region.id, list);
+  }
+  const regionEntries: LocationEntry[] = [];
+  for (const region of REGIONS) {
+    const members = regionMembers.get(region.id);
+    if (!members || members.length < 2) continue;
+    const key = regionKey(region.id);
+    const rawValues = Array.from(new Set(members.flatMap((m) => m.rawValues)));
+    rawValuesByKey[key] = rawValues;
+    regionEntries.push({
+      canonicalKey: key,
+      label: region.label,
+      icon: 'region',
+      flagCode: null,
+      rawValues,
+      companyIds: Array.from(new Set(members.flatMap((m) => m.companyIds))),
+      memberKeys: members.map((m) => m.canonicalKey),
+    });
+  }
+  options.unshift(...regionEntries);
 
   // Append "General" last (it's the legacy no-location catch-all, not a place).
   if (generalBuckets.size > 0) {

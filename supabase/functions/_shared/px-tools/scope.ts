@@ -16,6 +16,7 @@ import {
   buildMeta, labelQuarter, METHODOLOGY_NOTES, monthToQuarter, quartersOfMonths,
   selectRecentQuarters,
 } from './helpers.ts';
+import { bucketsInRegion, regionFromText } from '../regions.ts';
 
 export interface ToolContext {
   admin: any;                 // service-role supabase client
@@ -103,11 +104,17 @@ export async function resolveLocationBuckets(
 // Shared fuzzy matcher for free-text buckets: exact (case-insensitive)
 // first, then containment either way, with optional aliases for the ways
 // people name things ("HR" → Human Resources, "engineers" → Engineering).
+// A request that names a world region ("Latin America", "LATAM", "APAC",
+// "region:latin-america") matches every tracked market inside that region —
+// the dashboard's region filter is the same union — unless an exact bucket
+// spelling wins first.
 export function matchBuckets(available: string[], requested: string, aliases: Record<string, string> = {}): string[] {
   const q = requested.trim().toLowerCase();
   if (!q) return [];
   const exact = available.filter(l => l.toLowerCase() === q);
   if (exact.length) return exact;
+  const region = regionFromText(q);
+  if (region) return bucketsInRegion(available, region);
   const terms = Array.from(new Set([q, aliases[q]].filter(Boolean))) as string[];
   return available.filter(l => terms.some(t => l.toLowerCase().includes(t) || t.includes(l.toLowerCase())));
 }

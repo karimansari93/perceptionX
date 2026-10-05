@@ -7,6 +7,7 @@ import {
   buildLocationOptions,
   canonicalizeLocationContext,
   companyCountryKey,
+  isRegionLocationKey,
 } from '@/utils/locationContext';
 
 // First-login profile setup: the user's name and "what do you want to focus
@@ -212,12 +213,15 @@ export const validLocationKey = (
   locationKey && options.some((o) => o.canonicalKey === locationKey) ? locationKey : null;
 
 // Canonical key → the raw spelling the DB stores (the first raw value of the
-// matching option — what reports and the MCP tools speak).
+// matching option — what reports and the MCP tools speak). A region has no
+// stored spelling: its key ("region:latin-america") is persisted verbatim and
+// canonicalizeLocationContext passes it back through unchanged.
 export const locationRawValue = (
   locationKey: string | null,
   options: LocationEntry[],
 ): string | null => {
   if (!locationKey) return null;
+  if (isRegionLocationKey(locationKey)) return locationKey;
   const entry = options.find((o) => o.canonicalKey === locationKey);
   return entry ? entry.rawValues[0] ?? entry.label : locationKey;
 };

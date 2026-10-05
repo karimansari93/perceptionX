@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { getCountryFlag } from '@/utils/countryFlags';
 import { GENERAL_KEY, LocationEntry, labelForCanonicalKey } from '@/utils/locationContext';
-import { Globe, MapPin, ChevronDown, Check } from 'lucide-react';
+import { Globe, MapPin, ChevronDown, Check, Map as MapIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface LocationFilterProps {
@@ -27,12 +27,13 @@ interface LocationFilterProps {
 }
 
 // Render the leading icon for an entry: flag emoji for countries, a map pin for
-// cities/states, a globe for global/unknown.
+// cities/states, a map for regions, a globe for global/unknown.
 const EntryIcon = ({ icon, flagCode }: { icon: LocationEntry['icon']; flagCode: string | null }) => {
   if (icon === 'flag' && flagCode) {
     return <span className="text-base leading-none">{getCountryFlag(flagCode)}</span>;
   }
   if (icon === 'pin') return <MapPin className="h-4 w-4" />;
+  if (icon === 'region') return <MapIcon className="h-4 w-4" />;
   return <Globe className="h-4 w-4" />;
 };
 
@@ -71,6 +72,36 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, options = [
   ) : (
     <Globe className="h-4 w-4" />
   );
+
+  // Regions (groups of tracked countries) sit in their own block above the
+  // individual markets; buildLocationOptions already orders them first.
+  const regionEntries = options.filter(o => o.icon === 'region');
+  const placeEntries = options.filter(o => o.icon !== 'region');
+
+  const renderEntry = (entry: LocationEntry) => {
+    const isSelected = selectedLocation === entry.canonicalKey;
+    return (
+      <DropdownMenuItem
+        key={entry.canonicalKey}
+        onClick={() => handleSelect(entry)}
+        onMouseEnter={() => onIntentPrefetch?.(entry.canonicalKey)}
+        onFocus={() => onIntentPrefetch?.(entry.canonicalKey)}
+        className="cursor-pointer flex items-center justify-between"
+      >
+        <div className="flex items-center gap-2">
+          {isSelected ? (
+            <Check className="h-4 w-4 text-[#13274F]" />
+          ) : (
+            <div className="h-4 w-4" />
+          )}
+          <EntryIcon icon={entry.icon} flagCode={entry.flagCode} />
+          <span className={cn('text-sm', isSelected && 'font-semibold text-[#13274F]')}>
+            {entry.label}
+          </span>
+        </div>
+      </DropdownMenuItem>
+    );
+  };
 
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
@@ -111,30 +142,16 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, options = [
             </span>
           </div>
         </DropdownMenuItem>
-        {options.map(entry => {
-          const isSelected = selectedLocation === entry.canonicalKey;
-          return (
-            <DropdownMenuItem
-              key={entry.canonicalKey}
-              onClick={() => handleSelect(entry)}
-              onMouseEnter={() => onIntentPrefetch?.(entry.canonicalKey)}
-              onFocus={() => onIntentPrefetch?.(entry.canonicalKey)}
-              className="cursor-pointer flex items-center justify-between"
-            >
-              <div className="flex items-center gap-2">
-                {isSelected ? (
-                  <Check className="h-4 w-4 text-[#13274F]" />
-                ) : (
-                  <div className="h-4 w-4" />
-                )}
-                <EntryIcon icon={entry.icon} flagCode={entry.flagCode} />
-                <span className={cn('text-sm', isSelected && 'font-semibold text-[#13274F]')}>
-                  {entry.label}
-                </span>
-              </div>
-            </DropdownMenuItem>
-          );
-        })}
+        {regionEntries.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Regions</DropdownMenuLabel>
+            {regionEntries.map(renderEntry)}
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Markets</DropdownMenuLabel>
+          </>
+        )}
+        {placeEntries.map(renderEntry)}
       </DropdownMenuContent>
     </DropdownMenu>
   );

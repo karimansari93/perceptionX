@@ -39,7 +39,7 @@ import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen";
 import { useCompanyDataCollection } from "@/hooks/useCompanyDataCollection";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { GENERAL_KEY } from "@/utils/locationContext";
+import { GENERAL_KEY, isRegionLocationKey } from "@/utils/locationContext";
 import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
@@ -226,9 +226,10 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
 
   // Proper-case market name for the selected location (e.g. "United States",
   // "Burbank"), used for benchmark lookups. The benchmark MV keys on country
-  // names; cities simply return no benchmark rows (handled gracefully).
+  // names; cities simply return no benchmark rows (handled gracefully), and a
+  // region (a group of countries) has no single benchmark market.
   const selectedMarketName = useMemo(() => {
-    if (!selectedLocation || selectedLocation === GENERAL_KEY) return null;
+    if (!selectedLocation || selectedLocation === GENERAL_KEY || isRegionLocationKey(selectedLocation)) return null;
     return locationOptions?.find(o => o.canonicalKey === selectedLocation)?.label ?? null;
   }, [selectedLocation, locationOptions]);
 

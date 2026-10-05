@@ -1,5 +1,5 @@
 import ReactCountryFlag from 'react-country-flag';
-import { Globe, MapPin } from 'lucide-react';
+import { Globe, MapPin, Map as MapIcon } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -38,6 +38,7 @@ const EntryIcon = ({ entry }: { entry: LocationEntry }) => {
     );
   }
   if (entry.icon === 'pin') return <MapPin className="h-4 w-4 text-gray-400" />;
+  if (entry.icon === 'region') return <MapIcon className="h-4 w-4 text-gray-400" />;
   return <Globe className="h-4 w-4 text-gray-400" />;
 };
 

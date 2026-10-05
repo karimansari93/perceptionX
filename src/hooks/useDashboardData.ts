@@ -38,7 +38,7 @@ import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
 import { parseDetectedCompetitors } from "@/utils/competitorDetection";
-import { buildLocationOptions, canonicalizeLocationContext, companyCountryKey, GENERAL_KEY, resolveResponseLocationKey } from "@/utils/locationContext";
+import { buildLocationOptions, canonicalizeLocationContext, companyCountryKey, GENERAL_KEY, makeLocationMatcher, resolveResponseLocationKey } from "@/utils/locationContext";
 import { GLOBAL_LIKE } from "@/utils/locations";
 import { LEGACY_ATTRIBUTE_MAP } from "@/config/attributes";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
@@ -1548,10 +1548,10 @@ export const useDashboardData = () => {
         r.confirmed_prompts?.location_context,
         r.company_id != null ? (countryKeyByCompanyId.get(r.company_id) ?? null) : null
       );
-    if (selectedLocation === GENERAL_KEY) {
-      return (r: PromptResponse) => resolve(r) === null;
-    }
-    return (r: PromptResponse) => resolve(r) === selectedLocation;
+    // General, a region (any member country) or one exact key — see
+    // makeLocationMatcher.
+    const matches = makeLocationMatcher(selectedLocation, selectedLocationEntry);
+    return (r: PromptResponse) => matches(resolve(r));
   }, [selectedLocation, selectedLocationEntry, countryKeyByCompanyId]);
 
   // Visibility rollup rows scoped to the active location selection, via the
@@ -1561,13 +1561,11 @@ export const useDashboardData = () => {
   const visibilityRowsForSelection = useMemo(() => {
     if (visibilityMvRows.length === 0) return visibilityMvRows;
     if (!selectedLocation || !selectedLocationEntry) return visibilityMvRows;
-    return visibilityMvRows.filter(row => {
-      const key = resolveResponseLocationKey(
-        row.location_context,
-        row.company_id != null ? (countryKeyByCompanyId.get(row.company_id) ?? null) : null
-      );
-      return selectedLocation === GENERAL_KEY ? key === null : key === selectedLocation;
-    });
+    const matches = makeLocationMatcher(selectedLocation, selectedLocationEntry);
+    return visibilityMvRows.filter(row => matches(resolveResponseLocationKey(
+      row.location_context,
+      row.company_id != null ? (countryKeyByCompanyId.get(row.company_id) ?? null) : null
+    )));
   }, [visibilityMvRows, selectedLocation, selectedLocationEntry, countryKeyByCompanyId]);
 
   // Responses surfaced across the app: deprecated prompt sets hidden and the
@@ -1783,6 +1781,7 @@ export const useDashboardData = () => {
   // this hook has, so it is applied once here.
   const cubeLocationSel = useMemo(() => ({
     locationKey: selectedLocation && selectedLocationEntry ? selectedLocation : null,
+    locationMemberKeys: selectedLocationEntry?.memberKeys ?? null,
     countryKeyByCompanyId,
     quarterKey: null,
   }), [selectedLocation, selectedLocationEntry, countryKeyByCompanyId]);
@@ -1818,13 +1817,15 @@ export const useDashboardData = () => {
   // Bucket-level mirror of resolveResponseLocationKey. The other-arm rows'
   // buckets are the selection's spellings (they canonicalize to the selection
   // by construction), so one filter serves the merged owned+other rows with
-  // the same outcome as the old per-arm filtering.
+  // the same outcome as the old per-arm filtering. For a region the selection
+  // is any member country (owned profiles' untagged rows still belong to it).
   const locRollupsFiltered: LocationRollups | null = useMemo(() => {
     const data = locRollupsQuery.data;
     if (!data || !selectedLocation) return null;
+    const selectionMatches = makeLocationMatcher(selectedLocation, selectedLocationEntry);
     const matches = (bucket: string | null | undefined) => {
       const key = canonicalizeLocationContext(bucket);
-      return isGeneralSelection ? key === null : (key === null || key === selectedLocation);
+      return isGeneralSelection ? key === null : (key === null || selectionMatches(key));
     };
     return {
       sentiment: data.sentiment.filter(r => matches(r.location_context)),
@@ -1835,7 +1836,7 @@ export const useDashboardData = () => {
       attribute_themes: data.attribute_themes.filter(r => matches(r.location_context)),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locRollupsQuery.data, selectedLocation, isGeneralSelection]);
+  }, [locRollupsQuery.data, selectedLocation, selectedLocationEntry, isGeneralSelection]);
 
   const locAgg = useMemo(() => ({
     sentiment: aggregateSentimentRows(locRollupsFiltered?.sentiment ?? []),
@@ -2331,6 +2332,7 @@ export const useDashboardData = () => {
     // with nested .find() + .findIndex() (O(N²)).
     const uniqueByText = new Map<string, PromptData>();
     for (const p of responseBasedPrompts) uniqueByText.set(p.prompt, p);
+    const promptLocationMatches = makeLocationMatcher(selectedLocation, selectedLocationEntry);
 
     // Merge in currently-active prompts that aren't represented yet. Using the
     // same Map keeps this O(N) instead of O(N × M). Under a location filter,
@@ -2344,8 +2346,7 @@ export const useDashboardData = () => {
           prompt.location_context,
           prompt.company_id != null ? (countryKeyByCompanyId.get(prompt.company_id) ?? null) : null
         );
-        const matches = selectedLocation === GENERAL_KEY ? key === null : key === selectedLocation;
-        if (!matches) return;
+        if (!promptLocationMatches(key)) return;
       }
       uniqueByText.set(prompt.prompt_text, {
         prompt: prompt.prompt_text,
@@ -2442,6 +2443,7 @@ export const useDashboardData = () => {
     // wave via stitched attribute copies; that is fixed at the source now).
     const statsSel: StatsSelection = {
       locationKey: selectedLocation && selectedLocationEntry ? selectedLocation : null,
+      locationMemberKeys: selectedLocationEntry?.memberKeys ?? null,
       countryKeyByCompanyId,
       // Mirror periodFilteredResponses' single-period bypass exactly: with one
       // (or zero) available periods the raw path returns ALL visible rows, so
