@@ -575,10 +575,23 @@ type ClientFontConfig = Pick<
   'heading_font' | 'body_font' | 'heading_font_url' | 'body_font_url'
 >;
 
+/**
+ * The family a client slot is declared under: the typed name, or, when only a
+ * file was uploaded, an internal name, so an upload alone is enough.
+ */
+function fontFamilyFor(
+  name: string | null | undefined,
+  url: string | null | undefined,
+  slot: 'heading' | 'body',
+): string | null {
+  const trimmed = name?.trim().replace(/'/g, '');
+  if (trimmed) return trimmed;
+  return url ? `client-${slot}` : null;
+}
+
 /** Quote a client family name and append the product default as fallback. */
-function fontStack(name: string | null | undefined, fallback: string): string {
-  const trimmed = name?.trim();
-  return trimmed ? `'${trimmed.replace(/'/g, '')}', ${fallback}` : fallback;
+function fontStack(family: string | null, fallback: string): string {
+  return family ? `'${family}', ${fallback}` : fallback;
 }
 
 const FONT_FORMATS: Record<string, string> = {
@@ -596,16 +609,16 @@ const FONT_FORMATS: Record<string, string> = {
  */
 function ClientFonts({ fonts }: { fonts?: ClientFontConfig }) {
   if (!fonts) return null;
-  const pairs: Array<[string | null, string | null]> = [
-    [fonts.heading_font, fonts.heading_font_url],
-    [fonts.body_font, fonts.body_font_url],
+  const pairs: Array<[string | null, string | null, 'heading' | 'body']> = [
+    [fonts.heading_font, fonts.heading_font_url, 'heading'],
+    [fonts.body_font, fonts.body_font_url, 'body'],
   ];
 
   const faces: string[] = [];
   const uploadedUrls: string[] = [];
   const googleFamilies: string[] = [];
-  for (const [name, url] of pairs) {
-    const family = name?.trim();
+  for (const [name, url, slot] of pairs) {
+    const family = fontFamilyFor(name, url, slot);
     if (!family) continue;
     if (url) {
       const ext = url.split('.').pop()?.toLowerCase() ?? '';
@@ -613,9 +626,12 @@ function ClientFonts({ fonts }: { fonts?: ClientFontConfig }) {
       uploadedUrls.push(url);
       // block, not swap: this page is the client's brand, and a beat of
       // held-back text reads better than visibly changing typeface mid-load.
+      // The heading file is one weight (often Bold) used at several: declaring
+      // the full range stops the browser adding a second, synthetic bold.
       faces.push(
-        `@font-face{font-family:'${family.replace(/'/g, '')}';` +
+        `@font-face{font-family:'${family}';` +
           `src:url('${url}')${format ? ` format('${format}')` : ''};` +
+          `${slot === 'heading' ? 'font-weight:100 900;' : ''}` +
           `font-display:block;}`,
       );
     } else if (!googleFamilies.includes(family)) {
@@ -684,9 +700,12 @@ function Canvas({
     '--activate-primary': primary,
     '--activate-accent': accent,
     '--activate-on': onColor(primary),
-    '--activate-font-heading': fontStack(fonts?.heading_font, "'Geologica', sans-serif"),
+    '--activate-font-heading': fontStack(
+      fontFamilyFor(fonts?.heading_font, fonts?.heading_font_url, 'heading'),
+      "'Geologica', sans-serif",
+    ),
     '--activate-font-body': fontStack(
-      fonts?.body_font,
+      fontFamilyFor(fonts?.body_font, fonts?.body_font_url, 'body'),
       "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif",
     ),
   } as CSSProperties;
