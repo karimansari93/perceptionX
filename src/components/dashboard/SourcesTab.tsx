@@ -18,7 +18,12 @@ import { usePersistedState } from "@/hooks/usePersistedState";
 import { enhanceCitations, normalizePageKey } from "@/utils/citationUtils";
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { getAttributeIconByName } from "@/config/attributeIcons";
-import { categorizeSourceByMediaType } from "@/utils/sourceConfig";
+import {
+  categorizeSourceByMediaType,
+  domainMatchesPlatformToken,
+  EMPLOYER_REVIEW_PLATFORMS,
+  type PlatformGroup,
+} from "@/utils/sourceConfig";
 import { poolDomainRows } from "@/hooks/dashboard/scopeStatsSelect";
 import { sentimentRatioV2 } from "@/lib/sentimentV2";
 import LLMLogo from "@/components/LLMLogo";
@@ -104,101 +109,8 @@ const SOURCE_TYPE_ORDER = ['owned', 'influenced', 'organic', 'competitive', 'irr
 const SENTIMENT_ORDER = ['positive', 'neutral', 'negative'];
 type SentimentBucket = 'positive' | 'neutral' | 'negative';
 
-// ---------------------------------------------------------------------------
-// Focus-chart platform groups (row 2's three small charts). Grouping is by
-// PLATFORM, not raw domain, so fr.glassdoor.com, glassdoor.de and
-// glassdoor.com read as one Glassdoor row. A bare token ("glassdoor") matches
-// the name as a whole domain label in any position — never as a substring, so
-// "monster.com" is listed as a dotted token rather than "monster" catching
-// monsterenergy.com. A dotted token ("youtu.be") matches that exact domain or
-// a subdomain of it.
-// ---------------------------------------------------------------------------
-type PlatformGroup = {
-  name: string;      // display name for the row
-  canonical: string; // domain whose logo represents the platform
-  tokens: string[];
-};
-
-const EMPLOYER_REVIEW_PLATFORMS: PlatformGroup[] = [
-  { name: 'Glassdoor', canonical: 'glassdoor.com', tokens: ['glassdoor'] },
-  { name: 'Indeed', canonical: 'indeed.com', tokens: ['indeed'] },
-  { name: 'AmbitionBox', canonical: 'ambitionbox.com', tokens: ['ambitionbox'] },
-  { name: 'Kununu', canonical: 'kununu.com', tokens: ['kununu'] },
-  { name: 'Comparably', canonical: 'comparably.com', tokens: ['comparably'] },
-  { name: 'Blind', canonical: 'teamblind.com', tokens: ['teamblind'] },
-  { name: 'Fishbowl', canonical: 'fishbowlapp.com', tokens: ['fishbowlapp'] },
-  { name: 'Levels.fyi', canonical: 'levels.fyi', tokens: ['levels.fyi'] },
-  { name: 'The Muse', canonical: 'themuse.com', tokens: ['themuse'] },
-  { name: 'Seek', canonical: 'seek.com.au', tokens: ['seek'] },
-  { name: 'Great Place to Work', canonical: 'greatplacetowork.com', tokens: ['greatplacetowork', 'gptw'] },
-  { name: 'Built In', canonical: 'builtin.com', tokens: ['builtin'] },
-  { name: 'Vault', canonical: 'vault.com', tokens: ['vault.com'] },
-  { name: 'FairyGodBoss', canonical: 'fairygodboss.com', tokens: ['fairygodboss'] },
-  { name: 'CareerBliss', canonical: 'careerbliss.com', tokens: ['careerbliss'] },
-  { name: 'InHerSight', canonical: 'inhersight.com', tokens: ['inhersight'] },
-  { name: 'JobCase', canonical: 'jobcase.com', tokens: ['jobcase'] },
-  { name: 'WayUp', canonical: 'wayup.com', tokens: ['wayup'] },
-  { name: 'Zippia', canonical: 'zippia.com', tokens: ['zippia'] },
-  { name: 'ZipRecruiter', canonical: 'ziprecruiter.com', tokens: ['ziprecruiter'] },
-  { name: 'Monster', canonical: 'monster.com', tokens: ['monster.com'] },
-  { name: 'CareerBuilder', canonical: 'careerbuilder.com', tokens: ['careerbuilder'] },
-  { name: 'SimplyHired', canonical: 'simplyhired.com', tokens: ['simplyhired'] },
-  { name: 'Dice', canonical: 'dice.com', tokens: ['dice.com'] },
-  { name: 'Naukri', canonical: 'naukri.com', tokens: ['naukri', 'naukrigulf'] },
-  { name: 'JobStreet', canonical: 'jobstreet.com', tokens: ['jobstreet'] },
-  { name: 'StepStone', canonical: 'stepstone.de', tokens: ['stepstone'] },
-  { name: 'Welcome to the Jungle', canonical: 'welcometothejungle.com', tokens: ['welcometothejungle'] },
-  { name: 'The Job Crowd', canonical: 'thejobcrowd.com', tokens: ['thejobcrowd'] },
-  { name: 'Rate My Employer', canonical: 'ratemyemployer.com', tokens: ['ratemyemployer'] },
-
-  // Added after a sweep of cited domains in the data. Regional review sites
-  // that are the top employer source in their own market but were missing.
-  // Japan
-  { name: 'OpenWork', canonical: 'openwork.jp', tokens: ['openwork.jp', 'en-hyouban.com'] },
-  { name: 'JobTalk', canonical: 'jobtalk.jp', tokens: ['jobtalk'] },
-  { name: 'Syukatsu Kaigi', canonical: 'syukatsu-kaigi.jp', tokens: ['syukatsu-kaigi.jp'] },
-  { name: 'ONE CAREER', canonical: 'onecareer.jp', tokens: ['onecareer'] },
-  // Korea
-  { name: 'JobPlanet', canonical: 'jobplanet.co.kr', tokens: ['jobplanet'] },
-  { name: 'JobKorea', canonical: 'jobkorea.co.kr', tokens: ['jobkorea'] },
-  // Europe
-  { name: 'GoWork.pl', canonical: 'gowork.pl', tokens: ['gowork'] },
-  { name: 'Undelucram', canonical: 'undelucram.ro', tokens: ['undelucram'] },
-  { name: 'Profession.hu', canonical: 'profession.hu', tokens: ['profession.hu'] },
-  { name: 'Where We Work', canonical: 'wherewework.hu', tokens: ['wherewework'] },
-  { name: 'ChooseMyCompany', canonical: 'choosemycompany.com', tokens: ['choosemycompany'] },
-  { name: 'InfoJobs', canonical: 'infojobs.com.br', tokens: ['infojobs'] },
-  // Latin America
-  { name: 'Merco Talento', canonical: 'merco.info', tokens: ['merco.info'] },
-  { name: 'Computrabajo', canonical: 'computrabajo.com', tokens: ['computrabajo'] },
-  { name: 'Bumeran', canonical: 'bumeran.com', tokens: ['bumeran'] },
-  { name: 'elempleo', canonical: 'elempleo.com', tokens: ['elempleo'] },
-  { name: 'OCC Mundial', canonical: 'occ.com.mx', tokens: ['occ.com.mx'] },
-  { name: 'Catho', canonical: 'catho.com.br', tokens: ['catho.com.br'] },
-  { name: 'Vagas', canonical: 'vagas.com.br', tokens: ['vagas.com.br'] },
-  // Asia-Pacific and Middle East
-  { name: 'WorkVenture', canonical: 'workventure.com', tokens: ['workventure'] },
-  { name: 'JobsDB', canonical: 'jobsdb.com', tokens: ['jobsdb'] },
-  { name: 'Shine', canonical: 'shine.com', tokens: ['shine.com'] },
-  { name: 'Foundit', canonical: 'foundit.in', tokens: ['foundit.in'] },
-  { name: 'Bayt', canonical: 'bayt.com', tokens: ['bayt.com'] },
-  { name: 'GulfTalent', canonical: 'gulftalent.com', tokens: ['gulftalent.com'] },
-  // North America and UK: salary, culture and employer rankings
-  { name: 'Payscale', canonical: 'payscale.com', tokens: ['payscale'] },
-  { name: 'Salary.com', canonical: 'salary.com', tokens: ['salary.com'] },
-  { name: 'RepVue', canonical: 'repvue.com', tokens: ['repvue'] },
-  { name: 'Taro', canonical: 'jointaro.com', tokens: ['jointaro'] },
-  { name: "Canada's Top 100 Employers", canonical: 'canadastop100.com', tokens: ['canadastop100'] },
-  { name: 'Top Employers Institute', canonical: 'top-employers.com', tokens: ['top-employers.com'] },
-  { name: 'Top Workplaces', canonical: 'topworkplaces.com', tokens: ['topworkplaces.com'] },
-  { name: 'Arbeitgeber-Ranking', canonical: 'arbeitgeber-ranking.de', tokens: ['arbeitgeber-ranking.de'] },
-  { name: 'WORK180', canonical: 'work180.com', tokens: ['work180'] },
-  { name: 'Handshake', canonical: 'joinhandshake.com', tokens: ['joinhandshake'] },
-  { name: 'Totaljobs', canonical: 'totaljobs.com', tokens: ['totaljobs'] },
-  { name: 'Reed', canonical: 'reed.co.uk', tokens: ['reed.co.uk'] },
-  { name: 'Jobs.ch', canonical: 'jobs.ch', tokens: ['jobs.ch'] },
-];
-
+// Social platforms for the focus charts. The employer review list and the token
+// matcher live in sourceConfig so Source type and this card share one list.
 const SOCIAL_PLATFORMS: PlatformGroup[] = [
   { name: 'LinkedIn', canonical: 'linkedin.com', tokens: ['linkedin'] },
   { name: 'Reddit', canonical: 'reddit.com', tokens: ['reddit'] },
@@ -217,18 +129,6 @@ const SOCIAL_PLATFORMS: PlatformGroup[] = [
   { name: 'Tumblr', canonical: 'tumblr.com', tokens: ['tumblr'] },
   { name: 'Mastodon', canonical: 'mastodon.social', tokens: ['mastodon'] },
 ];
-
-const domainMatchesPlatformToken = (domain: string, token: string): boolean => {
-  if (token.includes('.')) {
-    return domain === token || domain.endsWith(`.${token}`);
-  }
-  return (
-    domain === token ||
-    domain.startsWith(`${token}.`) ||   // glassdoor.com, glassdoor.in
-    domain.includes(`.${token}.`) ||    // fr.glassdoor.com
-    domain.endsWith(`.${token}`)
-  );
-};
 
 // Rows per focus chart. Six keeps the three cards level with each other and
 // scannable; the full ranking lives in the domain list above.
