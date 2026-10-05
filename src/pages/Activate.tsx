@@ -91,6 +91,9 @@ const PLATFORM_NAMES: Record<string, string> = {
   facebook: 'Facebook',
   openwork: 'OpenWork',
   jobtalk: 'JobTalk',
+  syukatsu: 'Syukatsu Kaigi',
+  onecareer: 'ONE CAREER',
+  openmoney: 'OpenMoney',
   jobplanet: 'JobPlanet',
   gowork: 'GoWork.pl',
   workventure: 'WorkVenture',
@@ -121,6 +124,9 @@ const PLATFORM_DOMAINS: Record<string, string> = {
   facebook: 'facebook.com',
   openwork: 'openwork.jp',
   jobtalk: 'jobtalk.jp',
+  syukatsu: 'syukatsu-kaigi.jp',
+  onecareer: 'onecareer.jp',
+  openmoney: 'openmoney.jp',
   jobplanet: 'jobplanet.co.kr',
   gowork: 'gowork.pl',
   workventure: 'workventure.com',
@@ -173,6 +179,17 @@ const PLATFORM_HOWTO: Record<string, string[]> = {
     'Post or reply',
   ],
   linkedin: ['Open LinkedIn and start a post', 'Say what you want about your work', 'Post it'],
+  levels: [
+    'Open the company page',
+    'Choose “Add Salary” or “Add Company Benefits”',
+    'Sign in or create a free account',
+    'Fill in your details and submit',
+  ],
+  note: [
+    'Open note and sign in or create a free account',
+    'Start a new post',
+    'Write in your own words and publish',
+  ],
 };
 
 const HOWTO_BY_CHANNEL: Record<string, string[]> = {
