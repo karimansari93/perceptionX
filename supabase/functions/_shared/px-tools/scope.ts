@@ -107,10 +107,15 @@ export async function resolveLocationBuckets(
 // A request that names a world region ("Latin America", "LATAM", "APAC",
 // "region:latin-america") matches every tracked market inside that region —
 // the dashboard's region filter is the same union — unless an exact bucket
-// spelling wins first.
+// spelling wins first. A saved multi-market selection ("set:india|united
+// states", as the dashboard stores it) matches the union of its members.
 export function matchBuckets(available: string[], requested: string, aliases: Record<string, string> = {}): string[] {
   const q = requested.trim().toLowerCase();
   if (!q) return [];
+  if (q.startsWith('set:')) {
+    const members = q.slice(4).split('|').map(m => m.trim()).filter(Boolean);
+    return Array.from(new Set(members.flatMap(m => matchBuckets(available, m, aliases))));
+  }
   const exact = available.filter(l => l.toLowerCase() === q);
   if (exact.length) return exact;
   const region = regionFromText(q);

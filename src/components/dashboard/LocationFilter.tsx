@@ -1,41 +1,25 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { getCountryFlag } from '@/utils/countryFlags';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { GENERAL_KEY, LocationEntry, labelForCanonicalKey } from '@/utils/locationContext';
-import { Globe, MapPin, ChevronDown, Check, Map as MapIcon } from 'lucide-react';
+import { resolveSelectionEntry } from '@/utils/locationSelection';
+import { LocationChecklist, LocationEntryIcon } from '@/components/location/LocationChecklist';
+import { Globe, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface LocationFilterProps {
-  // Canonical key of the active location, or null for "All locations".
+  // Selection key of the active location(s), or null for "All locations".
+  // One market, a region, or an explicit set — see utils/locationSelection.
   selectedLocation: string | null;
   onLocationChange: (location: string | null) => void;
   // Filter entries across the merged brand scope (location_context values +
-  // each sibling profile's country), built in useDashboardData.
+  // each sibling profile's country + regions), built in useDashboardData.
   options?: LocationEntry[];
   // Intent prefetch: fired on hover/focus of an entry so its rollups are
   // cached before the click lands (no-op for already-fresh locations).
   onIntentPrefetch?: (locationKey: string) => void;
   className?: string;
 }
-
-// Render the leading icon for an entry: flag emoji for countries, a map pin for
-// cities/states, a map for regions, a globe for global/unknown.
-const EntryIcon = ({ icon, flagCode }: { icon: LocationEntry['icon']; flagCode: string | null }) => {
-  if (icon === 'flag' && flagCode) {
-    return <span className="text-base leading-none">{getCountryFlag(flagCode)}</span>;
-  }
-  if (icon === 'pin') return <MapPin className="h-4 w-4" />;
-  if (icon === 'region') return <MapIcon className="h-4 w-4" />;
-  return <Globe className="h-4 w-4" />;
-};
 
 export const LocationFilter = ({ selectedLocation, onLocationChange, options = [], onIntentPrefetch, className }: LocationFilterProps) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -45,69 +29,34 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, options = [
     return null;
   }
 
-  const selectedEntry = selectedLocation
-    ? options.find(o => o.canonicalKey === selectedLocation)
-    : undefined;
+  // The active selection's entry: a market/region row, a synthesized entry
+  // for a multi-market set, or null for an unresolved key.
+  const selectedEntry = resolveSelectionEntry(selectedLocation, options);
 
-  // Every entry filters within the merged brand scope — selecting a country
-  // never switches company anymore (sibling profiles are aggregated).
-  const handleSelect = (entry: LocationEntry) => {
-    setIsOpen(false);
-    onLocationChange(entry.canonicalKey);
-  };
-
-  // The trigger reflects the active focus: a chosen city/country, or "All
-  // locations" when nothing is filtered. A non-null selection with no matching
-  // option (stale key mid-switch, or restored for another company) renders its
-  // own name — NOT "All locations" — so the label never claims the filter is
-  // cleared while state says otherwise; the reconcile effect in
-  // useDashboardData clears it if it stays unresolvable once data loads.
+  // The trigger reflects the active focus: a market, a region, "India,
+  // United States", "3 markets", or "All locations" when nothing is
+  // filtered. A non-null selection with no matching option (stale key
+  // mid-switch, or restored for another company) renders its own name — NOT
+  // "All locations" — so the label never claims the filter is cleared while
+  // state says otherwise; the reconcile effect in useDashboardData clears it
+  // if it stays unresolvable once data loads.
   const displayName = selectedEntry
     ? selectedEntry.label
     : selectedLocation
       ? (selectedLocation === GENERAL_KEY ? 'General' : labelForCanonicalKey(selectedLocation))
       : 'All locations';
   const displayIcon = selectedEntry ? (
-    <EntryIcon icon={selectedEntry.icon} flagCode={selectedEntry.flagCode} />
+    <LocationEntryIcon icon={selectedEntry.icon} flagCode={selectedEntry.flagCode} />
   ) : (
     <Globe className="h-4 w-4" />
   );
 
-  // Regions (groups of tracked countries) sit in their own block above the
-  // individual markets; buildLocationOptions already orders them first.
-  const regionEntries = options.filter(o => o.icon === 'region');
-  const placeEntries = options.filter(o => o.icon !== 'region');
-
-  const renderEntry = (entry: LocationEntry) => {
-    const isSelected = selectedLocation === entry.canonicalKey;
-    return (
-      <DropdownMenuItem
-        key={entry.canonicalKey}
-        onClick={() => handleSelect(entry)}
-        onMouseEnter={() => onIntentPrefetch?.(entry.canonicalKey)}
-        onFocus={() => onIntentPrefetch?.(entry.canonicalKey)}
-        className="cursor-pointer flex items-center justify-between"
-      >
-        <div className="flex items-center gap-2">
-          {isSelected ? (
-            <Check className="h-4 w-4 text-[#13274F]" />
-          ) : (
-            <div className="h-4 w-4" />
-          )}
-          <EntryIcon icon={entry.icon} flagCode={entry.flagCode} />
-          <span className={cn('text-sm', isSelected && 'font-semibold text-[#13274F]')}>
-            {entry.label}
-          </span>
-        </div>
-      </DropdownMenuItem>
-    );
-  };
-
   return (
-    <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
-      <DropdownMenuTrigger asChild>
+    <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <PopoverTrigger asChild>
         <Button
           variant="outline"
+          aria-label={`Location filter: ${displayName}`}
           className={cn(
             'flex items-center gap-2 justify-between min-w-[140px] sm:min-w-[160px]',
             className
@@ -115,45 +64,23 @@ export const LocationFilter = ({ selectedLocation, onLocationChange, options = [
         >
           <div className="flex items-center gap-2">
             {displayIcon}
-            <span className="font-medium truncate max-w-[100px] sm:max-w-[120px] text-xs sm:text-sm">
+            <span className="font-medium truncate max-w-[100px] sm:max-w-[140px] text-xs sm:text-sm">
               {displayName}
             </span>
           </div>
           <ChevronDown className="h-4 w-4 opacity-50" />
         </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-[220px]">
-        <DropdownMenuLabel>Filter by Location</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {/* "All locations" clears the filter. */}
-        <DropdownMenuItem
-          onClick={() => { setIsOpen(false); onLocationChange(null); }}
-          className="cursor-pointer flex items-center justify-between"
-        >
-          <div className="flex items-center gap-2">
-            {!selectedLocation ? (
-              <Check className="h-4 w-4 text-[#13274F]" />
-            ) : (
-              <div className="h-4 w-4" />
-            )}
-            <Globe className="h-4 w-4" />
-            <span className={cn('text-sm', !selectedLocation && 'font-semibold text-[#13274F]')}>
-              All locations
-            </span>
-          </div>
-        </DropdownMenuItem>
-        {regionEntries.length > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Regions</DropdownMenuLabel>
-            {regionEntries.map(renderEntry)}
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Markets</DropdownMenuLabel>
-          </>
-        )}
-        {placeEntries.map(renderEntry)}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </PopoverTrigger>
+      {/* Stays open while ticking so several markets can be combined. */}
+      <PopoverContent align="start" className="w-[260px] max-h-[70vh] overflow-y-auto p-1">
+        <LocationChecklist
+          options={options}
+          value={selectedLocation}
+          onChange={onLocationChange}
+          onIntentPrefetch={onIntentPrefetch}
+          dense
+        />
+      </PopoverContent>
+    </Popover>
   );
 };
-

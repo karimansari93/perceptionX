@@ -39,6 +39,7 @@ import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
 import { retrySupabaseQuery, retrySupabaseFunction, queryDebouncer, networkMonitor } from "@/utils/supabaseRetry";
 import { parseDetectedCompetitors } from "@/utils/competitorDetection";
 import { buildLocationOptions, canonicalizeLocationContext, companyCountryKey, GENERAL_KEY, makeLocationMatcher, resolveResponseLocationKey } from "@/utils/locationContext";
+import { resolveSelectionEntry } from "@/utils/locationSelection";
 import { GLOBAL_LIKE } from "@/utils/locations";
 import { LEGACY_ATTRIBUTE_MAP } from "@/config/attributes";
 import { readStarredView, stampStarredViewCompany, starredViewAppliesTo } from "@/hooks/useStarredView";
@@ -1529,9 +1530,10 @@ export const useDashboardData = () => {
   );
 
   // The active selection's entry (null when the key doesn't resolve in this
-  // scope — stale/mid-switch selections).
+  // scope — stale/mid-switch selections). A multi-market set key resolves to
+  // a synthesized entry that unions its tracked members.
   const selectedLocationEntry = useMemo(
-    () => (selectedLocation ? locationOptions.find(o => o.canonicalKey === selectedLocation) ?? null : null),
+    () => resolveSelectionEntry(selectedLocation, locationOptions),
     [selectedLocation, locationOptions]
   );
 
@@ -1638,7 +1640,7 @@ export const useDashboardData = () => {
   // Leaves the company-wide MV state and its per-company cache untouched; the
   // `effective*` selectors below pick the location-scoped values whenever a
   // location is active.
-  const selectedRawValues = selectedLocation ? (locationRawValues[selectedLocation] || []) : [];
+  const selectedRawValues = selectedLocation ? (selectedLocationEntry?.rawValues ?? locationRawValues[selectedLocation] ?? []) : [];
   const selectedRawKey = selectedRawValues.join('|');
   const selectedOwnedCompanyIds = useMemo(() => {
     if (!selectedLocation) return [] as string[];
@@ -1897,8 +1899,8 @@ export const useDashboardData = () => {
   const prefetchLocationRollups = useCallback((locKey: string | null) => {
     if (!locKey || !scopeReady || locKey === selectedLocation) return;
     const isGeneral = locKey === GENERAL_KEY;
-    const rawValues = isGeneral ? [] : (locationRawValues[locKey] || []);
-    const entry = locationOptions.find(o => o.canonicalKey === locKey);
+    const entry = resolveSelectionEntry(locKey, locationOptions);
+    const rawValues = isGeneral ? [] : (entry?.rawValues ?? locationRawValues[locKey] ?? []);
     const ownedIds = isGeneral
       ? scopeCompanies.filter(c => companyCountryKey(c.country) === null).map(c => c.id)
       : (entry?.companyIds ?? []);
@@ -2038,7 +2040,7 @@ export const useDashboardData = () => {
     // spelling of the scope) is the complete option set.
     const cubeFinal = !rawResponsesEnabled && scopeStatsQuery.data !== undefined;
     if (!rawFinal && !cubeFinal) return;
-    if (!locationOptions.some(o => o.canonicalKey === selectedLocation)) {
+    if (!resolveSelectionEntry(selectedLocation, locationOptions)) {
       setSelectedLocationState(null);
     }
   }, [selectedLocation, responsesLoadedCompanyId, currentCompany?.id, locationOptions, rawResponsesEnabled, scopeStatsQuery.data]);

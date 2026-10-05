@@ -92,9 +92,10 @@ export const canonicalizeLocationContext = (
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed || GLOBAL_LIKE.has(trimmed)) return null;
-  // Region keys ("region:latin-america") are already canonical: they are
-  // stored as-is by the saved view / profile focus and must round-trip.
-  if (isRegionKey(trimmed)) return trimmed.toLowerCase();
+  // Region and set keys ("region:latin-america", "set:india|united states")
+  // are already canonical: they are stored as-is by the saved view / profile
+  // focus and must round-trip.
+  if (isRegionKey(trimmed) || trimmed.startsWith('set:')) return trimmed.toLowerCase();
 
   const stripped = stripLeadingThe(trimmed);
   if (!stripped || GLOBAL_LIKE.has(stripped)) return null;
@@ -126,14 +127,20 @@ export const locationIconKind = (raw: string): LocationIconKind => {
 
 // Title-case fallback label for a canonical key with no matching entry (e.g. a
 // starred location for a company that no longer has it).
-export const labelForCanonicalKey = (key: string): string =>
-  regionFromKey(key)?.label ?? key.replace(/\b\w/g, (c) => c.toUpperCase());
+export const labelForCanonicalKey = (key: string): string => {
+  const region = regionFromKey(key);
+  if (region) return region.label;
+  if (key.startsWith('set:')) {
+    return key.slice(4).split('|').map((k) => k.replace(/\b\w/g, (c) => c.toUpperCase())).join(', ');
+  }
+  return key.replace(/\b\w/g, (c) => c.toUpperCase());
+};
 
 // THE match rule between the active selection and a response/row/prompt's
 // own location key (as produced by resolveResponseLocationKey):
 //  - no selection → everything matches;
 //  - "General" → only untagged rows of countryless profiles (key === null);
-//  - a region → any member country of the region;
+//  - a composite selection (a region, or a set of markets) → any member key;
 //  - a country/city → that exact key.
 // `entry` is the selection's dropdown entry (null when the key doesn't
 // resolve in this scope, in which case callers decide the fallback).
@@ -143,7 +150,7 @@ export const makeLocationMatcher = (
 ): ((key: string | null) => boolean) => {
   if (!selectedKey) return () => true;
   if (selectedKey === GENERAL_KEY) return (key) => key === null;
-  if (isRegionKey(selectedKey)) {
+  if (isRegionKey(selectedKey) || selectedKey.startsWith('set:')) {
     const members = new Set(entry?.memberKeys ?? []);
     return (key) => key !== null && members.has(key);
   }

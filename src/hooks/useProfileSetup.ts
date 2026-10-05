@@ -7,8 +7,8 @@ import {
   buildLocationOptions,
   canonicalizeLocationContext,
   companyCountryKey,
-  isRegionLocationKey,
 } from '@/utils/locationContext';
+import { isCompositeKey, resolveSelectionEntry } from '@/utils/locationSelection';
 
 // First-login profile setup: the user's name and "what do you want to focus
 // on first?" — one subsidiary (company/brand) when the organization has
@@ -204,24 +204,26 @@ export const representativeCompanyId = (
   return (byLocation ?? brand.companies[0]).id;
 };
 
-// A canonical key is only valid if the subsidiary offers it; anything else
-// falls back to "All countries".
+// A canonical key is only valid if the subsidiary offers it (a multi-market
+// set is valid while at least one member is tracked); anything else falls
+// back to "All countries".
 export const validLocationKey = (
   locationKey: string | null,
   options: LocationEntry[],
 ): string | null =>
-  locationKey && options.some((o) => o.canonicalKey === locationKey) ? locationKey : null;
+  locationKey && resolveSelectionEntry(locationKey, options) ? locationKey : null;
 
 // Canonical key → the raw spelling the DB stores (the first raw value of the
-// matching option — what reports and the MCP tools speak). A region has no
-// stored spelling: its key ("region:latin-america") is persisted verbatim and
+// matching option — what reports and the MCP tools speak). A region or a
+// multi-market set has no stored spelling: its key ("region:latin-america",
+// "set:india|united states") is persisted verbatim and
 // canonicalizeLocationContext passes it back through unchanged.
 export const locationRawValue = (
   locationKey: string | null,
   options: LocationEntry[],
 ): string | null => {
   if (!locationKey) return null;
-  if (isRegionLocationKey(locationKey)) return locationKey;
+  if (isCompositeKey(locationKey)) return locationKey;
   const entry = options.find((o) => o.canonicalKey === locationKey);
   return entry ? entry.rawValues[0] ?? entry.label : locationKey;
 };

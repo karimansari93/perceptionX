@@ -27,3 +27,9 @@ Deno.test('regions: a region request matches every tracked market inside it', ()
   assertEquals(matchBuckets(TRACKED, 'india'), ['India']);
   assertEquals(matchBuckets(['Europe', 'Germany'], 'europe'), ['Europe']);
 });
+
+Deno.test('regions: a saved multi-market selection matches the union of its members', () => {
+  assertEquals(matchBuckets(TRACKED, 'set:india|united states'), ['India']);
+  assertEquals(matchBuckets(TRACKED, 'set:india|latam'), ['India', 'Brazil', 'Mexico']);
+  assertEquals(matchBuckets(TRACKED, 'set:'), []);
+});
