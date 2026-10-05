@@ -130,7 +130,7 @@ const EMPLOYER_REVIEW_PLATFORMS: PlatformGroup[] = [
   { name: 'Levels.fyi', canonical: 'levels.fyi', tokens: ['levels.fyi'] },
   { name: 'The Muse', canonical: 'themuse.com', tokens: ['themuse'] },
   { name: 'Seek', canonical: 'seek.com.au', tokens: ['seek'] },
-  { name: 'Great Place to Work', canonical: 'greatplacetowork.com', tokens: ['greatplacetowork'] },
+  { name: 'Great Place to Work', canonical: 'greatplacetowork.com', tokens: ['greatplacetowork', 'gptw'] },
   { name: 'Built In', canonical: 'builtin.com', tokens: ['builtin'] },
   { name: 'Vault', canonical: 'vault.com', tokens: ['vault.com'] },
   { name: 'FairyGodBoss', canonical: 'fairygodboss.com', tokens: ['fairygodboss'] },
@@ -144,12 +144,59 @@ const EMPLOYER_REVIEW_PLATFORMS: PlatformGroup[] = [
   { name: 'CareerBuilder', canonical: 'careerbuilder.com', tokens: ['careerbuilder'] },
   { name: 'SimplyHired', canonical: 'simplyhired.com', tokens: ['simplyhired'] },
   { name: 'Dice', canonical: 'dice.com', tokens: ['dice.com'] },
-  { name: 'Naukri', canonical: 'naukri.com', tokens: ['naukri'] },
+  { name: 'Naukri', canonical: 'naukri.com', tokens: ['naukri', 'naukrigulf'] },
   { name: 'JobStreet', canonical: 'jobstreet.com', tokens: ['jobstreet'] },
   { name: 'StepStone', canonical: 'stepstone.de', tokens: ['stepstone'] },
   { name: 'Welcome to the Jungle', canonical: 'welcometothejungle.com', tokens: ['welcometothejungle'] },
   { name: 'The Job Crowd', canonical: 'thejobcrowd.com', tokens: ['thejobcrowd'] },
   { name: 'Rate My Employer', canonical: 'ratemyemployer.com', tokens: ['ratemyemployer'] },
+
+  // Added after a sweep of cited domains in the data. Regional review sites
+  // that are the top employer source in their own market but were missing.
+  // Japan
+  { name: 'OpenWork', canonical: 'openwork.jp', tokens: ['openwork.jp', 'en-hyouban.com'] },
+  { name: 'JobTalk', canonical: 'jobtalk.jp', tokens: ['jobtalk'] },
+  { name: 'Syukatsu Kaigi', canonical: 'syukatsu-kaigi.jp', tokens: ['syukatsu-kaigi.jp'] },
+  { name: 'ONE CAREER', canonical: 'onecareer.jp', tokens: ['onecareer'] },
+  // Korea
+  { name: 'JobPlanet', canonical: 'jobplanet.co.kr', tokens: ['jobplanet'] },
+  { name: 'JobKorea', canonical: 'jobkorea.co.kr', tokens: ['jobkorea'] },
+  // Europe
+  { name: 'GoWork.pl', canonical: 'gowork.pl', tokens: ['gowork'] },
+  { name: 'Undelucram', canonical: 'undelucram.ro', tokens: ['undelucram'] },
+  { name: 'Profession.hu', canonical: 'profession.hu', tokens: ['profession.hu'] },
+  { name: 'Where We Work', canonical: 'wherewework.hu', tokens: ['wherewework'] },
+  { name: 'ChooseMyCompany', canonical: 'choosemycompany.com', tokens: ['choosemycompany'] },
+  { name: 'InfoJobs', canonical: 'infojobs.com.br', tokens: ['infojobs'] },
+  // Latin America
+  { name: 'Merco Talento', canonical: 'merco.info', tokens: ['merco.info'] },
+  { name: 'Computrabajo', canonical: 'computrabajo.com', tokens: ['computrabajo'] },
+  { name: 'Bumeran', canonical: 'bumeran.com', tokens: ['bumeran'] },
+  { name: 'elempleo', canonical: 'elempleo.com', tokens: ['elempleo'] },
+  { name: 'OCC Mundial', canonical: 'occ.com.mx', tokens: ['occ.com.mx'] },
+  { name: 'Catho', canonical: 'catho.com.br', tokens: ['catho.com.br'] },
+  { name: 'Vagas', canonical: 'vagas.com.br', tokens: ['vagas.com.br'] },
+  // Asia-Pacific and Middle East
+  { name: 'WorkVenture', canonical: 'workventure.com', tokens: ['workventure'] },
+  { name: 'JobsDB', canonical: 'jobsdb.com', tokens: ['jobsdb'] },
+  { name: 'Shine', canonical: 'shine.com', tokens: ['shine.com'] },
+  { name: 'Foundit', canonical: 'foundit.in', tokens: ['foundit.in'] },
+  { name: 'Bayt', canonical: 'bayt.com', tokens: ['bayt.com'] },
+  { name: 'GulfTalent', canonical: 'gulftalent.com', tokens: ['gulftalent.com'] },
+  // North America and UK: salary, culture and employer rankings
+  { name: 'Payscale', canonical: 'payscale.com', tokens: ['payscale'] },
+  { name: 'Salary.com', canonical: 'salary.com', tokens: ['salary.com'] },
+  { name: 'RepVue', canonical: 'repvue.com', tokens: ['repvue'] },
+  { name: 'Taro', canonical: 'jointaro.com', tokens: ['jointaro'] },
+  { name: "Canada's Top 100 Employers", canonical: 'canadastop100.com', tokens: ['canadastop100'] },
+  { name: 'Top Employers Institute', canonical: 'top-employers.com', tokens: ['top-employers.com'] },
+  { name: 'Top Workplaces', canonical: 'topworkplaces.com', tokens: ['topworkplaces.com'] },
+  { name: 'Arbeitgeber-Ranking', canonical: 'arbeitgeber-ranking.de', tokens: ['arbeitgeber-ranking.de'] },
+  { name: 'WORK180', canonical: 'work180.com', tokens: ['work180'] },
+  { name: 'Handshake', canonical: 'joinhandshake.com', tokens: ['joinhandshake'] },
+  { name: 'Totaljobs', canonical: 'totaljobs.com', tokens: ['totaljobs'] },
+  { name: 'Reed', canonical: 'reed.co.uk', tokens: ['reed.co.uk'] },
+  { name: 'Jobs.ch', canonical: 'jobs.ch', tokens: ['jobs.ch'] },
 ];
 
 const SOCIAL_PLATFORMS: PlatformGroup[] = [
