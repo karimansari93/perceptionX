@@ -207,7 +207,7 @@ function howToFor(route: ActivateRoute): string[] {
   return PLATFORM_HOWTO[route.platform] ?? HOWTO_BY_CHANNEL[route.channel] ?? [];
 }
 
-function platformName(key: string): string {
+export function platformName(key: string): string {
   return PLATFORM_NAMES[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
 }
 
