@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
+import { platformName } from '@/pages/Activate';
 import {
   ActivateAdminRoute,
   ActivateAudience,
@@ -225,10 +226,10 @@ export const ActivateTab = ({ organizationId }: ActivateTabProps = {}) => {
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              Links don't expire — the switch turns one off and back on, on the same token, so a
-              link already in an email footer or an onboarding pack can be paused without
-              reminting. Funnel starts at declarations — opens include email-scanner bots. Below 5
-              declared sessions a link shows totals only (k-anonymity floor, enforced server-side).
+              Links never expire. Switch one off to pause it, and back on to restart it on the same
+              address. "Opened" includes email-scanner bots, so "picked a country" is the number to
+              trust. Until 5 people have picked a country, only totals are shown, to protect
+              privacy.
             </p>
           </div>
 
@@ -314,7 +315,7 @@ function BrandingCard({
         : kind === 'heading-font' ? { heading_font_url: url }
         : { body_font_url: url };
       set(patch);
-      toast.success('Uploaded — remember to save');
+      toast.success('Uploaded. Press Save to put it on the link.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Upload failed');
     } finally {
@@ -559,53 +560,66 @@ function BrandingCard({
           <div className="grid gap-3 md:grid-cols-2">
             {(
               [
-                ['heading_font', 'heading-font', 'heading_font_url', 'Heading font'],
-                ['body_font', 'body-font', 'body_font_url', 'Body font'],
+                ['heading_font', 'heading-font', 'heading_font_url', 'Heading font', 'Where are you based?', 700],
+                ['body_font', 'body-font', 'body_font_url', 'Body font', 'Two questions, and we\'ll show you where to share.', 400],
               ] as const
-            ).map(([nameKey, kind, urlKey, label]) => (
+            ).map(([nameKey, kind, urlKey, label, sample, weight]) => (
               <div key={nameKey} className="space-y-1.5">
                 <Label htmlFor={`b-${nameKey}`}>{label}</Label>
-                <Input
-                  id={`b-${nameKey}`}
-                  value={form[nameKey] ?? ''}
-                  onChange={(e) => set({ [nameKey]: e.target.value || null } as Partial<ActivateBrandingRow>)}
-                  placeholder="e.g. Netflix Sans — blank uses the default"
-                />
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="file"
-                    accept=".woff2,.woff,.ttf,.otf"
-                    disabled={uploading === kind}
-                    onChange={(e) => upload(kind, e.target.files?.[0])}
-                    className="cursor-pointer file:mr-2 file:cursor-pointer file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
-                  />
-                  {form[urlKey] && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => set({ [urlKey]: null } as Partial<ActivateBrandingRow>)}
-                      title="Remove font file"
+                {form[urlKey] ? (
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    {/* Live preview straight from the uploaded file: if the sample
+                        text looks right here, it will look right on the link. */}
+                    <style>{`@font-face{font-family:'amp-preview-${kind}';src:url('${form[urlKey]}');font-weight:100 900;}`}</style>
+                    <p
+                      className="text-lg leading-snug"
+                      style={{ fontFamily: `'amp-preview-${kind}', sans-serif`, fontWeight: weight }}
                     >
-                      <Trash2 className="h-4 w-4 text-muted-foreground" />
-                    </Button>
-                  )}
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  {uploading === kind
-                    ? 'Uploading…'
-                    : form[urlKey]
-                      ? 'Font file uploaded.'
-                      : form[nameKey]
-                        ? 'No file — will be loaded from Google Fonts if it exists there.'
-                        : 'Using the default.'}
-                </p>
+                      {sample}
+                    </p>
+                    <div className="mt-2 flex items-center justify-between">
+                      <span className="text-[11px] text-muted-foreground">
+                        Your uploaded font. Save to put it on the link.
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => set({ [urlKey]: null } as Partial<ActivateBrandingRow>)}
+                        title="Remove this font"
+                      >
+                        <Trash2 className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <Input
+                      id={`b-${nameKey}`}
+                      type="file"
+                      accept=".woff2,.woff,.ttf,.otf"
+                      disabled={uploading === kind}
+                      onChange={(e) => upload(kind, e.target.files?.[0])}
+                      className="cursor-pointer file:mr-2 file:cursor-pointer file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
+                    />
+                    <Input
+                      aria-label={`${label}: or a Google Fonts name`}
+                      value={form[nameKey] ?? ''}
+                      onChange={(e) =>
+                        set({ [nameKey]: e.target.value || null } as Partial<ActivateBrandingRow>)
+                      }
+                      placeholder="Or type a Google Fonts name, e.g. Inter"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      {uploading === kind ? 'Uploading…' : 'Blank uses the PerceptionX default.'}
+                    </p>
+                  </>
+                )}
               </div>
             ))}
           </div>
           <p className="text-xs text-muted-foreground">
-            Name the family and optionally upload the font file (WOFF2, WOFF, TTF, OTF). Name
-            alone is looked up on Google Fonts. Uploaded files are served from a public URL —
-            check the client's licence allows that before uploading a proprietary font.
+            Font files (WOFF2, WOFF, TTF, OTF) are served from a public address, so check the
+            client's licence allows that.
           </p>
 
           <div className="grid gap-3 md:grid-cols-2">
@@ -701,14 +715,14 @@ function LinkRow({
         </p>
         {stats && (
           <p className="text-xs mt-1">
-            <span className="text-muted-foreground">~{stats.open_sessions} opens · </span>
-            <span className="font-medium">{stats.declared_sessions} declared</span>
+            <span className="text-muted-foreground">{stats.open_sessions} opened · </span>
+            <span className="font-medium">{stats.declared_sessions} picked a country</span>
             <span className="text-muted-foreground">
-              {' '}· {stats.click_sessions} clicked ({stats.clicks_total} clicks)
+              {' '}· {stats.click_sessions} clicked through
             </span>
             {stats.suppressed ? (
               <Badge variant="outline" className="ml-2 text-[10px]">
-                aggregate only — under 5 sessions
+                too few to break down yet
               </Badge>
             ) : (
               <>
@@ -770,56 +784,70 @@ function RoutesOverview({
 
   if (routes.length === 0) return null;
 
+  const marketLabel = (tier: number) =>
+    tier === 1 ? 'Measured' : tier === 2 ? 'Known platforms' : 'Everywhere else';
+  const groups: { channel: string; title: string }[] = [
+    { channel: 'review', title: 'Reviews' },
+    { channel: 'forum', title: 'Forums' },
+    { channel: 'social', title: 'Social' },
+  ];
+
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold">Routes</h3>
+      <div>
+        <h3 className="text-sm font-semibold">Where each country is sent</h3>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          After a recipient picks their country, these are the platforms they see, in order. Any
+          country not listed here sees the "Everywhere else" platforms.
+        </p>
+      </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {byMarket.map(([market, rows]) => (
           <div key={market} className="rounded-lg border p-3.5">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2.5">
               <span className="text-sm font-medium">
-                {market === 'global' ? 'Global default' : countryName(market)}
+                {market === 'global' ? 'Everywhere else' : countryName(market)}
               </span>
-              <Badge variant="outline" className="text-[10px]">
-                tier {rows[0].tier}
-              </Badge>
+              {market !== 'global' && (
+                <Badge variant="outline" className="text-[10px]">
+                  {marketLabel(rows[0].tier)}
+                </Badge>
+              )}
             </div>
-            <ul className="space-y-1.5">
-              {rows.map((r) => (
-                <li key={r.id} className="text-xs flex items-center gap-1.5 flex-wrap">
-                  <span className={r.active ? '' : 'text-muted-foreground line-through'}>
-                    {r.rank}. {r.platform}
-                  </span>
-                  {r.entity_company_id && (
-                    <span className="text-muted-foreground">
-                      ({entityName[r.entity_company_id] ?? 'entity'})
-                    </span>
-                  )}
-                  {!r.active && (
-                    <Badge variant="outline" className="text-[10px]">
-                      inactive
-                    </Badge>
-                  )}
-                  {r.use_direct_link && (
-                    <Badge variant="outline" className="text-[10px]">
-                      noreferrer
-                    </Badge>
-                  )}
-                  {r.channel === 'social' && (
-                    <Badge variant="outline" className="text-[10px]">
-                      social
-                    </Badge>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <div className="space-y-2">
+              {groups.map(({ channel, title }) => {
+                const inGroup = rows.filter((r) => r.channel === channel);
+                if (inGroup.length === 0) return null;
+                return (
+                  <div key={channel}>
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-0.5">
+                      {title}
+                    </p>
+                    <p className="text-xs leading-relaxed">
+                      {inGroup.map((r, i) => (
+                        <span key={r.id}>
+                          {i > 0 && <span className="text-muted-foreground"> · </span>}
+                          <span className={r.active ? '' : 'text-muted-foreground line-through'}>
+                            {platformName(r.platform)}
+                          </span>
+                          {r.entity_company_id && (
+                            <span className="text-muted-foreground">
+                              {' '}({entityName[r.entity_company_id] ?? 'entity'})
+                            </span>
+                          )}
+                          {!r.active && <span className="text-muted-foreground"> (off)</span>}
+                        </span>
+                      ))}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ))}
       </div>
       <p className="text-xs text-muted-foreground">
-        Routes are curated by hand (SQL) on purpose — "most cited" and "best place to post" are
-        different questions. DE/CH stay inactive until kununu profile consolidation and the
-        client's works-council review clear.
+        Routes are set up by hand in the database, not from this screen.
       </p>
     </div>
   );

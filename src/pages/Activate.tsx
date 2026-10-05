@@ -38,6 +38,7 @@ import {
   affinityTagFor,
   ActivateHighlight,
   ActivateRoute,
+  COUNTRY_CODES,
   countryInSentence,
   countryName,
   entitiesForMarket,
@@ -90,6 +91,9 @@ const PLATFORM_NAMES: Record<string, string> = {
   facebook: 'Facebook',
   openwork: 'OpenWork',
   jobtalk: 'JobTalk',
+  syukatsu: 'Syukatsu Kaigi',
+  onecareer: 'ONE CAREER',
+  openmoney: 'OpenMoney',
   jobplanet: 'JobPlanet',
   gowork: 'GoWork.pl',
   workventure: 'WorkVenture',
@@ -120,6 +124,9 @@ const PLATFORM_DOMAINS: Record<string, string> = {
   facebook: 'facebook.com',
   openwork: 'openwork.jp',
   jobtalk: 'jobtalk.jp',
+  syukatsu: 'syukatsu-kaigi.jp',
+  onecareer: 'onecareer.jp',
+  openmoney: 'openmoney.jp',
   jobplanet: 'jobplanet.co.kr',
   gowork: 'gowork.pl',
   workventure: 'workventure.com',
@@ -172,6 +179,17 @@ const PLATFORM_HOWTO: Record<string, string[]> = {
     'Post or reply',
   ],
   linkedin: ['Open LinkedIn and start a post', 'Say what you want about your work', 'Post it'],
+  levels: [
+    'Open the company page',
+    'Choose “Add Salary” or “Add Company Benefits”',
+    'Sign in or create a free account',
+    'Fill in your details and submit',
+  ],
+  note: [
+    'Open note and sign in or create a free account',
+    'Start a new post',
+    'Write in your own words and publish',
+  ],
 };
 
 const HOWTO_BY_CHANNEL: Record<string, string[]> = {
@@ -189,7 +207,7 @@ function howToFor(route: ActivateRoute): string[] {
   return PLATFORM_HOWTO[route.platform] ?? HOWTO_BY_CHANNEL[route.channel] ?? [];
 }
 
-function platformName(key: string): string {
+export function platformName(key: string): string {
   return PLATFORM_NAMES[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
 }
 
@@ -557,10 +575,23 @@ type ClientFontConfig = Pick<
   'heading_font' | 'body_font' | 'heading_font_url' | 'body_font_url'
 >;
 
+/**
+ * The family a client slot is declared under: the typed name, or, when only a
+ * file was uploaded, an internal name, so an upload alone is enough.
+ */
+function fontFamilyFor(
+  name: string | null | undefined,
+  url: string | null | undefined,
+  slot: 'heading' | 'body',
+): string | null {
+  const trimmed = name?.trim().replace(/'/g, '');
+  if (trimmed) return trimmed;
+  return url ? `client-${slot}` : null;
+}
+
 /** Quote a client family name and append the product default as fallback. */
-function fontStack(name: string | null | undefined, fallback: string): string {
-  const trimmed = name?.trim();
-  return trimmed ? `'${trimmed.replace(/'/g, '')}', ${fallback}` : fallback;
+function fontStack(family: string | null, fallback: string): string {
+  return family ? `'${family}', ${fallback}` : fallback;
 }
 
 const FONT_FORMATS: Record<string, string> = {
@@ -578,16 +609,16 @@ const FONT_FORMATS: Record<string, string> = {
  */
 function ClientFonts({ fonts }: { fonts?: ClientFontConfig }) {
   if (!fonts) return null;
-  const pairs: Array<[string | null, string | null]> = [
-    [fonts.heading_font, fonts.heading_font_url],
-    [fonts.body_font, fonts.body_font_url],
+  const pairs: Array<[string | null, string | null, 'heading' | 'body']> = [
+    [fonts.heading_font, fonts.heading_font_url, 'heading'],
+    [fonts.body_font, fonts.body_font_url, 'body'],
   ];
 
   const faces: string[] = [];
   const uploadedUrls: string[] = [];
   const googleFamilies: string[] = [];
-  for (const [name, url] of pairs) {
-    const family = name?.trim();
+  for (const [name, url, slot] of pairs) {
+    const family = fontFamilyFor(name, url, slot);
     if (!family) continue;
     if (url) {
       const ext = url.split('.').pop()?.toLowerCase() ?? '';
@@ -595,9 +626,12 @@ function ClientFonts({ fonts }: { fonts?: ClientFontConfig }) {
       uploadedUrls.push(url);
       // block, not swap: this page is the client's brand, and a beat of
       // held-back text reads better than visibly changing typeface mid-load.
+      // The heading file is one weight (often Bold) used at several: declaring
+      // the full range stops the browser adding a second, synthetic bold.
       faces.push(
-        `@font-face{font-family:'${family.replace(/'/g, '')}';` +
+        `@font-face{font-family:'${family}';` +
           `src:url('${url}')${format ? ` format('${format}')` : ''};` +
+          `${slot === 'heading' ? 'font-weight:100 900;' : ''}` +
           `font-display:block;}`,
       );
     } else if (!googleFamilies.includes(family)) {
@@ -666,9 +700,12 @@ function Canvas({
     '--activate-primary': primary,
     '--activate-accent': accent,
     '--activate-on': onColor(primary),
-    '--activate-font-heading': fontStack(fonts?.heading_font, "'Geologica', sans-serif"),
+    '--activate-font-heading': fontStack(
+      fontFamilyFor(fonts?.heading_font, fonts?.heading_font_url, 'heading'),
+      "'Geologica', sans-serif",
+    ),
     '--activate-font-body': fontStack(
-      fonts?.body_font,
+      fontFamilyFor(fonts?.body_font, fonts?.body_font_url, 'body'),
       "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif",
     ),
   } as CSSProperties;
@@ -1034,19 +1071,20 @@ function CountryStep({
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
   const byName = (a: string, b: string) => countryName(a).localeCompare(countryName(b));
-  // Only countries the org actually has routes for are offered — a country
-  // outside the client's footprint has nothing to show. Measured markets
-  // first, then the known-platform fallbacks, each alphabetical.
+  // Every country is on offer: a country without its own routes falls back to
+  // the global defaults. The org's own markets (measured first, then the
+  // known-platform fallbacks) are listed up front as shortcuts; typing
+  // searches the full list, measured markets first.
   const ordered = [
     ...markets.filter((c) => measured.includes(c)).sort(byName),
     ...markets.filter((c) => !measured.includes(c)).sort(byName),
   ];
+  const others = COUNTRY_CODES.filter((c) => !markets.includes(c)).sort(byName);
   const shown = q
-    ? ordered.filter((c) => countryName(c).toLowerCase().includes(q) || c.toLowerCase() === q)
+    ? [...ordered, ...others]
+        .filter((c) => countryName(c).toLowerCase().includes(q) || c.toLowerCase() === q)
+        .slice(0, 30)
     : ordered;
-  // A handful of markets reads faster as a plain list; the filter box only
-  // earns its place once the list is long enough to scroll.
-  const searchable = ordered.length > 8;
 
   return (
     <>
@@ -1058,20 +1096,21 @@ function CountryStep({
         Where are you based?
       </h2>
 
-      {searchable && (
-        <label className="act-search w-full">
-          <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter countries"
-            aria-label="Filter countries"
-          />
-        </label>
-      )}
+      <label className="act-search w-full">
+        <Search size={17} className="shrink-0 act-search-icon" aria-hidden />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search countries"
+          aria-label="Search countries"
+        />
+      </label>
 
       <div className="flex w-full flex-col gap-2" role="listbox" aria-label="Countries">
-        {shown.length === 0 && (
+        {q === '' && shown.length === 0 && (
+          <p className="act-search-hint">Start typing to find your country.</p>
+        )}
+        {q !== '' && shown.length === 0 && (
           <p className="act-search-hint">No matches — try another spelling.</p>
         )}
         {shown.map((code) => (
