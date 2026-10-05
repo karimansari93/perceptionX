@@ -264,6 +264,22 @@ export function resolveRoutes(
   return { tier: routes[0]?.tier ?? 3, routes };
 }
 
+/**
+ * The kinds of place (review sites, forums, social) that have at least one
+ * thing a recipient can act on for this country and company. The "what are you
+ * up for?" question only offers these, so no choice can lead to an empty page.
+ */
+export function availableChannels(
+  all: ActivateRoute[],
+  marketCode: string,
+  entityCompanyId: string | null,
+): ActivateChannel[] {
+  const channels: ActivateChannel[] = ['review', 'forum', 'social'];
+  return channels.filter((c) =>
+    resolveRoutes(all, marketCode, entityCompanyId, c).routes.some((r) => !r.is_listen_only),
+  );
+}
+
 /** Markets that have their own (active) rows — pinned atop the country picker. */
 export function marketsWithRoutes(all: ActivateRoute[]): string[] {
   return [...new Set(all.map((r) => r.market_code).filter((c): c is string => c !== null))].sort();
