@@ -5,6 +5,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { isCreditExhausted } from "../_shared/claude-keys.ts";
 import {
   buildThemeRequest,
+  CLASSIFIER_VERSION,
   clientFor,
   parseCompetitorList as parseCompetitors,
   parseThemeMessage,
@@ -122,12 +123,15 @@ async function collect(timeLeft: () => number) {
   return collected;
 }
 
-// 2. Replace each response's theme rows with the stored result.
+// 2. Replace each response's theme rows with the stored result. Rows queued
+// with apply_result = false (reference checks) stay 'stored' and never touch
+// live themes; compare them against theme_reference_labels instead.
 async function apply(timeLeft: () => number) {
   const { data: items } = await supabase
     .from("theme_batch_items")
     .select("run_label, response_id, result")
     .eq("status", "stored")
+    .eq("apply_result", true)
     .limit(APPLY_PER_TICK);
   let applied = 0;
   const queue = [...(items ?? [])];
@@ -166,6 +170,7 @@ async function replaceThemes(responseId: string, result: any): Promise<string | 
       confidence_score: t.confidence_score,
       keywords: t.keywords,
       context_snippets: t.context_snippets,
+      classifier_version: CLASSIFIER_VERSION,
     })));
     if (error) return `insert ai_themes: ${error.message}`;
   }

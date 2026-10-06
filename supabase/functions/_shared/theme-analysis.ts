@@ -23,6 +23,12 @@ import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
 
 import { withClaudeKey } from "./claude-keys.ts";
 
+// Stamped on every ai_themes row (classifier_version). Bump it whenever the
+// model, temperature, schema, SYSTEM_PROMPT or validation below changes, and
+// run the reference check first (docs/methodology-sentiment.md). Periods
+// themed under different versions are not comparable on absolute sentiment.
+export const CLASSIFIER_VERSION = "v2-2026-10-06";
+
 // Keys come from CLAUDE_API_KEY / CLAUDE_API_KEY_NEXT (see claude-keys.ts);
 // one client per key so the handover doesn't rebuild a client per call.
 const clients = new Map<string, Anthropic>();
