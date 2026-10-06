@@ -26,7 +26,7 @@ import { withClaudeKey } from "./claude-keys.ts";
 // Keys come from CLAUDE_API_KEY / CLAUDE_API_KEY_NEXT (see claude-keys.ts);
 // one client per key so the handover doesn't rebuild a client per call.
 const clients = new Map<string, Anthropic>();
-const clientFor = (apiKey: string) => {
+export const clientFor = (apiKey: string) => {
   let c = clients.get(apiKey);
   if (!c) clients.set(apiKey, c = new Anthropic({ apiKey }));
   return c;
@@ -320,81 +320,104 @@ function validateCompetitorTheme(
   };
 }
 
+// One request body for both paths: the real-time/bulk call below and the
+// Message Batches job (theme-batch). Keeping it in one place is what makes a
+// batch re-theme label exactly like a live one.
+export function buildThemeRequest(
+  responseText: string,
+  companyName: string,
+  competitors: string[] = [],
+): Anthropic.MessageCreateParamsNonStreaming {
+  const competitorLine = competitors.length > 0
+    ? `\n\nOther companies detected in this response (extract competitor_themes ONLY for these): ${competitors.join(", ")}`
+    : "\n\nNo other companies were detected; return an empty competitor_themes array.";
+  return {
+    model: "claude-haiku-4-5",
+    max_tokens: 4096,
+    // Deterministic labelling: at the default temperature the same kind of
+    // statement drifted between positive and neutral across collection runs
+    // (Ford July vs October 2026), which moved sentiment with no real change.
+    temperature: 0,
+    system: [
+      {
+        type: "text",
+        text: SYSTEM_PROMPT,
+        // ephemeral = 5-min TTL; we're firing 40 calls in ~30s so they
+        // all hit a warm cache after the first.
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    // Structured outputs — Anthropic enforces the schema server-side,
+    // so the model's first response block is guaranteed-parseable JSON.
+    output_config: {
+      format: { type: "json_schema", schema: THEME_SCHEMA },
+    },
+    messages: [
+      {
+        role: "user",
+        content: `Analyze this response about "${companyName}":\n\n"""\n${responseText}\n"""${competitorLine}`,
+      },
+    ],
+    // This SDK version predates output_config, so its params type doesn't
+    // know the field; the API accepts it.
+  } as unknown as Anthropic.MessageCreateParamsNonStreaming;
+}
+
+// Turn a finished message into validated themes. Shared with theme-batch.
+export function parseThemeMessage(
+  response: Anthropic.Message,
+  companyName: string,
+  responseText: string,
+  competitors: string[] = [],
+): ThemeAnalysisResult {
+  // Structured outputs return as a single text block containing the JSON.
+  const EMPTY: ThemeAnalysisResult = { themes: [], competitorThemes: [] };
+  const textBlock = response.content.find((b: any) => b.type === "text") as
+    | { type: "text"; text: string }
+    | undefined;
+  if (!textBlock) {
+    console.warn(
+      `[theme-analysis] no text block. stop_reason=${response.stop_reason}`,
+    );
+    return EMPTY;
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(textBlock.text);
+  } catch (e) {
+    console.error("[theme-analysis] JSON parse failed despite structured output:", e, textBlock.text.slice(0, 200));
+    return EMPTY;
+  }
+
+  const companyThemes = Array.isArray(parsed?.company_themes) ? parsed.company_themes : [];
+  const rawCompetitorThemes = Array.isArray(parsed?.competitor_themes) ? parsed.competitor_themes : [];
+
+  if (companyThemes.length === 0) {
+    console.warn(`[theme-analysis] EMPTY for "${companyName}". Input head: ${responseText.slice(0, 150)}`);
+  } else {
+    console.log(`[theme-analysis] ${companyThemes.length} themes + ${rawCompetitorThemes.length} competitor themes for "${companyName}". cache_read=${response.usage?.cache_read_input_tokens ?? 0} cache_write=${response.usage?.cache_creation_input_tokens ?? 0}`);
+  }
+
+  return {
+    themes: companyThemes.map(validateAndCleanTheme),
+    competitorThemes: rawCompetitorThemes
+      .map((t: any) => validateCompetitorTheme(t, competitors))
+      .filter((t: CompetitorTheme | null): t is CompetitorTheme => t !== null),
+  };
+}
+
 export async function analyzeThemes(
   responseText: string,
   companyName: string,
   competitors: string[] = [],
 ): Promise<ThemeAnalysisResult> {
   try {
-    const competitorLine = competitors.length > 0
-      ? `\n\nOther companies detected in this response (extract competitor_themes ONLY for these): ${competitors.join(", ")}`
-      : "\n\nNo other companies were detected; return an empty competitor_themes array.";
-    const response = await withClaudeKey<Anthropic.Message>((apiKey) => clientFor(apiKey).messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 4096,
-      // Deterministic labelling: at the default temperature the same kind of
-      // statement drifted between positive and neutral across collection runs
-      // (Ford July vs October 2026), which moved sentiment with no real change.
-      temperature: 0,
-      system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT,
-          // ephemeral = 5-min TTL; we're firing 40 calls in ~30s so they
-          // all hit a warm cache after the first.
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      // Structured outputs — Anthropic enforces the schema server-side,
-      // so the model's first response block is guaranteed-parseable JSON.
-      output_config: {
-        format: { type: "json_schema", schema: THEME_SCHEMA },
-      },
-      messages: [
-        {
-          role: "user",
-          content: `Analyze this response about "${companyName}":\n\n"""\n${responseText}\n"""${competitorLine}`,
-        },
-      ],
-      // Non-streaming call: the SDK types can't pick that overload because
-      // this SDK version predates output_config, so pin the result type.
-    }) as Promise<Anthropic.Message>);
-
-    // Structured outputs return as a single text block containing the JSON.
-    const EMPTY: ThemeAnalysisResult = { themes: [], competitorThemes: [] };
-    const textBlock = response.content.find((b: any) => b.type === "text") as
-      | { type: "text"; text: string }
-      | undefined;
-    if (!textBlock) {
-      console.warn(
-        `[theme-analysis] no text block. stop_reason=${response.stop_reason}`,
-      );
-      return EMPTY;
-    }
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(textBlock.text);
-    } catch (e) {
-      console.error("[theme-analysis] JSON parse failed despite structured output:", e, textBlock.text.slice(0, 200));
-      return EMPTY;
-    }
-
-    const companyThemes = Array.isArray(parsed?.company_themes) ? parsed.company_themes : [];
-    const rawCompetitorThemes = Array.isArray(parsed?.competitor_themes) ? parsed.competitor_themes : [];
-
-    if (companyThemes.length === 0) {
-      console.warn(`[theme-analysis] EMPTY for "${companyName}". Input head: ${responseText.slice(0, 150)}`);
-    } else {
-      console.log(`[theme-analysis] ${companyThemes.length} themes + ${rawCompetitorThemes.length} competitor themes for "${companyName}". cache_read=${response.usage?.cache_read_input_tokens ?? 0} cache_write=${response.usage?.cache_creation_input_tokens ?? 0}`);
-    }
-
-    return {
-      themes: companyThemes.map(validateAndCleanTheme),
-      competitorThemes: rawCompetitorThemes
-        .map((t: any) => validateCompetitorTheme(t, competitors))
-        .filter((t: CompetitorTheme | null): t is CompetitorTheme => t !== null),
-    };
+    const params = buildThemeRequest(responseText, companyName, competitors);
+    const response = await withClaudeKey<Anthropic.Message>((apiKey) =>
+      clientFor(apiKey).messages.create(params) as Promise<Anthropic.Message>
+    );
+    return parseThemeMessage(response, companyName, responseText, competitors);
   } catch (e: any) {
     // Surface rate-limit / overload distinctly so the bulk function's per-response
     // try/catch can decide what to do. The SDK throws typed exceptions; check by
