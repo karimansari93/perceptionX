@@ -178,7 +178,6 @@
   - [ ] `ai-thematic-analysis`
   - [ ] `ai-thematic-analysis-bulk`
   - [ ] `analyze-response`
-  - [ ] `aspect-sentiment-openai`
   - [ ] `company-report`
   - [ ] `company-report-text`
   - [ ] `detect-competitors`
