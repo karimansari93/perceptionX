@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { analyzeThemes, parseCompetitorList } from "../_shared/theme-analysis.ts";
+import { analyzeThemes, CLASSIFIER_VERSION, parseCompetitorList } from "../_shared/theme-analysis.ts";
 
 // Real-time, single-response theme extraction. Invoked fire-and-forget from
 // analyze-response immediately after a prompt_response row is inserted.
@@ -138,6 +138,7 @@ serve(async (req) => {
       confidence_score: theme.confidence_score,
       keywords: theme.keywords,
       context_snippets: theme.context_snippets,
+      classifier_version: CLASSIFIER_VERSION,
     }));
 
     const { data: insertedThemes, error: insertError } = await supabase
