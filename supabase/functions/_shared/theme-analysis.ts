@@ -206,6 +206,12 @@ Classification rules — be strict:
 - Work-life balance, mental health, flexibility, and remote work belong to wellbeing-balance, NOT company-culture
 - Candidate-journey topics belong to the dedicated candidate-experience attributes: the application process and recruiter communication → application-communication; interviews → interview-experience; post-interview/application feedback → candidate-feedback; onboarding → onboarding-experience
 
+Sentiment rules: judge what the response says about the company as an employer, not whether the information is useful:
+- positive: the response praises or speaks favourably (e.g. "candidates describe interviews as friendly", "well paid", "rated highly")
+- negative: the response criticises or speaks unfavourably (e.g. "slow to respond", "layoffs", "rated poorly")
+- neutral: the response only describes facts or process with no evaluation (e.g. lists interview stages, explains how to apply, states how candidates are contacted). A plain description of a process is neutral even when it sounds organised or thorough
+- A rating or score is positive or negative only when the response itself frames it as good or bad; a bare number with no framing is neutral
+
 Coverage:
 - Look for both positive and negative themes
 - If the response contains ANY information about the named company — even if it also discusses competitors or comparisons — extract themes from that information
@@ -326,6 +332,10 @@ export async function analyzeThemes(
     const response = await withClaudeKey<Anthropic.Message>((apiKey) => clientFor(apiKey).messages.create({
       model: "claude-haiku-4-5",
       max_tokens: 4096,
+      // Deterministic labelling: at the default temperature the same kind of
+      // statement drifted between positive and neutral across collection runs
+      // (Ford July vs October 2026), which moved sentiment with no real change.
+      temperature: 0,
       system: [
         {
           type: "text",
