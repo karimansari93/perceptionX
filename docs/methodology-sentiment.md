@@ -97,11 +97,15 @@ candidate classifier:
    that moves either measure by more than 2 points changes the methodology and
    needs Karim's sign-off.
 
-## Re-theming and cost
+## Theming and cost
 
-- Bulk re-theming goes through the `theme-batch` function (Message Batches
-  API, half price, results usually within an hour). Never loop live calls over
-  thousands of answers.
+- All theming is batch-only, for new collections and re-runs alike. New
+  answers are queued by `ai-thematic-analysis` / `ai-thematic-analysis-bulk`
+  (run_label `live` in `theme_batch_items`) and labelled by `theme-batch`
+  through the Message Batches API at half price, usually within the hour.
+  There is no live theming path.
+- A re-run uses its own run_label (for example `netflix-2026q3-retheme`) so it
+  does not collide with `live` rows.
 - Before any re-run over 1,000 answers, estimate the cost (about $0.003 per
   answer through batch at current Haiku 4.5 prices) and get Karim's approval.
 - Back up the themes being replaced first, and verify afterwards that no

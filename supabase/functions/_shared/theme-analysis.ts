@@ -1,8 +1,7 @@
-// Shared theme extraction used by both ai-thematic-analysis (real-time, one
-// response at a time, called fire-and-forget from analyze-response) and
-// ai-thematic-analysis-bulk (cron + admin backfill panel). Kept in one place
-// so the prompt, attribute taxonomy, and validation behaviour can't drift
-// between the two paths.
+// The theme classifier: request body, schema, prompt and validation. Used only
+// by the theme-batch function (Message Batches API). Theming is batch-only;
+// there is deliberately no live call here. ai-thematic-analysis and
+// ai-thematic-analysis-bulk queue responses for theme-batch instead.
 //
 // Backed by Claude Haiku 4.5 with `output_config.format` JSON-schema mode.
 // Why Claude not Gemini:
@@ -20,8 +19,6 @@
 // 40-response batch and reduces TTFT.
 
 import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
-
-import { withClaudeKey } from "./claude-keys.ts";
 
 // Stamped on every ai_themes row (classifier_version). Bump it whenever the
 // model, temperature, schema, SYSTEM_PROMPT or validation below changes, and
@@ -411,29 +408,4 @@ export function parseThemeMessage(
       .map((t: any) => validateCompetitorTheme(t, competitors))
       .filter((t: CompetitorTheme | null): t is CompetitorTheme => t !== null),
   };
-}
-
-export async function analyzeThemes(
-  responseText: string,
-  companyName: string,
-  competitors: string[] = [],
-): Promise<ThemeAnalysisResult> {
-  try {
-    const params = buildThemeRequest(responseText, companyName, competitors);
-    const response = await withClaudeKey<Anthropic.Message>((apiKey) =>
-      clientFor(apiKey).messages.create(params) as Promise<Anthropic.Message>
-    );
-    return parseThemeMessage(response, companyName, responseText, competitors);
-  } catch (e: any) {
-    // Surface rate-limit / overload distinctly so the bulk function's per-response
-    // try/catch can decide what to do. The SDK throws typed exceptions; check by
-    // status rather than message-string matching.
-    if (e instanceof Anthropic.RateLimitError) {
-      throw new Error(`Claude rate-limited (429): ${e.message}`);
-    }
-    if (e instanceof Anthropic.APIError) {
-      throw new Error(`Claude API error ${e.status}: ${e.message}`);
-    }
-    throw e;
-  }
 }
