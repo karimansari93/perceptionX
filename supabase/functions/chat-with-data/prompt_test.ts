@@ -32,6 +32,12 @@ Deno.test('chat prompt embeds the rulebook word for word, adds only persona and 
   assertStringIncludes(prompt, 'association');
   // Chat voice: no process narration, answer first.
   assertStringIncludes(prompt, 'Never narrate your process');
+  // Structured, scannable answers: headings, bold lead-ins, source badges.
+  assertStringIncludes(prompt, '## What\'s working');
+  assertStringIncludes(prompt, '**bold lead-in**');
+  assertStringIncludes(prompt, 'source badge');
+  assertStringIncludes(prompt, 'No em dashes');
+  assert(!/flowing paragraphs/.test(prompt));
   assert(!/excluded models|excludes? (claude|gemini|deepseek)/i.test(prompt));
 });
 

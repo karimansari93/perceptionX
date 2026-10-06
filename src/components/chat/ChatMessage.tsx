@@ -181,18 +181,20 @@ function buildComponents(onAsk?: (q: string) => void): Components {
       return isHttpUrl(href) ? <SourceLinkInline href={href}>{children}</SourceLinkInline> : <span>{children}</span>;
     },
     p: ({ children }) => <p className="text-[15px] leading-[1.65] text-[#13274F] [text-wrap:pretty]">{children}</p>,
-    h1: ({ children }) => <h2 className="font-headline text-base font-semibold tracking-[-0.01em] text-[#13274F]">{children}</h2>,
-    h2: ({ children }) => <h3 className="font-headline text-base font-semibold tracking-[-0.01em] text-[#13274F]">{children}</h3>,
-    h3: ({ children }) => <h4 className="text-sm font-semibold text-[#13274F]">{children}</h4>,
-    h4: ({ children }) => <h5 className="text-sm font-semibold text-[#13274F]">{children}</h5>,
-    ul: ({ children }) => <ul className="list-disc space-y-1 pl-5 text-[14.5px] leading-[1.6] text-[#13274F]">{children}</ul>,
-    ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5 text-[14.5px] leading-[1.6] text-[#13274F]">{children}</ol>,
+    // Section headings carry the structure of an answer, so they sit a step
+    // above body text with room above them; the parent's gap-4 gives the rest.
+    h1: ({ children }) => <h2 className="mt-2 -mb-1.5 font-headline text-[18px] font-semibold tracking-[-0.01em] text-[#13274F]">{children}</h2>,
+    h2: ({ children }) => <h3 className="mt-2 -mb-1.5 font-headline text-[17px] font-semibold tracking-[-0.01em] text-[#13274F]">{children}</h3>,
+    h3: ({ children }) => <h4 className="mt-1 -mb-2 text-[15px] font-semibold text-[#13274F]">{children}</h4>,
+    h4: ({ children }) => <h5 className="-mb-2 text-sm font-semibold text-[#13274F]">{children}</h5>,
+    ul: ({ children }) => <ul className="list-disc space-y-2 pl-5 text-[15px] leading-[1.6] text-[#13274F] marker:text-gray-400">{children}</ul>,
+    ol: ({ children }) => <ol className="list-decimal space-y-2 pl-5 text-[15px] leading-[1.6] text-[#13274F] marker:text-gray-400">{children}</ol>,
     li: ({ children }) => (
       isLinkOnlyItem(children)
         ? <li className="list-none -ml-5"><FullCitation.Provider value={true}>{children}</FullCitation.Provider></li>
         : <li>{children}</li>
     ),
-    strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+    strong: ({ children }) => <strong className="font-semibold text-[#13274F]">{children}</strong>,
     em: ({ children }) => <em>{children}</em>,
     blockquote: ({ children }) => <blockquote className="border-l-2 border-[#0DBCBA]/60 pl-3 text-gray-600 italic">{children}</blockquote>,
     code: ({ children, className }) => {
