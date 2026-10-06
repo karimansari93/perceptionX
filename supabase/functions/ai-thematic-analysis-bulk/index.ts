@@ -1,22 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { analyzeThemes, CLASSIFIER_VERSION, parseCompetitorList } from "../_shared/theme-analysis.ts";
+import { queueForBatchTheming } from "../_shared/theme-queue.ts";
 
-// Bulk theme extraction. Caller provides an array of { response_id,
-// response_text } plus the company_name; we run Gemini 2.5 Flash on each
-// in parallel (capped by BATCH_SIZE) and write the themes back. Used by
-// the AnalyzeThemesPanel admin tool and the theme-backfill-tick cron.
-//
-// Gemini 2.5 Flash is faster (~1-3s) and cheaper than gpt-4o-mini, so we
-// can afford higher parallelism. BATCH_SIZE 8 + 250ms gap = ~30 req/sec
-// peak, well under the Tier-2 Gemini limit (~2k RPM = 33 RPS) and far
-// faster than the old 3-parallel+1s gap pattern (~3 RPS) — a 40-response
-// chunk drops from ~70s to ~15s, keeping us comfortably under the 150s
-// edge timeout even on slow days.
-
-const BATCH_SIZE = 8;
-const INTER_BATCH_DELAY_MS = 250;
+// Bulk entry point used by theme-backfill-tick, the theme gap fill and the
+// admin panel. Theming is batch-only, so this queues the responses for
+// theme-batch instead of calling Claude. Each result reports success: false
+// with error "queued_for_batch" so callers never record a queued response as
+// "no themes found".
 
 const supabase = createClient(
   // @ts-ignore Deno.env is available in edge runtime
@@ -36,204 +27,31 @@ serve(async (req) => {
   }
 
   try {
-    const body = await req.json();
-    const { responses, company_name, clear_existing = true } = body;
-
+    const { responses, company_name } = await req.json();
     if (!Array.isArray(responses) || responses.length === 0) {
       return json({ error: "responses array is required and must not be empty" }, 400);
     }
-    if (!company_name) {
-      return json({ error: "company_name is required" }, 400);
-    }
+    if (!company_name) return json({ error: "company_name is required" }, 400);
 
-    const responseIds = responses.map((r: ResponseData) => r.response_id);
-
-    if (clear_existing && responseIds.length > 0) {
-      const { error: deleteError } = await supabase
-        .from("ai_themes")
-        .delete()
-        .in("response_id", responseIds);
-      if (deleteError) {
-        console.warn("Error clearing existing themes:", deleteError);
-      }
-      // Competitor triples come from the same extraction pass — clear them
-      // together so a re-run can't leave stale competitor rows behind.
-      const { error: deleteCompError } = await supabase
-        .from("competitor_themes")
-        .delete()
-        .in("response_id", responseIds);
-      if (deleteCompError) {
-        console.warn("Error clearing existing competitor themes:", deleteCompError);
-      }
-    }
-
-    // Detected competitors per response (canonical form), one query for the
-    // whole batch. Passed into the extraction call so competitor ↔ attribute
-    // ↔ sentiment triples come out alongside the company themes.
-    const competitorsByResponse = new Map<string, string[]>();
-    if (responseIds.length > 0) {
-      const { data: responseRows, error: rowsError } = await supabase
-        .from("prompt_responses")
-        .select("id, canonical_competitors, detected_competitors")
-        .in("id", responseIds);
-      if (rowsError) {
-        console.warn("Error fetching competitor lists for batch:", rowsError);
-      }
-      for (const row of responseRows ?? []) {
-        competitorsByResponse.set(
-          row.id,
-          parseCompetitorList(row.canonical_competitors ?? row.detected_competitors, company_name),
-        );
-      }
-    }
-
-    const results: Array<Record<string, unknown>> = [];
-    let totalThemesCreated = 0;
-
-    for (let i = 0; i < responses.length; i += BATCH_SIZE) {
-      const batch = responses.slice(i, i + BATCH_SIZE);
-
-      const batchResults = await Promise.all(
-        batch.map(async (response: ResponseData) => {
-          try {
-            // Skip-if-themed lets the cron race the real-time trigger
-            // without double-paying for Gemini calls.
-            const { data: existing } = await supabase
-              .from("ai_themes")
-              .select("id")
-              .eq("response_id", response.response_id)
-              .limit(1);
-
-            if (existing && existing.length > 0) {
-              return {
-                response_id: response.response_id,
-                success: true,
-                message: "Themes already exist",
-                themes_count: existing.length,
-              };
-            }
-
-            const { themes, competitorThemes } = await analyzeThemes(
-              response.response_text,
-              company_name,
-              competitorsByResponse.get(response.response_id) ?? [],
-            );
-
-            // Insert competitor triples even when no company themes were
-            // found (a discovery answer can describe competitors without
-            // saying anything about the company). The BEFORE INSERT trigger
-            // canonicalizes names, stamps company_id, drops noise/self rows.
-            let competitorThemesCreated = 0;
-            if (competitorThemes.length > 0) {
-              const { data: insertedComp, error: compInsertError } = await supabase
-                .from("competitor_themes")
-                .insert(competitorThemes.map((t) => ({
-                  response_id: response.response_id,
-                  competitor_name: t.competitor_name,
-                  attribute_id: t.attribute_id,
-                  attribute_name: t.attribute_name,
-                  sentiment: t.sentiment,
-                  sentiment_score: t.sentiment_score,
-                  context_snippet: t.context_snippet,
-                })))
-                .select();
-              if (compInsertError) {
-                console.warn(`Competitor-theme insert error for ${response.response_id}:`, compInsertError);
-              } else {
-                competitorThemesCreated = insertedComp?.length ?? 0;
-              }
-            }
-
-            if (themes.length === 0) {
-              return {
-                response_id: response.response_id,
-                success: true,
-                message: "No themes identified",
-                themes_count: 0,
-                competitor_themes_count: competitorThemesCreated,
-              };
-            }
-
-            const themeInserts = themes.map((theme) => ({
-              response_id: response.response_id,
-              theme_name: theme.theme_name,
-              theme_description: theme.theme_description,
-              sentiment: theme.sentiment,
-              sentiment_score: theme.sentiment_score,
-              attribute_id: theme.attribute_id,
-              attribute_name: theme.attribute_name,
-              confidence_score: theme.confidence_score,
-              keywords: theme.keywords,
-              context_snippets: theme.context_snippets,
-              classifier_version: CLASSIFIER_VERSION,
-            }));
-
-            const { data: insertedThemes, error: insertError } = await supabase
-              .from("ai_themes")
-              .insert(themeInserts)
-              .select();
-
-            if (insertError) {
-              console.error(`Insert error for ${response.response_id}:`, insertError);
-              return {
-                response_id: response.response_id,
-                success: false,
-                error: insertError.message,
-                themes_count: 0,
-              };
-            }
-
-            return {
-              response_id: response.response_id,
-              success: true,
-              themes_count: insertedThemes?.length ?? 0,
-              competitor_themes_count: competitorThemesCreated,
-              positive_themes: themes.filter((t) => t.sentiment === "positive").length,
-              negative_themes: themes.filter((t) => t.sentiment === "negative").length,
-              neutral_themes: themes.filter((t) => t.sentiment === "neutral").length,
-            };
-          } catch (error: any) {
-            console.error(`Error processing response ${response.response_id}:`, error?.message ?? error);
-            return {
-              response_id: response.response_id,
-              success: false,
-              error: error?.message ?? String(error),
-              themes_count: 0,
-            };
-          }
-        }),
-      );
-
-      for (const r of batchResults) {
-        results.push(r);
-        const n = (r as any).themes_count;
-        if (typeof n === "number") totalThemesCreated += n;
-      }
-
-      // Small gap between batches keeps us under Gemini per-second limits
-      // when the cron + admin panel happen to fire concurrently.
-      if (i + BATCH_SIZE < responses.length) {
-        await new Promise((resolve) => setTimeout(resolve, INTER_BATCH_DELAY_MS));
-      }
-    }
-
-    const successful = results.filter((r) => (r as any).success);
-    const failed = results.filter((r) => !(r as any).success);
+    const ids = responses.map((r: ResponseData) => r.response_id);
+    const { queued, error } = await queueForBatchTheming(supabase, ids, company_name);
+    if (error) return json({ error: "Failed to queue for batch theming", details: error }, 500);
 
     return json({
       success: true,
       summary: {
-        total_responses: responses.length,
-        successful_responses: successful.length,
-        failed_responses: failed.length,
-        total_themes: totalThemesCreated,
-        total_themes_created: totalThemesCreated,
+        total_responses: ids.length,
+        queued_for_batch: queued,
+        successful_responses: 0,
+        failed_responses: 0,
+        total_themes: 0,
+        total_themes_created: 0,
       },
-      results,
+      results: ids.map((id: string) => ({ response_id: id, success: false, error: "queued_for_batch" })),
     });
   } catch (error: any) {
-    console.error("Error in bulk AI thematic analysis:", error);
-    return json({ error: "Failed to analyze themes", details: error?.message ?? String(error) }, 500);
+    console.error("Error queueing bulk theme analysis:", error);
+    return json({ error: "Failed to queue themes", details: error?.message ?? String(error) }, 500);
   }
 });
 

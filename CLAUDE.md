@@ -16,8 +16,10 @@
 
 ## Cost
 
-- Bulk re-theming goes through `theme-batch` (Message Batches API, half
-  price). Do not loop live Claude calls over large sets of answers.
+- All AI theming is batch-only (Karim, 2026-10-06): new collections and
+  re-runs alike go through `theme-batch` (Message Batches API, half price).
+  `ai-thematic-analysis` and `ai-thematic-analysis-bulk` only queue
+  responses; never add a live Claude call for themes back.
 - Quote the estimated cost and get Karim's approval before any job over 1,000
   answers. Our timelines are usually a month, so slower and cheaper wins.
 - Keep background check-ins sparse: report on completion or on a problem, not
