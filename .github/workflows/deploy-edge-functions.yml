@@ -1,0 +1,89 @@
+# Deploys Supabase edge functions from GitHub, so no laptop or cloud session
+# needs a Supabase token.
+#
+# * Merge to main: deploys only the functions the push changed (their own
+#   folder, or a _shared/ module they import). Untouched functions are left
+#   exactly as they are in production.
+# * Run workflow (Actions tab → "Deploy edge functions" → Run workflow): pick a
+#   branch and name the functions, to try a change in production before it is
+#   merged. Merging later deploys the same code again.
+#
+# Needs one repository secret: SUPABASE_ACCESS_TOKEN (a Supabase personal
+# access token; Settings → Secrets and variables → Actions).
+# verify_jwt per function comes from supabase/config.toml.
+
+name: Deploy edge functions
+
+on:
+  push:
+    branches: [main]
+    paths: ['supabase/functions/**', 'supabase/config.toml']
+  workflow_dispatch:
+    inputs:
+      functions:
+        description: 'Functions to deploy from the selected branch, separated by spaces (e.g. chat-with-data)'
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-edge-functions
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_REF: ofyjvfmcgtntwamkubui
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Work out which functions to deploy
+        id: pick
+        env:
+          INPUT_FUNCTIONS: ${{ inputs.functions }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            list=""
+            for fn in $INPUT_FUNCTIONS; do
+              if [ ! -f "supabase/functions/$fn/index.ts" ]; then
+                echo "::error::No edge function called '$fn' on this branch"; exit 1
+              fi
+              list="$list $fn"
+            done
+          else
+            base="$BEFORE"
+            if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then base="$AFTER~1"; fi
+            list=$(scripts/changed-edge-functions.sh "$base" "$AFTER" | tr '\n' ' ')
+          fi
+          list=$(echo $list)
+          echo "functions=$list" >> "$GITHUB_OUTPUT"
+          if [ -n "$list" ]; then echo "Deploying: $list"; else echo "No edge functions changed."; fi
+
+      - uses: supabase/setup-cli@v1
+        if: steps.pick.outputs.functions != ''
+        with:
+          version: latest
+
+      - name: Deploy
+        if: steps.pick.outputs.functions != ''
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          FUNCTIONS: ${{ steps.pick.outputs.functions }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::Add the SUPABASE_ACCESS_TOKEN repository secret (Settings → Secrets and variables → Actions)"; exit 1
+          fi
+          for fn in $FUNCTIONS; do
+            echo "::group::$fn"
+            supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --use-api
+            echo "::endgroup::"
+            echo "- \`$fn\` deployed from \`${GITHUB_REF_NAME}\` @ \`${GITHUB_SHA::7}\`" >> "$GITHUB_STEP_SUMMARY"
+          done

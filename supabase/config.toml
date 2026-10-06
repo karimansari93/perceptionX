@@ -332,3 +332,16 @@ s3_region = "env(S3_REGION)"
 s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
+
+# Edge functions that are called without a Supabase user JWT (webhooks, cron,
+# the MCP connector with its own OAuth). `supabase functions deploy` reads
+# these, so CI deploys keep the same setting as production. Every other
+# function deploys with verify_jwt = true.
+[functions.mcp-server]
+verify_jwt = false
+
+[functions.process-visibility-queue]
+verify_jwt = false
+
+[functions.test-prompt-openai]
+verify_jwt = false
