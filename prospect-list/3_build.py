@@ -54,7 +54,7 @@ NON_COMPANY = re.compile(
 NON_COMPANY_NAME = re.compile(
     r"\b(universit|hospital|ministry|police|army|navy|air force|armed forces|civil service|"
     r"fonction publique|council|municipality|county of|city of|state of|government|"
-    r"department of|school|college|health (?:service|board|trust|authority)|red cross)", re.I)
+    r"department of|school|college|health (?:service|board|trust|authority)|red cross|postal service)", re.I)
 REVIEW_REVENUE = 300_000_000      # US-HQ filer above this with no headcount found -> "Check headcount" tab
 REVIEW_REVENUE_HIGH = 5_000_000_000  # ...or with a parsed headcount under the floor (likely misread)
 FREE_MAIL = {"gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com",
@@ -131,7 +131,14 @@ def main():
     if sec_path.exists():
         sec = json.loads(sec_path.read_text())
     else:  # step 2 still running: use the filings read so far
-        sec = [json.loads(f.read_text()) for f in (CACHE / "sec").glob("*.json")]
+        sec = []
+        for f in (CACHE / "sec").glob("*.json"):
+            try:
+                rec = json.loads(f.read_text())
+            except json.JSONDecodeError:  # being written right now
+                continue
+            if rec.get("parser"):  # skip answers from the first, less accurate reader
+                sec.append(rec)
         print(f"WARNING: step 2 has not finished; using the {len(sec)} SEC filers read so far")
     rev_path = CACHE / "sec_revenue.json"
     revenue = {int(k): v for k, v in json.loads(rev_path.read_text()).items()} if rev_path.exists() else {}
@@ -323,7 +330,8 @@ def main():
             flags.append("STALE" + ("" if e["asof"] else " (no date)"))
         if e["kind"] == "unclear":
             flags.append("CHECK TYPE")
-        if (e["emp"] or 0) > PLAUSIBLE_MAX and "CHECK HEADCOUNT" not in flags:
+        undated_big = e["source"] == "Wikidata" and not e["asof"] and (e["emp"] or 0) >= 100_000
+        if ((e["emp"] or 0) > PLAUSIBLE_MAX or undated_big) and "CHECK HEADCOUNT" not in flags:
             flags.append("CHECK HEADCOUNT")
         if e["merged"]:
             flags.append("MERGED: " + "; ".join(e["merged"][:5]) + ("…" if len(e["merged"]) > 5 else ""))
