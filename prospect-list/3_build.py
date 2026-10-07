@@ -23,15 +23,16 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 sec_reader = importlib.import_module("2_sec")  # reuse the step 2 headcount reader
-from common import CACHE, INPUTS, MAIN_THRESHOLD, MIN_EMPLOYEES, OUTPUT, norm_domain, norm_name
+from common import CACHE, INPUTS, ROOT, get, MAIN_THRESHOLD, MIN_EMPLOYEES, OUTPUT, norm_domain, norm_name
 
 STALE_BEFORE = "2024-01-01"
-OUTFILE = OUTPUT / "10k-companies-master.xlsx"
+OUTFILE = OUTPUT / "10k-companies-master-v2.xlsx"
 
 COLUMNS = ["Company", "Domain", "Parent", "Country", "HQ city", "Industry", "Employees",
            "Employees as of", "Source", "US-listed (Y/N)", "AI-mentioned (Y/N)", "Flags",
            # Andy's network
-           "Andy LinkedIn contacts", "Andy HubSpot contacts", "Andy connected (Y/N)", "Andy's contacts (up to 5)",
+           "Status", "Andy LinkedIn contacts", "Andy HubSpot contacts", "Andy connected (Y/N)",
+           "Buyer contact (Y/N)", "Andy's contacts (up to 5, buyers first)",
            # extra reference columns, kept to the right of the requested ones
            "Ticker", "Wikidata ID", "SEC CIK"]
 
@@ -64,6 +65,15 @@ FREE_MAIL = {"gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook
              "icloud.com", "me.com", "aol.com", "msn.com", "protonmail.com", "proton.me", "gmx.com",
              "hotmail.co.uk", "yahoo.co.uk", "btinternet.com", "perceptionx.ai"}
 MIN_REVENUE_PER_EMPLOYEE = 15_000  # below this an SEC headcount is a misread (units, sq ft, ...)
+SANITY_RATIO = 3          # SEC vs Wikidata more than 3x apart (either way) -> flag
+SANITY_MAX = 1_000_000    # any headcount above this -> flag
+UNVERIFIED_MIN = 50_000   # Wikidata-only, undated, at least this big -> "Check headcount" tab
+# Roles from job titles. BUYER is checked first, so "Employer Brand Manager" is a buyer.
+BUYER_RE = re.compile(r"\b(hr|human resources?|talent|recruit\w*|employer brand\w*|people|early careers?|"
+                      r"comms|communications?|chro|culture|employee (?:experience|engagement|value)|hrbp|"
+                      r"careers?|workforce|internal comms)\b", re.I)
+INFLUENCER_RE = re.compile(r"\b(marketing|brand\w*|cmo)\b", re.I)
+STATUS_ORDER = ["CURRENT CLIENT", "ACTIVE", "LINKEDIN ONLY", "CONNECTED NOT BUYER", "UNTOUCHED"]
 PLAUSIBLE_MAX = 2_500_000  # Walmart, the largest private employer, is about 2.1-2.3m
 # Wikidata batch with junk headcounts (stadiums and road networks with 1m+ "employees"):
 # Ukrainian entities dated 1 January 2024/2025. Ignore those statements.
@@ -199,6 +209,45 @@ def main():
         merged.append(head)
     ents = merged
 
+    # ---- 2b. Reviewed corrections (corrections.csv), tied to one filing each ---------
+    corr = {}
+    corr_path = ROOT / "corrections.csv"
+    if corr_path.exists():
+        with corr_path.open(newline="") as f:
+            for row in csv.DictReader(f):
+                corr[(int(row["cik"]), row["accession"])] = row
+    for s in sec:
+        c = corr.get((s["cik"], s.get("accession")))
+        if c:
+            s["employees"] = int(c["employees"]) if c["employees"] else None
+            s["review_note"] = f"{c['action']}: \"{c['evidence']}\""
+            s["snippet"] = c["evidence"]
+
+    # ---- 2c. Subsidiary filers -> parent -----------------------------------------------
+    # One combined annual report (same accession) covers parent and subsidiaries, e.g. Entergy;
+    # or a managed fund repeats its manager's headcount (BlackRock TCP Capital -> BlackRock).
+    def rev_of(s):
+        return revenue.get(s["cik"], {}).get("revenue") or 0
+    groups = defaultdict(list)
+    for s in sec:
+        if s.get("accession"):
+            groups[("acc", s["accession"])].append(s)
+        if s["employees"] and s["employees"] >= MIN_EMPLOYEES:
+            groups[("same", (norm_name(s["name"]).split() or [""])[0], s["employees"], s["period"])].append(s)
+    absorbed = set()
+    for members in groups.values():
+        members = [m for m in members if m["cik"] not in absorbed]
+        if len(members) < 2:
+            continue
+        head = max(members, key=lambda m: (rev_of(m), -len(m["name"])))
+        for m in members:
+            if m is not head:
+                absorbed.add(m["cik"])
+                head.setdefault("merged_filers", []).append(m["name"])
+                head["tickers"] = sorted(set(head["tickers"]) | set(m["tickers"]))
+    sec = [s for s in sec if s["cik"] not in absorbed]
+    print(f"SEC: merged {len(absorbed)} subsidiary filers into their parent")
+
     # ---- 3. Attach SEC filings ------------------------------------------------------
     by_cik = {c: e for e in ents for c in e["ciks"]}
     by_ticker = {t.upper(): e for e in ents for t in e["tickers"]}
@@ -251,6 +300,9 @@ def main():
             ents.append(e)
             sec_only += 1
         e["us_listed"] = True
+        e["merged"] += s.get("merged_filers", [])
+        if s.get("review_note"):
+            e["extra_flags"].append(s["review_note"])
         if st in US_STATES and (s.get("form") or "").startswith("10-K"):
             e["us_hq"] = True  # a 10-K from a US address: US HQ (20-F filers are foreign)
         e["tickers"] |= set(s["tickers"])
@@ -318,8 +370,18 @@ def main():
             if abs(a - b) / max(a, b) > 0.05:
                 e["extra_flags"].append(
                     "HEADCOUNTS DIFFER: " + "; ".join(f"{c[0]} {c[1]:,} ({c[2] or 'no date'})" for c in cands))
-            if abs(a - b) / max(a, b) > 0.5:
-                e["extra_flags"].append("CHECK HEADCOUNT")
+        sec_c = next((c for c in cands if c[0].startswith("SEC")), None)
+        wd_c = next((c for c in cands if c[0] == "Wikidata"), None)
+        reviewed = any(f.startswith(("CORRECTED", "CHECKED")) for f in e["extra_flags"])
+        if sec_c and wd_c and not reviewed:
+            ratio = sec_c[1] / wd_c[1]
+            if ratio > SANITY_RATIO or ratio < 1 / SANITY_RATIO:
+                e["extra_flags"].append(f"CHECK HEADCOUNT: SEC is {ratio:.1f}x Wikidata")
+        if (e["emp"] or 0) > SANITY_MAX and not reviewed:
+            e["extra_flags"].append("CHECK HEADCOUNT: over 1,000,000")
+        if src == "Wikidata" and not e["asof"] and e["emp"] >= UNVERIFIED_MIN:
+            e["unverified"] = True
+            e["extra_flags"].append("UNVERIFIED: Wikidata only, no date")
 
     # ---- 5. PerceptionX lists --------------------------------------------------------
     by_dom = {e["key"]: e for e in ents if e.get("key")}
@@ -363,8 +425,13 @@ def main():
             targets = {id(e): e for e in ents
                        if (dom and e.get("key") and e["key"] == norm_domain(dom))
                        or (name and norm_name(name) in {norm_name(n) for n in [e["name"], *e["merged"]]})}
+            possible = (row.get("status") or "").strip().lower() == "possible"
             for e in targets.values():
-                e["extra_flags"].insert(0, "CURRENT CLIENT")
+                if possible:
+                    e["extra_flags"].insert(0, "POSSIBLE CLIENT - confirm")
+                else:
+                    e["client"] = True
+                    e["extra_flags"].insert(0, "CURRENT CLIENT")
                 hit += 1
         print(f"Clients: {len(rows)} names, {hit} rows flagged CURRENT CLIENT")
 
@@ -392,7 +459,11 @@ def main():
             flags.append("MERGED: " + "; ".join(e["merged"][:5]) + ("…" if len(e["merged"]) > 5 else ""))
         e["flags"] = flags
         top = ultimate(e) if e["kind"] in ("company", "unclear") else None
-        if top:
+        if e.get("client") and e["kind"] != "non-company":
+            e["tab"] = "clients"
+            if top:
+                e["parent"] = top["name"]
+        elif top:
             e["parent"] = top["name"]
             e["tab"] = "subs"
         elif e["kind"] == "non-company":
@@ -402,7 +473,7 @@ def main():
             e["flags"].insert(0, f"DISSOLVED {e['dissolved']}")
         elif e["kind"] == "ai-only":
             e["tab"] = "ai"
-        elif e["kind"] == "review":
+        elif e["kind"] == "review" or e.get("unverified"):
             e["tab"] = "check"
         elif e.get("us_hq"):
             e["tab"] = "main" if e["emp"] >= MAIN_THRESHOLD else "mid"
@@ -431,19 +502,31 @@ def main():
                 return idx_name[key]
         return None
 
+    def role_of(title):
+        if not title:
+            return "UNKNOWN"
+        if BUYER_RE.search(title):
+            return "BUYER"
+        return "INFLUENCER" if INFLUENCER_RE.search(title) else "OTHER"
+
     for e in ents:
         e["li"], e["hs"] = [], []
     li_rows, hs_rows = 0, 0
+    titles = {}  # (first, last) -> LinkedIn position, used to give HubSpot contacts a role
     li_path = INPUTS / "andy_linkedin.csv"
     if li_path.exists():
         lines_ = li_path.read_text(encoding="utf-8-sig").splitlines()
         start = next(i for i, l in enumerate(lines_) if l.startswith("First Name"))
         for row in csv.DictReader(lines_[start:]):
             li_rows += 1
+            first, last = (row.get("First Name") or "").strip(), (row.get("Last Name") or "").strip()
+            titles[(first.lower(), last.lower())] = row.get("Position") or ""
             e = by_company(row.get("Company"))
             if e:
-                e["li"].append(f"{row['First Name']} {row['Last Name']}, {row.get('Position', '')} "
-                               f"({row.get('Company')}) [LinkedIn]")
+                e["li"].append({"name": f"{first} {last}", "title": row.get("Position") or "",
+                                "company": row.get("Company"), "src": "LinkedIn",
+                                "email": (row.get("Email Address") or "").lower(),
+                                "role": role_of(row.get("Position"))})
     hs_path = INPUTS / "andy_hubspot.csv"
     if hs_path.exists():
         with hs_path.open(newline="", encoding="utf-8-sig") as f:
@@ -454,8 +537,11 @@ def main():
                 e = (idx_dom.get(dom) if dom and dom not in FREE_MAIL else None) \
                     or by_company(row.get("Associated Company"))
                 if e and dom != "perceptionx.ai":
-                    who = f"{row.get('First Name', '')} {row.get('Last Name', '')}".strip() or email
-                    e["hs"].append(f"{who} ({row.get('Associated Company') or dom}) [HubSpot]")
+                    first, last = (row.get("First Name") or "").strip(), (row.get("Last Name") or "").strip()
+                    title = titles.get((first.lower(), last.lower()), "")
+                    e["hs"].append({"name": f"{first} {last}".strip() or email, "title": title,
+                                    "company": row.get("Associated Company") or dom, "src": "HubSpot",
+                                    "email": email, "role": role_of(title)})
     # contacts at a subsidiary also count for its parent
     parents = {e["name"]: e for e in ents if e["tab"] != "subs"}
     for e in ents:
@@ -464,17 +550,86 @@ def main():
             parents[e["parent"]]["hs"] += e["hs"]
     print(f"Andy: {li_rows} LinkedIn connections, {hs_rows} HubSpot contacts read")
 
+    # ---- 6c. Status ------------------------------------------------------------------
+    for e in ents:
+        e["buyer"] = any(c["role"] == "BUYER" for c in e["li"] + e["hs"])
+        if e.get("client"):
+            e["status"] = "CURRENT CLIENT"
+        elif any(c["role"] == "BUYER" for c in e["hs"]):
+            e["status"] = "ACTIVE"
+        elif any(c["role"] == "BUYER" for c in e["li"]):
+            e["status"] = "LINKEDIN ONLY"
+        elif e["li"] or e["hs"]:
+            e["status"] = "CONNECTED NOT BUYER"
+        else:
+            e["status"] = "UNTOUCHED"
+
+    # ---- 6d. Fill missing website domains ----------------------------------------------
+    def resembles(dom, name):
+        label = dom.split(".")[0]
+        words = [w for w in norm_name(name).split() if len(w) >= 3]
+        return any(w[:4] in label or label in w for w in words) or \
+            "".join(w[0] for w in norm_name(name).split()) == label  # initials: "ibm"
+    lookup_path = CACHE / "domain_lookup.json"
+    lookup = json.loads(lookup_path.read_text()) if lookup_path.exists() else {}
+
+    def wikidata_domain(name):
+        if name in lookup:
+            return lookup[name]
+        dom = ""
+        try:
+            hits = get("https://www.wikidata.org/w/api.php", params={
+                "action": "wbsearchentities", "search": name, "language": "en", "type": "item",
+                "limit": 3, "format": "json"}).json().get("search", [])
+            ids = "|".join(h["id"] for h in hits)
+            if ids:
+                ents_ = get("https://www.wikidata.org/w/api.php", params={
+                    "action": "wbgetentities", "ids": ids, "props": "claims", "format": "json"}).json()
+                for h in hits:
+                    for c in ents_.get("entities", {}).get(h["id"], {}).get("claims", {}).get("P856", []):
+                        d = norm_domain(c["mainsnak"].get("datavalue", {}).get("value", ""))
+                        if d and resembles(d, name):
+                            dom = d
+                            break
+                    if dom:
+                        break
+        except Exception:
+            return ""  # try again next run
+        lookup[name] = dom
+        return dom
+
+    filled = Counter()
+    for e in ents:
+        if e["domain"] or e["tab"] not in ("clients", "main", "mid", "global", "check"):
+            continue
+        doms = Counter(norm_domain(c["email"].split("@")[-1]) for c in e["li"] + e["hs"]
+                       if "@" in c["email"])
+        doms = [d for d, n in doms.most_common() if d not in FREE_MAIL and (n >= 2 or resembles(d, e["name"]))]
+        if doms:
+            e["domain"], how = doms[0], "contact emails"
+        else:
+            e["domain"], how = wikidata_domain(re.sub(r"\s*/[A-Za-z]{2,3}/?\s*$", "", e["name"])), "Wikidata search"
+        if e["domain"]:
+            filled[how] += 1
+            e["flags"] = [f for f in e["flags"] if f != "NO DOMAIN"] + [f"DOMAIN FROM {how.upper()}"]
+    lookup_path.write_text(json.dumps(lookup, indent=1))
+    print(f"Domains filled: {dict(filled)}; still missing on company tabs: "
+          f"{sum(1 for e in ents if not e['domain'] and e['tab'] in ('clients', 'main', 'mid', 'global', 'check'))}")
+
     # ---- 7. Write workbook ----------------------------------------------------------
     def row_of(e):
         return [e["name"], e["domain"], e["parent"], e["country"], e["city"], e["industry"],
                 e["emp"], e["asof"], e["source"], "Y" if e["us_listed"] else "N",
                 "Y" if e["ai"] else "N", " | ".join(e["flags"]),
-                len(e["li"]), len(e["hs"]), "Y" if (e["li"] or e["hs"]) else "N",
-                "; ".join((e["hs"] + e["li"])[:5]),
+                e["status"], len(e["li"]), len(e["hs"]), "Y" if (e["li"] or e["hs"]) else "N",
+                "Y" if e["buyer"] else "N",
+                "; ".join(f"{c['name']}, {c['title'] or 'no title'} ({c['company']}) [{c['src']}] {{{c['role']}}}"
+                          for c in sorted(e["hs"] + e["li"],
+                                          key=lambda c: (c["role"] != "BUYER", c["src"] != "HubSpot"))[:5]),
                 ", ".join(sorted(e["tickers"]))[:80], ", ".join(sorted(e["qids"])),
                 ", ".join(str(c) for c in sorted(e["ciks"]))]
 
-    tabs = [("main", f"US HQ {MAIN_THRESHOLD // 1000}k+"),
+    tabs = [("clients", "Current clients"), ("main", f"US HQ {MAIN_THRESHOLD // 1000}k+"),
             ("mid", f"US HQ {MIN_EMPLOYEES // 1000}k-{MAIN_THRESHOLD // 1000}k"),
             ("global", "Global HQ, US presence"), ("check", "Check headcount (US HQ)"),
             ("nous", "No US presence found"), ("subs", "Subsidiaries & brands"),
@@ -494,7 +649,7 @@ def main():
             c.font, c.fill = head_font, head_fill
         ws.freeze_panes = "B2"
         ws.auto_filter.ref = ws.dimensions
-        for i, w in enumerate([34, 22, 26, 18, 18, 30, 12, 13, 26, 10, 12, 50, 10, 10, 10, 70,
+        for i, w in enumerate([34, 22, 26, 18, 18, 30, 12, 13, 26, 10, 12, 50, 20, 10, 10, 10, 10, 80,
                                18, 14, 12, 40][:len(cols)], 1):
             ws.column_dimensions[get_column_letter(i)].width = w
         for (cell,) in ws.iter_rows(min_row=2, min_col=7, max_col=7):
@@ -517,10 +672,18 @@ def main():
     main, mid = counts("main"), counts("mid")
     is_stale = lambda e: any(f.startswith("STALE") for f in e["flags"])
     conn = lambda grp: sum(bool(e["li"] or e["hs"]) for e in grp)
+    status_rows = [["Status (all company tabs)", "US HQ 10k+", "US HQ 5k-10k", "Global, US presence",
+                    "Check headcount", "Current clients"]]
+    for st in STATUS_ORDER:
+        status_rows.append([st] + [sum(e["status"] == st for e in counts(k))
+                                   for k in ("main", "mid", "global", "check", "clients")])
     lines = [
         ["10k+ companies master list (US HQ focus)", ""],
         ["Built", today],
         ["", ""],
+        ["Current clients (own tab)", len(counts("clients"))],
+        ["POSSIBLE CLIENT - confirm (all tabs)", sum("POSSIBLE CLIENT - confirm" in e["flags"] for e in ents)],
+        ["CORRECTED headcounts (re-read from the filing)", sum(any(f.startswith("CORRECTED") for f in e["flags"]) for e in ents)],
         [f"US HQ companies with {MAIN_THRESHOLD:,}+ employees", len(main)],
         [f"  of which STALE (headcount before {STALE_BEFORE[:4]} or undated)", sum(map(is_stale, main))],
         ["  Andy connected (LinkedIn or HubSpot)", conn(main)],
@@ -540,10 +703,18 @@ def main():
         ["US-listed (US HQ 10k+)", sum(e["us_listed"] for e in main)],
         ["AI-mentioned (US HQ 10k+)", sum(e["ai"] for e in main)],
         ["CURRENT CLIENT (all tabs)", sum("CURRENT CLIENT" in e["flags"] for e in ents)],
-        ["CHECK HEADCOUNT (sources differ by >50%)", sum("CHECK HEADCOUNT" in e["flags"] for e in ents)],
+        ["CHECK HEADCOUNT (SEC vs Wikidata >3x apart, or over 1m)",
+         sum(any(f.startswith("CHECK HEADCOUNT") for f in e["flags"]) for e in ents)],
+        ["UNVERIFIED (Wikidata only, undated, 50k+; on Check tab)", sum(bool(e.get("unverified")) for e in ents)],
     ]
     for line in lines:
         summary.append(line)
+    summary.append([])
+    for i, line in enumerate(status_rows):
+        summary.append(line)
+        if i == 0:
+            for c in summary[summary.max_row]:
+                c.font = Font(bold=True)
     summary["A1"].font = Font(bold=True, size=14)
 
     def block(col, title, counter):
