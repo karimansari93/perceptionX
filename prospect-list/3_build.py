@@ -18,12 +18,13 @@ import re
 from collections import Counter, defaultdict
 from datetime import date
 
+import requests
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 sec_reader = importlib.import_module("2_sec")  # reuse the step 2 headcount reader
-from common import CACHE, INPUTS, ROOT, get, MAIN_THRESHOLD, MIN_EMPLOYEES, OUTPUT, norm_domain, norm_name
+from common import CACHE, INPUTS, ROOT, USER_AGENT, MAIN_THRESHOLD, MIN_EMPLOYEES, OUTPUT, norm_domain, norm_name
 
 STALE_BEFORE = "2024-01-01"
 OUTFILE = OUTPUT / "10k-companies-master-v2.xlsx"
@@ -71,7 +72,8 @@ UNVERIFIED_MIN = 50_000   # Wikidata-only, undated, at least this big -> "Check 
 # Roles from job titles. BUYER is checked first, so "Employer Brand Manager" is a buyer.
 BUYER_RE = re.compile(r"\b(hr|human resources?|talent|recruit\w*|employer brand\w*|people|early careers?|"
                       r"comms|communications?|chro|culture|employee (?:experience|engagement|value)|hrbp|"
-                      r"careers?|workforce|internal comms)\b", re.I)
+                      r"careers?|workforce|internal comms|compensation|benefits|total rewards?|reward|"
+                      r"(?:global|international) mobility)\b", re.I)
 INFLUENCER_RE = re.compile(r"\b(marketing|brand\w*|cmo)\b", re.I)
 STATUS_ORDER = ["CURRENT CLIENT", "ACTIVE", "LINKEDIN ONLY", "CONNECTED NOT BUYER", "UNTOUCHED"]
 PLAUSIBLE_MAX = 2_500_000  # Walmart, the largest private employer, is about 2.1-2.3m
@@ -573,18 +575,33 @@ def main():
     lookup_path = CACHE / "domain_lookup.json"
     lookup = json.loads(lookup_path.read_text()) if lookup_path.exists() else {}
 
+    throttled = [False]
+
     def wikidata_domain(name):
         if name in lookup:
             return lookup[name]
+        if throttled[0]:
+            return ""  # Wikidata said "too many requests" earlier this run; try again next run
         dom = ""
         try:
-            hits = get("https://www.wikidata.org/w/api.php", params={
-                "action": "wbsearchentities", "search": name, "language": "en", "type": "item",
-                "limit": 3, "format": "json"}).json().get("search", [])
+            time.sleep(1)  # Wikidata asks for one request at a time, unhurried
+            r = requests.get("https://www.wikidata.org/w/api.php", headers={"User-Agent": USER_AGENT}, timeout=30,
+                             params={"action": "wbsearchentities", "search": name, "language": "en",
+                                     "type": "item", "limit": 3, "format": "json"})
+            if r.status_code == 429:
+                throttled[0] = True
+                print("  Wikidata rate limit reached; remaining domain lookups wait for the next run")
+                return ""
+            hits = r.json().get("search", [])
             ids = "|".join(h["id"] for h in hits)
             if ids:
-                ents_ = get("https://www.wikidata.org/w/api.php", params={
-                    "action": "wbgetentities", "ids": ids, "props": "claims", "format": "json"}).json()
+                r = requests.get("https://www.wikidata.org/w/api.php", headers={"User-Agent": USER_AGENT},
+                                 timeout=30, params={"action": "wbgetentities", "ids": ids,
+                                                     "props": "claims", "format": "json"})
+                if r.status_code == 429:
+                    throttled[0] = True
+                    return ""
+                ents_ = r.json()
                 for h in hits:
                     for c in ents_.get("entities", {}).get(h["id"], {}).get("claims", {}).get("P856", []):
                         d = norm_domain(c["mainsnak"].get("datavalue", {}).get("value", ""))
@@ -596,6 +613,7 @@ def main():
         except Exception:
             return ""  # try again next run
         lookup[name] = dom
+        lookup_path.write_text(json.dumps(lookup, indent=1))  # save as we go
         return dom
 
     filled = Counter()
