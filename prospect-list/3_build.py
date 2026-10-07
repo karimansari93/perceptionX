@@ -11,6 +11,8 @@ Inputs (all optional except the caches from steps 1 and 2):
   inputs/andy_hubspot.csv        -> HubSpot contacts export
 """
 import csv
+import gzip
+import importlib
 import json
 import re
 from collections import Counter, defaultdict
@@ -20,6 +22,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+sec_reader = importlib.import_module("2_sec")  # reuse the step 2 headcount reader
 from common import CACHE, INPUTS, MAIN_THRESHOLD, MIN_EMPLOYEES, OUTPUT, norm_domain, norm_name
 
 STALE_BEFORE = "2024-01-01"
@@ -60,6 +63,7 @@ REVIEW_REVENUE_HIGH = 5_000_000_000  # ...or with a parsed headcount under the f
 FREE_MAIL = {"gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com",
              "icloud.com", "me.com", "aol.com", "msn.com", "protonmail.com", "proton.me", "gmx.com",
              "hotmail.co.uk", "yahoo.co.uk", "btinternet.com", "perceptionx.ai"}
+MIN_REVENUE_PER_EMPLOYEE = 15_000  # below this an SEC headcount is a misread (units, sq ft, ...)
 PLAUSIBLE_MAX = 2_500_000  # Walmart, the largest private employer, is about 2.1-2.3m
 # Wikidata batch with junk headcounts (stadiums and road networks with 1m+ "employees"):
 # Ukrainian entities dated 1 January 2024/2025. Ignore those statements.
@@ -164,7 +168,9 @@ def main():
             "kind": "defunct" if r.get("dissolved") else classify(r["label"], r["types"], r["is_business_type"]),
             "dissolved": (r.get("dissolved") or [""])[0][:10], "types": "; ".join(r["types"]),
             "us_listed": False, "ai": False, "merged": [],
-            "us_hq": bool(r.get("hq_in_us")) or any("United States" in c for c in r["country"]),
+            # HQ location first; country only when it is the single country listed
+            "us_hq": (bool(r.get("hq_in_us")) and (not r["country"] or "United States" in r["country"]))
+                     or r["country"] == ["United States"],
             "us_subs": r.get("us_subsidiaries", []),
             "extra_flags": ["NO NAME"] if re.fullmatch(r"Q\d+", r["label"] or "Q") else [],
         })
@@ -203,7 +209,11 @@ def main():
     sec_only = 0
     for s in sec:
         e = (by_cik.get(s["cik"])
-             or next((by_ticker[t.upper()] for t in s["tickers"] if t.upper() in by_ticker), None)
+             # tickers repeat across exchanges (DTE = Deutsche Telekom in Frankfurt, DTE Energy in NY),
+             # so a ticker match also needs the names to start the same way
+             or next((by_ticker[t.upper()] for t in s["tickers"] if t.upper() in by_ticker
+                      and norm_name(by_ticker[t.upper()]["name"]).split()[:1] == norm_name(s["name"]).split()[:1]),
+                     None)
              or by_dom.get(norm_domain(s["website"]))
              or by_nm.get(norm_name(s["name"])))
         st = (s.get("state") or "").upper()
@@ -211,6 +221,14 @@ def main():
         review = st in US_STATES and (
             (not s["employees"] and rev >= REVIEW_REVENUE)
             or (s["employees"] and s["employees"] < MIN_EMPLOYEES and rev >= REVIEW_REVENUE_HIGH))
+        loose = None
+        if review and not s["employees"]:
+            # second, looser read of the saved filing text before sending it to "Check headcount"
+            tpath = CACHE / "sec_text" / f"{s['cik']}_{s.get('accession')}.txt.gz"
+            if tpath.exists():
+                loose = sec_reader.extract_headcount(gzip.decompress(tpath.read_bytes()).decode(), min_score=0)
+                if loose[0] and loose[0] < MIN_EMPLOYEES:
+                    review = False  # confidently small
         if e is None:
             if not review and (not s["employees"] or s["employees"] < MIN_EMPLOYEES):
                 continue
@@ -222,6 +240,8 @@ def main():
                  "kind": "review" if review else "company", "types": "", "us_listed": False, "ai": False,
                  "merged": [], "extra_flags": [], "us_hq": st in US_STATES, "us_subs": []}
             if review:
+                if loose and loose[0]:
+                    e["extra_flags"].append(f"POSSIBLE HEADCOUNT {loose[0]:,}: \"{loose[1][:200]}\"")
                 e["extra_flags"].append(
                     f"HEADCOUNT NOT FOUND IN {s.get('form') or 'FILING'}; revenue ${rev / 1e9:,.1f}bn"
                     if not s["employees"] else
@@ -231,10 +251,13 @@ def main():
             ents.append(e)
             sec_only += 1
         e["us_listed"] = True
-        if st in US_STATES:
-            e["us_hq"] = True  # SEC business address is authoritative for US filers
+        if st in US_STATES and (s.get("form") or "").startswith("10-K"):
+            e["us_hq"] = True  # a 10-K from a US address: US HQ (20-F filers are foreign)
         e["tickers"] |= set(s["tickers"])
         e["ciks"].add(s["cik"])
+        if s["employees"] and rev and rev / s["employees"] < MIN_REVENUE_PER_EMPLOYEE:
+            e["extra_flags"].append(f"SEC HEADCOUNT REJECTED ({s['employees']:,} vs revenue ${rev / 1e6:,.0f}m)")
+            s = {**s, "employees": None}
         if s["employees"] and (e.get("sec_emp") is None or (s["period"] or "") > e.get("sec_date", "")):
             e.update(sec_emp=s["employees"], sec_date=s["period"] or "", sec_form=s["form"],
                      sec_snippet=s["snippet"] or "")

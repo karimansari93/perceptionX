@@ -5,6 +5,7 @@ headcount sentence out of the latest 10-K (US) or 20-F (foreign) text.
 Results are cached per company in cache/sec/, so a re-run only fetches new filings.
 
 Usage: python3 2_sec.py            # all exchange-listed filers
+       python3 2_sec.py --reparse  # re-read saved filings after a reader fix (no downloads)
        python3 2_sec.py AAPL PFE    # just these tickers (for testing)
 """
 import gzip
@@ -22,7 +23,7 @@ SEC_CACHE = CACHE / "sec"
 SEC_CACHE.mkdir(exist_ok=True)
 TEXT_CACHE = CACHE / "sec_text"  # gzipped filing text, so parser fixes don't need re-downloads
 TEXT_CACHE.mkdir(exist_ok=True)
-PARSER_VERSION = 2  # bump when extract_headcount changes; cached answers are then re-parsed
+PARSER_VERSION = 4  # bump when extract_headcount changes; cached answers are then re-parsed
 ANNUAL_FORMS = ("10-K", "20-F", "10-K405", "10-KT")
 REQ_INTERVAL = 0.13  # SEC allows 10 requests/second; stay under it
 _last = [0.0]
@@ -40,13 +41,20 @@ def sec_get(url, **kw):
 
 WORKER_WORDS = r"(?:full[- ]time\s+|part[- ]time\s+|permanent\s+|total\s+|active\s+|global\s+|)" \
                r"(?:employees|colleagues|team\s+members|associates|teammates|people|" \
-               r"workers|staff|personnel|crew\s+members|partners)"
+               r"workers|staff|personnel|crew\s+members)\b(?!['’]s)"
 NUM = r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?\s*(?:thousand|million)|\d{4,7})"
 # "approximately 83,000 employees", "166,000 full-time equivalent employees"
 P1 = re.compile(NUM + r"\s+(?:[\w-]+\s+){0,3}?" + WORKER_WORDS, re.I)
 # "employees ... was approximately 83,000", "workforce of approximately 83,000"
-P2 = re.compile(r"(?:employ(?:ed|s)?|workforce|headcount|employees)\b[^.]{0,80}?"
+P2 = re.compile(r"(?:employ(?:ed|s)?|workforce|headcount|employees)\b[^.;]{0,50}?"
+                r"\b(?:was|were|totall?ed|of|is|are|had|:)\s+"
                 r"(?:approximately|about|over|more than|around|roughly|nearly|some)?\s*" + NUM, re.I)
+# "we employed approximately 130,000 AutoZoners"
+P3 = re.compile(r"\bemploy(?:ed|s|ing)?\s+(?:a total of\s+)?(?:approximately|about|over|more than|around|"
+                r"roughly|nearly|some)?\s*" + NUM, re.I)
+# Units that mean the number isn't people: "1.1 million sq. ft.", "526,915 operating partnership units"
+NOT_PEOPLE_AFTER = re.compile(r"\s*(?:sq|square|acres|units|shares|tons|barrels|charities|customers|"
+                              r"locations|stores|beds|miles|members\b(?! of (?:our|the) (?:staff|team)))", re.I)
 HEADING = re.compile(r"human\s+capital|item\s*6\.?\s*d\b|\n\s*employees\s*\n|our\s+(?:people|workforce|employees)\s*\n", re.I)
 AS_OF = re.compile(r"\b(?:as of|at|as at)\s+(?:the end of|(?:january|february|march|april|may|june|july|"
                    r"august|september|october|november|december)\s+\d{1,2},?\s+20\d\d|\d{1,2}\s+\w+\s+20\d\d|"
@@ -80,11 +88,11 @@ def text_of(raw):
     return re.sub(r"\n\s*\n+", "\n", t)
 
 
-def extract_headcount(text):
+def extract_headcount(text, min_score=2):
     """Return (count, snippet) for the most plausible own-headcount sentence."""
     heads = [m.end() for m in HEADING.finditer(text)]
     best = None
-    for pat in (P1, P2):
+    for pat in (P1, P2, P3):
         for m in pat.finditer(text):
             n = to_int(m.group(1))
             # "65,900 and 69,700 employees" (this year and last year): take the first number
@@ -99,6 +107,8 @@ def extract_headcount(text):
             # the matched phrase itself, or the words right after the number, about equity or money
             if EQUITY.search(m.group(0)) or EQUITY.search(text[m.end(1):m.end(1) + 25]):
                 continue
+            if pat in (P2, P3) and NOT_PEOPLE_AFTER.match(text, m.end(1)):
+                continue
             before = text[max(0, m.start() - 160):m.start()]
             near = text[max(0, m.start() - 100):m.end() + 40]
             score = 0
@@ -111,14 +121,15 @@ def extract_headcount(text):
             if re.search(r"employ", near, re.I):
                 score += 1
             # "temporary employees" counts against; "(excluding temporary ...)" afterwards does not
-            if NOT_OURS.search(text[max(0, m.start() - 100):m.end()]):
+            sent_start = max(text.rfind(". ", 0, m.start()), m.start() - 100, 0)  # same sentence only
+            if NOT_OURS.search(text[sent_start:m.end()]):
                 score -= 4
             if len(re.findall(r"\d[\d,.]*", text[max(0, m.start() - 100):m.end() + 100])) > 6:  # table rows, not a sentence
                 score -= 4
             cand = (score, -m.start(), n, " ".join(text[max(0, m.start() - 140):m.end() + 60].split()))
             if best is None or cand[:2] > best[:2]:
                 best = cand
-    if best is None or best[0] < 2:  # need a heading, an "as of" date or "we employ/had"
+    if best is None or best[0] < min_score:  # default needs a heading, an "as of" date or "we employ/had"
         return None, None
     return best[2], best[3]
 
@@ -174,8 +185,25 @@ def process(cik, meta):
     return rec
 
 
+def reparse():
+    """Re-read every saved filing with the current reader; no downloads."""
+    results = []
+    for path in sorted(SEC_CACHE.glob("*.json")):
+        rec = json.loads(path.read_text())
+        tpath = TEXT_CACHE / f"{rec['cik']}_{rec.get('accession')}.txt.gz"
+        if rec.get("accession") and tpath.exists():
+            rec["employees"], rec["snippet"] = extract_headcount(gzip.decompress(tpath.read_bytes()).decode())
+            rec["parser"] = PARSER_VERSION
+            path.write_text(json.dumps(rec))
+        results.append(rec)
+    (CACHE / "sec.json").write_text(json.dumps(results, indent=1))
+    print(f"Re-read {len(results)} filers; headcount found for {sum(1 for r in results if r['employees'])}")
+
+
 def main():
     sys.stdout.reconfigure(line_buffering=True)
+    if sys.argv[1:] == ["--reparse"]:
+        return reparse()
     listing = sec_get("https://www.sec.gov/files/company_tickers_exchange.json").json()
     filers = {}
     for cik, name, ticker, exch in listing["data"]:
