@@ -60,7 +60,7 @@ NON_COMPANY = re.compile(
 NON_COMPANY_NAME = re.compile(
     r"\b(universit|hospital|ministry|police|army|navy|air force|armed forces|civil service|"
     r"fonction publique|council|municipality|county of|city of|state of|government|"
-    r"department of|school|college|health (?:service|board|trust|authority)|red cross|postal service)", re.I)
+    r"department of|school|college|health (?:service|board|trust|authority)|red cross|postal service|authority)", re.I)
 REVIEW_REVENUE = 300_000_000      # US-HQ filer above this with no headcount found -> "Check headcount" tab
 REVIEW_REVENUE_HIGH = 5_000_000_000  # ...or with a parsed headcount under the floor (likely misread)
 FREE_MAIL = {"gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com", "live.com",
@@ -543,7 +543,8 @@ def main():
                     first, last = (row.get("First Name") or "").strip(), (row.get("Last Name") or "").strip()
                     title = titles.get((first.lower(), last.lower()), "")
                     e["hs"].append({"name": f"{first} {last}".strip() or email, "title": title,
-                                    "company": row.get("Associated Company") or dom, "src": "HubSpot",
+                                    "company": (row.get("Associated Company") or "").strip(" 0123456789;") or dom,
+                                    "src": "HubSpot",
                                     "email": email, "role": role_of(title)})
     # contacts at a subsidiary also count for its parent
     parents = {e["name"]: e for e in ents if e["tab"] != "subs"}
@@ -576,49 +577,49 @@ def main():
     lookup_path = CACHE / "domain_lookup.json"
     lookup = json.loads(lookup_path.read_text()) if lookup_path.exists() else {}
 
-    throttled = [False]
+    def name_variants(name):
+        """Spellings to try against Wikidata labels: 'TJX COMPANIES INC /DE/' -> 'TJX Companies', ..."""
+        base = re.sub(r"\s*/[A-Za-z]{2,3}/?\s*$", "", name).strip()
+        core = re.sub(r",?\s+(inc\.?|corp\.?|corporation|co\.?|company|ltd\.?|llc|plc|l\.?p\.?|"
+                      r"holdings?|group)$", "", base, flags=re.I).strip()
+        out = set()
+        for v in (base, core):
+            title = " ".join(w if (w.isupper() and len(w) <= 4) else w.capitalize() for w in v.split())
+            out |= {v, title, f"{title}, Inc.", f"{title} Inc.", f"{title} Corporation", f"{title} Company"}
+        return {v for v in out if len(v) >= 3}
 
-    def wikidata_domain(name):
-        if name in lookup:
-            return lookup[name]
-        if throttled[0]:
-            return ""  # Wikidata said "too many requests" earlier this run; try again next run
-        dom = ""
-        try:
-            time.sleep(1)  # Wikidata asks for one request at a time, unhurried
-            r = requests.get("https://www.wikidata.org/w/api.php", headers={"User-Agent": USER_AGENT}, timeout=30,
-                             params={"action": "wbsearchentities", "search": name, "language": "en",
-                                     "type": "item", "limit": 3, "format": "json"})
-            if r.status_code == 429:
-                throttled[0] = True
-                print("  Wikidata rate limit reached; remaining domain lookups wait for the next run")
-                return ""
-            hits = r.json().get("search", [])
-            ids = "|".join(h["id"] for h in hits)
-            if ids:
-                r = requests.get("https://www.wikidata.org/w/api.php", headers={"User-Agent": USER_AGENT},
-                                 timeout=30, params={"action": "wbgetentities", "ids": ids,
-                                                     "props": "claims", "format": "json"})
-                if r.status_code == 429:
-                    throttled[0] = True
-                    return ""
-                ents_ = r.json()
-                for h in hits:
-                    for c in ents_.get("entities", {}).get(h["id"], {}).get("claims", {}).get("P856", []):
-                        d = norm_domain(c["mainsnak"].get("datavalue", {}).get("value", ""))
-                        if d and resembles(d, name):
-                            dom = d
-                            break
-                    if dom:
-                        break
-        except Exception as err:
-            if not throttled[0]:
-                print(f"  domain lookup error ({name}): {err!r}; remaining lookups wait for the next run")
-            throttled[0] = True
-            return ""
-        lookup[name] = dom
-        lookup_path.write_text(json.dumps(lookup, indent=1))  # save as we go
-        return dom
+    def wikidata_domains(names):
+        """Batch label lookup on the Wikidata query service (the search API rate-limits quickly)."""
+        todo = [n for n in names if n not in lookup]
+        variant_of = {}
+        for n in todo:
+            for v in name_variants(n):
+                variant_of.setdefault(v, []).append(n)
+        found = {}
+        keys = sorted(variant_of)
+        for i in range(0, len(keys), 150):
+            values = " ".join(json.dumps(v) + "@en" for v in keys[i:i + 150])
+            try:
+                r = requests.get("https://query.wikidata.org/sparql", headers={
+                    "User-Agent": USER_AGENT, "Accept": "application/sparql-results+json"}, timeout=120,
+                    params={"query": f"SELECT ?label ?web WHERE {{ VALUES ?label {{ {values} }} "
+                                     f"?item rdfs:label ?label ; wdt:P856 ?web . }}"})
+                r.raise_for_status()
+            except Exception as err:
+                print(f"  domain lookup stopped ({err!r}); the rest wait for the next run")
+                return
+            for b in r.json()["results"]["bindings"]:
+                for n in variant_of.get(b["label"]["value"], []):
+                    d = norm_domain(b["web"]["value"])
+                    if d and resembles(d, n) and d not in SHARED_HOSTS:
+                        found.setdefault(n, d)
+            time.sleep(1)
+        for n in todo:
+            lookup[n] = found.get(n, "")
+        lookup_path.write_text(json.dumps(lookup, indent=1))
+
+    missing = [e for e in ents if not e["domain"] and e["tab"] in ("clients", "main", "mid", "global", "check")]
+    wikidata_domains([e["name"] for e in missing])
 
     filled = Counter()
     for e in ents:
@@ -630,7 +631,7 @@ def main():
         if doms:
             e["domain"], how = doms[0], "contact emails"
         else:
-            e["domain"], how = wikidata_domain(re.sub(r"\s*/[A-Za-z]{2,3}/?\s*$", "", e["name"])), "Wikidata search"
+            e["domain"], how = lookup.get(e["name"], ""), "Wikidata"
         if e["domain"]:
             filled[how] += 1
             e["flags"] = [f for f in e["flags"] if f != "NO DOMAIN"] + [f"DOMAIN FROM {how.upper()}"]
@@ -639,6 +640,15 @@ def main():
           f"{sum(1 for e in ents if not e['domain'] and e['tab'] in ('clients', 'main', 'mid', 'global', 'check'))}")
 
     # ---- 7. Write workbook ----------------------------------------------------------
+    def unique_people(e):
+        """Buyers first, HubSpot before LinkedIn, each person once."""
+        seen, out = set(), []
+        for c in sorted(e["hs"] + e["li"], key=lambda c: (c["role"] != "BUYER", c["src"] != "HubSpot")):
+            if c["name"].lower() not in seen:
+                seen.add(c["name"].lower())
+                out.append(c)
+        return out
+
     def row_of(e):
         return [e["name"], e["domain"], e["parent"], e["country"], e["city"], e["industry"],
                 e["emp"], e["asof"], e["source"], "Y" if e["us_listed"] else "N",
@@ -646,8 +656,7 @@ def main():
                 e["status"], len(e["li"]), len(e["hs"]), "Y" if (e["li"] or e["hs"]) else "N",
                 "Y" if e["buyer"] else "N",
                 "; ".join(f"{c['name']}, {c['title'] or 'no title'} ({c['company']}) [{c['src']}] {{{c['role']}}}"
-                          for c in sorted(e["hs"] + e["li"],
-                                          key=lambda c: (c["role"] != "BUYER", c["src"] != "HubSpot"))[:5]),
+                          for c in unique_people(e)[:5]),
                 ", ".join(sorted(e["tickers"]))[:80], ", ".join(sorted(e["qids"])),
                 ", ".join(str(c) for c in sorted(e["ciks"]))]
 
@@ -760,9 +769,10 @@ def main():
                     c[v][idx] += 1
         return sorted(c.items(), key=lambda kv: (-kv[1][0], -kv[1][1], kv[0]))
 
-    block(4, "Count by country", tally("country", True))
-    block(8, "Count by industry (a company can sit in several)", tally("industry", True))
-    for col, w in (("A", 58), ("B", 12), ("D", 30), ("E", 8), ("F", 8), ("H", 40), ("I", 8), ("J", 8)):
+    block(9, "Count by country", tally("country", True))
+    block(13, "Count by industry (a company can sit in several)", tally("industry", True))
+    for col, w in (("A", 58), ("B", 12), ("C", 14), ("D", 18), ("E", 16), ("F", 16), ("I", 30), ("J", 8),
+                   ("K", 8), ("M", 40), ("N", 8), ("O", 8)):
         summary.column_dimensions[col].width = w
     for row in summary.iter_rows():
         for c in row:
