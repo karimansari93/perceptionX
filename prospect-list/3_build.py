@@ -15,6 +15,7 @@ import gzip
 import importlib
 import json
 import re
+import time
 from collections import Counter, defaultdict
 from datetime import date
 
@@ -610,8 +611,11 @@ def main():
                             break
                     if dom:
                         break
-        except Exception:
-            return ""  # try again next run
+        except Exception as err:
+            if not throttled[0]:
+                print(f"  domain lookup error ({name}): {err!r}; remaining lookups wait for the next run")
+            throttled[0] = True
+            return ""
         lookup[name] = dom
         lookup_path.write_text(json.dumps(lookup, indent=1))  # save as we go
         return dom
