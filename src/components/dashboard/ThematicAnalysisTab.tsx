@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { sentimentRatioV2, isExcludedAiModel } from '@/lib/sentimentV2';
@@ -14,7 +14,6 @@ import { enhanceCitations, extractSourceUrl } from '@/utils/citationUtils';
 import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
 import type { ScopeStatsRow, ScopePromptTypeStatsRow } from '@/hooks/dashboard/dashboardQueries';
 import {
-  Loader2,
   BarChart3,
   Activity,
   Target,
@@ -36,6 +35,9 @@ import {
   Briefcase,
   Info,
   X,
+  Check,
+  AlertCircle,
+  RefreshCw,
   Layers,
   Tags,
   Globe,
@@ -44,7 +46,7 @@ import {
 import { PromptResponse } from '@/types/dashboard';
 import { ATTRIBUTES, normalizeAttributeId, getAttributeIdByName } from '@/config/attributes';
 import { ATTRIBUTE_ICONS } from '@/config/attributeIcons';
-import { getLLMDisplayName } from '@/config/llmLogos';
+import { getLLMDisplayName, getLLMLogo } from '@/config/llmLogos';
 import { Favicon } from '@/components/ui/favicon';
 import LLMLogo from '@/components/LLMLogo';
 import { useTabSearchSeed } from '@/contexts/TabSearchSeedContext';
@@ -140,6 +142,14 @@ const CARD_FILL = 'rgba(19,39,79,0.04)';
 const BAR_TRACK = 'rgba(219,94,137,0.13)';
 const PINK = '#DB5E89';
 const TEAL = '#0DBCBA';
+const NAVY_60 = '#4A5F86';
+const CARD_LIGHT = '#F7F8FA';
+// Sentiment washes and tile strips for the drilldown's split tiles.
+const WASH: Record<'positive' | 'neutral' | 'negative', string> = {
+  positive: '#E4F5F5',
+  neutral: '#EEF1F4',
+  negative: '#FBEEF2',
+};
 
 // Sentiment color scale — breaks on the same 60% cut as the grouping rule so
 // nothing below the cut ever reads teal.
@@ -159,6 +169,11 @@ const POLARITY_LABEL: Record<'positive' | 'neutral' | 'negative', string> = {
   positive: 'Positive',
   neutral: 'Neutral',
   negative: 'Negative',
+};
+const POLARITY_META: Record<'positive' | 'neutral' | 'negative', { label: string; color: string; wash: string; strip: string }> = {
+  positive: { label: 'Positive', color: TEAL, wash: WASH.positive, strip: TEAL },
+  neutral: { label: 'Neutral', color: RULE_STRONG, wash: WASH.neutral, strip: NAVY_60 },
+  negative: { label: 'Negative', color: PINK, wash: WASH.negative, strip: PINK },
 };
 
 type GroupKey = 'fix' | 'protect' | 'amplify' | 'watch';
@@ -915,6 +930,10 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     id: string;
     model: string | null;
     domains: string[];
+    // Pages the answer cited (answer-level: the AI does not tie a citation
+    // to a sentence, so these are "cited in this answer", never proof of
+    // where one excerpt came from).
+    cites: { domain: string; url: string }[];
     market: string | null;
     jobFunction: string | null;
     text: string;
@@ -968,19 +987,25 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         const byId = new Map<string, DetailRow>();
         metaResults.forEach((res: any) => (res.data ?? []).forEach((r: any) => {
           let domains: string[] = [];
+          const cites: { domain: string; url: string }[] = [];
           try {
             const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
             if (Array.isArray(citations)) {
-              // Fold www. into the bare domain so one source never shows twice.
-              domains = [...new Set(citations
-                .map((c: any) => (c?.domain ? String(c.domain).replace(/^www\./, '') : null))
-                .filter(Boolean) as string[])];
+              citations.forEach((c: any) => {
+                // Fold www. into the bare domain so one source never shows twice.
+                const domain = c?.domain ? String(c.domain).replace(/^www\./, '') : null;
+                if (!domain || domains.includes(domain)) return;
+                domains.push(domain);
+                const url = typeof c?.url === 'string' && /^https?:\/\//.test(c.url) ? c.url : `https://${domain}`;
+                cites.push({ domain, url });
+              });
             }
           } catch { /* skip invalid citations */ }
           byId.set(r.id, {
             id: r.id,
             model: r.ai_model ?? null,
             domains,
+            cites,
             market: r.confirmed_prompts?.location_context ?? null,
             jobFunction: r.confirmed_prompts?.job_function_context?.trim() || null,
             text: texts.get(r.id) || responseTexts[r.id] || '',
@@ -1028,6 +1053,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       model: string | null;
       market: string | null;
       jobFunction: string | null;
+      cites: { domain: string; url: string }[];
       polarity: 'positive' | 'neutral' | 'negative';
     }[] = [];
     for (const r of detailRows) {
@@ -1053,15 +1079,29 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         }
       }
       const anchor = idx === -1 ? 0 : idx;
-      const start = Math.max(0, anchor - 80);
-      const end = Math.min(text.length, anchor + 240);
-      const excerpt = text.slice(start, end).trim();
+      // Snap the window to a sentence start (else a word) and a word end so
+      // the excerpt never opens or closes mid-word.
+      let start = Math.max(0, anchor - 120);
+      if (start > 0) {
+        const lead = text.slice(start, anchor);
+        const sentenceEnd = Math.max(lead.lastIndexOf('. '), lead.lastIndexOf('! '), lead.lastIndexOf('? '), lead.lastIndexOf('\n'));
+        const firstSpace = lead.indexOf(' ');
+        if (sentenceEnd !== -1) start += sentenceEnd + 1;
+        else if (firstSpace !== -1) start += firstSpace + 1;
+      }
+      let end = Math.min(text.length, anchor + 560);
+      if (end < text.length) {
+        const space = text.lastIndexOf(' ', end);
+        if (space > anchor) end = space;
+      }
+      const excerpt = text.slice(start, end).trim().replace(/^[\s.,;:!?)]+/, '');
       if (!excerpt) continue;
       out.push({
         id: r.id,
         model: r.model,
         market: r.market,
         jobFunction: r.jobFunction,
+        cites: r.cites.slice(0, 4),
         polarity: (matched?.sentiment || rThemes[0]?.sentiment || 'neutral') as 'positive' | 'neutral' | 'negative',
         text: `${start > 0 ? '…' : ''}${excerpt}${end < text.length ? '…' : ''}`,
       });
@@ -1096,6 +1136,35 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   const togglePolarity = (key: 'positive' | 'neutral' | 'negative') => {
     setPolarity(prev => (prev === key ? null : key));
   };
+
+  // Per-quote "Read full excerpt" state; resets with the attribute.
+  const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
+  useEffect(() => { setExpandedQuotes({}); }, [selectedAttribute]);
+
+  // "How {client} compares": each competitor's sentiment on this attribute
+  // from the competitor_themes triples on in-scope answers (same rows the
+  // table's "Competitor gap" uses), ranked with the client's own score.
+  const comparison = useMemo(() => {
+    if (!isModalOpen || !selectedAttribute || !modalAttribute) return [];
+    const inScope = new Set(streamInScope.map(r => r.id));
+    const comps = new Map<string, { positive: number; negative: number }>();
+    for (const row of competitorThemeRows) {
+      if (!inScope.has(row.response_id)) continue;
+      if (normalizeAttributeId(row.attribute_id) !== selectedAttribute || !row.competitor_name) continue;
+      const c = comps.get(row.competitor_name) ?? { positive: 0, negative: 0 };
+      if (row.sentiment === 'positive') c.positive += 1;
+      else if (row.sentiment === 'negative') c.negative += 1;
+      comps.set(row.competitor_name, c);
+    }
+    const rows: { name: string; score: number; isClient: boolean }[] = [];
+    comps.forEach((c, name) => {
+      const ratio = sentimentRatioV2(c.positive, c.negative);
+      if (ratio !== null) rows.push({ name, score: Math.round(ratio * 100), isClient: false });
+    });
+    if (rows.length === 0) return [];
+    rows.push({ name: companyName, score: modalAttribute.sentimentPct, isClient: true });
+    return rows.sort((a, b) => b.score - a.score).slice(0, 6);
+  }, [isModalOpen, selectedAttribute, modalAttribute, competitorThemeRows, streamInScope, companyName]);
 
   const SortableHead = ({ label, k, className }: { label: string; k: TableSortKey; className?: string }) => (
     <TableHead
@@ -1503,191 +1572,416 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         </Card>
       )}
 
-      {/* Attribute detail modal — one scroll, no tabs. The sentiment split is
-          the primary filter for everything below it. */}
-      <Dialog open={isModalOpen && !!modalAttribute} onOpenChange={(open) => { if (!open) closeModal(); }}>
-        <DialogContent
-          aria-describedby={undefined}
-          className="max-w-[1056px] w-[calc(100vw-32px)] p-0 gap-0 rounded-[20px] overflow-hidden max-h-[92vh] flex flex-col [&>button]:hidden"
-        >
-          {modalAttribute && (() => {
-            const IconComponent = ATTRIBUTE_ICONS[modalAttribute.id] || Activity;
-            const rawSettling = attrThemes.length === 0 && !themesSettled;
+      {/* Attribute detail panel (Claude Design handoff, 2026-10). One scroll,
+          no tabs. The sentiment split is the filter for quotes and sources;
+          the comparison card ignores it. Rendered on the Radix primitives
+          directly: the shared DialogContent adds a shadow and its own close
+          button, and the spec wants neither. */}
+      <DialogPrimitive.Root open={isModalOpen && !!modalAttribute} onOpenChange={(open) => { if (!open) closeModal(); }}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay
+            className="fixed inset-0 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+            style={{ background: 'rgba(19,39,79,0.55)' }}
+          />
+          <DialogPrimitive.Content
+            aria-describedby={undefined}
+            className="fixed z-50 bg-white flex flex-col overflow-hidden outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-200
+              inset-x-0 bottom-0 top-[52px] rounded-t-[20px]
+              md:inset-auto md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:w-[min(1000px,calc(100vw-40px))] md:max-h-[calc(100vh-80px)] md:rounded-[20px]"
+            style={{ color: INK, fontVariantNumeric: 'tabular-nums' }}
+          >
+            {modalAttribute && (() => {
+              const IconComponent = ATTRIBUTE_ICONS[modalAttribute.id] || Activity;
+              const rawSettling = attrThemes.length === 0 && !themesSettled;
+              const status: 'loading' | 'ready' | 'error' =
+                rawSettling || (attrThemes.length > 0 && detailStatus === 'loading') ? 'loading'
+                : attrThemes.length === 0 || detailStatus === 'error' ? 'error'
+                : 'ready';
+              const retry = () => {
+                if (attrThemes.length === 0) {
+                  if (selectedAttribute) fetchAIThemesForAttribute?.(selectedAttribute);
+                  setGraceElapsedFor(null);
+                } else {
+                  setDetailRetry(n => n + 1);
+                }
+              };
+              const meterFilled = modalAttribute.band >= 4 ? 3 : modalAttribute.band === 3 ? 2 : 1;
+              const eyebrow = 'text-[13px] font-semibold uppercase tracking-[0.16em]';
+              const h3 = 'font-headline font-semibold text-xl tracking-[-0.015em] m-0';
+              const filterMeta = polarity ? POLARITY_META[polarity] : null;
+              const clearFilter = () => setPolarity(null);
+              const clientFirst = companyName.split(/\s+/)[0] || companyName;
+              const clientRank = comparison.findIndex(c => c.isClient) + 1;
+              const ordinal = (n: number) => `${n}${['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : Math.min(n % 10, 4) % 4] ?? 'th'}`;
 
-            return (
-              <div className="overflow-y-auto">
-                {/* Header */}
-                <div className="flex items-center justify-between gap-5 px-7 py-[22px] border-b" style={{ borderColor: RULE }}>
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <IconComponent className="w-[22px] h-[22px] flex-none" style={{ color: INK }} />
-                    <div className="flex flex-col gap-[3px] min-w-0">
-                      <DialogTitle className="font-headline text-2xl font-semibold tracking-[-0.02em] leading-tight truncate" style={{ color: INK }}>
-                        {modalAttribute.name}
-                      </DialogTitle>
-                      <span className="text-[11px]" style={{ color: INK_MUTED }}>
-                        {modalAttribute.bandLabel} volume
-                      </span>
-                    </div>
+              return (
+                <div className="overflow-y-auto flex-1 min-h-0">
+                  <div className="md:hidden flex justify-center pt-2.5 pb-1">
+                    <div className="w-10 h-[5px] rounded-full" style={{ background: RULE_STRONG }} />
                   </div>
-                  <div className="flex items-center gap-[22px] flex-none">
-                    <div className="flex flex-col items-end">
-                      <span className="font-headline text-[34px] font-semibold tracking-[-0.03em] leading-none tabular-nums" style={{ color: INK }}>
-                        {modalAttribute.sentimentPct}%
-                      </span>
-                      <span className={SMALL_LABEL_CLS} style={{ color: INK_DIM }}>Sentiment</span>
-                    </div>
-                    <button onClick={closeModal} aria-label="Close" className="p-1 -m-1" style={{ color: INK_DIM }}>
-                      <X className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
+                  <div className="flex flex-col gap-6 md:gap-8 p-5 pb-7 md:p-10 md:pb-11">
 
-                {/* Sentiment split — the primary filter */}
-                <div className="px-7 py-[22px] border-b flex flex-col gap-3" style={{ borderColor: RULE }}>
-                  <div className="flex h-3.5 rounded-lg overflow-hidden gap-[2px]">
-                    {splitCounts.filter(s => s.n > 0).map(s => (
+                    {/* Header */}
+                    <header className="relative flex flex-wrap items-end justify-between gap-y-5 gap-x-10 pr-[52px]">
+                      <div className="flex gap-[18px] items-start min-w-0" style={{ flex: '1 1 320px' }}>
+                        <div className="flex-none w-[52px] h-[52px] rounded-[14px] flex items-center justify-center" style={{ background: WASH.positive }}>
+                          <IconComponent className="w-[26px] h-[26px]" style={{ color: '#0A8F8D' }} strokeWidth={1.75} />
+                        </div>
+                        <div className="flex flex-col gap-2 min-w-0">
+                          <span className={eyebrow} style={{ color: INK_DIM }}>{companyName} · Attribute</span>
+                          <DialogPrimitive.Title className="font-headline font-semibold text-2xl md:text-[30px] leading-[1.15] tracking-[-0.02em] m-0 [text-wrap:pretty]" style={{ color: INK }}>
+                            {modalAttribute.name}
+                          </DialogPrimitive.Title>
+                          <div className="flex items-center gap-2.5 mt-0.5">
+                            <span className="flex items-end gap-[3px] h-3.5" aria-hidden="true">
+                              {[6, 10, 14].map((h, i) => (
+                                <span key={h} className="w-1 rounded-[1px]" style={{ height: h, background: i < meterFilled ? TEAL : RULE_STRONG }} />
+                              ))}
+                            </span>
+                            <span className="text-sm" style={{ color: INK_MUTED }}>Volume</span>
+                            <span className="text-sm font-semibold">{modalAttribute.bandLabel}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1.5 flex-none">
+                        <span className={eyebrow} style={{ color: INK_DIM }}>Sentiment score</span>
+                        <div className="flex items-baseline font-headline font-bold leading-none tracking-[-0.045em]">
+                          <span className="text-[56px] md:text-[72px]">{modalAttribute.sentimentPct}</span>
+                          <span className="text-[30px] md:text-[36px] ml-0.5" style={{ color: NAVY_60 }}>%</span>
+                        </div>
+                        <span className="text-[13.5px] max-w-[240px]" style={{ color: INK_MUTED }}>Share of positive vs negative themes</span>
+                      </div>
                       <button
-                        key={s.key}
-                        onClick={() => togglePolarity(s.key)}
-                        title={`Show ${POLARITY_LABEL[s.key]} only`}
-                        className="cursor-pointer transition-opacity border-0 p-0"
-                        style={{
-                          width: `${(s.n / splitTotal) * 100}%`,
-                          background: POLARITY_COLOR[s.key],
-                          opacity: !polarity || polarity === s.key ? 1 : 0.32,
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-7 flex-wrap">
-                    {splitCounts.map(s => (
-                      <button
-                        key={s.key}
-                        onClick={() => togglePolarity(s.key)}
-                        className="flex items-baseline gap-2 cursor-pointer bg-transparent border-0 p-0 transition-opacity"
-                        style={{ opacity: !polarity || polarity === s.key ? 1 : 0.32 }}
+                        onClick={closeModal}
+                        aria-label="Close"
+                        className="absolute top-0 right-0 w-10 h-10 rounded-full border bg-white flex items-center justify-center transition-colors hover:bg-[rgba(19,39,79,0.04)]"
+                        style={{ borderColor: RULE }}
                       >
-                        <span className="w-[9px] h-[9px] rounded-full self-center" style={{ background: POLARITY_COLOR[s.key] }} />
-                        <span
-                          className="font-headline text-lg tabular-nums"
-                          style={{ color: INK, fontWeight: polarity === s.key ? 700 : 600 }}
+                        <X className="w-[18px] h-[18px]" strokeWidth={1.75} style={{ color: INK }} />
+                      </button>
+                    </header>
+
+                    <div className="h-px" style={{ background: RULE }} />
+
+                    {/* Error */}
+                    {status === 'error' && (
+                      <div className="border rounded-2xl p-7 md:p-12 flex flex-wrap items-center gap-y-5 gap-x-7" style={{ borderColor: RULE, background: CARD_LIGHT }}>
+                        <div className="flex-none w-12 h-12 rounded-full bg-white border flex items-center justify-center" style={{ borderColor: RULE }}>
+                          <AlertCircle className="w-[22px] h-[22px]" strokeWidth={1.75} style={{ color: INK }} />
+                        </div>
+                        <div className="flex flex-col gap-1.5" style={{ flex: '1 1 280px' }}>
+                          <span className="font-headline font-semibold text-[19px] tracking-[-0.01em]">This attribute didn't load</span>
+                          <span className="text-[15px] leading-[1.55] [text-wrap:pretty]" style={{ color: INK_MUTED }}>
+                            The quotes and sources couldn't be fetched. Nothing is lost; try again in a moment.
+                          </span>
+                        </div>
+                        <button
+                          onClick={retry}
+                          className="flex-none h-11 px-[22px] rounded-full text-white text-[14.5px] font-semibold flex items-center gap-2 transition-colors hover:bg-[#284472]"
+                          style={{ background: INK }}
                         >
-                          {splitTotal > 0 ? ((s.n / splitTotal) * 100).toFixed(1) : '0.0'}%
-                        </span>
-                        <span className="text-xs" style={{ color: INK_MUTED }}>
-                          {POLARITY_LABEL[s.key]}
-                        </span>
-                      </button>
-                    ))}
-                    {polarity && (
-                      <button
-                        onClick={() => setPolarity(null)}
-                        title="Clear the sentiment filter"
-                        className="ml-auto text-xs font-semibold px-3 py-[5px] rounded-full text-white"
-                        style={{ background: INK }}
-                      >
-                        {POLARITY_LABEL[polarity]} only ×
-                      </button>
+                          <RefreshCw className="w-4 h-4" strokeWidth={1.75} />
+                          Retry
+                        </button>
+                      </div>
+                    )}
+
+                    {status !== 'error' && (
+                      <>
+                        {/* Sentiment split: the filter */}
+                        <section className="flex flex-col gap-4">
+                          <div className="flex items-center justify-between gap-4 min-h-[28px]">
+                            <span className={eyebrow} style={{ color: INK_DIM }}>Sentiment split</span>
+                            {polarity && status === 'ready' && (
+                              <button
+                                onClick={clearFilter}
+                                className="h-[30px] px-3 rounded-full border bg-white text-[13.5px] font-semibold flex items-center gap-1.5 transition-colors hover:bg-[rgba(19,39,79,0.04)]"
+                                style={{ borderColor: RULE_STRONG, color: INK }}
+                              >
+                                <X className="w-3.5 h-3.5" strokeWidth={1.75} />
+                                Reset filter
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex gap-1 h-24 md:h-28">
+                            {splitCounts.map((s, i) => {
+                              const pct = splitTotal > 0 ? (s.n / splitTotal) * 100 : 0;
+                              const active = polarity === s.key;
+                              const radius = i === 0 ? '14px 4px 4px 14px' : i === splitCounts.length - 1 ? '4px 14px 14px 4px' : '4px';
+                              if (status === 'loading') {
+                                return <div key={s.key} style={{ flex: `${Math.max(pct, 8)} 1 0px`, borderRadius: radius, background: CARD_FILL }} />;
+                              }
+                              return (
+                                <button
+                                  key={s.key}
+                                  onClick={() => togglePolarity(s.key)}
+                                  aria-pressed={active}
+                                  aria-label={`Filter to ${POLARITY_LABEL[s.key].toLowerCase()} (${pct.toFixed(1)}%)`}
+                                  className="relative overflow-hidden border-0 text-left flex flex-col justify-between min-w-[92px] p-2.5 pt-3.5 md:p-4 md:pt-5 transition-opacity duration-[180ms] hover:brightness-[0.97]"
+                                  style={{
+                                    flex: `${Math.max(pct, 8)} 1 0px`,
+                                    borderRadius: radius,
+                                    background: WASH[s.key],
+                                    outline: active ? `2px solid ${INK}` : '0 solid transparent',
+                                    outlineOffset: -2,
+                                    opacity: polarity && !active ? 0.4 : 1,
+                                    color: INK,
+                                  }}
+                                >
+                                  <span className="absolute left-0 right-0 top-0 h-[5px]" style={{ background: POLARITY_META[s.key].strip }} />
+                                  <span className="flex items-baseline font-headline font-bold leading-none tracking-[-0.04em] text-[22px] md:text-4xl">
+                                    {pct.toFixed(1)}<span className="text-[0.55em] ml-px" style={{ color: NAVY_60 }}>%</span>
+                                  </span>
+                                  <span className="flex items-center gap-1.5 text-[13px] font-semibold uppercase tracking-[0.08em] whitespace-nowrap">
+                                    {POLARITY_LABEL[s.key]}
+                                    {active && <Check className="w-3.5 h-3.5" strokeWidth={2.25} />}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {status === 'ready' && (
+                            <span className="text-[13px]" style={{ color: INK_DIM }}>
+                              {filterMeta
+                                ? `Filtered to ${filterMeta.label.toLowerCase()} themes. Select it again or reset to see all.`
+                                : 'Share of themes in AI answers. Select a share to filter quotes and sources.'}
+                            </span>
+                          )}
+                        </section>
+
+                        {/* Body */}
+                        <div className="flex flex-wrap items-start gap-7 md:gap-10">
+
+                          {/* What AI says */}
+                          <section className="min-w-0 flex flex-col gap-4" style={{ flex: '1.7 1 440px' }}>
+                            <div className="flex flex-col gap-1">
+                              <h3 className={h3}>What AI says</h3>
+                              <span className="text-sm" style={{ color: INK_MUTED }}>Verbatim excerpts from recent AI answers about {companyName}.</span>
+                            </div>
+
+                            {filterMeta && status === 'ready' && (
+                              <div className="flex items-center gap-2.5 flex-wrap rounded-xl py-2.5 pl-3.5 pr-3" style={{ background: filterMeta.wash }}>
+                                <span className="w-2.5 h-2.5 rounded-[3px]" style={{ background: filterMeta.color }} />
+                                <span className="text-sm">Showing <strong className="font-semibold">{filterMeta.label}</strong> themes only</span>
+                                <button onClick={clearFilter} className="ml-auto h-7 px-2.5 rounded-full text-[13.5px] font-semibold underline underline-offset-[3px]" style={{ color: INK }}>
+                                  Show all
+                                </button>
+                              </div>
+                            )}
+
+                            {status === 'loading' && (
+                              <div className="flex flex-col gap-3" aria-busy="true">
+                                {[0, 1, 2].map(i => (
+                                  <div key={i} className="border rounded-[14px] px-[22px] py-5 flex flex-col gap-2.5" style={{ borderColor: RULE }}>
+                                    <div className="w-[84px] h-[13px] rounded" style={{ background: CARD_FILL }} />
+                                    <div className="h-3.5 rounded" style={{ background: CARD_FILL }} />
+                                    <div className="h-3.5 rounded" style={{ background: CARD_FILL }} />
+                                    <div className="h-3.5 rounded w-[62%]" style={{ background: CARD_FILL }} />
+                                    <div className="h-px my-1.5" style={{ background: RULE }} />
+                                    <div className="flex gap-3">
+                                      <div className="w-[110px] h-5 rounded-md" style={{ background: CARD_FILL }} />
+                                      <div className="w-[140px] h-5 rounded-md" style={{ background: CARD_FILL }} />
+                                    </div>
+                                  </div>
+                                ))}
+                                <span className="text-[13.5px]" style={{ color: INK_DIM }}>Loading recent answers…</span>
+                              </div>
+                            )}
+
+                            {status === 'ready' && visibleQuotes.length > 0 && (
+                              <div className="flex flex-col gap-3">
+                                {visibleQuotes.map(q => {
+                                  const expanded = !!expandedQuotes[q.id];
+                                  const flag = q.market ? locationFlag(q.market) : '';
+                                  return (
+                                    <article key={q.id} className="border rounded-[14px] bg-white px-[22px] pt-5 pb-4 flex flex-col gap-3" style={{ borderColor: RULE }}>
+                                      <div className="flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full" style={{ background: POLARITY_COLOR[q.polarity] }} />
+                                        <span className="text-[13px] font-semibold uppercase tracking-[0.12em]" style={{ color: INK_MUTED }}>{POLARITY_LABEL[q.polarity]}</span>
+                                      </div>
+                                      <blockquote
+                                        className="m-0 text-base leading-[1.62] [text-wrap:pretty]"
+                                        style={expanded ? { color: INK } : { color: INK, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 3, overflow: 'hidden' }}
+                                      >
+                                        “{q.text}”
+                                      </blockquote>
+                                      <button
+                                        onClick={() => setExpandedQuotes(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
+                                        className="self-start p-0 text-[13.5px] font-semibold underline underline-offset-[3px]"
+                                        style={{ color: INK, textDecorationColor: RULE_STRONG }}
+                                      >
+                                        {expanded ? 'Show less' : 'Read full excerpt'}
+                                      </button>
+                                      <div className="h-px" style={{ background: RULE }} />
+                                      <div className="flex flex-wrap items-center gap-y-2 gap-x-3.5 text-[13.5px]" style={{ color: INK_MUTED }}>
+                                        <span className="flex items-center gap-2 font-semibold" style={{ color: INK }}>
+                                          {q.model && getLLMLogo(q.model) && (
+                                            <span className="inline-flex items-center justify-center w-5 h-5 rounded-[5px] bg-white border" style={{ borderColor: RULE }}>
+                                              <LLMLogo modelName={q.model} size="sm" showFallback={false} />
+                                            </span>
+                                          )}
+                                          {q.model ? getLLMDisplayName(q.model) : 'AI answer'}
+                                        </span>
+                                        {q.jobFunction && (
+                                          <>
+                                            <span className="w-[3px] h-[3px] rounded-full" style={{ background: RULE_STRONG }} />
+                                            <span>{q.jobFunction}</span>
+                                          </>
+                                        )}
+                                        {q.market && (
+                                          <>
+                                            <span className="w-[3px] h-[3px] rounded-full" style={{ background: RULE_STRONG }} />
+                                            <span className="flex items-center gap-1.5">
+                                              {flag && <span className="text-[15px]" aria-hidden="true">{flag}</span>}
+                                              {locationDisplayName(q.market)}
+                                            </span>
+                                          </>
+                                        )}
+                                      </div>
+                                      {q.cites.length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-y-1.5 gap-x-2 text-[12.5px]" style={{ color: INK_DIM }}>
+                                          <span>Cited in this answer</span>
+                                          {q.cites.map(c => (
+                                            <a
+                                              key={c.domain}
+                                              href={c.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-1.5 h-6 pl-1 pr-2 rounded-full border bg-white font-mono text-[12px] transition-colors hover:bg-[rgba(19,39,79,0.04)]"
+                                              style={{ borderColor: RULE, color: INK }}
+                                            >
+                                              <Favicon domain={c.domain} size="sm" />
+                                              {c.domain}
+                                            </a>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </article>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {status === 'ready' && visibleQuotes.length === 0 && (
+                              <div className="border border-dashed rounded-[14px] px-7 py-10 flex flex-col items-center text-center gap-2" style={{ borderColor: RULE_STRONG }}>
+                                <span className="font-headline font-semibold text-lg">No quotes for this filter</span>
+                                <span className="text-[14.5px] leading-[1.55] max-w-[380px] [text-wrap:pretty]" style={{ color: INK_MUTED }}>
+                                  {filterMeta
+                                    ? `Recent AI answers on this topic don't carry ${filterMeta.label.toLowerCase()} themes for ${companyName}.`
+                                    : `Recent AI answers on this topic don't carry quotable text for ${companyName}.`}
+                                </span>
+                                {filterMeta && (
+                                  <button onClick={clearFilter} className="mt-2.5 h-10 px-[18px] rounded-full border bg-white text-sm font-semibold transition-colors hover:bg-[rgba(19,39,79,0.04)]" style={{ borderColor: RULE_STRONG, color: INK }}>
+                                    Show all sentiment
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </section>
+
+                          {/* Side column */}
+                          <div className="min-w-0 flex flex-col gap-4" style={{ flex: '1 1 260px' }}>
+                            <aside className="rounded-2xl border px-[22px] pt-[22px] pb-6 flex flex-col gap-[18px]" style={{ background: CARD_LIGHT, borderColor: RULE }}>
+                              <div className="flex flex-col gap-1">
+                                <h3 className={h3}>Where it comes from</h3>
+                                <span className="text-[13.5px]" style={{ color: INK_MUTED }}>Share of recent answers citing each source.</span>
+                              </div>
+                              {status === 'loading' && (
+                                <div className="flex flex-col gap-[18px]" aria-busy="true">
+                                  {[0, 1, 2, 3, 4, 5].map(i => (
+                                    <div key={i} className="flex flex-col gap-[9px]">
+                                      <div className="flex gap-2.5 items-center">
+                                        <div className="w-[22px] h-[22px] rounded-[5px]" style={{ background: CARD_FILL }} />
+                                        <div className="w-[120px] h-[13px] rounded" style={{ background: CARD_FILL }} />
+                                      </div>
+                                      <div className="h-1.5 rounded-full" style={{ background: CARD_FILL }} />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {status === 'ready' && sourceCoverage.rows.length > 0 && (
+                                <ol className="list-none m-0 p-0 flex flex-col gap-4">
+                                  {sourceCoverage.rows.map(s => (
+                                    <li key={s.domain} className="flex flex-col gap-2">
+                                      <div className="flex items-center gap-2.5 min-w-0">
+                                        <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[5px] bg-white border flex-none" style={{ borderColor: RULE }}>
+                                          <Favicon domain={s.domain} size="md" />
+                                        </span>
+                                        <span className="flex-1 min-w-0 font-mono text-[13.5px] truncate" style={{ color: INK }}>{s.domain}</span>
+                                        <span className="text-sm font-semibold w-10 text-right">{s.pct}%</span>
+                                      </div>
+                                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: BAR_TRACK }}>
+                                        <div className="h-full rounded-full transition-[width] duration-200" style={{ width: `${s.pct}%`, background: TEAL }} />
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ol>
+                              )}
+                              {status === 'ready' && sourceCoverage.rows.length === 0 && (
+                                <span className="px-1 py-5 text-sm leading-[1.55]" style={{ color: INK_MUTED }}>No sources cited for this filter.</span>
+                              )}
+                            </aside>
+
+                            {(status === 'loading' || comparison.length > 0) && (
+                              <aside className="rounded-2xl border bg-white px-[22px] pt-[22px] pb-6 flex flex-col gap-[18px]" style={{ borderColor: RULE }}>
+                                <div className="flex flex-col gap-1">
+                                  <h3 className={h3}>How {clientFirst} compares</h3>
+                                  <span className="text-[13.5px] leading-[1.5] [text-wrap:pretty]" style={{ color: INK_MUTED }}>How positively AI talks about similar employers on this topic.</span>
+                                </div>
+                                {status === 'loading' ? (
+                                  <div className="flex flex-col gap-3.5" aria-busy="true">
+                                    {[0, 1, 2, 3, 4].map(i => (
+                                      <div key={i} className="flex gap-2.5 items-center">
+                                        <div className="w-[26px] h-[26px] rounded-[7px]" style={{ background: CARD_FILL }} />
+                                        <div className="flex-1 h-[13px] rounded" style={{ background: CARD_FILL }} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="flex items-baseline gap-2.5 pb-4 border-b" style={{ borderColor: RULE }}>
+                                      <span className="font-headline font-bold text-[34px] leading-none tracking-[-0.04em]">{ordinal(clientRank)}</span>
+                                      <span className="text-[14.5px]" style={{ color: INK_MUTED }}>of {comparison.length} employers</span>
+                                    </div>
+                                    <ol className="list-none m-0 p-0 flex flex-col gap-1">
+                                      {comparison.map((c, i) => (
+                                        <li key={c.name} className="flex flex-col gap-[7px] px-2.5 py-[9px] -mx-2.5 rounded-[10px]" style={{ background: c.isClient ? WASH.positive : 'transparent' }}>
+                                          <div className="flex items-center gap-2.5 min-w-0">
+                                            <span className="w-3.5 text-[13px] font-semibold" style={{ color: INK_DIM }}>{i + 1}</span>
+                                            <span
+                                              className="flex-none w-6 h-6 rounded-[7px] flex items-center justify-center font-headline font-bold text-xs text-white"
+                                              style={{ background: c.isClient ? INK : NAVY_60 }}
+                                              aria-hidden="true"
+                                            >
+                                              {c.name.charAt(0).toUpperCase()}
+                                            </span>
+                                            <span className="flex-1 min-w-0 text-[14.5px] truncate" style={{ fontWeight: c.isClient ? 700 : 500 }}>{c.name}</span>
+                                            <span className="font-headline font-bold text-[17px] tracking-[-0.02em]">{c.score}%</span>
+                                          </div>
+                                          <div className="ml-6 h-1.5 rounded-full" style={{ background: BAR_TRACK }}>
+                                            <div className="h-full rounded-full" style={{ width: `${c.score}%`, background: c.isClient ? TEAL : 'rgba(19,39,79,0.3)' }} />
+                                          </div>
+                                        </li>
+                                      ))}
+                                    </ol>
+                                    <span className="text-[13px]" style={{ color: INK_DIM }}>
+                                      Sentiment score on {modalAttribute.name}. Not affected by the filter above.
+                                    </span>
+                                  </>
+                                )}
+                              </aside>
+                            )}
+                          </div>
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>
-
-                {/* Body — quotes | sources */}
-                {rawSettling || (attrThemes.length > 0 && detailStatus === 'loading') ? (
-                  <div className="flex items-center justify-center gap-2 py-16" style={{ color: INK_DIM }}>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span className="text-sm">Loading…</span>
-                  </div>
-                ) : attrThemes.length === 0 || detailStatus === 'error' ? (
-                  <div className="py-16 flex flex-col items-center gap-3 text-sm" style={{ color: INK_MUTED }}>
-                    <span>The detail for this attribute didn't load.</span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        if (attrThemes.length === 0) {
-                          if (selectedAttribute) fetchAIThemesForAttribute?.(selectedAttribute);
-                          setGraceElapsedFor(null);
-                        } else {
-                          setDetailRetry(n => n + 1);
-                        }
-                      }}
-                    >
-                      Retry
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-[1fr_340px]">
-                    {/* In their words — verbatim quotes, filtered by the split */}
-                    <div className="px-7 py-6 md:border-r flex flex-col gap-3.5" style={{ borderColor: RULE }}>
-                      <span className={EYEBROW_CLS} style={{ color: PINK }}>In their words</span>
-                      {visibleQuotes.length > 0 ? (
-                        visibleQuotes.map(q => (
-                          <div
-                            key={q.id}
-                            className="border rounded-[14px] px-[18px] py-4 flex flex-col gap-3"
-                            style={{ borderColor: RULE, background: CARD_FILL }}
-                          >
-                            <p className="text-sm leading-[1.55] m-0 [text-wrap:pretty]" style={{ color: INK }}>
-                              “{q.text}”
-                            </p>
-                            <div className="flex items-center gap-2.5 flex-wrap text-[11px]" style={{ color: INK_MUTED }}>
-                              <span className="w-2 h-2 rounded-full flex-none" style={{ background: POLARITY_COLOR[q.polarity] }} />
-                              <span className="inline-flex items-center gap-1.5">
-                                {q.model && <LLMLogo modelName={q.model} size="sm" showFallback={false} />}
-                                {q.model ? getLLMDisplayName(q.model) : 'AI answer'}
-                              </span>
-                              {q.jobFunction && <span>· {q.jobFunction}</span>}
-                              {q.market && (
-                                <span className="inline-flex items-center gap-1">
-                                  · {locationFlag(q.market) && <span aria-hidden="true">{locationFlag(q.market)}</span>}
-                                  {locationDisplayName(q.market)}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <span className="text-[13px]" style={{ color: INK_MUTED }}>
-                          No verbatim quotes match this filter.
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Sources cited — coverage of the sampled answers */}
-                    <div className="px-7 py-6 flex flex-col gap-3.5">
-                      <div className="flex items-center gap-2">
-                        <span className={EYEBROW_CLS} style={{ color: PINK }}>Sources cited</span>
-                        {infoTip('Share of the most recent AI answers on this attribute (within the current sentiment filter) that cite each source.')}
-                      </div>
-                      {sourceCoverage.rows.map(s => (
-                        <div key={s.domain} className="flex flex-col gap-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="flex items-center gap-2 text-[13px] font-medium" style={{ color: INK }}>
-                              <Favicon domain={s.domain} size="sm" />
-                              {s.domain}
-                            </span>
-                            <span className="text-xs tabular-nums" style={{ color: INK }}>{s.pct}%</span>
-                          </div>
-                          <div className="h-2 rounded-lg" style={{ background: BAR_TRACK }}>
-                            <div className="h-full rounded-lg" style={{ width: `${s.pct}%`, background: TEAL }} />
-                          </div>
-                        </div>
-                      ))}
-                      {sourceCoverage.rows.length === 0 && (
-                        <span className="text-[13px]" style={{ color: INK_MUTED }}>No cited sources under this filter.</span>
-                      )}
-                      <span className="text-[11px] mt-0.5" style={{ color: INK_DIM }}>
-                        {polarity ? `${POLARITY_LABEL[polarity]} answers only` : 'Share of recent answers citing each source'}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
+              );
+            })()}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
     </div>
   );
 });
