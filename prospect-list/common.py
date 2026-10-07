@@ -51,7 +51,7 @@ _LEGAL_SUFFIX = re.compile(
 def norm_name(name):
     """Loose name key for matching when there is no domain."""
     s = re.sub(r"\s*/[a-z]{2,3}/?\s*$", "", str(name or "").lower())  # SEC state tag: "MARRIOTT ... /MD"
-    s = s.replace("&", " and ")
+    s = re.sub(r"\bl\.\s*p\.?(?=\s|$)", " ", s.replace("&", " and "))  # "Bloomberg L.P."
     s = re.sub(r"[^a-z0-9 ]+", " ", s)
     s = _LEGAL_SUFFIX.sub(" ", s)
     return re.sub(r"\s+", " ", s).strip()

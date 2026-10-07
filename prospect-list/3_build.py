@@ -242,6 +242,36 @@ def main():
             e["industry"] = s["sic"]
     print(f"SEC: {len(sec)} filers read, {sec_only} US-listed companies added that Wikidata lacks")
 
+    # ---- 3b. Forbes largest private companies ----------------------------------------
+    forbes_path = CACHE / "forbes.json"
+    forbes = json.loads(forbes_path.read_text()) if forbes_path.exists() else []
+    by_nm = {}
+    for e in ents:
+        for n in [e["name"], *e["merged"]]:
+            by_nm.setdefault(norm_name(n), e)
+    f_new = 0
+    for f in forbes:
+        if not f["employees"]:
+            continue
+        e = by_nm.get(norm_name(f["name"]))
+        if e is None:
+            if f["employees"] < MIN_EMPLOYEES:
+                continue
+            e = {"name": f["name"], "domain": "", "key": None, "parent": "", "country": f["country"],
+                 "city": f["city"], "industry": f["industry"], "wd_emp": None, "wd_date": "",
+                 "tickers": set(), "qids": set(), "ciks": set(), "kind": "company", "types": "",
+                 "us_listed": False, "ai": False, "merged": [], "extra_flags": ["NO DOMAIN"],
+                 "us_hq": f["country"] == "United States", "us_subs": []}
+            ents.append(e)
+            by_nm[norm_name(f["name"])] = e
+            f_new += 1
+        e["forbes"] = (f"Forbes Largest Private Cos {f['list_year']}", f["employees"], f["as_of"])
+        if f["country"] == "United States":
+            e["us_hq"] = True
+        e["city"] = e["city"] or f["city"]
+        e["industry"] = e["industry"] or f["industry"]
+    print(f"Forbes: {len(forbes)} private companies read, {f_new} added that other sources lack")
+
     # ---- 4. Pick headcount, note disagreements ---------------------------------------
     for e in ents:
         e.setdefault("sec_emp", None)
@@ -251,6 +281,8 @@ def main():
             cands.append(("SEC " + e.get("sec_form", "annual report"), e["sec_emp"], e["sec_date"]))
         if e.get("wd_emp"):
             cands.append(("Wikidata", e["wd_emp"], e["wd_date"]))
+        if e.get("forbes"):
+            cands.append(e["forbes"])
         if not cands:
             e["emp"], e["asof"], e["source"] = None, "", ""
             continue
@@ -258,7 +290,7 @@ def main():
         src, e["emp"], e["asof"] = cands[0]
         others = [c[0] for c in cands[1:]]
         e["source"] = src + (f" (also {', '.join(others)})" if others else "")
-        if len(cands) == 2:
+        if len(cands) >= 2:
             a, b = cands[0][1], cands[1][1]
             if abs(a - b) / max(a, b) > 0.05:
                 e["extra_flags"].append(

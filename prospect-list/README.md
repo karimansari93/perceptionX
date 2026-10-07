@@ -6,6 +6,7 @@ Builds `output/10k-companies-master.xlsx`. Rerun quarterly, in this order:
 python3 1_wikidata.py       # Wikidata: entities with 5,000+ employees (~5 min)
 python3 2_sec.py            # SEC: headcount from latest 10-K / 20-F text (~1-1.5 h first run; cached after)
 python3 2b_sec_revenue.py   # SEC: revenue, used to catch large companies whose headcount wasn't read
+python3 2c_forbes.py        # Forbes America's Largest Private Companies (newest published year)
 python3 3_build.py          # merge, roll up, flag, write the Excel file
 ```
 
