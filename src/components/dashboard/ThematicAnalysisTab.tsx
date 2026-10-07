@@ -48,6 +48,7 @@ import { getLLMDisplayName } from '@/config/llmLogos';
 import { Favicon } from '@/components/ui/favicon';
 import LLMLogo from '@/components/LLMLogo';
 import { useTabSearchSeed } from '@/contexts/TabSearchSeedContext';
+import { locationFlag, locationDisplayName } from '@/utils/locationContext';
 import { SearchInput } from './SearchInput';
 import { FilterDropdown } from './FilterDropdown';
 import { TablePagination } from './TablePagination';
@@ -210,8 +211,10 @@ const EMPTY_OBJECT: Record<string, string> = {};
 export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiThemes, aiThemesLoading, attributeThemes = EMPTY_ARRAY, fetchAIThemesForAttribute, aiThemeAttrsLoaded = EMPTY_ARRAY, onRefreshThemes, responseTexts = EMPTY_OBJECT, fetchResponseTexts, previousPeriodResponses = EMPTY_ARRAY, responsesLoading = false, themesStatus = 'ready', streamError = false, onRetry, selectedJobFunction = 'all', onJobFunctionChange, cubeQuarterKey, cubeMonthFloor = null, cubeScopeRows, cubePromptTypeRows, currentCompanyId, recencyData = EMPTY_ARRAY, recencyDataLoading = false }: ThematicAnalysisTabProps) => {
 
   // Modal state — persisted so a reload restores the open drilldown.
-  const [selectedAttribute, setSelectedAttribute] = usePersistedState<string | null>('thematicTab.selectedAttribute', null);
-  const [isModalOpen, setIsModalOpen] = usePersistedState<boolean>('thematicTab.isModalOpen', false);
+  // Plain state: restoring an open drilldown on page load opened it before
+  // any of its data existed.
+  const [selectedAttribute, setSelectedAttribute] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   // Modal filter: the sentiment split filters quotes and sources together.
   const [polarity, setPolarity] = useState<'positive' | 'neutral' | 'negative' | null>(null);
 
@@ -900,73 +903,118 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     [filteredThemes, selectedAttribute, isModalOpen]
   );
 
-  // Sources cited, split by the polarity of the theme instance that cites
-  // them — so the sentiment filter can recompute shares over the filtered
-  // citation counts. Citations parse ONCE per response (many theme rows share
-  // a response; parsing per row froze the tab for seconds on big attributes).
-  const attrSources = useMemo(() => {
-    if (attrThemes.length === 0) return [] as { domain: string; positive: number; neutral: number; negative: number }[];
-    const responseById = new Map(responses.map(r => [r.id, r]));
-    const citationsByResponse = new Map<string, string[]>();
-    const citationDomains = (responseId: string): string[] => {
-      const cached = citationsByResponse.get(responseId);
-      if (cached) return cached;
-      let domains: string[] = [];
-      const response = responseById.get(responseId);
-      if (response) {
-        try {
-          const citations = typeof response.citations === 'string'
-            ? JSON.parse(response.citations)
-            : response.citations;
-          if (Array.isArray(citations)) {
-            // Fold www. into the bare domain so one source never shows twice.
-            domains = citations
-              .map((c: any) => (c?.domain ? String(c.domain).replace(/^www\./, '') : null))
-              .filter(Boolean) as string[];
-          }
-        } catch { /* skip invalid citations */ }
-      }
-      citationsByResponse.set(responseId, domains);
-      return domains;
-    };
-    const map = new Map<string, { domain: string; positive: number; neutral: number; negative: number }>();
+  // Drilldown detail (quotes + sources), loaded straight from the database for
+  // the attribute's most recent answers. The modal used to join themes against
+  // the in-memory response stream, which is scoped to the active period and
+  // often still loading, so quotes and sources came up empty. This is one
+  // small, bounded fetch per open and never depends on the stream.
+  const DETAIL_SAMPLE = 150;
+  const QUOTE_TEXT_SAMPLE = 30;
+  const QUOTE_LIMIT = 8;
+  type DetailRow = {
+    id: string;
+    model: string | null;
+    domains: string[];
+    market: string | null;
+    jobFunction: string | null;
+    text: string;
+  };
+  const [detail, setDetail] = useState<{ key: string; status: 'loading' | 'ready' | 'error'; rows: DetailRow[] } | null>(null);
+  const [detailRetry, setDetailRetry] = useState(0);
+
+  // Most recent answers first (by their newest theme row for this attribute).
+  const sampleIds = useMemo(() => {
+    const latest = new Map<string, string>();
     attrThemes.forEach(t => {
-      citationDomains(t.response_id).forEach(domain => {
-        const s = map.get(domain) ?? { domain, positive: 0, neutral: 0, negative: 0 };
-        s[t.sentiment] += 1;
-        map.set(domain, s);
-      });
+      const prev = latest.get(t.response_id);
+      if (prev === undefined || (t.created_at || '') > prev) latest.set(t.response_id, t.created_at || '');
     });
-    return [...map.values()];
-  }, [attrThemes, responses]);
+    return [...latest.entries()]
+      .sort((a, b) => b[1].localeCompare(a[1]))
+      .slice(0, DETAIL_SAMPLE)
+      .map(([id]) => id);
+  }, [attrThemes]);
+  const detailKey = isModalOpen && selectedAttribute && sampleIds.length > 0
+    ? `${selectedAttribute}|${sampleIds.length}|${sampleIds[0]}|${detailRetry}`
+    : '';
 
-  // Verbatim quotes — excerpts anchored on theme keywords so each quote is
-  // actually about this attribute; each carries the matched theme (for the
-  // theme filter), polarity, AI platform and market.
-  const attrResponses = useMemo(() => {
-    // attrThemes is [] while the drilldown is closed — skip the full responses
-    // scan on every stream/scope change until one is actually open.
-    if (attrThemes.length === 0) return [];
-    const ids = new Set(attrThemes.map(t => t.response_id));
-    return responses.filter(r => ids.has(r.id));
-  }, [attrThemes, responses]);
-
-  // Response texts are lazy-loaded (the eager dashboard query omits them) —
-  // fetch them for the open attribute's responses so the quotes can render.
-  const quoteTextFetchKeyRef = useRef<string>('');
   useEffect(() => {
-    if (!isModalOpen || !selectedAttribute || !fetchResponseTexts) return;
-    if (attrResponses.length === 0) return;
-    if (quoteTextFetchKeyRef.current === selectedAttribute) return;
-    const missing = attrResponses
-      .filter(r => !(responseTexts[r.id] || r.response_text))
-      .map(r => r.id)
-      .slice(0, 60);
-    quoteTextFetchKeyRef.current = selectedAttribute;
-    if (missing.length > 0) fetchResponseTexts(missing);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isModalOpen, selectedAttribute, attrResponses]);
+    if (!detailKey) return;
+    let cancelled = false;
+    setDetail({ key: detailKey, status: 'loading', rows: [] });
+    (async () => {
+      try {
+        const chunks: string[][] = [];
+        for (let i = 0; i < sampleIds.length; i += 50) chunks.push(sampleIds.slice(i, i + 50));
+        const textIds = sampleIds.slice(0, QUOTE_TEXT_SAMPLE);
+        const [metaResults, textResult] = await Promise.all([
+          Promise.all(chunks.map(chunk =>
+            (supabase as any)
+              .from('prompt_responses')
+              .select('id, ai_model, citations, confirmed_prompts(location_context, job_function_context)')
+              .in('id', chunk)
+          )),
+          (supabase as any)
+            .from('prompt_responses')
+            .select('id, response_text')
+            .in('id', textIds),
+        ]);
+        if (cancelled) return;
+        const failed = [...metaResults, textResult].find((r: any) => r.error);
+        if (failed) throw failed.error;
 
+        const texts = new Map<string, string>();
+        (textResult.data ?? []).forEach((r: any) => texts.set(r.id, r.response_text || ''));
+        const byId = new Map<string, DetailRow>();
+        metaResults.forEach((res: any) => (res.data ?? []).forEach((r: any) => {
+          let domains: string[] = [];
+          try {
+            const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
+            if (Array.isArray(citations)) {
+              // Fold www. into the bare domain so one source never shows twice.
+              domains = [...new Set(citations
+                .map((c: any) => (c?.domain ? String(c.domain).replace(/^www\./, '') : null))
+                .filter(Boolean) as string[])];
+            }
+          } catch { /* skip invalid citations */ }
+          byId.set(r.id, {
+            id: r.id,
+            model: r.ai_model ?? null,
+            domains,
+            market: r.confirmed_prompts?.location_context ?? null,
+            jobFunction: r.confirmed_prompts?.job_function_context?.trim() || null,
+            text: texts.get(r.id) || responseTexts[r.id] || '',
+          });
+        }));
+        const rows = sampleIds.map(id => byId.get(id)).filter(Boolean) as DetailRow[];
+        setDetail({ key: detailKey, status: 'ready', rows });
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('Attribute detail fetch failed:', err);
+        setDetail({ key: detailKey, status: 'error', rows: [] });
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailKey]);
+
+  const detailStatus: 'loading' | 'ready' | 'error' =
+    detail && detail.key === detailKey ? detail.status : 'loading';
+  const detailRows = detail && detail.key === detailKey ? detail.rows : [];
+
+  // Polarities this attribute carries in each answer, so the sentiment split
+  // filters quotes and sources together.
+  const polaritiesByResponse = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    attrThemes.forEach(t => {
+      const set = map.get(t.response_id) ?? new Set<string>();
+      set.add(t.sentiment);
+      map.set(t.response_id, set);
+    });
+    return map;
+  }, [attrThemes]);
+
+  // Verbatim quotes, anchored on the theme name where it appears in the text.
   const quotes = useMemo(() => {
     const themesByResponse = new Map<string, AITheme[]>();
     attrThemes.forEach(t => {
@@ -977,15 +1025,15 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     const out: {
       id: string;
       text: string;
-      model?: string;
-      market?: string | null;
+      model: string | null;
+      market: string | null;
+      jobFunction: string | null;
       polarity: 'positive' | 'neutral' | 'negative';
-      theme: string | null;
     }[] = [];
-    for (const r of attrResponses) {
+    for (const r of detailRows) {
       // Strip markdown noise so quotes read as prose ("**", "###",
       // and the known "• undefined:" data artifact).
-      const text = (responseTexts[r.id] || r.response_text || '')
+      const text = r.text
         .replace(/•\s*undefined:\s*/g, '• ')
         .replace(/^#{1,6}\s+/gm, '')
         .replace(/\s#{1,6}\s+/g, ' ')
@@ -1009,38 +1057,34 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       const end = Math.min(text.length, anchor + 240);
       const excerpt = text.slice(start, end).trim();
       if (!excerpt) continue;
-      const fallback = rThemes[0] ?? null;
       out.push({
         id: r.id,
-        model: r.ai_model,
-        market: r.confirmed_prompts?.location_context ?? null,
-        polarity: (matched?.sentiment || fallback?.sentiment || 'neutral') as 'positive' | 'neutral' | 'negative',
-        theme: matched?.theme_name || fallback?.theme_name || null,
+        model: r.model,
+        market: r.market,
+        jobFunction: r.jobFunction,
+        polarity: (matched?.sentiment || rThemes[0]?.sentiment || 'neutral') as 'positive' | 'neutral' | 'negative',
         text: `${start > 0 ? '…' : ''}${excerpt}${end < text.length ? '…' : ''}`,
       });
-      if (out.length >= 12) break;
     }
     return out;
-  }, [attrResponses, attrThemes, responseTexts]);
+  }, [detailRows, attrThemes]);
 
-  // Filtered views. The polarity filter narrows quotes and sources together.
-  const visibleSources = useMemo(() => {
-    const total = (s: { positive: number; neutral: number; negative: number }) =>
-      s.positive + s.neutral + s.negative;
-    const val = (s: { positive: number; neutral: number; negative: number }) =>
-      polarity ? s[polarity] : total(s);
-    return attrSources
-      .map(s => ({
-        domain: s.domain,
-        value: val(s),
-        pctPositive: total(s) > 0 ? Math.round((s.positive / total(s)) * 100) : 0,
-      }))
-      .filter(s => s.value > 0)
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
-  }, [attrSources, polarity]);
+  // Sources cited, as coverage: the share of the sampled answers (within the
+  // sentiment filter) that cite each domain.
+  const sourceCoverage = useMemo(() => {
+    const inFilter = detailRows.filter(r => !polarity || polaritiesByResponse.get(r.id)?.has(polarity));
+    const counts = new Map<string, number>();
+    inFilter.forEach(r => r.domains.forEach(d => counts.set(d, (counts.get(d) ?? 0) + 1)));
+    return {
+      base: inFilter.length,
+      rows: [...counts.entries()]
+        .map(([domain, n]) => ({ domain, pct: inFilter.length ? Math.round((n / inFilter.length) * 100) : 0 }))
+        .sort((a, b) => b.pct - a.pct)
+        .slice(0, 8),
+    };
+  }, [detailRows, polarity, polaritiesByResponse]);
   const visibleQuotes = useMemo(
-    () => quotes.filter(q => !polarity || q.polarity === polarity),
+    () => quotes.filter(q => !polarity || q.polarity === polarity).slice(0, QUOTE_LIMIT),
     [quotes, polarity]
   );
 
@@ -1468,8 +1512,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         >
           {modalAttribute && (() => {
             const IconComponent = ATTRIBUTE_ICONS[modalAttribute.id] || Activity;
-            const srcFilteredTotal = visibleSources.reduce((a, s) => a + s.value, 0) || 1;
-            const maxSrc = Math.max(1, ...visibleSources.map(s => s.value));
             const rawSettling = attrThemes.length === 0 && !themesSettled;
 
             return (
@@ -1483,7 +1525,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                         {modalAttribute.name}
                       </DialogTitle>
                       <span className="text-[11px]" style={{ color: INK_MUTED }}>
-                        {modalAttribute.bandLabel} volume · {splitTotal.toLocaleString()} mentions
+                        {modalAttribute.bandLabel} volume
                       </span>
                     </div>
                   </div>
@@ -1530,10 +1572,10 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                           className="font-headline text-lg tabular-nums"
                           style={{ color: INK, fontWeight: polarity === s.key ? 700 : 600 }}
                         >
-                          {s.n.toLocaleString()}
+                          {splitTotal > 0 ? ((s.n / splitTotal) * 100).toFixed(1) : '0.0'}%
                         </span>
                         <span className="text-xs" style={{ color: INK_MUTED }}>
-                          {POLARITY_LABEL[s.key]} · {splitTotal > 0 ? ((s.n / splitTotal) * 100).toFixed(1) : '0.0'}%
+                          {POLARITY_LABEL[s.key]}
                         </span>
                       </button>
                     ))}
@@ -1551,85 +1593,95 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                 </div>
 
                 {/* Body — quotes | sources */}
-                {rawSettling ? (
+                {rawSettling || (attrThemes.length > 0 && detailStatus === 'loading') ? (
                   <div className="flex items-center justify-center gap-2 py-16" style={{ color: INK_DIM }}>
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span className="text-sm">Loading…</span>
                   </div>
-                ) : attrThemes.length === 0 ? (
-                  <div className="py-16 text-center text-sm" style={{ color: INK_MUTED }}>
-                    No detail available for this attribute yet.
+                ) : attrThemes.length === 0 || detailStatus === 'error' ? (
+                  <div className="py-16 flex flex-col items-center gap-3 text-sm" style={{ color: INK_MUTED }}>
+                    <span>The detail for this attribute didn't load.</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (attrThemes.length === 0) {
+                          if (selectedAttribute) fetchAIThemesForAttribute?.(selectedAttribute);
+                          setGraceElapsedFor(null);
+                        } else {
+                          setDetailRetry(n => n + 1);
+                        }
+                      }}
+                    >
+                      Retry
+                    </Button>
                   </div>
                 ) : (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-[1fr_340px]">
-                      {/* In their words — verbatim quotes, filtered by the split */}
-                      <div className="px-7 py-6 md:border-r flex flex-col gap-3.5" style={{ borderColor: RULE }}>
-                        <div className="flex items-baseline justify-between">
-                          <span className={EYEBROW_CLS} style={{ color: PINK }}>In their words</span>
-                          <span className="text-[11px]" style={{ color: INK_DIM }}>
-                            {visibleQuotes.length} of {quotes.length} quotes
-                          </span>
-                        </div>
-                        {visibleQuotes.length > 0 ? (
-                          visibleQuotes.map(q => (
-                            <div
-                              key={q.id}
-                              className="border rounded-[14px] px-[18px] py-4 flex flex-col gap-3"
-                              style={{ borderColor: RULE, background: CARD_FILL }}
-                            >
-                              <p className="text-sm leading-[1.55] m-0 [text-wrap:pretty]" style={{ color: INK }}>
-                                “{q.text}”
-                              </p>
-                              <div className="flex items-center gap-2.5">
-                                <span className="w-2 h-2 rounded-full flex-none" style={{ background: POLARITY_COLOR[q.polarity] }} />
-                                <span className="text-[11px]" style={{ color: INK_MUTED }}>
-                                  {q.model ? getLLMDisplayName(q.model) : 'AI answer'}{q.market ? ` · ${q.market}` : ''}
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr_340px]">
+                    {/* In their words — verbatim quotes, filtered by the split */}
+                    <div className="px-7 py-6 md:border-r flex flex-col gap-3.5" style={{ borderColor: RULE }}>
+                      <span className={EYEBROW_CLS} style={{ color: PINK }}>In their words</span>
+                      {visibleQuotes.length > 0 ? (
+                        visibleQuotes.map(q => (
+                          <div
+                            key={q.id}
+                            className="border rounded-[14px] px-[18px] py-4 flex flex-col gap-3"
+                            style={{ borderColor: RULE, background: CARD_FILL }}
+                          >
+                            <p className="text-sm leading-[1.55] m-0 [text-wrap:pretty]" style={{ color: INK }}>
+                              “{q.text}”
+                            </p>
+                            <div className="flex items-center gap-2.5 flex-wrap text-[11px]" style={{ color: INK_MUTED }}>
+                              <span className="w-2 h-2 rounded-full flex-none" style={{ background: POLARITY_COLOR[q.polarity] }} />
+                              <span className="inline-flex items-center gap-1.5">
+                                {q.model && <LLMLogo modelName={q.model} size="sm" showFallback={false} />}
+                                {q.model ? getLLMDisplayName(q.model) : 'AI answer'}
+                              </span>
+                              {q.jobFunction && <span>· {q.jobFunction}</span>}
+                              {q.market && (
+                                <span className="inline-flex items-center gap-1">
+                                  · {locationFlag(q.market) && <span aria-hidden="true">{locationFlag(q.market)}</span>}
+                                  {locationDisplayName(q.market)}
                                 </span>
-                              </div>
+                              )}
                             </div>
-                          ))
-                        ) : (
-                          <span className="text-[13px]" style={{ color: INK_MUTED }}>
-                            No verbatim quotes match this filter.
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Sources cited */}
-                      <div className="px-7 py-6 flex flex-col gap-3.5">
-                        <div className="flex items-center gap-2">
-                          <span className={EYEBROW_CLS} style={{ color: PINK }}>Sources cited</span>
-                          {infoTip('Bar length is citations from that domain within the current sentiment filter. The percentage is its share of them.')}
-                        </div>
-                        {visibleSources.map(s => (
-                          <div key={s.domain} className="flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between">
-                              <span className="flex items-center gap-2 text-[13px] font-medium" style={{ color: INK }}>
-                                <Favicon domain={s.domain} size="sm" />
-                                {s.domain}
-                              </span>
-                              <span className="text-xs tabular-nums" style={{ color: INK }}>
-                                {Math.round((s.value / srcFilteredTotal) * 100)}%
-                              </span>
-                            </div>
-                            <div className="h-2 rounded-lg" style={{ background: BAR_TRACK }}>
-                              <div className="h-full rounded-lg" style={{ width: `${(s.value / maxSrc) * 100}%`, background: TEAL }} />
-                            </div>
-                            <span className="text-[11px]" style={{ color: INK_DIM }}>
-                              {s.value.toLocaleString()} citations · {s.pctPositive}% positive overall
-                            </span>
                           </div>
-                        ))}
-                        {visibleSources.length === 0 && (
-                          <span className="text-[13px]" style={{ color: INK_MUTED }}>No cited sources under this filter.</span>
-                        )}
-                        <span className="text-[11px] mt-0.5" style={{ color: INK_DIM }}>
-                          {polarity ? `${POLARITY_LABEL[polarity]} citations only` : 'Citations by source'}
+                        ))
+                      ) : (
+                        <span className="text-[13px]" style={{ color: INK_MUTED }}>
+                          No verbatim quotes match this filter.
                         </span>
-                      </div>
+                      )}
                     </div>
-                  </>
+
+                    {/* Sources cited — coverage of the sampled answers */}
+                    <div className="px-7 py-6 flex flex-col gap-3.5">
+                      <div className="flex items-center gap-2">
+                        <span className={EYEBROW_CLS} style={{ color: PINK }}>Sources cited</span>
+                        {infoTip('Share of the most recent AI answers on this attribute (within the current sentiment filter) that cite each source.')}
+                      </div>
+                      {sourceCoverage.rows.map(s => (
+                        <div key={s.domain} className="flex flex-col gap-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-2 text-[13px] font-medium" style={{ color: INK }}>
+                              <Favicon domain={s.domain} size="sm" />
+                              {s.domain}
+                            </span>
+                            <span className="text-xs tabular-nums" style={{ color: INK }}>{s.pct}%</span>
+                          </div>
+                          <div className="h-2 rounded-lg" style={{ background: BAR_TRACK }}>
+                            <div className="h-full rounded-lg" style={{ width: `${s.pct}%`, background: TEAL }} />
+                          </div>
+                        </div>
+                      ))}
+                      {sourceCoverage.rows.length === 0 && (
+                        <span className="text-[13px]" style={{ color: INK_MUTED }}>No cited sources under this filter.</span>
+                      )}
+                      <span className="text-[11px] mt-0.5" style={{ color: INK_DIM }}>
+                        {polarity ? `${POLARITY_LABEL[polarity]} answers only` : 'Share of recent answers citing each source'}
+                      </span>
+                    </div>
+                  </div>
                 )}
               </div>
             );

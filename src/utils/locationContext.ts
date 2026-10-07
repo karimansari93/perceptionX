@@ -96,6 +96,8 @@ const displayFromRaw = (raw: string): string => {
   return stripped;
 };
 
+export const locationDisplayName = (raw: string): string => displayFromRaw(raw);
+
 export const locationFlag = (raw: string): string => {
   const code = codeForLocation(stripLeadingThe(raw.trim()));
   return code ? getCountryFlag(code) : '';
