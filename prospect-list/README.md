@@ -20,3 +20,13 @@ contact email in `common.py` as the User-Agent, as SEC requires.
 Known limits: Wikidata is incomplete and often stale, especially for private companies.
 SEC headcounts are read from report text; the "SEC evidence" tab shows the sentence each
 number came from, and "Check headcount (US HQ)" lists large US filers where none was found.
+
+## Talent and employer-brand leaders (optional)
+
+```
+python3 5_ai_people.py --limit 25   # pilot: asks Google AI Mode via ScrapingDog, 1 request per company
+python3 5_ai_people.py              # all of targets/us_hq_10k.csv
+```
+
+Needs `SCRAPINGDOG_API_KEY` in the environment. Writes `output/ai-people.xlsx`. Every name is
+AI-stated and must be checked (LinkedIn) before outreach.
