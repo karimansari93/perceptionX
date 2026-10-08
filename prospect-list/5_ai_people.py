@@ -1,4 +1,4 @@
-"""Step 5: ask Google (via ScrapingDog) who runs talent attraction / employer brand at each company.
+"""Step 5: ask Google AI Overviews (via ScrapingDog) who runs talent attraction / employer brand at each company.
 
 One question per company, all four roles in the same question. Answers are AI-stated and
 must be verified (LinkedIn) before outreach: the output marks every name "AI-stated, verify".
@@ -8,7 +8,7 @@ Needs the SCRAPINGDOG_API_KEY environment variable (never printed or saved).
 Usage:
   python3 5_ai_people.py --limit 25            # pilot on the first 25 companies
   python3 5_ai_people.py                       # all companies in targets/us_hq_10k.csv
-  python3 5_ai_people.py --surface ai_overview # Google AI Overviews instead of AI Mode (2 requests each)
+  python3 5_ai_people.py --surface ai_mode     # Google AI Mode instead (1 request each)
   python3 5_ai_people.py --dry-run             # show the questions, call nothing
 Answers are cached in cache/ai_people/, so re-runs only ask what is new.
 Writes output/ai-people.xlsx.
@@ -143,7 +143,7 @@ def andy_names():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--surface", choices=["ai_mode", "ai_overview"], default="ai_mode")
+    ap.add_argument("--surface", choices=["ai_overview", "ai_mode"], default="ai_overview")
     ap.add_argument("--targets", default=str(ROOT / "targets" / "us_hq_10k.csv"))
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()

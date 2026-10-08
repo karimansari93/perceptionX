@@ -24,7 +24,7 @@ number came from, and "Check headcount (US HQ)" lists large US filers where none
 ## Talent and employer-brand leaders (optional)
 
 ```
-python3 5_ai_people.py --limit 25   # pilot: asks Google AI Mode via ScrapingDog, 1 request per company
+python3 5_ai_people.py --limit 25   # pilot: asks Google AI Overviews via ScrapingDog, 2 requests per company
 python3 5_ai_people.py              # all of targets/us_hq_10k.csv
 ```
 
