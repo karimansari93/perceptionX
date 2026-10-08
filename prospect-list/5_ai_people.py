@@ -3,7 +3,11 @@
 One question per company, all four roles in the same question. Answers are AI-stated and
 must be verified (LinkedIn) before outreach: the output marks every name "AI-stated, verify".
 
-Needs the SCRAPINGDOG_API_KEY environment variable (never printed or saved).
+By default each question goes through our own Supabase edge function
+`test-prompt-google-ai-overviews`, which calls ScrapingDog with the key stored in Supabase
+(read-only: it returns the answer and saves nothing). It needs the project's public anon key in
+SUPABASE_ANON_KEY or cache/.supabase_anon (never committed). With --direct it calls ScrapingDog
+itself and needs SCRAPINGDOG_API_KEY.
 
 Usage:
   python3 5_ai_people.py --limit 25            # pilot on the first 25 companies
@@ -29,11 +33,12 @@ from common import CACHE, INPUTS, OUTPUT, ROOT, norm_name
 
 ROLES = ["Head of Talent Attraction", "Head of Recruitment Marketing", "Head of Talent Brand",
          "Head of Employer Brand"]
-QUESTION = ("Who is the {roles} at {company}? For each role give the person's full name and exact "
-            "current job title, or say if it is not publicly known.")
+# Kept short on purpose: Google's search step rejected a longer four-part question (tested on Walmart).
+QUESTION = "Who leads talent attraction, recruitment marketing, talent brand and employer brand at {company}?"
 PEOPLE_CACHE = CACHE / "ai_people"
 PEOPLE_CACHE.mkdir(exist_ok=True)
 API = "https://api.scrapingdog.com/google"
+EDGE = "https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-google-ai-overviews"
 ROLE_WORDS = re.compile(r"talent|employer brand|recruit|attraction|people|hr\b|human resources|careers?|"
                         r"acquisition|brand|communications?", re.I)
 # "Jane Doe", "Jane M. Doe", "Jane Doe-Smith", "Jean-Luc O'Neil" (2-4 capitalised words)
@@ -44,8 +49,7 @@ NOT_A_NAME = re.compile(r"^(Head|Vice|Senior|Global|Chief|Director|Talent|Employ
 
 
 def question_for(company):
-    roles = ", ".join(ROLES[:-1]) + " and " + ROLES[-1]
-    return QUESTION.format(roles=roles, company=company)
+    return QUESTION.format(company=company)
 
 
 def text_of(blocks):
@@ -71,6 +75,40 @@ def sources_of(data):
                 seen.add(link)
                 out.append(f"{s.get('title') or s.get('source') or ''} {link}".strip())
     return out
+
+
+def ask_edge(company, anon):
+    """Ask through our AI Overviews edge function; cached on disk like ask()."""
+    path = PEOPLE_CACHE / f"edge_{re.sub(r'[^a-z0-9]+', '_', company.lower())[:80]}.json"
+    if path.exists():
+        return json.loads(path.read_text())
+    q = question_for(company)
+    for attempt in range(3):
+        try:
+            r = requests.post(EDGE, json={"prompt": q, "location_context": "United States"}, timeout=180,
+                              headers={"Authorization": f"Bearer {anon}", "apikey": anon})
+            if r.status_code in (401, 403):
+                sys.exit(f"The edge function refused the request ({r.status_code}). Check SUPABASE_ANON_KEY.")
+            if r.status_code >= 500 or r.status_code == 429:
+                time.sleep(10 * (attempt + 1))
+                continue
+            data = r.json()
+            answer = data.get("response") or ""
+            failed = (not answer or answer == "No response generated"
+                      or re.match(r"(Google (AI|search)|AI Overview|Failed to fetch|No AI Overview|No response)",
+                                  answer))
+            rec = {"company": company, "question": q, "surface": "ai_overview (edge function)",
+                   "answer": "" if failed else answer,
+                   "sources": [f"{c.get('title') or ''} {c.get('url') or ''}".strip()
+                               for c in (data.get("citations") or []) if isinstance(c, dict)],
+                   "status": "answered" if not failed else f"no AI answer ({answer[:80] or 'empty'})"}
+            if not failed or "No response generated" in answer:
+                path.write_text(json.dumps(rec, indent=1))  # errors are not cached, so they retry next run
+            return rec
+        except (requests.RequestException, ValueError):
+            time.sleep(5 * (attempt + 1))
+    return {"company": company, "question": q, "surface": "ai_overview (edge function)", "answer": "",
+            "sources": [], "status": "failed (will retry next run)"}
 
 
 def ask(company, key, surface):
@@ -146,6 +184,8 @@ def main():
     ap.add_argument("--surface", choices=["ai_overview", "ai_mode"], default="ai_overview")
     ap.add_argument("--targets", default=str(ROOT / "targets" / "us_hq_10k.csv"))
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--direct", action="store_true", help="call ScrapingDog directly (needs SCRAPINGDOG_API_KEY)")
     args = ap.parse_args()
 
     with open(args.targets, newline="") as f:
@@ -159,17 +199,26 @@ def main():
         for c in companies[:3]:
             print("  e.g.", question_for(c))
         return
-    key = os.environ.get("SCRAPINGDOG_API_KEY")
-    if not key:
-        sys.exit("SCRAPINGDOG_API_KEY is not set in this environment.")
+    if args.direct:
+        key = os.environ.get("SCRAPINGDOG_API_KEY")
+        if not key:
+            sys.exit("SCRAPINGDOG_API_KEY is not set in this environment.")
+        fetch = lambda c: ask(c, key, args.surface)
+    else:
+        anon_file = CACHE / ".supabase_anon"
+        anon = os.environ.get("SUPABASE_ANON_KEY") or (anon_file.read_text().strip() if anon_file.exists() else "")
+        if not anon:
+            sys.exit("Set SUPABASE_ANON_KEY (the project's public anon key) or save it to cache/.supabase_anon")
+        fetch = lambda c: ask_edge(c, anon)
 
     andy = andy_names()
+    from concurrent.futures import ThreadPoolExecutor
     results = []
-    for i, c in enumerate(companies, 1):
-        results.append(ask(c, key, args.surface))
-        if i % 25 == 0:
-            print(f"  {i}/{len(companies)}")
-        time.sleep(0.5)
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:  # gentle: shares ScrapingDog with live collection
+        for i, rec in enumerate(pool.map(fetch, companies), 1):
+            results.append(rec)
+            if i % 25 == 0:
+                print(f"  {i}/{len(companies)}: {sum(r['status'] == 'answered' for r in results)} answered", flush=True)
 
     wb = Workbook()
     ws = wb.active
