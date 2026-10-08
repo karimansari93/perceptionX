@@ -25,8 +25,12 @@ number came from, and "Check headcount (US HQ)" lists large US filers where none
 
 ```
 python3 5_ai_people.py --limit 25   # pilot: asks Google AI Overviews via ScrapingDog, 2 requests per company
-python3 5_ai_people.py              # all of targets/us_hq_10k.csv
+python3 5_ai_people.py              # all of targets/us_hq_10k.csv (or --targets your.csv)
+python3 5_ai_people.py --fallback-only   # send AI Overviews gaps to Google AI Mode, nothing else
 ```
 
-Needs `SCRAPINGDOG_API_KEY` in the environment. Writes `output/ai-people.xlsx`. Every name is
-AI-stated and must be checked (LinkedIn) before outreach.
+Questions go through our read-only edge functions `test-prompt-google-ai-overviews` and, for
+companies with no AI Overview, `test-prompt-google-ai-mode` (keys stay in Supabase). Needs the
+project's public anon key in `SUPABASE_ANON_KEY` or `cache/.supabase_anon`. Writes
+`output/ai-people.xlsx` with every cited link kept. Every name is AI-stated and must be checked
+(LinkedIn) before outreach.

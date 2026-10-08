@@ -38,7 +38,12 @@ QUESTION = "Who leads talent attraction, recruitment marketing, talent brand and
 PEOPLE_CACHE = CACHE / "ai_people"
 PEOPLE_CACHE.mkdir(exist_ok=True)
 API = "https://api.scrapingdog.com/google"
-EDGE = "https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-google-ai-overviews"
+EDGE_BASE = "https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/"
+EDGE = EDGE_BASE + "test-prompt-google-ai-overviews"
+EDGE_FUNCTIONS = {"ai_overview": "test-prompt-google-ai-overviews",  # both read-only: prompt in, answer out
+                  "ai_mode": "test-prompt-google-ai-mode"}
+CACHE_PREFIX = {"ai_overview": "edge", "ai_mode": "edgemode"}
+SURFACE_LABEL = {"ai_overview": "Google AI Overviews", "ai_mode": "Google AI Mode"}
 ROLE_WORDS = re.compile(r"talent|employer brand|recruit|attraction|people|hr\b|human resources|careers?|"
                         r"acquisition|brand|communications?", re.I)
 # A name is 2-4 capitalised words (any alphabet, so "Morgan-Schönwetter" survives), allowing an initial.
@@ -94,15 +99,24 @@ def sources_of(data):
     return out
 
 
-def ask_edge(company, anon):
-    """Ask through our AI Overviews edge function; cached on disk like ask()."""
-    path = PEOPLE_CACHE / f"edge_{re.sub(r'[^a-z0-9]+', '_', company.lower())[:80]}.json"
+def edge_cache_path(company, surface):
+    return PEOPLE_CACHE / f"{CACHE_PREFIX[surface]}_{re.sub(r'[^a-z0-9]+', '_', company.lower())[:80]}.json"
+
+
+def links_in(text):
+    return list(dict.fromkeys(u.rstrip(").,;") for u in re.findall(r"https?://[^\s<>\"']+", text or "")))
+
+
+def ask_edge(company, anon, surface="ai_overview"):
+    """Ask through our read-only Google edge functions; answers cached on disk."""
+    path = edge_cache_path(company, surface)
     if path.exists():
         return json.loads(path.read_text())
     q = question_for(company)
     for attempt in range(3):
         try:
-            r = requests.post(EDGE, json={"prompt": q, "location_context": "United States"}, timeout=180,
+            r = requests.post(EDGE_BASE + EDGE_FUNCTIONS[surface],
+                              json={"prompt": q, "location_context": "United States"}, timeout=180,
                               headers={"Authorization": f"Bearer {anon}", "apikey": anon})
             if r.status_code in (401, 403):
                 sys.exit(f"The edge function refused the request ({r.status_code}). Check SUPABASE_ANON_KEY.")
@@ -114,10 +128,12 @@ def ask_edge(company, anon):
             failed = (not answer or answer == "No response generated"
                       or re.match(r"(Google (AI|search)|AI Overview|Failed to fetch|No AI Overview|No response)",
                                   answer))
-            rec = {"company": company, "question": q, "surface": "ai_overview (edge function)",
+            cites = [c for c in (data.get("citations") or []) if isinstance(c, dict)]
+            rec = {"company": company, "question": q, "surface": SURFACE_LABEL[surface],
                    "answer": "" if failed else answer,
-                   "sources": [f"{c.get('title') or ''} {c.get('url') or ''}".strip()
-                               for c in (data.get("citations") or []) if isinstance(c, dict)],
+                   "sources": [f"{c.get('title') or ''} {c.get('url') or c.get('link') or ''}".strip() for c in cites],
+                   "links": list(dict.fromkeys([c.get("url") or c.get("link") for c in cites
+                                                if c.get("url") or c.get("link")] + links_in(answer))),
                    "status": "answered" if not failed else
                              ("no AI answer" if "No response generated" in answer
                               else f"failed ({answer[:80] or 'empty'})")}
@@ -126,8 +142,8 @@ def ask_edge(company, anon):
             return rec
         except (requests.RequestException, ValueError):
             time.sleep(5 * (attempt + 1))
-    return {"company": company, "question": q, "surface": "ai_overview (edge function)", "answer": "",
-            "sources": [], "status": "failed (will retry next run)"}
+    return {"company": company, "question": q, "surface": SURFACE_LABEL[surface], "answer": "",
+            "sources": [], "links": [], "status": "failed (will retry next run)"}
 
 
 def ask(company, key, surface):
@@ -236,6 +252,12 @@ def extract_people(answer, company=""):
     return people
 
 
+def label_of(rec):
+    """Older saved answers carry 'ai_overview (edge function)'."""
+    s_ = rec.get("surface", "")
+    return "Google AI Overviews" if s_.startswith("ai_overview") else SURFACE_LABEL.get(s_, s_)
+
+
 def andy_names():
     path = INPUTS / "andy_linkedin.csv"
     if not path.exists():
@@ -253,6 +275,10 @@ def main():
     ap.add_argument("--targets", default=str(ROOT / "targets" / "us_hq_10k.csv"))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--no-ai-mode-fallback", action="store_true",
+                    help="don't ask Google AI Mode when AI Overviews gives no answer")
+    ap.add_argument("--fallback-only", action="store_true",
+                    help="use saved AI Overviews answers only; send every gap straight to AI Mode")
     ap.add_argument("--direct", action="store_true", help="call ScrapingDog directly (needs SCRAPINGDOG_API_KEY)")
     args = ap.parse_args()
 
@@ -277,7 +303,17 @@ def main():
         anon = os.environ.get("SUPABASE_ANON_KEY") or (anon_file.read_text().strip() if anon_file.exists() else "")
         if not anon:
             sys.exit("Set SUPABASE_ANON_KEY (the project's public anon key) or save it to cache/.supabase_anon")
-        fetch = lambda c: ask_edge(c, anon)
+        def fetch(c):
+            aio_path = edge_cache_path(c, "ai_overview")
+            if args.fallback_only and not aio_path.exists():
+                rec = {"company": c, "status": "failed (not asked)", "answer": "", "sources": [], "links": []}
+            else:
+                rec = ask_edge(c, anon, "ai_overview")
+            if rec["status"] != "answered" and not args.no_ai_mode_fallback:
+                alt = ask_edge(c, anon, "ai_mode")
+                if alt["status"] == "answered":
+                    return alt
+            return rec
 
     andy = andy_names()
     from concurrent.futures import ThreadPoolExecutor
@@ -298,23 +334,31 @@ def main():
     ws = wb.active
     ws.title = "People (AI-stated, verify)"
     ws.append(["Company", "Name (AI-stated)", "Title (AI-stated)", "Current or possibly former",
-               "Andy LinkedIn connection", "Verified (fill in)", "Sentence it came from", "Sources Google cited"])
+               "Andy LinkedIn connection", "Verified (fill in)", "LinkedIn link", "Answered by",
+               "Sentence it came from", "All links"])
     found = 0
     for r in results:
         people = extract_people(r["answer"], r["company"])
         found += bool(people)
+        links = r.get("links") or [x.split()[-1] for x in r["sources"] if x.split()]
         for name, title, when, line in people:
+            slug = re.sub(r"[^a-z]", "", name.split()[-1].lower())
+            li = next((u for u in links if "linkedin.com/in/" in u and slug and slug in u.lower()), "")
+            li = li or next((s_.split()[-1] for s_ in r["sources"]
+                             if "linkedin.com/in/" in s_ and name.split()[0].lower() in s_.lower()), "")
             ws.append([r["company"], name, title, when,
-                       andy.get(name.lower(), "") and f"Yes: {andy[name.lower()]}", "", line,
-                       "\n".join(r["sources"][:5])])
+                       andy.get(name.lower(), "") and f"Yes: {andy[name.lower()]}", "", li,
+                       label_of(r), line, "\n".join(links)])
     ws2 = wb.create_sheet("Full answers")
-    ws2.append(["Company", "Status", "Full AI answer", "Sources Google cited", "Question asked"])
+    ws2.append(["Company", "Status", "Answered by", "Full AI answer", "All links", "Sources Google cited",
+                "Question asked"])
     for r in results:
-        ws2.append([r["company"], r["status"], r["answer"], "\n".join(r["sources"]), r["question"]])
-    for sheet, widths in ((ws, (30, 26, 40, 16, 30, 14, 90, 60)), (ws2, (30, 16, 120, 60, 60))):
+        ws2.append([r["company"], r["status"], label_of(r), r["answer"],
+                    "\n".join(r.get("links") or []), "\n".join(r["sources"]), r.get("question", "")])
+    for sheet, widths in ((ws, (30, 26, 40, 16, 30, 14, 40, 18, 90, 60)), (ws2, (30, 16, 18, 120, 60, 60, 60))):
         for c in sheet[1]:
             c.font, c.fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="1F2A44")
-        for col, w in zip("ABCDEFGH", widths):
+        for col, w in zip("ABCDEFGHIJ", widths):
             sheet.column_dimensions[col].width = w
         sheet.freeze_panes = "B2"
         sheet.auto_filter.ref = sheet.dimensions
