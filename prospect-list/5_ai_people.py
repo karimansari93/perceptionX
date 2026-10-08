@@ -63,6 +63,12 @@ if the a an at in for of and with value proposition campaign hello possible ente
 corporate network health healthcare bank financial store stores foods food energy motors motor airlines
 would she he they we you ceo review please know within other operating units each major subsidiary
 insurance hills area metropolitan usa fruit
+focus areas local leads employee experience functional support supply chain core responsibilities
+execution news direct selling key overview summary strategy strategies programs initiatives function
+functions structure model approach notes note resources team's organization organisation org
+life science sciences subgerente gerente gerencia directora directrice directeur recrutement marque
+employeur groupe atracción atraccion talento talentos reclutamiento responsable jefe jefa coordinadora
+coordinador recursos humanos personas marca empleadora rh drh chef leiter leiterin personal
 """.split())
 TITLE_AFTER = re.compile(r"\b(?:as|is|was|serves as|served as|is the|was the|as the)\s+(?:the\s+|an?\s+)?"
                          r"((?:[A-Z][\w&/,'’\-]*\s?){1,12}?)(?=\s+(?:at|for|of|in|within|across|on)\b|[.,;(]|$)")
@@ -186,7 +192,7 @@ def ask(company, key, surface):
             "status": "failed (will retry next run)"}
 
 
-VERB_AFTER = re.compile(r"\s*(?:,|\(|–|—|-\s|:|\b(?:serves|served|leads|led|is|was|heads|headed|manages|managed|"
+VERB_AFTER = re.compile(r"\s*(?:,|\(|–|—|-\s|\b(?:serves|served|leads|led|is|was|heads|headed|manages|managed|"
                         r"oversees|oversaw|operates|runs|ran|directs|directed|built|spearheaded|holds|held|"
                         r"currently|previously|has|had|works|worked|drives|drove)\b)")
 CUE_BEFORE = re.compile(r"(?:such as|like|including|by|named|is|was|are|:|-|•)\s*$", re.I)
@@ -241,6 +247,8 @@ def extract_people(answer, company=""):
             start = m.start() + m.group(1).find(tokens[0])
             end = start + m.group(1)[m.group(1).find(tokens[0]):].find(tokens[-1]) + len(tokens[-1])
             before, after = line[:start], line[end:]
+            if re.match(r"\s*\**\s*:", after):
+                continue  # "Focus Areas:" is a heading, not a person
             if not (VERB_AFTER.match(after) or CUE_BEFORE.search(before)):
                 continue  # not in a person position: likely a place, product or business
             title = title_from(after)
