@@ -41,11 +41,28 @@ API = "https://api.scrapingdog.com/google"
 EDGE = "https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-google-ai-overviews"
 ROLE_WORDS = re.compile(r"talent|employer brand|recruit|attraction|people|hr\b|human resources|careers?|"
                         r"acquisition|brand|communications?", re.I)
-# "Jane Doe", "Jane M. Doe", "Jane Doe-Smith", "Jean-Luc O'Neil" (2-4 capitalised words)
-NAME = r"([A-Z][a-zA-Z'’\-]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-zA-Z'’\-]+){1,2})"
-NOT_A_NAME = re.compile(r"^(Head|Vice|Senior|Global|Chief|Director|Talent|Employer|Recruitment|Human|The|"
-                        r"Not|No|Some|While|However|As|According|Based|Recent|Current|LinkedIn|Google|"
-                        r"Glassdoor|Indeed)\b")
+# A name is 2-4 capitalised words (any alphabet, so "Morgan-Schönwetter" survives), allowing an initial.
+_W = r"[^\W\d_][^\W\d_'’\-]*(?:-[^\W\d_][^\W\d_'’]*)?"
+NAME = re.compile(rf"(?<![\w-])({_W}(?:\s+[^\W\d_]\.)?(?:\s+{_W}){{1,2}}|{_W}\s+[^\W\d_]\.)")
+# Words that mean the match is a company, place, job or source rather than a person.
+NOT_PERSON = set("""
+group corporation corp inc co company companies limited ltd plc llc holdings international global united
+states america american india china europe uk us north south east west new york city digital industrial
+internet technology technologies services solutions systems brands brand talent employer recruitment
+recruiting recruiter acquisition attraction marketing manager management business partner board member
+officer chief vice president director head senior lead leader principal executive human resources people
+hr culture communications careers career team teams department role roles details leadership regional
+transition global specific linkedin magazine forum world economic conference expo glassdoor indeed google
+because while however according based recent current previously formerly also such including more contact
+if the a an at in for of and with value proposition campaign hello possible enterprise operations retail
+corporate network health healthcare bank financial store stores foods food energy motors motor airlines
+would she he they we you ceo review please know within other operating units each major subsidiary
+insurance hills area metropolitan usa fruit
+""".split())
+TITLE_AFTER = re.compile(r"\b(?:as|is|was|serves as|served as|is the|was the|as the)\s+(?:the\s+|an?\s+)?"
+                         r"((?:[A-Z][\w&/,'’\-]*\s?){1,12}?)(?=\s+(?:at|for|of|in|within|across|on)\b|[.,;(]|$)")
+TITLE_PAREN = re.compile(r"^\s*\(([^)]{4,120})\)")
+PAST = re.compile(r"\b(previously|formerly|former|led|headed|was|transitioned|moved|left|until|ex-)\b", re.I)
 
 
 def question_for(company):
@@ -101,7 +118,9 @@ def ask_edge(company, anon):
                    "answer": "" if failed else answer,
                    "sources": [f"{c.get('title') or ''} {c.get('url') or ''}".strip()
                                for c in (data.get("citations") or []) if isinstance(c, dict)],
-                   "status": "answered" if not failed else f"no AI answer ({answer[:80] or 'empty'})"}
+                   "status": "answered" if not failed else
+                             ("no AI answer" if "No response generated" in answer
+                              else f"failed ({answer[:80] or 'empty'})")}
             if not failed or "No response generated" in answer:
                 path.write_text(json.dumps(rec, indent=1))  # errors are not cached, so they retry next run
             return rec
@@ -151,20 +170,69 @@ def ask(company, key, surface):
             "status": "failed (will retry next run)"}
 
 
-def extract_people(answer):
-    """Pull (name, title) pairs from sentences that also mention a talent/brand role."""
-    people = []
+VERB_AFTER = re.compile(r"\s*(?:,|\(|–|—|-\s|:|\b(?:serves|served|leads|led|is|was|heads|headed|manages|managed|"
+                        r"oversees|oversaw|operates|runs|ran|directs|directed|built|spearheaded|holds|held|"
+                        r"currently|previously|has|had|works|worked|drives|drove)\b)")
+CUE_BEFORE = re.compile(r"(?:such as|like|including|by|named|is|was|are|:|-|•)\s*$", re.I)
+TITLE_START = re.compile(r"\b(?:as|is|was)\s+(?:the\s+|an?\s+|its\s+)?(?=[A-Z])")
+TITLE_GLUE = {"of", "and", "&", "for", "-", "–", "/"}
+
+
+def title_from(text):
+    """'... serves as the Head of Talent Acquisition at X' -> 'Head of Talent Acquisition'."""
+    m = TITLE_PAREN.match(text)
+    if m:
+        return m.group(1).strip()
+    m = TITLE_START.search(text[:120])
+    if not m:
+        return ""
+    words = []
+    for tok in re.findall(r"[\w&/'’\-–]+|,", text[m.end():m.end() + 160]):
+        if tok[0].isupper() or tok in TITLE_GLUE or (tok == "," and words):
+            words.append(tok)
+        else:
+            break
+    while words and (words[-1] in TITLE_GLUE or words[-1] == ","):
+        words.pop()
+    return " ".join(words).replace(" ,", ",")
+
+
+def extract_people(answer, company=""):
+    """(name, title, 'current'/'possibly former', sentence) for each person the answer names."""
+    company_words = {w for w in re.findall(r"[^\W\d_]+", company.lower())}
+    # drop Google's source tags glued to sentences: "...Manager.LinkedIn·Mollie Bush +1"
+    answer = re.sub(r"(?:LinkedIn|Glassdoor|Indeed|Medium|YouTube|Instagram|Facebook|Forbes|[A-Z][\w&.'’ ]{1,40}?)"
+                    r"·[^\n.]*|\s*\+\d+\b", ". ", answer)
+    people, seen = [], set()
     # split into sentences, but not after a middle initial ("Jane M. Doe")
-    for line in re.split(r"(?<=[a-z0-9)][.;])\s+|\n", answer):
-        if not ROLE_WORDS.search(line) or re.search(r"not (publicly )?(known|available|disclosed|listed)", line, re.I):
+    for line in re.split(r"(?<=[a-z0-9)][.;])\s+|\n|(?<=[a-z])(?=LinkedIn·)", answer):
+        if re.search(r"not (publicly )?(known|available|disclosed|listed)", line, re.I):
             continue
-        for m in re.finditer(NAME, line):
-            name = m.group(1).strip()
-            if NOT_A_NAME.match(name) or len(name.split()) < 2:
+        for m in NAME.finditer(line):
+            tokens = m.group(1).split()
+            lead = 0
+            while tokens and not tokens[0][0].isupper():  # "while Mollie Bush" -> "Mollie Bush"
+                lead += 1
+                tokens.pop(0)
+            while tokens and not tokens[-1][0].isupper():  # "Bjorn Luijters leads" -> "Bjorn Luijters"
+                tokens.pop()
+            if len(tokens) < 2 or not all(t[0].isupper() for t in tokens):
                 continue
-            title = re.sub(r"\s+", " ", line).strip()[:200]
-            if name not in [p[0] for p in people]:
-                people.append((name, title))
+            name = " ".join(tokens)
+            words = [w.strip(".").lower() for w in tokens]
+            if any(w in NOT_PERSON or w in company_words for w in words) or name.isupper() or name.lower() in seen:
+                continue
+            start = m.start() + m.group(1).find(tokens[0])
+            end = start + m.group(1)[m.group(1).find(tokens[0]):].find(tokens[-1]) + len(tokens[-1])
+            before, after = line[:start], line[end:]
+            if not (VERB_AFTER.match(after) or CUE_BEFORE.search(before)):
+                continue  # not in a person position: likely a place, product or business
+            title = title_from(after)
+            if not title and not ROLE_WORDS.search(line):
+                continue
+            seen.add(name.lower())
+            when = "possibly former" if PAST.search(line[max(0, start - 40):end + 80]) else "current"
+            people.append((name, title, when, re.sub(r"\s+", " ", line).strip()[:300]))
     return people
 
 
@@ -184,7 +252,7 @@ def main():
     ap.add_argument("--surface", choices=["ai_overview", "ai_mode"], default="ai_overview")
     ap.add_argument("--targets", default=str(ROOT / "targets" / "us_hq_10k.csv"))
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--direct", action="store_true", help="call ScrapingDog directly (needs SCRAPINGDOG_API_KEY)")
     args = ap.parse_args()
 
@@ -219,27 +287,34 @@ def main():
             results.append(rec)
             if i % 25 == 0:
                 print(f"  {i}/{len(companies)}: {sum(r['status'] == 'answered' for r in results)} answered", flush=True)
+    # second pass: retry failures one at a time (failures are usually ScrapingDog rate limits)
+    retry = [i for i, r in enumerate(results) if r["status"].startswith("failed")]
+    if retry:
+        print(f"  retrying {len(retry)} failed questions one at a time", flush=True)
+        for i in retry:
+            results[i] = fetch(companies[i])
 
     wb = Workbook()
     ws = wb.active
     ws.title = "People (AI-stated, verify)"
-    ws.append(["Company", "Name (AI-stated)", "Sentence it came from", "Andy LinkedIn connection",
-               "Verified (fill in)", "Sources Google cited"])
+    ws.append(["Company", "Name (AI-stated)", "Title (AI-stated)", "Current or possibly former",
+               "Andy LinkedIn connection", "Verified (fill in)", "Sentence it came from", "Sources Google cited"])
     found = 0
     for r in results:
-        people = extract_people(r["answer"])
+        people = extract_people(r["answer"], r["company"])
         found += bool(people)
-        for name, line in people:
-            ws.append([r["company"], name, line, andy.get(name.lower(), "") and f"Yes: {andy[name.lower()]}",
-                       "", "\n".join(r["sources"][:5])])
+        for name, title, when, line in people:
+            ws.append([r["company"], name, title, when,
+                       andy.get(name.lower(), "") and f"Yes: {andy[name.lower()]}", "", line,
+                       "\n".join(r["sources"][:5])])
     ws2 = wb.create_sheet("Full answers")
     ws2.append(["Company", "Status", "Full AI answer", "Sources Google cited", "Question asked"])
     for r in results:
         ws2.append([r["company"], r["status"], r["answer"], "\n".join(r["sources"]), r["question"]])
-    for sheet, widths in ((ws, (30, 26, 90, 30, 14, 60)), (ws2, (30, 16, 120, 60, 60))):
+    for sheet, widths in ((ws, (30, 26, 40, 16, 30, 14, 90, 60)), (ws2, (30, 16, 120, 60, 60))):
         for c in sheet[1]:
             c.font, c.fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="1F2A44")
-        for col, w in zip("ABCDEF", widths):
+        for col, w in zip("ABCDEFGH", widths):
             sheet.column_dimensions[col].width = w
         sheet.freeze_panes = "B2"
         sheet.auto_filter.ref = sheet.dimensions
