@@ -1446,7 +1446,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                                           <Tooltip key={theme}>
                                             <TooltipTrigger asChild>
                                               <span
-                                                className="relative flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 ring-2 ring-white cursor-help transition-colors hover:bg-gray-200"
+                                                className="relative flex h-6 w-6 items-center justify-center rounded-full bg-white border border-gray-200 cursor-help transition-colors hover:bg-gray-100"
                                                 style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
                                               >
                                                 <Icon className="w-3.5 h-3.5 text-gray-600" />
@@ -1483,7 +1483,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                                         {page.models.slice(0, 4).map((model, i) => (
                                           <span
                                             key={model}
-                                            className="relative flex h-6 w-6 items-center justify-center rounded-full bg-white ring-2 ring-white"
+                                            className="relative flex h-6 w-6 items-center justify-center rounded-full bg-white border border-gray-200"
                                             style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
                                           >
                                             <LLMLogo modelName={model} size="sm" />

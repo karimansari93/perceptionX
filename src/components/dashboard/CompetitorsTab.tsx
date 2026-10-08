@@ -1609,7 +1609,7 @@ export const CompetitorsTab = memo(({
                                         <Tooltip key={domain}>
                                           <TooltipTrigger asChild>
                                             <span
-                                              className="relative flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 ring-2 ring-white cursor-help overflow-hidden"
+                                              className="relative flex h-6 w-6 items-center justify-center rounded-full bg-white border border-gray-200 cursor-help overflow-hidden"
                                               style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
                                             >
                                               <Favicon domain={domain} />
@@ -1638,7 +1638,7 @@ export const CompetitorsTab = memo(({
                                     <span
                                       key={m}
                                       title={m}
-                                      className="relative flex h-6 w-6 items-center justify-center rounded-full bg-white ring-2 ring-white"
+                                      className="relative flex h-6 w-6 items-center justify-center rounded-full bg-white border border-gray-200"
                                       style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
                                     >
                                       <LLMLogo modelName={m} size="sm" showFallback={false} />
@@ -1667,7 +1667,7 @@ export const CompetitorsTab = memo(({
                                           <Tooltip key={market}>
                                             <TooltipTrigger asChild>
                                               <span
-                                                className="relative flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 ring-2 ring-white cursor-help text-sm leading-none"
+                                                className="relative flex h-6 w-6 items-center justify-center rounded-full bg-white border border-gray-200 cursor-help text-sm leading-none"
                                                 style={{ marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i }}
                                               >
                                                 {flag || <Globe className="w-3.5 h-3.5 text-gray-400" />}
