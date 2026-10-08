@@ -1,7 +1,7 @@
 -- Official Ford country domains for company_owned_domains (Ford has none on file).
 -- Each domain is added only to the Ford, Ford Credit and Ford Business Solutions
 -- records for its own country. Re-runnable: existing (company_id, domain) pairs are skipped.
--- Dry run 2026-10-08: 34 rows (21 domains across 28 company records). Pending Karim's sign-off.
+-- Dry run 2026-10-08: 34 rows (21 domains across 28 company records). Applied 2026-10-08 on Rodrigo's instruction.
 insert into company_owned_domains (company_id, domain, asset_type, is_auto_detected, notes)
 select c.id, d.domain, 'regional', false, d.notes
 from companies c
