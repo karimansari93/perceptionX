@@ -63,13 +63,14 @@ serve(async (req) => {
       // "fill April's Perplexity gap" — set to "2026-04" and only prompts
       // missing an April response get run, regardless of Jan/Feb/May data.
       skipIfCollectedInMonth = null,
-      // Queue runs pass true: Claude prompts that need a fresh model call are
-      // handed to claude-batch-collector (Anthropic Message Batches API, 50%
-      // off) instead of calling test-prompt-claude synchronously. Results land
-      // later via the claude-batch-tick poll, through analyze-response, exactly
-      // like the synchronous path. Interactive callers leave it false.
-      claudeViaBatch = false,
     } = body;
+    // Claude is ALWAYS collected through claude-batch-collector (Anthropic
+    // Message Batches API, 50% off), never synchronously via
+    // test-prompt-claude: synchronous Claude collection is too expensive
+    // (founder decision, Oct 2026). Results land later via the
+    // claude-batch-tick poll, through analyze-response, exactly like the
+    // synchronous path did. The old `claudeViaBatch` flag is ignored.
+    const claudeViaBatch = true;
 
     // Derive the period window [start, end) from "YYYY-MM" or "YYYY-Qn".
     let skipMonthStart: string | null = null;
