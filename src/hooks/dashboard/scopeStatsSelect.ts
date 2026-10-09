@@ -8,7 +8,7 @@
 // exact. Non-additive measures (distinct domains/models across keys) cannot
 // be pooled from this cube — those stay on their existing sources until the
 // domain/competitor cubes land.
-import { canonicalizeLocationContext, GENERAL_KEY } from '@/utils/locationContext';
+import { canonicalizeLocationContext, makeLocationMatcher } from '@/utils/locationContext';
 import type {
   CompetitorStatsRow,
   DomainStatsRow,
@@ -22,8 +22,12 @@ import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
 
 export interface StatsSelection {
   // Active location filter: null = all locations; GENERAL_KEY = untagged
-  // rows of countryless profiles; otherwise a canonical location key.
+  // rows of countryless profiles; a region key = any of locationMemberKeys;
+  // otherwise a canonical location key.
   locationKey: string | null;
+  // For a region selection: the member countries' canonical keys (the
+  // selection entry's memberKeys). Ignored for other selections.
+  locationMemberKeys?: string[] | null;
   // company_id → the profile's own canonical country key (or null).
   countryKeyByCompanyId: Map<string, string | null>;
   // Active period: null = all periods; otherwise a "YYYY-Qn" quarter key.
@@ -38,8 +42,9 @@ const rowLocationKey = (row: LocatedRow, sel: StatsSelection): string | null =>
 
 const matchesLocation = (row: LocatedRow, sel: StatsSelection): boolean => {
   if (!sel.locationKey) return true;
-  const key = rowLocationKey(row, sel);
-  return sel.locationKey === GENERAL_KEY ? key === null : key === sel.locationKey;
+  return makeLocationMatcher(sel.locationKey, { memberKeys: sel.locationMemberKeys ?? undefined })(
+    rowLocationKey(row, sel)
+  );
 };
 
 const matchesQuarter = (month: string | null | undefined, sel: StatsSelection): boolean => {

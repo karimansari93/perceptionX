@@ -38,7 +38,7 @@ export const READ_ONLY_ANNOTATIONS = {
 const companyIdProp = { type: 'string', description: 'The company UUID (from list_companies)' };
 const locationProp = {
   type: 'string',
-  description: "Optional market filter, e.g. 'India', 'Germany', 'Japan'. Matched against the organization's tracked markets; if the market isn't tracked, the tool says so and lists what is.",
+  description: "Optional market filter, e.g. 'India', 'Germany', 'Japan', or a world region ('Latin America', 'Europe', 'Asia Pacific', 'North America', 'Middle East & Africa') which combines every tracked market in that region. Matched against the organization's tracked markets; if the market isn't tracked, the tool says so and lists what is.",
 };
 const jobFunctionProp = {
   type: 'string',
