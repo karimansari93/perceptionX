@@ -29,9 +29,23 @@ export const CLASSIFIER_VERSION = "v2-2026-10-06";
 // Dry-run candidates. Live theming always uses "current"; a candidate is
 // used only for theme_batch_items whose run_label starts with its prefix
 // (queued with apply_result = false, so results never reach ai_themes).
-export type ThemeVariant = "current" | "haiku-5-5";
+export type ThemeVariant = "current" | "haiku-5-5" | "haiku-5-5b";
 export const variantForRun = (runLabel: string): ThemeVariant =>
-  runLabel.startsWith("refcheck-haiku55") ? "haiku-5-5" : "current";
+  runLabel.startsWith("refcheck-haiku55b") ? "haiku-5-5b"
+    : runLabel.startsWith("refcheck-haiku55") ? "haiku-5-5"
+    : "current";
+
+// haiku-5-5b: Haiku 5.5 with granularity rules. On the 197-answer reference
+// set plain Haiku 5.5 kept positive/negative themes level with v2 but added
+// ~18% more themes, nearly all neutral (one per interview step, "limited
+// public data", corporate facts), lifting neutral share ~27% -> ~35%.
+const GRANULARITY_RULES = `
+
+Theme granularity:
+- One theme per distinct point the response makes about the company as an employer. Describe a process once: a sequence of steps (application, screening, interview rounds, assessments, onboarding steps) is ONE theme, not one theme per step
+- Do not create a theme for missing information: what the response could not find, "limited public data", "no published figures", or advice to the candidate to check elsewhere
+- Do not create a theme for corporate facts that say nothing about working there (ownership, financing, products, office locations, headcount) unless the response ties them to the employee or candidate experience
+- Most responses support 3 to 6 company themes`;
 
 // Keys come from CLAUDE_API_KEY / CLAUDE_API_KEY_NEXT (see claude-keys.ts);
 // one client per key so the handover doesn't rebuild a client per call.
@@ -342,7 +356,7 @@ export function buildThemeRequest(
   const competitorLine = competitors.length > 0
     ? `\n\nOther companies detected in this response (extract competitor_themes ONLY for these): ${competitors.join(", ")}`
     : "\n\nNo other companies were detected; return an empty competitor_themes array.";
-  const modelParams = variant === "haiku-5-5"
+  const modelParams = variant === "haiku-5-5" || variant === "haiku-5-5b"
     ? {
       model: "claude-haiku-5-5",
       // Haiku 5.5 rejects non-default sampling values (temperature: 0 is a
@@ -363,7 +377,7 @@ export function buildThemeRequest(
     system: [
       {
         type: "text",
-        text: SYSTEM_PROMPT,
+        text: variant === "haiku-5-5b" ? SYSTEM_PROMPT + GRANULARITY_RULES : SYSTEM_PROMPT,
         // ephemeral = 5-min TTL; we're firing 40 calls in ~30s so they
         // all hit a warm cache after the first.
         cache_control: { type: "ephemeral" },
