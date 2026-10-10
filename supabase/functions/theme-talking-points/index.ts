@@ -14,7 +14,7 @@ import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
 //   {action: "submit", company, topic, names: [{name, positive, neutral, negative}], runs?}
 //     -> {batch_id}
 //   {action: "fetch", batch_id}
-//     -> {status, results: [{run, points: [{label, summary, members: [index]}]}], usage}
+//     -> {status, results: [{run, points: [{label, summary}], assignments: [pointIndex per name]}], usage}
 
 const MODEL = "claude-haiku-5-5";
 
@@ -28,14 +28,17 @@ const SCHEMA = {
         properties: {
           label: { type: "string" },
           summary: { type: "string" },
-          members: { type: "array", items: { type: "integer" } },
         },
-        required: ["label", "summary", "members"],
+        required: ["label", "summary"],
         additionalProperties: false,
       },
     },
+    // assignments[i] = position in points of the group label i belongs to.
+    // One entry per label, in label order, so every label lands in exactly
+    // one group (an earlier members-per-group shape left ~16% unassigned).
+    assignments: { type: "array", items: { type: "integer" } },
   },
-  required: ["points"],
+  required: ["points", "assignments"],
   additionalProperties: false,
 };
 
@@ -49,10 +52,11 @@ Rules:
 - Group by what is claimed, not by wording. "Top-of-market compensation", "Excellent pay" and "High salaries" are one point.
 - Keep a claim and its opposite apart: "pay is top of market" and "pay is below top tech rivals" are different points.
 - A point that only a few labels make still gets its own group when it is a distinct claim a recruiter would care about (for example severance, or limited raises).
-- Put every label index in exactly one group.
+- assignments: one number per label, in the same order as the labels (label 0 first), giving the position (0-based) in points of the group it belongs to. Every label gets exactly one number. Write all of them.
 - label: a plain-English statement of the claim, at most 8 words, no jargon, no em dashes. Write it as what AI says, e.g. "Pays top of market".
 - summary: one sentence on what the answers in this group say.
-- Order the groups from most labels to fewest.`;
+- Order the groups from most labels to fewest.
+- First decide the groups, then assign each label.`;
 
 function buildRequest(company: string, topic: string, names: any[]) {
   const lines = names.map((n, i) =>
@@ -114,7 +118,8 @@ serve(async (req) => {
         usage.output_tokens += msg.usage?.output_tokens ?? 0;
         const text = msg.content.find((b: any) => b.type === "text")?.text ?? "";
         try {
-          results.push({ run: r.custom_id, points: JSON.parse(text).points, stop_reason: msg.stop_reason });
+          const parsed = JSON.parse(text);
+          results.push({ run: r.custom_id, points: parsed.points, assignments: parsed.assignments, stop_reason: msg.stop_reason });
         } catch {
           results.push({ run: r.custom_id, error: "unparseable", stop_reason: msg.stop_reason });
         }
