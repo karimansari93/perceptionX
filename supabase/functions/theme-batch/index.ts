@@ -9,6 +9,7 @@ import {
   clientFor,
   parseCompetitorList as parseCompetitors,
   parseThemeMessage,
+  variantForRun,
 } from "../_shared/theme-analysis.ts";
 
 // Re-themes queued responses through the Message Batches API: same request
@@ -95,7 +96,22 @@ async function collect(timeLeft: () => number) {
       // response's existing rows, so only a complete reply is stored.
       if (r.result.type === "succeeded" && r.result.message.stop_reason === "end_turn") {
         const parsed = parseThemeMessage(r.result.message, job.company_name, "", item.competitors ?? []);
-        updates.push({ ...key(item), status: "stored", result: parsed, error: null });
+        // Dry runs also keep the model and token usage, so a candidate's cost
+        // can be compared with the live classifier on the same answers.
+        const result = item.run_label.startsWith("refcheck-")
+          ? { ...parsed, model: r.result.message.model, usage: r.result.message.usage }
+          : parsed;
+        updates.push({ ...key(item), status: "stored", result, error: null });
+      } else if (item.run_label.startsWith("refcheck-")) {
+        // Dry runs: record why the candidate failed instead of retrying it.
+        updates.push({
+          ...key(item),
+          status: "failed",
+          job_id: null,
+          error: (r.result.type === "succeeded"
+            ? `stop_reason ${r.result.message.stop_reason}`
+            : `batch result ${r.result.type}: ${JSON.stringify((r.result as any).error ?? null)}`).slice(0, 1000),
+        });
       } else {
         const retry = item.attempts < MAX_ATTEMPTS;
         updates.push({
@@ -234,7 +250,12 @@ async function submit(timeLeft: () => number) {
     const usable = (items ?? []).filter((i) => (texts.get(i.response_id)?.text ?? "").length > 0);
     const requests = usable.map((i) => ({
       custom_id: i.response_id,
-      params: buildThemeRequest(texts.get(i.response_id)!.text, company_name, texts.get(i.response_id)!.competitors),
+      params: buildThemeRequest(
+        texts.get(i.response_id)!.text,
+        company_name,
+        texts.get(i.response_id)!.competitors,
+        variantForRun(run_label),
+      ),
     }));
     if (requests.length === 0) {
       await updateItems((items ?? []).map((i) => ({ ...key(i), status: "failed", error: "no response text" })));

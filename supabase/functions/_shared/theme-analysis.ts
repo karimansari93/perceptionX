@@ -26,6 +26,13 @@ import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
 // themed under different versions are not comparable on absolute sentiment.
 export const CLASSIFIER_VERSION = "v2-2026-10-06";
 
+// Dry-run candidates. Live theming always uses "current"; a candidate is
+// used only for theme_batch_items whose run_label starts with its prefix
+// (queued with apply_result = false, so results never reach ai_themes).
+export type ThemeVariant = "current" | "haiku-5-5";
+export const variantForRun = (runLabel: string): ThemeVariant =>
+  runLabel.startsWith("refcheck-haiku55") ? "haiku-5-5" : "current";
+
 // Keys come from CLAUDE_API_KEY / CLAUDE_API_KEY_NEXT (see claude-keys.ts);
 // one client per key so the handover doesn't rebuild a client per call.
 const clients = new Map<string, Anthropic>();
@@ -330,17 +337,29 @@ export function buildThemeRequest(
   responseText: string,
   companyName: string,
   competitors: string[] = [],
+  variant: ThemeVariant = "current",
 ): Anthropic.MessageCreateParamsNonStreaming {
   const competitorLine = competitors.length > 0
     ? `\n\nOther companies detected in this response (extract competitor_themes ONLY for these): ${competitors.join(", ")}`
     : "\n\nNo other companies were detected; return an empty competitor_themes array.";
+  const modelParams = variant === "haiku-5-5"
+    ? {
+      model: "claude-haiku-5-5",
+      // Haiku 5.5 rejects non-default sampling values (temperature: 0 is a
+      // 400) and thinks by default; thinking is billed as output, so it is
+      // switched off (allowed at the default "medium" effort).
+      thinking: { type: "disabled" },
+    }
+    : {
+      model: "claude-haiku-4-5",
+      // Deterministic labelling: at the default temperature the same kind of
+      // statement drifted between positive and neutral across collection runs
+      // (Ford July vs October 2026), which moved sentiment with no real change.
+      temperature: 0,
+    };
   return {
-    model: "claude-haiku-4-5",
+    ...modelParams,
     max_tokens: 4096,
-    // Deterministic labelling: at the default temperature the same kind of
-    // statement drifted between positive and neutral across collection runs
-    // (Ford July vs October 2026), which moved sentiment with no real change.
-    temperature: 0,
     system: [
       {
         type: "text",
