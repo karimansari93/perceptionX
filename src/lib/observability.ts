@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/react';
+import { RELOAD_FLAG } from './lazyWithRetry';
 
 // Error reporting for the dashboard data path.
 //
@@ -77,6 +78,14 @@ export interface InitOptions {
 }
 
 // Call once at app start. No-op without a DSN.
+// A tab still running the previous build asks for chunk files a new deploy
+// replaced. lazyWithRetry reloads the tab once and recovers, so these are
+// noise. Only a failure that survives that reload is reported (tagged
+// chunk_reload_failed by reportRenderError).
+const STALE_CHUNK_RE = /Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|Expected a JavaScript(-or-Wasm)? module script/i;
+export const isStaleChunkError = (message: string | undefined | null): boolean =>
+  !!message && STALE_CHUNK_RE.test(message);
+
 export const initObservability = (options: InitOptions = {}): boolean => {
   const dsn = options.dsn ?? (import.meta.env.VITE_SENTRY_DSN as string | undefined);
   if (!dsn) {
@@ -99,6 +108,8 @@ export const initObservability = (options: InitOptions = {}): boolean => {
     },
     tracesSampleRate: 0,
     beforeSend(event) {
+      const message = event.exception?.values?.[0]?.value ?? event.message;
+      if (isStaleChunkError(message) && event.tags?.chunk_reload_failed !== 'yes') return null;
       // Belt and braces: an id is all we ever want to know about a person.
       if (event.user) event.user = { id: event.user.id };
       if (event.request) {
@@ -224,7 +235,12 @@ export const reportDashboardQueryError = (error: unknown, queryKey: readonly unk
 // React error boundary hook (src/App.tsx).
 export const reportRenderError = (error: Error, componentStack: string | undefined) => {
   if (!sentryEnabled) return;
-  Sentry.captureException(error, { contexts: { react: { componentStack } } });
+  // A stale-chunk error reaching the boundary after lazyWithRetry's reload is
+  // a real failure: tag it so beforeSend keeps it.
+  let reloaded = false;
+  try { reloaded = window.sessionStorage.getItem(RELOAD_FLAG) !== null; } catch { /* storage blocked */ }
+  const tags = isStaleChunkError(error?.message) && reloaded ? { chunk_reload_failed: 'yes' } : undefined;
+  Sentry.captureException(error, { contexts: { react: { componentStack } }, tags });
 };
 
 export const getRecentDashboardErrors = (): readonly DashboardQueryError[] => recent.slice();

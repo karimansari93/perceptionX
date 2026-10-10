@@ -17,7 +17,7 @@ import { lazy, type ComponentType } from "react";
  * broken rather than merely stale — in that case we rethrow so the
  * ErrorBoundary can show the real error.
  */
-const RELOAD_FLAG = "chunk-reload-attempted";
+export const RELOAD_FLAG = "chunk-reload-attempted";
 
 export function lazyWithRetry<T extends ComponentType<any>>(
   factory: () => Promise<{ default: T }>,

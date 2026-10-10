@@ -29,6 +29,7 @@ const recordRpcAttempt: Observability['recordRpcAttempt'] = (a) => obs.recordRpc
 const reportDashboardQueryError: Observability['reportDashboardQueryError'] = (e, k) => obs.reportDashboardQueryError(e, k);
 const setObservabilityContext: Observability['setObservabilityContext'] = (p) => obs.setObservabilityContext(p);
 const setObservabilityUser: Observability['setObservabilityUser'] = (u) => obs.setObservabilityUser(u);
+const reportRenderError: Observability['reportRenderError'] = (e, c) => obs.reportRenderError(e, c);
 
 const SCOPE = '33333333-3333-4333-8333-333333333333';
 
@@ -149,5 +150,41 @@ describe('observability: reporting', () => {
 
     // Disable again so later suites run in buffer-only mode.
     expect(initObservability({ dsn: undefined })).toBe(false);
+  });
+});
+
+describe('observability: stale-deploy chunk errors', () => {
+  const staleMessage = 'Failed to fetch dynamically imported module: https://app.example/assets/CompetitorsTab-C0FdgR_Q.js';
+  const beforeSend = () => {
+    vi.mocked(Sentry.init).mockClear();
+    initObservability({ dsn: 'https://public@example.ingest.sentry.io/1', environment: 'test' });
+    return (vi.mocked(Sentry.init).mock.calls[0][0] as any).beforeSend as (e: any) => any;
+  };
+  afterEach(() => {
+    window.sessionStorage.clear();
+    initObservability({ dsn: undefined });
+  });
+
+  it('drops stale-chunk errors, which lazyWithRetry recovers from with a reload', () => {
+    const send = beforeSend();
+    expect(send({ exception: { values: [{ value: staleMessage }] } })).toBeNull();
+    expect(send({ exception: { values: [{ value: 'Importing a module script failed.' }] } })).toBeNull();
+  });
+
+  it('keeps other errors', () => {
+    const send = beforeSend();
+    const event = { exception: { values: [{ value: 'canceling statement due to statement timeout' }] } };
+    expect(send(event)).toBe(event);
+  });
+
+  it('keeps a stale-chunk error that survives the reload, tagged by reportRenderError', () => {
+    const send = beforeSend();
+    vi.mocked(Sentry.captureException).mockClear();
+    window.sessionStorage.setItem('chunk-reload-attempted', '1');
+    reportRenderError(new Error(staleMessage), undefined);
+    const [, hint] = vi.mocked(Sentry.captureException).mock.calls[0] as [Error, any];
+    expect(hint.tags).toEqual({ chunk_reload_failed: 'yes' });
+    const event = { exception: { values: [{ value: staleMessage }] }, tags: hint.tags };
+    expect(send(event)).toBe(event);
   });
 });
