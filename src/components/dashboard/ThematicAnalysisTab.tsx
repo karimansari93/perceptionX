@@ -938,7 +938,11 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     jobFunction: string | null;
     text: string;
   };
-  const [detail, setDetail] = useState<{ key: string; status: 'loading' | 'ready' | 'error'; rows: DetailRow[] } | null>(null);
+  // Per theme: the verbatim snippets the classifier stored as evidence, and
+  // its keywords. The keyset RPC leaves these heavy columns out, so they are
+  // read here for the sampled answers only.
+  type ThemeEvidence = { snippets: string[]; keywords: string[] };
+  const [detail, setDetail] = useState<{ key: string; status: 'loading' | 'ready' | 'error'; rows: DetailRow[]; evidence: Map<string, ThemeEvidence> } | null>(null);
   const [detailRetry, setDetailRetry] = useState(0);
 
   // Most recent answers first (by their newest theme row for this attribute).
@@ -960,13 +964,17 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   useEffect(() => {
     if (!detailKey) return;
     let cancelled = false;
-    setDetail({ key: detailKey, status: 'loading', rows: [] });
+    setDetail({ key: detailKey, status: 'loading', rows: [], evidence: new Map() });
     (async () => {
       try {
         const chunks: string[][] = [];
         for (let i = 0; i < sampleIds.length; i += 50) chunks.push(sampleIds.slice(i, i + 50));
         const textIds = sampleIds.slice(0, QUOTE_TEXT_SAMPLE);
-        const [metaResults, textResult] = await Promise.all([
+        const sampled = new Set(sampleIds);
+        const themeIds = attrThemes.filter(t => sampled.has(t.response_id)).map(t => t.id);
+        const themeChunks: string[][] = [];
+        for (let i = 0; i < themeIds.length; i += 100) themeChunks.push(themeIds.slice(i, i + 100));
+        const [metaResults, textResult, evidenceResults] = await Promise.all([
           Promise.all(chunks.map(chunk =>
             (supabase as any)
               .from('prompt_responses')
@@ -977,10 +985,29 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
             .from('prompt_responses')
             .select('id, response_text')
             .in('id', textIds),
+          Promise.all(themeChunks.map(chunk =>
+            (supabase as any)
+              .from('ai_themes')
+              .select('id, context_snippets, keywords')
+              .in('id', chunk)
+          )),
         ]);
         if (cancelled) return;
         const failed = [...metaResults, textResult].find((r: any) => r.error);
         if (failed) throw failed.error;
+
+        // Evidence is an enhancement: if it fails, quotes fall back to
+        // excerpts cut from the answer text.
+        const evidence = new Map<string, ThemeEvidence>();
+        evidenceResults.forEach((res: any) => {
+          if (res.error) { console.warn('Theme evidence fetch failed:', res.error); return; }
+          (res.data ?? []).forEach((t: any) => evidence.set(t.id, {
+            snippets: (Array.isArray(t.context_snippets) ? t.context_snippets : [])
+              .map((s: unknown) => String(s ?? '').trim())
+              .filter(Boolean),
+            keywords: Array.isArray(t.keywords) ? t.keywords.filter(Boolean) : [],
+          }));
+        });
 
         const texts = new Map<string, string>();
         (textResult.data ?? []).forEach((r: any) => texts.set(r.id, r.response_text || ''));
@@ -1012,11 +1039,11 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
           });
         }));
         const rows = sampleIds.map(id => byId.get(id)).filter(Boolean) as DetailRow[];
-        setDetail({ key: detailKey, status: 'ready', rows });
+        setDetail({ key: detailKey, status: 'ready', rows, evidence });
       } catch (err) {
         if (cancelled) return;
         console.warn('Attribute detail fetch failed:', err);
-        setDetail({ key: detailKey, status: 'error', rows: [] });
+        setDetail({ key: detailKey, status: 'error', rows: [], evidence: new Map() });
       }
     })();
     return () => { cancelled = true; };
@@ -1026,6 +1053,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   const detailStatus: 'loading' | 'ready' | 'error' =
     detail && detail.key === detailKey ? detail.status : 'loading';
   const detailRows = detail && detail.key === detailKey ? detail.rows : [];
+  const themeEvidence = detail && detail.key === detailKey ? detail.evidence : null;
 
   // Polarities this attribute carries in each answer, so the sentiment split
   // filters quotes and sources together.
