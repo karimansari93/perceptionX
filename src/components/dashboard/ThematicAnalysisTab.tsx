@@ -1067,7 +1067,11 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     return map;
   }, [attrThemes]);
 
-  // Verbatim quotes, anchored on the theme name where it appears in the text.
+  // Quotes. Each theme stores 1-2 verbatim snippets from its answer as
+  // evidence; those lead the card, under the theme's own name and sentiment.
+  // "Read in context" shows the wider passage around the first snippet when
+  // the answer text is loaded. Answers whose themes carry no snippets fall
+  // back to an excerpt anchored on a keyword or the theme name.
   const quotes = useMemo(() => {
     const themesByResponse = new Map<string, AITheme[]>();
     attrThemes.forEach(t => {
@@ -1075,40 +1079,25 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       list.push(t);
       themesByResponse.set(t.response_id, list);
     });
-    const out: {
-      id: string;
-      text: string;
-      model: string | null;
-      market: string | null;
-      jobFunction: string | null;
-      cites: { domain: string; url: string }[];
-      polarity: 'positive' | 'neutral' | 'negative';
-    }[] = [];
-    for (const r of detailRows) {
-      // Strip markdown noise so quotes read as prose ("**", "###",
-      // and the known "• undefined:" data artifact).
-      const text = r.text
-        .replace(/•\s*undefined:\s*/g, '• ')
-        .replace(/^#{1,6}\s+/gm, '')
-        .replace(/\s#{1,6}\s+/g, ' ')
-        .replace(/\*\*/g, '');
-      if (!text.trim()) continue;
-      const rThemes = themesByResponse.get(r.id) ?? [];
+    // Strip markdown noise so quotes read as prose ("**", "###",
+    // and the known "• undefined:" data artifact).
+    const clean = (s: string) => s
+      .replace(/•\s*undefined:\s*/g, '• ')
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/\s#{1,6}\s+/g, ' ')
+      .replace(/\*\*/g, '');
+    // Window of the answer around the first needle found, snapped to a
+    // sentence start (else a word) and a word end so it never opens or
+    // closes mid-word. Null when no needle is in the text.
+    const excerptAround = (text: string, needles: string[], fallbackToStart: boolean): string | null => {
+      const lower = text.toLowerCase();
       let idx = -1;
-      let matched: AITheme | null = null;
-      for (const t of rThemes) {
-        const needles = [...(Array.isArray(t.keywords) ? t.keywords : []), t.theme_name].filter(Boolean);
-        for (const n of needles) {
-          const i = text.toLowerCase().indexOf(String(n).toLowerCase());
-          if (i !== -1 && (idx === -1 || i < idx)) {
-            idx = i;
-            matched = t;
-          }
-        }
+      for (const n of needles) {
+        const i = lower.indexOf(n.toLowerCase());
+        if (i !== -1 && (idx === -1 || i < idx)) idx = i;
       }
-      const anchor = idx === -1 ? 0 : idx;
-      // Snap the window to a sentence start (else a word) and a word end so
-      // the excerpt never opens or closes mid-word.
+      if (idx === -1 && !fallbackToStart) return null;
+      const anchor = Math.max(idx, 0);
       let start = Math.max(0, anchor - 120);
       if (start > 0) {
         const lead = text.slice(start, anchor);
@@ -1123,19 +1112,66 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         if (space > anchor) end = space;
       }
       const excerpt = text.slice(start, end).trim().replace(/^[\s.,;:!?)]+/, '');
+      if (!excerpt) return null;
+      return `${start > 0 ? '…' : ''}${excerpt}${end < text.length ? '…' : ''}`;
+    };
+
+    const out: {
+      id: string;
+      responseId: string;
+      themeName: string | null;
+      text: string;
+      context: string | null;
+      model: string | null;
+      market: string | null;
+      jobFunction: string | null;
+      cites: { domain: string; url: string }[];
+      polarity: 'positive' | 'neutral' | 'negative';
+    }[] = [];
+    for (const r of detailRows) {
+      const text = clean(r.text);
+      const rThemes = themesByResponse.get(r.id) ?? [];
+      const meta = { responseId: r.id, model: r.model, market: r.market, jobFunction: r.jobFunction, cites: r.cites.slice(0, 4) };
+      let hadEvidence = false;
+      for (const t of rThemes) {
+        const ev = themeEvidence?.get(t.id);
+        const snippets = (ev?.snippets ?? []).map(clean).map(s => s.trim()).filter(Boolean);
+        if (snippets.length === 0) continue;
+        hadEvidence = true;
+        const context = text.trim() ? excerptAround(text, [snippets[0], ...(ev?.keywords ?? [])], false) : null;
+        out.push({
+          ...meta,
+          id: t.id,
+          themeName: t.theme_name || null,
+          text: snippets.join(' … '),
+          context,
+          polarity: (t.sentiment || 'neutral') as 'positive' | 'neutral' | 'negative',
+        });
+      }
+      if (hadEvidence || !text.trim()) continue;
+      // Fallback: no stored snippets for this answer's themes.
+      let matched: AITheme | null = null;
+      let best = -1;
+      for (const t of rThemes) {
+        const needles = [...(themeEvidence?.get(t.id)?.keywords ?? []), t.theme_name].filter(Boolean);
+        for (const n of needles) {
+          const i = text.toLowerCase().indexOf(String(n).toLowerCase());
+          if (i !== -1 && (best === -1 || i < best)) { best = i; matched = t; }
+        }
+      }
+      const excerpt = excerptAround(text, matched ? [...(themeEvidence?.get(matched.id)?.keywords ?? []), matched.theme_name] : [], true);
       if (!excerpt) continue;
       out.push({
+        ...meta,
         id: r.id,
-        model: r.model,
-        market: r.market,
-        jobFunction: r.jobFunction,
-        cites: r.cites.slice(0, 4),
+        themeName: matched?.theme_name || null,
+        text: excerpt,
+        context: null,
         polarity: (matched?.sentiment || rThemes[0]?.sentiment || 'neutral') as 'positive' | 'neutral' | 'negative',
-        text: `${start > 0 ? '…' : ''}${excerpt}${end < text.length ? '…' : ''}`,
       });
     }
     return out;
-  }, [detailRows, attrThemes]);
+  }, [detailRows, attrThemes, themeEvidence]);
 
   // Sources cited, as coverage: the share of the sampled answers (within the
   // sentiment filter) that cite each domain.
@@ -1152,7 +1188,14 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     };
   }, [detailRows, polarity, polaritiesByResponse]);
   const visibleQuotes = useMemo(
-    () => quotes.filter(q => !polarity || q.polarity === polarity).slice(0, QUOTE_LIMIT),
+    () => {
+      // One card per answer so a single long answer can't fill the list.
+      const seen = new Set<string>();
+      return quotes
+        .filter(q => !polarity || q.polarity === polarity)
+        .filter(q => (seen.has(q.responseId) ? false : (seen.add(q.responseId), true)))
+        .slice(0, QUOTE_LIMIT);
+    },
     [quotes, polarity]
   );
 
@@ -1823,23 +1866,30 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                                   const flag = q.market ? locationFlag(q.market) : '';
                                   return (
                                     <article key={q.id} className="border rounded-[14px] bg-white px-[22px] pt-5 pb-4 flex flex-col gap-3" style={{ borderColor: RULE }}>
-                                      <div className="flex items-center gap-2">
-                                        <span className="w-2 h-2 rounded-full" style={{ background: POLARITY_COLOR[q.polarity] }} />
-                                        <span className="text-[13px] font-semibold uppercase tracking-[0.12em]" style={{ color: INK_MUTED }}>{POLARITY_LABEL[q.polarity]}</span>
+                                      <div className="flex flex-col gap-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-2 h-2 rounded-full" style={{ background: POLARITY_COLOR[q.polarity] }} />
+                                          <span className="text-[13px] font-semibold uppercase tracking-[0.12em]" style={{ color: INK_MUTED }}>{POLARITY_LABEL[q.polarity]}</span>
+                                        </div>
+                                        {q.themeName && (
+                                          <span className="font-headline font-semibold text-[17px] leading-snug [text-wrap:pretty]" style={{ color: INK }}>{q.themeName}</span>
+                                        )}
                                       </div>
                                       <blockquote
                                         className="m-0 text-base leading-[1.62] [text-wrap:pretty]"
-                                        style={expanded ? { color: INK } : { color: INK, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 3, overflow: 'hidden' }}
+                                        style={expanded ? { color: INK } : { color: INK, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 4, overflow: 'hidden' }}
                                       >
-                                        “{q.text}”
+                                        “{expanded && q.context ? q.context : q.text}”
                                       </blockquote>
-                                      <button
-                                        onClick={() => setExpandedQuotes(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
-                                        className="self-start p-0 text-[13.5px] font-semibold underline underline-offset-[3px]"
-                                        style={{ color: INK, textDecorationColor: RULE_STRONG }}
-                                      >
-                                        {expanded ? 'Show less' : 'Read full excerpt'}
-                                      </button>
+                                      {(q.context || q.text.length > 240) && (
+                                        <button
+                                          onClick={() => setExpandedQuotes(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
+                                          className="self-start p-0 text-[13.5px] font-semibold underline underline-offset-[3px]"
+                                          style={{ color: INK, textDecorationColor: RULE_STRONG }}
+                                        >
+                                          {expanded ? 'Show less' : q.context ? 'Read in context' : 'Read full excerpt'}
+                                        </button>
+                                      )}
                                       <div className="h-px" style={{ background: RULE }} />
                                       <div className="flex flex-wrap items-center gap-y-2 gap-x-3.5 text-[13.5px]" style={{ color: INK_MUTED }}>
                                         <span className="flex items-center gap-2 font-semibold" style={{ color: INK }}>
