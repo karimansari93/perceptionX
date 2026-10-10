@@ -13,7 +13,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { getCompetitorFavicon, getFavicon } from "@/utils/citationUtils";
 import { getAttributeIconByName } from "@/config/attributeIcons";
 import { getLLMDisplayName } from "@/config/llmLogos";
-import { sentimentRatioV2 } from "@/lib/sentimentV2";
 import { escapeRegExp } from "@/utils/competitorDetection";
 import LLMLogo from "@/components/LLMLogo";
 import type { CompetitorNormalizedResponse } from "./CompetitorsTab";
@@ -56,7 +55,6 @@ interface CompetitorDetailsModalProps {
    *  between "no data for this competitor" and "the pipeline hasn't emitted
    *  triples yet". */
   hasCompetitorThemeData: boolean;
-  companySentimentById: Map<string, number | null>;
   domainRecencyAvg: Map<string, number>;
   responseTexts?: Record<string, string>;
   fetchResponseTexts?: (ids: string[]) => Promise<Record<string, string>>;
@@ -78,7 +76,6 @@ export const CompetitorDetailsModal = ({
   competitorAgg,
   competitorThemeAgg,
   hasCompetitorThemeData,
-  companySentimentById,
   domainRecencyAvg,
   responseTexts = {},
   fetchResponseTexts,
@@ -268,21 +265,6 @@ export const CompetitorDetailsModal = ({
       ? (competitorAgg.count / totals.total) * 100
       : 0;
 
-    let companyRatioSum = 0;
-    let companyRatioN = 0;
-    for (const nr of analyzedResponses) {
-      const ratio = companySentimentById.get(nr.id);
-      if (typeof ratio === "number") {
-        companyRatioSum += ratio;
-        companyRatioN += 1;
-      }
-    }
-    const companySentiment = companyRatioN > 0 ? (companyRatioSum / companyRatioN) * 100 : null;
-    const competitorSentimentRatio = competitorThemeAgg
-      ? sentimentRatioV2(competitorThemeAgg.positive, competitorThemeAgg.negative)
-      : null;
-    const competitorSentiment = competitorSentimentRatio !== null ? competitorSentimentRatio * 100 : null;
-
     const avgFreshness = (rows: CompetitorNormalizedResponse[]): number | null => {
       let sum = 0;
       let n = 0;
@@ -299,13 +281,12 @@ export const CompetitorDetailsModal = ({
     };
     return {
       visibility: { company: companyVisibility, competitor: competitorVisibility },
-      sentiment: { company: companySentiment, competitor: competitorSentiment },
       freshness: {
         company: avgFreshness(analyzedResponses.filter((nr) => nr.mentioned)),
         competitor: avgFreshness(competitorResponses),
       },
     };
-  }, [analyzedResponses, competitorResponses, totals, competitorAgg, competitorThemeAgg, companySentimentById, domainRecencyAvg]);
+  }, [analyzedResponses, competitorResponses, totals, competitorAgg, domainRecencyAvg]);
 
   const buildProfile = (
     keyOf: (nr: CompetitorNormalizedResponse) => string | null,
@@ -1011,7 +992,7 @@ Be direct, specific, professional. No hedging, no preamble, no summary paragraph
             {/* ------------------------------------------ Tab 3: head-to-head */}
             <TabsContent value="headtohead" className="px-6 py-4 mt-0 focus-visible:outline-none space-y-6">
               <section>
-                <SectionTitle hint={`Visibility: share of the analyzed answers mentioning each of you. Sentiment: positive share of opinionated themes (neutrals excluded). Freshness: average recency of the sources cited where each of you appears (0–100).`}>
+                <SectionTitle hint={`Visibility: share of the analyzed answers mentioning each of you. Freshness: average recency of the sources cited where each of you appears (0–100).`}>
                   Scorecard
                 </SectionTitle>
                 <div className="rounded-lg border border-gray-100 px-3">
@@ -1021,19 +1002,6 @@ Be direct, specific, professional. No hedging, no preamble, no summary paragraph
                     competitor={scorecard.visibility.competitor}
                     format={(v) => `${v.toFixed(1)}%`}
                     noDataNote=""
-                  />
-                  <HeadToHeadRow
-                    label="Sentiment"
-                    company={scorecard.sentiment.company}
-                    competitor={scorecard.sentiment.competitor}
-                    format={(v) => `${Math.round(v)}%`}
-                    noDataNote={
-                      scorecard.sentiment.competitor === null
-                        ? hasCompetitorThemeData
-                          ? "no opinionated themes for them yet"
-                          : "accrues with newly collected answers"
-                        : "no signal"
-                    }
                   />
                   <HeadToHeadRow
                     label="Source freshness"

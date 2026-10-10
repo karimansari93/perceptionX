@@ -29,7 +29,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { enhanceCitations, getCompetitorFavicon } from "@/utils/citationUtils";
 import { getLLMDisplayName } from "@/config/llmLogos";
 import { getAttributeIconByName } from "@/config/attributeIcons";
-import { sentimentRatioV2 } from "@/lib/sentimentV2";
 import {
   parseDetectedCompetitors,
   buildVariantCollapseMap,
@@ -168,8 +167,9 @@ interface CompetitorsTabProps {
   // the parent Dashboard so a selection persists when switching tabs.
   selectedJobFunction?: string;
   onJobFunctionChange?: (value: string) => void;
-  // Per-response sentiment rollup rows (company_response_sentiment_mv) — the
-  // measured company's side of the head-to-head sentiment comparison.
+  // Per-response sentiment rollup rows (company_response_sentiment_mv). Unused
+  // since the head-to-head sentiment row was removed (competitor sentiment
+  // came from passing mentions in the client's answers, skewed to 100%).
   responseSentimentRows?: any[];
   // url_recency_cache rows {url, domain, recency_score 0-100} — the
   // freshness/relevance comparison in the head-to-head scorecard.
@@ -196,7 +196,6 @@ export const CompetitorsTab = memo(({
   onRetry,
   selectedJobFunction = "all",
   onJobFunctionChange,
-  responseSentimentRows = EMPTY_ARRAY,
   recencyData = EMPTY_ARRAY,
   onNavigateToSources,
 }: CompetitorsTabProps) => {
@@ -644,23 +643,6 @@ export const CompetitorsTab = memo(({
     analyzed.matching.forEach((nr) => { if (nr.model) models.add(getLLMDisplayName(nr.model)); });
     return models.size;
   }, [analyzed]);
-
-  // response_id → sentiment ratio for the measured company (methodology v2).
-  const companySentimentById = useMemo(() => {
-    const map = new Map<string, number | null>();
-    for (const row of responseSentimentRows) {
-      if (!row?.response_id) continue;
-      let ratio: number | null;
-      if (row.sentiment_ratio === null || row.sentiment_ratio === undefined) {
-        ratio = sentimentRatioV2(Number(row.positive_themes) || 0, Number(row.negative_themes) || 0);
-      } else {
-        const n = typeof row.sentiment_ratio === "number" ? row.sentiment_ratio : Number(row.sentiment_ratio);
-        ratio = Number.isFinite(n) ? n : null;
-      }
-      map.set(row.response_id, ratio);
-    }
-    return map;
-  }, [responseSentimentRows]);
 
   // domain → average recency score (0-100). Freshness side of head-to-head.
   const domainRecencyAvg = useMemo(() => {
@@ -1736,7 +1718,6 @@ export const CompetitorsTab = memo(({
             attrNames: new Map(Array.from(modalThemes.attrCounts.entries()).map(([id, v]) => [id, v.name])),
           } : null}
           hasCompetitorThemeData={hasAnyCompetitorThemes}
-          companySentimentById={companySentimentById}
           domainRecencyAvg={domainRecencyAvg}
           responsesLoading={responsesLoading}
           responseTexts={responseTexts}

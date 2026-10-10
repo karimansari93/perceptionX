@@ -25,8 +25,6 @@ import {
   Coffee,
   Crown,
   Lock,
-  TrendingUp,
-  TrendingDown,
   FileText,
   MessageSquare,
   ClipboardList,
@@ -101,9 +99,7 @@ interface ThematicAnalysisTabProps {
   cubeMonthFloor?: string | null;
   cubeScopeRows?: ScopeStatsRow[];
   cubePromptTypeRows?: ScopePromptTypeStatsRow[];
-  // Measured company id — scopes the competitor_themes read behind the
-  // attributes table's "Competitor gap" column (the same fetch CompetitorsTab
-  // makes for its head-to-head sentiment).
+  // Measured company id.
   currentCompanyId?: string;
   // url_recency_cache rows {url, domain, recency_score 0-100} — the citation
   // freshness score behind the attributes table's Relevance column, the same
@@ -204,7 +200,7 @@ const GROUP_ORDER: GroupKey[] = ['fix', 'protect', 'amplify', 'watch'];
 // Attributes table (CompetitorsTab's "Card 3" pattern).
 const TABLE_PAGE_SIZE = 15;
 const TOP_SOURCES_PER_ROW = 5;
-type TableSortKey = 'name' | 'group' | 'sentiment' | 'visibility' | 'relevance' | 'gap' | 'sources';
+type TableSortKey = 'name' | 'group' | 'sentiment' | 'visibility' | 'relevance' | 'sources';
 
 const BAND_LABELS: Record<number, string> = {
   5: 'Very high',
@@ -249,50 +245,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   useEffect(() => {
     setTablePage(0);
   }, [searchQuery, filterGroups, filterCategories, filterSources, filterModels, sortKey, sortDir, selectedJobFunction, cubeQuarterKey]);
-
-  // Competitor ↔ attribute ↔ sentiment triples (competitor_themes), the
-  // competitive-set side of the table's "Competitor gap". Loaded once per
-  // company, exactly as CompetitorsTab does; rows only exist for responses
-  // themed after the extraction pass started emitting them, so the column
-  // degrades to "—" for an attribute with no rows yet.
-  const [competitorThemeRows, setCompetitorThemeRows] = useState<any[]>([]);
-  const [competitorThemesLoaded, setCompetitorThemesLoaded] = useState(false);
-  useEffect(() => {
-    if (!currentCompanyId) {
-      setCompetitorThemeRows([]);
-      setCompetitorThemesLoaded(true);
-      return;
-    }
-    let cancelled = false;
-    setCompetitorThemesLoaded(false);
-    (async () => {
-      const PAGE = 1000;
-      const all: any[] = [];
-      try {
-        for (let page = 0; page < 25; page += 1) {
-          const { data, error } = await (supabase as any)
-            .from('competitor_themes')
-            .select('response_id, competitor_name, attribute_id, sentiment')
-            .eq('company_id', currentCompanyId)
-            .range(page * PAGE, (page + 1) * PAGE - 1);
-          if (cancelled) return;
-          if (error) {
-            console.warn('competitor_themes fetch failed:', error.message);
-            break;
-          }
-          all.push(...(data ?? []));
-          if (!data || data.length < PAGE) break;
-        }
-      } catch (err) {
-        console.warn('competitor_themes fetch failed:', err);
-      }
-      if (!cancelled) {
-        setCompetitorThemeRows(all);
-        setCompetitorThemesLoaded(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [currentCompanyId]);
 
   // Reset the modal filter whenever a different attribute is opened.
   useEffect(() => {
@@ -655,40 +607,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     return out;
   }, [streamInScope, recencyData]);
 
-  // Competitive-set sentiment per attribute from the competitor_themes triples
-  // on in-scope answers: each competitor's methodology-v2 ratio, then the
-  // unweighted mean across competitors — the same "own minus peer average"
-  // family as the competitor benchmark's sentiment_gap.
-  const competitorSentimentByAttr = useMemo(() => {
-    const out = new Map<string, number>();
-    if (competitorThemeRows.length === 0) return out;
-    const inScope = new Set(streamInScope.map(r => r.id));
-    const byAttr = new Map<string, Map<string, { positive: number; negative: number }>>();
-    for (const row of competitorThemeRows) {
-      if (!inScope.has(row.response_id)) continue;
-      const attrId = normalizeAttributeId(row.attribute_id);
-      if (!attrId || !row.competitor_name) continue;
-      let comps = byAttr.get(attrId);
-      if (!comps) {
-        comps = new Map();
-        byAttr.set(attrId, comps);
-      }
-      const c = comps.get(row.competitor_name) ?? { positive: 0, negative: 0 };
-      if (row.sentiment === 'positive') c.positive += 1;
-      else if (row.sentiment === 'negative') c.negative += 1;
-      comps.set(row.competitor_name, c);
-    }
-    byAttr.forEach((comps, attrId) => {
-      const ratios: number[] = [];
-      comps.forEach(c => {
-        const ratio = sentimentRatioV2(c.positive, c.negative);
-        if (ratio !== null) ratios.push(ratio * 100);
-      });
-      if (ratios.length > 0) out.set(attrId, ratios.reduce((a, b) => a + b, 0) / ratios.length);
-    });
-    return out;
-  }, [competitorThemeRows, streamInScope]);
-
   type AttributeTableRow = {
     id: string;
     name: string;
@@ -698,7 +616,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     color: string;
     visibilityPct: number | null;
     relevance: number | null;
-    gapPts: number | null;
     /** Top cited domains (the stack). */
     sources: string[];
     /** Every cited domain (the Sources filter). */
@@ -714,7 +631,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
           .sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
           .map(([domain]) => domain)
       : [];
-    const peer = competitorSentimentByAttr.get(a.id);
     return {
       id: a.id,
       name: a.name,
@@ -724,13 +640,12 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       color: a.color,
       visibilityPct: totalScopedAnswers > 0 ? Math.min(100, (a.count / totalScopedAnswers) * 100) : null,
       relevance: extras && extras.recencyN > 0 ? Math.round(extras.recencySum / extras.recencyN) : null,
-      gapPts: peer === undefined ? null : Math.round(a.sentimentPct - peer),
       sources: domainsRanked.slice(0, TOP_SOURCES_PER_ROW),
       domains: domainsRanked,
       sourceCount: domainsRanked.length,
       models: extras ? Array.from(extras.models).sort() : [],
     };
-  }), [attributes, attributeExtras, competitorSentimentByAttr, totalScopedAnswers]);
+  }), [attributes, attributeExtras, totalScopedAnswers]);
 
   const filteredTableRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -757,7 +672,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         case 'group': return dir * (GROUP_ORDER.indexOf(b.group) - GROUP_ORDER.indexOf(a.group)) || a.name.localeCompare(b.name);
         case 'sentiment': return dir * (a.sentimentPct - b.sentimentPct);
         case 'relevance': return num(a.relevance, b.relevance);
-        case 'gap': return num(a.gapPts, b.gapPts);
         case 'sources': return dir * (a.sourceCount - b.sourceCount);
         default: return num(a.visibilityPct, b.visibilityPct) || dir * (a.sentimentPct - b.sentimentPct);
       }
@@ -938,7 +852,11 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     jobFunction: string | null;
     text: string;
   };
-  const [detail, setDetail] = useState<{ key: string; status: 'loading' | 'ready' | 'error'; rows: DetailRow[] } | null>(null);
+  // Per theme: the verbatim snippets the classifier stored as evidence, and
+  // its keywords. The keyset RPC leaves these heavy columns out, so they are
+  // read here for the sampled answers only.
+  type ThemeEvidence = { snippets: string[]; keywords: string[] };
+  const [detail, setDetail] = useState<{ key: string; status: 'loading' | 'ready' | 'error'; rows: DetailRow[]; evidence: Map<string, ThemeEvidence> } | null>(null);
   const [detailRetry, setDetailRetry] = useState(0);
 
   // Most recent answers first (by their newest theme row for this attribute).
@@ -960,13 +878,17 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   useEffect(() => {
     if (!detailKey) return;
     let cancelled = false;
-    setDetail({ key: detailKey, status: 'loading', rows: [] });
+    setDetail({ key: detailKey, status: 'loading', rows: [], evidence: new Map() });
     (async () => {
       try {
         const chunks: string[][] = [];
         for (let i = 0; i < sampleIds.length; i += 50) chunks.push(sampleIds.slice(i, i + 50));
         const textIds = sampleIds.slice(0, QUOTE_TEXT_SAMPLE);
-        const [metaResults, textResult] = await Promise.all([
+        const sampled = new Set(sampleIds);
+        const themeIds = attrThemes.filter(t => sampled.has(t.response_id)).map(t => t.id);
+        const themeChunks: string[][] = [];
+        for (let i = 0; i < themeIds.length; i += 100) themeChunks.push(themeIds.slice(i, i + 100));
+        const [metaResults, textResult, evidenceResults] = await Promise.all([
           Promise.all(chunks.map(chunk =>
             (supabase as any)
               .from('prompt_responses')
@@ -977,10 +899,29 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
             .from('prompt_responses')
             .select('id, response_text')
             .in('id', textIds),
+          Promise.all(themeChunks.map(chunk =>
+            (supabase as any)
+              .from('ai_themes')
+              .select('id, context_snippets, keywords')
+              .in('id', chunk)
+          )),
         ]);
         if (cancelled) return;
         const failed = [...metaResults, textResult].find((r: any) => r.error);
         if (failed) throw failed.error;
+
+        // Evidence is an enhancement: if it fails, quotes fall back to
+        // excerpts cut from the answer text.
+        const evidence = new Map<string, ThemeEvidence>();
+        evidenceResults.forEach((res: any) => {
+          if (res.error) { console.warn('Theme evidence fetch failed:', res.error); return; }
+          (res.data ?? []).forEach((t: any) => evidence.set(t.id, {
+            snippets: (Array.isArray(t.context_snippets) ? t.context_snippets : [])
+              .map((s: unknown) => String(s ?? '').trim())
+              .filter(Boolean),
+            keywords: Array.isArray(t.keywords) ? t.keywords.filter(Boolean) : [],
+          }));
+        });
 
         const texts = new Map<string, string>();
         (textResult.data ?? []).forEach((r: any) => texts.set(r.id, r.response_text || ''));
@@ -1012,11 +953,11 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
           });
         }));
         const rows = sampleIds.map(id => byId.get(id)).filter(Boolean) as DetailRow[];
-        setDetail({ key: detailKey, status: 'ready', rows });
+        setDetail({ key: detailKey, status: 'ready', rows, evidence });
       } catch (err) {
         if (cancelled) return;
         console.warn('Attribute detail fetch failed:', err);
-        setDetail({ key: detailKey, status: 'error', rows: [] });
+        setDetail({ key: detailKey, status: 'error', rows: [], evidence: new Map() });
       }
     })();
     return () => { cancelled = true; };
@@ -1026,6 +967,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   const detailStatus: 'loading' | 'ready' | 'error' =
     detail && detail.key === detailKey ? detail.status : 'loading';
   const detailRows = detail && detail.key === detailKey ? detail.rows : [];
+  const themeEvidence = detail && detail.key === detailKey ? detail.evidence : null;
 
   // Polarities this attribute carries in each answer, so the sentiment split
   // filters quotes and sources together.
@@ -1039,7 +981,11 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     return map;
   }, [attrThemes]);
 
-  // Verbatim quotes, anchored on the theme name where it appears in the text.
+  // Quotes. Each theme stores 1-2 verbatim snippets from its answer as
+  // evidence; those lead the card, under the theme's own name and sentiment.
+  // "Read in context" shows the wider passage around the first snippet when
+  // the answer text is loaded. Answers whose themes carry no snippets fall
+  // back to an excerpt anchored on a keyword or the theme name.
   const quotes = useMemo(() => {
     const themesByResponse = new Map<string, AITheme[]>();
     attrThemes.forEach(t => {
@@ -1047,40 +993,25 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       list.push(t);
       themesByResponse.set(t.response_id, list);
     });
-    const out: {
-      id: string;
-      text: string;
-      model: string | null;
-      market: string | null;
-      jobFunction: string | null;
-      cites: { domain: string; url: string }[];
-      polarity: 'positive' | 'neutral' | 'negative';
-    }[] = [];
-    for (const r of detailRows) {
-      // Strip markdown noise so quotes read as prose ("**", "###",
-      // and the known "• undefined:" data artifact).
-      const text = r.text
-        .replace(/•\s*undefined:\s*/g, '• ')
-        .replace(/^#{1,6}\s+/gm, '')
-        .replace(/\s#{1,6}\s+/g, ' ')
-        .replace(/\*\*/g, '');
-      if (!text.trim()) continue;
-      const rThemes = themesByResponse.get(r.id) ?? [];
+    // Strip markdown noise so quotes read as prose ("**", "###",
+    // and the known "• undefined:" data artifact).
+    const clean = (s: string) => s
+      .replace(/•\s*undefined:\s*/g, '• ')
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/\s#{1,6}\s+/g, ' ')
+      .replace(/\*\*/g, '');
+    // Window of the answer around the first needle found, snapped to a
+    // sentence start (else a word) and a word end so it never opens or
+    // closes mid-word. Null when no needle is in the text.
+    const excerptAround = (text: string, needles: string[], fallbackToStart: boolean): string | null => {
+      const lower = text.toLowerCase();
       let idx = -1;
-      let matched: AITheme | null = null;
-      for (const t of rThemes) {
-        const needles = [...(Array.isArray(t.keywords) ? t.keywords : []), t.theme_name].filter(Boolean);
-        for (const n of needles) {
-          const i = text.toLowerCase().indexOf(String(n).toLowerCase());
-          if (i !== -1 && (idx === -1 || i < idx)) {
-            idx = i;
-            matched = t;
-          }
-        }
+      for (const n of needles) {
+        const i = lower.indexOf(n.toLowerCase());
+        if (i !== -1 && (idx === -1 || i < idx)) idx = i;
       }
-      const anchor = idx === -1 ? 0 : idx;
-      // Snap the window to a sentence start (else a word) and a word end so
-      // the excerpt never opens or closes mid-word.
+      if (idx === -1 && !fallbackToStart) return null;
+      const anchor = Math.max(idx, 0);
       let start = Math.max(0, anchor - 120);
       if (start > 0) {
         const lead = text.slice(start, anchor);
@@ -1095,19 +1026,66 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         if (space > anchor) end = space;
       }
       const excerpt = text.slice(start, end).trim().replace(/^[\s.,;:!?)]+/, '');
+      if (!excerpt) return null;
+      return `${start > 0 ? '…' : ''}${excerpt}${end < text.length ? '…' : ''}`;
+    };
+
+    const out: {
+      id: string;
+      responseId: string;
+      themeName: string | null;
+      text: string;
+      context: string | null;
+      model: string | null;
+      market: string | null;
+      jobFunction: string | null;
+      cites: { domain: string; url: string }[];
+      polarity: 'positive' | 'neutral' | 'negative';
+    }[] = [];
+    for (const r of detailRows) {
+      const text = clean(r.text);
+      const rThemes = themesByResponse.get(r.id) ?? [];
+      const meta = { responseId: r.id, model: r.model, market: r.market, jobFunction: r.jobFunction, cites: r.cites.slice(0, 4) };
+      let hadEvidence = false;
+      for (const t of rThemes) {
+        const ev = themeEvidence?.get(t.id);
+        const snippets = (ev?.snippets ?? []).map(clean).map(s => s.trim()).filter(Boolean);
+        if (snippets.length === 0) continue;
+        hadEvidence = true;
+        const context = text.trim() ? excerptAround(text, [snippets[0], ...(ev?.keywords ?? [])], false) : null;
+        out.push({
+          ...meta,
+          id: t.id,
+          themeName: t.theme_name || null,
+          text: snippets.join(' … '),
+          context,
+          polarity: (t.sentiment || 'neutral') as 'positive' | 'neutral' | 'negative',
+        });
+      }
+      if (hadEvidence || !text.trim()) continue;
+      // Fallback: no stored snippets for this answer's themes.
+      let matched: AITheme | null = null;
+      let best = -1;
+      for (const t of rThemes) {
+        const needles = [...(themeEvidence?.get(t.id)?.keywords ?? []), t.theme_name].filter(Boolean);
+        for (const n of needles) {
+          const i = text.toLowerCase().indexOf(String(n).toLowerCase());
+          if (i !== -1 && (best === -1 || i < best)) { best = i; matched = t; }
+        }
+      }
+      const excerpt = excerptAround(text, matched ? [...(themeEvidence?.get(matched.id)?.keywords ?? []), matched.theme_name] : [], true);
       if (!excerpt) continue;
       out.push({
+        ...meta,
         id: r.id,
-        model: r.model,
-        market: r.market,
-        jobFunction: r.jobFunction,
-        cites: r.cites.slice(0, 4),
+        themeName: matched?.theme_name || null,
+        text: excerpt,
+        context: null,
         polarity: (matched?.sentiment || rThemes[0]?.sentiment || 'neutral') as 'positive' | 'neutral' | 'negative',
-        text: `${start > 0 ? '…' : ''}${excerpt}${end < text.length ? '…' : ''}`,
       });
     }
     return out;
-  }, [detailRows, attrThemes]);
+  }, [detailRows, attrThemes, themeEvidence]);
 
   // Sources cited, as coverage: the share of the sampled answers (within the
   // sentiment filter) that cite each domain.
@@ -1124,7 +1102,14 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     };
   }, [detailRows, polarity, polaritiesByResponse]);
   const visibleQuotes = useMemo(
-    () => quotes.filter(q => !polarity || q.polarity === polarity).slice(0, QUOTE_LIMIT),
+    () => {
+      // One card per answer so a single long answer can't fill the list.
+      const seen = new Set<string>();
+      return quotes
+        .filter(q => !polarity || q.polarity === polarity)
+        .filter(q => (seen.has(q.responseId) ? false : (seen.add(q.responseId), true)))
+        .slice(0, QUOTE_LIMIT);
+    },
     [quotes, polarity]
   );
 
@@ -1140,31 +1125,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   // Per-quote "Read full excerpt" state; resets with the attribute.
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
   useEffect(() => { setExpandedQuotes({}); }, [selectedAttribute]);
-
-  // "How {client} compares": each competitor's sentiment on this attribute
-  // from the competitor_themes triples on in-scope answers (same rows the
-  // table's "Competitor gap" uses), ranked with the client's own score.
-  const comparison = useMemo(() => {
-    if (!isModalOpen || !selectedAttribute || !modalAttribute) return [];
-    const inScope = new Set(streamInScope.map(r => r.id));
-    const comps = new Map<string, { positive: number; negative: number }>();
-    for (const row of competitorThemeRows) {
-      if (!inScope.has(row.response_id)) continue;
-      if (normalizeAttributeId(row.attribute_id) !== selectedAttribute || !row.competitor_name) continue;
-      const c = comps.get(row.competitor_name) ?? { positive: 0, negative: 0 };
-      if (row.sentiment === 'positive') c.positive += 1;
-      else if (row.sentiment === 'negative') c.negative += 1;
-      comps.set(row.competitor_name, c);
-    }
-    const rows: { name: string; score: number; isClient: boolean }[] = [];
-    comps.forEach((c, name) => {
-      const ratio = sentimentRatioV2(c.positive, c.negative);
-      if (ratio !== null) rows.push({ name, score: Math.round(ratio * 100), isClient: false });
-    });
-    if (rows.length === 0) return [];
-    rows.push({ name: companyName, score: modalAttribute.sentimentPct, isClient: true });
-    return rows.sort((a, b) => b.score - a.score).slice(0, 6);
-  }, [isModalOpen, selectedAttribute, modalAttribute, competitorThemeRows, streamInScope, companyName]);
 
   const SortableHead = ({ label, k, className }: { label: string; k: TableSortKey; className?: string }) => (
     <TableHead
@@ -1463,7 +1423,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                         <SortableHead label="Sentiment" k="sentiment" className="min-w-[170px]" />
                         <SortableHead label="Visibility" k="visibility" className="min-w-[110px]" />
                         <SortableHead label="Relevance" k="relevance" className="min-w-[100px]" />
-                        <SortableHead label="Competitor gap" k="gap" className="min-w-[110px]" />
                         <SortableHead label="Top sources cited" k="sources" className="min-w-[170px]" />
                       </TableRow>
                     </TableHeader>
@@ -1507,21 +1466,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                               {row.relevance === null
                                 ? (rawExtrasPending || recencyDataLoading ? pendingCell : emptyCell)
                                 : <span className="text-sm text-gray-600 tabular-nums">{row.relevance}</span>}
-                            </TableCell>
-                            <TableCell>
-                              {row.gapPts === null ? (
-                                rawExtrasPending || !competitorThemesLoaded ? pendingCell : emptyCell
-                              ) : (
-                                <span
-                                  className="inline-flex items-center gap-1 text-xs font-semibold"
-                                  style={{ color: row.gapPts > 0 ? '#0A9A98' : row.gapPts < 0 ? PINK : INK_DIM }}
-                                >
-                                  {row.gapPts > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : row.gapPts < 0 ? <TrendingDown className="w-3 h-3 flex-shrink-0" /> : null}
-                                  <span className="whitespace-nowrap">
-                                    {row.gapPts > 0 ? '+' : row.gapPts < 0 ? '−' : ''}{Math.abs(row.gapPts)} pts
-                                  </span>
-                                </span>
-                              )}
                             </TableCell>
                             <TableCell>
                               {row.sources.length === 0 ? (
@@ -1610,9 +1554,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
               const h3 = 'font-headline font-semibold text-xl tracking-[-0.015em] m-0';
               const filterMeta = polarity ? POLARITY_META[polarity] : null;
               const clearFilter = () => setPolarity(null);
-              const clientFirst = companyName.split(/\s+/)[0] || companyName;
-              const clientRank = comparison.findIndex(c => c.isClient) + 1;
-              const ordinal = (n: number) => `${n}${['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : Math.min(n % 10, 4) % 4] ?? 'th'}`;
 
               return (
                 <div className="overflow-y-auto flex-1 min-h-0">
@@ -1795,23 +1736,30 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                                   const flag = q.market ? locationFlag(q.market) : '';
                                   return (
                                     <article key={q.id} className="border rounded-[14px] bg-white px-[22px] pt-5 pb-4 flex flex-col gap-3" style={{ borderColor: RULE }}>
-                                      <div className="flex items-center gap-2">
-                                        <span className="w-2 h-2 rounded-full" style={{ background: POLARITY_COLOR[q.polarity] }} />
-                                        <span className="text-[13px] font-semibold uppercase tracking-[0.12em]" style={{ color: INK_MUTED }}>{POLARITY_LABEL[q.polarity]}</span>
+                                      <div className="flex flex-col gap-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-2 h-2 rounded-full" style={{ background: POLARITY_COLOR[q.polarity] }} />
+                                          <span className="text-[13px] font-semibold uppercase tracking-[0.12em]" style={{ color: INK_MUTED }}>{POLARITY_LABEL[q.polarity]}</span>
+                                        </div>
+                                        {q.themeName && (
+                                          <span className="font-headline font-semibold text-[17px] leading-snug [text-wrap:pretty]" style={{ color: INK }}>{q.themeName}</span>
+                                        )}
                                       </div>
                                       <blockquote
                                         className="m-0 text-base leading-[1.62] [text-wrap:pretty]"
-                                        style={expanded ? { color: INK } : { color: INK, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 3, overflow: 'hidden' }}
+                                        style={expanded ? { color: INK } : { color: INK, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 4, overflow: 'hidden' }}
                                       >
-                                        “{q.text}”
+                                        “{expanded && q.context ? q.context : q.text}”
                                       </blockquote>
-                                      <button
-                                        onClick={() => setExpandedQuotes(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
-                                        className="self-start p-0 text-[13.5px] font-semibold underline underline-offset-[3px]"
-                                        style={{ color: INK, textDecorationColor: RULE_STRONG }}
-                                      >
-                                        {expanded ? 'Show less' : 'Read full excerpt'}
-                                      </button>
+                                      {(q.context || q.text.length > 240) && (
+                                        <button
+                                          onClick={() => setExpandedQuotes(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
+                                          className="self-start p-0 text-[13.5px] font-semibold underline underline-offset-[3px]"
+                                          style={{ color: INK, textDecorationColor: RULE_STRONG }}
+                                        >
+                                          {expanded ? 'Show less' : q.context ? 'Read in context' : 'Read full excerpt'}
+                                        </button>
+                                      )}
                                       <div className="h-px" style={{ background: RULE }} />
                                       <div className="flex flex-wrap items-center gap-y-2 gap-x-3.5 text-[13.5px]" style={{ color: INK_MUTED }}>
                                         <span className="flex items-center gap-2 font-semibold" style={{ color: INK }}>
@@ -1922,55 +1870,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                               )}
                             </aside>
 
-                            {(status === 'loading' || comparison.length > 0) && (
-                              <aside className="rounded-2xl border bg-white px-[22px] pt-[22px] pb-6 flex flex-col gap-[18px]" style={{ borderColor: RULE }}>
-                                <div className="flex flex-col gap-1">
-                                  <h3 className={h3}>How {clientFirst} compares</h3>
-                                  <span className="text-[13.5px] leading-[1.5] [text-wrap:pretty]" style={{ color: INK_MUTED }}>How positively AI talks about similar employers on this topic.</span>
-                                </div>
-                                {status === 'loading' ? (
-                                  <div className="flex flex-col gap-3.5" aria-busy="true">
-                                    {[0, 1, 2, 3, 4].map(i => (
-                                      <div key={i} className="flex gap-2.5 items-center">
-                                        <div className="w-[26px] h-[26px] rounded-[7px]" style={{ background: CARD_FILL }} />
-                                        <div className="flex-1 h-[13px] rounded" style={{ background: CARD_FILL }} />
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="flex items-baseline gap-2.5 pb-4 border-b" style={{ borderColor: RULE }}>
-                                      <span className="font-headline font-bold text-[34px] leading-none tracking-[-0.04em]">{ordinal(clientRank)}</span>
-                                      <span className="text-[14.5px]" style={{ color: INK_MUTED }}>of {comparison.length} employers</span>
-                                    </div>
-                                    <ol className="list-none m-0 p-0 flex flex-col gap-1">
-                                      {comparison.map((c, i) => (
-                                        <li key={c.name} className="flex flex-col gap-[7px] px-2.5 py-[9px] -mx-2.5 rounded-[10px]" style={{ background: c.isClient ? WASH.positive : 'transparent' }}>
-                                          <div className="flex items-center gap-2.5 min-w-0">
-                                            <span className="w-3.5 text-[13px] font-semibold" style={{ color: INK_DIM }}>{i + 1}</span>
-                                            <span
-                                              className="flex-none w-6 h-6 rounded-[7px] flex items-center justify-center font-headline font-bold text-xs text-white"
-                                              style={{ background: c.isClient ? INK : NAVY_60 }}
-                                              aria-hidden="true"
-                                            >
-                                              {c.name.charAt(0).toUpperCase()}
-                                            </span>
-                                            <span className="flex-1 min-w-0 text-[14.5px] truncate" style={{ fontWeight: c.isClient ? 700 : 500 }}>{c.name}</span>
-                                            <span className="font-headline font-bold text-[17px] tracking-[-0.02em]">{c.score}%</span>
-                                          </div>
-                                          <div className="ml-6 h-1.5 rounded-full" style={{ background: BAR_TRACK }}>
-                                            <div className="h-full rounded-full" style={{ width: `${c.score}%`, background: c.isClient ? TEAL : 'rgba(19,39,79,0.3)' }} />
-                                          </div>
-                                        </li>
-                                      ))}
-                                    </ol>
-                                    <span className="text-[13px]" style={{ color: INK_DIM }}>
-                                      Sentiment score on {modalAttribute.name}. Not affected by the filter above.
-                                    </span>
-                                  </>
-                                )}
-                              </aside>
-                            )}
                           </div>
                         </div>
                       </>
