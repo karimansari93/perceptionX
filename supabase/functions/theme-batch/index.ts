@@ -9,6 +9,7 @@ import {
   clientFor,
   parseCompetitorList as parseCompetitors,
   parseThemeMessage,
+  variantForRun,
 } from "../_shared/theme-analysis.ts";
 
 // Re-themes queued responses through the Message Batches API: same request
@@ -234,7 +235,12 @@ async function submit(timeLeft: () => number) {
     const usable = (items ?? []).filter((i) => (texts.get(i.response_id)?.text ?? "").length > 0);
     const requests = usable.map((i) => ({
       custom_id: i.response_id,
-      params: buildThemeRequest(texts.get(i.response_id)!.text, company_name, texts.get(i.response_id)!.competitors),
+      params: buildThemeRequest(
+        texts.get(i.response_id)!.text,
+        company_name,
+        texts.get(i.response_id)!.competitors,
+        variantForRun(run_label),
+      ),
     }));
     if (requests.length === 0) {
       await updateItems((items ?? []).map((i) => ({ ...key(i), status: "failed", error: "no response text" })));

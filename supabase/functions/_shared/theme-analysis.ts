@@ -26,6 +26,18 @@ import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.65.0";
 // themed under different versions are not comparable on absolute sentiment.
 export const CLASSIFIER_VERSION = "v2-2026-10-06";
 
+// Candidate under reference check: same as the live classifier except it asks
+// for ONE short quote per theme instead of 1-2 (quotes are ~27% of output
+// tokens and only the first one is ever read, by the chat tools). It is used
+// ONLY for theme_batch_items whose run_label starts with CANDIDATE_RUN_PREFIX
+// (dry runs, apply_result = false), so live theming is untouched until the
+// reference check is signed off.
+export const CANDIDATE_CLASSIFIER_VERSION = "v2.1-2026-10-10";
+export const CANDIDATE_RUN_PREFIX = "refcheck-v2.1";
+export type ThemeVariant = "current" | "short-quotes";
+export const variantForRun = (runLabel: string): ThemeVariant =>
+  runLabel.startsWith(CANDIDATE_RUN_PREFIX) ? "short-quotes" : "current";
+
 // Keys come from CLAUDE_API_KEY / CLAUDE_API_KEY_NEXT (see claude-keys.ts);
 // one client per key so the handover doesn't rebuild a client per call.
 const clients = new Map<string, Anthropic>();
@@ -226,6 +238,21 @@ Competitor themes ("competitor_themes" array):
 - Only use companies from the provided list; never invent or add others. If no list is provided or none are described, return an empty competitor_themes array.
 - company_themes must stay strictly about the named company; never move competitor information there.`;
 
+// The candidate prompt differs from SYSTEM_PROMPT only in the two quote lines.
+function replaceOnce(text: string, from: string, to: string): string {
+  if (text.split(from).length !== 2) throw new Error(`theme-analysis: prompt line not found once: ${from}`);
+  return text.replace(from, to);
+}
+const SYSTEM_PROMPT_SHORT_QUOTES = replaceOnce(
+  replaceOnce(
+    SYSTEM_PROMPT,
+    "- context_snippets: array of 1-2 verbatim snippets from the response that support the theme",
+    "- context_snippets: array with exactly ONE short verbatim snippet (at most 200 characters) from the response that supports the theme",
+  ),
+  "context_snippet (ONE short verbatim snippet supporting it).",
+  "context_snippet (ONE short verbatim snippet supporting it, at most 200 characters).",
+);
+
 // Resolve any emitted id to a live v2 id: pass v2 ids through, fold legacy v1
 // ids to their successor, and reject everything else (incl. retired ids that
 // map to null) as "unknown" so it never counts under a real attribute.
@@ -330,6 +357,7 @@ export function buildThemeRequest(
   responseText: string,
   companyName: string,
   competitors: string[] = [],
+  variant: ThemeVariant = "current",
 ): Anthropic.MessageCreateParamsNonStreaming {
   const competitorLine = competitors.length > 0
     ? `\n\nOther companies detected in this response (extract competitor_themes ONLY for these): ${competitors.join(", ")}`
@@ -344,7 +372,7 @@ export function buildThemeRequest(
     system: [
       {
         type: "text",
-        text: SYSTEM_PROMPT,
+        text: variant === "short-quotes" ? SYSTEM_PROMPT_SHORT_QUOTES : SYSTEM_PROMPT,
         // ephemeral = 5-min TTL; we're firing 40 calls in ~30s so they
         // all hit a warm cache after the first.
         cache_control: { type: "ephemeral" },
