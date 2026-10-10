@@ -29,9 +29,10 @@ export const CLASSIFIER_VERSION = "v2-2026-10-06";
 // Dry-run candidates. Live theming always uses "current"; a candidate is
 // used only for theme_batch_items whose run_label starts with its prefix
 // (queued with apply_result = false, so results never reach ai_themes).
-export type ThemeVariant = "current" | "haiku-5-5" | "haiku-5-5b";
+export type ThemeVariant = "current" | "haiku-5-5" | "haiku-5-5b" | "haiku-5-5c";
 export const variantForRun = (runLabel: string): ThemeVariant =>
-  runLabel.startsWith("refcheck-haiku55b") ? "haiku-5-5b"
+  runLabel.startsWith("refcheck-haiku55c") ? "haiku-5-5c"
+    : runLabel.startsWith("refcheck-haiku55b") ? "haiku-5-5b"
     : runLabel.startsWith("refcheck-haiku55") ? "haiku-5-5"
     : "current";
 
@@ -46,6 +47,21 @@ Theme granularity:
 - Do not create a theme for missing information: what the response could not find, "limited public data", "no published figures", or advice to the candidate to check elsewhere
 - Do not create a theme for corporate facts that say nothing about working there (ownership, financing, products, office locations, headcount) unless the response ties them to the employee or candidate experience
 - Most responses support 3 to 6 company themes`;
+
+// haiku-5-5c: b plus calibration. b brought themes per answer to 4.5 (v2:
+// 4.8) but neutral stayed ~33% (v2: ~27%): Haiku 5.5 read evaluative claims
+// written in a plain style ("agile, well-communicated selection processes",
+// "burnout and retention problems") as neutral, and filed day-to-day work
+// under career-opportunities instead of company-culture.
+const CALIBRATION_RULES = `
+
+Sentiment calibration:
+- Judge the claim, not the writing style. A statement that something is good or bad for employees or candidates is positive or negative even when it is written as a plain description (e.g. "agile, well-communicated selection processes" is positive; "retention problems and burnout" is negative; "staff stay because of the mission" is positive)
+- Neutral is only for statements with no judgement either way: lists of roles, steps, requirements or locations, how to apply, and numbers given without framing
+
+Attribute calibration:
+- Day-to-day work, teams, collaboration and what it feels like to work there are company-culture
+- career-opportunities is only for growth, promotion, learning and development; a list of the kinds of jobs available is not a career-opportunities theme unless the response says something about progression`;
 
 // Keys come from CLAUDE_API_KEY / CLAUDE_API_KEY_NEXT (see claude-keys.ts);
 // one client per key so the handover doesn't rebuild a client per call.
@@ -356,7 +372,7 @@ export function buildThemeRequest(
   const competitorLine = competitors.length > 0
     ? `\n\nOther companies detected in this response (extract competitor_themes ONLY for these): ${competitors.join(", ")}`
     : "\n\nNo other companies were detected; return an empty competitor_themes array.";
-  const modelParams = variant === "haiku-5-5" || variant === "haiku-5-5b"
+  const modelParams = variant !== "current"
     ? {
       model: "claude-haiku-5-5",
       // Haiku 5.5 rejects non-default sampling values (temperature: 0 is a
@@ -377,7 +393,9 @@ export function buildThemeRequest(
     system: [
       {
         type: "text",
-        text: variant === "haiku-5-5b" ? SYSTEM_PROMPT + GRANULARITY_RULES : SYSTEM_PROMPT,
+        text: variant === "haiku-5-5c" ? SYSTEM_PROMPT + GRANULARITY_RULES + CALIBRATION_RULES
+          : variant === "haiku-5-5b" ? SYSTEM_PROMPT + GRANULARITY_RULES
+          : SYSTEM_PROMPT,
         // ephemeral = 5-min TTL; we're firing 40 calls in ~30s so they
         // all hit a warm cache after the first.
         cache_control: { type: "ephemeral" },
