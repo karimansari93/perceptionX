@@ -1212,31 +1212,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
   useEffect(() => { setExpandedQuotes({}); }, [selectedAttribute]);
 
-  // "How {client} compares": each competitor's sentiment on this attribute
-  // from the competitor_themes triples on in-scope answers (same rows the
-  // table's "Competitor gap" uses), ranked with the client's own score.
-  const comparison = useMemo(() => {
-    if (!isModalOpen || !selectedAttribute || !modalAttribute) return [];
-    const inScope = new Set(streamInScope.map(r => r.id));
-    const comps = new Map<string, { positive: number; negative: number }>();
-    for (const row of competitorThemeRows) {
-      if (!inScope.has(row.response_id)) continue;
-      if (normalizeAttributeId(row.attribute_id) !== selectedAttribute || !row.competitor_name) continue;
-      const c = comps.get(row.competitor_name) ?? { positive: 0, negative: 0 };
-      if (row.sentiment === 'positive') c.positive += 1;
-      else if (row.sentiment === 'negative') c.negative += 1;
-      comps.set(row.competitor_name, c);
-    }
-    const rows: { name: string; score: number; isClient: boolean }[] = [];
-    comps.forEach((c, name) => {
-      const ratio = sentimentRatioV2(c.positive, c.negative);
-      if (ratio !== null) rows.push({ name, score: Math.round(ratio * 100), isClient: false });
-    });
-    if (rows.length === 0) return [];
-    rows.push({ name: companyName, score: modalAttribute.sentimentPct, isClient: true });
-    return rows.sort((a, b) => b.score - a.score).slice(0, 6);
-  }, [isModalOpen, selectedAttribute, modalAttribute, competitorThemeRows, streamInScope, companyName]);
-
   const SortableHead = ({ label, k, className }: { label: string; k: TableSortKey; className?: string }) => (
     <TableHead
       className={`cursor-pointer select-none hover:text-gray-900 ${className ?? ''}`}
@@ -1681,9 +1656,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
               const h3 = 'font-headline font-semibold text-xl tracking-[-0.015em] m-0';
               const filterMeta = polarity ? POLARITY_META[polarity] : null;
               const clearFilter = () => setPolarity(null);
-              const clientFirst = companyName.split(/\s+/)[0] || companyName;
-              const clientRank = comparison.findIndex(c => c.isClient) + 1;
-              const ordinal = (n: number) => `${n}${['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : Math.min(n % 10, 4) % 4] ?? 'th'}`;
 
               return (
                 <div className="overflow-y-auto flex-1 min-h-0">
@@ -2000,55 +1972,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                               )}
                             </aside>
 
-                            {(status === 'loading' || comparison.length > 0) && (
-                              <aside className="rounded-2xl border bg-white px-[22px] pt-[22px] pb-6 flex flex-col gap-[18px]" style={{ borderColor: RULE }}>
-                                <div className="flex flex-col gap-1">
-                                  <h3 className={h3}>How {clientFirst} compares</h3>
-                                  <span className="text-[13.5px] leading-[1.5] [text-wrap:pretty]" style={{ color: INK_MUTED }}>How positively AI talks about similar employers on this topic.</span>
-                                </div>
-                                {status === 'loading' ? (
-                                  <div className="flex flex-col gap-3.5" aria-busy="true">
-                                    {[0, 1, 2, 3, 4].map(i => (
-                                      <div key={i} className="flex gap-2.5 items-center">
-                                        <div className="w-[26px] h-[26px] rounded-[7px]" style={{ background: CARD_FILL }} />
-                                        <div className="flex-1 h-[13px] rounded" style={{ background: CARD_FILL }} />
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="flex items-baseline gap-2.5 pb-4 border-b" style={{ borderColor: RULE }}>
-                                      <span className="font-headline font-bold text-[34px] leading-none tracking-[-0.04em]">{ordinal(clientRank)}</span>
-                                      <span className="text-[14.5px]" style={{ color: INK_MUTED }}>of {comparison.length} employers</span>
-                                    </div>
-                                    <ol className="list-none m-0 p-0 flex flex-col gap-1">
-                                      {comparison.map((c, i) => (
-                                        <li key={c.name} className="flex flex-col gap-[7px] px-2.5 py-[9px] -mx-2.5 rounded-[10px]" style={{ background: c.isClient ? WASH.positive : 'transparent' }}>
-                                          <div className="flex items-center gap-2.5 min-w-0">
-                                            <span className="w-3.5 text-[13px] font-semibold" style={{ color: INK_DIM }}>{i + 1}</span>
-                                            <span
-                                              className="flex-none w-6 h-6 rounded-[7px] flex items-center justify-center font-headline font-bold text-xs text-white"
-                                              style={{ background: c.isClient ? INK : NAVY_60 }}
-                                              aria-hidden="true"
-                                            >
-                                              {c.name.charAt(0).toUpperCase()}
-                                            </span>
-                                            <span className="flex-1 min-w-0 text-[14.5px] truncate" style={{ fontWeight: c.isClient ? 700 : 500 }}>{c.name}</span>
-                                            <span className="font-headline font-bold text-[17px] tracking-[-0.02em]">{c.score}%</span>
-                                          </div>
-                                          <div className="ml-6 h-1.5 rounded-full" style={{ background: BAR_TRACK }}>
-                                            <div className="h-full rounded-full" style={{ width: `${c.score}%`, background: c.isClient ? TEAL : 'rgba(19,39,79,0.3)' }} />
-                                          </div>
-                                        </li>
-                                      ))}
-                                    </ol>
-                                    <span className="text-[13px]" style={{ color: INK_DIM }}>
-                                      Sentiment score on {modalAttribute.name}. Not affected by the filter above.
-                                    </span>
-                                  </>
-                                )}
-                              </aside>
-                            )}
                           </div>
                         </div>
                       </>
