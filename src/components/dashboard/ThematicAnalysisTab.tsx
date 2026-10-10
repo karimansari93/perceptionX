@@ -25,8 +25,6 @@ import {
   Coffee,
   Crown,
   Lock,
-  TrendingUp,
-  TrendingDown,
   FileText,
   MessageSquare,
   ClipboardList,
@@ -101,9 +99,7 @@ interface ThematicAnalysisTabProps {
   cubeMonthFloor?: string | null;
   cubeScopeRows?: ScopeStatsRow[];
   cubePromptTypeRows?: ScopePromptTypeStatsRow[];
-  // Measured company id — scopes the competitor_themes read behind the
-  // attributes table's "Competitor gap" column (the same fetch CompetitorsTab
-  // makes for its head-to-head sentiment).
+  // Measured company id.
   currentCompanyId?: string;
   // url_recency_cache rows {url, domain, recency_score 0-100} — the citation
   // freshness score behind the attributes table's Relevance column, the same
@@ -204,7 +200,7 @@ const GROUP_ORDER: GroupKey[] = ['fix', 'protect', 'amplify', 'watch'];
 // Attributes table (CompetitorsTab's "Card 3" pattern).
 const TABLE_PAGE_SIZE = 15;
 const TOP_SOURCES_PER_ROW = 5;
-type TableSortKey = 'name' | 'group' | 'sentiment' | 'visibility' | 'relevance' | 'gap' | 'sources';
+type TableSortKey = 'name' | 'group' | 'sentiment' | 'visibility' | 'relevance' | 'sources';
 
 const BAND_LABELS: Record<number, string> = {
   5: 'Very high',
@@ -249,50 +245,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
   useEffect(() => {
     setTablePage(0);
   }, [searchQuery, filterGroups, filterCategories, filterSources, filterModels, sortKey, sortDir, selectedJobFunction, cubeQuarterKey]);
-
-  // Competitor ↔ attribute ↔ sentiment triples (competitor_themes), the
-  // competitive-set side of the table's "Competitor gap". Loaded once per
-  // company, exactly as CompetitorsTab does; rows only exist for responses
-  // themed after the extraction pass started emitting them, so the column
-  // degrades to "—" for an attribute with no rows yet.
-  const [competitorThemeRows, setCompetitorThemeRows] = useState<any[]>([]);
-  const [competitorThemesLoaded, setCompetitorThemesLoaded] = useState(false);
-  useEffect(() => {
-    if (!currentCompanyId) {
-      setCompetitorThemeRows([]);
-      setCompetitorThemesLoaded(true);
-      return;
-    }
-    let cancelled = false;
-    setCompetitorThemesLoaded(false);
-    (async () => {
-      const PAGE = 1000;
-      const all: any[] = [];
-      try {
-        for (let page = 0; page < 25; page += 1) {
-          const { data, error } = await (supabase as any)
-            .from('competitor_themes')
-            .select('response_id, competitor_name, attribute_id, sentiment')
-            .eq('company_id', currentCompanyId)
-            .range(page * PAGE, (page + 1) * PAGE - 1);
-          if (cancelled) return;
-          if (error) {
-            console.warn('competitor_themes fetch failed:', error.message);
-            break;
-          }
-          all.push(...(data ?? []));
-          if (!data || data.length < PAGE) break;
-        }
-      } catch (err) {
-        console.warn('competitor_themes fetch failed:', err);
-      }
-      if (!cancelled) {
-        setCompetitorThemeRows(all);
-        setCompetitorThemesLoaded(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [currentCompanyId]);
 
   // Reset the modal filter whenever a different attribute is opened.
   useEffect(() => {
@@ -655,40 +607,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     return out;
   }, [streamInScope, recencyData]);
 
-  // Competitive-set sentiment per attribute from the competitor_themes triples
-  // on in-scope answers: each competitor's methodology-v2 ratio, then the
-  // unweighted mean across competitors — the same "own minus peer average"
-  // family as the competitor benchmark's sentiment_gap.
-  const competitorSentimentByAttr = useMemo(() => {
-    const out = new Map<string, number>();
-    if (competitorThemeRows.length === 0) return out;
-    const inScope = new Set(streamInScope.map(r => r.id));
-    const byAttr = new Map<string, Map<string, { positive: number; negative: number }>>();
-    for (const row of competitorThemeRows) {
-      if (!inScope.has(row.response_id)) continue;
-      const attrId = normalizeAttributeId(row.attribute_id);
-      if (!attrId || !row.competitor_name) continue;
-      let comps = byAttr.get(attrId);
-      if (!comps) {
-        comps = new Map();
-        byAttr.set(attrId, comps);
-      }
-      const c = comps.get(row.competitor_name) ?? { positive: 0, negative: 0 };
-      if (row.sentiment === 'positive') c.positive += 1;
-      else if (row.sentiment === 'negative') c.negative += 1;
-      comps.set(row.competitor_name, c);
-    }
-    byAttr.forEach((comps, attrId) => {
-      const ratios: number[] = [];
-      comps.forEach(c => {
-        const ratio = sentimentRatioV2(c.positive, c.negative);
-        if (ratio !== null) ratios.push(ratio * 100);
-      });
-      if (ratios.length > 0) out.set(attrId, ratios.reduce((a, b) => a + b, 0) / ratios.length);
-    });
-    return out;
-  }, [competitorThemeRows, streamInScope]);
-
   type AttributeTableRow = {
     id: string;
     name: string;
@@ -698,7 +616,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
     color: string;
     visibilityPct: number | null;
     relevance: number | null;
-    gapPts: number | null;
     /** Top cited domains (the stack). */
     sources: string[];
     /** Every cited domain (the Sources filter). */
@@ -714,7 +631,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
           .sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
           .map(([domain]) => domain)
       : [];
-    const peer = competitorSentimentByAttr.get(a.id);
     return {
       id: a.id,
       name: a.name,
@@ -724,13 +640,12 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       color: a.color,
       visibilityPct: totalScopedAnswers > 0 ? Math.min(100, (a.count / totalScopedAnswers) * 100) : null,
       relevance: extras && extras.recencyN > 0 ? Math.round(extras.recencySum / extras.recencyN) : null,
-      gapPts: peer === undefined ? null : Math.round(a.sentimentPct - peer),
       sources: domainsRanked.slice(0, TOP_SOURCES_PER_ROW),
       domains: domainsRanked,
       sourceCount: domainsRanked.length,
       models: extras ? Array.from(extras.models).sort() : [],
     };
-  }), [attributes, attributeExtras, competitorSentimentByAttr, totalScopedAnswers]);
+  }), [attributes, attributeExtras, totalScopedAnswers]);
 
   const filteredTableRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -757,7 +672,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         case 'group': return dir * (GROUP_ORDER.indexOf(b.group) - GROUP_ORDER.indexOf(a.group)) || a.name.localeCompare(b.name);
         case 'sentiment': return dir * (a.sentimentPct - b.sentimentPct);
         case 'relevance': return num(a.relevance, b.relevance);
-        case 'gap': return num(a.gapPts, b.gapPts);
         case 'sources': return dir * (a.sourceCount - b.sourceCount);
         default: return num(a.visibilityPct, b.visibilityPct) || dir * (a.sentimentPct - b.sentimentPct);
       }
@@ -1509,7 +1423,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                         <SortableHead label="Sentiment" k="sentiment" className="min-w-[170px]" />
                         <SortableHead label="Visibility" k="visibility" className="min-w-[110px]" />
                         <SortableHead label="Relevance" k="relevance" className="min-w-[100px]" />
-                        <SortableHead label="Competitor gap" k="gap" className="min-w-[110px]" />
                         <SortableHead label="Top sources cited" k="sources" className="min-w-[170px]" />
                       </TableRow>
                     </TableHeader>
@@ -1553,21 +1466,6 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                               {row.relevance === null
                                 ? (rawExtrasPending || recencyDataLoading ? pendingCell : emptyCell)
                                 : <span className="text-sm text-gray-600 tabular-nums">{row.relevance}</span>}
-                            </TableCell>
-                            <TableCell>
-                              {row.gapPts === null ? (
-                                rawExtrasPending || !competitorThemesLoaded ? pendingCell : emptyCell
-                              ) : (
-                                <span
-                                  className="inline-flex items-center gap-1 text-xs font-semibold"
-                                  style={{ color: row.gapPts > 0 ? '#0A9A98' : row.gapPts < 0 ? PINK : INK_DIM }}
-                                >
-                                  {row.gapPts > 0 ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : row.gapPts < 0 ? <TrendingDown className="w-3 h-3 flex-shrink-0" /> : null}
-                                  <span className="whitespace-nowrap">
-                                    {row.gapPts > 0 ? '+' : row.gapPts < 0 ? '−' : ''}{Math.abs(row.gapPts)} pts
-                                  </span>
-                                </span>
-                              )}
                             </TableCell>
                             <TableCell>
                               {row.sources.length === 0 ? (
