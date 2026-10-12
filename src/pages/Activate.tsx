@@ -287,6 +287,20 @@ const contrast = (a: number[], b: number[]) => {
   return (x + 0.05) / (y + 0.05);
 };
 
+/**
+ * The brand colour for text and icons on white cards. The primary is the
+ * canvas, and a pale one (a white canvas, a light yellow) vanishes on a white
+ * card, so fall back to the accent, then to navy, at the 3:1 large-text bar.
+ */
+function inkOnWhite(primary: string, accent: string): string {
+  const white = [255, 255, 255];
+  for (const c of [primary, accent]) {
+    const rgb = hexRgb(c);
+    if (rgb && contrast(rgb, white) >= 3) return c;
+  }
+  return '#13274F';
+}
+
 /** Strongest the hero photo may show; .34 on a dark brand colour. */
 const HERO_MAX = 0.34;
 
@@ -793,6 +807,8 @@ function Canvas({
     '--activate-primary': primary,
     '--activate-accent': accent,
     '--activate-on': onColor(primary),
+    '--activate-ink': inkOnWhite(primary, accent),
+    '--activate-on-ink': onColor(inkOnWhite(primary, accent)),
     '--activate-font-heading': fontStack(
       fontFamilyFor(fonts?.heading_font, fonts?.heading_font_url, 'heading'),
       "'Geologica', sans-serif",
@@ -854,7 +870,7 @@ function CompanyAvatar({
       ) : (
         <span
           className="font-headline font-bold"
-          style={{ color: 'var(--activate-primary)', fontSize: size * 0.32 }}
+          style={{ color: 'var(--activate-ink)', fontSize: size * 0.32 }}
         >
           {initials}
         </span>
@@ -1206,13 +1222,16 @@ function RoleStep({
             className="act-entity"
             aria-current={o.id === initial || undefined}
           >
-            <span className="min-w-0 flex-1 text-left">
+            <span className="min-w-0 flex-1 py-3 text-left">
               <span className="block">{o.label}</span>
-              <span className="block text-[12.5px] font-normal opacity-70">
+              <span
+                className="mt-0.5 block text-[12.5px] font-normal leading-snug opacity-70"
+                style={{ fontFamily: 'var(--activate-font-body)', letterSpacing: 0 }}
+              >
                 {o.note(org.display_name)}
               </span>
             </span>
-            <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-primary)' }} />
+            <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-ink)' }} />
           </button>
         ))}
       </div>
@@ -1346,12 +1365,12 @@ function EntityStep({
         {entities.map((e) => (
           <button key={e.name} onClick={() => onPick(e.name)} className="act-entity">
             <span className="flex-1 text-left">{e.name}</span>
-            <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-primary)' }} />
+            <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-ink)' }} />
           </button>
         ))}
         <button onClick={() => onPick(UNSURE)} className="act-entity">
           <span className="flex-1 text-left">Not sure</span>
-          <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-primary)' }} />
+          <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-ink)' }} />
         </button>
       </div>
     </>
@@ -1480,15 +1499,17 @@ function RoutesStep({
           Your options in {countryInSentence(market)}
         </h2>
         <p className="act-intro">
-          These are the places AI pulls from when someone asks what it's like to{' '}
-          {role === 'candidate' ? 'interview at' : 'work at'} {org.display_name} here
+          {/* "work at" for candidates too: the coverage figure is measured
+              across every question about working here, not interview ones. */}
+          These are the places AI pulls from when someone asks what it's like to work at{' '}
+          {org.display_name} here
           {coveragePct !== null ? ` — in ${coveragePct}% of answers` : ''}.
         </p>
       </div>
 
       <p className="act-intro">
         {role === 'candidate'
-          ? 'Share how the process went on any of them you’re comfortable with — or none at all.'
+          ? 'Share how your interview went on any of them you’re comfortable with, or none at all.'
           : 'Share your honest thoughts on any of them you’re comfortable with — or none at all.'}{' '}
         Whether you say anything, and what you say, is entirely yours.
       </p>
@@ -1633,7 +1654,7 @@ function PlatformCard({
           {route.action_label && (
             <span
               className="block font-semibold"
-              style={{ fontSize: 13, lineHeight: 1.35, color: 'var(--activate-primary)' }}
+              style={{ fontSize: 13, lineHeight: 1.35, color: 'var(--activate-ink)' }}
             >
               {route.action_label}
             </span>
@@ -1704,7 +1725,7 @@ function PlatformCard({
             padding: '0 18px',
             borderTop: '1px solid rgba(19,39,79,.08)',
             fontSize: 13.5,
-            color: 'var(--activate-primary)',
+            color: 'var(--activate-ink)',
           }}
           aria-label={`Write on ${name} — opens in a new tab`}
         >
@@ -2108,7 +2129,7 @@ const activateCss = `
 .act-howto-open {
   display: inline-flex; align-items: center; gap: 7px; min-height: 40px;
   padding: 0 16px; border-radius: 999px; font-size: 13.5px; font-weight: 600;
-  background: var(--activate-primary); color: var(--activate-on);
+  background: var(--activate-ink); color: var(--activate-on-ink);
 }
 
 /* Desktop: identity and context sit in the page corners, not in the column */
