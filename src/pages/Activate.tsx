@@ -111,6 +111,8 @@ const PLATFORM_NAMES: Record<string, string> = {
   naver: 'Naver Blog',
   brunch: 'brunch',
   fourprogrammers: '4programmers.net',
+  jobstreet: 'JobStreet',
+  repvue: 'RepVue',
 };
 
 const PLATFORM_DOMAINS: Record<string, string> = {
@@ -144,6 +146,8 @@ const PLATFORM_DOMAINS: Record<string, string> = {
   naver: 'naver.com',
   brunch: 'brunch.co.kr',
   fourprogrammers: '4programmers.net',
+  jobstreet: 'jobstreet.com',
+  repvue: 'repvue.com',
 };
 
 /**
