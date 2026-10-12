@@ -61,7 +61,15 @@ type LoadState =
   | { kind: 'invalid' }
   | { kind: 'ready'; config: ActivateConfig };
 
-type Step = 'intro' | 'country' | 'entity' | 'profile' | 'willing' | 'routes';
+type Step = 'intro' | 'role' | 'country' | 'entity' | 'profile' | 'willing' | 'routes';
+
+/**
+ * Who is reading. It changes what we point at: a candidate is steered to the
+ * interview and application-experience side of a platform, an employee to the
+ * reviews of working there. Declared by the recipient (or the sender's link),
+ * never inferred.
+ */
+type Role = 'employee' | 'candidate';
 
 const UNSURE = 'unsure';
 
@@ -103,6 +111,8 @@ const PLATFORM_NAMES: Record<string, string> = {
   naver: 'Naver Blog',
   brunch: 'brunch',
   fourprogrammers: '4programmers.net',
+  jobstreet: 'JobStreet',
+  repvue: 'RepVue',
 };
 
 const PLATFORM_DOMAINS: Record<string, string> = {
@@ -136,6 +146,8 @@ const PLATFORM_DOMAINS: Record<string, string> = {
   naver: 'naver.com',
   brunch: 'brunch.co.kr',
   fourprogrammers: '4programmers.net',
+  jobstreet: 'jobstreet.com',
+  repvue: 'repvue.com',
 };
 
 /**
@@ -153,7 +165,7 @@ const PLATFORM_HOWTO: Record<string, string[]> = {
   indeed: [
     'Open the company profile',
     'Choose “Review this company”',
-    'Rate the areas you want to — skip the rest',
+    'Rate the areas you want to and skip the rest',
     'Write in your own words and submit',
   ],
   kununu: [
@@ -176,7 +188,7 @@ const PLATFORM_HOWTO: Record<string, string[]> = {
   quora: ['Open the question', 'Sign in or create an account', 'Choose “Answer” and write'],
   blind: [
     'Open the company page',
-    'Verify with your work email — Blind hides who you are',
+    'Verify with your work email. Blind hides who you are',
     'Post or reply',
   ],
   linkedin: ['Open LinkedIn and start a post', 'Say what you want about your work', 'Post it'],
@@ -204,7 +216,40 @@ const HOWTO_BY_CHANNEL: Record<string, string[]> = {
   social: ['Open the app', 'Post about your work', 'Mention the company if you want to'],
 };
 
-function howToFor(route: ActivateRoute): string[] {
+/**
+ * A candidate's how-to leads them to the interview side of a platform rather
+ * than the employee review form. Only where we know the page exists; the rest
+ * fall back to the generic steps below.
+ */
+const CANDIDATE_HOWTO: Record<string, string[]> = {
+  glassdoor: [
+    'Open the company profile',
+    'Sign in or create a free account',
+    'Choose “Interviews”, then “Add an interview”',
+    'Pick the role you applied for and when',
+    'Describe the process in your own words and submit',
+  ],
+};
+
+const CANDIDATE_HOWTO_BY_CHANNEL: Record<string, string[]> = {
+  review: [
+    'Open the company profile',
+    'Sign in or create a free account',
+    'Look for the interview or application-experience option',
+    'Describe the process in your own words and submit',
+  ],
+  forum: [
+    'Open the page',
+    'Sign in or create an account',
+    'Reply with what the process was like, in your own words',
+  ],
+};
+
+function howToFor(route: ActivateRoute, role: Role): string[] {
+  if (role === 'candidate') {
+    const steps = CANDIDATE_HOWTO[route.platform] ?? CANDIDATE_HOWTO_BY_CHANNEL[route.channel];
+    if (steps) return steps;
+  }
   return PLATFORM_HOWTO[route.platform] ?? HOWTO_BY_CHANNEL[route.channel] ?? [];
 }
 
@@ -241,6 +286,20 @@ const contrast = (a: number[], b: number[]) => {
   const [x, y] = [relLum(a), relLum(b)].sort((p, q) => q - p);
   return (x + 0.05) / (y + 0.05);
 };
+
+/**
+ * The brand colour for text and icons on white cards. The primary is the
+ * canvas, and a pale one (a white canvas, a light yellow) vanishes on a white
+ * card, so fall back to the accent, then to navy, at the 3:1 large-text bar.
+ */
+function inkOnWhite(primary: string, accent: string): string {
+  const white = [255, 255, 255];
+  for (const c of [primary, accent]) {
+    const rgb = hexRgb(c);
+    if (rgb && contrast(rgb, white) >= 3) return c;
+  }
+  return '#13274F';
+}
 
 /** Strongest the hero photo may show; .34 on a dark brand colour. */
 const HERO_MAX = 0.34;
@@ -297,6 +356,13 @@ export default function Activate() {
   // What the recipient is open to doing. Empty = they skipped, so show all.
   const [channels, setChannels] = useState<ActivateChannel[]>([]);
   const [prefilled, setPrefilled] = useState(false);
+  // Employee vs candidate. A sender who set the link's audience has already
+  // answered this, so the step is skipped (roleFromLink).
+  const [role, setRole] = useState<Role | null>(null);
+  const [roleFromLink, setRoleFromLink] = useState(false);
+  // Where the role step hands over to: the country step normally, or further
+  // along when the sender prefilled the market.
+  const [afterRole, setAfterRole] = useState<Step>('country');
   const headingRef = useRef<HTMLHeadingElement>(null);
   const mountedOnce = useRef(false);
 
@@ -339,12 +405,19 @@ export default function Activate() {
         return;
       }
       const cfg = res.config;
+      const linkRole: Role | null =
+        cfg.audience === 'employee' || cfg.audience === 'candidate' ? cfg.audience : null;
+      if (linkRole) {
+        setRole(linkRole);
+        setRoleFromLink(true);
+      }
       // Sender prefills are declarations too (they're what routes), but the
       // recipient can always override from the routes screen.
       const preMarket = cfg.prefill_market_code;
       const preEntity = cfg.prefill_entity_company_id
         ? entityOwningCompanyId(cfg.entities, cfg.prefill_entity_company_id)
         : undefined;
+      let next: Step | null = null;
       if (preMarket) {
         setMarket(preMarket);
         logActivateEvent(token, sessionId, 'market_declared', { marketCode: preMarket });
@@ -360,11 +433,19 @@ export default function Activate() {
               ? entityCompanyIdFor(resolvedEntity, preMarket)
               : null,
           });
-          setStep('routes');
+          next = 'routes';
           setPrefilled(true);
         } else {
-          setStep('entity');
+          next = 'entity';
         }
+      }
+      // A prefilled link still needs to know who is reading before it shows
+      // routes, so the role question comes first and then hands over.
+      if (next && !linkRole) {
+        setAfterRole(next);
+        setStep('role');
+      } else if (next) {
+        setStep(next);
       }
       setLoad({ kind: 'ready', config: cfg });
     })();
@@ -414,6 +495,11 @@ export default function Activate() {
     selectedEntity && market ? entityCompanyIdFor(selectedEntity, market) : null;
   // Only the kinds of place that have something to show here are ever offered.
   const available = market ? availableChannels(config.routes, market, entityCompanyId) : [];
+
+  const declareRole = (r: Role) => {
+    setRole(r);
+    setStep(afterRole);
+  };
 
   const declareMarket = (code: string) => {
     setMarket(code);
@@ -504,11 +590,19 @@ export default function Activate() {
 
         <div key={step} className="act-step flex w-full flex-col items-center gap-4">
           {step === 'intro' && (
-            <IntroStep org={org} onDone={() => setStep('country')} headingRef={headingRef} />
+            <IntroStep
+              org={org}
+              onDone={() => setStep(roleFromLink ? 'country' : 'role')}
+              headingRef={headingRef}
+            />
+          )}
+          {step === 'role' && (
+            <RoleStep org={org} initial={role} onPick={declareRole} headingRef={headingRef} />
           )}
           {step === 'country' && (
             <CountryStep
               org={org}
+              onBack={roleFromLink ? undefined : () => setStep('role')}
               markets={marketsWithRoutes(config.routes)}
               measured={measuredMarketCodes(config.routes)}
               onPick={declareMarket}
@@ -539,6 +633,7 @@ export default function Activate() {
           {step === 'willing' && (
             <WillingStep
               org={org}
+              role={role ?? 'employee'}
               available={available}
               initial={channels}
               onDone={declareWilling}
@@ -549,6 +644,7 @@ export default function Activate() {
           {step === 'routes' && market && (
             <RoutesStep
               token={token!}
+              role={role ?? 'employee'}
               sessionId={sessionId}
               org={org}
               audience={config.audience}
@@ -711,6 +807,8 @@ function Canvas({
     '--activate-primary': primary,
     '--activate-accent': accent,
     '--activate-on': onColor(primary),
+    '--activate-ink': inkOnWhite(primary, accent),
+    '--activate-on-ink': onColor(inkOnWhite(primary, accent)),
     '--activate-font-heading': fontStack(
       fontFamilyFor(fonts?.heading_font, fonts?.heading_font_url, 'heading'),
       "'Geologica', sans-serif",
@@ -772,7 +870,7 @@ function CompanyAvatar({
       ) : (
         <span
           className="font-headline font-bold"
-          style={{ color: 'var(--activate-primary)', fontSize: size * 0.32 }}
+          style={{ color: 'var(--activate-ink)', fontSize: size * 0.32 }}
         >
           {initials}
         </span>
@@ -781,7 +879,7 @@ function CompanyAvatar({
   );
 }
 
-// Three steps now (the profile step is skippable) — a deliberate deviation
+// Five steps now (the profile step is skippable) — a deliberate deviation
 // from the two-step handoff, driven by the function/seniority gathering ask.
 /**
  * The one PerceptionX mark on the page. The logo carries the wordmark, so the
@@ -935,19 +1033,37 @@ function RoutesTopBar({
   );
 }
 
-const WILLING_OPTIONS: Array<{ id: ActivateChannel; label: string; note: string }> = [
-  {
-    id: 'review',
-    label: 'Leave a review about your experience',
-    note: 'Glassdoor, Indeed and the local sites where candidates look first',
-  },
-  {
-    id: 'forum',
-    label: 'Join a conversation on forums',
-    note: 'People are already asking what it’s like to work here',
-  },
-  { id: 'social', label: 'Post on social media', note: 'On your own account, in your own words' },
-];
+const WILLING_OPTIONS: Record<
+  Role,
+  Array<{ id: ActivateChannel; label: string; note: string }>
+> = {
+  employee: [
+    {
+      id: 'review',
+      label: 'Leave a review about your experience',
+      note: 'Glassdoor, Indeed and the local sites where candidates look first',
+    },
+    {
+      id: 'forum',
+      label: 'Join a conversation on forums',
+      note: 'People are already asking what it’s like to work here',
+    },
+    { id: 'social', label: 'Post on social media', note: 'On your own account, in your own words' },
+  ],
+  candidate: [
+    {
+      id: 'review',
+      label: 'Share how the interview went',
+      note: 'The interview and candidate-experience sections on Glassdoor and the local sites',
+    },
+    {
+      id: 'forum',
+      label: 'Join a conversation on forums',
+      note: 'Other candidates are already asking what the process is like',
+    },
+    { id: 'social', label: 'Post on social media', note: 'On your own account, in your own words' },
+  ],
+};
 
 /**
  * The last question, and the one that shapes the payoff: only the kinds of
@@ -956,6 +1072,7 @@ const WILLING_OPTIONS: Array<{ id: ActivateChannel; label: string; note: string 
  */
 function WillingStep({
   org,
+  role,
   available,
   initial,
   onDone,
@@ -963,6 +1080,7 @@ function WillingStep({
   headingRef,
 }: {
   org: ActivateConfig['org'];
+  role: Role;
   /** Only the kinds of place that have something to show for this country. */
   available: ActivateChannel[];
   initial: ActivateChannel[];
@@ -978,7 +1096,7 @@ function WillingStep({
 
   return (
     <>
-      <StepHeader org={org} step={4} onBack={onBack} />
+      <StepHeader org={org} step={5} onBack={onBack} />
       <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
         What are you up for?
       </h2>
@@ -987,7 +1105,7 @@ function WillingStep({
       </p>
 
       <div className="flex w-full flex-col gap-2.5">
-        {WILLING_OPTIONS.filter((o) => available.includes(o.id)).map((o) => (
+        {WILLING_OPTIONS[role].filter((o) => available.includes(o.id)).map((o) => (
           <button
             key={o.id}
             onClick={() => toggle(o.id)}
@@ -1019,7 +1137,7 @@ function StepHeader({
   onBack,
 }: {
   org: ActivateConfig['org'];
-  step: 1 | 2 | 3 | 4;
+  step: 1 | 2 | 3 | 4 | 5;
   onBack?: () => void;
 }) {
   return (
@@ -1039,9 +1157,9 @@ function StepHeader({
   );
 }
 
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 5;
 
-function StepDots({ step }: { step: 1 | 2 | 3 | 4 }) {
+function StepDots({ step }: { step: 1 | 2 | 3 | 4 | 5 }) {
   return (
     <div className="flex flex-col items-center gap-1.5">
       <div className="flex gap-1.5">
@@ -1053,6 +1171,71 @@ function StepDots({ step }: { step: 1 | 2 | 3 | 4 }) {
         Step {step} of {TOTAL_STEPS}
       </span>
     </div>
+  );
+}
+
+const ROLE_OPTIONS: Array<{ id: Role; label: string; note: (org: string) => string }> = [
+  {
+    id: 'employee',
+    label: 'I work here',
+    note: (org) => `You're a current ${org} employee`,
+  },
+  {
+    id: 'candidate',
+    label: 'I’m interviewing or applying',
+    note: (org) => `You're going through, or have been through, ${org}'s hiring process`,
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Step 1 — employee or candidate
+//
+// Shapes the copy and the how-to steps downstream (a candidate is pointed at
+// interview and application experience, an employee at what it's like to work
+// there). Routes themselves are the same list either way.
+// ---------------------------------------------------------------------------
+
+function RoleStep({
+  org,
+  initial,
+  onPick,
+  headingRef,
+}: {
+  org: ActivateConfig['org'];
+  initial: Role | null;
+  onPick: (role: Role) => void;
+  headingRef: React.RefObject<HTMLHeadingElement>;
+}) {
+  return (
+    <>
+      {org.banner_url && <Banner url={org.banner_url} />}
+      <StepHeader org={org} step={1} />
+      <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
+        Which describes you?
+      </h2>
+      <p className="act-hint">It changes which places we point you to.</p>
+      <div className="flex w-full flex-col" style={{ gap: 11 }}>
+        {ROLE_OPTIONS.map((o) => (
+          <button
+            key={o.id}
+            onClick={() => onPick(o.id)}
+            className="act-entity"
+            aria-current={o.id === initial || undefined}
+          >
+            <span className="min-w-0 flex-1 py-3 text-left">
+              <span className="block">{o.label}</span>
+              <span
+                className="mt-0.5 block text-[12.5px] font-normal leading-snug opacity-70"
+                style={{ fontFamily: 'var(--activate-font-body)', letterSpacing: 0 }}
+              >
+                {o.note(org.display_name)}
+              </span>
+            </span>
+            <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-ink)' }} />
+          </button>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -1068,7 +1251,7 @@ function Flag({ code, size }: { code: string; size: number }) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 1 — welcome + country
+// Step 2 — country
 // ---------------------------------------------------------------------------
 
 function CountryStep({
@@ -1076,12 +1259,15 @@ function CountryStep({
   markets,
   measured,
   onPick,
+  onBack,
   headingRef,
 }: {
   org: ActivateConfig['org'];
   markets: string[];
   measured: string[];
   onPick: (code: string) => void;
+  /** Absent when the sender's link already answered the step before. */
+  onBack?: () => void;
   headingRef: React.RefObject<HTMLHeadingElement>;
 }) {
   const [query, setQuery] = useState('');
@@ -1106,8 +1292,8 @@ function CountryStep({
     <>
       {/* Optional campaign banner. Decorative: the company name is the h1
           immediately below, so it carries no alt text of its own. */}
-      {org.banner_url && <Banner url={org.banner_url} />}
-      <StepHeader org={org} step={1} />
+      {org.banner_url && !onBack && <Banner url={org.banner_url} />}
+      <StepHeader org={org} step={2} onBack={onBack} />
       <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
         Where are you based?
       </h2>
@@ -1127,7 +1313,7 @@ function CountryStep({
           <p className="act-search-hint">Start typing to find your country.</p>
         )}
         {q !== '' && shown.length === 0 && (
-          <p className="act-search-hint">No matches — try another spelling.</p>
+          <p className="act-search-hint">No matches. Try another spelling.</p>
         )}
         {shown.map((code) => (
           <button
@@ -1150,7 +1336,7 @@ function CountryStep({
 }
 
 // ---------------------------------------------------------------------------
-// Step 2 — entity
+// Step 3 — entity
 // ---------------------------------------------------------------------------
 
 function EntityStep({
@@ -1168,7 +1354,7 @@ function EntityStep({
 }) {
   return (
     <>
-      <StepHeader org={org} step={2} onBack={onBack} />
+      <StepHeader org={org} step={3} onBack={onBack} />
       <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
         Which part of {org.display_name}?
       </h2>
@@ -1179,12 +1365,12 @@ function EntityStep({
         {entities.map((e) => (
           <button key={e.name} onClick={() => onPick(e.name)} className="act-entity">
             <span className="flex-1 text-left">{e.name}</span>
-            <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-primary)' }} />
+            <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-ink)' }} />
           </button>
         ))}
         <button onClick={() => onPick(UNSURE)} className="act-entity">
           <span className="flex-1 text-left">Not sure</span>
-          <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-primary)' }} />
+          <ArrowRight size={17} aria-hidden style={{ color: 'var(--activate-ink)' }} />
         </button>
       </div>
     </>
@@ -1192,7 +1378,7 @@ function EntityStep({
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 — optional profile (function + seniority)
+// Step 4 — optional profile (function + seniority)
 //
 // Review routing never keys on these (measured: function doesn't move the
 // review mix). They rank the social section and are gathered as signal.
@@ -1219,7 +1405,7 @@ function ProfileStep({
   // step, their previous answer is still marked.
   return (
     <>
-      <StepHeader org={org} step={3} onBack={onBack} />
+      <StepHeader org={org} step={4} onBack={onBack} />
       <h2 ref={headingRef} tabIndex={-1} className="act-question outline-none">
         What kind of work do you do?
       </h2>
@@ -1249,13 +1435,14 @@ function ProfileStep({
 }
 
 // ---------------------------------------------------------------------------
-// Step 4 — routes (payoff)
+// Routes (payoff)
 // ---------------------------------------------------------------------------
 
 function RoutesStep({
   token,
   sessionId,
   org,
+  role,
   audience,
   market,
   entityId,
@@ -1270,6 +1457,7 @@ function RoutesStep({
   token: string;
   sessionId: string;
   org: ActivateConfig['org'];
+  role: Role;
   audience: ActivateConfig['audience'];
   market: string;
   entityId: string | null;
@@ -1285,6 +1473,7 @@ function RoutesStep({
   const sectionProps = {
     market,
     highlights,
+    role,
     onOpen: (route: ActivateRoute) =>
       logActivateEvent(token, sessionId, 'platform_click', {
         marketCode: market,
@@ -1310,19 +1499,25 @@ function RoutesStep({
           Your options in {countryInSentence(market)}
         </h2>
         <p className="act-intro">
+          {/* "work at" for candidates too: the coverage figure is measured
+              across every question about working here, not interview ones. */}
           These are the places AI pulls from when someone asks what it's like to work at{' '}
           {org.display_name} here
-          {coveragePct !== null ? ` — in ${coveragePct}% of answers` : ''}.
+          {coveragePct !== null ? `, in ${coveragePct}% of answers` : ''}.
         </p>
       </div>
 
       <p className="act-intro">
-        Share your honest thoughts on any of them you're comfortable with — or none at all.
+        {role === 'candidate'
+          ? 'Share how your interview went on any of them you’re comfortable with, or none at all.'
+          : 'Share your honest thoughts on any of them you’re comfortable with, or none at all.'}{' '}
         Whether you say anything, and what you say, is entirely yours.
       </p>
 
       {wants('review') && (
-        <ChannelSection eyebrow="Review sites" routes={routes} {...sectionProps} />
+        <ChannelSection
+          eyebrow={role === 'candidate' ? 'Interview and review sites' : 'Review sites'}
+          routes={routes} {...sectionProps} />
       )}
 
       {wants('forum') && (
@@ -1334,7 +1529,7 @@ function RoutesStep({
       )}
 
       <footer className="mt-2 flex flex-col items-center gap-2.5 text-center">
-        <p className="act-honesty">We don't see what you write — or whether you write at all.</p>
+        <p className="act-honesty">We don't see what you write, or whether you write at all.</p>
         <PoweredBy onDark={onColor(org.primary_color) === '#FFFFFF'} />
       </footer>
     </>
@@ -1348,6 +1543,7 @@ function ChannelSection({
   hideFirstRationale = false,
   market,
   highlights,
+  role,
   onOpen,
 }: {
   eyebrow: string;
@@ -1356,6 +1552,7 @@ function ChannelSection({
   hideFirstRationale?: boolean;
   market: string;
   highlights: ActivateConfig['highlights'];
+  role: Role;
   onOpen: (route: ActivateRoute) => void;
 }) {
   if (routes.length === 0) return null;
@@ -1371,6 +1568,7 @@ function ChannelSection({
           <PlatformCard
             key={route.platform}
             route={route}
+            role={role}
             matched={matched?.has(route.platform)}
             // The stat block already told the top platform's story — repeating
             // the same sentence on its card reads as a glitch.
@@ -1387,6 +1585,7 @@ function ChannelSection({
 
 function PlatformCard({
   route,
+  role,
   onOpen,
   hideRationale = false,
   matched = false,
@@ -1394,6 +1593,7 @@ function PlatformCard({
   localLabel = 'Local',
 }: {
   route: ActivateRoute;
+  role: Role;
   onOpen: () => void;
   hideRationale?: boolean;
   /** e.g. "Romania's own" — every market with a local platform reads well. */
@@ -1454,7 +1654,7 @@ function PlatformCard({
           {route.action_label && (
             <span
               className="block font-semibold"
-              style={{ fontSize: 13, lineHeight: 1.35, color: 'var(--activate-primary)' }}
+              style={{ fontSize: 13, lineHeight: 1.35, color: 'var(--activate-ink)' }}
             >
               {route.action_label}
             </span>
@@ -1478,7 +1678,7 @@ function PlatformCard({
       {open && (
         <div className="act-howto">
           <ol>
-            {howToFor(route).map((stepText) => (
+            {howToFor(route, role).map((stepText) => (
               <li key={stepText}>{stepText}</li>
             ))}
           </ol>
@@ -1488,7 +1688,7 @@ function PlatformCard({
             rel={rel}
             onClick={onOpen}
             className="act-howto-open"
-            aria-label={`Open ${name} — opens in a new tab`}
+            aria-label={`Open ${name} (opens in a new tab)`}
           >
             Open {name}
             <ExternalLink size={15} aria-hidden />
@@ -1504,7 +1704,7 @@ function PlatformCard({
           rel={rel}
           onClick={onOpen}
           className="act-highlight-row"
-          aria-label={`${highlight.label} — opens in a new tab`}
+          aria-label={`${highlight.label} (opens in a new tab)`}
         >
           <span className="act-highlight-label">
             {route.channel === 'forum' ? 'Answer this' : 'Most cited'}
@@ -1525,9 +1725,9 @@ function PlatformCard({
             padding: '0 18px',
             borderTop: '1px solid rgba(19,39,79,.08)',
             fontSize: 13.5,
-            color: 'var(--activate-primary)',
+            color: 'var(--activate-ink)',
           }}
-          aria-label={`Write on ${name} — opens in a new tab`}
+          aria-label={`Write on ${name} (opens in a new tab)`}
         >
           Write on {name}
           <ArrowRight size={13} aria-hidden />
@@ -1929,7 +2129,7 @@ const activateCss = `
 .act-howto-open {
   display: inline-flex; align-items: center; gap: 7px; min-height: 40px;
   padding: 0 16px; border-radius: 999px; font-size: 13.5px; font-weight: 600;
-  background: var(--activate-primary); color: var(--activate-on);
+  background: var(--activate-ink); color: var(--activate-on-ink);
 }
 
 /* Desktop: identity and context sit in the page corners, not in the column */
