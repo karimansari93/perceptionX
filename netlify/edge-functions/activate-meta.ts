@@ -100,7 +100,7 @@ export function personalizeAmplifyHtml(
   html = set(
     html,
     /(<meta property="og:image:alt" content=")[^"]*(")/,
-    `${name} — PerceptionX Amplify`,
+    `${name} on PerceptionX Amplify`,
   );
   html = withLinkUrl(html, linkUrl);
   // og:site_name is the client's, not ours: an employee is being sent this by

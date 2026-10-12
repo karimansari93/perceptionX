@@ -165,7 +165,7 @@ const PLATFORM_HOWTO: Record<string, string[]> = {
   indeed: [
     'Open the company profile',
     'Choose “Review this company”',
-    'Rate the areas you want to — skip the rest',
+    'Rate the areas you want to and skip the rest',
     'Write in your own words and submit',
   ],
   kununu: [
@@ -188,7 +188,7 @@ const PLATFORM_HOWTO: Record<string, string[]> = {
   quora: ['Open the question', 'Sign in or create an account', 'Choose “Answer” and write'],
   blind: [
     'Open the company page',
-    'Verify with your work email — Blind hides who you are',
+    'Verify with your work email. Blind hides who you are',
     'Post or reply',
   ],
   linkedin: ['Open LinkedIn and start a post', 'Say what you want about your work', 'Post it'],
@@ -1313,7 +1313,7 @@ function CountryStep({
           <p className="act-search-hint">Start typing to find your country.</p>
         )}
         {q !== '' && shown.length === 0 && (
-          <p className="act-search-hint">No matches — try another spelling.</p>
+          <p className="act-search-hint">No matches. Try another spelling.</p>
         )}
         {shown.map((code) => (
           <button
@@ -1503,14 +1503,14 @@ function RoutesStep({
               across every question about working here, not interview ones. */}
           These are the places AI pulls from when someone asks what it's like to work at{' '}
           {org.display_name} here
-          {coveragePct !== null ? ` — in ${coveragePct}% of answers` : ''}.
+          {coveragePct !== null ? `, in ${coveragePct}% of answers` : ''}.
         </p>
       </div>
 
       <p className="act-intro">
         {role === 'candidate'
           ? 'Share how your interview went on any of them you’re comfortable with, or none at all.'
-          : 'Share your honest thoughts on any of them you’re comfortable with — or none at all.'}{' '}
+          : 'Share your honest thoughts on any of them you’re comfortable with, or none at all.'}{' '}
         Whether you say anything, and what you say, is entirely yours.
       </p>
 
@@ -1529,7 +1529,7 @@ function RoutesStep({
       )}
 
       <footer className="mt-2 flex flex-col items-center gap-2.5 text-center">
-        <p className="act-honesty">We don't see what you write — or whether you write at all.</p>
+        <p className="act-honesty">We don't see what you write, or whether you write at all.</p>
         <PoweredBy onDark={onColor(org.primary_color) === '#FFFFFF'} />
       </footer>
     </>
@@ -1688,7 +1688,7 @@ function PlatformCard({
             rel={rel}
             onClick={onOpen}
             className="act-howto-open"
-            aria-label={`Open ${name} — opens in a new tab`}
+            aria-label={`Open ${name} (opens in a new tab)`}
           >
             Open {name}
             <ExternalLink size={15} aria-hidden />
@@ -1704,7 +1704,7 @@ function PlatformCard({
           rel={rel}
           onClick={onOpen}
           className="act-highlight-row"
-          aria-label={`${highlight.label} — opens in a new tab`}
+          aria-label={`${highlight.label} (opens in a new tab)`}
         >
           <span className="act-highlight-label">
             {route.channel === 'forum' ? 'Answer this' : 'Most cited'}
@@ -1727,7 +1727,7 @@ function PlatformCard({
             fontSize: 13.5,
             color: 'var(--activate-ink)',
           }}
-          aria-label={`Write on ${name} — opens in a new tab`}
+          aria-label={`Write on ${name} (opens in a new tab)`}
         >
           Write on {name}
           <ArrowRight size={13} aria-hidden />
