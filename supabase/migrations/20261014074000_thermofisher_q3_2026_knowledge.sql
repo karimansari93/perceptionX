@@ -9,6 +9,7 @@
 -- Peer figures merge name variants containing IQVIA, ICON and Parexel.
 -- Stored text: percentages only, no em dashes, no other PerceptionX clients.
 -- Idempotent: re-running updates the same rows (keys below).
+-- Applied 2026-10-14 with Karim's approval, which is also his sign-off on these figures.
 
 -- ─── Snapshot ───────────────────────────────────────────────────────────────
 INSERT INTO public.client_report_snapshots
