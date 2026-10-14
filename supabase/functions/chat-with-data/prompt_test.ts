@@ -5,8 +5,8 @@ import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/st
 import { PX_INSTRUCTIONS, PX_RULES, PX_RULES_TEXT } from '../_shared/px-tools/instructions.ts';
 import { buildSystemPrompt } from './prompt.ts';
 
-Deno.test('rulebook: eleven numbered rules, the phrases the eval pins', () => {
-  assertEquals(PX_RULES.length, 11);
+Deno.test('rulebook: twelve numbered rules, the phrases the eval pins', () => {
+  assertEquals(PX_RULES.length, 12);
   for (let i = 1; i <= 11; i++) assertStringIncludes(PX_RULES_TEXT, `\n${i}. `.replace(/^\n1\. $/, '1. '));
   assertStringIncludes(PX_INSTRUCTIONS, '_coverage');
   assertStringIncludes(PX_INSTRUCTIONS, 'never describe it as missing');
