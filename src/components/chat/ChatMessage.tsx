@@ -72,8 +72,9 @@ const textOf = (children: unknown): string =>
 // ─── Inline decorations ─────────────────────────────────────────────────────
 
 // A list item that is nothing but a link ("which pages…?" answers) shows
-// the citation in full — title and URL — instead of a pill.
-const FullCitation = createContext(false);
+// the citation in full — title and URL — instead of a pill. A table cell
+// that is nothing but a link shows the page title with the site underneath.
+const FullCitation = createContext<false | 'list' | 'cell'>(false);
 
 // A citation: a small pill with the site's favicon and name, after the
 // sentence it supports; hovering shows the page title and URL. In a link
@@ -84,7 +85,19 @@ function SourceLinkInline({ href, children }: { href: string; children: React.Re
   const label = siteLabel(host);
   const title = textOf(children).trim();
   const hasTitle = !!title && title !== href;
-  if (useContext(FullCitation)) {
+  const full = useContext(FullCitation);
+  if (full === 'cell') {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" title={href} className="group inline-flex max-w-[28rem] items-start gap-1.5 no-underline">
+        <Favicon domain={host} size="sm" className="mt-[2px] flex-shrink-0 rounded-sm" />
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="line-clamp-2 font-medium leading-snug text-[#13274F] group-hover:underline">{hasTitle ? title : label}</span>
+          {hasTitle && <span className="truncate text-[11.5px] text-gray-400">{label}</span>}
+        </span>
+      </a>
+    );
+  }
+  if (full) {
     return (
       <a href={href} target="_blank" rel="noopener noreferrer" className="group inline-flex max-w-full flex-col gap-0.5 no-underline">
         <span className="inline-flex items-center gap-1.5 text-[14.5px] text-[#13274F] group-hover:underline">
@@ -191,7 +204,7 @@ function buildComponents(onAsk?: (q: string) => void): Components {
     ol: ({ children }) => <ol className="list-decimal space-y-2 pl-5 text-[15px] leading-[1.6] text-[#13274F] marker:text-gray-400">{children}</ol>,
     li: ({ children }) => (
       isLinkOnlyItem(children)
-        ? <li className="list-none -ml-5"><FullCitation.Provider value={true}>{children}</FullCitation.Provider></li>
+        ? <li className="list-none -ml-5"><FullCitation.Provider value="list">{children}</FullCitation.Provider></li>
         : <li>{children}</li>
     ),
     strong: ({ children }) => <strong className="font-semibold text-[#13274F]">{children}</strong>,
@@ -229,7 +242,10 @@ function buildComponents(onAsk?: (q: string) => void): Components {
     td: ({ children }) => {
       const text = textOf(children);
       const delta = isDeltaText(text);
-      return <td className={cn('px-[14px] py-[11px] align-top text-[#13274F]', delta && 'text-right tabular-nums')} data-delta={delta ? 'true' : undefined}>{delta ? <span className="px-delta">{children}</span> : children}</td>;
+      const body = delta
+        ? <span className="px-delta">{children}</span>
+        : isLinkOnlyItem(children) ? <FullCitation.Provider value="cell">{children}</FullCitation.Provider> : children;
+      return <td className={cn('px-[14px] py-[11px] align-top text-[#13274F]', delta && 'text-right tabular-nums')} data-delta={delta ? 'true' : undefined}>{body}</td>;
     },
   };
 }

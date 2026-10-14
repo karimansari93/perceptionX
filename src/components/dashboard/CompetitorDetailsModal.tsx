@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { RateDonut } from "@/components/ui/rate-donut";
 import {
-  X, ExternalLink, ChevronDown, ChevronUp, Info, Sparkles, Loader2, CheckCircle2,
+  X, ExternalLink, ChevronDown, ChevronUp, Info, Loader2,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getCompetitorFavicon, getFavicon } from "@/utils/citationUtils";
@@ -17,8 +16,7 @@ import { escapeRegExp } from "@/utils/competitorDetection";
 import LLMLogo from "@/components/LLMLogo";
 import type { CompetitorNormalizedResponse } from "./CompetitorsTab";
 
-// Mirrors SourceDetailsModal: identity header + stat strip, underline tabs,
-// on-demand AI summary above the tab content, floating Ask AI button.
+// Mirrors SourceDetailsModal: identity header + stat strip, underline tabs.
 //
 // Tab layout is deliberately answer-first (the client's questions, in order):
 //   1. Where they win — sources that cite them and never you, and the
@@ -32,8 +30,6 @@ const PROFILE_MIN_ANSWERS = 3;
 const LOSING_PROMPT_LIMIT = 8;
 const DOMAIN_PREVIEW_LIMIT = 10;
 const ORDER_POSITION_TEXT_CAP = 200;
-const SUMMARY_SAMPLE_CAP = 20;
-const SUMMARY_EXCERPT_CHARS = 380;
 
 interface CompetitorDetailsModalProps {
   isOpen: boolean;
@@ -86,13 +82,6 @@ export const CompetitorDetailsModal = ({
   const [expandedPromptIdx, setExpandedPromptIdx] = useState<number | null>(null);
   const [showAllDomains, setShowAllDomains] = useState(false);
   const [fetchedTexts, setFetchedTexts] = useState<Record<string, string>>({});
-
-  // AI summary state (same three-state machine as the Sources modal).
-  const [summary, setSummary] = useState("");
-  const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [loadingSummary, setLoadingSummary] = useState(false);
-  const [thinkingStep, setThinkingStep] = useState(-1);
-  const [thinkingSteps, setThinkingSteps] = useState<string[]>([]);
 
   // ai_themes rows (measured company) for co-mention responses — the company
   // side of the unique-attributes comparison. Fetched on open, chunked.
@@ -328,7 +317,7 @@ export const CompetitorDetailsModal = ({
     : 0;
 
   // ---------------------------------------------------------------------
-  // Response texts (order position + losing-prompt excerpts + AI summary)
+  // Response texts (order position + losing-prompt excerpts)
   // ---------------------------------------------------------------------
   useEffect(() => {
     if (!isOpen || !fetchResponseTexts) return;
@@ -387,175 +376,12 @@ export const CompetitorDetailsModal = ({
     );
   };
 
-  // ---------------------------------------------------------------------
-  // AI summary — on demand via the floating Ask AI button (Sources pattern),
-  // with the three-section framing the old competitor sheet had.
-  // ---------------------------------------------------------------------
-  const fetchSummary = useCallback(async () => {
-    if (!competitorAgg || competitorResponses.length === 0) {
-      setSummaryError("No answers mentioning this competitor in the current scope.");
-      return;
-    }
-    setSummary("");
-    setSummaryError(null);
-    setLoadingSummary(true);
-    setThinkingStep(0);
-
-    const totalCount = competitorAgg.count;
-    const withoutCompanyCount = totalCount - competitorAgg.coMention;
-
-    // Sample weighted toward answers where the company is ABSENT — that's
-    // where the competitor is winning ground.
-    const withoutCompany = competitorResponses.filter((nr) => !nr.mentioned);
-    const withCompany = competitorResponses.filter((nr) => nr.mentioned);
-    const gapTarget = Math.min(withoutCompany.length, Math.ceil(SUMMARY_SAMPLE_CAP / 2));
-    const sample = [
-      ...withoutCompany.slice(0, gapTarget),
-      ...withCompany.slice(0, SUMMARY_SAMPLE_CAP - gapTarget),
-    ];
-
-    const steps = [
-      totalCount > SUMMARY_SAMPLE_CAP
-        ? `Sampling ${sample.length} of ${totalCount} answers…`
-        : `Reading ${sample.length} answers…`,
-      `Comparing visibility vs ${companyName}…`,
-      `Ranking the sources carrying them…`,
-      `Writing the summary…`,
-    ];
-    setThinkingSteps(steps);
-    const stepTimers: ReturnType<typeof setTimeout>[] = [];
-    for (let i = 1; i < steps.length; i += 1) {
-      stepTimers.push(setTimeout(() => setThinkingStep(i), i * 1500));
-    }
-
-    try {
-      // Texts for the sample (many are usually cached already).
-      let texts: Record<string, string> = { ...responseTexts, ...fetchedTexts };
-      const missing = sample.filter((nr) => !texts[nr.id] && !nr.raw?.response_text).map((nr) => nr.id);
-      if (missing.length > 0 && fetchResponseTexts) {
-        const fetched = await fetchResponseTexts(missing);
-        if (fetched) texts = { ...texts, ...fetched };
-      }
-
-      const domainCounts = new Map<string, number>();
-      const locationCounts = new Map<string, number>();
-      const functionCounts = new Map<string, number>();
-      for (const nr of competitorResponses) {
-        for (const d of nr.domains) domainCounts.set(d, (domainCounts.get(d) || 0) + 1);
-        if (nr.location) locationCounts.set(nr.location, (locationCounts.get(nr.location) || 0) + 1);
-        if (nr.jobFunction) functionCounts.set(nr.jobFunction, (functionCounts.get(nr.jobFunction) || 0) + 1);
-      }
-      const topLine = (m: Map<string, number>, n: number) =>
-        Array.from(m.entries()).sort((a, b) => b[1] - a[1]).slice(0, n)
-          .map(([k, v]) => `${k} (${v})`).join(", ");
-      const exclusiveLine = competitorOnlyDomains.slice(0, 6)
-        .map((d) => `${d.domain} (${d.count})`).join(", ");
-
-      const prompt = `You are an employer brand analyst. Analyze how ${competitorName} shows up in AI answers about the talent market, and what that means for ${companyName}.
-
-Hard numbers, computed over ALL ${totalCount} AI answers that mention ${competitorName}:
-- ${withoutCompanyCount} of ${totalCount} answers mention ${competitorName} WITHOUT mentioning ${companyName} — this is where ${competitorName} is winning visibility.
-- ${competitorAgg.coMention} answers mention both companies.
-- Top sources carrying ${competitorName}'s visibility (answer counts): ${topLine(domainCounts, 6) || "n/a"}
-- Sources that cite ${competitorName} and NEVER cite ${companyName}: ${exclusiveLine || "none"}
-- Markets (answer counts): ${topLine(locationCounts, 4) || "unspecified"}
-- Job functions (answer counts): ${topLine(functionCounts, 4) || "unspecified"}
-
-Excerpts from answers mentioning ${competitorName} — each tagged with whether ${companyName} also appeared:
-${sample.map((nr) => {
-  const tag = nr.mentioned ? "[both mentioned]" : `[${companyName} ABSENT]`;
-  return `${tag} ${excerptAround(textOf(nr) || (texts[nr.id] ?? ""), competitorName, SUMMARY_EXCERPT_CHARS)}`;
-}).join("\n---\n")}
-
-Write a short, actionable analysis with three short sections. Each section uses a markdown bold header on its own line, followed by ONE or TWO short sentences. Total output is short — keep it tight. Ground every claim in the hard numbers or excerpts, naming specific markets, functions, or sources.
-
-**Where ${competitorName} is visible**
-Which sources, markets, and roles ${competitorName} shows up in — lean on the hard numbers.
-
-**Where they're winning vs ${companyName}**
-What ${competitorName} is recognized for in the answers where ${companyName} is absent — the themes or claims earning them that visibility.
-
-**Your move**
-One concrete, actionable recommendation for ${companyName} in response — targeted at a specific market, function, or source.
-
-Be direct, specific, professional. No hedging, no preamble, no summary paragraph. Do not open with "${competitorName} is...". **Do NOT include a top-level title or heading** (no "# Title", no "## Heading"). Only the three bold section headers exactly as specified. NEVER claim the dataset lacks ${competitorName} data — if the excerpts are thin, lean on the hard numbers instead.`;
-
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setSummaryError("Authentication required");
-        return;
-      }
-      const res = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-claude", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          prompt,
-          enableWebSearch: false,
-          model: "claude-haiku-4-5",
-          maxTokens: 900,
-        }),
-      });
-      const data = await res.json();
-      if (data.response) {
-        setSummary(data.response.trim());
-      } else {
-        const isRateLimit = /rate limit|429/i.test(data.error || "");
-        setSummaryError(
-          isRateLimit
-            ? "We're a bit overloaded right now — give it a moment."
-            : "Couldn't generate the summary. Try again?",
-        );
-      }
-    } catch {
-      setSummaryError("Couldn't generate the summary. Try again?");
-    } finally {
-      stepTimers.forEach(clearTimeout);
-      setLoadingSummary(false);
-      setThinkingStep(-1);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [competitorAgg, competitorResponses, competitorOnlyDomains, companyName, competitorName, responseTexts, fetchedTexts, fetchResponseTexts, textOf]);
-
-  // Reset summary when the modal closes or the competitor changes.
+  // Reset view state when the modal closes or the competitor changes.
   useEffect(() => {
-    setSummary("");
-    setSummaryError(null);
-    setLoadingSummary(false);
-    setThinkingStep(-1);
     setActiveTab("wins");
     setExpandedPromptIdx(null);
     setShowAllDomains(false);
   }, [isOpen, competitorName]);
-
-  // Bold-header-aware paragraph renderer for the summary text.
-  const renderSummaryText = (text: string) =>
-    text.split("\n\n").filter(Boolean).map((para, i) => {
-      const trimmed = para.trim();
-      if (/^#{1,6}\s/.test(trimmed)) return null;
-      const headerOnly = trimmed.match(/^\*\*([^*]+)\*\*$/);
-      if (headerOnly) {
-        return (
-          <h4 key={i} className="text-sm font-semibold text-gray-900 mt-3 first:mt-0 mb-1">
-            {headerOnly[1]}
-          </h4>
-        );
-      }
-      const parts = trimmed.split(/(\*\*[^*]+\*\*|\*[^*\n]+\*)/g);
-      return (
-        <p key={i} className="mb-2.5 last:mb-0">
-          {parts.map((p, j) => {
-            const b = p.match(/^\*\*([^*]+)\*\*$/);
-            if (b) return <strong key={j} className="font-semibold text-gray-900">{b[1]}</strong>;
-            const em = p.match(/^\*([^*\n]+)\*$/);
-            if (em) return <em key={j} className="not-italic font-medium text-gray-900">{em[1]}</em>;
-            return <span key={j}>{p}</span>;
-          })}
-        </p>
-      );
-    });
 
   // ---------------------------------------------------------------------
   // Small render helpers
@@ -771,81 +597,6 @@ Be direct, specific, professional. No hedging, no preamble, no summary paragraph
           </TabsList>
 
           <div className="flex-1 overflow-y-auto">
-            <div className="px-6 pt-4 empty:hidden">
-              {/* AI Summary — on demand */}
-              {summary ? (
-                <Card className="border-[#0DBCBA]/30 bg-[#0DBCBA]/5">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-base font-semibold flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
-                        AI Summary
-                      </CardTitle>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={fetchSummary}
-                        disabled={loadingSummary}
-                        className="text-xs text-gray-400 hover:text-gray-600 h-auto py-1"
-                      >
-                        {loadingSummary ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-                        Regenerate
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-gray-800 text-sm leading-relaxed">{renderSummaryText(summary)}</div>
-                  </CardContent>
-                </Card>
-              ) : loadingSummary ? (
-                <Card className="border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/5 to-[#0DBCBA]/10 overflow-hidden">
-                  <CardContent className="py-5 px-5">
-                    <div className="flex items-center gap-2 mb-4">
-                      <div className="relative">
-                        <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
-                        <div className="absolute inset-0 animate-ping"><Sparkles className="w-4 h-4 text-[#0DBCBA] opacity-30" /></div>
-                      </div>
-                      <span className="text-sm font-medium text-[#0A8B89]">Analyzing...</span>
-                    </div>
-                    <div className="space-y-0.5">
-                      {thinkingSteps.map((step, i) => {
-                        const isActive = i === thinkingStep;
-                        const isComplete = i < thinkingStep;
-                        const isPending = i > thinkingStep;
-                        return (
-                          <div
-                            key={i}
-                            className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${isActive ? "bg-[#0DBCBA]/15" : ""}`}
-                            style={{ opacity: isPending ? 0.3 : 1, transform: isPending ? "translateX(4px)" : "translateX(0)", transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)" }}
-                          >
-                            <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
-                              {isComplete ? <CheckCircle2 className="w-3.5 h-3.5 text-[#0DBCBA]" /> : isActive ? <Loader2 className="w-3.5 h-3.5 text-[#0DBCBA] animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
-                            </div>
-                            <span className={`text-xs transition-colors duration-300 ${isActive ? "text-[#0A8B89] font-medium" : isComplete ? "text-[#0DBCBA]" : "text-gray-400"}`}>{step}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-4 h-1 bg-[#0DBCBA]/20 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-[#0DBCBA] to-[#0A8B89] rounded-full transition-all duration-700 ease-out"
-                        style={{ width: `${thinkingSteps.length > 0 ? ((thinkingStep + 1) / thinkingSteps.length) * 100 : 0}%` }}
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : summaryError ? (
-                <Card className="border-red-100 bg-red-50/30">
-                  <CardContent className="py-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-red-600 text-sm">{summaryError}</span>
-                      <Button variant="ghost" size="sm" onClick={fetchSummary} className="text-xs">Retry</Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : null}
-            </div>
-
             {/* ------------------------------------------ Tab 1: where they win */}
             <TabsContent value="wins" className="px-6 py-4 mt-0 focus-visible:outline-none space-y-6">
               <section>
@@ -1080,20 +831,6 @@ Be direct, specific, professional. No hedging, no preamble, no summary paragraph
             </TabsContent>
           </div>
         </Tabs>
-        )}
-
-        {/* Floating Ask AI button — bottom right of panel */}
-        {!summary && !loadingSummary && !summaryError && (
-          <div className="absolute bottom-6 right-6 z-10 animate-slideUpGlow rounded-full">
-            <button
-              onClick={fetchSummary}
-              className="h-12 rounded-full bg-[#13274F] text-white shadow-lg hover:bg-[#1a3468] transition-all hover:scale-105 flex items-center justify-center gap-2 px-5"
-            >
-              <img alt="PerceptionX" className="h-5 w-5 object-contain shrink-0 brightness-0 invert" src="/logos/perceptionx-small.png" />
-              <span className="text-sm font-medium whitespace-nowrap">Ask AI</span>
-              <span className="text-[10px] font-semibold bg-[#DB5E89] text-white px-1.5 py-0.5 rounded-full leading-none">BETA</span>
-            </button>
-          </div>
         )}
       </SheetContent>
     </Sheet>

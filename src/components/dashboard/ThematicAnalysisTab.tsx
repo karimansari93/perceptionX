@@ -1169,6 +1169,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       <button
         key={a.id}
         onClick={() => openAttribute(a.id)}
+        data-ask-subject={a.name}
         className="w-full text-left rounded-[14px] border p-4 pb-3.5 flex flex-col gap-3 transition-colors hover:border-[rgba(19,39,79,0.28)]"
         style={{ borderColor: RULE, background: CARD_FILL }}
       >
@@ -1321,6 +1322,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                         <button
                           key={a.id}
                           onClick={() => openAttribute(a.id)}
+                          data-ask-subject={a.name}
                           aria-label={`${a.name} — ${a.sentimentPct}% sentiment, ${a.bandLabel} volume`}
                           className="absolute flex items-center gap-2 cursor-pointer group bg-transparent border-0 p-0"
                           style={{
@@ -1433,6 +1435,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
                           <TableRow
                             key={row.id}
                             onClick={() => openAttribute(row.id)}
+                            data-ask-subject={row.name}
                             className="cursor-pointer transition-colors"
                           >
                             <TableCell>
