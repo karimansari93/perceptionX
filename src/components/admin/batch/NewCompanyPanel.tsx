@@ -46,6 +46,7 @@ const ALL_MODELS = [
   { id: "claude", label: "Claude", default: true },
   { id: "deepseek", label: "DeepSeek", default: false },
   { id: "gemini", label: "Gemini", default: false },
+  { id: "muse", label: "Meta AI (Muse)", default: false },
 ] as const;
 const DEFAULT_MODEL_IDS: string[] = ALL_MODELS.filter((m) => m.default).map((m) => m.id);
 

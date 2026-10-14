@@ -345,3 +345,6 @@ verify_jwt = false
 
 [functions.test-prompt-openai]
 verify_jwt = false
+
+[functions.test-prompt-muse]
+verify_jwt = false
