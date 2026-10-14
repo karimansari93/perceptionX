@@ -35,9 +35,11 @@ const ALL_PROMPT_TYPES = [
   { id: "discovery", label: "Discovery" },
 ] as const;
 
-// Default-checked set mirrors RecollectPanel and DEFAULT_MODELS in
-// process-company-batch-queue, so a new company is collected on the same
-// models as every other client.
+// Default-checked set = DEFAULT_MODELS in process-company-batch-queue plus
+// Meta AI (Muse), which every client onboarded from October 2026 gets. Muse is
+// deliberately NOT in DEFAULT_MODELS or ticked in RecollectPanel, so existing
+// clients' re-runs keep the model set their earlier periods were measured on.
+// The choice is saved on the config, so later re-kicks keep Muse.
 const ALL_MODELS = [
   { id: "openai", label: "OpenAI", default: true },
   { id: "perplexity", label: "Perplexity", default: true },
@@ -46,7 +48,7 @@ const ALL_MODELS = [
   { id: "claude", label: "Claude", default: true },
   { id: "deepseek", label: "DeepSeek", default: false },
   { id: "gemini", label: "Gemini", default: false },
-  { id: "muse", label: "Meta AI (Muse)", default: false },
+  { id: "muse", label: "Meta AI (Muse)", default: true },
 ] as const;
 const DEFAULT_MODEL_IDS: string[] = ALL_MODELS.filter((m) => m.default).map((m) => m.id);
 
@@ -612,7 +614,7 @@ export const NewCompanyPanel = ({ orgMode, organizationId, newOrgName, onBack }:
               This will collect responses across all prompt types
               (informational, experience, competitive, discovery) on the
               standard models (OpenAI, Perplexity, Google AI Overviews, Google
-              AI Mode, Claude). Choose "Customize" to add DeepSeek or Gemini
+              AI Mode, Claude, Meta AI). Choose "Customize" to add DeepSeek or Gemini
               or pick a subset.
             </AlertDialogDescription>
           </AlertDialogHeader>
