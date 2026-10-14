@@ -110,7 +110,7 @@ export const VisibilityRankingsTab = () => {
   // function (Google AI Overviews was dropped from that pipeline).
   const ALL_INDUSTRY_MODELS = [
     { id: "openai", label: "OpenAI (gpt-5-nano)" },
-    { id: "perplexity", label: "Perplexity" },
+    { id: "claude", label: "Claude (Haiku 5.5)" },
     { id: "gemini", label: "Gemini" },
   ];
   const [confirmStartOpen, setConfirmStartOpen] = useState(false);
@@ -1466,7 +1466,7 @@ export const VisibilityRankingsTab = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>Run for all models?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will collect responses across all models (OpenAI, Perplexity,
+              This will collect responses across all models (OpenAI, Claude,
               Gemini) for the pending queue items. Choose
               "Customize" to pick a subset (e.g. only OpenAI when re-collecting
               after an outage).

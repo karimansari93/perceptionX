@@ -95,7 +95,7 @@ serve(async (req) => {
                 country: countryCode,
                 status: "pending",
                 batch_index: 0,
-                total_prompts: 16, // Default
+                total_prompts: 13, // v2 discovery set (DISCOVERY_PROMPTS)
               });
             }
           }
@@ -158,7 +158,7 @@ serve(async (req) => {
     if (jobs && jobs.length > 0) {
       const job = jobs[0];
       console.log(
-        `[Processor] Processing Job ${job.id}: ${job.industry}/${job.country} (Batch ${job.batch_index})`,
+        `[Processor] Processing Job ${job.id}: ${job.industry}/${job.country}${job.job_function ? `/${job.job_function}` : ""} (Batch ${job.batch_index})`,
       );
 
       // Check if job has been cancelled before processing
@@ -208,6 +208,9 @@ serve(async (req) => {
                 batchOffset: currentOffset,
                 batchSize: BATCH_SIZE,
                 skipResponses: false,
+                jobFunction: job.job_function ?? null,
+                // null = the collector's default model set
+                models: job.models ?? null,
               },
             });
 

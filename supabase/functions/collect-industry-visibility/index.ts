@@ -3,19 +3,28 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { SOURCES_SECTION_REGEX, unwrapTranslateUrl } from "../_shared/citation-extraction.ts";
 import { COUNTRY_CODE_TO_NAME } from "../_shared/countries.ts";
+import { claudeFetch } from "../_shared/claude-keys.ts";
 
 // OpenAI model for bulk industry collection. The client-facing collection path
 // (test-prompt-openai) deliberately runs gpt-5.5 to mirror ChatGPT's live
 // default; this internal rankings pipeline just needs mention/citation data at
 // minimum cost, so it runs OpenAI's cheapest tier (nano) instead.
 const OPENAI_MODEL = "gpt-5-nano";
-// Earlier runs stored OpenAI responses under these names; a response under any
-// of them still counts as "already collected" so we don't pay to re-collect.
-const LEGACY_OPENAI_MODELS = ["gpt-5.2-chat-latest"];
+// Claude leg (October 2026): replaces Perplexity Sonar, whose $5 per 1,000
+// requests search fee was ~85% of the pipeline's cost. Haiku answers from the
+// model's own knowledge (no web search), like the OpenAI and Gemini legs.
+const CLAUDE_MODEL = "claude-haiku-5-5";
+// Models collected when the caller doesn't pass `models`. Perplexity stays
+// selectable explicitly but is no longer part of a default run.
+const DEFAULT_MODEL_TYPES = ["openai", "claude", "gemini"];
+// Index prompts and answers live in index_prompts / index_responses, apart
+// from client data in confirmed_prompts / prompt_responses. Index answers are
+// never themed. job_function null = industry-wide prompt; otherwise the prompt
+// asks about that function's roles within the industry.
 
 /**
  * Apply `unwrapTranslateUrl` to every citation in a list so the stored
- * prompt_responses.citations never contains translate.google.com redirects.
+ * index_responses.citations never contains translate.google.com redirects.
  * Re-derives `domain` from the unwrapped URL so analytics aggregates correctly.
  */
 function unwrapCitations(citations: any[]): any[] {
@@ -112,11 +121,16 @@ serve(async (req) => {
       skipResponses = false,
       batchOffset = 0,
       batchSize = null,
-      // Optional subset of models to collect — defaults to all 3.
-      // Valid values: 'openai', 'perplexity', 'gemini'
+      // Optional subset of models to collect — defaults to DEFAULT_MODEL_TYPES.
+      // Valid values: 'openai', 'claude', 'gemini', 'perplexity'
       models = null,
+      // Optional job function, e.g. "Software Engineering". When set, every
+      // prompt asks about that function's roles within the industry.
+      jobFunction = null,
     } = body;
-    const modelsFilter: string[] | null = Array.isArray(models) && models.length > 0 ? models : null;
+    const modelsFilter: string[] = Array.isArray(models) && models.length > 0 ? models : DEFAULT_MODEL_TYPES;
+    const jobFunctionContext: string | null =
+      typeof jobFunction === "string" && jobFunction.trim().length > 0 ? jobFunction.trim() : null;
 
     if (!industry) {
       console.error("Industry is required but not provided");
@@ -169,6 +183,15 @@ serve(async (req) => {
     const promptLocation =
       country === "GLOBAL" ? undefined : resolvedCountryName;
 
+    // "...best workplace culture?" -> "...best workplace culture for Sales roles?"
+    const appendJobFunction = (text: string, fn: string | null): string => {
+      if (!fn) return text;
+      const trimmed = text.trim();
+      const suffix = ` for ${fn} roles`;
+      if (trimmed.endsWith("?")) return trimmed.replace(/\?$/, `${suffix}?`);
+      return `${trimmed}${suffix}`;
+    };
+
     // Same behavior as the batch pipeline's appendPromptContext: append the
     // location before the trailing "?" unless the text already mentions it.
     const appendLocationContext = (text: string, location?: string): string => {
@@ -200,25 +223,6 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get or create a system user for these prompts (or use first admin user)
-    const { data: adminUser, error: adminUserError } = await supabase
-      .from("profiles")
-      .select("id")
-      .limit(1)
-      .single();
-
-    if (adminUserError) {
-      console.error("Error fetching admin user:", adminUserError);
-      throw new Error(`Failed to get admin user: ${adminUserError.message}`);
-    }
-
-    if (!adminUser) {
-      console.error("No admin user found");
-      throw new Error("No user found to associate prompts with");
-    }
-
-    console.log("Using admin user:", adminUser.id);
-
     const results = {
       promptsCreated: 0,
       responsesCollected: 0,
@@ -237,7 +241,7 @@ serve(async (req) => {
       category: t.category,
       theme: t.theme,
       text: appendLocationContext(
-        t.text.replace(/{industry}/g, industry),
+        appendJobFunction(t.text.replace(/{industry}/g, industry), jobFunctionContext),
         promptLocation,
       ),
     }));
@@ -247,201 +251,48 @@ serve(async (req) => {
       allPrompts.map((p) => `${p.theme} (${p.category})`).join(", "),
     );
 
-    // PHASE 1: Create all prompts first (fast, no API calls)
-    console.log(`PHASE 1: Creating all ${allPrompts.length} prompts`);
+    // PHASE 1: Create or fetch all prompts in one upsert (no API calls)
+    const { data: promptRows, error: promptError } = await supabase
+      .from("index_prompts")
+      .upsert(
+        allPrompts.map((p) => ({
+          prompt_text: p.text,
+          attribute_id: p.attributeId,
+          prompt_category: p.category,
+          prompt_theme: p.theme,
+          industry,
+          country: dbLocationContext,
+          job_function: jobFunctionContext,
+          prompt_version: 2,
+        })),
+        { onConflict: "industry,country,job_function,attribute_id,prompt_version" },
+      )
+      .select("id, attribute_id");
 
-    const promptsWithIds: Array<{
-      promptData: {
-        attributeId: string;
-        category: string;
-        theme: string;
-        text: string;
-      };
-      promptId: string;
-    }> = [];
-
-    for (let i = 0; i < allPrompts.length; i++) {
-      const promptData = allPrompts[i];
-
-      let promptId: string | null = null;
-
-      try {
-        // Try to insert directly - faster than checking first
-        // If it's a duplicate, we'll catch the error and get the existing ID
-        try {
-          const { data: newPrompt, error: promptError } = await supabase
-            .from("confirmed_prompts")
-            .insert({
-              user_id: adminUser.id,
-              company_id: null,
-              onboarding_id: null,
-              prompt_text: promptData.text,
-              prompt_type: "discovery",
-              prompt_category: promptData.category,
-              prompt_theme: promptData.theme,
-              attribute_id: promptData.attributeId,
-              industry_context: industry,
-              location_context: dbLocationContext,
-              is_active: true,
-              prompt_version: 2,
-            })
-            .select("id")
-            .single();
-
-          if (promptError) {
-            // If it's a unique constraint violation, the prompt already exists - get the existing ID
-            if (
-              promptError.code === "23505" ||
-              promptError.message?.includes("duplicate") ||
-              promptError.message?.includes("unique")
-            ) {
-              console.log(
-                `[${i + 1}/${allPrompts.length}] Prompt already exists, fetching existing ID...`,
-              );
-
-              let query = supabase
-                .from("confirmed_prompts")
-                .select("id")
-                .is("company_id", null)
-                .eq("prompt_type", "discovery")
-                .eq("prompt_category", promptData.category)
-                .eq("prompt_theme", promptData.theme)
-                // Pin to the v2 row — legacy pre-attribute rows share some
-                // theme names (e.g. "Company Culture") but have null attribute_id.
-                .eq("attribute_id", promptData.attributeId)
-                .eq("industry_context", industry);
-
-              if (dbLocationContext) {
-                query = query.eq("location_context", dbLocationContext);
-              } else {
-                query = query.is("location_context", null);
-              }
-
-              const { data: existingPrompts } = await query.limit(1);
-
-              if (existingPrompts && existingPrompts.length > 0) {
-                promptId = existingPrompts[0].id;
-                console.log(
-                  `[${i + 1}/${allPrompts.length}] → Using existing prompt ${promptId} for ${promptData.theme}`,
-                );
-              } else {
-                console.error(
-                  `[${i + 1}/${allPrompts.length}] Duplicate error but couldn't find existing prompt`,
-                );
-                results.errors.push(
-                  `Duplicate error for ${promptData.theme} but couldn't retrieve ID`,
-                );
-              }
-            } else {
-              // Some other error
-              console.error(
-                `[${i + 1}/${allPrompts.length}] Failed to create prompt:`,
-                {
-                  error: promptError.message,
-                  code: promptError.code,
-                },
-              );
-              results.errors.push(
-                `Failed to create prompt for ${promptData.theme}: ${promptError.message}`,
-              );
-            }
-          } else if (newPrompt && newPrompt.id) {
-            promptId = newPrompt.id;
-            results.promptsCreated++;
-            console.log(
-              `[${i + 1}/${allPrompts.length}] ✓ Created prompt ${promptId} for ${promptData.theme}`,
-            );
-          } else {
-            console.error(
-              `[${i + 1}/${allPrompts.length}] Prompt creation returned no ID`,
-            );
-            results.errors.push(
-              `Prompt creation failed for ${promptData.theme}: No ID returned`,
-            );
-          }
-        } catch (insertError: any) {
-          console.error(
-            `[${i + 1}/${allPrompts.length}] Exception during prompt creation:`,
-            insertError.message,
-          );
-          results.errors.push(
-            `Exception creating prompt ${promptData.theme}: ${insertError.message}`,
-          );
-        }
-      } catch (error: any) {
-        console.error(
-          `[${i + 1}/${allPrompts.length}] CRITICAL ERROR processing prompt ${promptData.theme}:`,
-          error.message,
-          error.stack,
-        );
-        results.errors.push(
-          `Critical error processing prompt ${promptData.theme}: ${error.message}`,
-        );
-        // Continue to next prompt - don't let one failure stop the whole process
-      }
-
-      // Only add to promptsWithIds if we have a valid promptId
-      if (promptId) {
-        promptsWithIds.push({ promptData, promptId });
-        console.log(
-          `[${i + 1}/${allPrompts.length}] ✓ Added ${promptData.theme} to collection list (ID: ${promptId})`,
-        );
-      } else {
-        console.warn(
-          `[${i + 1}/${allPrompts.length}] ⚠ Skipping ${promptData.theme} - no prompt ID available`,
-        );
-      }
-
-      // Log completion of this iteration
-      console.log(
-        `[${i + 1}/${allPrompts.length}] Iteration ${i + 1} COMPLETE. Total processed so far: ${promptsWithIds.length} prompts with IDs`,
-      );
-
-      // Force a small delay to prevent overwhelming the database
-      if (i < allPrompts.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+    if (promptError) {
+      throw new Error(`Failed to create index prompts: ${promptError.message}`);
     }
 
-    console.log(
-      `✅ LOOP COMPLETE: Processed all ${allPrompts.length} prompts. Total with IDs: ${promptsWithIds.length}`,
+    const idByAttribute = new Map(
+      (promptRows || []).map((r: any) => [r.attribute_id, r.id as string]),
     );
-    console.log(
-      `Prompts processed:`,
-      promptsWithIds.map((p) => p.promptData.theme).join(", "),
-    );
-
-    if (promptsWithIds.length < allPrompts.length) {
-      const missing = allPrompts.filter(
-        (p) => !promptsWithIds.find((pid) => pid.promptData.theme === p.theme),
-      );
-      console.warn(
-        `⚠️ WARNING: Only ${promptsWithIds.length} of ${allPrompts.length} prompts were processed!`,
-      );
-      console.warn(`Missing prompts:`, missing.map((p) => p.theme).join(", "));
-    }
-
-    console.log(
-      `PHASE 1 COMPLETE: Processed ${allPrompts.length} prompts, successfully created/found ${promptsWithIds.length} prompts`,
-    );
-    console.log(`  - Prompts created: ${results.promptsCreated}`);
-    console.log(`  - Errors encountered: ${results.errors.length}`);
-    console.log(
-      `  - Prompts ready for response collection: ${promptsWithIds.length}`,
-    );
+    // Keep DISCOVERY_PROMPTS order so batchOffset is stable across calls.
+    const promptsWithIds = allPrompts
+      .filter((p) => idByAttribute.has(p.attributeId))
+      .map((p) => ({ promptData: p, promptId: idByAttribute.get(p.attributeId)! }));
+    results.promptsCreated = promptsWithIds.length;
 
     if (promptsWithIds.length === 0) {
-      console.error("WARNING: No prompts were created or found!");
       return new Response(
         JSON.stringify({
           success: false,
           error: "No prompts were created or found",
           results,
-          message: `Failed to create any prompts. Errors: ${results.errors.length}`,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+
 
     // Skip response collection if requested (to avoid timeouts)
     if (skipResponses) {
@@ -491,58 +342,27 @@ serve(async (req) => {
       );
 
       try {
-        // Check if we already have responses for each model
-        const { data: existingResponseGPT, error: responseCheckErrorGPT } =
-          await supabase
-            .from("prompt_responses")
-            .select("id, ai_model, tested_at")
-            .eq("confirmed_prompt_id", promptId)
-            .in("ai_model", [OPENAI_MODEL, ...LEGACY_OPENAI_MODELS])
-            .limit(1)
-            .maybeSingle();
+        // Models already answered for this prompt in the current period
+        const { data: existingRows, error: existingError } = await supabase
+          .from("index_responses")
+          .select("ai_model")
+          .eq("index_prompt_id", promptId)
+          .is("index_period", null);
+        if (existingError) {
+          throw new Error(`Error checking existing responses: ${existingError.message}`);
+        }
+        const existingModels = new Set((existingRows || []).map((r: any) => r.ai_model));
 
-        const {
-          data: existingResponsePerplexity,
-          error: responseCheckErrorPerplexity,
-        } = await supabase
-          .from("prompt_responses")
-          .select("id, ai_model, tested_at")
-          .eq("confirmed_prompt_id", promptId)
-          .eq("ai_model", "perplexity")
-          .maybeSingle();
-
-        const {
-          data: existingResponseGemini,
-          error: responseCheckErrorGemini,
-        } = await supabase
-          .from("prompt_responses")
-          .select("id, ai_model, tested_at")
-          .eq("confirmed_prompt_id", promptId)
-          .eq("ai_model", "gemini")
-          .maybeSingle();
-
-        // Collect responses for each model that doesn't exist yet
+        // Collect responses for each requested model that doesn't exist yet.
+        // Match by `type` (e.g. 'openai') so the UI can pass simple identifiers.
         const modelsToCollect = [
-          {
-            name: OPENAI_MODEL,
-            exists: !!existingResponseGPT,
-            type: "openai",
-          },
-          {
-            name: "perplexity",
-            exists: !!existingResponsePerplexity,
-            type: "perplexity",
-          },
-          {
-            name: "gemini",
-            exists: !!existingResponseGemini,
-            type: "gemini",
-          },
+          { name: OPENAI_MODEL, type: "openai" },
+          { name: "perplexity", type: "perplexity" },
+          { name: "gemini", type: "gemini" },
+          { name: CLAUDE_MODEL, type: "claude" },
         ]
-          .filter((m) => !m.exists)
-          // If caller passed `models`, restrict to that subset. Match by `type`
-          // (e.g. 'openai') so the UI can pass simple identifiers.
-          .filter((m) => !modelsFilter || modelsFilter.includes(m.type) || modelsFilter.includes(m.name));
+          .filter((m) => modelsFilter.includes(m.type) || modelsFilter.includes(m.name))
+          .filter((m) => !existingModels.has(m.name));
 
         // Run models in PARALLEL to avoid timeouts
         const modelPromises = modelsToCollect.map(async (model) => {
@@ -652,6 +472,37 @@ serve(async (req) => {
               // Same as the OpenAI leg: no grounded citations, so pull any
               // URLs the model wrote into the text.
               citations = extractCitationsFromResponse(responseText);
+            } else if (model.type === "claude") {
+              // Claude Haiku, no web search, thinking off: same answer budget
+              // as the OpenAI leg and the lowest cost per answer.
+              const claudeResponse = await claudeFetch(
+                "https://api.anthropic.com/v1/messages",
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "anthropic-version": "2023-06-01",
+                  },
+                  body: JSON.stringify({
+                    model: model.name,
+                    max_tokens: 1000,
+                    thinking: { type: "disabled" },
+                    messages: [{ role: "user", content: promptData.text }],
+                  }),
+                },
+              );
+              const claudeData = await claudeResponse.json();
+              if (!claudeResponse.ok) {
+                throw new Error(
+                  `${model.name} API error: ${claudeData?.error?.message || claudeResponse.status}`,
+                );
+              }
+              responseText = (claudeData.content || [])
+                .filter((b: any) => b.type === "text")
+                .map((b: any) => b.text)
+                .join("\n")
+                .trim();
+              citations = extractCitationsFromResponse(responseText);
             }
 
             if (!responseText) {
@@ -662,40 +513,9 @@ serve(async (req) => {
               `Received response from ${model.name} for ${promptData.theme} (${responseText.length} chars)`,
             );
 
-            // Store response
-            const { data: insertedResponse, error: insertError } =
-              await supabase
-                .from("prompt_responses")
-                .insert({
-                  confirmed_prompt_id: promptId,
-                  ai_model: model.name,
-                  response_text: responseText,
-                  citations:
-                    model.type === "openai"
-                      ? unwrapCitations(citations)
-                      : model.type === "perplexity"
-                        ? unwrapCitations(citations)
-                        : model.type === "gemini"
-                          ? unwrapCitations(citations)
-                          : [],
-                  company_id: null, // Industry-wide response
-                  company_mentioned: false,
-                  detected_competitors: "",
-                  for_index: true,
-                })
-                .select()
-                .single();
-
-            if (insertError) {
-              throw new Error(`Error storing response: ${insertError.message}`);
-            }
-
             // Extract ALL companies mentioned from the response
             let detectedCompetitors = "";
             try {
-              console.log(
-                `Calling detect-competitors for ${promptData.theme} (${model.name})...`,
-              );
               const competitorResponse = await fetch(
                 `${supabaseUrl}/functions/v1/detect-competitors`,
                 {
@@ -722,18 +542,23 @@ serve(async (req) => {
               );
             }
 
-            // Update the response with detected competitors
-            if (detectedCompetitors) {
-              const { error: updateError } = await supabase
-                .from("prompt_responses")
-                .update({ detected_competitors: detectedCompetitors })
-                .eq("id", insertedResponse.id);
+            // Store in the index tables (never prompt_responses). A duplicate
+            // from an overlapping run is ignored by the unique key.
+            const { error: insertError } = await supabase
+              .from("index_responses")
+              .upsert(
+                {
+                  index_prompt_id: promptId,
+                  ai_model: model.name,
+                  response_text: responseText,
+                  citations: unwrapCitations(citations),
+                  detected_competitors: detectedCompetitors,
+                },
+                { onConflict: "index_prompt_id,ai_model,index_period", ignoreDuplicates: true },
+              );
 
-              if (updateError) {
-                console.error(
-                  `Error updating competitors: ${updateError.message}`,
-                );
-              }
+            if (insertError) {
+              throw new Error(`Error storing response: ${insertError.message}`);
             }
 
             results.responsesCollected++;
