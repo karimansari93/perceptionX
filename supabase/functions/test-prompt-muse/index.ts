@@ -12,6 +12,13 @@ const MODEL_FALLBACKS = ['muse-spark-1.2']
 
 const API_URL = 'https://api.meta.ai/v1/responses'
 
+// Prompt caching is automatic on the Model API; these two hints raise the hit
+// rate on the fixed prefix (tool definitions + our instructions, ~4k tokens).
+// One stable key for all collection traffic, never per company or per run, and
+// 24h retention so a collection spread over hours keeps hitting the cache.
+const PROMPT_CACHE_KEY = 'perceptionx-collection'
+const PROMPT_CACHE_RETENTION = '24h'
+
 // Same soft search cap and instructions as test-prompt-openai, so the two
 // Responses-API models are collected under comparable conditions.
 const MAX_WEB_SEARCHES = 2
@@ -202,6 +209,8 @@ async function callMuse(
       input: prompt,
       max_output_tokens: useWebSearch ? 4000 : 2000,
       reasoning: { effort: 'low' },
+      prompt_cache_key: PROMPT_CACHE_KEY,
+      prompt_cache_retention: PROMPT_CACHE_RETENTION,
       ...(useWebSearch
         ? { tools: [webSearchTool], include: ['web_search_call.results'] }
         : {}),
