@@ -116,6 +116,10 @@ export interface ActivateHighlight {
   label: string;
   citations: number | null;
   rank: number;
+  /** Only for this kind of recipient; null = either. */
+  audience?: 'employee' | 'candidate' | null;
+  /** Only for these of the client's job functions; null = any. */
+  job_functions?: string[] | null;
 }
 
 export interface ActivateTheme {
@@ -141,12 +145,32 @@ export interface ActivateConfig {
 }
 
 /** Most-cited page for a platform in this market, if we have one. */
+/**
+ * The most specific page that fits this recipient: a highlight for their role
+ * beats one for their job function, which beats a general one. Highlights
+ * scoped to another role or function are never shown.
+ */
 export function highlightFor(
   highlights: ActivateHighlight[],
   marketCode: string,
   platform: string,
+  role?: 'employee' | 'candidate' | null,
+  jobFunction?: string | null,
 ): ActivateHighlight | undefined {
-  return highlights.find((h) => h.platform === platform && h.market_code === marketCode);
+  const score = (h: ActivateHighlight) =>
+    (h.audience ? 2 : 0) + (h.job_functions?.length ? 1 : 0);
+  return highlights
+    .filter(
+      (h) =>
+        h.platform === platform &&
+        h.market_code === marketCode &&
+        (!h.audience || h.audience === role) &&
+        (!h.job_functions?.length || (!!jobFunction && h.job_functions.includes(jobFunction))),
+    )
+    .sort(
+      (a, b) =>
+        score(b) - score(a) || a.rank - b.rank || (b.citations ?? 0) - (a.citations ?? 0),
+    )[0];
 }
 
 export type ActivateTokenError = 'not_found' | 'expired' | 'revoked' | string;

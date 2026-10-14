@@ -662,6 +662,7 @@ export default function Activate() {
                 null,
               )}
               highlights={config.highlights}
+              jobFunction={functionId}
               coverage={config.coverage ?? {}}
               channels={channels}
               headingRef={headingRef}
@@ -1450,6 +1451,7 @@ function RoutesStep({
   forum,
   social,
   highlights,
+  jobFunction,
   coverage,
   channels,
   headingRef,
@@ -1465,6 +1467,8 @@ function RoutesStep({
   forum: ReturnType<typeof rankSocialRoutes>;
   social: ReturnType<typeof rankSocialRoutes>;
   highlights: ActivateConfig['highlights'];
+  /** The recipient's declared kind of work; narrows which page is highlighted. */
+  jobFunction: string | null;
   coverage: ActivateConfig['coverage'];
   channels: ActivateChannel[];
   headingRef: React.RefObject<HTMLHeadingElement>;
@@ -1474,6 +1478,7 @@ function RoutesStep({
     market,
     highlights,
     role,
+    jobFunction,
     onOpen: (route: ActivateRoute) =>
       logActivateEvent(token, sessionId, 'platform_click', {
         marketCode: market,
@@ -1544,6 +1549,7 @@ function ChannelSection({
   market,
   highlights,
   role,
+  jobFunction,
   onOpen,
 }: {
   eyebrow: string;
@@ -1553,6 +1559,7 @@ function ChannelSection({
   market: string;
   highlights: ActivateConfig['highlights'];
   role: Role;
+  jobFunction: string | null;
   onOpen: (route: ActivateRoute) => void;
 }) {
   if (routes.length === 0) return null;
@@ -1573,7 +1580,7 @@ function ChannelSection({
             // The stat block already told the top platform's story — repeating
             // the same sentence on its card reads as a glitch.
             hideRationale={i === 0 && hideFirstRationale}
-            highlight={highlightFor(highlights, market, route.platform)}
+            highlight={highlightFor(highlights, market, route.platform, role, jobFunction)}
             localLabel={`${countryName(market)}'s own`}
             onOpen={() => onOpen(route)}
           />
