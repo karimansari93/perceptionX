@@ -17,6 +17,7 @@ import {
 import {
   getAttributeThemes, getCompetitorLandscape, getSources, getTrends, getVisibility,
 } from './executors-insights.ts';
+import { getReportActions } from './executors-report.ts';
 
 export { PX_TOOLS, anthropicTools, mcpTools, toolLabels } from './tools.ts';
 export { coverageFound, coverageNoData, coveragePartial, genRequestId } from './helpers.ts';
@@ -81,6 +82,18 @@ export async function executeTool(
       case 'list_companies':
         result = await listCompanies(ctx);
         break;
+      case 'get_report_actions': {
+        // Organization-scoped (ctx.organizationId), so no company_id check.
+        const include = ['all', 'report', 'actions', 'watch'].includes(toolInput?.include) ? toolInput.include : 'all';
+        const n = Number(toolInput?.action_number);
+        result = await getReportActions(
+          ctx,
+          typeof toolInput?.market === 'string' ? toolInput.market.slice(0, 120) : undefined,
+          Number.isInteger(n) && n > 0 ? n : undefined,
+          include,
+        );
+        break;
+      }
       case 'get_company_overview':
         result = await getCompanyOverview(ctx, toolInput.company_id, includeSiblings);
         break;

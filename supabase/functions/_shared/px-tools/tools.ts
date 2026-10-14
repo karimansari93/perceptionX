@@ -57,6 +57,19 @@ const PERIOD_SHARE_NOTE = 'Results carry _meta.periods (every measured quarter i
 
 export const PX_TOOLS: PxToolDef[] = [
   {
+    name: 'get_report_actions',
+    progressLabel: 'Reading your report and actions',
+    description: "What PerceptionX reported and recommended to this organization: the latest published report snapshot (period, as-of date, scope, headline figures, market / attribute / source breakdowns, and which metrics are final or provisional), the numbered actions with problem, what AI says, where AI reads it (source and coverage), exact URLs, what to do, lane, timing, what it lifts, verified facts with check dates, owner and status, plus watch items. Use for 'what should we fix first', 'what did you recommend', 'why is X low', 'what is the status of action 2', 'is our score final'. Cite the action number, the report period and the as-of date (cite_as). Say 'provisional' when quoting a metric whose metric_status is provisional. Pair with the live tools when the user wants current data, and give both figures with their dates if they differ. Read-only: status and owner are set by PerceptionX. No company_id needed.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        market: { type: 'string', description: "Optional market filter, e.g. 'Germany'. Keeps actions for that market plus organization-wide items." },
+        action_number: { type: 'number', description: 'Optional action number from the report (1, 2, 3 ...).' },
+        include: { type: 'string', description: "'all' (default) | 'report' | 'actions' | 'watch'" },
+      },
+    },
+  },
+  {
     name: 'list_companies',
     progressLabel: 'Looking up companies',
     description: "List all companies/market profiles in the user's organization. Always call this first if you don't already know the company IDs. Returns id, name, country, industries, latest_period (the profile's most recent measured quarter), measured_periods (how many quarters have data) and total_responses (a size cue for choosing a profile). Same-name profiles are one brand measured per market; the other tools aggregate them like the dashboard.",

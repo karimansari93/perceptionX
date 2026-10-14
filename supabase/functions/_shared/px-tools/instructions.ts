@@ -1,5 +1,5 @@
 // ─── px-tools: the rulebook ─────────────────────────────────────────────────
-// The eleven rules every consumer of this tool layer follows, verbatim. One
+// The twelve rules every consumer of this tool layer follows, verbatim. One
 // source of truth, three transports:
 //   * mcp-server sends PX_INSTRUCTIONS as `initialize.instructions` — the
 //     only prompt-level surface ChatGPT/Claude get over MCP;
@@ -24,6 +24,7 @@ export const PX_RULES: readonly string[] = [
   'Competitor "share of voice on an attribute" means who gets NAMED when the topic comes up — it is not a claim that the competitor is rated better.',
   'Start with list_companies if you don\'t know company IDs. "How are we doing?" → get_company_overview. Market questions ("culture in India") → get_attribute_themes / get_visibility / get_sources / get_competitor_landscape / get_trends. "Why did X change?" → get_attribute_themes with attribute_id: it returns the example themes and the sources cited in those answers.',
   'Link sources. Source and citation rows carry top_pages (url + title) — the only URLs you may show. When you name a source, link its top page as a markdown link using the returned title and the exact url. Never construct, shorten or guess a URL, never link a bare domain, and never link anything a tool did not return. If the user wants links and the rows in hand carry none, call get_sources or get_citations (with domain_filter) rather than saying links are unavailable.',
+  "Recommendations. For 'what should we fix', 'what did you recommend', 'why is X low' or 'is this score final', call get_report_actions alongside the live tools. Name the action number and cite the report period and as-of date (cite_as). Say 'provisional' for any metric its metric_status marks provisional. Its urls and where_ai_reads urls may be linked exactly as returned. Never work out a figure the records or live tools did not return: say it is not measured yet. Action status and owners are set by PerceptionX; you cannot change them.",
   'Scope. Figures are brand-wide across every market and job function unless the user asks for one. The market-aware tools (get_attribute_themes, get_visibility, get_sources, get_competitor_landscape, get_trends) take location and job_function filters, matched against what the organization tracks; _meta.locations_matched and _meta.job_functions_matched show what applied. Never present unfiltered figures as specific to a role, function or market — filter, or say the figure is brand-wide. For "which functions differ" use by_job_function.',
 ];
 
