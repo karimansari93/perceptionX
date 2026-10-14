@@ -14,6 +14,9 @@
 -- in the one-off edge function zz-netflix-stray-purge (the Supabase MCP holds
 -- DELETE statements for a confirmation that never reaches cloud sessions). It
 -- removes only the ids copied here; ai_themes and competitor_themes cascade.
+-- Ran 2026-10-14: deleted 161 responses, 161 theme_batch_items, 91 failures;
+-- 796 ai_themes and 185 competitor_themes cascaded. The function source is
+-- in this branch's history and was removed after use.
 
 create table if not exists public.backup_20261014_netflix_stray_prompts as
 select cp.id
