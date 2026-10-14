@@ -2,11 +2,11 @@ import { useState, useEffect, useMemo, useRef, memo } from "react";
 import type { DomainStats, CompetitorStats, ScopeStatsRow, ScopeDailyStatsRow, ScopePromptTypeStatsRow } from '@/hooks/dashboard/dashboardQueries';
 import { poolCompetitorRows } from '@/hooks/dashboard/scopeStatsSelect';
 import { quarterKeyOfMonthStr } from '@/utils/quarterKey';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardTitle, CardDescription } from "@/components/ui/card";
 import { MetricCard } from "./MetricCard";
 import { DashboardMetrics, DashboardFamilyStatus, CitationCount, LLMMentionRanking } from "@/types/dashboard";
 import { DataUnavailable } from "./DataUnavailable";
-import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown, Sparkles, Loader2, CheckCircle2, Minus } from 'lucide-react';
+import { TrendingUp, FileText, MessageSquare, BarChart3, Target, HelpCircle, X, TrendingDown, Minus } from 'lucide-react';
 import { usePersistedState } from "@/hooks/usePersistedState";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -23,11 +23,9 @@ import { SourcesSummaryCard } from "./SourcesSummaryCard";
 import { CompetitorsSummaryCard } from "./CompetitorsSummaryCard";
 import { AttributesSummaryCard } from "./AttributesSummaryCard";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
 import { Favicon } from "@/components/ui/favicon";
 import { AskAiHero } from "@/components/chat/AskAiHero";
-import { extractSourceUrl, getFavicon } from "@/utils/citationUtils";
+import { extractSourceUrl } from "@/utils/citationUtils";
 import {
   ChartContainer,
   ChartTooltip,
@@ -207,13 +205,6 @@ export const OverviewTab = memo(({
   const [isCompetitorModalOpen, setIsCompetitorModalOpen] = usePersistedState<boolean>('overviewTab.isCompetitorModalOpen', false);
   const [competitorSnippets, setCompetitorSnippets] = useState<{ snippet: string; full: string }[]>([]);
   const [expandedSnippetIdx, setExpandedSnippetIdx] = useState<number | null>(null);
-  const [competitorSummary, setCompetitorSummary] = useState<string>("");
-  const [loadingCompetitorSummary, setLoadingCompetitorSummary] = useState(false);
-  const [competitorSummaryError, setCompetitorSummaryError] = useState<string | null>(null);
-  const [competitorThinkingStep, setCompetitorThinkingStep] = useState<number>(-1);
-  const [competitorThinkingSteps, setCompetitorThinkingSteps] = useState<string[]>([]);
-  const [competitorSummarySources, setCompetitorSummarySources] = useState<{ domain: string; url: string | null; displayName: string }[]>([]);
-  const [hoveredCompetitorCitation, setHoveredCompetitorCitation] = useState<number | null>(null);
   const [isMentionsDrawerOpen, setIsMentionsDrawerOpen] = usePersistedState<boolean>('overviewTab.isMentionsDrawerOpen', false);
   const [expandedMentionIdx, setExpandedMentionIdx] = useState<number | null>(null);
 
@@ -649,12 +640,6 @@ export const OverviewTab = memo(({
     setIsCompetitorModalOpen(false);
     setSelectedCompetitor(null);
     setCompetitorSnippets([]);
-    setCompetitorSummary("");
-    setCompetitorSummaryError(null);
-    setCompetitorThinkingStep(-1);
-    setCompetitorThinkingSteps([]);
-    setCompetitorSummarySources([]);
-    setHoveredCompetitorCitation(null);
   };
 
   const handleLLMClick = (llm: LLMMentionRanking) => {
@@ -686,128 +671,6 @@ export const OverviewTab = memo(({
     });
     return Array.from(normalizedCompetitorsMap.values()).sort((a, b) => b.count - a.count);
   }, [topCompetitors]);
-
-  // Helper to get all full responses mentioning a competitor
-  const getFullResponsesForCompetitor = (competitor: string) => {
-    const competitorPattern = `(?:\\*\\*|__)?${competitor.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(?:\\*\\*|__)?[\\s]*[:*\-]*`;
-    const regex = new RegExp(competitorPattern, 'i');
-    return responses.filter(r => r.response_text && regex.test(r.response_text));
-  };
-
-  const fetchCompetitorSummary = async () => {
-    if (!selectedCompetitor) return;
-    setCompetitorSummary("");
-    setCompetitorSummaryError(null);
-    setLoadingCompetitorSummary(true);
-    setCompetitorThinkingStep(0);
-    setCompetitorThinkingSteps([]);
-
-    const relevantResponses = getFullResponsesForCompetitor(selectedCompetitor);
-    if (relevantResponses.length === 0) {
-      setCompetitorSummaryError("No responses found for this competitor.");
-      setLoadingCompetitorSummary(false);
-      setCompetitorThinkingStep(-1);
-      return;
-    }
-
-    let texts = responseTexts;
-    const missingTextIds = relevantResponses.filter(r => !r.response_text && !texts[r.id]).map(r => r.id);
-    if (missingTextIds.length > 0 && fetchResponseTexts) {
-      texts = await fetchResponseTexts(missingTextIds) || texts;
-    }
-
-    // Build numbered source list
-    const sourceMap: { domain: string; url: string | null; displayName: string }[] = [];
-    const seenDomains = new Set<string>();
-    relevantResponses.forEach(r => {
-      try {
-        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
-        if (Array.isArray(citations)) {
-          citations.forEach((c: any) => {
-            if (c.domain && !seenDomains.has(c.domain)) {
-              seenDomains.add(c.domain);
-              sourceMap.push({
-                domain: c.domain,
-                url: c.url ? extractSourceUrl(c.url) : null,
-                displayName: getSourceDisplayName(c.domain),
-              });
-            }
-          });
-        }
-      } catch { /* skip */ }
-    });
-    setCompetitorSummarySources(sourceMap);
-
-    const steps = [
-      `Reading ${relevantResponses.length} responses mentioning ${selectedCompetitor}...`,
-      `Identifying key themes and comparisons...`,
-      `Evaluating sentiment across mentions...`,
-      `Writing competitive analysis...`,
-    ];
-    setCompetitorThinkingSteps(steps);
-
-    const stepTimers: ReturnType<typeof setTimeout>[] = [];
-    for (let i = 1; i < steps.length; i++) {
-      stepTimers.push(setTimeout(() => setCompetitorThinkingStep(i), i * 1800));
-    }
-
-    const sourcesList = sourceMap.map((s, i) => `[${i + 1}] ${s.displayName} (${s.domain})`).join('\n');
-
-    const prompt = `You are an employer brand analyst. Write a concise, insightful summary comparing how ${selectedCompetitor} is positioned relative to ${companyName} in the talent market.
-
-Available sources:
-${sourcesList || 'No sources available'}
-
-Source responses:
-${relevantResponses.map((r, i) => {
-      let responseSources = '';
-      try {
-        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
-        if (Array.isArray(citations)) {
-          const domains = [...new Set(citations.map((c: any) => c.domain).filter(Boolean))];
-          const indices = domains.map((d: string) => sourceMap.findIndex(s => s.domain === d) + 1).filter((n: number) => n > 0);
-          if (indices.length > 0) responseSources = ` [Sources: ${indices.join(', ')}]`;
-        }
-      } catch { /* skip */ }
-      return `${(texts[r.id] || r.response_text || '').slice(0, 800)}${responseSources}`;
-    }).join('\n---\n')}
-
-Write 2-3 short paragraphs (no bullet points, no headings). Cover: (1) what stands out about ${selectedCompetitor} and how they differ from ${companyName}, (2) areas where ${selectedCompetitor} is stronger or weaker, (3) what this means for ${companyName}'s talent strategy. Be direct and specific. Do not start with "${selectedCompetitor} is..."
-
-CRITICAL: When you reference information from a source, add an inline citation like [1], [2], etc. matching the source numbers above. Place citations naturally at the end of the relevant sentence or claim. Use citations frequently — every key claim should have one. Only cite sources from the numbered list above.`;
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setCompetitorSummaryError("Authentication required");
-        setLoadingCompetitorSummary(false);
-        setCompetitorThinkingStep(-1);
-        stepTimers.forEach(clearTimeout);
-        return;
-      }
-      const res = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-claude", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({ prompt, enableWebSearch: false })
-      });
-      const data = await res.json();
-      stepTimers.forEach(clearTimeout);
-      if (data.response) {
-        setCompetitorSummary(data.response.trim());
-      } else {
-        setCompetitorSummaryError(data.error || "No summary generated.");
-      }
-    } catch (err) {
-      stepTimers.forEach(clearTimeout);
-      setCompetitorSummaryError("Failed to generate summary.");
-    } finally {
-      setLoadingCompetitorSummary(false);
-      setCompetitorThinkingStep(-1);
-    }
-  };
 
   // Filtered mentions for drawer
   const filteredMentions = competitorSnippets;
@@ -1441,126 +1304,6 @@ CRITICAL: When you reference information from a source, add an inline citation l
             </SheetTitle>
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-4">
-          {/* AI Summary — on demand */}
-          <div className="mb-4">
-            {competitorSummary ? (
-              <Card className="border-[#0DBCBA]/30 bg-[#0DBCBA]/5">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base font-semibold flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
-                      AI Summary
-                    </CardTitle>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={fetchCompetitorSummary}
-                      disabled={loadingCompetitorSummary}
-                      className="text-xs text-gray-400 hover:text-gray-600 h-auto py-1"
-                    >
-                      {loadingCompetitorSummary ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-                      Regenerate
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-gray-800 text-sm leading-relaxed">
-                    {competitorSummary.split('\n\n').filter(Boolean).map((paragraph, pIdx) => {
-                      const parts = paragraph.split(/(\[\d+\])/g);
-                      return (
-                        <p key={pIdx} className="mb-3 last:mb-0">
-                          {parts.map((part, partIdx) => {
-                            const citationMatch = part.match(/^\[(\d+)\]$/);
-                            if (citationMatch) {
-                              const num = parseInt(citationMatch[1], 10);
-                              const source = competitorSummarySources[num - 1];
-                              if (!source) return <span key={partIdx}>{part}</span>;
-                              return (
-                                <span key={partIdx} className="relative inline-block">
-                                  <button
-                                    className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-blue-600 bg-blue-100 hover:bg-blue-200 rounded-full cursor-pointer align-super transition-colors ml-0.5"
-                                    onMouseEnter={() => setHoveredCompetitorCitation(num)}
-                                    onMouseLeave={() => setHoveredCompetitorCitation(null)}
-                                    onClick={() => { if (source.url) window.open(source.url, '_blank', 'noopener,noreferrer'); }}
-                                  >
-                                    {num}
-                                  </button>
-                                  {hoveredCompetitorCitation === num && (
-                                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 whitespace-nowrap bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg flex items-center gap-2 pointer-events-none">
-                                      <img src={getFavicon(source.domain)} alt="" className="w-4 h-4 rounded" style={{ background: '#fff' }} />
-                                      <span>{source.displayName}</span>
-                                      <span className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900" />
-                                    </span>
-                                  )}
-                                </span>
-                              );
-                            }
-                            return <span key={partIdx}>{part}</span>;
-                          })}
-                        </p>
-                      );
-                    })}
-                  </div>
-                  {competitorSummarySources.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-[#0DBCBA]/30">
-                      {competitorSummarySources.map((source, index) => (
-                        <button
-                          key={index}
-                          onClick={() => { if (source.url) window.open(source.url, '_blank', 'noopener,noreferrer'); }}
-                          className={`inline-flex items-center gap-1.5 bg-white hover:bg-gray-50 pl-1 pr-2 py-1 rounded-full text-xs text-gray-600 transition-colors border border-gray-200 ${source.url ? 'cursor-pointer' : 'cursor-default'}`}
-                        >
-                          <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-blue-600 bg-blue-100 rounded-full flex-shrink-0">{index + 1}</span>
-                          <img src={getFavicon(source.domain)} alt="" className="w-3.5 h-3.5 rounded" style={{ background: '#fff', display: 'block' }} onError={e => { e.currentTarget.style.display = 'none'; }} />
-                          <span>{source.displayName}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ) : loadingCompetitorSummary ? (
-              <Card className="border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/5 to-[#0DBCBA]/10 overflow-hidden">
-                <CardContent className="py-5 px-5">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="relative">
-                      <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
-                      <div className="absolute inset-0 animate-ping"><Sparkles className="w-4 h-4 text-[#0DBCBA] opacity-30" /></div>
-                    </div>
-                    <span className="text-sm font-medium text-[#0A8B89]">Analyzing...</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    {competitorThinkingSteps.map((step, i) => {
-                      const isActive = i === competitorThinkingStep;
-                      const isComplete = i < competitorThinkingStep;
-                      const isPending = i > competitorThinkingStep;
-                      return (
-                        <div key={i} className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${isActive ? 'bg-[#0DBCBA]/15' : ''}`}
-                          style={{ opacity: isPending ? 0.3 : 1, transform: isPending ? 'translateX(4px)' : 'translateX(0)', transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }}>
-                          <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
-                            {isComplete ? <CheckCircle2 className="w-3.5 h-3.5 text-[#0DBCBA]" /> : isActive ? <Loader2 className="w-3.5 h-3.5 text-[#0DBCBA] animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
-                          </div>
-                          <span className={`text-xs transition-colors duration-300 ${isActive ? 'text-[#0A8B89] font-medium' : isComplete ? 'text-[#0DBCBA]' : 'text-gray-400'}`}>{step}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-4 h-1 bg-[#0DBCBA]/20 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-[#0DBCBA] to-[#0A8B89] rounded-full transition-all duration-700 ease-out"
-                      style={{ width: `${competitorThinkingSteps.length > 0 ? ((competitorThinkingStep + 1) / competitorThinkingSteps.length) * 100 : 0}%` }} />
-                  </div>
-                </CardContent>
-              </Card>
-            ) : competitorSummaryError ? (
-              <Card className="border-red-100 bg-red-50/30">
-                <CardContent className="py-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-red-600 text-sm">{competitorSummaryError}</span>
-                    <Button variant="ghost" size="sm" onClick={fetchCompetitorSummary} className="text-xs">Retry</Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : null}
-          </div>
           {/* View All Mentions Button */}
           <button
             className="w-full mt-2 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold"
@@ -1571,20 +1314,6 @@ CRITICAL: When you reference information from a source, add an inline citation l
           </button>
 
           </div>
-
-          {/* Floating Ask AI button — bottom right of panel */}
-          {!competitorSummary && !loadingCompetitorSummary && !competitorSummaryError && (
-            <div className="absolute bottom-6 right-6 z-10 animate-slideUpGlow rounded-full">
-              <button
-                onClick={fetchCompetitorSummary}
-                className="h-12 rounded-full bg-[#13274F] text-white shadow-lg hover:bg-[#1a3468] transition-all hover:scale-105 flex items-center justify-center gap-2 px-5"
-              >
-                <img alt="PerceptionX" className="h-5 w-5 object-contain shrink-0 brightness-0 invert" src="/logos/perceptionx-small.png" />
-                <span className="text-sm font-medium whitespace-nowrap">Ask AI</span>
-                <span className="text-[10px] font-semibold bg-[#DB5E89] text-white px-1.5 py-0.5 rounded-full leading-none">BETA</span>
-              </button>
-            </div>
-          )}
         </SheetContent>
       </Sheet>
 

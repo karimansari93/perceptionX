@@ -1,7 +1,7 @@
 // The floating Ask PerceptionX bubble: it picks up what the user clicks on
 // the dashboard and hands questions to the chat page like the overview box.
 import { describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { nudgeFor } from '@/lib/askAiNudges';
 
 describe('bubble nudges', () => {
@@ -39,7 +39,9 @@ describe('AskAiBubble', () => {
       </>,
     );
 
-    expect(screen.getByText('Got a question about your competitors?')).toBeInTheDocument();
+    // Icon only at first; the question appears after a couple of seconds.
+    expect(screen.queryByText('Got a question about your competitors?')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Got a question about your competitors?')).toBeInTheDocument(), { timeout: 3000 });
     act(() => { fireEvent.click(screen.getByText('Globex')); });
     fireEvent.click(screen.getByText('Got a question about Globex?'));
 

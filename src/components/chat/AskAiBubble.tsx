@@ -24,6 +24,8 @@ interface Focus {
 
 // How long the pill glows after the user clicks something new.
 const PULSE_MS = 4000;
+// The question slides out beside the icon once the user has settled on a tab.
+const TEXT_DELAY_MS = 2000;
 
 // The floating Ask PerceptionX bubble (bottom right of the dashboard). It
 // is a pill with the icon and a question that follows what the user is
@@ -41,6 +43,7 @@ export function AskAiBubble({ section, companyName, market, jobFunction }: AskAi
 
   const [open, setOpen] = useState(false);
   const [nudging, setNudging] = useState(false);
+  const [showText, setShowText] = useState(false);
   const [focus, setFocus] = useState<Focus>({ area: null, subject: null });
   const [value, setValue] = useState('');
 
@@ -50,10 +53,14 @@ export function AskAiBubble({ section, companyName, market, jobFunction }: AskAi
     [section, focus, brand]
   );
 
-  // A new tab resets the focus to the tab-level question.
+  // A new tab resets the focus to the tab-level question, shown beside the
+  // icon after a couple of seconds on the tab.
   useEffect(() => {
     setFocus({ area: null, subject: null });
     setNudging(false);
+    setShowText(false);
+    const t = window.setTimeout(() => setShowText(true), TEXT_DELAY_MS);
+    return () => window.clearTimeout(t);
   }, [section]);
 
   // Watch clicks on the dashboard for things the user is digging into.
@@ -67,6 +74,7 @@ export function AskAiBubble({ section, companyName, market, jobFunction }: AskAi
       if (!subject) return;
       const area = subjectEl?.closest('[data-tour]')?.getAttribute('data-tour') ?? null;
       setFocus({ area, subject });
+      setShowText(true);
       if (!open) setNudging(true);
     };
     document.addEventListener('click', onClick, true);
@@ -191,13 +199,17 @@ export function AskAiBubble({ section, companyName, market, jobFunction }: AskAi
           type="button"
           onClick={openPanel}
           aria-expanded={false}
+          aria-label={showText ? undefined : 'Open Ask PerceptionX'}
           className={cn(
-            'flex h-14 max-w-[min(360px,calc(100vw-2.5rem))] items-center gap-2.5 rounded-full bg-[#13274F] pl-4 pr-5 text-left text-white shadow-[0_8px_24px_rgba(19,39,79,.28)] transition-all hover:-translate-y-0.5 hover:bg-[#183056]',
+            'flex h-14 max-w-[min(360px,calc(100vw-2.5rem))] items-center gap-2.5 rounded-full bg-[#13274F] text-left text-white shadow-[0_8px_24px_rgba(19,39,79,.28)] transition-all hover:-translate-y-0.5 hover:bg-[#183056]',
+            showText ? 'pl-4 pr-5' : 'w-14 justify-center',
             nudging && 'ring-4 ring-[#0DBCBA]/40'
           )}
         >
           <MessageCircle className="h-6 w-6 flex-shrink-0" />
-          <span key={nudge.prompt} className="truncate text-[14px] font-medium animate-in fade-in duration-300">{nudge.prompt}</span>
+          {showText && (
+            <span key={nudge.prompt} className="truncate text-[14px] font-medium animate-in fade-in slide-in-from-right-2 duration-300">{nudge.prompt}</span>
+          )}
         </button>
       )}
     </div>

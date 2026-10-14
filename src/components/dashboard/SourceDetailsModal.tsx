@@ -1,11 +1,9 @@
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 import { CitationCount } from "@/types/dashboard";
-import { ExternalLink, X, Download, Sparkles, Loader2, CheckCircle2, ChevronRight, TrendingUp, TrendingDown, Flame } from "lucide-react";
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { ExternalLink, X, Download, CheckCircle2, ChevronRight, TrendingUp, TrendingDown, Flame } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
 import { categorizeSourceByMediaType, getMediaTypeInfo, MEDIA_TYPE_DESCRIPTIONS } from "@/utils/sourceConfig";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -401,11 +399,6 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, previou
 
   const [editingMediaType, setEditingMediaType] = useState(false);
   const [customMediaType, setCustomMediaType] = useState<string | null>(null);
-  const [sourceSummary, setSourceSummary] = useState<string>("");
-  const [loadingSourceSummary, setLoadingSourceSummary] = useState(false);
-  const [sourceSummaryError, setSourceSummaryError] = useState<string | null>(null);
-  const [sourceThinkingStep, setSourceThinkingStep] = useState<number>(-1);
-  const [sourceThinkingSteps, setSourceThinkingSteps] = useState<string[]>([]);
   const [hoveredSourceCitation, setHoveredSourceCitation] = useState<number | null>(null);
 
 
@@ -459,118 +452,9 @@ export const SourceDetailsModal = ({ isOpen, onClose, source, responses, previou
     return name.charAt(0).toUpperCase() + name.slice(1);
   };
 
-  const fetchSourceSummary = useCallback(async () => {
-    if (!source?.domain) return;
-    setSourceSummary("");
-    setSourceSummaryError(null);
-    setLoadingSourceSummary(true);
-    setSourceThinkingStep(0);
-    setSourceThinkingSteps([]);
-
-    const relevantResponses = responses.filter(r => {
-      if (!r.citations) return false;
-      try {
-        const citations = typeof r.citations === 'string' ? JSON.parse(r.citations) : r.citations;
-        if (!Array.isArray(citations)) return false;
-        const targetDomain = source.domain.replace(/^www\./, '').toLowerCase();
-        return citations.some((c: any) => {
-          const domainField = (c.domain || '').replace(/^www\./, '').toLowerCase();
-          const sourceField = (c.source || '').replace(/^www\./, '').toLowerCase();
-          const urlField = (c.url || '').toLowerCase();
-          return (
-            domainField === targetDomain ||
-            sourceField === targetDomain ||
-            sourceField.includes(targetDomain) ||
-            urlField.includes(targetDomain)
-          );
-        });
-      } catch { return false; }
-    });
-
-    if (relevantResponses.length === 0) {
-      setSourceSummaryError("No responses found citing this source.");
-      setLoadingSourceSummary(false);
-      setSourceThinkingStep(-1);
-      return;
-    }
-
-    let texts = responseTexts;
-    const missingTextIds = relevantResponses.filter(r => !r.response_text && !texts[r.id]).map(r => r.id);
-    if (missingTextIds.length > 0 && fetchResponseTexts) {
-      texts = await fetchResponseTexts(missingTextIds) || texts;
-    }
-
-    const displayName = getSourceDisplayName(source.domain);
-
-    const steps = [
-      `Reading ${relevantResponses.length} responses citing ${displayName}...`,
-      `Analyzing how ${displayName} is referenced...`,
-      `Identifying key topics and sentiment...`,
-      `Writing source analysis...`,
-    ];
-    setSourceThinkingSteps(steps);
-
-    const stepTimers: ReturnType<typeof setTimeout>[] = [];
-    for (let i = 1; i < steps.length; i++) {
-      stepTimers.push(setTimeout(() => setSourceThinkingStep(i), i * 1800));
-    }
-
-    const prompt = `You are an employer brand analyst. Analyze how "${displayName}" (${source.domain}) is cited in AI responses about ${companyName || 'this company'}.
-
-This source was cited ${source.count} times. Here are ${relevantResponses.length} responses that reference it:
-
-${relevantResponses.slice(0, 6).map((r, i) => {
-  const text = (texts[r.id] || r.response_text || '').slice(0, 600);
-  return `Response ${i + 1}:\n${text}`;
-}).join('\n\n---\n\n')}
-
-Write 2-3 paragraphs covering: (1) what specific information from ${displayName} appears in AI responses about ${companyName || 'the company'}, (2) the sentiment and framing around this source, (3) how reliable/relevant this source is for employer brand intelligence. Be specific about actual content mentioned.`;
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setSourceSummaryError("Authentication required");
-        setLoadingSourceSummary(false);
-        setSourceThinkingStep(-1);
-        stepTimers.forEach(clearTimeout);
-        return;
-      }
-      const res = await fetch("https://ofyjvfmcgtntwamkubui.supabase.co/functions/v1/test-prompt-claude", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({
-          prompt,
-          enableWebSearch: false,
-          model: "claude-haiku-4-5",
-          maxTokens: 900,
-        })
-      });
-      const data = await res.json();
-      stepTimers.forEach(clearTimeout);
-      if (data.response) {
-        setSourceSummary(data.response.trim());
-      } else {
-        setSourceSummaryError(data.error || "No summary generated.");
-      }
-    } catch (err) {
-      stepTimers.forEach(clearTimeout);
-      setSourceSummaryError("Failed to generate summary.");
-    } finally {
-      setLoadingSourceSummary(false);
-      setSourceThinkingStep(-1);
-    }
-  }, [source?.domain, source?.count, responses, companyName]);
-
-  // Reset summary when modal closes or source changes
+  // Reset hover state when modal closes or source changes
   useEffect(() => {
     if (!isOpen) {
-      setSourceSummary("");
-      setSourceSummaryError(null);
-      setSourceThinkingStep(-1);
-      setSourceThinkingSteps([]);
       setHoveredSourceCitation(null);
     }
   }, [isOpen, source?.domain]);
@@ -1036,82 +920,6 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
           </TabsList>
 
           <div className="flex-1 overflow-y-auto">
-            <div className="px-6 pt-4 empty:hidden">
-
-
-            {/* AI Summary — on demand */}
-            {sourceSummary ? (
-              <Card className="border-[#0DBCBA]/30 bg-[#0DBCBA]/5">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base font-semibold flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
-                      AI Summary
-                    </CardTitle>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={fetchSourceSummary}
-                      disabled={loadingSourceSummary}
-                      className="text-xs text-gray-400 hover:text-gray-600 h-auto py-1"
-                    >
-                      {loadingSourceSummary ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-                      Regenerate
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-gray-800 text-sm leading-relaxed">
-                    {sourceSummary.split('\n\n').filter(Boolean).map((paragraph, pIdx) => (
-                      <p key={pIdx} className="mb-3 last:mb-0">{paragraph}</p>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            ) : loadingSourceSummary ? (
-              <Card className="border-[#0DBCBA]/30 bg-gradient-to-br from-[#0DBCBA]/5 to-[#0DBCBA]/10 overflow-hidden">
-                <CardContent className="py-5 px-5">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="relative">
-                      <Sparkles className="w-4 h-4 text-[#0DBCBA]" />
-                      <div className="absolute inset-0 animate-ping"><Sparkles className="w-4 h-4 text-[#0DBCBA] opacity-30" /></div>
-                    </div>
-                    <span className="text-sm font-medium text-[#0A8B89]">Analyzing...</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    {sourceThinkingSteps.map((step, i) => {
-                      const isActive = i === sourceThinkingStep;
-                      const isComplete = i < sourceThinkingStep;
-                      const isPending = i > sourceThinkingStep;
-                      return (
-                        <div key={i} className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all duration-500 ${isActive ? 'bg-[#0DBCBA]/15' : ''}`}
-                          style={{ opacity: isPending ? 0.3 : 1, transform: isPending ? 'translateX(4px)' : 'translateX(0)', transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }}>
-                          <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
-                            {isComplete ? <CheckCircle2 className="w-3.5 h-3.5 text-[#0DBCBA]" /> : isActive ? <Loader2 className="w-3.5 h-3.5 text-[#0DBCBA] animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
-                          </div>
-                          <span className={`text-xs transition-colors duration-300 ${isActive ? 'text-[#0A8B89] font-medium' : isComplete ? 'text-[#0DBCBA]' : 'text-gray-400'}`}>{step}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-4 h-1 bg-[#0DBCBA]/20 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-[#0DBCBA] to-[#0A8B89] rounded-full transition-all duration-700 ease-out"
-                      style={{ width: `${sourceThinkingSteps.length > 0 ? ((sourceThinkingStep + 1) / sourceThinkingSteps.length) * 100 : 0}%` }} />
-                  </div>
-                </CardContent>
-              </Card>
-            ) : sourceSummaryError ? (
-              <Card className="border-red-100 bg-red-50/30">
-                <CardContent className="py-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-red-600 text-sm">{sourceSummaryError}</span>
-                    <Button variant="ghost" size="sm" onClick={fetchSourceSummary} className="text-xs">Retry</Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : null}
-            </div>
-
             {/* Trending — which specific pages drove this source up or down,
                 period-over-period. Directly answers "why did this source rise?" */}
             <TabsContent value="trending" className="px-6 py-4 mt-0 focus-visible:outline-none">
@@ -1562,20 +1370,6 @@ Write 2-3 paragraphs covering: (1) what specific information from ${displayName}
             </TabsContent>
           </div>
         </Tabs>
-
-        {/* Floating Ask AI button — bottom right of panel */}
-        {!sourceSummary && !loadingSourceSummary && !sourceSummaryError && (
-          <div className="absolute bottom-6 right-6 z-10 animate-slideUpGlow rounded-full">
-            <button
-              onClick={fetchSourceSummary}
-              className="h-12 rounded-full bg-[#13274F] text-white shadow-lg hover:bg-[#1a3468] transition-all hover:scale-105 flex items-center justify-center gap-2 px-5"
-            >
-              <img alt="PerceptionX" className="h-5 w-5 object-contain shrink-0 brightness-0 invert" src="/logos/perceptionx-small.png" />
-              <span className="text-sm font-medium whitespace-nowrap">Ask AI</span>
-              <span className="text-[10px] font-semibold bg-[#DB5E89] text-white px-1.5 py-0.5 rounded-full leading-none">BETA</span>
-            </button>
-          </div>
-        )}
       </SheetContent>
     </Sheet>
   );
