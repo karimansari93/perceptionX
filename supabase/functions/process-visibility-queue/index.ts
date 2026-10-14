@@ -130,173 +130,95 @@ serve(async (req) => {
       }
     }
 
-    // 2. PROCESSOR: Pick up pending jobs
-    // We process a small amount to avoid timeouts.
-    // This function should be called frequently (e.g. every minute).
+    // 2. PROCESSOR: work through the queue for up to PROCESS_BUDGET_MS.
+    // A pg_cron job (visibility-queue-processor) calls this every minute while
+    // collection is active, so there is no self-chaining: a run that dies is
+    // simply replaced by the next minute's run. The budget stays well under a
+    // minute so consecutive runs don't overlap and collect the same prompt.
+    const PROCESS_BUDGET_MS = 45_000;
+    const BATCH_SIZE = 1; // prompts per collector call (3 models in parallel)
+    const startedAt = Date.now();
+    let processed = 0;
+    let lastMessage = "Idle";
 
-    // Fetch one pending/processing job
-    // Prioritize 'processing' to finish what started, then 'pending'
-    const { data: jobs, error: jobError } = await supabase
-      .from("visibility_queue")
-      .select(
-        `
-        *,
-        visibility_configurations!inner (
-          user_id
-        )
-      `,
-      )
-      .in("status", ["pending", "processing"])
-      .or("is_cancelled.is.null,is_cancelled.eq.false")
-      .order("updated_at", { ascending: true }) // Oldest first
-      .limit(1);
+    while (Date.now() - startedAt < PROCESS_BUDGET_MS) {
+      // Oldest-touched live job first, so jobs advance round-robin.
+      const { data: jobs, error: jobError } = await supabase
+        .from("visibility_queue")
+        .select("*")
+        .in("status", ["pending", "processing"])
+        .or("is_cancelled.is.null,is_cancelled.eq.false")
+        .order("updated_at", { ascending: true })
+        .limit(1);
 
-    if (jobError) throw jobError;
+      if (jobError) throw jobError;
+      if (!jobs || jobs.length === 0) break;
 
-    let result = { processed: 0, message: "Idle" };
-
-    if (jobs && jobs.length > 0) {
       const job = jobs[0];
+      const nowIso = new Date().toISOString();
+
+      if (job.batch_index >= job.total_prompts) {
+        await supabase
+          .from("visibility_queue")
+          .update({ status: "completed", updated_at: nowIso })
+          .eq("id", job.id);
+        continue;
+      }
+
       console.log(
-        `[Processor] Processing Job ${job.id}: ${job.industry}/${job.country}${job.job_function ? `/${job.job_function}` : ""} (Batch ${job.batch_index})`,
+        `[Processor] Job ${job.id}: ${job.industry}/${job.country}${job.job_function ? `/${job.job_function}` : ""} (batch ${job.batch_index})`,
       );
 
-      // Check if job has been cancelled before processing
-      if (job.is_cancelled) {
-        console.log(`[Processor] Job ${job.id} was cancelled, skipping.`);
+      try {
+        const { data: invokeData, error: invokeError } =
+          await supabase.functions.invoke("collect-industry-visibility", {
+            body: {
+              industry: job.industry,
+              country: job.country,
+              batchOffset: job.batch_index,
+              batchSize: BATCH_SIZE,
+              skipResponses: false,
+              jobFunction: job.job_function ?? null,
+              // null = the collector's default model set
+              models: job.models ?? null,
+            },
+          });
+
+        if (invokeError) throw new Error(invokeError.message);
+        if (!invokeData?.success)
+          throw new Error(invokeData?.error || "Unknown error");
+
+        const nextOffset = job.batch_index + BATCH_SIZE;
         await supabase
           .from("visibility_queue")
-          .update({ status: "failed", error_log: "Cancelled by admin", updated_at: now.toISOString() })
+          .update({
+            batch_index: nextOffset,
+            status: nextOffset >= job.total_prompts ? "completed" : "processing",
+            updated_at: new Date().toISOString(),
+            error_log: null,
+          })
           .eq("id", job.id);
-        result = { processed: 0, message: "Job cancelled" };
-      } else
-      // Mark as processing if pending
-      if (job.status === "pending") {
+
+        processed++;
+        lastMessage = `Processed batch ${job.batch_index} for job ${job.id}`;
+      } catch (err: any) {
+        console.error(`[Processor] Error processing job ${job.id}:`, err);
+        const retryCount = (job.retry_count || 0) + 1;
         await supabase
           .from("visibility_queue")
-          .update({ status: "processing", updated_at: now.toISOString() })
+          .update({
+            // Back to pending (end of the line) until retries run out.
+            status: retryCount > 3 ? "failed" : "pending",
+            retry_count: retryCount,
+            error_log: err.message,
+            updated_at: new Date().toISOString(),
+          })
           .eq("id", job.id);
-      }
-
-      // Determine batch parameters
-      // We process 1 prompt per execution to stay very safe within limits
-      const BATCH_SIZE = 1;
-      const currentOffset = job.batch_index;
-
-      if (currentOffset >= job.total_prompts) {
-        // Already done? Mark completed
-        await supabase
-          .from("visibility_queue")
-          .update({ status: "completed", updated_at: now.toISOString() })
-          .eq("id", job.id);
-        result = {
-          processed: 0,
-          message: "Marked completed (was already done)",
-        };
-      } else {
-        // Call the collection function
-        try {
-          // We invoke the other function directly via fetch
-          // Note: In production, might be better to import logic, but fetch is easier for isolation
-          console.log(`[Processor] Invoking collect-industry-visibility...`);
-
-          const { data: invokeData, error: invokeError } =
-            await supabase.functions.invoke("collect-industry-visibility", {
-              body: {
-                industry: job.industry,
-                country: job.country,
-                batchOffset: currentOffset,
-                batchSize: BATCH_SIZE,
-                skipResponses: false,
-                jobFunction: job.job_function ?? null,
-                // null = the collector's default model set
-                models: job.models ?? null,
-              },
-            });
-
-          if (invokeError) throw new Error(invokeError.message);
-          if (!invokeData?.success)
-            throw new Error(invokeData?.error || "Unknown error");
-
-          // Success - update progress
-          const nextOffset = currentOffset + BATCH_SIZE;
-          const newStatus =
-            nextOffset >= job.total_prompts ? "completed" : "processing";
-
-          await supabase
-            .from("visibility_queue")
-            .update({
-              batch_index: nextOffset,
-              status: newStatus,
-              updated_at: now.toISOString(),
-              error_log: null, // Clear errors on success
-            })
-            .eq("id", job.id);
-
-          result = {
-            processed: 1,
-            message: `Processed batch ${currentOffset} for Job ${job.id}`,
-          };
-          console.log(
-            `[Processor] Success. New status: ${newStatus}, Next Offset: ${nextOffset}`,
-          );
-
-          // RECURSIVE CHAINING:
-          // If we successfully processed a batch, and there's likely more work (either this job isn't done,
-          // or other jobs exist), we trigger ourselves again immediately.
-          // This allows the entire queue to drain with a single external Cron trigger (Hourly).
-
-          if (newStatus === "processing") {
-            console.log(`[Processor] Job not finished, chaining next batch...`);
-            // Fire and forget - don't await to avoid holding this connection open
-            fetch(`${supabaseUrl}/functions/v1/process-visibility-queue`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${supabaseKey}`,
-                "Content-Type": "application/json",
-              },
-            }).catch((e) => console.error("Failed to chain execution:", e));
-          } else {
-            // Job completed - check if there are MORE jobs pending
-            const { count } = await supabase
-              .from("visibility_queue")
-              .select("*", { count: "exact", head: true })
-              .eq("status", "pending");
-
-            if (count && count > 0) {
-              console.log(
-                `[Processor] Job finished, but ${count} pending jobs remain. Chaining...`,
-              );
-              fetch(`${supabaseUrl}/functions/v1/process-visibility-queue`, {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${supabaseKey}`,
-                  "Content-Type": "application/json",
-                },
-              }).catch((e) => console.error("Failed to chain execution:", e));
-            }
-          }
-        } catch (err: any) {
-          console.error(`[Processor] Error processing job ${job.id}:`, err);
-
-          // Increment retry or fail
-          const retryCount = (job.retry_count || 0) + 1;
-          const status = retryCount > 3 ? "failed" : "pending"; // Go back to pending to retry later
-
-          await supabase
-            .from("visibility_queue")
-            .update({
-              status: status,
-              retry_count: retryCount,
-              error_log: err.message,
-              updated_at: now.toISOString(),
-            })
-            .eq("id", job.id);
-
-          result = { processed: 0, message: `Error: ${err.message}` };
-        }
+        lastMessage = `Error: ${err.message}`;
       }
     }
+
+    const result = { processed, message: lastMessage };
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
