@@ -22,26 +22,14 @@ interface Focus {
   subject: string | null;
 }
 
-// Tabs that greet the user with a nudge on their first visit each session.
-// The overview already has the full chat box, so it stays quiet.
-const GREET_SECTIONS = new Set(['competitors', 'sources', 'thematic', 'prompts']);
-const NUDGE_MS = 9000;
-const seenKey = (k: string) => `px.askAi.bubble.seen.${k}`;
-
-function seenThisSession(key: string): boolean {
-  try {
-    if (sessionStorage.getItem(seenKey(key))) return true;
-    sessionStorage.setItem(seenKey(key), '1');
-  } catch {
-    // Storage blocked: nudge anyway, it is only a hint.
-  }
-  return false;
-}
+// How long the pill glows after the user clicks something new.
+const PULSE_MS = 4000;
 
 // The floating Ask PerceptionX bubble (bottom right of the dashboard). It
-// follows what the user is looking at: clicking a competitor, source or
-// theme (any element carrying data-ask-subject) makes it ask "Got a question
-// about …?", and the first visit to a tab gets a tab-level nudge. Opening it
+// is a pill with the icon and a question that follows what the user is
+// looking at: "Got a question about your competitors?" on the Competitors
+// tab, and "Got a question about Globex?" once they click Globex (any
+// element carrying data-ask-subject: a competitor, source or theme). Opening it
 // shows tailored starter questions and a composer; asking hands over to the
 // Answer page exactly like the overview's chat box, under the dashboard's
 // current company, market and job function.
@@ -62,15 +50,10 @@ export function AskAiBubble({ section, companyName, market, jobFunction }: AskAi
     [section, focus, brand]
   );
 
-  // A new tab resets the focus; first visits get a gentle nudge.
+  // A new tab resets the focus to the tab-level question.
   useEffect(() => {
     setFocus({ area: null, subject: null });
     setNudging(false);
-    if (!GREET_SECTIONS.has(section)) return;
-    const t = window.setTimeout(() => {
-      if (!seenThisSession(`tab.${section}`)) setNudging(true);
-    }, 1500);
-    return () => window.clearTimeout(t);
   }, [section]);
 
   // Watch clicks on the dashboard for things the user is digging into.
@@ -90,10 +73,10 @@ export function AskAiBubble({ section, companyName, market, jobFunction }: AskAi
     return () => document.removeEventListener('click', onClick, true);
   }, [open]);
 
-  // Nudges fade on their own so the bubble never nags.
+  // The glow fades on its own so the bubble never nags.
   useEffect(() => {
     if (!nudging) return;
-    const t = window.setTimeout(() => setNudging(false), NUDGE_MS);
+    const t = window.setTimeout(() => setNudging(false), PULSE_MS);
     return () => window.clearTimeout(t);
   }, [nudging, focus]);
 
@@ -193,35 +176,30 @@ export function AskAiBubble({ section, companyName, market, jobFunction }: AskAi
         </section>
       )}
 
-      {!open && nudging && (
-        <div className="relative max-w-[min(300px,calc(100vw-2.5rem))] rounded-2xl rounded-br-sm border border-[#0DBCBA]/30 bg-white py-2.5 pl-3.5 pr-8 shadow-[0_8px_28px_rgba(19,39,79,.16)] animate-in fade-in slide-in-from-bottom-1 duration-200">
-          <button type="button" onClick={openPanel} className="text-left text-[13.5px] font-medium leading-snug text-[#13274F]">
-            {nudge.prompt}
-            <span className="mt-0.5 block text-xs font-normal text-[#DB5E89]">Ask me</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setNudging(false)}
-            aria-label="Dismiss"
-            className="absolute right-2 top-2 rounded p-0.5 text-gray-400 hover:text-gray-600"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
+      {open ? (
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          aria-label="Close Ask PerceptionX"
+          aria-expanded
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-[#13274F] text-white shadow-[0_8px_24px_rgba(19,39,79,.28)] transition-colors hover:bg-[#183056]"
+        >
+          <X className="h-6 w-6" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={openPanel}
+          aria-expanded={false}
+          className={cn(
+            'flex h-14 max-w-[min(360px,calc(100vw-2.5rem))] items-center gap-2.5 rounded-full bg-[#13274F] pl-4 pr-5 text-left text-white shadow-[0_8px_24px_rgba(19,39,79,.28)] transition-all hover:-translate-y-0.5 hover:bg-[#183056]',
+            nudging && 'ring-4 ring-[#0DBCBA]/40'
+          )}
+        >
+          <MessageCircle className="h-6 w-6 flex-shrink-0" />
+          <span key={nudge.prompt} className="truncate text-[14px] font-medium animate-in fade-in duration-300">{nudge.prompt}</span>
+        </button>
       )}
-
-      <button
-        type="button"
-        onClick={() => (open ? setOpen(false) : openPanel())}
-        aria-label={open ? 'Close Ask PerceptionX' : 'Open Ask PerceptionX'}
-        aria-expanded={open}
-        className={cn(
-          'flex h-14 w-14 items-center justify-center rounded-full bg-[#13274F] text-white shadow-[0_8px_24px_rgba(19,39,79,.28)] transition-transform hover:scale-105 hover:bg-[#183056]',
-          nudging && !open && 'ring-4 ring-[#0DBCBA]/30'
-        )}
-      >
-        {open ? <X className="h-6 w-6" /> : <MessageCircle className="h-6 w-6" />}
-      </button>
     </div>
   );
 }

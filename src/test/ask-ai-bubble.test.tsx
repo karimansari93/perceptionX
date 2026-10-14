@@ -35,10 +35,11 @@ describe('AskAiBubble', () => {
         <div data-tour="competitors-eoc">
           <button data-ask-subject="Globex">Globex</button>
         </div>
-        <AskAiBubble section="overview" market="United States" jobFunction="all" />
+        <AskAiBubble section="competitors" market="United States" jobFunction="all" />
       </>,
     );
 
+    expect(screen.getByText('Got a question about your competitors?')).toBeInTheDocument();
     act(() => { fireEvent.click(screen.getByText('Globex')); });
     fireEvent.click(screen.getByText('Got a question about Globex?'));
 
