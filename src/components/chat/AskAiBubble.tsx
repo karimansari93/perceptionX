@@ -22,13 +22,14 @@ interface Focus {
   subject: string | null;
 }
 
-// How long the pill glows after the user clicks something new.
+// How long the icon glows after the user clicks something new.
 const PULSE_MS = 4000;
-// The question slides out beside the icon once the user has settled on a tab.
+// The question appears above the icon once the user has settled on a tab.
 const TEXT_DELAY_MS = 2000;
 
-// The floating Ask PerceptionX bubble (bottom right of the dashboard). It
-// is a pill with the icon and a question that follows what the user is
+// The floating Ask PerceptionX bubble (bottom right of the dashboard): a
+// round chat icon with a small speech bubble above it, shown after a couple
+// of seconds on a tab, asking a question that follows what the user is
 // looking at: "Got a question about your competitors?" on the Competitors
 // tab, and "Got a question about Globex?" once they click Globex (any
 // element carrying data-ask-subject: a competitor, source or theme). Opening it
@@ -184,34 +185,37 @@ export function AskAiBubble({ section, companyName, market, jobFunction }: AskAi
         </section>
       )}
 
-      {open ? (
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          aria-label="Close Ask PerceptionX"
-          aria-expanded
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-[#13274F] text-white shadow-[0_8px_24px_rgba(19,39,79,.28)] transition-colors hover:bg-[#183056]"
+      {!open && showText && (
+        <div
+          key={nudge.prompt}
+          className="relative mr-1 max-w-[min(260px,calc(100vw-2.5rem))] rounded-xl rounded-br-sm border border-gray-200 bg-white/95 py-2 pl-3 pr-7 shadow-sm backdrop-blur-sm animate-in fade-in slide-in-from-bottom-1 duration-300"
         >
-          <X className="h-6 w-6" />
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={openPanel}
-          aria-expanded={false}
-          aria-label={showText ? undefined : 'Open Ask PerceptionX'}
-          className={cn(
-            'flex h-14 max-w-[min(360px,calc(100vw-2.5rem))] items-center gap-2.5 rounded-full bg-[#13274F] text-left text-white shadow-[0_8px_24px_rgba(19,39,79,.28)] transition-all hover:-translate-y-0.5 hover:bg-[#183056]',
-            showText ? 'pl-4 pr-5' : 'w-14 justify-center',
-            nudging && 'ring-4 ring-[#0DBCBA]/40'
-          )}
-        >
-          <MessageCircle className="h-6 w-6 flex-shrink-0" />
-          {showText && (
-            <span key={nudge.prompt} className="truncate text-[14px] font-medium animate-in fade-in slide-in-from-right-2 duration-300">{nudge.prompt}</span>
-          )}
-        </button>
+          <button type="button" onClick={openPanel} className="text-left text-[13px] leading-snug text-gray-700 hover:text-[#13274F]">
+            {nudge.prompt}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowText(false)}
+            aria-label="Dismiss"
+            className="absolute right-1.5 top-1.5 rounded p-0.5 text-gray-300 hover:text-gray-500"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
       )}
+
+      <button
+        type="button"
+        onClick={() => (open ? setOpen(false) : openPanel())}
+        aria-label={open ? 'Close Ask PerceptionX' : 'Open Ask PerceptionX'}
+        aria-expanded={open}
+        className={cn(
+          'flex h-12 w-12 items-center justify-center rounded-full bg-[#13274F] text-white shadow-[0_6px_18px_rgba(19,39,79,.22)] transition-transform hover:scale-105 hover:bg-[#183056]',
+          nudging && !open && 'ring-2 ring-[#0DBCBA]/40 ring-offset-2'
+        )}
+      >
+        {open ? <X className="h-5 w-5" /> : <MessageCircle className="h-5 w-5" />}
+      </button>
     </div>
   );
 }
