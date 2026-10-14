@@ -6,6 +6,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Suspense } from "react";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import { CustomReports } from "@/components/dashboard/CustomReports";
+import { AskAiBubble } from "@/components/chat/AskAiBubble";
 import { AppSidebar } from "@/components/AppSidebar";
 import { CommandPalette } from "@/components/dashboard/CommandPalette";
 import { TabSearchSeedProvider } from "@/contexts/TabSearchSeedContext";
@@ -881,6 +882,12 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           )}
         </div>
       </SidebarInset>
+      <AskAiBubble
+        section={activeSection}
+        companyName={companyName}
+        market={selectedMarketName}
+        jobFunction={selectedJobFunction}
+      />
     </div>
   );
 };

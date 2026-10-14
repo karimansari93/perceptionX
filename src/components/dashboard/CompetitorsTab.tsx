@@ -1312,6 +1312,7 @@ export const CompetitorsTab = memo(({
                         <button
                           key={name}
                           onClick={() => handleChartRowClick(name)}
+                          data-ask-subject={name}
                           className="flex items-center gap-1.5 min-w-0 group cursor-pointer"
                         >
                           <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: CHART_COLORS[i] }} />
@@ -1342,6 +1343,7 @@ export const CompetitorsTab = memo(({
                             <button
                               key={row.name}
                               onClick={() => { if (!row.isCompany) handleChartRowClick(row.name); }}
+                              data-ask-subject={row.isCompany ? undefined : row.name}
                               className={`w-full text-left px-2 sm:px-3 py-1.5 rounded-lg transition-colors ${
                                 row.isCompany
                                   ? "bg-[#0DBCBA]/5 border border-[#0DBCBA]/30 cursor-default"
@@ -1436,6 +1438,7 @@ export const CompetitorsTab = memo(({
                         <button
                           key={row.name}
                           onClick={() => { if (!row.isCompany) handleChartRowClick(row.name); }}
+                          data-ask-subject={row.isCompany ? undefined : row.name}
                           className={`w-full text-left px-2 py-1.5 rounded-lg transition-colors ${
                             row.isCompany
                               ? "bg-[#0DBCBA]/5 border border-[#0DBCBA]/30 cursor-default"
@@ -1562,6 +1565,7 @@ export const CompetitorsTab = memo(({
                           <TableRow
                             key={row.name}
                             onClick={() => openModal(row.name)}
+                            data-ask-subject={row.name}
                             className={`cursor-pointer transition-colors ${
                               selectedCompetitor === row.name ? "bg-[#0DBCBA]/5" : ""
                             }`}

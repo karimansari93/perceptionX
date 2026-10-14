@@ -956,6 +956,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
       <button
         key={row.domain}
         onClick={() => handleSourceClick({ domain: row.domain, count: row.count })}
+        data-ask-subject={row.domain}
         className="w-full text-left px-2 sm:px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors"
         title={`Cited by ${row.share.toFixed(1)}% of responses, ${before} (${row.count.toLocaleString()} vs ${row.prevCount.toLocaleString()} responses)`}
       >
@@ -994,6 +995,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
       <button
         key={row.domain}
         onClick={() => handleSourceClick({ domain: row.domain, count: row.count })}
+        data-ask-subject={row.domain}
         className="w-full text-left px-2 sm:px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors"
         title={`${row.count.toLocaleString()} citations — ${companyName || 'company'} mentioned in ${row.mentionedCount.toLocaleString()} (${Math.round(mentionRate)}%)`}
       >
@@ -1049,6 +1051,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
       <button
         key={row.key}
         onClick={() => handleSourceClick({ domain: row.domain, count: analyzed.domainCounts.get(row.domain) || row.count })}
+        data-ask-subject={row.domain}
         className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
         title={row.tooltip}
       >
@@ -1402,6 +1405,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                           <TableRow
                             key={page.key}
                             onClick={() => handleSourceClick({ domain: page.domain, count: analyzed.domainCounts.get(page.domain) || page.count })}
+                            data-ask-subject={page.domain}
                             className="cursor-pointer"
                           >
                             <TableCell className="py-3">
