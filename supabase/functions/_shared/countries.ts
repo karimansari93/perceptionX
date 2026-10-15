@@ -40,6 +40,7 @@ export const COUNTRY_CODE_TO_NAME: Record<string, string> = {
   BR: "Brazil",
   MX: "Mexico",
   AR: "Argentina",
+  VE: "Venezuela",
   ZA: "South Africa",
   AE: "United Arab Emirates",
   SA: "Saudi Arabia",
