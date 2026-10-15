@@ -41,16 +41,14 @@ serve(async (req) => {
     const body = await req.json();
     const { response, companyName, promptType, perplexityCitations, confirmed_prompt_id, ai_model, company_id, for_index } = body;
     
-    // Handle citations from different LLMs. These models return their own
-    // native citations (via `body.citations`), so we use those directly rather
-    // than scraping URLs from the response text. Claude in particular emits
-    // STRUCTURED citations (web_search_result_location) that never appear as
-    // inline URLs in the text, so omitting it here silently dropped every
-    // Claude citation and fell back to text extraction, which found nothing.
-    let llmCitations = perplexityCitations || [];
-    if ((ai_model === 'google-ai-overviews' || ai_model === 'google-ai-mode' || ai_model === 'bing-copilot' || ai_model === 'openai' || ai_model === 'claude' || ai_model === 'deepseek') && body.citations) {
-      llmCitations = body.citations;
-    }
+    // Use whatever native citations the caller sends, for ANY model. There used
+    // to be a per-model allow list here; every model added without updating it
+    // (Claude once, Muse nearly) silently lost all its structured citations and
+    // fell back to scraping URLs from the text, which usually finds nothing.
+    // Text extraction below remains the fallback when none are sent.
+    let llmCitations = Array.isArray(body.citations) && body.citations.length > 0
+      ? body.citations
+      : (perplexityCitations || []);
 
 
 

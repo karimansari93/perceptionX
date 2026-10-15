@@ -48,6 +48,7 @@ const MODEL_OPTIONS = [
   { value: "claude", label: "Claude", default: true },
   { value: "gemini", label: "Gemini", default: false },
   { value: "deepseek", label: "DeepSeek", default: false },
+  { value: "muse", label: "Meta AI (Muse)", default: false },
 ];
 const DEFAULT_MODEL_IDS = MODEL_OPTIONS.filter((m) => m.default).map((m) => m.value);
 

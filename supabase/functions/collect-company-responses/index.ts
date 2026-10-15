@@ -448,15 +448,8 @@ serve(async (req) => {
                     promptType: prompt.prompt_type,
                     perplexityCitations:
                       modelName === "perplexity" ? citations : null,
-                    citations:
-                      modelName === "openai" ||
-                      modelName === "google-ai-overviews" ||
-                      modelName === "google-ai-mode" ||
-                      modelName === "bing-copilot" ||
-                      modelName === "claude" ||
-                      modelName === "deepseek"
-                        ? citations
-                        : null,
+                    // Forward native citations for every model (no allow list).
+                    citations,
                     confirmed_prompt_id: prompt.id,
                     ai_model: modelName,
                     company_id: companyId,
