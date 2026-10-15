@@ -6,6 +6,7 @@ import {
   isProtected,
   normalize,
   rollUpToParent,
+  ruleRollUp,
 } from "./rules.ts";
 
 const canon = (name: string, type = "other"): CanonicalRef => ({
@@ -90,4 +91,25 @@ Deno.test("competitor names are not protected", () => {
 Deno.test("hasParentCanonical flags likely roll-ups", () => {
   assertEquals(hasParentCanonical("Toyota Financial Services", index), true);
   assertEquals(hasParentCanonical("Grifols", index), false);
+});
+
+Deno.test("ruleRollUp rolls country arms of tracked companies, never a tracked name itself", () => {
+  const idx = new Map(index);
+  for (const c of ["Netflix", "CSL Behring", "Ford", "Ford Credit", "Thermo Fisher Scientific"]) {
+    idx.set(normalize(c), canon(c));
+  }
+  const trackedExact = new Set(
+    ["Netflix", "CSL Behring", "CSL Limited", "Ford", "Ford Credit", "Thermo Fisher Scientific"]
+      .map((n) => normalize(n)),
+  );
+  const roll = (raw: string) => ruleRollUp(raw, idx, trackedExact)?.canonical_name ?? null;
+  assertEquals(roll("Netflix Korea"), "Netflix");
+  assertEquals(roll("CSL Behring Australia"), "CSL Behring");
+  assertEquals(roll("Thermo Fisher Scientific France"), "Thermo Fisher Scientific");
+  assertEquals(roll("Thermo Fisher Scientific UK"), "Thermo Fisher Scientific");
+  assertEquals(roll("Ford Credit UK"), "Ford Credit");
+  assertEquals(roll("CSL Limited"), null); // a tracked name is never rolled up
+  assertEquals(roll("Ford Credit"), null);
+  assertEquals(roll("Netflix Animation Studios"), null); // division: tail is not noise
+  assertEquals(roll("Thermo Fisher Clinical"), null); // left to the review model
 });

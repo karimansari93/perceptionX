@@ -10,9 +10,10 @@
 //      generic corporate word. This is the edit admins made by hand on almost
 //      every suggestion they changed.
 //   2. isProtected(): names that belong to our tracked companies (clients,
-//      their divisions, and every company we measure) are NEVER auto-grouped.
-//      "CSL Behring", "Ford Credit", "Netflix Animation Studios" must stay
-//      separate entities; those stay in the manual queue.
+//      their divisions, and every company we measure) are never grouped on
+//      the cheap LLM's say-so alone. "CSL Behring", "Ford Credit", "Netflix
+//      Animation Studios" must stay separate entities; such names go to the
+//      stronger review model (index.ts), not to a person.
 // =============================================================================
 import { COUNTRY_CODE_TO_NAME } from "../_shared/countries.ts";
 
@@ -209,6 +210,23 @@ export function hasParentCanonical(name: string, index: Map<string, CanonicalRef
     if (prefix.length >= 3 && index.has(prefix)) return true;
   }
   return false;
+}
+
+/**
+ * Rule roll-up gate. Geography / legal / plant variants roll up even for
+ * tracked companies ("Netflix Korea" -> "Netflix", "CSL Behring Australia" ->
+ * "CSL Behring"): a country arm is the same employer, and nothing is left for
+ * a person to review (Karim, 2026-10-15). A name that IS a tracked company
+ * ("CSL Limited", "Ford Credit") is never rolled up. Divisions with their own
+ * name never match the rule anyway: their tail is not noise.
+ */
+export function ruleRollUp(
+  raw: string,
+  index: Map<string, CanonicalRef>,
+  trackedExact: Set<string>,
+): CanonicalRef | null {
+  if (trackedExact.has(cleanForMatch(raw))) return null;
+  return rollUpToParent(raw, index);
 }
 
 // Historical agreement between the LLM and admin decisions (2026-09-25 audit)
