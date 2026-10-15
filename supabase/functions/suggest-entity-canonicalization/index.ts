@@ -291,8 +291,9 @@ function toRow(
   let auto = false;
   if (ctx.autoQueue && !c.protected && confidence !== null && confidence >= AUTO_CONFIDENCE) {
     if (isNonEntity) {
-      // Never hide something that is already a real, active canonical.
-      auto = !ctx.index.has(c.normalized_alias);
+      // Dropping a name hides a real company if it's wrong ("Vipps MobilePay"
+      // was called two companies joined), so the review model always decides.
+      auto = false;
     } else if (
       s.canonical_name &&
       !isProtected(s.canonical_name, ctx.stems) &&
