@@ -30,8 +30,8 @@ const SYSTEM = `You check company names that AI assistants named as employers in
 
 Answer every name with [n, size, employer, same, spelling]:
 - size: global headcount of the whole company. A = under 50, B = 50-499, C = 500-4,999, D = 5,000-49,999, E = 50,000+, U = you do not know the company.
-- employer: 1 if it is a real organisation that employs people (company, bank, hospital, university, government body), 0 if it is a category ("veterinary clinics"), a place, a product, app or game, a technology, a person or another term.
-- same: the letter of the candidate that is the same employer under another name, spelling, abbreviation or country unit, otherwise "-". A parent group and a separately run company are not the same (TCS is not Tata, JLR is not Tata Motors, Merck KGaA is not Merck & Co.).
+- employer: 1 for any real organisation that employs people, including companies with short or ambiguous names (DR, SBB, KIWI), government bodies, universities and hospitals. 0 only for a generic category ("veterinary clinics"), a place, a product, app or game, a technology, a person, an award or ranking ("Great Place to Work"), or a news publication.
+- same: the letter of the candidate only when you are sure both are the same organisation, or one is its country unit ("Santander México" and "Santander"); otherwise "-". Different companies that share a word are not the same (Scalapay is not Scala, Klar is not Klarna, PostNord is not PostNL, Bankinter is not Banco Inter). A group's separately run companies are not the group (Samsung SDS is not Samsung, LG Uplus is not LG, TCS is not Tata). When unsure, "-".
 - spelling: the company's own spelling of its name when ours differs (capitals, accents, punctuation, e.g. "Samsung Sds" -> "Samsung SDS"), otherwise "". Never a different name.
 
 Reply with one JSON array of arrays and nothing else, for example [[1,"D",1,"a",""],[2,"E",1,"-","LG CNS"],[3,"U",0,"-",""]].`;
