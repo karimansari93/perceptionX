@@ -225,3 +225,6 @@ REVOKE EXECUTE ON FUNCTION public.index_name_review_store(text, jsonb, jsonb, js
 REVOKE EXECUTE ON FUNCTION public.index_name_review_tick(integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.index_name_review_mark_submitted(text, text, integer, jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.index_name_review_store(text, jsonb, jsonb, jsonb) TO service_role;
+
+-- Every 5 minutes while names are queued or a batch is open (no-op otherwise).
+SELECT cron.schedule('index-name-review-tick', '*/5 * * * *', $$SELECT public.index_name_review_tick();$$);
