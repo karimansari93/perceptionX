@@ -28,12 +28,13 @@ const TIERS: Record<string, string> = {
 
 const SYSTEM = `You check company names that AI assistants named as employers in employer-reputation answers. For each numbered name you get the countries and industries where it was named, and up to five candidate entries already on our list.
 
-Answer every name with [n, size, employer, same]:
+Answer every name with [n, size, employer, same, spelling]:
 - size: global headcount of the whole company. A = under 50, B = 50-499, C = 500-4,999, D = 5,000-49,999, E = 50,000+, U = you do not know the company.
 - employer: 1 if it is a real organisation that employs people (company, bank, hospital, university, government body), 0 if it is a category ("veterinary clinics"), a place, a product, app or game, a technology, a person or another term.
 - same: the letter of the candidate that is the same employer under another name, spelling, abbreviation or country unit, otherwise "-". A parent group and a separately run company are not the same (TCS is not Tata, JLR is not Tata Motors, Merck KGaA is not Merck & Co.).
+- spelling: the company's own spelling of its name when ours differs (capitals, accents, punctuation, e.g. "Samsung Sds" -> "Samsung SDS"), otherwise "". Never a different name.
 
-Reply with one JSON array of arrays and nothing else, for example [[1,"D",1,"a"],[2,"U",0,"-"]].`;
+Reply with one JSON array of arrays and nothing else, for example [[1,"D",1,"a",""],[2,"E",1,"-","LG CNS"],[3,"U",0,"-",""]].`;
 
 const supabase = createClient(
   // @ts-ignore Deno.env is available in edge runtime
@@ -172,9 +173,9 @@ async function submit(maxRequests: number) {
   return assigned.length;
 }
 
-type Answer = { tier: string; employer: boolean; same: string | null };
+type Answer = { tier: string; employer: boolean; same: string | null; display: string | null };
 
-/** [[n, size, employer, same], ...] -> answers by position; candidates resolved later in SQL. */
+/** [[n, size, employer, same, spelling], ...] -> answers by position; candidates resolved later in SQL. */
 function parseAnswers(message: any): Map<number, Answer> {
   const text = (message.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
   const start = text.indexOf("[");
@@ -189,14 +190,16 @@ function parseAnswers(message: any): Map<number, Answer> {
   }
   for (const row of Array.isArray(arr) ? arr : []) {
     if (!Array.isArray(row) || row.length < 4) continue;
-    const [n, size, employer, same] = row;
+    const [n, size, employer, same, spelling] = row;
     const tier = TIERS[String(size).toUpperCase()];
     if (!Number.isInteger(n) || !tier) continue;
     const letter = String(same).toLowerCase();
+    const display = typeof spelling === "string" ? spelling.trim() : "";
     out.set(n as number, {
       tier,
       employer: Number(employer) === 1,
       same: /^[a-e]$/.test(letter) ? letter : null,
+      display: display || null,
     });
   }
   return out;

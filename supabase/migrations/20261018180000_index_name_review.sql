@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS public.index_name_review (
   tier text,
   is_employer boolean,
   same_as text,                   -- candidate letter a-e
+  display_name text,              -- the company's own spelling, when ours differs
   error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -169,8 +170,8 @@ DECLARE
 BEGIN
   UPDATE index_name_review r
   SET status = 'stored', tier = a.tier, is_employer = a.employer, same_as = a.same,
-      error = NULL, updated_at = now()
-  FROM jsonb_to_recordset(p_answers) AS a(custom_id text, request_pos integer, tier text, employer boolean, same text)
+      display_name = a.display, error = NULL, updated_at = now()
+  FROM jsonb_to_recordset(p_answers) AS a(custom_id text, request_pos integer, tier text, employer boolean, same text, display text)
   WHERE r.batch_id = p_batch_id AND r.custom_id = a.custom_id AND r.request_pos = a.request_pos;
   GET DIAGNOSTICS v_n = ROW_COUNT;
 
@@ -214,7 +215,7 @@ $function$;
 CREATE OR REPLACE VIEW public.index_name_review_results AS
 SELECT name, mentions, countries, industries, status, tier, is_employer,
        CASE WHEN same_as ~ '^[a-e]$' THEN candidates[ascii(same_as) - 96] END AS same_as_entry,
-       candidates, error
+       display_name, candidates, error
 FROM public.index_name_review;
 REVOKE ALL ON public.index_name_review_results FROM anon, authenticated;
 
