@@ -13,13 +13,14 @@
 // every result gets auto_method set and entity_canonicalization_tick()
 // applies it. Nothing waits for a person (Karim, 2026-10-15):
 //   - rule roll-ups, including country arms of tracked companies;
-//   - cheap-LLM decisions at confidence >= 0.95 (historical admin agreement
-//     ~95%+), minus new canonicals that look like an unproven roll-up and
-//     names of tracked companies;
-//   - everything else goes to a stronger review model (REVIEW_MODEL), which
-//     merges only when certain and otherwise keeps the name as its own
-//     company. A wrong merge is worse than a split, so "keep separate" is the
-//     default when unsure.
+//   - first-pass LLM decisions at confidence >= 0.95, minus non-entities, new
+//     canonicals that look like an unproven roll-up and names of tracked
+//     companies;
+//   - everything else goes to a stricter review pass, which merges only when
+//     certain and otherwise keeps the name as its own company. A wrong merge
+//     is worse than a split, so "keep separate" is the default when unsure.
+// Each LLM call carries a per-batch shortlist of canonicals (rules.ts
+// buildShortlister), never the whole table.
 // Each run also reviews up to MAX_PENDING_REVIEW older suggestions that were
 // left for manual review before this change.
 //
@@ -45,15 +46,17 @@ import {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
-// Cheapest models we have (Karim, 2026-10-18): gpt-5-nano for the first pass
-// ($0.05 / $0.40 per M tokens), Claude Haiku 5.5 for review ($0.10 / $0.50),
-// replacing gpt-4.1-mini and gpt-4.1.
-const MODEL = "gpt-5-nano";
-// Final decision-maker for everything the cheap pass can't settle.
+// No OpenAI (Karim, 2026-10-18): both passes run on Claude Haiku 5.5, the
+// cheapest model we have that knows companies well ($0.10 / $0.50 per M
+// tokens, thinking off), replacing gpt-4.1-mini and gpt-4.1. The review pass
+// uses the same model with stricter instructions.
+const MODEL = "claude-haiku-5-5";
 const REVIEW_MODEL = "claude-haiku-5-5";
-// Review models whose decisions are final (gpt-4.1 reviewed until 2026-10-18).
-const REVIEW_MODELS = ["gpt-4.1", REVIEW_MODEL];
+// llm_model label on review decisions, distinct from first-pass rows so a
+// first-pass row whose review failed is still picked up again.
+const REVIEW_LABEL = `${REVIEW_MODEL}/review`;
+// Labels whose decisions are final (gpt-4.1 reviewed until 2026-10-18).
+const REVIEW_MODELS = ["gpt-4.1", REVIEW_LABEL];
 const MAX_PENDING_REVIEW = 200;
 const LLM_CHUNK = 50;
 const LLM_CONCURRENCY = 6; // ~300 variants = one round, well inside the edge wall-clock limit
@@ -434,7 +437,7 @@ async function reviewAll(
 function reviewToPatch(item: ReviewItem, d: ReviewDecision, ctx: ReviewCtx): ReviewPatch {
   const base = {
     status: "pending" as const,
-    llm_model: REVIEW_MODEL,
+    llm_model: REVIEW_LABEL,
     auto_method: "auto_llm" as const,
     confidence: typeof d.confidence === "number" ? d.confidence : null,
     llm_rationale: `[Reviewed by ${REVIEW_MODEL}] ${d.rationale ?? ""}`.trim(),
@@ -533,6 +536,12 @@ ${
     }).join("\n")
   }`;
 
+  const parsed = await askClaude(REVIEW_MODEL, systemPrompt, userPrompt) as { decisions?: ReviewDecision[] };
+  return parsed.decisions ?? [];
+}
+
+/** One Claude call that must answer with a JSON object. Throws on failure. */
+async function askClaude(model: string, system: string, user: string): Promise<Record<string, unknown>> {
   // claudeFetch sets x-api-key and hands over to CLAUDE_API_KEY_NEXT when the
   // current key's organization is out of credit (see claude-keys.ts).
   const resp = await claudeFetch("https://api.anthropic.com/v1/messages", {
@@ -542,12 +551,12 @@ ${
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: REVIEW_MODEL,
+      model,
       max_tokens: 8000,
       // Thinking off keeps the cost to the answer itself.
       thinking: { type: "disabled" },
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
+      system,
+      messages: [{ role: "user", content: user }],
     }),
   });
 
@@ -562,8 +571,7 @@ ${
     .filter((b: { type: string }) => b.type === "text")
     .map((b: { text: string }) => b.text)
     .join("");
-  const parsed = parseJsonObject(text) as { decisions?: ReviewDecision[] };
-  return parsed.decisions ?? [];
+  return parseJsonObject(text);
 }
 
 /** The JSON object in a model reply, tolerating code fences or a preamble. */
@@ -685,31 +693,6 @@ ${canonicalList.join(", ")}${examples}
 Variants to classify:
 ${chunk.map((u, i) => `${i + 1}. ${u.raw_alias}`).join("\n")}`;
 
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      response_format: { type: "json_object" },
-      // gpt-5-nano is a reasoning model and takes no temperature: minimal
-      // reasoning keeps the output (and the bill) to the answer itself, and
-      // the cap leaves room for 50 entries.
-      reasoning_effort: "minimal",
-      max_completion_tokens: 8000,
-    }),
-  });
-
-  if (!resp.ok) {
-    throw new Error(`OpenAI ${resp.status}: ${await resp.text()}`);
-  }
-  const data = await resp.json();
-  const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}") as { suggestions?: LlmSuggestion[] };
+  const parsed = await askClaude(MODEL, systemPrompt, userPrompt) as { suggestions?: LlmSuggestion[] };
   return parsed.suggestions ?? [];
 }
