@@ -41,10 +41,12 @@ BEGIN
       v_target := coalesce(v_merges ->> r.name, r.same_as_entry);
       IF v_target IS NOT NULL THEN
         PERFORM index_fold_entry(r.name, v_target, true);
-        -- The entry keeps its own label; it takes this one only when it has none.
+        -- The entry keeps its own label; it takes this one only when it has
+        -- none. "unknown" is left out so it can't block the label of a new
+        -- entry that is itself under review ("Eth" => "ETH Zurich").
         INSERT INTO company_employee_tiers (company_name, estimated_tier, confidence, classified_by, classified_at)
         SELECT v_target, r.tier, 'medium', 'llm', now()
-        WHERE r.tier IS NOT NULL
+        WHERE r.tier IS NOT NULL AND r.tier <> 'unknown'
           AND NOT EXISTS (SELECT 1 FROM company_employee_tiers t WHERE lower(t.company_name) = lower(v_target))
         ON CONFLICT (company_name) DO NOTHING;
         v_merged := v_merged + 1;
