@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS public.index_name_review_batches (
   collected_at timestamptz
 );
 
+-- Current Index entries with a trigram index, so the duplicate shortlist is a
+-- quick index lookup per name instead of a scan of every entry.
+CREATE TABLE IF NOT EXISTS public.index_name_review_entries (name text PRIMARY KEY);
+CREATE INDEX IF NOT EXISTS index_name_review_entries_trgm
+  ON public.index_name_review_entries USING gin (lower(name) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS index_name_review_entries_lower
+  ON public.index_name_review_entries (lower(name) text_pattern_ops);
+ALTER TABLE public.index_name_review_entries ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.index_name_review_entries FROM anon, authenticated;
+
 ALTER TABLE public.index_name_review ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.index_name_review_batches ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.index_name_review, public.index_name_review_batches FROM anon, authenticated;
@@ -84,18 +94,34 @@ BEGIN
   ON CONFLICT (name) DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT;
 
+  INSERT INTO index_name_review_entries (name)
+  SELECT canonical_name FROM company_search_index
+  ON CONFLICT (name) DO NOTHING;
+
+  -- Similar spellings (trigram index) plus entries the name starts with
+  -- ("Samsung Electronics Korea" -> Samsung): every leading run of words.
   UPDATE index_name_review r
   SET candidates = c.cands
   FROM (
-    SELECT q.name, array_agg(e.f ORDER BY e.score DESC) AS cands
+    SELECT q.name, (array_agg(e.f ORDER BY e.score DESC))[1:5] AS cands
     FROM index_name_review q
     CROSS JOIN LATERAL (
-      SELECT s.canonical_name AS f,
-             similarity(lower(s.canonical_name), lower(q.name))
-               + CASE WHEN lower(q.name) LIKE lower(s.canonical_name) || ' %' THEN 1 ELSE 0 END AS score
-      FROM company_search_index s
-      WHERE lower(s.canonical_name) <> lower(q.name)
-        AND (lower(s.canonical_name) % lower(q.name) OR lower(q.name) LIKE lower(s.canonical_name) || ' %')
+      SELECT x.f, max(x.score) AS score
+      FROM (
+        SELECT s.name AS f, similarity(lower(s.name), lower(q.name)) AS score
+        FROM index_name_review_entries s
+        WHERE lower(s.name) % lower(q.name)
+        UNION ALL
+        SELECT s.name, 1 + length(p.prefix)
+        FROM generate_series(1, 4) AS w(n)
+        CROSS JOIN LATERAL (
+          SELECT array_to_string((regexp_split_to_array(lower(q.name), '\s+'))[1:w.n], ' ') AS prefix
+        ) p
+        JOIN index_name_review_entries s ON lower(s.name) = p.prefix
+        WHERE p.prefix <> lower(q.name)
+      ) x
+      WHERE lower(x.f) <> lower(q.name)
+      GROUP BY x.f
       ORDER BY 2 DESC
       LIMIT 5
     ) e
