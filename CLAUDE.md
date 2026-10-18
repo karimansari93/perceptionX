@@ -22,6 +22,16 @@
   responses; never add a live Claude call for themes back.
 - Quote the estimated cost and get Karim's approval before any job over 1,000
   answers. Our timelines are usually a month, so slower and cheaper wins.
+- Flag cost before it happens, for any AI job (collection, extraction,
+  canonicalization, theming): quote it up front, and stop and re-quote to
+  Karim if the scale or the per-call size grows past the quote (Karim,
+  2026-10-18, after a canonicalization run cost several times its estimate
+  because the canonical list sent with every call grew 8x). Offer a cheaper
+  route when one exists.
+- Use the cheapest model that does the job. OpenAI is only for measuring
+  ChatGPT itself; supporting work (canonicalization, extraction) runs on
+  Claude Haiku or another cheap model, never gpt-4.1-class models. Never send
+  a whole table in a prompt; send a shortlist.
 - Keep background check-ins sparse: report on completion or on a problem, not
   on a fixed hourly cadence.
 
