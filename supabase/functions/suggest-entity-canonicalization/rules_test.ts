@@ -1,6 +1,7 @@
 import { assertEquals } from "https://deno.land/std@0.168.0/testing/asserts.ts";
 import {
   buildProtectedStems,
+  buildShortlister,
   type CanonicalRef,
   hasParentCanonical,
   isProtected,
@@ -112,4 +113,21 @@ Deno.test("ruleRollUp rolls country arms of tracked companies, never a tracked n
   assertEquals(roll("Ford Credit"), null);
   assertEquals(roll("Netflix Animation Studios"), null); // division: tail is not noise
   assertEquals(roll("Thermo Fisher Clinical"), null); // left to the review model
+});
+
+Deno.test("shortlist sends core companies plus same-first-word canonicals only", () => {
+  const idx = new Map(index);
+  for (const c of ["Thermo Fisher Scientific", "Thermosome", "Zurich", "Zurich Airport", "Acme Widgets"]) {
+    idx.set(normalize(c), canon(c));
+  }
+  const aliasCounts = new Map([["id-Amazon", 50], ["id-Toyota", 40]]);
+  const shortlist = buildShortlister(idx, aliasCounts, 2);
+  const list = shortlist(["Thermo Fisher Clinical", "Zurich Insurance Group"]);
+  assertEquals(list.includes("Amazon"), true); // core: most aliases
+  assertEquals(list.includes("Toyota"), true);
+  assertEquals(list.includes("Thermo Fisher Scientific"), true); // same first word
+  assertEquals(list.includes("Zurich"), true);
+  assertEquals(list.includes("Zurich Airport"), true);
+  assertEquals(list.includes("Thermosome"), false); // different first word
+  assertEquals(list.includes("Acme Widgets"), false);
 });

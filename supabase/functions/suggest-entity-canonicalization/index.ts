@@ -33,6 +33,7 @@ import { corsHeaders } from "../_shared/cors.ts";
 import {
   AUTO_CONFIDENCE,
   buildProtectedStems,
+  buildShortlister,
   type CanonicalRef,
   cleanForMatch,
   hasParentCanonical,
@@ -154,6 +155,10 @@ serve(async (req) => {
     }
     // Normalized names of every canonical, active or not (non-entity guard).
     const anyCanonical = new Set(canonicals.map((c) => c.normalized_name));
+    // Per-batch list of canonicals to show the LLMs (never the whole table).
+    const aliasCounts = new Map<string, number>();
+    for (const a of aliases) aliasCounts.set(a.canonical_id, (aliasCounts.get(a.canonical_id) ?? 0) + 1);
+    const shortlist = buildShortlister(index, aliasCounts);
 
     const tracked = companyNames.map((c) => c.name).filter((n) => n && n.trim().length > 0);
     const stems = buildProtectedStems(tracked);
@@ -186,14 +191,13 @@ serve(async (req) => {
 
     // 2. LLM pass, chunked with bounded concurrency. A failed chunk is logged
     //    and skipped; its variants stay unqueued and are retried next run.
-    const canonicalList = [...new Set([...byId.values()].map((c) => c.canonical_name))].sort();
     const chunks: Array<typeof forLlm> = [];
     for (let i = 0; i < forLlm.length; i += LLM_CHUNK) chunks.push(forLlm.slice(i, i + LLM_CHUNK));
 
     let llmFailures = 0;
     for (let i = 0; i < chunks.length; i += LLM_CONCURRENCY) {
       const results = await Promise.allSettled(
-        chunks.slice(i, i + LLM_CONCURRENCY).map((chunk) => classify(chunk, canonicalList, corrections)),
+        chunks.slice(i, i + LLM_CONCURRENCY).map((chunk) => classify(chunk, shortlist(chunk.map((c) => c.raw_alias)), corrections)),
       );
       results.forEach((res, j) => {
         const chunk = chunks[i + j];
@@ -213,7 +217,7 @@ serve(async (req) => {
 
     // 3. Review pass: everything the cheap pass left for a person, new rows
     //    first, then older pending suggestions.
-    const reviewCtx = { index, anyCanonical, tracked, corrections, canonicalList };
+    const reviewCtx = { index, anyCanonical, tracked, corrections, shortlist };
     let reviewFailures = 0;
     let reviewedPending = 0;
     if (autoQueue) {
@@ -369,7 +373,7 @@ interface ReviewCtx {
   anyCanonical: Set<string>;
   tracked: string[];
   corrections: Array<{ raw: string; suggested: string; final: string }>;
-  canonicalList: string[];
+  shortlist: (names: string[]) => string[];
 }
 
 const REVIEW_CHUNK = 40;
@@ -504,7 +508,10 @@ Each entry: { raw_alias, decision, canonical_name, entity_type, confidence, rati
     : "";
 
   const userPrompt = `Existing canonical companies (merge into these exactly when applicable):
-${ctx.canonicalList.join(", ")}
+${
+    ctx.shortlist(chunk.flatMap((u) => [u.raw_alias, u.suggested_canonical_name ?? ""]).filter(Boolean))
+      .join(", ")
+  }
 
 Tracked companies:
 ${ctx.tracked.join(", ")}${examples}
