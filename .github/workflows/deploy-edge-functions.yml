@@ -70,7 +70,9 @@ jobs:
       - uses: supabase/setup-cli@v1
         if: steps.pick.outputs.functions != ''
         with:
-          version: latest
+          # Pinned: "latest" asks the GitHub API which release that is, and the
+          # shared runners hit its rate limit (deploy of #177 failed that way).
+          version: 2.121.0
 
       - name: Deploy
         if: steps.pick.outputs.functions != ''
