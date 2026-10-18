@@ -60,7 +60,9 @@ serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   try {
     const collected = await collect();
-    const submitted = await submit(Number(body.maxRequests) || 0);
+    // maxRequests < 0: collect only (used to check a pilot before sending more).
+    const max = Number(body.maxRequests) || 0;
+    const submitted = max < 0 ? 0 : await submit(max);
     return json({ collected, submitted });
   } catch (e: any) {
     console.error("[index-name-review]", e?.message ?? e);
