@@ -30,6 +30,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { claudeFetch } from "../_shared/claude-keys.ts";
 import {
   AUTO_CONFIDENCE,
   buildProtectedStems,
@@ -45,9 +46,14 @@ import {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
-const MODEL = "gpt-4.1-mini";
+// Cheapest models we have (Karim, 2026-10-18): gpt-5-nano for the first pass
+// ($0.05 / $0.40 per M tokens), Claude Haiku 5.5 for review ($0.10 / $0.50),
+// replacing gpt-4.1-mini and gpt-4.1.
+const MODEL = "gpt-5-nano";
 // Final decision-maker for everything the cheap pass can't settle.
-const REVIEW_MODEL = "gpt-4.1";
+const REVIEW_MODEL = "claude-haiku-5-5";
+// Review models whose decisions are final (gpt-4.1 reviewed until 2026-10-18).
+const REVIEW_MODELS = ["gpt-4.1", REVIEW_MODEL];
 const MAX_PENDING_REVIEW = 200;
 const LLM_CHUNK = 50;
 const LLM_CONCURRENCY = 6; // ~300 variants = one round, well inside the edge wall-clock limit
@@ -386,7 +392,7 @@ async function fetchPendingManual(supabase: Supabase): Promise<PendingItem[]> {
     .is("auto_method", null)
     // Reviewed once is final: a decision the apply step bounced back must not
     // be re-sent to the review model every tick.
-    .or(`llm_model.is.null,llm_model.neq.${REVIEW_MODEL}`)
+    .or(`llm_model.is.null,llm_model.not.in.(${REVIEW_MODELS.map((m) => `"${m}"`).join(",")})`)
     .order("mention_count", { ascending: false })
     .limit(MAX_PENDING_REVIEW);
   if (error) {
@@ -527,29 +533,45 @@ ${
     }).join("\n")
   }`;
 
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+  // claudeFetch sets x-api-key and hands over to CLAUDE_API_KEY_NEXT when the
+  // current key's organization is out of credit (see claude-keys.ts).
+  const resp = await claudeFetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
       model: REVIEW_MODEL,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0,
+      max_tokens: 8000,
+      // Thinking off keeps the cost to the answer itself.
+      thinking: { type: "disabled" },
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
     }),
   });
 
-  if (!resp.ok) {
-    throw new Error(`OpenAI ${resp.status}: ${await resp.text()}`);
-  }
   const data = await resp.json();
-  const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}") as { decisions?: ReviewDecision[] };
+  if (!resp.ok) {
+    throw new Error(`Claude ${resp.status}: ${data?.error?.message ?? JSON.stringify(data)}`);
+  }
+  if (data.stop_reason === "refusal" || data.stop_reason === "max_tokens") {
+    throw new Error(`Claude stopped: ${data.stop_reason}`);
+  }
+  const text = (data.content ?? [])
+    .filter((b: { type: string }) => b.type === "text")
+    .map((b: { text: string }) => b.text)
+    .join("");
+  const parsed = parseJsonObject(text) as { decisions?: ReviewDecision[] };
   return parsed.decisions ?? [];
+}
+
+/** The JSON object in a model reply, tolerating code fences or a preamble. */
+function parseJsonObject(text: string): Record<string, unknown> {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) throw new Error("No JSON object in model reply");
+  return JSON.parse(text.slice(start, end + 1));
 }
 
 async function findCandidates(
@@ -676,7 +698,11 @@ ${chunk.map((u, i) => `${i + 1}. ${u.raw_alias}`).join("\n")}`;
         { role: "user", content: userPrompt },
       ],
       response_format: { type: "json_object" },
-      temperature: 0.1,
+      // gpt-5-nano is a reasoning model and takes no temperature: minimal
+      // reasoning keeps the output (and the bill) to the answer itself, and
+      // the cap leaves room for 50 entries.
+      reasoning_effort: "minimal",
+      max_completion_tokens: 8000,
     }),
   });
 
