@@ -229,6 +229,52 @@ export function ruleRollUp(
   return rollUpToParent(raw, index);
 }
 
+/**
+ * Canonicals worth showing the LLM for one batch of names: a core list of the
+ * biggest companies (most aliases, so "AWS" can still find Amazon) plus every
+ * canonical that shares a name's first word, capped per word. Sending every
+ * canonical cost ~200k input tokens per call once the list passed 30,000
+ * names (October 2026); this keeps a call around 10k.
+ */
+export function buildShortlister(
+  index: Map<string, CanonicalRef>,
+  aliasCounts: Map<string, number>,
+  coreSize = 1500,
+  perWord = 50,
+): (names: string[]) => string[] {
+  const byFirst = new Map<string, Set<string>>();
+  const refs = new Map<string, CanonicalRef>();
+  for (const [norm, ref] of index) {
+    refs.set(ref.id, ref);
+    const first = norm.split(" ")[0];
+    if (first.length < 2) continue;
+    let names = byFirst.get(first);
+    if (!names) byFirst.set(first, names = new Set());
+    names.add(ref.canonical_name);
+  }
+  const core = [...refs.values()]
+    .sort((a, b) =>
+      (aliasCounts.get(b.id) ?? 0) - (aliasCounts.get(a.id) ?? 0) ||
+      a.canonical_name.localeCompare(b.canonical_name)
+    )
+    .slice(0, coreSize)
+    .map((r) => r.canonical_name);
+
+  return (names: string[]) => {
+    const out = new Set(core);
+    for (const n of names) {
+      const hits = byFirst.get(cleanForMatch(n).split(" ")[0]);
+      if (!hits) continue;
+      let k = 0;
+      for (const h of hits) {
+        out.add(h);
+        if (++k >= perWord) break;
+      }
+    }
+    return [...out].sort();
+  };
+}
+
 // Historical agreement between the LLM and admin decisions (2026-09-25 audit)
 // was ~95% or better only at confidence >= 0.95, for every decision type.
 export const AUTO_CONFIDENCE = 0.95;
