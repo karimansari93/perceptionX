@@ -25,6 +25,7 @@ DECLARE
   r record;
   v_merges jsonb;
   v_target text;
+  v_done text[] := '{}';
   v_respelled int := 0;
   v_labelled int := 0;
   v_merged int := 0;
@@ -37,6 +38,7 @@ BEGIN
   FOR r IN
     SELECT * FROM index_name_review_results WHERE status = 'stored'
   LOOP
+    v_done := v_done || r.name;
     IF v_merges ? r.name THEN
       v_target := coalesce(v_merges ->> r.name, r.same_as_entry);
       IF v_target IS NOT NULL THEN
@@ -93,7 +95,8 @@ BEGIN
     END IF;
   END LOOP;
 
-  UPDATE index_name_review SET status = 'applied', updated_at = now() WHERE status = 'stored';
+  -- Only the rows handled above: a batch collected meanwhile waits for review.
+  UPDATE index_name_review SET status = 'applied', updated_at = now() WHERE name = ANY (v_done);
 
   RETURN jsonb_build_object('labelled', v_labelled, 'respelled', v_respelled,
                             'merged', v_merged, 'excluded', v_excluded);
