@@ -215,7 +215,7 @@ $function$;
 CREATE OR REPLACE VIEW public.index_name_review_results AS
 SELECT name, mentions, countries, industries, status, tier, is_employer,
        CASE WHEN same_as ~ '^[a-e]$' THEN candidates[ascii(same_as) - 96] END AS same_as_entry,
-       display_name, candidates, error
+       candidates, error, display_name
 FROM public.index_name_review;
 REVOKE ALL ON public.index_name_review_results FROM anon, authenticated;
 
