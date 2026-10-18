@@ -25,8 +25,16 @@ INSERT INTO public.company_keep_apart (name, note) VALUES
   ('Reliance Industries', 'Separate employer (2026-10-18 clean-up)'),
   ('Reliance General Insurance', 'Anil Ambani group, not Reliance Industries'),
   ('Reliance Nippon Life Insurance', 'Anil Ambani group, not Reliance Industries'),
-  ('Reliance Group', 'Anil Ambani group, not Reliance Industries')
+  ('Reliance Group', 'Anil Ambani group, not Reliance Industries'),
+  ('Reliance Defence and Aerospace', 'Anil Ambani group, not Reliance Industries'),
+  ('Reliance Entertainment', 'Anil Ambani group, not Reliance Industries'),
+  ('Reliance Games', 'Anil Ambani group, not Reliance Industries'),
+  ('Reliance Life Sciences', 'Separate company, not Reliance Industries')
 ON CONFLICT (name) DO NOTHING;
+
+-- The first nightly run after the split folded this one back (it was not on
+-- the keep-apart list yet).
+SELECT public.index_split_variants('Reliance Industries', '^reliance entertainment', 'Reliance Entertainment');
 
 CREATE OR REPLACE FUNCTION public.index_spelling_variant_plan()
 RETURNS TABLE(fragment text, target text)
