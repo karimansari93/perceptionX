@@ -49,3 +49,8 @@ AS $function$
     OR lower(trim(p_canonical_name)) ~ '(^university of |university$| university | nhs foundation trust| nhs ft$| nhs trust$)'
   );
 $function$;
+
+-- One restored employer had a size label far too small (about 19,000 staff).
+UPDATE public.company_employee_tiers
+SET estimated_tier = '5000-49999', confidence = 'medium', classified_by = 'manual', classified_at = now()
+WHERE lower(company_name) = 'amsterdam umc';
