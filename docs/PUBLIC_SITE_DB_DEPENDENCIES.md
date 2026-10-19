@@ -22,16 +22,24 @@ started failing with 401:
 
 Materialized views — these cannot carry RLS, so anon table-level SELECT is
 the *only* access control, and Supabase's security advisor will forever flag
-them as "materialized view exposed in API". For these three, that lint is an
+them as "materialized view exposed in API". For these four, that lint is an
 **accepted trade-off**: they contain only published aggregate rankings data.
 Do not "fix" the lint by revoking anon.
 
 - `public.rankings_overview`
 - `public.rankings_historical`
 - `public.company_search_index`
+- `public.rankings_job_function` (job-function rankings, opened 2026-10-19)
 
 Each carries a `COMMENT ON` marker starting with `PUBLIC BY DESIGN` so sweeps
 that inspect objects directly see the warning in place.
+
+What each country shows is set in `public.index_country_status` (not public):
+`overview_source` picks the collection behind its industry rankings
+(`legacy` = `prompt_responses`, `index` = `index_responses`), and
+`job_functions_published` decides whether its job-function rankings appear.
+Changing a country is one `UPDATE` plus a refresh of the rankings; only do it
+once Karim has signed off that country's lists.
 
 ## Must stay anon-executable
 
