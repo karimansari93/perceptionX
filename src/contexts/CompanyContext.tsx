@@ -24,6 +24,15 @@ export interface Company {
   country?: string | null;
 }
 
+// The brand a company sits under: settings.brand_name when set, else its own
+// name. Lets a differently named entity stand in for one of a brand's
+// countries (Ford Business Solutions is Ford > India). The company keeps its
+// own name for mention detection; only grouping and the dashboard's brand
+// scope read this.
+export const brandOf = (company: Pick<Company, 'name' | 'settings'>): string =>
+  (typeof company.settings?.brand_name === 'string' && company.settings.brand_name.trim()) ||
+  company.name;
+
 export interface CompanyMembership {
   id: string;
   user_id: string;

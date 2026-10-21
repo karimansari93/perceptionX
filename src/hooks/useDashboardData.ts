@@ -32,7 +32,7 @@ import {
 } from "@/hooks/dashboard/scopeStatsSelect";
 import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 import { useAuth } from "@/contexts/AuthContext";
-import { useCompany } from "@/contexts/CompanyContext";
+import { brandOf, useCompany } from "@/contexts/CompanyContext";
 import { PromptResponse, DashboardMetrics, DashboardFamilyStatus, CitationCount, PromptData, Citation, CompetitorMention, LLMMentionRanking } from "@/types/dashboard";
 import { enhanceCitations, EnhancedCitation } from "@/utils/citationUtils";
 import { getLLMDisplayName, getLLMLogo } from "@/config/llmLogos";
@@ -333,12 +333,14 @@ export const useDashboardData = () => {
   // statement timeouts. Same-org groups are the only real sibling sets.
   const scopeCompanies = useMemo(() => {
     if (!currentCompany) return [] as { id: string; country: string | null }[];
-    const nameLower = currentCompany.name.toLowerCase();
+    // Brand, not raw name: settings.brand_name puts a differently named
+    // entity in the scope (Ford Business Solutions is Ford's India).
+    const brandLower = brandOf(currentCompany).toLowerCase();
     const orgId = currentCompany.organization_id ?? null;
     const siblings = userCompanies
       .filter(
         c => c.id !== currentCompany.id &&
-          c.name.toLowerCase() === nameLower &&
+          brandOf(c).toLowerCase() === brandLower &&
           (c.organization_id ?? null) === orgId
       )
       .sort((a, b) => a.id.localeCompare(b.id));
