@@ -8,7 +8,9 @@ or after a recollection, and at no other time. See
 Ground rules for every step:
 
 - One heavy step at a time. Wait for each to finish before starting the next.
-- Run heavy steps off-peak (21:00 to 06:00 UTC) where the timing allows.
+- Run heavy steps while Karim is awake: Dubai working hours, roughly 05:00
+  to 15:00 UTC (also clear of the US evening peak). Never leave one running
+  overnight in Dubai.
 - Run long steps as a one-off pg_cron job with its own time limit
   (`SET statement_timeout = '900s'; ...`), then unschedule the job. The
   Supabase MCP gives up after about 60 seconds, and pg_cron's default limit
@@ -31,7 +33,7 @@ Ground rules for every step:
    `REFRESH MATERIALIZED VIEW public.rankings_historical;`
 3. **Exclusions.** `SELECT public.reconcile_stale_exclusions();`
 4. **Rankings.** `SELECT public.refresh_rankings_pipeline();` (2 to 4 minutes;
-   the public rankings are locked while it runs, so off-peak).
+   the public rankings are locked while it runs).
 5. **Profiles.** `SELECT public.trigger_snapshot_regen();` then, about 20
    minutes later, `SELECT public.rebuild_slug_aliases();`
 6. **New countries.** A country's rankings stay hidden until Karim signs off
