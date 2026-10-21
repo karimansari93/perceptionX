@@ -42,8 +42,11 @@
   each quarterly collection or recollection: follow
   `docs/RUNBOOK_AFTER_COLLECTION.md`. Do not switch paused cron jobs back on.
 - Before any collection, rebuild or bulk job over 1,000 answers: check the
-  Disk IO budget in the Supabase dashboard, run heavy steps one at a time and
-  off-peak (21:00 to 06:00 UTC), and give each a time limit. On 2026-10-21 an
+  Disk IO budget in the Supabase dashboard, run heavy steps one at a time,
+  and give each a time limit. Run them while Karim is awake: Dubai working
+  hours, roughly 05:00 to 15:00 UTC, which also avoids the US evening peak.
+  Never leave a heavy job running overnight in Dubai (Karim, 2026-10-21:
+  "i dont want shit running when im asleep in dubai"). On 2026-10-21 an
   untimed full scan after a 56,000-answer collection exhausted the budget and
   took the database down for about two hours.
 - Quote the load as well as the cost: say what else the new rows will set off
