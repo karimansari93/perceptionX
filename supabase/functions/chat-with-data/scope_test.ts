@@ -2,7 +2,13 @@ import { assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.
 import { normalizeScope, scopeNote } from './scope.ts';
 
 Deno.test('scope: brand-wide questions carry no note; filtered ones name the tool filters', () => {
-  assertEquals(scopeNote({ company: 'Ford', locations: [], jobFunctions: [] }), null);
+  assertEquals(scopeNote({ company: null, locations: [], jobFunctions: [] }), null);
+  // A company picked on its own (a sub-brand of a multi-brand org) still scopes the answer.
+  const brand = scopeNote({ company: 'Ford Business Solutions', locations: [], jobFunctions: [] })!;
+  assertStringIncludes(brand, 'company: Ford Business Solutions');
+  assertStringIncludes(brand, 'company_id of "Ford Business Solutions"');
+  assertStringIncludes(brand, 'that brand alone');
+  assertEquals(brand.includes('location'), false);
   const one = scopeNote({ company: 'Ford', locations: ['Germany'], jobFunctions: ['Finance'] })!;
   assertStringIncludes(one, 'company: Ford');
   assertStringIncludes(one, 'pass location "Germany"');

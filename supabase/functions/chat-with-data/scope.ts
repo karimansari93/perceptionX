@@ -92,14 +92,23 @@ export async function getScopeOptions(ctx: ToolContext, company?: string | null)
 
 const quoteList = (items: string[]) => items.map(i => `"${i}"`).join(', ');
 
-// The scope block appended to the user turn. Empty when nothing is filtered
-// (brand-wide is the rulebook's default and needs no note).
+// The scope block appended to the user turn. Empty only when nothing is
+// picked. A company on its own still needs a note: in a multi-brand
+// organization (Ford, Ford Business Solutions, Lincoln...) the analyst would
+// otherwise answer for the whole family.
 export function scopeNote(scope: ChatScope): string | null {
-  if (!scope.locations.length && !scope.jobFunctions.length) return null;
+  if (!scope.company && !scope.locations.length && !scope.jobFunctions.length) return null;
   const parts: string[] = [];
   if (scope.company) parts.push(`company: ${scope.company}`);
   if (scope.locations.length) parts.push(`market${scope.locations.length > 1 ? 's' : ''}: ${scope.locations.join(', ')}`);
   if (scope.jobFunctions.length) parts.push(`job function${scope.jobFunctions.length > 1 ? 's' : ''}: ${scope.jobFunctions.join(', ')}`);
+
+  const company = scope.company
+    ? ` Use the company_id of "${scope.company}" from list_companies on every call, and report on that brand alone: no other brands, sub-brands or sibling profiles of the organization unless the user asks for a comparison.`
+    : '';
+  if (!scope.locations.length && !scope.jobFunctions.length) {
+    return `[Question scope chosen by the user — ${parts.join('; ')}.${company} State the scope in the answer.]`;
+  }
 
   const how: string[] = [];
   if (scope.locations.length === 1) how.push(`pass location ${quoteList(scope.locations)}`);
@@ -107,5 +116,5 @@ export function scopeNote(scope: ChatScope): string | null {
   if (scope.jobFunctions.length === 1) how.push(`pass job_function ${quoteList(scope.jobFunctions)}`);
   if (scope.jobFunctions.length > 1) how.push(`call the tools once per job function (job_function ${quoteList(scope.jobFunctions)}, in parallel) and compare the functions side by side`);
 
-  return `[Question scope chosen by the user — ${parts.join('; ')}. Answer for this scope: ${how.join('; ')} on the market-aware tools, state the scope in the answer, and if a market or function is not tracked say so and give the brand-wide figure instead.]`;
+  return `[Question scope chosen by the user — ${parts.join('; ')}.${company} Answer for this scope: ${how.join('; ')} on the market-aware tools, state the scope in the answer, and if a market or function is not tracked say so and give the brand-wide figure instead.]`;
 }
