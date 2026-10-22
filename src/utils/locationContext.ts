@@ -16,9 +16,9 @@ import { GLOBAL_LIKE } from '@/utils/locations';
 import {
   REGIONS,
   isRegionKey,
-  regionForCountryCode,
   regionFromKey,
   regionKey,
+  regionsForCountryCode,
 } from '@/utils/regions';
 
 export type LocationIconKind = 'flag' | 'pin' | 'globe' | 'region';
@@ -351,15 +351,16 @@ export const buildLocationOptions = (
   // Each is the plain union of its member countries' spellings and owned
   // profiles, so every downstream filter and rollup query treats it exactly
   // like a country with more spellings. Cities/states ("Burbank") carry no
-  // country, so they never join a region. Listed first: the broadest views
-  // sit above the countries they contain.
+  // country, so they never join a region. A country joins its base region
+  // and every composite that includes it (Germany → Europe and EMEA).
+  // Listed first: the broadest views sit above the countries they contain.
   const regionMembers = new Map<string, LocationEntry[]>();
   for (const entry of options) {
-    const region = regionForCountryCode(entry.flagCode);
-    if (!region) continue;
-    const list = regionMembers.get(region.id) ?? [];
-    list.push(entry);
-    regionMembers.set(region.id, list);
+    for (const region of regionsForCountryCode(entry.flagCode)) {
+      const list = regionMembers.get(region.id) ?? [];
+      list.push(entry);
+      regionMembers.set(region.id, list);
+    }
   }
   const regionEntries: LocationEntry[] = [];
   for (const region of REGIONS) {

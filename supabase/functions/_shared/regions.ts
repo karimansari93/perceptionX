@@ -14,12 +14,16 @@ export type RegionId =
   | 'latin-america'
   | 'europe'
   | 'middle-east-africa'
+  | 'emea'
   | 'asia-pacific';
 
 export interface RegionDef {
   id: RegionId;
   label: string;
   aliases: string[];
+  // Composite regions: the base regions this one unions (EMEA = Europe +
+  // Middle East & Africa). Absent on base regions.
+  includes?: RegionId[];
 }
 
 export const REGIONS: readonly RegionDef[] = [
@@ -27,6 +31,9 @@ export const REGIONS: readonly RegionDef[] = [
   { id: 'latin-america', label: 'Latin America', aliases: ['latin america', 'latam', 'south america', 'latinoamerica', 'latinoamérica', 'américa latina', 'america latina'] },
   { id: 'europe', label: 'Europe', aliases: ['europe', 'eu', 'european union'] },
   { id: 'middle-east-africa', label: 'Middle East & Africa', aliases: ['middle east & africa', 'middle east and africa', 'mea', 'middle east', 'africa'] },
+  // Composite: how most clients organise their HR regions. A country belongs
+  // to its base region AND to every composite that includes that region.
+  { id: 'emea', label: 'EMEA', aliases: ['emea', 'europe, middle east & africa', 'europe, middle east and africa', 'europe middle east africa'], includes: ['europe', 'middle-east-africa'] },
   { id: 'asia-pacific', label: 'Asia Pacific', aliases: ['asia pacific', 'asia-pacific', 'apac', 'asia', 'asia pac'] },
 ];
 
@@ -92,6 +99,12 @@ export const regionForCountryCode = (code: string | null | undefined): RegionDef
   return id ? BY_ID[id] : null;
 };
 
-// The tracked market spellings that fall inside a region.
-export const bucketsInRegion = (available: string[], region: RegionDef): string[] =>
-  available.filter((b) => regionForCountryCode(countryCodeForLocation(b))?.id === region.id);
+// The tracked market spellings that fall inside a region (a composite region
+// covers every base region it includes).
+export const bucketsInRegion = (available: string[], region: RegionDef): string[] => {
+  const ids = new Set<string>([region.id, ...(region.includes ?? [])]);
+  return available.filter((b) => {
+    const base = regionForCountryCode(countryCodeForLocation(b));
+    return !!base && ids.has(base.id);
+  });
+};

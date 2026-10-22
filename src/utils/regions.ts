@@ -20,6 +20,7 @@ export type RegionId =
   | 'latin-america'
   | 'europe'
   | 'middle-east-africa'
+  | 'emea'
   | 'asia-pacific';
 
 export interface RegionDef {
@@ -28,6 +29,9 @@ export interface RegionDef {
   // Lower-cased ways people name the region (Ask AI, saved views typed by
   // hand). The label itself always matches.
   aliases: string[];
+  // Composite regions: the base regions this one unions (EMEA = Europe +
+  // Middle East & Africa). Absent on base regions.
+  includes?: RegionId[];
 }
 
 export const REGIONS: readonly RegionDef[] = [
@@ -35,6 +39,9 @@ export const REGIONS: readonly RegionDef[] = [
   { id: 'latin-america', label: 'Latin America', aliases: ['latin america', 'latam', 'south america', 'latinoamerica', 'latinoamérica', 'américa latina', 'america latina'] },
   { id: 'europe', label: 'Europe', aliases: ['europe', 'eu', 'european union'] },
   { id: 'middle-east-africa', label: 'Middle East & Africa', aliases: ['middle east & africa', 'middle east and africa', 'mea', 'middle east', 'africa'] },
+  // Composite: how most clients organise their HR regions. A country belongs
+  // to its base region AND to every composite that includes that region.
+  { id: 'emea', label: 'EMEA', aliases: ['emea', 'europe, middle east & africa', 'europe, middle east and africa', 'europe middle east africa'], includes: ['europe', 'middle-east-africa'] },
   { id: 'asia-pacific', label: 'Asia Pacific', aliases: ['asia pacific', 'asia-pacific', 'apac', 'asia', 'asia pac'] },
 ];
 
@@ -75,10 +82,19 @@ export const regionFromKey = (key: string | null | undefined): RegionDef | null 
   return BY_ID[(key as string).slice(REGION_KEY_PREFIX.length)] ?? null;
 };
 
+// The base region of a country.
 export const regionForCountryCode = (code: string | null | undefined): RegionDef | null => {
   if (!code) return null;
   const id = COUNTRY_REGION[code.toUpperCase()];
   return id ? BY_ID[id] : null;
+};
+
+// Every region a country belongs to: its base region plus each composite
+// that includes it (Germany → Europe and EMEA), in REGIONS order.
+export const regionsForCountryCode = (code: string | null | undefined): RegionDef[] => {
+  const base = regionForCountryCode(code);
+  if (!base) return [];
+  return REGIONS.filter((r) => r.id === base.id || (r.includes ?? []).includes(base.id));
 };
 
 // Resolve free text ("LATAM", "Latin America", "region:latin-america") to a

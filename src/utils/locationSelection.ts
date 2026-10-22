@@ -135,7 +135,10 @@ export const regionTickState = (currentKey: string | null, region: LocationEntry
 };
 
 // Tick a region (every member on) or, when it is already fully ticked, untick
-// all of its members.
+// all of its members. When the result is exactly this region, its own key is
+// stored even if another preset currently has the same members (Europe and
+// EMEA coincide until a Middle East market is tracked): the user's intent
+// is the region they clicked, and new markets then join the right one.
 export const toggleRegion = (
   currentKey: string | null,
   region: LocationEntry,
@@ -145,8 +148,10 @@ export const toggleRegion = (
   const members = region.memberKeys ?? [];
   if (regionTickState(currentKey, region, options) === 'all') {
     members.forEach((m) => ticked.delete(m));
-  } else {
-    members.forEach((m) => ticked.add(m));
+    return buildSelectionKey(ticked, options);
   }
-  return buildSelectionKey(ticked, options);
+  members.forEach((m) => ticked.add(m));
+  const next = buildSelectionKey(ticked, options);
+  const exactlyThisRegion = sortKeys(ticked).join(SET_SEPARATOR) === sortKeys(members).join(SET_SEPARATOR);
+  return exactlyThisRegion ? region.canonicalKey : next;
 };

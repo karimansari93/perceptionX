@@ -3,7 +3,7 @@ import { assertEquals } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
 import { bucketsInRegion, countryCodeForLocation, regionFromText } from './regions.ts';
 import { matchBuckets } from './px-tools/scope.ts';
 
-const TRACKED = ['Brazil', 'Mexico', 'India', 'the Netherlands', 'Berlin, Germany', 'US'];
+const TRACKED = ['Brazil', 'Mexico', 'India', 'the Netherlands', 'Berlin, Germany', 'US', 'United Arab Emirates'];
 
 Deno.test('regions: free text and keys resolve to one region', () => {
   assertEquals(regionFromText('LATAM')?.id, 'latin-america');
@@ -26,6 +26,9 @@ Deno.test('regions: a region request matches every tracked market inside it', ()
   // always wins over region resolution.
   assertEquals(matchBuckets(TRACKED, 'india'), ['India']);
   assertEquals(matchBuckets(['Europe', 'Germany'], 'europe'), ['Europe']);
+  // EMEA is Europe plus Middle East & Africa.
+  assertEquals(matchBuckets(TRACKED, 'EMEA'), ['the Netherlands', 'United Arab Emirates']);
+  assertEquals(matchBuckets(TRACKED, 'Europe'), ['the Netherlands']);
 });
 
 Deno.test('regions: a saved multi-market selection matches the union of its members', () => {

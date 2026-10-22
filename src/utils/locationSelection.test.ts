@@ -11,8 +11,9 @@ import {
 } from './locationSelection';
 import { validLocationKey, locationRawValue } from '@/hooks/useProfileSetup';
 
-// Brazil, Mexico (Latin America), India, United States, and a city.
-const responses = ['Brazil', 'Mexico', 'India', 'United States', 'Burbank'].map((loc) => ({
+// Brazil, Mexico (Latin America), Germany, Poland (Europe and EMEA), India,
+// United States, and a city.
+const responses = ['Brazil', 'Mexico', 'Germany', 'Poland', 'India', 'United States', 'Burbank'].map((loc) => ({
   company_id: 'c1',
   confirmed_prompts: { location_context: loc },
 }));
@@ -67,6 +68,23 @@ describe('ticking markets and regions', () => {
     // Region plus an outside market is an explicit set.
     expect(toggleMarket(k, 'india', options)).toBe('set:brazil|india|mexico');
   });
+
+  it('a composite preset keeps its own key when it coincides with a base region', () => {
+    const europe = options.find((o) => o.canonicalKey === 'region:europe')!;
+    const emea = options.find((o) => o.canonicalKey === 'region:emea')!;
+    // No Middle East market is tracked, so both presets hold the same two
+    // countries today.
+    expect(europe.memberKeys).toEqual(['germany', 'poland']);
+    expect(emea.memberKeys).toEqual(['germany', 'poland']);
+    // Clicking EMEA stores EMEA; clicking Europe stores Europe.
+    expect(toggleRegion(null, emea, options)).toBe('region:emea');
+    expect(toggleRegion(null, europe, options)).toBe('region:europe');
+    // Ticking the two countries by hand resolves to the base region.
+    expect(buildSelectionKey(['poland', 'germany'], options)).toBe('region:europe');
+    // Both rows show fully ticked under either key.
+    expect(regionTickState('region:emea', europe, options)).toBe('all');
+    expect(regionTickState('region:europe', emea, options)).toBe('all');
+  });
 });
 
 describe('resolving a selection to an entry', () => {
@@ -86,7 +104,7 @@ describe('resolving a selection to an entry', () => {
   it('drops members this scope no longer tracks, and gives up when none remain', () => {
     const set = resolveSelectionEntry('set:india|japan', options)!;
     expect(set.memberKeys).toEqual(['india']);
-    expect(resolveSelectionEntry('set:japan|germany', options)).toBeNull();
+    expect(resolveSelectionEntry('set:japan|france', options)).toBeNull();
     expect(resolveSelectionEntry('germany', options)).toBeNull();
   });
 
