@@ -48,8 +48,8 @@ const payload: DigestPayload = {
 const opts = { appUrl: 'https://app.perceptionx.ai', logoDevToken: 'pk_test' };
 
 Deno.test('subject and title carry the short quarter', () => {
-  assertEquals(digestSubject(payload), 'Your PerceptionX Q4 26 Update');
-  assertStringIncludes(renderDigestHtml(payload, opts), '<title>Your PerceptionX Q4 26 Update</title>');
+  assertEquals(digestSubject(payload), 'Your Q4 26 Update');
+  assertStringIncludes(renderDigestHtml(payload, opts), '<title>Your Q4 26 Update</title>');
 });
 
 Deno.test('marks come from logo.dev and icons from the app, never Google', () => {

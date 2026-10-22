@@ -114,7 +114,7 @@ export function digestMarkdown(payload: DigestPayload): string {
   const d = (v: number | null) => v === null ? '' : v > 0 ? ` (up ${v} points)` : v < 0 ? ` (down ${-v} points)` : ' (no change)';
   const prev = payload.period.previousLabel;
   const lines: string[] = [];
-  lines.push(`## Your PerceptionX ${payload.period.short} Update: ${payload.brand.name}, ${payload.scope.locationLabel}`);
+  lines.push(`## Your ${payload.period.short} Update: ${payload.brand.name}, ${payload.scope.locationLabel}`);
   lines.push('');
   lines.push(`Here is how AI assistants described ${payload.brand.name} to candidates ${payload.scope.preposition} ${payload.scope.locationLabel} this quarter${prev ? `, and what changed since ${prev}` : ''}.`);
   lines.push('');

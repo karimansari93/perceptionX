@@ -146,7 +146,7 @@ function groupTable(rows: DigestGroupRow[], head: string, hideSentimentChange: b
 }
 
 export function digestSubject(payload: DigestPayload): string {
-  return `Your PerceptionX ${payload.period.short} Update`;
+  return `Your ${payload.period.short} Update`;
 }
 
 export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptions): string {
