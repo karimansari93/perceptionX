@@ -79,11 +79,9 @@ const normalizeDomain = (domain: string): string => {
 // The mentioned/not-mentioned split colors used by the domain-list bars.
 const MENTIONED_COLOR = '#0DBCBA';
 const NOT_MENTIONED_COLOR = '#D1D5DB';
-// Trending-domains card: bar color for a source losing share (a rising one
-// reuses the brand teal), rows shown per direction, and the floor a row needs
+// Trending-domains card: rows shown per direction, and the floor a row needs
 // in the period it is moving from — citing responses and share of responses —
 // so a site that went from one answer to three never tops the card.
-const FALLING_COLOR = '#FCA5A5';
 const TRENDING_ROW_LIMIT = 10;
 const TRENDING_MIN_COUNT = 3;
 const TRENDING_MIN_SHARE = 1; // % of responses
@@ -941,16 +939,15 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
   );
 
   // One row of the trending card: rank, logo, domain and the share it holds
-  // now; beneath, a bar sized to the card's largest relative move, where the
-  // share stood last period, and the move itself. A new domain has no base
-  // to move from — it takes the full bar and its chip says "New". Teal for a
-  // rise, red for a fall, the same encoding as the delta chips elsewhere on
-  // the page.
-  const renderTrendingRow = (row: TrendingRow, idx: number, maxAbsChange: number) => {
+  // now; beneath, where the share stood last period and the move itself. No
+  // bar: the Top domains card beside it owns magnitude, and a bar per move
+  // reads as a second ranking (every New domain would fill it). A new domain
+  // has no base to move from, so its chip says "New". Green for a rise, red
+  // for a fall, the same encoding as the delta chips elsewhere on the page.
+  const renderTrendingRow = (row: TrendingRow, idx: number) => {
     const displayName = getSourceDisplayName(row.domain);
     const isNew = row.change === null;
     const rising = isNew || (row.change as number) > 0;
-    const barPct = isNew ? 100 : maxAbsChange > 0 ? (Math.abs(row.change as number) / maxAbsChange) * 100 : 0;
     const before = isNew ? 'not cited last period' : `${row.prevShare.toFixed(1)}% last period`;
     return (
       <button
@@ -968,16 +965,11 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
             {row.share.toFixed(1)}%
           </span>
         </div>
-        <div className="mt-1.5 ml-[30px] flex items-center gap-2">
-          <div className="flex-1 h-1.5 rounded-full bg-gray-100 overflow-hidden" aria-hidden>
-            <div
-              className="h-full rounded-full"
-              style={{ width: `${barPct}%`, backgroundColor: rising ? MENTIONED_COLOR : FALLING_COLOR }}
-            />
-          </div>
-          <span className="text-[11px] text-gray-400 tabular-nums whitespace-nowrap flex-shrink-0">
-            was {row.prevShare.toFixed(1)}%
+        <div className="mt-0.5 ml-[30px] flex items-center gap-2">
+          <span className="text-[11px] text-gray-400 tabular-nums whitespace-nowrap">
+            {isNew ? 'not cited last period' : `was ${row.prevShare.toFixed(1)}%`}
           </span>
+          <span className="flex-1" />
           <span className={`w-[52px] flex items-center justify-end gap-0.5 flex-shrink-0 text-xs font-semibold ${rising ? 'text-green-600' : 'text-red-600'}`}>
             {rising ? <TrendingUp className="w-3 h-3 flex-shrink-0" /> : <TrendingDown className="w-3 h-3 flex-shrink-0" />}
             <span className="whitespace-nowrap">{isNew ? 'New' : `${Math.abs(Math.round(row.change as number))}%`}</span>
@@ -987,10 +979,15 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
     );
   };
 
-  const renderDomainRow = (row: { domain: string; count: number; mentionedCount: number; prevCount: number }, idx: number) => {
+  const renderDomainRow = (row: { domain: string; count: number; mentionedCount: number; prevCount: number }, idx: number, maxCount: number) => {
     const displayName = getSourceDisplayName(row.domain);
     const share = shareOf(row.count, analyzed.total);
     const mentionRate = row.count > 0 ? (row.mentionedCount / row.count) * 100 : 0;
+    // Bar length is the row's citations against the top domain's, so the
+    // list reads as a ranking; the teal/gray split sits inside that length.
+    const barPct = maxCount > 0 ? (row.count / maxCount) * 100 : 0;
+    const mentionedPct = (barPct * mentionRate) / 100;
+    const notMentionedPct = barPct - mentionedPct;
     return (
       <button
         key={row.domain}
@@ -1012,11 +1009,11 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
             inset (rank width + gap) lines the bar up with the domain logo. */}
         <div className="mt-1.5 ml-[30px] flex items-center gap-2">
           <div className="flex-1 h-1.5 flex gap-[2px] rounded-full overflow-hidden">
-            {mentionRate > 0 && (
-              <div className="h-full rounded-full" style={{ width: `${mentionRate}%`, backgroundColor: MENTIONED_COLOR }} />
+            {mentionedPct > 0 && (
+              <div className="h-full rounded-full" style={{ width: `${mentionedPct}%`, backgroundColor: MENTIONED_COLOR }} />
             )}
-            {mentionRate < 100 && (
-              <div className="h-full rounded-full" style={{ width: `${100 - mentionRate}%`, backgroundColor: NOT_MENTIONED_COLOR }} />
+            {notMentionedPct > 0 && (
+              <div className="h-full rounded-full" style={{ width: `${notMentionedPct}%`, backgroundColor: NOT_MENTIONED_COLOR }} />
             )}
           </div>
           <span className="w-[52px] flex justify-end flex-shrink-0">{renderShareDelta(row.count, row.prevCount)}</span>
@@ -1159,7 +1156,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-2 min-w-0">
-                    <CardTitle className="text-base font-bold text-gray-800">Cited domains</CardTitle>
+                    <CardTitle className="text-base font-bold text-gray-800">Top domains</CardTitle>
                     <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
                       {domainList.length.toLocaleString()}
                     </Badge>
@@ -1183,7 +1180,8 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                           <p className="text-xs">
                             The percentage is the share of analyzed AI responses that cite
                             this source (responses cite several sources, so these don't add
-                            up to 100%). The bar splits each source's citations into
+                            up to 100%). The bar's length compares each source with the
+                            top one, and its colours split those citations into
                             responses that mention {companyName || 'your company'} and
                             responses where it's absent. The change beside it is how
                             much that share moved versus the previous period.
@@ -1202,7 +1200,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                   <div className="px-2">{loadingSkeleton(8)}</div>
                 ) : (
                   <div className="h-full max-h-[400px] overflow-y-auto pr-1">
-                    {domainsToRender.map((row, idx) => renderDomainRow(row, idx))}
+                    {domainsToRender.map((row, idx) => renderDomainRow(row, idx, domainList[0]?.count ?? 0))}
                     {!showAllDomains && domainList.length > INITIAL_DOMAIN_LIMIT && (
                       <div className="pt-3 pb-2 text-center">
                         <Button variant="outline" size="sm" onClick={() => setShowAllDomains(true)}>
@@ -1282,12 +1280,9 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
                       </div>
                     );
                   }
-                  // Bars are scaled to the largest relative move in the visible
-                  // list; a new domain (no base) takes the full bar.
-                  const maxAbsChange = rows.reduce((m, r) => (r.change === null ? m : Math.max(m, Math.abs(r.change))), 0);
                   return (
                     <div className="h-full max-h-[400px] overflow-y-auto pr-1">
-                      {rows.map((row, idx) => renderTrendingRow(row, idx, maxAbsChange))}
+                      {rows.map((row, idx) => renderTrendingRow(row, idx))}
                     </div>
                   );
                 })()}
