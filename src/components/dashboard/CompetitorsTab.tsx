@@ -74,19 +74,23 @@ const SET_LABELS: Record<CompetitorSet, string> = {
   emergent: "Emergent",
 };
 
-type TrendGranularity = "week" | "month";
+// "YYYY-Qn" → "Q3 2026", the trend's x-axis label.
+const quarterLabel = (key: string): string => `${key.slice(5)} ${key.slice(0, 4)}`;
 
-const startOfWeekTs = (ts: number): number => {
-  const d = new Date(ts);
-  const day = (d.getDay() + 6) % 7; // Monday = 0
-  d.setDate(d.getDate() - day);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-};
-
-const startOfMonthTs = (ts: number): number => {
-  const d = new Date(ts);
-  return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+// Contiguous quarter keys from first to last inclusive, so a quarter with no
+// collection renders as zero rather than vanishing from the axis.
+const quarterRange = (first: string, last: string): string[] => {
+  const out: string[] = [];
+  let y = Number(first.slice(0, 4));
+  let q = Number(first.slice(6));
+  const lastY = Number(last.slice(0, 4));
+  const lastQ = Number(last.slice(6));
+  while ((y < lastY || (y === lastY && q <= lastQ)) && out.length < 40) {
+    out.push(`${y}-Q${q}`);
+    q += 1;
+    if (q > 4) { q = 1; y += 1; }
+  }
+  return out;
 };
 
 const normalizeDomain = (domain: string): string =>
@@ -395,7 +399,10 @@ export const CompetitorsTab = memo(({
     const mk = () => ({ total: 0, companyMentioned: 0, discoveryTotal: 0, discoveryMentioned: 0, competitiveTotal: 0, competitiveMentioned: 0 });
     const current = mk();
     const previous = mk();
-    const competitiveByMonth = new Map<string, number>();
+    // Competitive totals per quarter across ALL quarters up to the selected
+    // one (not just the selected quarter): the share-of-voice trend plots
+    // quarters, so it needs the history the period filter would drop.
+    const competitiveByQuarter = new Map<string, number>();
     const add = (t: ReturnType<typeof mk>, r: ScopePromptTypeStatsRow) => {
       const n = r.total_responses || 0;
       const m = r.mentioned_responses || 0;
@@ -407,16 +414,13 @@ export const CompetitorsTab = memo(({
     for (const r of cubePromptTypeRows) {
       if (cubeJobFunction != null && r.job_function_context !== cubeJobFunction) continue;
       const rowQuarter = r.response_month ? quarterKeyOfMonthStr(String(r.response_month)) : null;
-      if (!cubeQuarterKey || rowQuarter === cubeQuarterKey) {
-        add(current, r);
-        if (r.prompt_type === "competitive" && r.response_month) {
-          const month = String(r.response_month).slice(0, 7);
-          competitiveByMonth.set(month, (competitiveByMonth.get(month) || 0) + (r.total_responses || 0));
-        }
-      }
+      if (!cubeQuarterKey || rowQuarter === cubeQuarterKey) add(current, r);
       if (cubePrevQuarterKey != null && rowQuarter === cubePrevQuarterKey) add(previous, r);
+      if (r.prompt_type === "competitive" && rowQuarter && (!cubeQuarterKey || rowQuarter <= cubeQuarterKey)) {
+        competitiveByQuarter.set(rowQuarter, (competitiveByQuarter.get(rowQuarter) || 0) + (r.total_responses || 0));
+      }
     }
-    return { current, previous, competitiveByMonth };
+    return { current, previous, competitiveByQuarter };
   }, [cubePromptTypeRows, cubeQuarterKey, cubePrevQuarterKey, cubeJobFunction]);
 
   // -------------------------------------------------------------------------
@@ -766,139 +770,87 @@ export const CompetitorsTab = memo(({
 
   const card1Visible = useMemo(() => card1Rows.slice(0, CARD1_ROW_LIMIT), [card1Rows]);
 
-  // Line view — share-of-voice trend: % of each period bucket's competitive
-  // answers mentioning each of the top direct competitors. The measured
-  // company is deliberately absent here too (named in the prompt → ~100%).
+  // Line view — share-of-voice trend: % of each quarter's competitive
+  // answers mentioning each of the top direct competitors, by calendar
+  // quarter (the dashboard's period unit), never by collection date: a
+  // quarter with two collection runs is one point, not two. Runs from the
+  // first quarter with data up to the selected one. The measured company is
+  // deliberately absent (named in the prompt → ~100%).
   const trend = useMemo(() => {
     const series = card1Rows.slice(0, TREND_SERIES_LIMIT).map((r) => r.name);
-    const empty = { data: [] as Record<string, any>[], series, granularity: "week" as TrendGranularity };
+    const toData = (quarters: string[], share: (quarter: string, i: number) => number) =>
+      quarters.map((key) => {
+        const row: Record<string, any> = { key, label: quarterLabel(key) };
+        series.forEach((_, i) => { row[`s${i}`] = share(key, i); });
+        return row;
+      });
 
-    const scope = analyzed.matching.filter((nr) => nr.promptType === "competitive");
-
-    // Cube path: month-grain numerators straight from the competitor cube
-    // (collection-cycle months, response_month) over denominators from the
-    // scope prompt-type cube — same months, same basis. The cube has no week
-    // grain, so short windows (<=2 pooled months) fall through to the raw
-    // path below.
+    // Cube path: per-quarter numerators from the competitor cube over
+    // per-quarter denominators from the scope prompt-type cube — same basis.
+    // Pooled across every quarter (quarterKey null), then capped at the
+    // selected quarter.
     if (cubePooled && competitorStats && cubeScopeTotals) {
       const monthly = poolCompetitorMonthly(competitorStats.rows, {
-        quarterKey: cubeQuarterKey,
+        quarterKey: null,
         jobFunction: cubeJobFunction,
         promptType: "competitive",
       });
       // Collapse cube names through the same map as the pooled counts so the
-      // monthly series line up with the card1Rows-derived series names.
+      // series line up with the card1Rows-derived series names.
       const byName = new Map<string, Map<string, number>>();
-      const monthSet = new Set<string>();
       for (const [rawName, months] of monthly) {
         for (const target of cubePooled.collapseMap.get(rawName) ?? [rawName]) {
           let merged = byName.get(target);
           if (!merged) { merged = new Map(); byName.set(target, merged); }
           for (const [month, v] of months) {
-            merged.set(month, (merged.get(month) || 0) + v);
-            monthSet.add(month);
+            const quarter = quarterKeyOfMonthStr(month);
+            if (!quarter || (cubeQuarterKey && quarter > cubeQuarterKey)) continue;
+            merged.set(quarter, (merged.get(quarter) || 0) + v);
           }
         }
       }
-      if (monthSet.size > 2) {
-        const denomByMonth = cubeScopeTotals.competitiveByMonth;
-
-        const monthsAsc = Array.from(monthSet).sort();
-        const firstMonth = monthsAsc[0];
-        const lastMonth = monthsAsc[monthsAsc.length - 1];
-        const multiYear = firstMonth.slice(0, 4) !== lastMonth.slice(0, 4);
-        // Contiguous month keys so gaps render as zero, capped at the same
-        // 60 buckets as the raw path.
-        let [y, m] = firstMonth.split("-").map(Number);
-        const [lastY, lastM] = lastMonth.split("-").map(Number);
-        const data: Record<string, any>[] = [];
-        while ((y < lastY || (y === lastY && m <= lastM)) && data.length < 60) {
-          const key = `${y}-${String(m).padStart(2, "0")}`;
-          const ts = new Date(y, m - 1, 1).getTime();
-          const row: Record<string, any> = {
-            ts,
-            label: new Date(ts).toLocaleDateString("en-US", multiYear ? { month: "short", year: "2-digit" } : { month: "short" }),
-          };
-          const denom = denomByMonth.get(key) || 0;
-          series.forEach((name, i) => {
-            const count = byName.get(name)?.get(key) || 0;
-            row[`s${i}`] = denom > 0 ? Math.min(100, Math.round((count / denom) * 1000) / 10) : 0;
-          });
-          data.push(row);
-          m += 1;
-          if (m > 12) { m = 1; y += 1; }
-        }
-        return { data, series, granularity: "month" as TrendGranularity };
-      }
-      // <=2 pooled months: week grain, which only the raw rows can serve.
+      const denomByQuarter = cubeScopeTotals.competitiveByQuarter;
+      const withData = Array.from(denomByQuarter.keys()).filter((q) => (denomByQuarter.get(q) || 0) > 0).sort();
+      if (withData.length === 0) return { data: [] as Record<string, any>[], series };
+      const quarters = quarterRange(withData[0], withData[withData.length - 1]);
+      return {
+        data: toData(quarters, (key, i) => {
+          const denom = denomByQuarter.get(key) || 0;
+          const count = byName.get(series[i])?.get(key) || 0;
+          return denom > 0 ? Math.min(100, Math.round((count / denom) * 1000) / 10) : 0;
+        }),
+        series,
+      };
     }
 
-    if (scope.length === 0) return empty;
-
-    let minTs = Infinity;
-    let maxTs = -Infinity;
-    const monthKeys = new Set<string>();
-    for (const nr of scope) {
-      if (nr.testedAt == null) continue;
-      if (nr.testedAt < minTs) minTs = nr.testedAt;
-      if (nr.testedAt > maxTs) maxTs = nr.testedAt;
-      const d = new Date(nr.testedAt);
-      monthKeys.add(`${d.getFullYear()}-${d.getMonth()}`);
-    }
-    if (!Number.isFinite(minTs)) return empty;
-
-    const granularity: TrendGranularity = monthKeys.size > 2 ? "month" : "week";
-    const bucketOf = granularity === "month" ? startOfMonthTs : startOfWeekTs;
-
-    const bucketStarts: number[] = [];
-    let cursor = bucketOf(minTs);
-    const last = bucketOf(maxTs);
-    while (cursor <= last && bucketStarts.length < 60) {
-      bucketStarts.push(cursor);
-      const d = new Date(cursor);
-      if (granularity === "month") d.setMonth(d.getMonth() + 1);
-      else d.setDate(d.getDate() + 7);
-      cursor = d.getTime();
-    }
-
-    const multiYear = new Date(minTs).getFullYear() !== new Date(maxTs).getFullYear();
-    type Bucket = { row: Record<string, any>; total: number; counts: number[] };
-    const buckets = new Map<number, Bucket>();
-    const data = bucketStarts.map((ts) => {
-      const d = new Date(ts);
-      const label = granularity === "month"
-        ? d.toLocaleDateString("en-US", multiYear ? { month: "short", year: "2-digit" } : { month: "short" })
-        : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      const row: Record<string, any> = { ts, label };
-      series.forEach((_, i) => { row[`s${i}`] = 0; });
-      buckets.set(ts, { row, total: 0, counts: series.map(() => 0) });
-      return row;
-    });
-
-    // Series names can come from the cube's name space (when the fallback
-    // runs for a short window on a cube-backed scope); match responses by
-    // the merged responseIds rather than by name string, so a name-space
-    // mismatch can't flatline a series. On the raw path the ids come from
-    // the same raw scan, so this is equivalent to the name check.
+    // Raw fallback: the stream only holds the selected period, so this is
+    // usually a single quarter.
+    const scope = analyzed.matching.filter((nr) => nr.promptType === "competitive");
+    // Match responses by the merged responseIds rather than by name string,
+    // so a cube/raw name-space mismatch can't flatline a series.
     const seriesIds = series.map((name) => new Set(analyzed.byName.get(name)?.responseIds ?? []));
+    const totals = new Map<string, number>();
+    const counts = new Map<string, number[]>();
     for (const nr of scope) {
       if (nr.testedAt == null) continue;
-      const bucket = buckets.get(bucketOf(nr.testedAt));
-      if (!bucket) continue;
-      bucket.total += 1;
+      const d = new Date(nr.testedAt);
+      const key = `${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`;
+      totals.set(key, (totals.get(key) || 0) + 1);
+      let c = counts.get(key);
+      if (!c) { c = series.map(() => 0); counts.set(key, c); }
       for (let i = 0; i < series.length; i += 1) {
-        if (seriesIds[i].has(nr.id)) bucket.counts[i] += 1;
+        if (seriesIds[i].has(nr.id)) c[i] += 1;
       }
     }
-    buckets.forEach((bucket) => {
-      series.forEach((_, i) => {
-        bucket.row[`s${i}`] = bucket.total > 0
-          ? Math.round((bucket.counts[i] / bucket.total) * 1000) / 10
-          : 0;
-      });
-    });
-
-    return { data, series, granularity };
+    if (totals.size === 0) return { data: [] as Record<string, any>[], series };
+    const keys = Array.from(totals.keys()).sort();
+    return {
+      data: toData(quarterRange(keys[0], keys[keys.length - 1]), (key, i) => {
+        const total = totals.get(key) || 0;
+        return total > 0 ? Math.round(((counts.get(key)?.[i] || 0) / total) * 1000) / 10 : 0;
+      }),
+      series,
+    };
   }, [card1Rows, analyzed, cubePooled, competitorStats, cubeScopeTotals, cubeQuarterKey, cubeJobFunction]);
 
   // -------------------------------------------------------------------------
