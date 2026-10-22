@@ -11,13 +11,15 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X, Star, ArrowRight } from 'lucide-react';
+import { Briefcase, Users, Building2, Plus, RefreshCw, Eye, Pencil, UserPlus, Mail, Search, Calendar, Database, FileText, Upload, Trash2, Check, X, Star, ArrowRight, Send } from 'lucide-react';
 import { OrgWorkspace } from './OrgWorkspace';
 import { OrgLogo, useOrgLogos } from './OrgLogo';
 import { WorkspaceActions } from './WorkspaceActions';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
 import { Switch } from '@/components/ui/switch';
 import { MemberFocusDialog, type MemberFocusDialogMember } from './MemberFocusDialog';
+import { DigestPreviewDialog, type DigestPreviewTarget } from './DigestPreviewDialog';
+import { previewDigest, sendDigestToList } from '@/services/digestService';
 import { describeMemberFocus } from './memberFocus';
 import { fetchOrgBrands, type OrgBrand } from '@/hooks/useProfileSetup';
 import { generatePdfThumbnail } from '@/utils/pdfThumbnail';
@@ -95,6 +97,12 @@ export const OrganizationManagementTab = () => {
   // member focus editor.
   const [orgBrands, setOrgBrands] = useState<OrgBrand[]>([]);
   const [focusMember, setFocusMember] = useState<MemberFocusDialogMember | null>(null);
+  // Quarterly update email: the open preview, which member is being
+  // rendered, and the confirm step before a send to the whole list.
+  const [digestTarget, setDigestTarget] = useState<DigestPreviewTarget | null>(null);
+  const [digestLoadingFor, setDigestLoadingFor] = useState<string | null>(null);
+  const [digestConfirmOpen, setDigestConfirmOpen] = useState(false);
+  const [digestSending, setDigestSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   // Platform-wide checks (collection running, theme backlog, rollup refresh
@@ -379,6 +387,40 @@ export const OrganizationManagementTab = () => {
       return;
     }
     toast.success(next ? `${member.email} added to the send list` : `${member.email} removed from the send list`);
+  };
+
+  // Render one member's quarterly email from their saved view (nothing is
+  // sent, no chat is created) and open it in the preview dialog.
+  const handlePreviewDigest = async (member: OrganizationMember) => {
+    setDigestLoadingFor(member.id);
+    try {
+      const preview = await previewDigest(member.id);
+      setDigestTarget({ memberId: member.id, email: member.email, preview });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not build the email');
+    } finally {
+      setDigestLoadingFor(null);
+    }
+  };
+
+  const handleSendDigestToList = async () => {
+    if (!selectedOrg) return;
+    setDigestSending(true);
+    try {
+      const r = await sendDigestToList(selectedOrg.id);
+      const sent = r.results.filter(x => x.status === 'sent').length;
+      const failed = r.results.filter(x => x.status === 'failed');
+      if (failed.length) {
+        toast.error(`${sent} sent, ${failed.length} failed: ${failed.map(f => `${f.email} (${f.error})`).join('; ')}`);
+      } else {
+        toast.success(`Quarterly email sent to ${sent} ${sent === 1 ? 'member' : 'members'}`);
+      }
+      setDigestConfirmOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Send failed');
+    } finally {
+      setDigestSending(false);
+    }
   };
 
   const openFocusEditor = (member: OrganizationMember) => {
@@ -993,14 +1035,28 @@ export const OrganizationManagementTab = () => {
   // Members section of the org workspace (was a modal).
   const membersPanel = (
     <div className="space-y-4">
-          <div className="space-y-1">
-            <h2 className="text-lg font-semibold text-nightsky">Members</h2>
-            <p className="text-sm text-slate-500">
-              Members of {selectedOrg?.name}
-              {orgMembers.length > 0 && (
-                <> · {orgMembers.filter(m => m.quarterly_digest).length} of {orgMembers.length} on the quarterly email list</>
-              )}
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold text-nightsky">Members</h2>
+              <p className="text-sm text-slate-500">
+                Members of {selectedOrg?.name}
+                {orgMembers.length > 0 && (
+                  <> · {orgMembers.filter(m => m.quarterly_digest).length} of {orgMembers.length} on the quarterly email list</>
+                )}
+              </p>
+            </div>
+            {orgMembers.some(m => m.quarterly_digest) && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-silver"
+                onClick={() => setDigestConfirmOpen(true)}
+                title="Send the quarterly update email to everyone on the list, each scoped to their own view"
+              >
+                <Send className="h-4 w-4 mr-2" />
+                Send quarterly email
+              </Button>
+            )}
           </div>
           <div className="space-y-4">
             {orgMembers.length === 0 ? (
@@ -1060,6 +1116,19 @@ export const OrganizationManagementTab = () => {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          {member.default_company_id && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-silver"
+                              onClick={() => handlePreviewDigest(member)}
+                              disabled={digestLoadingFor === member.id}
+                              title="Preview this member's quarterly email"
+                            >
+                              <Eye className="h-4 w-4 mr-1.5" />
+                              {digestLoadingFor === member.id ? 'Building…' : 'Email'}
+                            </Button>
+                          )}
                           {member.role !== 'owner' && (
                             <Button
                               variant="outline"
@@ -1126,6 +1195,33 @@ export const OrganizationManagementTab = () => {
             reportsPanel={reportsPanel}
             membersPanel={membersPanel}
           />
+          <DigestPreviewDialog target={digestTarget} onClose={() => setDigestTarget(null)} />
+          <Dialog open={digestConfirmOpen} onOpenChange={(open) => { if (!digestSending) setDigestConfirmOpen(open); }}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Send the quarterly email?</DialogTitle>
+                <DialogDescription>
+                  {orgMembers.filter(m => m.quarterly_digest).length} {orgMembers.filter(m => m.quarterly_digest).length === 1 ? 'member' : 'members'} of {selectedOrg?.name} will
+                  each get the email for their own saved view, with a chat thread of the summary. This cannot be recalled.
+                </DialogDescription>
+              </DialogHeader>
+              <ul className="max-h-48 overflow-auto text-sm text-nightsky">
+                {orgMembers.filter(m => m.quarterly_digest).map(m => (
+                  <li key={m.id} className="flex justify-between gap-3 py-1 border-b border-silver/60 last:border-0">
+                    <span>{m.email}</span>
+                    <span className="text-nightsky/60">{describeMemberFocus({ defaultCompanyId: m.default_company_id, defaultLocationContext: m.default_location_context }, orgBrands)}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" className="border-silver" onClick={() => setDigestConfirmOpen(false)} disabled={digestSending}>Cancel</Button>
+                <Button className="bg-pink text-white hover:bg-pink/90" onClick={handleSendDigestToList} disabled={digestSending}>
+                  <Send className="h-4 w-4 mr-2" />
+                  {digestSending ? 'Sending…' : 'Send now'}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
           <MemberFocusDialog
             orgId={openOrg.id}
             brands={orgBrands}
