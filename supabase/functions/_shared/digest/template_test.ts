@@ -130,3 +130,14 @@ Deno.test('digestMarkdown carries the figures for the chat thread', () => {
   assertStringIncludes(md, '- LinkedIn: 49% of answers (down 2 points)');
   assertStringIncludes(md, 'Where to act next');
 });
+
+Deno.test('domains in prose become navy links, never client auto-links', () => {
+  const html = renderDigestHtml({
+    ...payload,
+    narrative: { ...payload.narrative!, action: 'The page AI reads most, jobs.netflix.com/culture, says nothing about workload.' },
+  }, opts);
+  assertStringIncludes(html, '<a href="https://jobs.netflix.com/culture" style="color:#13274F;text-decoration:none;font-weight:600;" target="_blank">jobs.netflix.com/culture</a>');
+  assertStringIncludes(html, '<a href="https://careers.ford.com" style="color:#0F172A;text-decoration:none;" target="_blank">careers.ford.com</a>');
+  assertStringIncludes(html, '>OWNED</span>');
+  assert(!html.includes('October'));
+});

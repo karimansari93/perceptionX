@@ -19,6 +19,18 @@ export function escapeHtml(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Mail clients auto-link anything that looks like a domain, in their own
+// blue. Prose and source names carry domains on purpose, so they become
+// deliberate links in our navy, no underline, to the page itself.
+const DOMAIN_RE = /\b((?:[a-z0-9-]+\.)+(?:com|org|net|io|co|ai|fyi|in|de|fr|uk|nl|pl|jp|au|ca|br|mx|es|it|se|ch|sg)(?:\.[a-z]{2})?(?:\/[a-z0-9._~%!$&'()*+,;=:@/-]*[a-z0-9_/-])?)/gi;
+export function linkDomains(escaped: string): string {
+  return escaped.replace(DOMAIN_RE, (m) => {
+    const href = m.includes('://') ? m : `https://${m}`;
+    return `<a href="${href}" style="color:${NAVY};text-decoration:none;font-weight:600;" target="_blank">${m}</a>`;
+  });
+}
+const prose = (text: string) => linkDomains(escapeHtml(text));
+
 const p = (text: string, size = 14, color = INK, weight = 400, extra = '', lh = '1.5') =>
   `<p style="${F}font-size:${size}px;line-height:${lh};color:${color};font-weight:${weight};margin:0;${extra}">${text}</p>`;
 
@@ -70,6 +82,17 @@ const metricRow = (a: string, b: string) =>
   `<tr><td class="em-stack" style="width:50%;vertical-align:top;padding-left:0;padding-right:5px;">${a}</td>` +
   `<td class="em-stack" style="width:50%;vertical-align:top;padding-left:5px;padding-right:0;">${b}</td></tr>`;
 
+const ownedTag = `<span style="${F}font-size:10px;font-weight:700;color:${NAVY};border:1px solid ${NAVY};border-radius:999px;padding:1px 6px;margin-left:6px;vertical-align:1px;letter-spacing:0.3px;">OWNED</span>`;
+
+function barName(row: DigestBarRow): string {
+  const name = escapeHtml(row.name);
+  const label = DOMAIN_RE.test(name) && !row.you
+    ? `<a href="https://${name}" style="color:${INK};text-decoration:none;" target="_blank">${name}</a>`
+    : name;
+  DOMAIN_RE.lastIndex = 0;
+  return label + (row.you ? ' (You)' : '') + (row.owned ? ownedTag : '');
+}
+
 function barRow(row: DigestBarRow, token: string): string {
   const fg = row.you ? PINK : INK;
   const bg = row.you ? '#FDF2F6' : '#FFFFFF';
@@ -81,7 +104,7 @@ function barRow(row: DigestBarRow, token: string): string {
   return `<tr><td style="border-radius:7px;padding:9px 12px;vertical-align:middle;background-color:${bg};">` +
     `<table style="border-collapse:collapse;border-spacing:0;width:100%;"><tr>` +
     `<td align="center" style="padding-right:7px;text-align:center;vertical-align:middle;width:24px;" valign="middle">${mark(row.domain, token)}</td>` +
-    `<td style="vertical-align:middle;width:100%;">${p(escapeHtml(row.name) + (row.you ? ' (You)' : ''), 12, fg, 600, '', '18px')}</td>` +
+    `<td style="vertical-align:middle;width:100%;">${p(barName(row), 12, fg, 600, '', '18px')}</td>` +
     `<td style="text-align:right;vertical-align:middle;white-space:nowrap;width:1%;">${p(`${row.pct}%` + change, 12, fg, 600, '', '24px')}</td></tr></table>` +
     `<table style="background-color:rgba(15,23,42,0.08);border-collapse:separate;border-radius:999px;border-spacing:0;margin-top:7px;width:100%;"><tr>` +
     `<td style="font-size:0;height:4px;line-height:0;background-color:${fill};border-radius:999px;width:${width}%;">&nbsp;</td>` +
@@ -99,7 +122,7 @@ function section(title: string, sub: string, body: string, top = 20): string {
 
 function callout(title: string, body: string): string {
   return `<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 12px;"><tr><td style="border-left:3px solid ${TEAL};padding:2px 0 2px 12px;">` +
-    p(escapeHtml(title), 14, INK, 700, 'margin-bottom:2px;', '20px') + p(escapeHtml(body), 13, BODY, 400, '', '1.5') + '</td></tr></table>';
+    p(prose(title), 14, INK, 700, 'margin-bottom:2px;', '20px') + p(prose(body), 13, BODY, 400, '', '1.5') + '</td></tr></table>';
 }
 
 function smallTable(headers: string[], rows: string[][]): string {
@@ -172,15 +195,15 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     ? `Positive sentiment and how often AI names ${escapeHtml(payload.brand.name)}${prev ? `. Visibility change since ${escapeHtml(prev)}.` : '.'}`
     : `Positive sentiment, change since ${escapeHtml(prev)}, and how often AI names ${escapeHtml(payload.brand.name)}${what}.`;
   const markets = payload.byMarket.length > 1
-    ? section('By market', groupSub(''), groupTable(payload.byMarket, 'Market', payload.sentimentChangeHidden) + (n?.marketsNote ? spacer + p(escapeHtml(n.marketsNote), 13, BODY) : ''))
+    ? section('By market', groupSub(''), groupTable(payload.byMarket, 'Market', payload.sentimentChangeHidden) + (n?.marketsNote ? spacer + p(prose(n.marketsNote), 13, BODY) : ''))
     : '';
   const functions = payload.byFunction.length > 1
-    ? section('By job function', groupSub(''), groupTable(payload.byFunction, 'Function', payload.sentimentChangeHidden) + (n?.functionsNote ? spacer + p(escapeHtml(n.functionsNote), 13, BODY) : ''))
+    ? section('By job function', groupSub(''), groupTable(payload.byFunction, 'Function', payload.sentimentChangeHidden) + (n?.functionsNote ? spacer + p(prose(n.functionsNote), 13, BODY) : ''))
     : '';
 
   const act = n?.action
     ? `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:20px;"><tbody><tr><td style="background:#FFF5F8;border:1px solid ${PINK};border-radius:10px;padding:16px;">` +
-      p('Where to act next', 14, INK, 700, 'margin-bottom:4px;', '24px') + p(escapeHtml(n.action), 13, BODY) + '</td></tr></tbody></table>'
+      p('Where to act next', 14, INK, 700, 'margin-bottom:4px;', '24px') + p(prose(n.action), 13, BODY) + '</td></tr></tbody></table>'
     : '';
 
   const sinceSub = prev ? `, with the change since ${escapeHtml(prev)}` : '';
@@ -188,7 +211,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     ? section('Employers AI names alongside you', `Share of all answers that mention each employer${sinceSub}.`, barList(payload.employers.map(r => barRow(r, token))))
     : '';
   const sources = payload.sources.length
-    ? section('Sources AI reads', `Share of answers citing each source${sinceSub}.${payload.sources.some(s => s.owned) ? ' Owned sites in navy.' : ''}`, barList(payload.sources.map(r => barRow(r, token))))
+    ? section('Sources AI reads', `Share of answers citing each source${sinceSub}.${payload.sources.some(s => s.owned) ? ' Your own sites are marked.' : ''}`, barList(payload.sources.map(r => barRow(r, token))))
     : '';
 
   const themeSub = `What AI talks about when it describes working at ${escapeHtml(payload.brand.name)}, and how positively.${payload.sentimentChangeHidden ? ' Change resumes next quarter.' : ''}`;
