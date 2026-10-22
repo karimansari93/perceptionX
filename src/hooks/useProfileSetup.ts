@@ -111,8 +111,38 @@ async function resolveSetupOrgId(userId: string): Promise<string | null> {
   return (data as unknown as Array<{ organization_id: string }> | null)?.[0]?.organization_id ?? null;
 }
 
-// Subsidiaries in the user's organization (companies grouped by name),
-// biggest footprint first so the org's main brand is the natural default.
+// Group an organization's company rows into subsidiaries (same name = one
+// brand measured per market), biggest footprint first so the org's main
+// brand is the natural default.
+export const groupBrands = (rows: Array<Partial<BrandCompany> | null | undefined>): OrgBrand[] => {
+  const byKey = new Map<string, OrgBrand>();
+  for (const c of rows) {
+    if (!c?.id || !c.name) continue;
+    const name = c.name.trim();
+    const key = name.toLowerCase();
+    const brand = byKey.get(key) ?? { key, name, companies: [] };
+    brand.companies.push({ id: c.id, name, country: c.country ?? null });
+    byKey.set(key, brand);
+  }
+  return Array.from(byKey.values()).sort(
+    (a, b) => b.companies.length - a.companies.length || a.name.localeCompare(b.name),
+  );
+};
+
+// The subsidiaries of one organization. Shared by the user's own pickers
+// and the admin member-focus editor (admins can read any org's companies).
+export async function fetchOrgBrands(orgId: string): Promise<OrgBrand[]> {
+  const { data, error } = await supabase
+    .from('organization_companies')
+    .select('companies(id, name, country)')
+    .eq('organization_id', orgId);
+  if (error) throw error;
+  const rows = ((data ?? []) as unknown as Array<{ companies: BrandCompany | BrandCompany[] | null }>)
+    .flatMap((r) => (Array.isArray(r.companies) ? r.companies : r.companies ? [r.companies] : []));
+  return groupBrands(rows);
+}
+
+// Subsidiaries in the user's organization.
 export function useOrgBrands(userId: string | null | undefined) {
   return useQuery({
     queryKey: ['profile-setup', 'org-brands', userId ?? 'anon'],
@@ -121,28 +151,31 @@ export function useOrgBrands(userId: string | null | undefined) {
     queryFn: async (): Promise<{ orgId: string | null; brands: OrgBrand[] }> => {
       const orgId = await resolveSetupOrgId(userId as string);
       if (!orgId) return { orgId: null, brands: [] };
-      const { data, error } = await supabase
-        .from('organization_companies')
-        .select('companies(id, name, country)')
-        .eq('organization_id', orgId);
-      if (error) throw error;
-      const rows = ((data ?? []) as unknown as Array<{ companies: BrandCompany | BrandCompany[] | null }>)
-        .flatMap((r) => (Array.isArray(r.companies) ? r.companies : r.companies ? [r.companies] : []));
-      const byKey = new Map<string, OrgBrand>();
-      for (const c of rows) {
-        if (!c?.id || !c.name) continue;
-        const name = c.name.trim();
-        const key = name.toLowerCase();
-        const brand = byKey.get(key) ?? { key, name, companies: [] };
-        brand.companies.push({ id: c.id, name, country: c.country ?? null });
-        byKey.set(key, brand);
-      }
-      const brands = Array.from(byKey.values()).sort(
-        (a, b) => b.companies.length - a.companies.length || a.name.localeCompare(b.name),
-      );
-      return { orgId, brands };
+      return { orgId, brands: await fetchOrgBrands(orgId) };
     },
   });
+}
+
+// Location choices for a subsidiary of an organization (or the whole org
+// when `brand` is null): every bucket with data or configured prompts plus
+// each row's own country, through the same option builder as the dashboard
+// filter. The RPC admits org members and platform admins.
+export async function fetchOrgLocationOptions(
+  orgId: string,
+  brand: OrgBrand | null,
+): Promise<LocationEntry[]> {
+  const companyIds = brand ? brand.companies.map((c) => c.id) : null;
+  const { data, error } = await supabase.rpc(
+    'list_org_location_buckets' as never,
+    { p_org_id: orgId, p_company_ids: companyIds } as never,
+  );
+  if (error) throw error;
+  const buckets = Array.isArray(data)
+    ? (data as unknown[]).filter((v): v is string => typeof v === 'string')
+    : [];
+  return buildLocationOptions([], brand?.companies ?? [], [], buckets).options.filter(
+    (o) => o.canonicalKey !== GENERAL_KEY,
+  );
 }
 
 // Country choices for the picker: every location bucket with data or
@@ -169,17 +202,7 @@ export function useOrgLocationOptions(
     queryFn: async (): Promise<LocationEntry[]> => {
       const orgId = await resolveSetupOrgId(userId as string);
       if (!orgId) return [];
-      const { data, error } = await supabase.rpc(
-        'list_org_location_buckets' as never,
-        { p_org_id: orgId, p_company_ids: companyIds } as never,
-      );
-      if (error) throw error;
-      const buckets = Array.isArray(data)
-        ? (data as unknown[]).filter((v): v is string => typeof v === 'string')
-        : [];
-      return buildLocationOptions([], brand?.companies ?? [], [], buckets).options.filter(
-        (o) => o.canonicalKey !== GENERAL_KEY,
-      );
+      return fetchOrgLocationOptions(orgId, brand ?? null);
     },
   });
 }

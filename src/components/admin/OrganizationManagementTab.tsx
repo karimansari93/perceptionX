@@ -16,6 +16,10 @@ import { OrgWorkspace } from './OrgWorkspace';
 import { OrgLogo, useOrgLogos } from './OrgLogo';
 import { WorkspaceActions } from './WorkspaceActions';
 import InviteTeammatesModal from '@/components/team/InviteTeammatesModal';
+import { Switch } from '@/components/ui/switch';
+import { MemberFocusDialog, type MemberFocusDialogMember } from './MemberFocusDialog';
+import { describeMemberFocus } from './memberFocus';
+import { fetchOrgBrands, type OrgBrand } from '@/hooks/useProfileSetup';
 import { generatePdfThumbnail } from '@/utils/pdfThumbnail';
 
 const PDF_MIME = 'application/pdf';
@@ -69,6 +73,11 @@ interface OrganizationMember {
   email: string;
   role: string;
   joined_at: string;
+  // Quarterly update email: on the send list, and the view it is scoped to
+  // (the member's dashboard focus).
+  quarterly_digest: boolean;
+  default_company_id: string | null;
+  default_location_context: string | null;
 }
 
 export const OrganizationManagementTab = () => {
@@ -82,6 +91,10 @@ export const OrganizationManagementTab = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const openOrgId = searchParams.get('org');
   const [orgMembers, setOrgMembers] = useState<OrganizationMember[]>([]);
+  // The open org's subsidiaries, for naming each member's brand and for the
+  // member focus editor.
+  const [orgBrands, setOrgBrands] = useState<OrgBrand[]>([]);
+  const [focusMember, setFocusMember] = useState<MemberFocusDialogMember | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   // Platform-wide checks (collection running, theme backlog, rollup refresh
@@ -218,28 +231,42 @@ export const OrganizationManagementTab = () => {
     try {
       const { data: membersData, error: membersError } = await supabase
         .from('organization_members')
-        .select('id, user_id, role, joined_at')
+        .select('id, user_id, role, joined_at, quarterly_digest')
         .eq('organization_id', orgId);
 
       if (membersError) throw membersError;
 
-      // Fetch profiles separately
+      fetchOrgBrands(orgId).then(setOrgBrands).catch((err) => {
+        console.error('Error loading org brands:', err);
+        setOrgBrands([]);
+      });
+
+      // Fetch profiles separately (admins can read every profile).
       if (membersData && membersData.length > 0) {
         const userIds = membersData.map(m => m.user_id);
         const { data: profilesData, error: profilesError } = await supabase
           .from('profiles')
-          .select('id, email')
+          .select('id, email, default_company_id, default_location_context')
           .in('id', userIds);
 
         if (profilesError) throw profilesError;
 
-        const members = membersData.map(member => ({
-          id: member.id,
-          user_id: member.user_id,
-          email: profilesData?.find(p => p.id === member.user_id)?.email || 'Unknown',
-          role: member.role,
-          joined_at: member.joined_at
-        }));
+        type ProfileRow = { id: string; email: string | null; default_company_id?: string | null; default_location_context?: string | null };
+        type MemberRow = { id: string; user_id: string; role: string; joined_at: string; quarterly_digest?: boolean | null };
+        const profiles = (profilesData ?? []) as unknown as ProfileRow[];
+        const members = (membersData as unknown as MemberRow[]).map(member => {
+          const profile = profiles.find(p => p.id === member.user_id);
+          return {
+            id: member.id,
+            user_id: member.user_id,
+            email: profile?.email || 'Unknown',
+            role: member.role,
+            joined_at: member.joined_at,
+            quarterly_digest: !!member.quarterly_digest,
+            default_company_id: profile?.default_company_id ?? null,
+            default_location_context: profile?.default_location_context ?? null,
+          };
+        });
 
         setOrgMembers(members);
       } else {
@@ -334,6 +361,45 @@ export const OrganizationManagementTab = () => {
       console.error('Error removing member:', error);
       toast.error('Failed to remove member');
     }
+  };
+
+  // Quick toggle from the table: flips the send-list flag only, keeping the
+  // member's view exactly as stored.
+  const handleToggleDigest = async (member: OrganizationMember, next: boolean) => {
+    setOrgMembers(prev => prev.map(m => (m.id === member.id ? { ...m, quarterly_digest: next } : m)));
+    const { error } = await supabase.rpc('admin_set_member_focus' as never, {
+      p_member_id: member.id,
+      p_default_company_id: member.default_company_id,
+      p_default_location_context: member.default_location_context,
+      p_quarterly_digest: next,
+    } as never);
+    if (error) {
+      setOrgMembers(prev => prev.map(m => (m.id === member.id ? { ...m, quarterly_digest: !next } : m)));
+      toast.error(`Could not update ${member.email}: ${error.message}`);
+      return;
+    }
+    toast.success(next ? `${member.email} added to the send list` : `${member.email} removed from the send list`);
+  };
+
+  const openFocusEditor = (member: OrganizationMember) => {
+    setFocusMember({
+      id: member.id,
+      email: member.email,
+      quarterlyDigest: member.quarterly_digest,
+      defaultCompanyId: member.default_company_id,
+      defaultLocationContext: member.default_location_context,
+    });
+  };
+
+  const applySavedFocus = (saved: MemberFocusDialogMember) => {
+    setOrgMembers(prev => prev.map(m => (m.id === saved.id
+      ? {
+          ...m,
+          quarterly_digest: saved.quarterlyDigest,
+          default_company_id: saved.defaultCompanyId,
+          default_location_context: saved.defaultLocationContext,
+        }
+      : m)));
   };
 
   const handleChangeMemberRole = async (memberId: string, newRole: 'admin' | 'member') => {
@@ -931,6 +997,9 @@ export const OrganizationManagementTab = () => {
             <h2 className="text-lg font-semibold text-nightsky">Members</h2>
             <p className="text-sm text-slate-500">
               Members of {selectedOrg?.name}
+              {orgMembers.length > 0 && (
+                <> · {orgMembers.filter(m => m.quarterly_digest).length} of {orgMembers.length} on the quarterly email list</>
+              )}
             </p>
           </div>
           <div className="space-y-4">
@@ -945,6 +1014,8 @@ export const OrganizationManagementTab = () => {
                   <TableRow>
                     <TableHead>Email</TableHead>
                     <TableHead>Role</TableHead>
+                    <TableHead>Quarterly email</TableHead>
+                    <TableHead>View</TableHead>
                     <TableHead>Joined</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
@@ -965,6 +1036,24 @@ export const OrganizationManagementTab = () => {
                         }>
                           {member.role === 'admin' ? 'Super Admin' : member.role === 'owner' ? 'Owner' : 'Member'}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={member.quarterly_digest}
+                          onCheckedChange={(next) => handleToggleDigest(member, next)}
+                          aria-label={`Quarterly email for ${member.email}`}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <button
+                          type="button"
+                          className="group flex items-center gap-1.5 text-left text-sm text-nightsky hover:underline"
+                          onClick={() => openFocusEditor(member)}
+                          title="Edit the brand and markets this member sees and is emailed about"
+                        >
+                          <span>{describeMemberFocus({ defaultCompanyId: member.default_company_id, defaultLocationContext: member.default_location_context }, orgBrands)}</span>
+                          <Pencil className="h-3.5 w-3.5 text-nightsky/40 group-hover:text-nightsky" />
+                        </button>
                       </TableCell>
                       <TableCell className="text-nightsky/60">
                         {new Date(member.joined_at).toLocaleDateString()}
@@ -1029,13 +1118,22 @@ export const OrganizationManagementTab = () => {
   return (
     <div className="space-y-4">
       {openOrg ? (
-        <OrgWorkspace
-          org={openOrg}
-          logoSrc={orgLogos[openOrg.id]}
-          onBack={closeWorkspace}
-          reportsPanel={reportsPanel}
-          membersPanel={membersPanel}
-        />
+        <>
+          <OrgWorkspace
+            org={openOrg}
+            logoSrc={orgLogos[openOrg.id]}
+            onBack={closeWorkspace}
+            reportsPanel={reportsPanel}
+            membersPanel={membersPanel}
+          />
+          <MemberFocusDialog
+            orgId={openOrg.id}
+            brands={orgBrands}
+            member={focusMember}
+            onClose={() => setFocusMember(null)}
+            onSaved={applySavedFocus}
+          />
+        </>
       ) : (
       <>
       {/* Header - compact */}
