@@ -93,7 +93,7 @@ const STEPS: WalkthroughStep[] = [
   },
   {
     target: '[data-tour="sources-domain-list"]',
-    title: 'Cited domains',
+    title: 'Top domains',
     content:
       "Sources shows where AI is getting its answers about you. Every cited domain, ranked by the share of AI responses citing it. The bar under each one splits those citations in two: teal where your company was mentioned in the answer, grey where it wasn't. A lot of grey on a big source is a visibility gap — that source is shaping answers you're absent from. Click any row to open that source.",
     placement: 'right',
