@@ -107,9 +107,9 @@ function barRow(row: DigestBarRow, token: string): string {
     `<td align="center" style="padding-right:7px;text-align:center;vertical-align:middle;width:24px;" valign="middle">${mark(row.domain, token)}</td>` +
     `<td style="vertical-align:middle;width:100%;">${p(barName(row), 12, fg, 600, '', '18px')}</td>` +
     `<td style="text-align:right;vertical-align:middle;white-space:nowrap;width:1%;">${p(`${row.pct}%` + change, 12, fg, 600, '', '24px')}</td></tr></table>` +
-    `<table style="background-color:rgba(15,23,42,0.08);border-collapse:separate;border-radius:999px;border-spacing:0;margin-top:7px;width:100%;"><tr>` +
-    `<td style="font-size:0;height:4px;line-height:0;background-color:${fill};border-radius:999px;width:${width}%;">&nbsp;</td>` +
-    `<td style="font-size:0;height:4px;line-height:0;width:${100 - width}%;">&nbsp;</td></tr></table></td></tr>`;
+    `<table class="em-bar" width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#E8EBF0;border-collapse:separate;border-radius:999px;border-spacing:0;margin-top:7px;width:100%;"><tr>` +
+    `<td width="${width}%" height="4" bgcolor="${fill}" style="font-size:0;height:4px;line-height:0;background-color:${fill};border-radius:999px;width:${width}%;">&nbsp;</td>` +
+    `<td width="${100 - width}%" height="4" style="font-size:0;height:4px;line-height:0;width:${100 - width}%;">&nbsp;</td></tr></table></td></tr>`;
 }
 
 const barList = (rows: string[]) =>
@@ -242,7 +242,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
   return '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">' +
     '<html dir="ltr" lang="en"><head><meta content="width=device-width, initial-scale=1" name="viewport"><meta content="text/html; charset=UTF-8" http-equiv="Content-Type"><meta name="x-apple-disable-message-reformatting">' +
     `<title>${escapeHtml(digestSubject(payload))}</title>` +
-    '<style>@media only screen and (max-width: 600px) { .em-container > tbody > tr > td { padding: 24px !important; } .em-project-card > tbody > tr > td { padding: 14px !important; } .em-stack { display: block !important; box-sizing: border-box !important; width: 100% !important; padding-left: 0 !important; padding-right: 0 !important; } .em-header-meta { text-align: left !important; margin-top: 12px !important; } .em-metric-card { height: auto !important; margin-bottom: 10px !important; } .em-metric-spacer { display: none !important; } }</style>' +
+    '<style>@media only screen and (max-width: 600px) { .em-container > tbody > tr > td { padding: 24px !important; } .em-project-card > tbody > tr > td { padding: 14px !important; } .em-stack { display: block !important; box-sizing: border-box !important; width: 100% !important; padding-left: 0 !important; padding-right: 0 !important; } .em-header-meta { text-align: left !important; margin-top: 12px !important; } .em-metric-card { height: auto !important; margin-bottom: 10px !important; } .em-metric-spacer { display: none !important; } .em-bar { display: none !important; } }</style>' +
     '</head><body dir="ltr" lang="en" style="background-color:#F4F5F7;padding:0;margin:0;">' + preheader +
     '<table border="0" width="100%" cellpadding="0" cellspacing="0" role="presentation" align="center"><tbody><tr><td style="background-color:#F4F5F7;padding:24px 0;">' +
     `<table align="center" width="100%" class="em-container" border="0" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;background-color:#FFFFFF;border:1px solid ${LINE};border-radius:16px;margin:0 auto;"><tbody><tr style="width:100%"><td style="padding:32px;">` +
