@@ -105,7 +105,7 @@ describe('resolving a selection to an entry', () => {
     const set = resolveSelectionEntry('set:india|japan', options)!;
     expect(set.memberKeys).toEqual(['india']);
     expect(resolveSelectionEntry('set:japan|france', options)).toBeNull();
-    expect(resolveSelectionEntry('germany', options)).toBeNull();
+    expect(resolveSelectionEntry('france', options)).toBeNull();
   });
 
   it('is what the profile focus stores and validates', () => {
