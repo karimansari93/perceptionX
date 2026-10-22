@@ -5,7 +5,8 @@ import { useChat } from '@/hooks/useChat';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { greetingFor } from '@/lib/askAi';
-import type { ChatConversation, ChatScope } from '@/services/chatService';
+import { getConversation, type ChatConversation, type ChatScope } from '@/services/chatService';
+import { toast } from 'sonner';
 import { ChatMessage } from './ChatMessage';
 import { ChatWelcome, conversationMeta, relativeAge } from './ChatWelcome';
 import { ScopePickers, scopeSummary, useScopeOptions } from './ChatScopeBar';
@@ -27,6 +28,10 @@ interface ChatCoreProps {
   onInitialQuestionSent?: () => void;
   /** The page shows the current view in its breadcrumb. */
   onViewChange?: (view: ChatView) => void;
+  /** A thread to open as soon as the chat is ready (deep link, ?c=). */
+  initialConversationId?: string | null;
+  /** Called once the deep-linked thread is open (or could not be), so the page can clear the URL. */
+  onInitialConversationOpened?: () => void;
 }
 
 // Handovers already sent this session, keyed by navigation entry + question,
@@ -38,8 +43,8 @@ const pillClass = 'inline-flex h-[30px] items-center gap-1.5 rounded-full border
 
 // The three views of Ask AI (design handoff): the new-chat page, the answer
 // page (a thread), and the chats list.
-export function ChatCore({ initialQuestion, initialScope, initialFiles, handoverKey, onInitialQuestionSent, onViewChange }: ChatCoreProps) {
-  const { currentCompany } = useCompany();
+export function ChatCore({ initialQuestion, initialScope, initialFiles, handoverKey, onInitialQuestionSent, onViewChange, initialConversationId, onInitialConversationOpened }: ChatCoreProps) {
+  const { currentCompany, viewAsOrganization } = useCompany();
   const { user } = useAuth();
   const {
     messages,
@@ -121,6 +126,54 @@ export function ChatCore({ initialQuestion, initialScope, initialFiles, handover
     }, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuestion, handoverKey, organizationId]);
+
+  // A thread opened from a link (the quarterly update email's button): load
+  // it directly rather than waiting for it to appear in the sidebar list.
+  // The thread's own scope is restored, as when it is picked from the list.
+  // A platform admin following a link into another organization's thread is
+  // switched to "view as" that organization first, so follow-up questions
+  // run against the right brand; the effect re-runs once the org changes.
+  const openedDeepLinkRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = initialConversationId?.trim();
+    if (!id || !organizationId || openedDeepLinkRef.current === id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const c = await getConversation(id);
+        if (cancelled) return;
+        if (!c) {
+          openedDeepLinkRef.current = id;
+          toast.error('That chat is not available on this account.');
+          onInitialConversationOpened?.();
+          return;
+        }
+        if (c.organization_id !== organizationId) {
+          const switched = await viewAsOrganization(c.organization_id);
+          if (cancelled) return;
+          if (switched) return; // organizationId changes → effect runs again and opens it
+          openedDeepLinkRef.current = id;
+          toast.error('That chat belongs to another organization.');
+          onInitialConversationOpened?.();
+          return;
+        }
+        openedDeepLinkRef.current = id;
+        setShowList(false);
+        if (c.scope) setScope({ company: c.scope.company ?? null, locations: c.scope.locations ?? [], jobFunctions: c.scope.jobFunctions ?? [] });
+        await loadConversation(id);
+        onInitialConversationOpened?.();
+      } catch (err) {
+        console.error('Failed to open linked conversation:', err);
+        if (!cancelled) {
+          openedDeepLinkRef.current = id;
+          toast.error('Could not open that chat.');
+          onInitialConversationOpened?.();
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialConversationId, organizationId]);
 
   const current = useMemo(() => conversations.find(c => c.id === currentConversationId) ?? null, [conversations, currentConversationId]);
 

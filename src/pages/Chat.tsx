@@ -6,7 +6,7 @@ import { ChatCore, type ChatView } from '@/components/chat/ChatCore';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { ASK_AI_TITLE } from '@/lib/askAi';
-import type { ChatScope } from '@/services/chatService';
+import { conversationIdFromSearch, type ChatScope } from '@/services/chatService';
 import { clearHandoverFiles, peekHandoverFiles } from '@/lib/chatHandover';
 
 const CRUMB: Record<ChatView, string> = { new: 'New chat', thread: 'Chats', list: 'Chats' };
@@ -37,6 +37,15 @@ function ChatContent() {
     navigate('/chat', { replace: true, state: null });
   }, [navigate]);
 
+  // A thread opened from a link (?c=<conversation id>, the quarterly update
+  // email's button). Cleared from the URL once open so a reload or a later
+  // "new chat" doesn't reopen it.
+  const [initialConversationId, setInitialConversationId] = useState<string | null>(() => conversationIdFromSearch(searchParams));
+  const handleConversationOpened = useCallback(() => {
+    setInitialConversationId(null);
+    navigate('/chat', { replace: true, state: null });
+  }, [navigate]);
+
   return (
     <div className="flex h-screen w-full bg-white">
       <AppSidebar activeSection="chat" onSectionChange={() => {}} />
@@ -59,6 +68,8 @@ function ChatContent() {
             handoverKey={handoverKey}
             onInitialQuestionSent={handleSent}
             onViewChange={setView}
+            initialConversationId={initialConversationId}
+            onInitialConversationOpened={handleConversationOpened}
           />
         </div>
       </SidebarInset>
