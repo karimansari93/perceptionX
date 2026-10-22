@@ -18,7 +18,8 @@
 //                                  send in quarterly_digest_sends
 //
 // Env: RESEND_API_KEY, DIGEST_FROM_EMAIL ("Karim at PerceptionX <karim@perceptionx.ai>"),
-//      DIGEST_REPLY_TO, APP_URL (https://app.perceptionx.ai), LOGO_DEV_TOKEN, CLAUDE_API_KEY.
+//      DIGEST_REPLY_TO, APP_URL (https://app.perceptionx.ai), DIGEST_ASSET_URL (images; defaults
+//      to APP_URL), LOGO_DEV_TOKEN, CLAUDE_API_KEY.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -31,6 +32,10 @@ import { digestSubject, renderDigestHtml } from '../_shared/digest/template.ts';
 import type { DigestPayload } from '../_shared/digest/types.ts';
 
 const APP_URL = (Deno.env.get('APP_URL') || 'https://app.perceptionx.ai').replace(/\/+$/, '');
+// Where the email's images live (the PerceptionX logo, the attribute icon
+// PNGs). Defaults to the app; set to a deploy preview while the icons are
+// not yet on the live app.
+const ASSET_URL = (Deno.env.get('DIGEST_ASSET_URL') || APP_URL).replace(/\/+$/, '');
 const LOGO_DEV_TOKEN = Deno.env.get('LOGO_DEV_TOKEN') || 'pk_ekarmbf-SbmRJ537a9wdxA';
 const FROM = Deno.env.get('DIGEST_FROM_EMAIL') || 'Karim at PerceptionX <karim@perceptionx.ai>';
 const REPLY_TO = Deno.env.get('DIGEST_REPLY_TO') || 'karim@perceptionx.ai';
@@ -139,7 +144,7 @@ async function compose(
     conversationId = await createDigestChat(admin, member.organizationId, chatOwnerUserId, payload);
     if (conversationId) payload.chatUrl = `${APP_URL}/chat?c=${conversationId}`;
   }
-  const html = renderDigestHtml(payload, { appUrl: APP_URL, logoDevToken: LOGO_DEV_TOKEN });
+  const html = renderDigestHtml(payload, { appUrl: ASSET_URL, logoDevToken: LOGO_DEV_TOKEN });
   return { payload, html, subject: digestSubject(payload), conversationId };
 }
 
