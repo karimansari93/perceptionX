@@ -66,7 +66,8 @@ function mark(domain: string, token: string, size = 18): string {
 }
 
 function attributeLabel(row: DigestAttributeRow, appUrl: string): string {
-  return `<img alt="" width="16" height="16" src="${appUrl}/email/attributes/${row.attributeId}.png" style="display:inline-block;vertical-align:-3px;border:0;margin-right:7px;">${escapeHtml(row.name)}`;
+  return `<span style="display:inline-block;width:22px;height:22px;border-radius:6px;background-color:#EEF2F7;vertical-align:middle;margin-right:8px;text-align:center;line-height:22px;">` +
+    `<img alt="" width="14" height="14" src="${appUrl}/email/attributes/${row.attributeId}.png" style="display:inline-block;vertical-align:middle;border:0;"></span>${escapeHtml(row.name)}`;
 }
 
 function metricCard(label: string, value: string, sub: string, grade?: string): string {
@@ -208,7 +209,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
 
   const sinceSub = prev ? `, with the change since ${escapeHtml(prev)}` : '';
   const peers = payload.employers.length
-    ? section('Employers AI names alongside you', `Share of all answers that mention each employer${sinceSub}.`, barList(payload.employers.map(r => barRow(r, token))))
+    ? section('Employers AI names alongside you', `${escapeHtml(payload.employersNote)}${sinceSub}.`, barList(payload.employers.map(r => barRow(r, token))))
     : '';
   const sources = payload.sources.length
     ? section('Sources AI reads', `Share of answers citing each source${sinceSub}.${payload.sources.some(s => s.owned) ? ' Your own sites are marked.' : ''}`, barList(payload.sources.map(r => barRow(r, token))))

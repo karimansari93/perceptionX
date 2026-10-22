@@ -11,7 +11,7 @@ import { readRollups, buildAttributeRows } from '../px-tools/executors-insights.
 import { scoreQuarters } from '../px-tools/executors-core.ts';
 import { resolveScope } from '../px-tools/scope.ts';
 import type { ResolvedScope, ToolContext } from '../px-tools/scope.ts';
-import { monthToQuarter, pct, pointsDelta, sentimentPct } from '../px-tools/helpers.ts';
+import { CLAUDE_PUBLISHED_OR, EXCLUDED_AI_MODELS_FILTER, monthToQuarter, pct, pointsDelta, sentimentPct } from '../px-tools/helpers.ts';
 import { REGIONS, regionFromKey } from '../regions.ts';
 import type { DigestAttributeRow, DigestBarRow, DigestGroupRow, DigestPayload } from './types.ts';
 
@@ -53,10 +53,11 @@ export function describeLocation(locationKey: string | null, matched: string[]):
   const region = regionFromKey(locationKey);
   if (region) return { label: region.label, preposition: 'across' };
   if (locationKey.startsWith('set:')) {
-    const names = matched.length ? matched : locationKey.slice(4).split('|').map(titleCase);
+    const names = (matched.length ? matched : locationKey.slice(4).split('|').map(titleCase)).map(displayMarket);
     return { label: names.join(', '), preposition: names.length > 1 ? 'across' : 'in' };
   }
-  const name = matched.length === 1 ? matched[0] : matched.length > 1 ? matched.join(', ') : titleCase(locationKey);
+  const shown = matched.map(displayMarket);
+  const name = shown.length === 1 ? shown[0] : shown.length > 1 ? shown.join(', ') : titleCase(locationKey);
   return { label: name, preposition: matched.length > 1 ? 'across' : 'in' };
 }
 
@@ -94,7 +95,7 @@ export function groupRows(
       const named = pct(v.latest.mentioned, v.latest.answers);
       const hasPrev = v.previous.answers > 0;
       return {
-        name,
+        name: displayMarket(name),
         positivePct: positive,
         sentimentDelta: hasPrev ? pointsDelta(positive, sentimentPct(v.previous.pos, v.previous.neg)) : null,
         namedPct: named,
@@ -145,15 +146,46 @@ async function domainCounts(ctx: ToolContext, r: ResolvedScope, quarter: string)
   return ((data?.rows || []) as any[]).map(row => ({ key: String(row.domain), quarter, count: row.responses_citing || 0 }));
 }
 
-async function competitorCounts(ctx: ToolContext, r: ResolvedScope, quarter: string) {
+// Employers named on the open "which employers should I consider" questions
+// (prompt_type discovery): the one place the client and its peers are
+// measured on the same footing. Rows carry the prompt type, so this is a
+// filter on the competitor cube read.
+const DISCOVERY = 'discovery';
+
+async function competitorCounts(ctx: ToolContext, r: ResolvedScope, quarter: string, promptType: string | null) {
   const months = monthsOfQuarter(r, quarter);
   if (!months.length) return [] as Array<{ key: string; quarter: string; count: number }>;
   const { data, error } = await ctx.admin.rpc('mcp_get_competitor_stats', {
     p_company_ids: r.scope.companyIds, p_buckets: r.buckets, p_job_functions: r.jobFunctions,
-    p_months: months, p_limit: 40,
+    p_months: months, p_limit: 60,
   });
   if (error) throw new Error(`Competitor stats read failed: ${error.message}`);
-  return ((data?.rows || []) as any[]).map(row => ({ key: String(row.competitor_name), quarter, count: row.responses_mentioning || 0 }));
+  return ((data?.rows || []) as any[])
+    .filter(row => !promptType || String(row.prompt_type || '') === promptType)
+    .map(row => ({ key: String(row.competitor_name), quarter, count: row.responses_mentioning || 0 }));
+}
+
+// Discovery answers in a quarter for the scope, and how many name the
+// client: the denominator and the client's own row for the employers list.
+// Same platform rules as the analyst tools' answer reads.
+async function discoveryCounts(ctx: ToolContext, r: ResolvedScope, quarter: string): Promise<{ answers: number; mentioned: number }> {
+  const months = monthsOfQuarter(r, quarter);
+  if (!months.length) return { answers: 0, mentioned: 0 };
+  const base = () => {
+    let q = ctx.admin.from('prompt_responses')
+      .select('id, confirmed_prompts!inner(prompt_type, location_context, job_function_context)', { count: 'exact', head: true })
+      .in('company_id', r.scope.companyIds)
+      .in('response_month', months)
+      .eq('confirmed_prompts.prompt_type', DISCOVERY)
+      .not('ai_model', 'in', EXCLUDED_AI_MODELS_FILTER)
+      .or(CLAUDE_PUBLISHED_OR);
+    if (r.buckets) q = q.in('confirmed_prompts.location_context', r.buckets);
+    if (r.jobFunctions) q = q.in('confirmed_prompts.job_function_context', r.jobFunctions);
+    return q;
+  };
+  const [all, named] = await Promise.all([base(), base().eq('company_mentioned', true)]);
+  if (all.error) throw new Error(`Discovery count failed: ${all.error.message}`);
+  return { answers: all.count || 0, mentioned: named.error ? 0 : (named.count || 0) };
 }
 
 // Pretty name for a source domain: a known site's brand, else the domain.
@@ -163,7 +195,27 @@ const SOURCE_NAMES: Record<string, string> = {
   'builtin.com': 'Built In', 'comparably.com': 'Comparably', 'wikipedia.org': 'Wikipedia', 'greatplacetowork.com': 'Great Place to Work',
   'quora.com': 'Quora', 'x.com': 'X', 'facebook.com': 'Facebook', 'instagram.com': 'Instagram', 'kununu.com': 'Kununu',
 };
-export const sourceName = (domain: string) => SOURCE_NAMES[domain] || domain;
+const TLD_COUNTRY: Record<string, string> = {
+  'co.uk': 'UK', 'co.in': 'India', 'de': 'Germany', 'fr': 'France', 'nl': 'Netherlands', 'pl': 'Poland', 'es': 'Spain',
+  'it': 'Italy', 'ie': 'Ireland', 'ca': 'Canada', 'com.au': 'Australia', 'sg': 'Singapore', 'com.br': 'Brazil',
+  'com.mx': 'Mexico', 'ch': 'Switzerland', 'at': 'Austria', 'be': 'Belgium', 'se': 'Sweden', 'jp': 'Japan',
+};
+// "glassdoor.co.uk" → "Glassdoor UK": a known site's regional edition keeps
+// the site's name and says which edition it is.
+export const sourceName = (domain: string): string => {
+  if (SOURCE_NAMES[domain]) return SOURCE_NAMES[domain];
+  const m = domain.match(/^([a-z0-9-]+)\.((?:co|com)\.[a-z]{2}|[a-z]{2})$/);
+  if (m) {
+    const root = SOURCE_NAMES[`${m[1]}.com`];
+    const country = TLD_COUNTRY[m[2]];
+    if (root && country) return `${root} ${country}`;
+  }
+  return domain;
+};
+
+// Tracked market spellings carry a leading article in some data sets
+// ("the Netherlands"); the email shows the name without it.
+export const displayMarket = (name: string) => name.replace(/^the\s+/i, '');
 
 // A competitor's mark: "General Motors" → generalmotors.com (the dashboard's guess).
 export const competitorDomain = (name: string) => {
@@ -222,13 +274,26 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
     ? groupRows(stats, row => String(row.location_context || ''), latestQ, previousQ)
     : [];
 
-  const [domainsLatest, domainsPrev, compLatest, compPrev, ownedRes] = await Promise.all([
+  const [domainsLatest, domainsPrev, discLatest, discPrev, ownedRes] = await Promise.all([
     domainCounts(ctx, r, latestQ),
     previousQ ? domainCounts(ctx, r, previousQ) : Promise.resolve([]),
-    competitorCounts(ctx, r, latestQ),
-    previousQ ? competitorCounts(ctx, r, previousQ) : Promise.resolve([]),
+    discoveryCounts(ctx, r, latestQ),
+    previousQ ? discoveryCounts(ctx, r, previousQ) : Promise.resolve({ answers: 0, mentioned: 0 }),
     ctx.admin.from('company_owned_domains').select('domain').in('company_id', r.scope.companyIds),
   ]);
+  // Employers: discovery questions when the view has them, else all answers.
+  const onDiscovery = discLatest.answers > 0;
+  const [compLatest, compPrev] = await Promise.all([
+    competitorCounts(ctx, r, latestQ, onDiscovery ? DISCOVERY : null),
+    previousQ ? competitorCounts(ctx, r, previousQ, onDiscovery ? DISCOVERY : null) : Promise.resolve([]),
+  ]);
+  const employerTotals = onDiscovery
+    ? new Map<string, number>([[latestQ, discLatest.answers], ...(previousQ ? [[previousQ, discPrev.answers] as [string, number]] : [])])
+    : totals;
+  const youPct = onDiscovery ? pct(discLatest.mentioned, discLatest.answers) : latest.visibility_pct;
+  const youPrev = onDiscovery
+    ? (previousQ && discPrev.answers > 0 ? pct(discPrev.mentioned, discPrev.answers) : null)
+    : (previous ? previous.visibility_pct : null);
   const owned = new Set<string>(((ownedRes.data || []) as any[]).map(d => String(d.domain).toLowerCase().replace(/^www\./, '')));
   const isOwned = (domain: string) => owned.has(domain) || Array.from(owned).some(o => domain.endsWith(`.${o}`) || o.endsWith(`.${domain}`));
 
@@ -238,18 +303,21 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
     .map(s => ({ domain: s.key, name: sourceName(s.key), pct: s.pct, delta: s.delta, owned: isOwned(s.key) }));
 
   const brandLower = r.scope.brandName.trim().toLowerCase();
-  const employers: DigestBarRow[] = coverageRows(compLatest.concat(compPrev), totals, latestQ, previousQ)
+  const employers: DigestBarRow[] = coverageRows(compLatest.concat(compPrev), employerTotals, latestQ, previousQ)
     .filter(c => c.key.trim().toLowerCase() !== brandLower && c.pct > 0)
     .slice(0, TOP_EMPLOYERS)
     .map(c => ({ domain: competitorDomain(c.key), name: c.key, pct: c.pct, delta: c.delta }));
   const ownedList = Array.from(owned).sort((a, b) => a.length - b.length);
   const brandDomain = ownedList[0] ?? null;
-  if (latest.visibility_pct !== null) {
+  if (youPct !== null) {
     employers.push({
       domain: brandDomain ?? competitorDomain(r.scope.brandName), name: r.scope.brandName,
-      pct: latest.visibility_pct, delta: previous ? pointsDelta(latest.visibility_pct, previous.visibility_pct) : null, you: true,
+      pct: youPct, delta: youPrev === null ? null : pointsDelta(youPct, youPrev), you: true,
     });
   }
+  const employersNote = onDiscovery
+    ? 'Share of answers to open employer questions (candidates asking which employers to consider) that name each employer'
+    : 'Share of all answers that mention each employer';
 
   const jobFunctions = Array.from(new Set(stats
     .filter(row => monthToQuarter(String(row.response_month)) === latestQ)
@@ -259,7 +327,7 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
   return {
     recipient: view.recipient,
     brand: { name: r.scope.brandName, domain: brandDomain },
-    scope: { locationLabel: loc.label, preposition: loc.preposition, markets: r.buckets || [], jobFunctions },
+    scope: { locationLabel: loc.label, preposition: loc.preposition, markets: (r.buckets || []).map(displayMarket), jobFunctions },
     period: { quarter: latestQ, short: shortQuarter(latestQ), previousQuarter: previousQ, previousLabel },
     metrics: {
       eps: { value: latest.eps, delta: previous ? latest.eps - previous.eps : null, grade: latest.eps_label },
@@ -271,7 +339,7 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
       ? `Change since ${previousLabel} compares this quarter's collection with the previous one, as the dashboard does.`
       : 'This is the first collection for this view, so there is no change to show yet.',
     sentimentChangeHidden: false,
-    byFunction, byMarket, employers, sources, attributes,
+    byFunction, byMarket, employers, employersNote, sources, attributes,
     narrative: null,
     chatUrl: view.chatUrl,
     chatNote: view.chatNote,

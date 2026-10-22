@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
 import { digestSubject, renderDigestHtml } from './template.ts';
-import { coverageRows, describeLocation, groupRows, previousWaveLabel, shortQuarter } from './payload.ts';
-import { digestMarkdown, validateNarrative } from './narrative.ts';
+import { coverageRows, describeLocation, displayMarket, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
+import { cap, digestMarkdown, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
 
 const payload: DigestPayload = {
@@ -26,6 +26,7 @@ const payload: DigestPayload = {
     { domain: 'infosys.com', name: 'Infosys', pct: 21, delta: -3 },
     { domain: 'careers.ford.com', name: 'Ford Business Solutions', pct: 68, delta: 2, you: true },
   ],
+  employersNote: 'Share of answers to open employer questions (candidates asking which employers to consider) that name each employer',
   sources: [
     { domain: 'linkedin.com', name: 'LinkedIn', pct: 49, delta: -2 },
     { domain: 'careers.ford.com', name: 'careers.ford.com', pct: 44, delta: 11, owned: true },
@@ -128,6 +129,7 @@ Deno.test('digestMarkdown carries the figures for the chat thread', () => {
   const md = digestMarkdown(payload);
   assertStringIncludes(md, '**Employer Perception Score:** 78 (Good) (up 1 points)');
   assertStringIncludes(md, '- LinkedIn: 49% of answers (down 2 points)');
+  assertStringIncludes(md, 'open employer questions');
   assertStringIncludes(md, 'Where to act next');
 });
 
@@ -140,4 +142,19 @@ Deno.test('domains in prose become navy links, never client auto-links', () => {
   assertStringIncludes(html, '<a href="https://careers.ford.com" style="color:#0F172A;text-decoration:none;" target="_blank">careers.ford.com</a>');
   assertStringIncludes(html, '>OWNED</span>');
   assert(!html.includes('October'));
+});
+
+Deno.test('cap cuts at a sentence end, never mid-sentence', () => {
+  const text = 'Reach is not the problem this quarter. Tone is. And this third sentence pushes it over the limit.';
+  assertEquals(cap(text, 60), 'Reach is not the problem this quarter. Tone is.');
+  assertEquals(cap('Short enough.', 60), 'Short enough.');
+  assertEquals(cap('A single very long sentence with no stop that keeps going and going well past the cap', 40), 'A single very long sentence with no.');
+});
+
+Deno.test('display names', () => {
+  assertEquals(displayMarket('the Netherlands'), 'Netherlands');
+  assertEquals(sourceName('glassdoor.co.uk'), 'Glassdoor UK');
+  assertEquals(sourceName('indeed.de'), 'Indeed Germany');
+  assertEquals(sourceName('about.netflix.com'), 'about.netflix.com');
+  assertEquals(describeLocation('set:the netherlands|poland', ['the Netherlands', 'Poland']), { label: 'Netherlands, Poland', preposition: 'across' });
 });

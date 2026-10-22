@@ -17,13 +17,14 @@ const MODEL = Deno.env.get('CLAUDE_MODEL') || 'claude-opus-5';
 const MAX_TOKENS = 4000;
 const EVIDENCE_ATTRIBUTES = 2;
 
-const LIMITS = { preheader: 120, title: 70, body: 360, note: 320, action: 480 };
+const LIMITS = { preheader: 140, title: 80, body: 560, note: 480, action: 680 };
 
 const RULES = `You write the prose blocks of a quarterly update email that PerceptionX sends to one client user. The reader is an employer brand or talent lead. Write in British English, direct and specific, in short sentences.
 
 Hard rules:
 - Use only figures that appear in the payload. Never invent, estimate or round a figure differently. Quote percentages as "44%" and changes as "up 11 points" or "down 4 points".
 - Lead with coverage percentages (share of answers), never relative lifts.
+- The employers list is measured on the basis given in employersNote (usually the open "which employers" questions only). When you compare the client with those employers, say it is on those questions, and never compare the client's headline visibility with an employer's share.
 - Never name an AI assistant, model or vendor. Say "AI" or "AI assistants".
 - Never use an em dash or en dash. Use commas, full stops or colons.
 - Never mention raw counts of answers, responses, prompts or themes.
@@ -36,9 +37,15 @@ Hard rules:
 - functionsNote is null when the payload has fewer than two job functions; marketsNote is null when it has fewer than two markets.`;
 
 const stripDashes = (s: string) => s.replace(/\s*[—–]\s*/g, ', ').replace(/, ,/g, ',');
-const cap = (s: unknown, max: number) => {
+// Over-length text is cut at the end of a sentence, never mid-sentence; a
+// single sentence that is still too long is cut at a word with a full stop.
+export const cap = (s: unknown, max: number) => {
   const t = stripDashes(String(s ?? '').trim());
-  return t.length <= max ? t : t.slice(0, max - 1).replace(/\s+\S*$/, '') + '.';
+  if (t.length <= max) return t;
+  const head = t.slice(0, max);
+  const lastStop = Math.max(head.lastIndexOf('. '), head.lastIndexOf('.\n'), head.endsWith('.') ? head.length - 1 : -1);
+  if (lastStop > max * 0.4) return head.slice(0, lastStop + 1);
+  return head.replace(/\s+\S*$/, '').replace(/[,:;]$/, '') + '.';
 };
 
 function parseJsonReply(text: string): any {
@@ -139,7 +146,8 @@ export function digestMarkdown(payload: DigestPayload): string {
   if (n?.action) lines.push('', '### Where to act next', n.action);
   if (payload.employers.length) {
     lines.push('', '### Employers AI names alongside you');
-    for (const e of payload.employers) lines.push(`- ${e.name}${e.you ? ' (you)' : ''}: ${e.pct}% of answers${d(e.delta)}`);
+    lines.push(`${payload.employersNote}.`);
+    for (const e of payload.employers) lines.push(`- ${e.name}${e.you ? ' (you)' : ''}: ${e.pct}%${d(e.delta)}`);
   }
   if (payload.sources.length) {
     lines.push('', '### Sources AI reads');

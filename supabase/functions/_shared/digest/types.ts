@@ -95,6 +95,8 @@ export interface DigestPayload {
   byFunction: DigestGroupRow[];
   byMarket: DigestGroupRow[];
   employers: DigestBarRow[];
+  /** What the employers shares are measured on, for the section subtitle and the prose. */
+  employersNote: string;
   sources: DigestBarRow[];
   attributes: DigestAttributeRow[];
   narrative: DigestNarrative | null;
