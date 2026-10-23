@@ -1,4 +1,4 @@
-import { BarChart3, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass, UserPlus, Search, Sparkles, Plug } from "lucide-react";
+import { BarChart3, MessageSquare, TrendingUp, HelpCircle, CheckCircle2, ActivitySquare, Globe, Users, Lightbulb, Download, Compass, UserPlus, Search, Sparkles, Plug, Building2 } from "lucide-react";
 import { ASK_AI_ENABLED } from "@/lib/askAi";
 import {
   Sidebar,
@@ -45,6 +45,7 @@ const navigationGroups: NavigationGroup[] = [
     items: [
       { title: "Overview", icon: BarChart3, section: "overview", group: "dashboard", route: "/dashboard" },
       { title: "Sources", icon: Globe, section: "sources", group: "dashboard", route: "/dashboard/sources" },
+      { title: "Career Site", icon: Building2, section: "careerSite", group: "dashboard", route: "/dashboard/career-site" },
       { title: "Competitors", icon: Users, section: "competitors", group: "dashboard", route: "/dashboard/competitors" },
       { title: "Themes", icon: Lightbulb, section: "thematic", group: "dashboard", route: "/dashboard/themes" },
     ]
@@ -63,7 +64,6 @@ const navigationGroups: NavigationGroup[] = [
   // {
   //   title: "Analyze",
   //   items: [
-  //     { title: "Career Site", icon: Globe, section: "career-site", group: "analyze", route: "/analyze/career-site" },
   //   ]
   // }
 ];

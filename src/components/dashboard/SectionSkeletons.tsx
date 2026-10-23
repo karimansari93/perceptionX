@@ -372,3 +372,50 @@ export const ReportsSkeleton = () => {
     </div>
   );
 }; 
+export const CareerSiteSkeleton = () => {
+  return (
+    <div className="space-y-4 p-4 md:p-6">
+      <div className="flex items-center gap-2">
+        <Skeleton className="h-6 w-6 rounded" />
+        <div className="space-y-1">
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-3 w-64" />
+        </div>
+      </div>
+      <Card>
+        <CardHeader className="pb-3"><Skeleton className="h-6 w-56" /></CardHeader>
+        <CardContent className="space-y-2.5">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div key={i} className="grid grid-cols-[minmax(130px,1.2fr)_3fr_auto] items-center gap-3">
+              <Skeleton className="h-4 w-28" />
+              <div className="space-y-1">
+                <Skeleton className="h-2 w-full" />
+                <Skeleton className="h-2 w-full" />
+              </div>
+              <Skeleton className="h-3 w-20" />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.9fr)_minmax(320px,1fr)]">
+        <Card className="min-h-[640px]">
+          <CardHeader className="pb-3">
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="mt-2 h-32 w-full" />
+          </CardHeader>
+          <CardContent><Skeleton className="h-80 w-full" /></CardContent>
+        </Card>
+        <div className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3"><Skeleton className="h-6 w-44" /></CardHeader>
+            <CardContent className="space-y-3">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-24 w-full rounded-lg" />
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+};

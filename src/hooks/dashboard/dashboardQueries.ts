@@ -27,6 +27,14 @@ export const dashboardKeys = {
     ['dashboard', 'scope', scopeKey, 'domains', locationKey] as const,
   competitorStats: (scopeKey: string, locationKey: string) =>
     ['dashboard', 'scope', scopeKey, 'competitors', locationKey] as const,
+  // Career Site tab: the page cube filtered to the detected career-site
+  // property, and the topic-ownership cube behind the gap list.
+  careerSiteOverview: (scopeKey: string, locationKey: string) =>
+    ['dashboard', 'scope', scopeKey, 'careerSite', 'overview', locationKey] as const,
+  careerSiteGaps: (scopeKey: string, locationKey: string) =>
+    ['dashboard', 'scope', scopeKey, 'careerSite', 'gaps', locationKey] as const,
+  careerSitePassages: (scopeKey: string, url: string) =>
+    ['dashboard', 'scope', scopeKey, 'careerSite', 'passages', url] as const,
 };
 
 export interface ScopeRollups {
@@ -208,6 +216,101 @@ export const fetchCompetitorStats = (params: CubeLocationParams, signal?: AbortS
     p_other_ids: params.otherIds,
     p_other_buckets: params.otherBuckets,
     p_limit: 300,
+  }, signal);
+
+// ─── Career Site ────────────────────────────────────────────────────────────
+//
+// The tab reads three cubes. Shares are computed client-side from these raw
+// measures so the tab divides by the same denominators the rest of the
+// dashboard uses (scope_totals for page shares, a topic's own `answers` for
+// topic shares) rather than a server-rounded percentage.
+
+// One cited page on the career-site property, at month grain.
+export interface CareerSitePageRow {
+  url: string;
+  response_month: string;
+  responses_citing: number;
+  title: string | null;
+  page_kind: 'content' | 'job_posting';
+}
+
+// A domain in the detected career-site property. `source` is 'detected' when
+// inferred from citations, 'override' when the company row names it.
+export interface CareerSiteDomainRow {
+  domain: string;
+  citations: number;
+  is_primary: boolean;
+  source: 'detected' | 'override';
+}
+
+export interface CareerSiteScopeTotalRow {
+  response_month: string;
+  total_responses: number;
+}
+
+export interface CareerSiteOverview {
+  domains: CareerSiteDomainRow[];
+  pages: CareerSitePageRow[];
+  scope_totals: CareerSiteScopeTotalRow[];
+  page_total: number;
+}
+
+// Topic ownership at month grain. `answers_owned` and `answers_benchmark`
+// are independent counts over the same `answers` denominator — an answer can
+// cite both the career site and Glassdoor, so they do not sum to `answers`.
+export interface CareerSiteGapRow {
+  attribute_id: string;
+  response_month: string;
+  answers: number;
+  answers_owned: number;
+  answers_benchmark: number;
+}
+
+export interface CareerSiteGaps {
+  rows: CareerSiteGapRow[];
+}
+
+// A passage a Google surface quoted, as the raw `#:~:text=` fragment. Parsed
+// client-side (see src/lib/careerSite/textFragment.ts) — the server stores it
+// verbatim so a future change to the fragment grammar needs no backfill.
+export interface CareerSitePassageRow {
+  url: string;
+  fragment: string;
+  ai_model: string;
+  occurrences: number;
+}
+
+export const fetchCareerSiteOverview = (
+  params: CubeLocationParams,
+  signal?: AbortSignal,
+): Promise<CareerSiteOverview> =>
+  rpc<CareerSiteOverview>('get_career_site_overview', {
+    p_owned_ids: params.ownedIds,
+    p_owned_buckets: params.ownedBuckets,
+    p_other_ids: params.otherIds,
+    p_other_buckets: params.otherBuckets,
+    p_limit: 200,
+  }, signal);
+
+export const fetchCareerSiteGaps = (
+  params: CubeLocationParams,
+  signal?: AbortSignal,
+): Promise<CareerSiteGaps> =>
+  rpc<CareerSiteGaps>('get_career_site_gaps', {
+    p_owned_ids: params.ownedIds,
+    p_owned_buckets: params.ownedBuckets,
+    p_other_ids: params.otherIds,
+    p_other_buckets: params.otherBuckets,
+  }, signal);
+
+export const fetchCareerSitePassages = (
+  ownedIds: string[],
+  url: string | null,
+  signal?: AbortSignal,
+): Promise<CareerSitePassageRow[]> =>
+  rpc<CareerSitePassageRow[]>('get_career_site_passages', {
+    p_owned_ids: ownedIds,
+    p_url: url,
   }, signal);
 
 export const fetchLocationRollups = (

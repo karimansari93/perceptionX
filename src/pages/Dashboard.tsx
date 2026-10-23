@@ -24,7 +24,8 @@ import {
   SourcesSkeleton,
   CompetitorsSkeleton,
   ThematicSkeleton,
-  SearchSkeleton
+  SearchSkeleton,
+  CareerSiteSkeleton
 } from "@/components/dashboard/SectionSkeletons";
 
 // OverviewTab is eagerly imported — it's the default landing tab
@@ -35,6 +36,7 @@ const SourcesTab = lazyWithRetry(() => import("@/components/dashboard/SourcesTab
 const CompetitorsTab = lazyWithRetry(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
 const ThematicAnalysisTab = lazyWithRetry(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
 const PromptsTab = lazyWithRetry(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
+const CareerSiteTab = lazyWithRetry(() => import("@/components/dashboard/CareerSiteTab").then(module => ({ default: module.CareerSiteTab })));
 import LLMLogo from "@/components/LLMLogo";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen";
@@ -48,6 +50,7 @@ import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 const SECTION_TITLES: Record<string, string> = {
   overview: "Overview",
   sources: "Sources",
+  careerSite: "Career Site",
   competitors: "Competitors",
   thematic: "Themes",
   prompts: "Prompts",
@@ -77,6 +80,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
   // scope's data — a reset would cold-remount all of them on every switch.
   const [hasVisited, setHasVisited] = useState({
     sources: false,
+    careerSite: false,
     competitors: false,
     thematic: false,
     prompts: false,
@@ -151,6 +155,9 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     locationOptions,
     locationMetricsLoading,
     scopeCompanyIds,
+    cubeParams,
+    cubeLocationKey,
+    scopeKey,
     allResponses,
     responsesLoadedCompanyId,
     prefetchLocationRollups,
@@ -368,6 +375,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       overview: '/dashboard',
       chat: '/chat',
       sources: '/dashboard/sources',
+      careerSite: '/dashboard/career-site',
       competitors: '/dashboard/competitors',
       thematic: '/dashboard/themes',
       prompts: '/monitor',
@@ -511,6 +519,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         setActiveSection('overview');
       } else if (path === '/dashboard/sources') {
         setActiveSection('sources');
+      } else if (path === '/dashboard/career-site') {
+        setActiveSection('careerSite');
       } else if (path === '/dashboard/competitors') {
         setActiveSection('competitors');
       } else if (path === '/dashboard/themes') {
@@ -563,6 +573,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         navigate('/dashboard');
       } else if (section === 'sources') {
         navigate('/dashboard/sources');
+      } else if (section === 'careerSite') {
+        navigate('/dashboard/career-site');
       } else if (section === 'competitors') {
         navigate('/dashboard/competitors');
       } else if (section === 'thematic') {
@@ -598,6 +610,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         case "sources": return <SourcesSkeleton />;
         case "competitors": return <CompetitorsSkeleton />;
         case "thematic": return <ThematicSkeleton />;
+        case "careerSite": return <CareerSiteSkeleton />;
         case "search": return <SearchSkeleton />;
         default: return <OverviewSkeleton />;
       }
@@ -684,6 +697,24 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
                 cubesLoading={cubesLoading}
                 streamError={streamError}
                 onRetry={retryFailedQueries}
+              />
+            </Suspense>
+          </div>
+        )}
+
+        {(activeSection === 'careerSite' || hasVisited.careerSite) && (
+          <div style={{ display: activeSection === 'careerSite' ? 'block' : 'none' }}>
+            <Suspense fallback={<CareerSiteSkeleton />}>
+              <CareerSiteTab
+                companyName={companyName}
+                currentCompanyId={currentCompany?.id}
+                scopeCompanyIds={scopeCompanyIds}
+                cubeParams={cubeParams}
+                scopeKey={scopeKey}
+                locationKey={cubeLocationKey}
+                cubeQuarterKey={cubeQuarterKey}
+                cubePrevQuarterKey={cubePrevQuarterKey}
+                enabled={activeSection === 'careerSite' || hasVisited.careerSite}
               />
             </Suspense>
           </div>
