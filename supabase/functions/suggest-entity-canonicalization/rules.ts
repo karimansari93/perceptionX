@@ -10,9 +10,10 @@
 //      generic corporate word. This is the edit admins made by hand on almost
 //      every suggestion they changed.
 //   2. isProtected(): names that belong to our tracked companies (clients,
-//      their divisions, and every company we measure) are NEVER auto-grouped.
-//      "CSL Behring", "Ford Credit", "Netflix Animation Studios" must stay
-//      separate entities; those stay in the manual queue.
+//      their divisions, and every company we measure) are never grouped on
+//      the cheap LLM's say-so alone. "CSL Behring", "Ford Credit", "Netflix
+//      Animation Studios" must stay separate entities; such names go to the
+//      stronger review model (index.ts), not to a person.
 // =============================================================================
 import { COUNTRY_CODE_TO_NAME } from "../_shared/countries.ts";
 
@@ -209,6 +210,69 @@ export function hasParentCanonical(name: string, index: Map<string, CanonicalRef
     if (prefix.length >= 3 && index.has(prefix)) return true;
   }
   return false;
+}
+
+/**
+ * Rule roll-up gate. Geography / legal / plant variants roll up even for
+ * tracked companies ("Netflix Korea" -> "Netflix", "CSL Behring Australia" ->
+ * "CSL Behring"): a country arm is the same employer, and nothing is left for
+ * a person to review (Karim, 2026-10-15). A name that IS a tracked company
+ * ("CSL Limited", "Ford Credit") is never rolled up. Divisions with their own
+ * name never match the rule anyway: their tail is not noise.
+ */
+export function ruleRollUp(
+  raw: string,
+  index: Map<string, CanonicalRef>,
+  trackedExact: Set<string>,
+): CanonicalRef | null {
+  if (trackedExact.has(cleanForMatch(raw))) return null;
+  return rollUpToParent(raw, index);
+}
+
+/**
+ * Canonicals worth showing the LLM for one batch of names: a core list of the
+ * biggest companies (most aliases, so "AWS" can still find Amazon) plus every
+ * canonical that shares a name's first word, capped per word. Sending every
+ * canonical cost ~200k input tokens per call once the list passed 30,000
+ * names (October 2026); this keeps a call around 10k.
+ */
+export function buildShortlister(
+  index: Map<string, CanonicalRef>,
+  aliasCounts: Map<string, number>,
+  coreSize = 1500,
+  perWord = 50,
+): (names: string[]) => string[] {
+  const byFirst = new Map<string, Set<string>>();
+  const refs = new Map<string, CanonicalRef>();
+  for (const [norm, ref] of index) {
+    refs.set(ref.id, ref);
+    const first = norm.split(" ")[0];
+    if (first.length < 2) continue;
+    let names = byFirst.get(first);
+    if (!names) byFirst.set(first, names = new Set());
+    names.add(ref.canonical_name);
+  }
+  const core = [...refs.values()]
+    .sort((a, b) =>
+      (aliasCounts.get(b.id) ?? 0) - (aliasCounts.get(a.id) ?? 0) ||
+      a.canonical_name.localeCompare(b.canonical_name)
+    )
+    .slice(0, coreSize)
+    .map((r) => r.canonical_name);
+
+  return (names: string[]) => {
+    const out = new Set(core);
+    for (const n of names) {
+      const hits = byFirst.get(cleanForMatch(n).split(" ")[0]);
+      if (!hits) continue;
+      let k = 0;
+      for (const h of hits) {
+        out.add(h);
+        if (++k >= perWord) break;
+      }
+    }
+    return [...out].sort();
+  };
 }
 
 // Historical agreement between the LLM and admin decisions (2026-09-25 audit)

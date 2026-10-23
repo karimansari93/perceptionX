@@ -389,7 +389,10 @@ serve(async (req) => {
                       },
                     ],
                     // max_tokens: 1000, // Not supported by gpt-5.x models — use max_completion_tokens
-                    max_completion_tokens: 1000,
+                    // 2000, not 1000: nano's pay-and-benefits answers average
+                    // ~1,000 tokens, and ~9% of them hit a 1,000 cap and came
+                    // back as empty text (October 2026 index run).
+                    max_completion_tokens: 2000,
                     // gpt-5-nano is a reasoning model: without this, default
                     // reasoning can eat the whole completion budget and return
                     // empty text. Minimal effort also keeps cost lowest.

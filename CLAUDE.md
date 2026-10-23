@@ -22,8 +22,37 @@
   responses; never add a live Claude call for themes back.
 - Quote the estimated cost and get Karim's approval before any job over 1,000
   answers. Our timelines are usually a month, so slower and cheaper wins.
+- Flag cost before it happens, for any AI job (collection, extraction,
+  canonicalization, theming): quote it up front, and stop and re-quote to
+  Karim if the scale or the per-call size grows past the quote (Karim,
+  2026-10-18, after a canonicalization run cost several times its estimate
+  because the canonical list sent with every call grew 8x). Offer a cheaper
+  route when one exists.
+- Use the cheapest model that does the job. OpenAI is only for measuring
+  ChatGPT itself; supporting work (canonicalization, extraction) runs on
+  Claude Haiku or another cheap model, never gpt-4.1-class models. Never send
+  a whole table in a prompt; send a shortlist.
 - Keep background check-ins sparse: report on completion or on a problem, not
   on a fixed hourly cadence.
+
+## Database load (read before any collection, rebuild or bulk job)
+
+- Nothing runs on a schedule except the workers that carry out a run someone
+  started (Karim, 2026-10-21). Index and client maintenance run by hand after
+  each quarterly collection or recollection: follow
+  `docs/RUNBOOK_AFTER_COLLECTION.md`. Do not switch paused cron jobs back on.
+- Before any collection, rebuild or bulk job over 1,000 answers: check the
+  Disk IO budget in the Supabase dashboard, run heavy steps one at a time,
+  and give each a time limit. Run them while Karim is awake: Dubai working
+  hours, roughly 05:00 to 15:00 UTC, which also avoids the US evening peak.
+  Never leave a heavy job running overnight in Dubai (Karim, 2026-10-21:
+  "i dont want shit running when im asleep in dubai"). On 2026-10-21 an
+  untimed full scan after a 56,000-answer collection exhausted the budget and
+  took the database down for about two hours.
+- Quote the load as well as the cost: say what else the new rows will set off
+  (triggers, ticks, refreshes) before starting.
+- Never scan all of `prompt_responses` or `index_responses` in one query from
+  a scheduled job. Scope it to the new collection's dates.
 
 ## Data safety
 

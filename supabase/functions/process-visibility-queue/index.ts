@@ -184,7 +184,8 @@ serve(async (req) => {
             },
           });
 
-        if (invokeError) throw new Error(invokeError.message);
+        // Keep the error's name: transport failures are handled apart below.
+        if (invokeError) throw invokeError;
         if (!invokeData?.success)
           throw new Error(invokeData?.error || "Unknown error");
 
@@ -203,6 +204,21 @@ serve(async (req) => {
         lastMessage = `Processed batch ${job.batch_index} for job ${job.id}`;
       } catch (err: any) {
         console.error(`[Processor] Error processing job ${job.id}:`, err);
+
+        // The collector never answered ("Failed to send a request to the
+        // Edge Function"): not the job's fault, so no retry is counted. These
+        // failures come in runs and are instant; counting them marked all 426
+        // jobs of a backfill failed within seconds (2026-10-18). End this run
+        // and let the next minute's run carry on.
+        if (err?.name === "FunctionsFetchError" || err?.name === "FunctionsRelayError") {
+          await supabase
+            .from("visibility_queue")
+            .update({ error_log: err.message, updated_at: new Date().toISOString() })
+            .eq("id", job.id);
+          lastMessage = `Collector unreachable, ending run: ${err.message}`;
+          break;
+        }
+
         const retryCount = (job.retry_count || 0) + 1;
         await supabase
           .from("visibility_queue")
@@ -215,6 +231,9 @@ serve(async (req) => {
           })
           .eq("id", job.id);
         lastMessage = `Error: ${err.message}`;
+        // One failure per run at most, so a problem that hits every job
+        // (bad key, provider outage) can't exhaust the whole queue at once.
+        break;
       }
     }
 

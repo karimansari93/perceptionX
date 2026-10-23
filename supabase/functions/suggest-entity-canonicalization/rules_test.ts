@@ -1,11 +1,13 @@
 import { assertEquals } from "https://deno.land/std@0.168.0/testing/asserts.ts";
 import {
   buildProtectedStems,
+  buildShortlister,
   type CanonicalRef,
   hasParentCanonical,
   isProtected,
   normalize,
   rollUpToParent,
+  ruleRollUp,
 } from "./rules.ts";
 
 const canon = (name: string, type = "other"): CanonicalRef => ({
@@ -90,4 +92,42 @@ Deno.test("competitor names are not protected", () => {
 Deno.test("hasParentCanonical flags likely roll-ups", () => {
   assertEquals(hasParentCanonical("Toyota Financial Services", index), true);
   assertEquals(hasParentCanonical("Grifols", index), false);
+});
+
+Deno.test("ruleRollUp rolls country arms of tracked companies, never a tracked name itself", () => {
+  const idx = new Map(index);
+  for (const c of ["Netflix", "CSL Behring", "Ford", "Ford Credit", "Thermo Fisher Scientific"]) {
+    idx.set(normalize(c), canon(c));
+  }
+  const trackedExact = new Set(
+    ["Netflix", "CSL Behring", "CSL Limited", "Ford", "Ford Credit", "Thermo Fisher Scientific"]
+      .map((n) => normalize(n)),
+  );
+  const roll = (raw: string) => ruleRollUp(raw, idx, trackedExact)?.canonical_name ?? null;
+  assertEquals(roll("Netflix Korea"), "Netflix");
+  assertEquals(roll("CSL Behring Australia"), "CSL Behring");
+  assertEquals(roll("Thermo Fisher Scientific France"), "Thermo Fisher Scientific");
+  assertEquals(roll("Thermo Fisher Scientific UK"), "Thermo Fisher Scientific");
+  assertEquals(roll("Ford Credit UK"), "Ford Credit");
+  assertEquals(roll("CSL Limited"), null); // a tracked name is never rolled up
+  assertEquals(roll("Ford Credit"), null);
+  assertEquals(roll("Netflix Animation Studios"), null); // division: tail is not noise
+  assertEquals(roll("Thermo Fisher Clinical"), null); // left to the review model
+});
+
+Deno.test("shortlist sends core companies plus same-first-word canonicals only", () => {
+  const idx = new Map(index);
+  for (const c of ["Thermo Fisher Scientific", "Thermosome", "Zurich", "Zurich Airport", "Acme Widgets"]) {
+    idx.set(normalize(c), canon(c));
+  }
+  const aliasCounts = new Map([["id-Amazon", 50], ["id-Toyota", 40]]);
+  const shortlist = buildShortlister(idx, aliasCounts, 2);
+  const list = shortlist(["Thermo Fisher Clinical", "Zurich Insurance Group"]);
+  assertEquals(list.includes("Amazon"), true); // core: most aliases
+  assertEquals(list.includes("Toyota"), true);
+  assertEquals(list.includes("Thermo Fisher Scientific"), true); // same first word
+  assertEquals(list.includes("Zurich"), true);
+  assertEquals(list.includes("Zurich Airport"), true);
+  assertEquals(list.includes("Thermosome"), false); // different first word
+  assertEquals(list.includes("Acme Widgets"), false);
 });

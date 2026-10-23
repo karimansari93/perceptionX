@@ -11,7 +11,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useCompany, type Company } from '@/contexts/CompanyContext';
+import { brandOf, useCompany, type Company } from '@/contexts/CompanyContext';
 import { Building2, Check, ChevronDown, Globe } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -89,12 +89,11 @@ export const CompanySwitcher = ({ className, variant = 'ghost', alwaysMounted = 
   // brand names ACROSS client organizations, hiding all but one org's profile
   // behind the country dedupe below and letting a country click silently jump
   // organizations. Same-name groups in different orgs stay separate entries.
-  // settings.switcher_brand files a differently named entity under a brand's
-  // submenu (Ford Business Solutions is Ford > India). Display only: the
-  // entity keeps its own name for detection and its own brand scope.
+  // Grouped by brandOf, so an entity with settings.brand_name sits in that
+  // brand's submenu (Ford Business Solutions is Ford > India).
   const groups = Object.values(
     userCompanies.reduce((acc, company) => {
-      const brand = (company.settings?.switcher_brand as string | undefined)?.trim() || company.name;
+      const brand = brandOf(company);
       const key = `${brand.toLowerCase()}::${company.organization_id ?? ''}`;
       if (!acc[key]) {
         acc[key] = { key, name: brand, companies: [] };

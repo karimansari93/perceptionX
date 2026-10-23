@@ -10,13 +10,19 @@
 //      new canonical, or flag as non-entity.
 //
 // Every result lands in entity_alias_suggestions. With autoQueue (default),
-// safe results also get auto_method set, and entity_canonicalization_tick()
-// (event-driven: runs after new responses land) applies them without review:
-//   - rule roll-ups;
-//   - LLM decisions at confidence >= 0.95 (historical admin agreement ~95%+),
-//     minus new canonicals that look like an unproven roll-up.
-// Names belonging to tracked companies (clients, their divisions, everything
-// we measure) are never auto-queued: they stay pending for manual review.
+// every result gets auto_method set and entity_canonicalization_tick()
+// applies it. Nothing waits for a person (Karim, 2026-10-15):
+//   - rule roll-ups, including country arms of tracked companies;
+//   - first-pass LLM decisions at confidence >= 0.95, minus non-entities, new
+//     canonicals that look like an unproven roll-up and names of tracked
+//     companies;
+//   - everything else goes to a stricter review pass, which merges only when
+//     certain and otherwise keeps the name as its own company. A wrong merge
+//     is worse than a split, so "keep separate" is the default when unsure.
+// Each LLM call carries a per-batch shortlist of canonicals (rules.ts
+// buildShortlister), never the whole table.
+// Each run also reviews up to MAX_PENDING_REVIEW older suggestions that were
+// left for manual review before this change.
 //
 // Candidates come from the request body (`variants`, sent by the SQL tick,
 // which computes them without a statement timeout) or from
@@ -25,20 +31,33 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { claudeFetch } from "../_shared/claude-keys.ts";
 import {
   AUTO_CONFIDENCE,
   buildProtectedStems,
+  buildShortlister,
   type CanonicalRef,
+  cleanForMatch,
   hasParentCanonical,
   isProtected,
   normalize,
-  rollUpToParent,
+  ruleRollUp,
 } from "./rules.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
-const MODEL = "gpt-4.1-mini";
+// No OpenAI (Karim, 2026-10-18): both passes run on Claude Haiku 5.5, the
+// cheapest model we have that knows companies well ($0.10 / $0.50 per M
+// tokens, thinking off), replacing gpt-4.1-mini and gpt-4.1. The review pass
+// uses the same model with stricter instructions.
+const MODEL = "claude-haiku-5-5";
+const REVIEW_MODEL = "claude-haiku-5-5";
+// llm_model label on review decisions, distinct from first-pass rows so a
+// first-pass row whose review failed is still picked up again.
+const REVIEW_LABEL = `${REVIEW_MODEL}/review`;
+// Labels whose decisions are final (gpt-4.1 reviewed until 2026-10-18).
+const REVIEW_MODELS = ["gpt-4.1", REVIEW_LABEL];
+const MAX_PENDING_REVIEW = 200;
 const LLM_CHUNK = 50;
 const LLM_CONCURRENCY = 6; // ~300 variants = one round, well inside the edge wall-clock limit
 const MAX_VARIANTS = 500;
@@ -95,6 +114,7 @@ serve(async (req) => {
       companyId = null,
       variants = null,
       autoQueue = true,
+      reviewPending = true,
     } = await req.json().catch(() => ({}));
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -111,7 +131,10 @@ serve(async (req) => {
       ? (variants as Candidate[]).slice(0, MAX_VARIANTS)
       : await findCandidates(supabase, Math.min(batchSize, MAX_VARIANTS), organizationId, companyId);
 
-    if (candidates.length === 0) {
+    // Older suggestions still waiting for a person get the review model too.
+    const pending = autoQueue && reviewPending && !dryRun ? await fetchPendingManual(supabase) : [];
+
+    if (candidates.length === 0 && pending.length === 0) {
       return json({ processed: 0, auto_rule: 0, auto_llm: 0, manual: 0, suggestions: [] });
     }
 
@@ -141,18 +164,22 @@ serve(async (req) => {
     }
     // Normalized names of every canonical, active or not (non-entity guard).
     const anyCanonical = new Set(canonicals.map((c) => c.normalized_name));
+    // Per-batch list of canonicals to show the LLMs (never the whole table).
+    const aliasCounts = new Map<string, number>();
+    for (const a of aliases) aliasCounts.set(a.canonical_id, (aliasCounts.get(a.canonical_id) ?? 0) + 1);
+    const shortlist = buildShortlister(index, aliasCounts);
 
-    const stems = buildProtectedStems(
-      companyNames.map((c) => c.name).filter((n) => n && n.trim().length > 0),
-    );
+    const tracked = companyNames.map((c) => c.name).filter((n) => n && n.trim().length > 0);
+    const stems = buildProtectedStems(tracked);
+    const trackedExact = new Set(tracked.map((n) => cleanForMatch(n)));
 
     // 1. Rule pass.
     const rows: SuggestionRow[] = [];
     const forLlm: Array<Candidate & { protected: boolean }> = [];
     for (const c of candidates) {
       const prot = isProtected(c.raw_alias, stems);
-      const parent = prot ? null : rollUpToParent(c.raw_alias, index);
-      if (parent && !isProtected(parent.canonical_name, stems)) {
+      const parent = ruleRollUp(c.raw_alias, index, trackedExact);
+      if (parent) {
         rows.push({
           raw_alias: c.raw_alias,
           normalized_alias: c.normalized_alias,
@@ -173,14 +200,13 @@ serve(async (req) => {
 
     // 2. LLM pass, chunked with bounded concurrency. A failed chunk is logged
     //    and skipped; its variants stay unqueued and are retried next run.
-    const canonicalList = [...new Set([...byId.values()].map((c) => c.canonical_name))].sort();
     const chunks: Array<typeof forLlm> = [];
     for (let i = 0; i < forLlm.length; i += LLM_CHUNK) chunks.push(forLlm.slice(i, i + LLM_CHUNK));
 
     let llmFailures = 0;
     for (let i = 0; i < chunks.length; i += LLM_CONCURRENCY) {
       const results = await Promise.allSettled(
-        chunks.slice(i, i + LLM_CONCURRENCY).map((chunk) => classify(chunk, canonicalList, corrections)),
+        chunks.slice(i, i + LLM_CONCURRENCY).map((chunk) => classify(chunk, shortlist(chunk.map((c) => c.raw_alias)), corrections)),
       );
       results.forEach((res, j) => {
         const chunk = chunks[i + j];
@@ -198,12 +224,49 @@ serve(async (req) => {
       });
     }
 
+    // 3. Review pass: everything the cheap pass left for a person, new rows
+    //    first, then older pending suggestions.
+    const reviewCtx = { index, anyCanonical, tracked, corrections, shortlist };
+    let reviewFailures = 0;
+    let reviewedPending = 0;
+    if (autoQueue) {
+      const unsettled = rows.filter((r) => r.auto_method === null);
+      const reviewed = await reviewAll(unsettled, reviewCtx);
+      reviewFailures += reviewed.failures;
+      for (const r of unsettled) {
+        const decided = reviewed.byAlias.get(r.normalized_alias);
+        if (decided) Object.assign(r, decided);
+      }
+
+      if (pending.length > 0) {
+        const reviewedOld = await reviewAll(pending, reviewCtx);
+        reviewFailures += reviewedOld.failures;
+        const updates = pending
+          .map((p) => ({ id: p.id, patch: reviewedOld.byAlias.get(p.normalized_alias) }))
+          .filter((u) => u.patch);
+        for (let i = 0; i < updates.length; i += 20) {
+          await Promise.all(updates.slice(i, i + 20).map(async (u) => {
+            const { error } = await supabase
+              .from("entity_alias_suggestions")
+              .update(u.patch)
+              .eq("id", u.id)
+              .eq("status", "pending")
+              .is("auto_method", null);
+            if (error) console.error("pending review update failed:", u.id, error);
+            else reviewedPending++;
+          }));
+        }
+      }
+    }
+
     const summary = {
       processed: rows.length,
       auto_rule: rows.filter((r) => r.auto_method === "auto_rule").length,
       auto_llm: rows.filter((r) => r.auto_method === "auto_llm").length,
       manual: rows.filter((r) => r.auto_method === null).length,
+      reviewed_pending: reviewedPending,
       llm_chunk_failures: llmFailures,
+      review_chunk_failures: reviewFailures,
     };
 
     if (dryRun) return json({ ...summary, dryRun: true, suggestions: rows });
@@ -241,8 +304,9 @@ function toRow(
   let auto = false;
   if (ctx.autoQueue && !c.protected && confidence !== null && confidence >= AUTO_CONFIDENCE) {
     if (isNonEntity) {
-      // Never hide something that is already a real, active canonical.
-      auto = !ctx.index.has(c.normalized_alias);
+      // Dropping a name hides a real company if it's wrong ("Vipps MobilePay"
+      // was called two companies joined), so the review model always decides.
+      auto = false;
     } else if (
       s.canonical_name &&
       !isProtected(s.canonical_name, ctx.stems) &&
@@ -278,6 +342,244 @@ function toRow(
     llm_model: MODEL,
     auto_method: auto ? "auto_llm" : null,
   };
+}
+
+interface ReviewItem {
+  raw_alias: string;
+  normalized_alias: string;
+  suggested_canonical_name: string | null;
+  suggested_is_non_entity: boolean;
+  confidence: number | null;
+}
+
+interface PendingItem extends ReviewItem {
+  id: string;
+}
+
+interface ReviewDecision {
+  raw_alias: string;
+  decision: "merge" | "separate" | "non_entity";
+  canonical_name: string | null;
+  entity_type: string | null;
+  confidence: number;
+  rationale: string;
+}
+
+type ReviewPatch = Pick<
+  SuggestionRow,
+  | "suggested_canonical_name"
+  | "suggested_entity_type"
+  | "suggested_is_non_entity"
+  | "confidence"
+  | "status"
+  | "llm_rationale"
+  | "llm_model"
+  | "auto_method"
+>;
+
+interface ReviewCtx {
+  index: Map<string, CanonicalRef>;
+  anyCanonical: Set<string>;
+  tracked: string[];
+  corrections: Array<{ raw: string; suggested: string; final: string }>;
+  shortlist: (names: string[]) => string[];
+}
+
+const REVIEW_CHUNK = 40;
+
+async function fetchPendingManual(supabase: Supabase): Promise<PendingItem[]> {
+  const { data, error } = await supabase
+    .from("entity_alias_suggestions")
+    .select("id, raw_alias, normalized_alias, suggested_canonical_name, suggested_is_non_entity, confidence")
+    .eq("status", "pending")
+    .is("auto_method", null)
+    // Reviewed once is final: a decision the apply step bounced back must not
+    // be re-sent to the review model every tick.
+    .or(`llm_model.is.null,llm_model.not.in.(${REVIEW_MODELS.map((m) => `"${m}"`).join(",")})`)
+    .order("mention_count", { ascending: false })
+    .limit(MAX_PENDING_REVIEW);
+  if (error) {
+    console.warn("fetchPendingManual failed:", error);
+    return [];
+  }
+  return (data ?? []) as PendingItem[];
+}
+
+/** Final decision for every item, keyed by normalized alias. */
+async function reviewAll(
+  items: ReviewItem[],
+  ctx: ReviewCtx,
+): Promise<{ byAlias: Map<string, ReviewPatch>; failures: number }> {
+  const byAlias = new Map<string, ReviewPatch>();
+  let failures = 0;
+  const chunks: ReviewItem[][] = [];
+  for (let i = 0; i < items.length; i += REVIEW_CHUNK) chunks.push(items.slice(i, i + REVIEW_CHUNK));
+  for (let i = 0; i < chunks.length; i += LLM_CONCURRENCY) {
+    const results = await Promise.allSettled(
+      chunks.slice(i, i + LLM_CONCURRENCY).map((chunk) => review(chunk, ctx)),
+    );
+    results.forEach((res, j) => {
+      if (res.status === "rejected") {
+        failures++;
+        console.error("Review chunk failed:", res.reason);
+        return; // stays pending; retried next run
+      }
+      const byRaw = new Map(res.value.map((d) => [d.raw_alias, d]));
+      for (const item of chunks[i + j]) {
+        const d = byRaw.get(item.raw_alias);
+        if (d) byAlias.set(item.normalized_alias, reviewToPatch(item, d, ctx));
+      }
+    });
+  }
+  return { byAlias, failures };
+}
+
+function reviewToPatch(item: ReviewItem, d: ReviewDecision, ctx: ReviewCtx): ReviewPatch {
+  const base = {
+    status: "pending" as const,
+    llm_model: REVIEW_LABEL,
+    auto_method: "auto_llm" as const,
+    confidence: typeof d.confidence === "number" ? d.confidence : null,
+    llm_rationale: `[Reviewed by ${REVIEW_MODEL}] ${d.rationale ?? ""}`.trim(),
+  };
+
+  if (d.decision === "merge" && d.canonical_name) {
+    const target = ctx.index.get(normalize(d.canonical_name));
+    if (target) {
+      return {
+        ...base,
+        suggested_canonical_name: target.canonical_name,
+        suggested_entity_type: target.entity_type ?? "other",
+        suggested_is_non_entity: false,
+      };
+    }
+    // Merge into a name that doesn't exist: keep the variant separate.
+  }
+
+  // Never hide something that is already a real, active canonical.
+  if (d.decision === "non_entity" && (d.confidence ?? 0) >= 0.9 && !ctx.index.has(item.normalized_alias)) {
+    return {
+      ...base,
+      suggested_canonical_name: null,
+      suggested_entity_type: "non_entity",
+      suggested_is_non_entity: true,
+    };
+  }
+
+  // Keep it as its own company. Use the reviewer's clean name unless it
+  // collides with an inactive or non-entity canonical, which the apply step
+  // would bounce back to manual.
+  let name = (d.decision === "separate" && d.canonical_name?.trim()) || item.raw_alias;
+  const norm = normalize(name);
+  if (ctx.anyCanonical.has(norm) && !ctx.index.has(norm)) name = item.raw_alias;
+  return {
+    ...base,
+    suggested_canonical_name: name,
+    suggested_entity_type: d.entity_type && d.entity_type !== "non_entity" ? d.entity_type : "other",
+    suggested_is_non_entity: false,
+  };
+}
+
+async function review(chunk: ReviewItem[], ctx: ReviewCtx): Promise<ReviewDecision[]> {
+  const systemPrompt =
+    `You make the FINAL call on company names that AI assistants mention when describing employers.
+No human reviews your decisions. Wrongly merging two different companies is worse than leaving a
+name separate, so merge only when you are certain.
+
+For each name decide:
+(a) "merge"      - it is the SAME employer as a company in the existing list: a country or regional
+                   arm, a legal-entity form, a former name, an abbreviation or misspelling, or a
+                   business unit without its own separate employer brand. canonical_name = the exact
+                   spelling from the list.
+(b) "separate"   - a different company, a subsidiary with its own employer brand, or you are not
+                   certain. canonical_name = the clean, commonly used brand name (drop legal suffixes
+                   like Inc, Ltd, GmbH, "Group", "Corporation").
+(c) "non_entity" - clearly not an organization: a phrase, an industry or category, a geography, a
+                   placeholder, or two companies joined ("Google/Meta"). Never just because you do
+                   not recognize the name.
+
+Tracked companies (our clients and the employers we measure) are listed separately. Never merge
+one tracked company into another tracked company ("Ford Credit" is not "Ford"). A name that belongs
+to a listed tracked division maps to that division, not to its parent.
+
+A cheaper model already suggested an answer for each name. It may be wrong; decide for yourself.
+
+Return STRICT JSON: {"decisions": [...]} with one entry per input name, in the same order.
+Each entry: { raw_alias, decision, canonical_name, entity_type, confidence, rationale }.
+- entity_type: "oem" | "supplier" | "it_services" | "consulting" | "financial" | "other" | "non_entity".
+- confidence: 0..1, calibrated.
+- rationale: <= 140 chars.`;
+
+  const examples = ctx.corrections.length
+    ? `\n\nPast reviewer corrections (follow this style):\n${
+      ctx.corrections.map((c) => `- "${c.raw}": not "${c.suggested}" but "${c.final}"`).join("\n")
+    }`
+    : "";
+
+  const userPrompt = `Existing canonical companies (merge into these exactly when applicable):
+${
+    ctx.shortlist(chunk.flatMap((u) => [u.raw_alias, u.suggested_canonical_name ?? ""]).filter(Boolean))
+      .join(", ")
+  }
+
+Tracked companies:
+${ctx.tracked.join(", ")}${examples}
+
+Names to decide:
+${
+    chunk.map((u, i) => {
+      const first = u.suggested_is_non_entity
+        ? "not a company"
+        : u.suggested_canonical_name ?? "no suggestion";
+      const conf = u.confidence === null ? "?" : u.confidence;
+      return `${i + 1}. ${u.raw_alias} (first suggestion: ${first}, confidence ${conf})`;
+    }).join("\n")
+  }`;
+
+  const parsed = await askClaude(REVIEW_MODEL, systemPrompt, userPrompt) as { decisions?: ReviewDecision[] };
+  return parsed.decisions ?? [];
+}
+
+/** One Claude call that must answer with a JSON object. Throws on failure. */
+async function askClaude(model: string, system: string, user: string): Promise<Record<string, unknown>> {
+  // claudeFetch sets x-api-key and hands over to CLAUDE_API_KEY_NEXT when the
+  // current key's organization is out of credit (see claude-keys.ts).
+  const resp = await claudeFetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 8000,
+      // Thinking off keeps the cost to the answer itself.
+      thinking: { type: "disabled" },
+      system,
+      messages: [{ role: "user", content: user }],
+    }),
+  });
+
+  const data = await resp.json();
+  if (!resp.ok) {
+    throw new Error(`Claude ${resp.status}: ${data?.error?.message ?? JSON.stringify(data)}`);
+  }
+  if (data.stop_reason === "refusal" || data.stop_reason === "max_tokens") {
+    throw new Error(`Claude stopped: ${data.stop_reason}`);
+  }
+  const text = (data.content ?? [])
+    .filter((b: { type: string }) => b.type === "text")
+    .map((b: { text: string }) => b.text)
+    .join("");
+  return parseJsonObject(text);
+}
+
+/** The JSON object in a model reply, tolerating code fences or a preamble. */
+function parseJsonObject(text: string): Record<string, unknown> {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) throw new Error("No JSON object in model reply");
+  return JSON.parse(text.slice(start, end + 1));
 }
 
 async function findCandidates(
@@ -391,27 +693,6 @@ ${canonicalList.join(", ")}${examples}
 Variants to classify:
 ${chunk.map((u, i) => `${i + 1}. ${u.raw_alias}`).join("\n")}`;
 
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.1,
-    }),
-  });
-
-  if (!resp.ok) {
-    throw new Error(`OpenAI ${resp.status}: ${await resp.text()}`);
-  }
-  const data = await resp.json();
-  const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}") as { suggestions?: LlmSuggestion[] };
+  const parsed = await askClaude(MODEL, systemPrompt, userPrompt) as { suggestions?: LlmSuggestion[] };
   return parsed.suggestions ?? [];
 }
