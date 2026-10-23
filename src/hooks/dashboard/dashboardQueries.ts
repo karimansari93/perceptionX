@@ -221,7 +221,32 @@ export const fetchLocationRollups = (
     p_other_buckets: params.otherBuckets,
   }, signal);
 
-export const eagerCutoffIso = () => new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000).toISOString();
+// Eager window start: EAGER_DAYS before the scope's latest response (anchor,
+// 'YYYY-MM-DD'), never before "now" minus the window. Anchoring on the data
+// keeps a scope whose last collection is older than the window (a dormant or
+// not-yet-refreshed brand) fully visible instead of cutting every row off.
+export const eagerCutoffIso = (anchorDay?: string | null): string => {
+  const parsed = anchorDay ? Date.parse(anchorDay.slice(0, 10)) : NaN;
+  const anchorMs = Number.isNaN(parsed) ? Date.now() : Math.min(parsed, Date.now());
+  return new Date(anchorMs - EAGER_DAYS * 24 * 60 * 60 * 1000).toISOString();
+};
+
+// Latest tested day in the scope-stats cube ('YYYY-MM-DD'), falling back to
+// the latest collection month. null = no stats yet (window anchors on now).
+export const latestResponseDay = (stats: ScopeStats | undefined): string | null => {
+  if (!stats) return null;
+  let latest: string | null = null;
+  for (const r of stats.daily ?? []) {
+    const day = String(r.tested_day).slice(0, 10);
+    if (!latest || day > latest) latest = day;
+  }
+  if (latest) return latest;
+  for (const r of stats.scope ?? []) {
+    const day = String(r.response_month).slice(0, 10);
+    if (!latest || day > latest) latest = day;
+  }
+  return latest;
+};
 
 const byTestedAtDesc = (a: any, b: any) =>
   new Date(b.tested_at || b.created_at || 0).getTime() - new Date(a.tested_at || a.created_at || 0).getTime();
@@ -243,12 +268,13 @@ const dedupeById = (rows: any[]): any[] => {
 const fetchResponsePage = async (
   companyId: string,
   cursor: { tested_at: string; id: string } | null,
+  sinceIso: string,
   signal?: AbortSignal
 ): Promise<{ rows: any[]; limit: number }> => {
   const attempt = (limit: number) => rpc<any[]>('get_company_responses_page', {
     p_company_id: companyId,
     p_excluded_models: EXCLUDED_AI_MODELS,
-    p_since: eagerCutoffIso(),
+    p_since: sinceIso,
     p_before_tested_at: cursor?.tested_at ?? null,
     p_before_id: cursor?.id ?? null,
     p_limit: limit,
@@ -300,8 +326,8 @@ export interface FirstPages extends ResponseStream {
 // 2 (was 4): the stream now starts only after the headline families have
 // settled, and two pages at a time keeps a cold load at three or four
 // statements in flight instead of ten (reliability audit P0-2).
-export const fetchResponsesFirstPages = async (scopeIds: string[], signal?: AbortSignal): Promise<FirstPages> => {
-  const pages = await boundedMap(scopeIds, 2, id => fetchResponsePage(id, null, signal));
+export const fetchResponsesFirstPages = async (scopeIds: string[], sinceIso: string, signal?: AbortSignal): Promise<FirstPages> => {
+  const pages = await boundedMap(scopeIds, 2, id => fetchResponsePage(id, null, sinceIso, signal));
   const cursorByCompany: FirstPages['cursorByCompany'] = {};
   let complete = true;
   pages.forEach(({ rows, limit }, i) => {
@@ -321,6 +347,7 @@ export const fetchResponsesFirstPages = async (scopeIds: string[], signal?: Abor
 export const fetchResponsesRemaining = async (
   scopeIds: string[],
   first: FirstPages | undefined,
+  sinceIso: string,
   signal?: AbortSignal
 ): Promise<ResponseStream> => {
   // Concurrency 2 (first pages run at 4): this walk is background hydration
@@ -333,7 +360,7 @@ export const fetchResponsesRemaining = async (
     const all: any[] = first ? [...firstRows] : [];
     if (first && cursor === null) return all; // this profile finished in page 1
     for (;;) {
-      const { rows, limit } = await fetchResponsePage(id, cursor, signal);
+      const { rows, limit } = await fetchResponsePage(id, cursor, sinceIso, signal);
       all.push(...rows);
       if (rows.length < limit) break;
       const last = rows[rows.length - 1];

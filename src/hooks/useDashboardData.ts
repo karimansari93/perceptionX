@@ -13,6 +13,7 @@ import {
   fetchDomainStats,
   fetchCompetitorStats,
   eagerCutoffIso,
+  latestResponseDay,
   type CubeLocationParams,
   type DomainStats,
   type CompetitorStats,
@@ -218,11 +219,6 @@ const visibilityFromMvRows = (
   if (total === 0) return null;
   return { pct: (mentioned / total) * 100, total, mentioned };
 };
-
-// Eager raw-response window (days). Shared by the background response fetch
-// and the rollup-derived period fallback so both agree on which months can
-// exist in the dashboard's working set.
-const EAGER_DAYS = 180;
 
 // Stable identities for empty derived values, so memo cascades don't re-run
 // when a query has no data yet.
@@ -476,13 +472,20 @@ export const useDashboardData = () => {
   });
   const scopeStats: ScopeStats | undefined = scopeStatsQuery.data;
   const statsSettled = scopeStatsQuery.data !== undefined || scopeStatsQuery.isError;
+  // Eager raw-response window start, anchored on the scope's latest response
+  // (not on today) so a scope last collected before the window still shows
+  // its data. Shared by the response stream, the cube floors and the period
+  // fallback so all three agree on which months the working set holds. The
+  // stream is gated on statsSettled, so the anchor is final before it runs.
+  const eagerAnchorDay = useMemo(() => latestResponseDay(scopeStats), [scopeStats]);
+  const eagerSinceIso = useMemo(() => eagerCutoffIso(eagerAnchorDay), [eagerAnchorDay]);
   // Response stream, two stages: the newest page of every profile commits
   // eagerly (tables hydrate fast), then the full keyset walk replaces it.
   // Wave 3: prompts, rollups and stats gate the stream so the critical path
   // gets the database first.
   const firstPagesQuery = useQuery({
     queryKey: dashboardKeys.responsesFirst(scopeKey),
-    queryFn: ({ signal }) => fetchResponsesFirstPages(scopeCompanyIds, signal),
+    queryFn: ({ signal }) => fetchResponsesFirstPages(scopeCompanyIds, eagerSinceIso, signal),
     enabled: scopeReady && rawResponsesEnabled && promptsQuery.data !== undefined && rollupsSettled && statsSettled,
     staleTime: FRESH_MS,
     gcTime: KEEP_MS,
@@ -498,6 +501,7 @@ export const useDashboardData = () => {
     queryFn: ({ signal }) => fetchResponsesRemaining(
       scopeCompanyIds,
       queryClient.getQueryData<FirstPages>(dashboardKeys.responsesFirst(scopeKey)),
+      eagerSinceIso,
       signal
     ),
     enabled: scopeReady && rawResponsesEnabled && firstPagesQuery.data !== undefined,
@@ -1602,7 +1606,7 @@ export const useDashboardData = () => {
     // the pre-streaming behavior (never offering a period whose in-location
     // raw data doesn't exist, which produced mixed-scope scorecards).
     if (responsesLoadedCompanyId !== currentCompany?.id) {
-      const cutoff = new Date(Date.now() - EAGER_DAYS * 24 * 60 * 60 * 1000);
+      const cutoff = new Date(eagerSinceIso);
       // Clamp at MONTH grain before mapping to a quarter: a quarter-grain
       // cutoff would admit MV months up to two months older than the eager
       // raw window (cutoff Feb 11 → "2026-Q1" would let January in), briefly
@@ -2075,8 +2079,8 @@ export const useDashboardData = () => {
   // showing lifetime counts beside windowed raw drill-downs. Clamp every cube
   // row set to the eager window whenever no quarter filter applies.
   // -------------------------------------------------------------------------
-  const cubeMonthFloor = cubeQuarterKey == null ? eagerCutoffIso().slice(0, 7) : null;
-  const cubeDayFloor = cubeQuarterKey == null ? eagerCutoffIso().slice(0, 10) : null;
+  const cubeMonthFloor = cubeQuarterKey == null ? eagerSinceIso.slice(0, 7) : null;
+  const cubeDayFloor = cubeQuarterKey == null ? eagerSinceIso.slice(0, 10) : null;
   const monthInWindow = (month: string | null | undefined): boolean =>
     !cubeMonthFloor || !month || String(month).slice(0, 7) >= cubeMonthFloor;
 
