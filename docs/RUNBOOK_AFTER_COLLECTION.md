@@ -32,12 +32,22 @@ Ground rules for every step:
 2. **Name clean-up.** `SELECT public.sync_index_obvious_variants();` then
    `REFRESH MATERIALIZED VIEW public.rankings_historical;`
 3. **Exclusions.** `SELECT public.reconcile_stale_exclusions();`
-4. **Rankings.** `SELECT public.refresh_rankings_pipeline();` (2 to 4 minutes;
-   the public rankings are locked while it runs).
-5. **Profiles.** `SELECT public.trigger_snapshot_regen();` then, about 20
-   minutes later, `SELECT public.rebuild_slug_aliases();`
-6. **New countries.** A country's rankings stay hidden until Karim signs off
-   its lists; then update `index_country_status` and repeat step 4.
+4. **Job-function rankings, one country at a time.** The public
+   `rankings_job_function` is a copy of the table
+   `rankings_job_function_rows`. Replace one country's rows at a time (the
+   per-country rebuild function is pending; until it exists, the only safe
+   route is copying finished rows, as `20261024150000` did), then
+   `REFRESH MATERIALIZED VIEW public.rankings_job_function;` (a copy,
+   seconds). Never refresh `rankings_job_function_recalc`: it recomputes all
+   countries in one query and froze the database twice on 2026-10-24.
+5. **Industry rankings.** `SELECT public.refresh_rankings_pipeline();` (2 to 4
+   minutes; the public rankings are locked while it runs). Its
+   `rankings_job_function` step is now the cheap copy above.
+6. **Profiles.** Only when the industry rankings changed:
+   `SELECT public.trigger_snapshot_regen();` then, about 20 minutes later,
+   `SELECT public.rebuild_slug_aliases();`
+7. **New countries.** A country's rankings stay hidden until Karim signs off
+   its lists; then update `index_country_status` and repeat steps 4 and 5.
 
 ## Client data (dashboards and reports)
 

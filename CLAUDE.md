@@ -53,6 +53,12 @@
   (triggers, ticks, refreshes) before starting.
 - Never scan all of `prompt_responses` or `index_responses` in one query from
   a scheduled job. Scope it to the new collection's dates.
+- Never refresh a rankings view that recomputes more than one country in one
+  query. `rankings_job_function` is a copy of `rankings_job_function_rows`,
+  which is filled one country at a time; the old recalculating view
+  (`rankings_job_function_recalc`) is never refreshed. On 2026-10-24 a
+  23-country refresh wrote 10 GB of temp files and froze the database twice.
+  "One step at a time" means one country, not one table.
 
 ## Data safety
 
