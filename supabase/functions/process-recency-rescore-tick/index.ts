@@ -22,6 +22,7 @@ interface JobRow {
   processed: number;
   is_cancelled: boolean;
   stall_ticks: number;
+  since_date: string | null;
 }
 
 serve(async (req) => {
@@ -39,7 +40,7 @@ serve(async (req) => {
     // -----------------------------------------------------------------------
     const { data: candidate, error: pickErr } = await supabase
       .from("recency_rescore_jobs")
-      .select("id, organization_id, company_id, status, total, processed, is_cancelled, stall_ticks")
+      .select("id, organization_id, company_id, status, total, processed, is_cancelled, stall_ticks, since_date")
       .in("status", ["queued", "running"])
       .eq("is_cancelled", false)
       .order("created_at", { ascending: true })
@@ -68,7 +69,9 @@ serve(async (req) => {
       }
     }
 
-    const scope = job.company_id ? `company ${job.company_id}` : "whole org";
+    const scope = job.since_date
+      ? `since ${job.since_date}${job.company_id ? ` / company ${job.company_id}` : ""}`
+      : job.company_id ? `company ${job.company_id}` : "whole org";
     console.log(`[RecencyRescore] Working job ${job.id} for org ${job.organization_id} (${scope}), processed=${job.processed}/${job.total}`);
 
     // -----------------------------------------------------------------------
@@ -91,15 +94,26 @@ serve(async (req) => {
         return jsonResponse({ cancelled: true, processedThisTick: cachedThisTick }, 200);
       }
 
-      // Pull the next batch of URLs that have never been scored. Company-
-      // scoped jobs read the company-grained view; org jobs keep the old path.
-      let urlQuery = supabase
-        .from(job.company_id ? "v_company_url_status" : "v_organization_url_status")
-        .select("url")
-        .eq("organization_id", job.organization_id)
-        .is("extraction_method", null);
-      if (job.company_id) {
-        urlQuery = urlQuery.eq("company_id", job.company_id);
+      // Pull the next batch of URLs that have never been scored.
+      //  - Date-scoped jobs drain their fixed candidate snapshot.
+      //  - Company-scoped jobs read the company-grained view.
+      //  - Whole-org jobs keep the old path.
+      let urlQuery;
+      if (job.since_date) {
+        urlQuery = supabase
+          .from("v_rescore_job_url_status")
+          .select("url")
+          .eq("job_id", job.id)
+          .is("extraction_method", null);
+      } else {
+        urlQuery = supabase
+          .from(job.company_id ? "v_company_url_status" : "v_organization_url_status")
+          .select("url")
+          .eq("organization_id", job.organization_id)
+          .is("extraction_method", null);
+        if (job.company_id) {
+          urlQuery = urlQuery.eq("company_id", job.company_id);
+        }
       }
       const { data: urls, error: urlsErr } = await urlQuery.limit(BATCH_SIZE);
 
@@ -163,14 +177,20 @@ serve(async (req) => {
         })
         .eq("id", job.id);
 
+      // Drop the candidate snapshot for scoped jobs — no longer needed.
+      if (job.since_date) {
+        await supabase.from("recency_rescore_job_urls").delete().eq("job_id", job.id);
+      }
+
       // Slack alert via the existing helper.
       await supabase.rpc("send_batch_alert", {
         payload: {
           event: "recency_rescore_done",
-          text: `Recency rescore for org \`${job.organization_id}\` completed. ${job.processed + cachedThisTick} URLs processed.`,
+          text: `Recency rescore for org \`${job.organization_id}\` (${scope}) completed. ${job.processed + cachedThisTick} URLs processed.`,
           fields: [
             { label: "Job", value: job.id },
             { label: "Org", value: job.organization_id },
+            { label: "Scope", value: scope },
             { label: "Processed", value: String(job.processed + cachedThisTick) },
           ],
         },
@@ -228,13 +248,19 @@ serve(async (req) => {
         })
         .eq("id", job.id);
 
+      // Drop the candidate snapshot for scoped jobs — no longer needed.
+      if (job.since_date) {
+        await supabase.from("recency_rescore_job_urls").delete().eq("job_id", job.id);
+      }
+
       await supabase.rpc("send_batch_alert", {
         payload: {
           event: "recency_rescore_stalled",
-          text: `Recency rescore for org \`${job.organization_id}\` stopped: no progress for ${stallTicks} ticks, ${unresolved} URLs unresolved.`,
+          text: `Recency rescore for org \`${job.organization_id}\` (${scope}) stopped: no progress for ${stallTicks} ticks, ${unresolved} URLs unresolved.`,
           fields: [
             { label: "Job", value: job.id },
             { label: "Org", value: job.organization_id },
+            { label: "Scope", value: scope },
             { label: "Processed", value: String(job.processed + cachedThisTick) },
             { label: "Unresolved", value: String(unresolved) },
           ],
