@@ -1,0 +1,782 @@
+company,domain,employees
+Walmart,walmart.com,2100000
+Amazon,amazon.com,1576000
+The Home Depot,homedepot.com,472400
+United Parcel Service,ups.com,460000
+FedEx,fedex.com,452000
+Target Corporation,target.com,415000
+MARRIOTT INTERNATIONAL INC /MD/,marriott.com,414000
+Kroger,kroger.com,403000
+UnitedHealth Group,unitedhealthgroup.com,390000
+Berkshire Hathaway,berkshirehathaway.com,387800
+Starbucks,starbucks.com,381000
+TJX COMPANIES INC /DE/,tjx.com,377000
+IBM,ibm.com,352600
+Costco,costco.com,341000
+Cognizant Technology Solutions,cognizant.com,330000
+JPMorgan Chase,jpmorganchase.com,318512
+CVS Health,cvshealth.com,300000
+Yum China,yumchina.com,290000
+Albertsons,albertsonscompanies.com,280000
+Aramark,aramark.com,278390
+Publix Super Markets,,260000
+Hyatt Hotels Corp,hyatt.com,242000
+The Walt Disney Company,thewaltdisneycompany.com,231000
+Citigroup,citibnqa.com,226000
+Microsoft,microsoft.com,223000
+Bank of America,bankofamerica.com,213000
+Walgreens,walgreens.com,210500
+Wells Fargo,wellsfargo.com,205000
+Aldi Süd,aldi-sued.de,200410
+McDonald's,mcdonalds.com,200000
+Chick-fil-A,cfacorp.com,200000
+DARDEN RESTAURANTS INC,darden.com,198111
+DOLLAR GENERAL CORP,dollargeneral.com,194000
+Alphabet Inc.,abc.xyz,190820
+Hilton Worldwide,hilton.com,182000
+Boeing,boeing.com,182000
+RTX,rtx.com,180000
+COMCAST CORP,comcast.com,179000
+H-E-B Grocery Company,,175000
+DXC Technology,dxc.com,170500
+AMPHENOL CORP /DE/,amphenol.com,170000
+LOWES COMPANIES INC,,167000
+Apple Inc.,apple.com.cn,166000
+General Motors,gm.com,164000
+Cargill,cargill.com,155000
+"CBRE GROUP, INC.",cbre.com,155000
+"GXO Logistics, Inc.",gxo.com,154000
+Flex Ltd.,flex.com,150000
+Dollar Tree,dollartree.com,150000
+"Mars, Incorporated",mars.com,150000
+Oracle Corporation,oracle.com,141000
+American Airlines Group,aa.com,139100
+Johnson & Johnson,jjmt.com.tw,138200
+Emerson Electric,emerson.com,134900
+Tesla,tesla.com,134785
+AT&T,att.com,133030
+Tyson Foods,tyson.com,133000
+Chipotle Mexican Grill,chipotle.com,130301
+AUTOZONE INC,autozone.com,130000
+Lockheed Martin,lockheedmartin.com,123000
+Intel,intel.com,121100
+OMNICOM GROUP INC.,omnicomgroup.com,120000
+Koch ,kochinc.com,120000
+Caterpillar Inc.,caterpillar.com,118000
+General Dynamics,gd.com,117000
+Abbott Laboratories,abbott.com,115000
+"United Airlines Holdings, Inc.",united.com,113200
+ABM INDUSTRIES INC /DE/,abm.com,113000
+SLB,slb.com,109000
+"Coupang, Inc.",aboutcoupang.com,108000
+ROYAL CARIBBEAN CRUISES LTD,,108000
+Procter & Gamble,pg.com,104000
+UNIVERSAL HEALTH SERVICES INC,,101500
+Honeywell,honeywell.com,101000
+"Texas Roadhouse, Inc.",texasroadhouse.com,101000
+Carnival Corp Ltd.,carnivalcorp.com,101000
+Forever Living Products,foreverliving.com,100000
+"DELTA AIR LINES, INC.",delta.com,100000
+TENET HEALTHCARE CORP,tenethealth.com,100000
+Enterprise Mobility,enterprisemobility.com,100000
+Kodak,kodak.com,97222
+Dell,dell.com,97000
+Eaton Corporation,eaton.com,97000
+Northrop Grumman Corporation,northropgrumman.com,95000
+"MARSH & MCLENNAN COMPANIES, INC.",marsh.com,95000
+IQVIA HOLDINGS INC.,iqvia.com,93000
+O REILLY AUTOMOTIVE INC,oreillyauto.com,92923
+"CHARTER COMMUNICATIONS, INC. /MO/",charter.com,91900
+"Mondelez International, Inc.",mondelezinternational.com,91000
+HCA Healthcare,hcahealthcare.com,90000
+Verizon,verizon.com,89900
+"BRINKER INTERNATIONAL, INC",brinker.com,85003
+Philip Morris International,pmi.com,84900
+KOHLS Corp,kohls.com,84000
+Salesforce,salesforce.com,83334
+"Burlington Stores, Inc.",burlingtoninvestors.com,83309
+Morgan Stanley,morganstanley.com,83000
+Cisco,cisco.com,82400
+BEST BUY CO INC,,82000
+Staples Inc.,staples.com,79075
+Gap Inc.,gapinc.com,79000
+Meta Platforms,meta.com,78865
+Fidelity Investments,fidelity.com,78000
+DAVITA INC.,davita.com,78000
+American Express,americanexpress.com,76800
+CAPITAL ONE FINANCIAL CORP,capitalone.com,76300
+Pfizer,pfizer.com,75000
+Sysco,sysco.com,75000
+Merck & Co.,merck.com,75000
+Hy-Vee,hy-vee.com,75000
+ExxonMobil,exxonmobil.com,74900
+"CRACKER BARREL OLD COUNTRY STORE, INC",crackerbarrel.com,74500
+Deere & Company,deere.com,73100
+Nike,nike.com,73000
+Advantage Solutions Inc.,advantagesolutions.net,73000
+Southwest Airlines,southwest.com,72790
+Nordstrom,nordstrom.com,72501
+BECTON DICKINSON & CO,,72000
+"Kyndryl Holdings, Inc.",kyndryl.com,72000
+Arthur J. Gallagher & Co.,,72000
+LABCORP HOLDINGS INC.,labcorp.com,71000
+Progressive Corporation,progressive.com,70000
+Meijer,meijer.com,70000
+"QUANTA SERVICES, INC.",quantaservices.com,69500
+U.S. Bancorp,usbank.com,68520
+The Cigna Group,cigna.com,67700
+CUMMINS INC,cummins.com,67400
+Corning Inc.,corning.com,67200
+Humana,humana.com,67060
+Hewlett Packard Enterprise,hpe.com,67000
+The Coca-Cola Company,coca-colacompany.com,65900
+"TaskUs, Inc.",taskus.com,65500
+"ExlService Holdings, Inc.",,65000
+"Ulta Beauty, Inc.",ulta.com,65000
+GENUINE PARTS CO,,65000
+AUTOLIV INC,autoliv.com,64300
+SHERWIN WILLIAMS CO,,64249
+"Toys ""R"" Us",toysrus.com,64000
+"Bloomin' Brands, Inc.",bloominbrands.com,64000
+CARDINAL HEALTH INC,cardinalhealth.com,63900
+Goodyear Tire and Rubber Company,goodyear.com,63000
+PILGRIMS PRIDE CORP,pilgrims.com,63000
+International Paper,internationalpaper.com,62602
+CENTENE CORP,centene.com,61100
+"Bath & Body Works, Inc.",lb.com,60700
+3M,3m.com,60500
+"Waste Management, Inc",wm.com,60500
+DANAHER CORP /DE/,danaher.com,60000
+Hard Rock International,hardrock.com,60000
+Parker Hannifin,parker.com,59850
+Boston Scientific,bostonscientific.com,59000
+BRINKS CO,brinks.com,58000
+GE Aerospace,geaerospace.com,57000
+QUEST DIAGNOSTICS INC,questdiagnostics.com,57000
+COMMUNITY HEALTH SYSTEMS INC,chs.net,57000
+AbbVie Inc.,abbvie.com,57000
+EPAM Systems,epam.com,56600
+Stryker Corporation,stryker.com,56000
+Baker Hughes,bakerhughes.com,56000
+HP Inc.,hp.com,55000
+ESTEE LAUDER COMPANIES INC,elcompanies.com,55000
+Edward Jones,edwardjones.com,55000
+GE HealthCare Technologies Inc.,gehealthcare.com,54000
+Delaware North ,delawarenorth.com,54000
+Restaurant Brands International Inc.,rbi.com,53500
+Cushman & Wakefield,cushmanwakefield.com,53000
+Micron Technology,micron.cn,53000
+ALLSTATE CORP,allstate.com,53000
+State Street Corporation,statestreet.com,52000
+RYDER SYSTEM INC,ryder.com,51600
+Cencora,cencora.com,51000
+"TTEC Holdings, Inc.",ttec.com,51000
+CONDUENT Inc,conduent.com,51000
+COHERENT CORP.,coherent.com,51000
+AECOM,aecom.com,51000
+Eli Lilly and Company,lilly.com,50000
+Bechtel,bechtel.com,50000
+"Caesars Entertainment, Inc.",caesars.com,50000
+"Amentum Holdings, Inc.",amentum.com,50000
+Cox Enterprises,coxenterprises.com,50000
+Yum! Brands,yum.com,49000
+BorgWarner,borgwarner.com,49000
+Chevron Corporation,chevron.com,48600
+The Cheesecake Factory,thecheesecakefactory.com,48400
+Bank of New York Mellon Corp,,48100
+CINTAS CORP,cintas.com,48100
+ECOLAB INC.,ecolab.com,48000
+Panda Restaurant Group,pandarg.com,48000
+"PACS Group, Inc.",pacs.com,47455
+Goldman Sachs,goldmansachs.com,47400
+"Leidos Holdings, Inc.",leidos.com,47000
+CARRIER GLOBAL Corp,carrier.com,47000
+Wawa,wawa.cc,47000
+Fertitta Entertainment,fertittaentertainmentinc.com,47000
+Halliburton,halliburton.com,46000
+METLIFE INC,metlife.com,46000
+"ENSIGN GROUP, INC",ensigngroup.net,46000
+Hobby Lobby Stores,,46000
+Qualcomm,consumerrights.wiki,45000
+"L3HARRIS TECHNOLOGIES, INC. /DE/",l3harris.com,45000
+Medline Inc.,medline.com,45000
+AMERICAN EAGLE OUTFITTERS INC,,45000
+Menards,menards.com,45000
+S&P Global,spglobal.com,44500
+Huntington Ingalls Industries,hii.com,44000
+LKQ Corporation,lkqcorp.com,44000
+"EMCOR Group, Inc.",emcorgroup.com,44000
+"Fidelity National Information Services, Inc.",,44000
+Performance Food Group Co,performancefoodservice.com,44000
+"Life Time Group Holdings, Inc.",,44000
+"KinderCare Learning Companies, Inc.",kc-learning.com,43700
+PPG INDUSTRIES INC,ppg.com,43500
+"STANLEY BLACK & DECKER, INC.",stanleyblackanddecker.com,43500
+Abercrombie & Fitch,abercrombie.com,43200
+Illinois Tool Works,itw.com,43000
+BNSF Railway,bnsf.com,43000
+Jacobs Engineering Group,jacobs.com,43000
+McKesson Corporation,mckesson.com,43000
+Nvidia,nvidia.com,42000
+Encompass Health Corp,encompasshealth.com,42000
+Prudential Financial,prudential.com,41671
+LAS VEGAS SANDS CORP,sands.com,41500
+Interpublic Group of Companies,interpublic.com,41000
+WHIRLPOOL CORP /DE/,whirlpoolcorp.com,41000
+MOHAWK INDUSTRIES INC,mohawkind.com,40500
+Western Digital,westerndigital.com,40000
+Barnes & Noble,barnesandnoble.com,40000
+"FedEx Freight Holding Company, Inc.",,40000
+Love's Travel Stops & Country Stores,loves.com,40000
+Great American Outdoors Group,,40000
+Mastercard,mastercard.com,39800
+SANMINA CORP,sanmina.com,39000
+NIQ Global Intelligence plc,nielseniq.com,38760
+Fiserv,fiserv.com,38000
+McKinsey & Company,mckinsey.com,38000
+Pilgrim's Corp,pilgrimspride.com,38000
+Life Care Centers of America,,38000
+Baxter International,baxter.com,37500
+"MAXIMUS, INC.",maximus.com,37200
+"XPO, Inc.",xpo.com,37000
+Day & Zimmermann,dayzim.com,37000
+Avon Products Inc.,avonworldwide.com,36700
+APPLIED MATERIALS INC /DE,appliedmaterials.com,36500
+"KBR, Inc.",kbr.com,36000
+MASTEC INC,mastec.com,36000
+"Sprouts Farmers Market, Inc.",sprouts.com,36000
+KIMBERLY CLARK CORP,kimberly-clark.com,36000
+HEALTHCARE SERVICES GROUP INC,,36000
+Reyes Holdings,reyesholdings.com,36000
+"ALASKA AIR GROUP, INC.",alaskaair.com,35951
+Ritz-Carlton,ritzcarlton.com,35001
+Avery Dennison,avery.com,35000
+"BJ's Wholesale Club Holdings, Inc.",,35000
+IBEX Ltd,ibex.co,35000
+Ferguson Enterprises Inc. /DE/,fergusonplc.com,35000
+Ashley Furniture Industries,ashleyfurniture.com,35000
+DOW INC.,dow.com,34600
+Bunge Limited,bunge.com,34000
+Exelon,exeloncorp.com,34000
+Bureau of Diplomatic Security,diplomaticsecurity.state.gov,34000
+Textron,textron.com,34000
+Vertiv,vertiv.com,34000
+Uber,uber.com,34000
+"TRAVELERS COMPANIES, INC.",,34000
+Asplundh Tree Expert,asplundh.com,33795
+COLGATE PALMOLIVE CO,colgatepalmolive.com,33600
+Kellanova,kelloggcompany.com,33577
+AMC Theatres,amctheatres.com,33311
+Charles Schwab Corporation,schwab.com,33000
+Nucor,nucor.com,33000
+Texas Instruments,ti.com,33000
+Broadcom,broadcom.com,33000
+Brookdale Senior Living Inc.,brookdaleinvestors.com,33000
+BCG (Boston Consulting Group),,33000
+U-Haul Holding Co /NV/,,32600
+Bristol-Myers Squibb,bms.com,32500
+BRIGHT HORIZONS FAMILY SOLUTIONS INC.,,32200
+Direct to Door Marketing,doorhangerswork.com,32068
+Dutch Bros. Coffee,dutchbros.com,32000
+Bed Bath & Beyond Inc.,bedbathandbeyond.com,32000
+SMITHFIELD FOODS INC,smithfieldfoods.com,32000
+Kiewit ,kiewit.com,31800
+J. B. Hunt,jbhunt.com,31750
+Dick's Sporting Goods,dickssportinggoods.com,31600
+Archer Daniels Midland,adm.com,31600
+Amgen,amgen.com,31500
+Booz Allen Hamilton Holding Corp,boozallen.com,31500
+DEL MONTE CORP,freshdelmonte.com,31466
+"DoorDash, Inc.",doordash.com,31400
+Adobe,adobe.com,31360
+QuikTrip,quiktrip.com,31306
+AMD,amd.com,31000
+MATTEL INC /DE/,mattel.com,31000
+URBAN OUTFITTERS INC,urbanoutfitters.com,31000
+WESTINGHOUSE AIR BRAKE TECHNOLOGIES CORP,,31000
+Discount Tire,discounttire.com,30972
+"AMKOR TECHNOLOGY, INC.",amkor.com,30800
+Keurig Dr Pepper Inc.,keurig.com,30600
+Precision Castparts Corp.,precast.com,30100
+UST,ust.com,30000
+General Mills,generalmills.com,30000
+Seagate Technology,seagate.com,30000
+Truist Financial,truist.com,30000
+LITHIA MOTORS INC,lithiainvestorrelations.com,30000
+US Foods Holding Corp.,usfoods.com,30000
+Viatris Inc,viatris.com,30000
+Giant Eagle,gianteagle.com,30000
+Harbor Freight Tools,harborfreight.com,30000
+Northeast Grocery,northeastgrocery.com,30000
+Kohler,kohler.com,30000
+SOUTHERN CO,southerncompany.com,29800
+Union Pacific Corporation,up.com,29287
+REGAL REXNORD CORP,regalrexnord.com,29200
+ServiceNow,servicenow.com,29187
+"DILLARD'S, INC.",dillards.com,29100
+PG&E Corp,,29000
+APi Group Corp,apigroupinc.com,29000
+FREEPORT-MCMORAN INC,,29000
+SS&C Technologies Holdings Inc,,28800
+Flutter Entertainment plc,flutter.com,28518
+WYNN RESORTS LTD,wynnresorts.com,28500
+ADVANCE AUTO PARTS INC,advanceautoparts.com,28274
+Applebee's,applebees.com,28000
+"Builders FirstSource, Inc.",,28000
+SYNOPSYS INC,synopsys.com,28000
+CARMAX INC,,27796
+"PENSKE AUTOMOTIVE GROUP, INC.",penskeautomotive.com,27700
+Sheetz,sheetz.com,27615
+CACI,caci.com,27000
+"Sally Beauty Holdings, Inc.",sallybeautyholdings.com,27000
+Inflection Point Acquisition Corp. VII,,27000
+Flex-N-Gate,,27000
+Demoulas Super Markets,,27000
+DANA Inc,dana.com,26900
+Duke Energy CORP,duke-energy.com,26441
+Bloomberg L.P.,bloomberg.com,26000
+Visa Inc.,visa.com,26000
+Penske Truck Leasing,gopenske.com,26000
+Aéropostale,aeropostale.com,26000
+Hertz Global Holdings,,26000
+PVH CORP. /DE/,pvh.com,26000
+TRACTOR SUPPLY CO /DE/,tractorsupply.com,26000
+PACCAR,paccar.com,25900
+"Sunbelt Rentals Holdings, Inc.",sunbeltrentals.com,25751
+INGLES MARKETS INC,ingles-markets.com,25551
+Howmet Aerospace Inc.,howmet.com,25430
+ManpowerGroup Inc.,manpowergroup.com,25400
+"Ardent Health, Inc.",ardenthealth.com,25200
+Hooters,hooters.com,25000
+Cleveland-Cliffs,clevelandcliffs.com,25000
+HENRY SCHEIN INC,henryschein.com,25000
+UNIVERSAL CORP /VA/,universalcorp.com,25000
+ALCON INC,alcon.com,25000
+Owens Corning,owenscorning.com,25000
+"Acadia Healthcare Company, Inc.",acadiahealthcare.com,25000
+"W.W. GRAINGER, INC.",grainger.com,25000
+"AVIS BUDGET GROUP, INC.",avis.com,25000
+TETRA TECH INC,tetratech.com,25000
+BlackRock,blackrock.com,24900
+"AUTONATION, INC.",autonation.com,24800
+"Fidelity National Financial, Inc.",fnf.com,24535
+Analog Devices,analog.com,24500
+FASTENAL CO,fastenal.com,24489
+Booking Holdings Inc.,bookingholdings.com,24300
+Estes Express Lines,estes-express.com,24000
+"Lineage, Inc.",lineage.com,24000
+"Savers Value Village, Inc.",savers.com,24000
+"Lumen Technologies, Inc.",lumen.com,24000
+DOVER Corp,dovercorporation.com,24000
+Southern Glazer's Wine & Spirits,southernglazers.com,24000
+Northern Trust,northerntrust.com,23800
+"PayPal Holdings, Inc.",paypal.com,23800
+"Dave & Buster's Entertainment, Inc.",,23610
+Ralph Lauren Corporation,ralphlauren.com,23600
+Rocket Companies,rocket.com,23500
+"BrightSpring Health Services, Inc.",brightspringhealth.com,23500
+"PENN Entertainment, Inc.",pennentertainment.com,23441
+UNITED NATURAL FOODS INC,,23431
+LAM RESEARCH CORP,lamresearch.com,23300
+Carvana,carvana.com,23100
+Firestone Tire and Rubber Company,firestone.com,23000
+Motorola Solutions,motorolasolutions.com,23000
+CSX Transportation,csx.com,23000
+"CROWN HOLDINGS, INC.",crowncork.com,23000
+GRAPHIC PACKAGING HOLDING CO,graphicpkg.com,23000
+Science Applications International Corp,,23000
+"Academy Sports & Outdoors, Inc.",academy.com,23000
+Ilitch Holdings,ilitchholdings.com,23000
+Xerox,xerox.com,22900
+MARKEL GROUP INC.,,22900
+"BROWN & BROWN, INC.",bbrown.com,22888
+COMFORT SYSTEMS USA INC,comfortsystemsusa.com,22700
+onsemi,onsemi.com,22600
+VISHAY INTERTECHNOLOGY INC,vishay.com,22600
+BizLink Holding,bizlinktech.com,22572
+AMETEK INC/,ametek.com,22500
+Energy Transfer LP,energytransfer.com,22311
+Hilton Grand Vacations Inc.,hgv.com,22300
+"ARROW ELECTRONICS, INC.",arrow.com,22230
+Ingram Micro Holding Corp,ingrammicro.com,22200
+CLEAN HARBORS INC,cleanharbors.com,22155
+American International Group,aig.com,22100
+Medco Health Solutions,medco.com,22000
+"Fanatics, Inc.",fanaticsinc.com,22000
+SpaceX,spacex.com,22000
+AGCO,agcocorp.com,22000
+Xylem Inc.,xylem.com,22000
+BJs RESTAURANTS INC,bjsrestaurants.com,22000
+WEIS MARKETS INC,weismarkets.com,22000
+Cooper-Standard Holdings Inc.,cooperstandard.com,22000
+Kenvue Inc.,kenvue.com,22000
+"FirstCash Holdings, Inc.",firstcash.com,22000
+SONOCO PRODUCTS CO,sonoco.com,22000
+ROLLINS INC,rollins.com,21946
+Palo Alto Networks,paloaltonetworks.com,21921
+Newell Brands,newellbrands.com,21900
+M&T BANK CORP,mtb.com,21839
+Corteva,corteva.com,21500
+INTERNATIONAL FLAVORS & FRAGRANCES INC,,21500
+"Air Products & Chemicals, Inc.",airproducts.com,21300
+MARRIOTT VACATIONS WORLDWIDE Corp,marriottvacationsworldwide.com,21100
+Tenneco,tenneco.com,21000
+Academi,theacademi.org,21000
+"Workday, Inc.",workday.com,21000
+Ingersoll Rand Inc.,ingersollrand.com,21000
+WESCO INTERNATIONAL INC,wesco.com,21000
+"TAPESTRY, INC.",tapestry.com,20600
+Old Dominion Freight Line,odfl.com,20591
+GROUP 1 AUTOMOTIVE INC,group1auto.com,20452
+Huntington Bancshares,huntington.com,20424
+Crown Equipment,crown.com,20300
+ALIGN TECHNOLOGY INC,aligntech.com,20290
+GARTNER INC,gartner.com,20244
+CKE Restaurants,ckr.com,20200
+Carlson Wagonlit Travel,mycwt.com,20000
+Hearst Communications,hearst.com,20000
+Chiquita Brands International,chiquita.com,20000
+JetBlue Airways,jetblue.com,20000
+OSI Group,osigroup.com,20000
+Amtrak,amtrak.com,20000
+Geek Squad,,20000
+Steak 'n Shake,steaknshake.com,20000
+NCR Atleos Corp,ncratleos.com,20000
+"DIEBOLD NIXDORF, Inc",diebold.com,20000
+HORMEL FOODS CORP /DE/,hormelfoods.com,20000
+EXPEDITORS INTERNATIONAL OF WASHINGTON INC,expeditors.com,20000
+PLEXUS CORP,plexus.com,20000
+Gordon Food Service,gfs.com,20000
+ABC Supply,abcsupply.com,20000
+Hearst,hearst.ca,20000
+Standard Industries,standardindustries.com,20000
+WinCo Foods,wincofoods.com,20000
+Perdue Farms,perdue.com,20000
+Hallmark,,20000
+REGIONS FINANCIAL CORP,regions.com,19969
+Graham Holdings Co,,19920
+WILLIAMS SONOMA INC,williams-sonomainc.com,19800
+"CHARLES RIVER LABORATORIES INTERNATIONAL, INC.",criver.com,19700
+PRINCIPAL FINANCIAL GROUP INC,principal.com,19700
+DYCOM INDUSTRIES INC,dycomind.com,19556
+HNI CORP,hnicorp.com,19500
+RAYMOND JAMES FINANCIAL INC,raymondjames.com,19500
+THOR INDUSTRIES INC,thorindustries.com,19500
+Pacific Gas and Electric Company,pge.com,19424
+NORFOLK SOUTHERN CORP,norfolksouthern.com,19400
+ROPER TECHNOLOGIES INC,ropertech.com,19400
+Travel & Leisure Co.,travelandleisureco.com,19300
+The Hartford,thehartford.com,19200
+First American Financial Corp,firstam.com,19102
+Freightliner Trucks,freightliner.com,19000
+Bain & Company,bain.com,19000
+"MOLINA HEALTHCARE, INC.",molinahealthcare.com,19000
+SOMNIGROUP INTERNATIONAL INC.,somnigroup.com,19000
+"Schneider National, Inc.",schneider.com,19000
+"O-I Glass, Inc. /DE/",,19000
+LEVI STRAUSS & CO,levistrauss.com,19000
+Allegis Group,allegisgroup.com,19000
+Houchens Industries,houchensindustries.com,19000
+LyondellBasell Industries N.V.,lyondellbasell.com,18970
+RED ROBIN GOURMET BURGERS INC,redrobin.com,18852
+FIFTH THIRD BANCORP,,18676
+"BrightView Holdings, Inc.",brightview.com,18600
+INTUIT INC.,intuit.com,18600
+Boston Consulting Group,bcg.com,18500
+Marathon Petroleum Corp,marathonpetroleum.com,18500
+Oshkosh Corporation,oshkoshcorp.com,18400
+"Cinemark Holdings, Inc.",cinemark.com,18300
+TTM TECHNOLOGIES INC,ttm.com,18200
+Vestis Corp,vestis.com,18150
+Agilent Technologies,agilent.com,18100
+Defense Commissary Agency,commissaries.com,18000
+Dauch Corp,dauch.com,18000
+"Chewy, Inc.",chewy.com,18000
+HUBBELL INC,hubbell.com,18000
+MASCO CORP /DE/,masco.com,18000
+MGM Resorts International,mgmresorts.com,18000
+GEO GROUP INC,geogroup.com,18000
+JR Simplot,,18000
+Stater Bros,,18000
+NFI Industries,,18000
+Microchip Technology,microchip.com,17900
+FIRST CITIZENS BANCSHARES INC /DE/,,17876
+SERVICE CORP INTERNATIONAL,,17869
+"Liberty Live Holdings, Inc.",livenation.com,17700
+Claire's,claires.com,17600
+Skydance Corp,skydance.com,17600
+PAYCHEX INC,paychex.com,17600
+AMERICAN ELECTRIC POWER CO INC,,17581
+RPM INTERNATIONAL INC/DE/,rpminc.com,17546
+NEWMONT Corp /DE/,newmont.com,17500
+"First Watch Restaurant Group, Inc.",firstwatch.com,17500
+CONAGRA BRANDS INC.,conagrabrands.com,17400
+KEYCORP /NEW/,key.com,17226
+Fluor Corporation,fluor.com,17122
+INTUITIVE SURGICAL INC,intuitive.com,17021
+Amsted Industries,amsted.com,17000
+Guardian Industries,guardian.com,17000
+Gilead Sciences,gilead.com,17000
+"ZIMMER BIOMET HOLDINGS, INC.",zimmerbiomet.com,17000
+"Live Nation Entertainment, Inc.",livenation.com,17000
+"Krispy Kreme, Inc.",krispykreme.com,17000
+Veralto Corp,veralto.com,17000
+"Coca-Cola Consolidated, Inc.",cokeconsolidated.com,17000
+KLA CORP,kla.com,17000
+C&S Wholesale Grocers,,17000
+Brookshire Grocery,brookshires.com,17000
+Murphy USA Inc.,murphyusa.com,16900
+Keysight Technologies,keysight.com,16800
+PACKAGING CORP OF AMERICA,packagingcorp.com,16800
+NRG Energy,nrg.com,16702
+Weatherford International plc,weatherford.com,16700
+SOUTHERN COPPER CORP/,southerncoppercorp.com,16617
+Arctic Slope Regional Corporation,,16219
+Molson Coors Brewing Company,molsoncoors.com,16200
+"V2X, Inc.",gov2x.com,16200
+BOYD GAMING CORP,boydgaming.com,16009
+Flowserve,flowserve.com,16000
+Edwards Lifesciences,edwardslifesciences.com,16000
+Food City,foodcity.com,16000
+Ball Corporation,ball.com,16000
+NBCUniversal,nbcuniversal.com,16000
+"Expedia Group, Inc.",expediagroup.com,16000
+"BROADRIDGE FINANCIAL SOLUTIONS, INC.",broadridge-ir.com,16000
+"Surgery Partners, Inc.",surgerypartners.com,16000
+GENESCO INC,genesco.com,16000
+UNIFIRST CORP,unifirst.com,16000
+K-VA-T Food Stores,,16000
+CHEMED CORP,chemed.com,15811
+TELEDYNE TECHNOLOGIES INC,teledyne.com,15800
+SKYWEST INC,,15775
+"RELIANCE, INC.",reliance.com,15700
+DONALDSON Co INC,,15500
+TELEFLEX INC,teleflex.com,15500
+GFL Environmental Inc.,gflenv.com,15475
+"REGENERON PHARMACEUTICALS, INC.",regeneron.com,15410
+CARTERS INC,carters.com,15400
+"QVC Group, Inc.",,15300
+NATIONAL HEALTHCARE CORP,,15278
+"Rivian Automotive, Inc. / DE",rivian.com,15232
+"DOMINION ENERGY, INC",dominionenergy.com,15200
+Fortinet,fortinet.com,15109
+AVNET INC,avnet.com,15040
+Howard Hanna Real Estate Services,howardhanna.com,15000
+DuPont,dupont.com,15000
+Equifax,equifax.com,15000
+The Vanguard Group,vanguard.com,15000
+ASBURY AUTOMOTIVE GROUP INC,asburyauto.com,15000
+"First Guaranty Bancshares, Inc.",,15000
+"COOPER COMPANIES, INC.",coopercos.com,15000
+UNISYS CORP,unisys.com,15000
+DARLING INGREDIENTS INC.,darlingii.com,15000
+Renco Group,rencogroup.net,15000
+FJ Management,,15000
+Alex Lee,alexmlee.com,15000
+Alcoa,alcoa.com,14900
+Wendy's Co,wendys.com,14900
+Genentech,gene.com,14815
+"ASSURANT, INC.",assurant.com,14800
+"RESIDEO TECHNOLOGIES, INC.",resideo.com,14800
+WESTLAKE CORP,westlake.com,14600
+UL Solutions Inc.,ul.com,14587
+INSIGHT ENTERPRISES INC,insight.com,14505
+Robert Half,roberthalf.com,14500
+Zoetis Inc.,zoetis.com,14500
+Polaris Inc.,polaris.com,14500
+Lucky Strike Entertainment Corp,luckystrikeent.com,14457
+Steel Dynamics,steeldynamics.com,14400
+HORTON D R INC /DE/,drhorton.com,14341
+Fortrea Holdings Inc.,fortrea.com,14300
+"Autodesk, Inc.",autodesk.com,14300
+Los Alamos National Laboratory,lanl.gov,14150
+"Under Armour, Inc.",underarmour.com,14100
+MCCORMICK & CO INC,mccormickcorporation.com,14100
+Yahoo Inc.,yahooinc.com,14000
+Amway,amwayglobal.com,14000
+Boston Market,bostonmarket.com,14000
+Rheem,rheem.com,14000
+BRUNSWICK CORP,brunswick.com,14000
+DENTSPLY SIRONA Inc.,dentsplysirona.com,14000
+SEABOARD CORP /DE/,seaboardcorp.com,14000
+ARCBEST CORP /TX/,arcb.com,14000
+"APTARGROUP, INC.",aptargroup.com,14000
+Burns & McDonnell ,burnsmcd.com,14000
+Epic Systems,,14000
+Koch Foods,kochfoods.com,14000
+Jeld-Wen,jeld-wen.com,13900
+Shake Shack Inc.,shakeshack.com,13873
+ACUITY INC. (DE),acuityinc.com,13800
+CADENCE DESIGN SYSTEMS INC,cadence.com,13800
+UFP INDUSTRIES INC,ufpi.com,13800
+Lumentum Holdings Inc.,lumentum.com,13757
+Edison International,edison.com,13725
+"Floor & Decor Holdings, Inc.",flooranddecor.com,13723
+Equinix,equinix.com,13716
+"CoreCivic, Inc.",corecivic.com,13651
+AMERIPRISE FINANCIAL INC,ameriprise.com,13600
+NCR Corporation,ncrvoyix.com,13500
+TransUnion,transunion.com,13500
+CAMPBELL'S Co,thecampbellscompany.com,13500
+"Avantor, Inc.",avantorsciences.com,13500
+MOOG INC.,moog.com,13500
+ICAHN ENTERPRISES L.P.,icahnenterprises.com,13500
+Atlassian,atlassian.com,13301
+The Mosaic Company,mosaicco.com,13249
+MODINE MANUFACTURING CO,modine.com,13200
+"Post Holdings, Inc.",postholdings.com,13180
+"National Vision Holdings, Inc.",nationalvision.com,13138
+Lockton Companies,lockton.com,13100
+Church of Scientology,scientologie.fr,13000
+Avaya,avaya.com,13000
+Simplot,simplot.com,13000
+Bausch & Lomb,bausch.com,13000
+Designer Brands Inc.,designerbrands.com,13000
+"Ollie's Bargain Outlet Holdings, Inc.",ollies.com,13000
+Gates Industrial Corp Ltd.,gates.com,13000
+Viking Holdings Ltd,viking.com,13000
+ICU MEDICAL INC/DE,icumed.com,13000
+Snap-on Inc,snapon.com,13000
+EASTMAN CHEMICAL CO,eastman.com,13000
+ADVANCED ENERGY INDUSTRIES INC,advancedenergy.com,13000
+SC Johnson,scj.com,13000
+Republic National Distributing Company,,13000
+Rich Products,richs.com,13000
+W. L. Gore & Associates,gore.com,13000
+Dart Container,dartcontainer.com,13000
+TIAA,tiaa.org,12950
+Take-Two Interactive,take2games.com,12909
+LENNOX INTERNATIONAL INC,lennox.com,12900
+"CAVA GROUP, INC.",cava.com,12900
+"Intercontinental Exchange, Inc.",intercontinentalexchange.com,12844
+FACTSET RESEARCH SYSTEMS INC,factset.com,12800
+Wayfair Inc.,wayfair.com,12800
+SILGAN HOLDINGS INC,silganholdings.com,12800
+"TIC Solutions, Inc.",tics.com,12760
+AMERICOLD REALTY TRUST,americold.com,12690
+Phillips 66,phillips66.com,12600
+Primo Brands Corp,primobrands.com,12600
+Harpo Productions,harpocareers.com,12554
+LENNAR CORP /NEW/,lennar.com,12532
+PHINIA INC.,phinia.com,12500
+Pratt Industries,,12500
+Enviri,harsco.com,12300
+eBay,ebay.com,12300
+Axalta Coating Systems Ltd.,axalta.com,12300
+LCI INDUSTRIES,lci1.com,12300
+WMATA,wmata.com,12260
+ENTERGY CORP /DE/,entergy.com,12233
+ADT Inc.,adt.com,12200
+EchoStar CORP,echostar.com,12100
+"UPBOUND GROUP, INC.",upbound.com,12050
+Aflac,aflac.com,12003
+SAS Group,sasgroup.net,12000
+SapientNitro,sapientnitro.com,12000
+Sanhua,sanhuagroup.com,12000
+Synchrony Financial,synchronybank.com,12000
+GE Consumer & Industrial,geappliances.com,12000
+Goulds Pumps,gouldspumps.com,12000
+PRICESMART INC,pricesmart.com,12000
+Envista Holdings Corp,envistaco.com,12000
+"MasterBrand, Inc.",masterbrand.com,12000
+"GREIF, INC",greif.com,12000
+LINCOLN ELECTRIC HOLDINGS INC,lincolnelectric.com,12000
+World Wide Technology,wwt.com,12000
+Black & Veatch,,12000
+COPART INC,copart.com,11900
+"C. H. ROBINSON WORLDWIDE, INC.",chrobinson.com,11855
+BENCHMARK ELECTRONICS INC,bench.com,11840
+"CORPAY, INC.",corpay.com,11800
+The Friedkin Group,,11745
+NetApp,netapp.com,11700
+IRON MOUNTAIN INC,ironmountain.com,11700
+ITT Corporation,itt.com,11600
+Schnuck Markets,,11591
+XCEL ENERGY INC,xcelenergy.com,11534
+Trimble,trimble.com,11500
+Tommy Hilfiger B.V.,tommy.com,11500
+Bally's Corporation,ballys.com,11500
+JBT MAREL Corp,jbtc.com,11500
+SMITH A O CORP,aosmith.com,11500
+Raley's,,11500
+Celanese Corporation,celanese.com,11434
+VALVOLINE INC,valvoline.com,11400
+RESMED INC,resmed.com,11370
+COTY INC.,coty.com,11335
+Harman International Industries,harman.com,11246
+BET Media Group,viacom.com,11200
+Osram Sylvania,osram-americas.com,11200
+Ingredion Inc,ingredion.com,11200
+Vulcan Materials CO,vulcanmaterials.com,11172
+DEXCOM INC,dexcom.com,11100
+Sandisk Corp,sandisk.com,11100
+HEICO CORP,heico.com,11100
+OCEANEERING INTERNATIONAL INC,oceaneering.com,11100
+BRUKER CORP,bruker.com,11085
+Kinder Morgan,kindermorgan.com,11028
+Electronic Arts,ea.com,11000
+"IDEXX Laboratories, Inc.",idexx.com,11000
+Akamai Technologies,akamai.com,11000
+Massachusetts Mutual Life Insurance Company,massmutual.co.jp,11000
+SONIC AUTOMOTIVE INC,sonicautomotive.com,11000
+Integer Holdings Corp,integer.net,11000
+"Voya Financial, Inc.",voya.com,11000
+"REVVITY, INC.",revvity.com,11000
+GREENBRIER COMPANIES INC,,11000
+DPR Construction,dpr.com,11000
+Total Wine & More,totalwine.com,11000
+"LifeStance Health Group, Inc.",lifestance.com,10961
+Stagwell Inc,stagwellglobal.com,10951
+Unum Group,unum.com,10910
+AdaptHealth Corp.,adapthealth.com,10900
+Euronet Worldwide,euronet.com,10800
+WEST PHARMACEUTICAL SERVICES INC,westpharma.com,10800
+EVERSOURCE ENERGY,eversource.com,10731
+ZEBRA TECHNOLOGIES CORP,zebra.com,10700
+TEREX CORP,terex.com,10700
+CrowdStrike,crowdstrike.com,10698
+"Kontoor Brands, Inc.",kontoorbrands.com,10600
+"XBP Global Holdings, Inc.",xbpglobal.com,10600
+PARSONS CORP,parsons.com,10600
+"MILLERKNOLL, INC.",millerknoll.com,10544
+"UNIVERSAL LOGISTICS HOLDINGS, INC.",universallogistics.com,10525
+"BWX Technologies, Inc.",bwxt.com,10400
+"Installed Building Products, Inc.",installedbuildingproducts.com,10400
+MKS INC,mks.com,10300
+FLOWERS FOODS INC,flowersfoods.com,10300
+ESAB Corp,esabcorporation.com,10300
+Ally Financial Inc.,ally.com,10300
+"Santander Holdings USA, Inc.",santanderus.com,10300
+"IES Holdings, Inc.",ies-corporate.com,10283
+"Block, Inc.",block.xyz,10205
+"Woodward, Inc.",woodward.com,10200
+DOMINOS PIZZA INC,dominos.com,10200
+The Kraft Group,thekraftgroup.com,10200
+INNODATA INC,innodata.com,10107
+Exide,exide.com,10027
+Solventum,solventum.com,10000
+GE Transportation,getransportation.com,10000
+Covista,covista.com,10000
+"HDR, Inc.",hdrinc.com,10000
+LexisNexis,lexisnexis.com,10000
+"Eddie Bauer Holdings, Inc.",eddiebauer.com,10000
+LPL Financial Holdings Inc.,,10000
+CALERES INC,caleres.com,10000
+"Fortune Brands Innovations, Inc.",,10000
+Fortive Corp,fortive.com,10000
+"Lamb Weston Holdings, Inc.",lambweston.com,10000
+Organon & Co.,organon.com,10000
+"Everus Construction Group, Inc.",everus.com,10000
+"Qnity Electronics, Inc.",,10000
+"SKYWORKS SOLUTIONS, INC.",skyworksinc.com,10000
+RaceTrac ,racetrac.com,10000
+Graybar Electric,,10000
+Breakthru Beverage Group,breakthrubev.com,10000
+New Balance ,newbalance.com,10000
+Schreiber Foods,schreiberfoods.com,10000
+The Wonderful Company,wonderful.com,10000
+Zachry Group,,10000
+Coca-Cola Bottling Co United,,10000
+Mountaire ,,10000
+R+L Carriers,,10000
+Rosendin Electric,rosendin.com,10000
