@@ -242,6 +242,33 @@ export async function createConversation(
 }
 
 /**
+ * One conversation by id (RLS: only the owner's own threads resolve). Used by
+ * deep links such as the quarterly update email, which may open a thread
+ * before the sidebar list for its organization has loaded.
+ */
+export async function getConversation(conversationId: string): Promise<ChatConversation | null> {
+  const { data, error } = await supabase
+    .from('chat_conversations')
+    .select('*')
+    .eq('id', conversationId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as ChatConversation | null) ?? null;
+}
+
+// Deep link to a thread: /chat?c=<conversation id>. The email's "open your
+// update" button points here; ProtectedRoute keeps the address across
+// sign-in, so a signed-out reader lands on the thread after logging in.
+export const CONVERSATION_PARAM = 'c';
+export const conversationPath = (conversationId: string): string =>
+  `/chat?${CONVERSATION_PARAM}=${encodeURIComponent(conversationId)}`;
+export const conversationIdFromSearch = (search: string | URLSearchParams): string | null => {
+  const params = typeof search === 'string' ? new URLSearchParams(search) : search;
+  const id = (params.get(CONVERSATION_PARAM) ?? '').trim();
+  return /^[0-9a-f-]{36}$/i.test(id) ? id : null;
+};
+
+/**
  * List conversations for the current user in an organization, most recent
  * first. Paginated to avoid loading hundreds of rows into the sidebar —
  * users who need older threads can request the next page.
