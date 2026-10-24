@@ -314,9 +314,8 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
         throw new Error(`Invalid response format from ${modelName}`);
       }
       
-      // Handle citations from Perplexity and Google AI Overviews responses
-      const perplexityCitations = functionName === 'test-prompt-perplexity' ? responseData.citations : null;
-      const googleAICitations = functionName === 'test-prompt-google-ai-overviews' ? responseData.citations : null;
+      // Forward native citations from every model, not just a chosen few.
+      const modelCitations = Array.isArray(responseData.citations) ? responseData.citations : null;
       
       // Check if response already exists for this prompt and model
       const responseExists = await checkExistingPromptResponse(
@@ -337,8 +336,7 @@ export const usePromptsLogic = (onboardingData?: OnboardingData) => {
             response: responseData.response,
             companyName: onboardingRecord?.company_name || onboardingData?.companyName,
             promptType: confirmedPrompt.prompt_type,
-            perplexityCitations: perplexityCitations,
-            citations: googleAICitations, // Pass Google AI citations
+            citations: modelCitations,
             confirmed_prompt_id: confirmedPrompt.id,
             ai_model: modelName,
             company_id: confirmedPrompt.company_id
