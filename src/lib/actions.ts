@@ -401,3 +401,20 @@ export function selectionMarkets(key: string | null | undefined, options: Locati
   if (!entry.memberKeys) spellings.add(entry.label);
   return { label: entry.label, spellings: [...spellings] };
 }
+
+// The title without a market label the card already shows: a leading
+// "Mexico: " or "Chile, Colombia and Peru: ", or a trailing " · Germany",
+// when it names only the action's own markets. The stored title is unchanged.
+export function displayTitle(a: Pick<CompanyAction, 'title' | 'markets'>): string {
+  const own = new Set((a.markets || []).map(norm));
+  const onlyOwn = (label: string) => {
+    const names = label.split(/\s*,\s*|\s+and\s+|\s*&\s*/).map(norm).filter(Boolean);
+    return names.length > 0 && names.every((n) => own.has(n));
+  };
+  const title = a.title.trim();
+  const prefix = /^([^:]{2,80}):\s+(.+)$/.exec(title);
+  if (prefix && onlyOwn(prefix[1])) return prefix[2].charAt(0).toUpperCase() + prefix[2].slice(1);
+  const suffix = /^(.+?)\s+·\s+([^·]+)$/.exec(title);
+  if (suffix && onlyOwn(suffix[2])) return suffix[1];
+  return title;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { actionScope, buildBoard, isForYou, selectionMarkets, isPeopleAction, pickAmplifyLink, readingView, trendText, compareActions, cycleLabel, matchesMarkets, noteParts, ownedChannel, pendingForUser, sourcesTarget, typeLabel, type CompanyAction } from './actions';
+import { actionScope, buildBoard, displayTitle, isForYou, selectionMarkets, isPeopleAction, pickAmplifyLink, readingView, trendText, compareActions, cycleLabel, matchesMarkets, noteParts, ownedChannel, pendingForUser, sourcesTarget, typeLabel, type CompanyAction } from './actions';
 
 const action = (over: Partial<CompanyAction>): CompanyAction => ({
   id: over.id ?? Math.random().toString(36),
@@ -249,5 +249,20 @@ describe('selectionMarkets', () => {
   it('is null for the global view', () => {
     expect(selectionMarkets(null, options)).toBeNull();
     expect(selectionMarkets('__general__', options)).toBeNull();
+  });
+});
+
+describe('displayTitle', () => {
+  const t = (title: string, markets: string[]) => displayTitle({ title, markets });
+  it('drops a market label the card already shows', () => {
+    expect(t("Mexico: merge and own Ford's Indeed Mexico pages.", ['Mexico'])).toBe("Merge and own Ford's Indeed Mexico pages.");
+    expect(t('Chile, Colombia and Peru: a section on careers.ford.com/southamerica.', ['Chile', 'Colombia', 'Peru'])).toBe('A section on careers.ford.com/southamerica.');
+    expect(t('Kununu · Germany', ['Germany'])).toBe('Kununu');
+  });
+  it('keeps titles where the market is part of the sentence or not the action\'s', () => {
+    expect(t('kununu in Germany', ['Germany'])).toBe('kununu in Germany');
+    expect(t('FBS: make Glassdoor describe FBS, not only Ford India.', ['India'])).toBe('FBS: make Glassdoor describe FBS, not only Ford India.');
+    expect(t('Germany: a statement.', ['France'])).toBe('Germany: a statement.');
+    expect(t('Germany: a statement.', [])).toBe('Germany: a statement.');
   });
 });

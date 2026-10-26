@@ -37,7 +37,7 @@ import { cn } from '@/lib/utils';
 import { GENERAL_KEY, canonicalizeLocationContext, countryCodeFor, type LocationEntry } from '@/utils/locationContext';
 import {
   BOARD_COLUMNS, LANE_LABEL, STATUS_LABEL, typeLabel, buildBoard, cycleLabel, noteParts,
-  sourcesTarget, selectionMarkets, actionScope, isPeopleAction, pickAmplifyLink, type AmplifyLink, readingView, trendText, type ReadingView, DISMISS_REASONS, dismissReasonLabel, type ActionCheck, type CompanyAction, type WorkStatus,
+  sourcesTarget, displayTitle, selectionMarkets, actionScope, isPeopleAction, pickAmplifyLink, type AmplifyLink, readingView, trendText, type ReadingView, DISMISS_REASONS, dismissReasonLabel, type ActionCheck, type CompanyAction, type WorkStatus,
 } from '@/lib/actions';
 
 const db = supabase as any;
@@ -510,7 +510,7 @@ function ActionCard({ action, ownerLabel, onOpen, onAccept, onDone, onDismiss, b
     >
       <KindLabel action={action} />
       <h4 className="mt-2.5 text-[15px] font-medium leading-snug text-gray-900">
-        {action.title}
+        {displayTitle(action)}
       </h4>
       {action.recommendation && <p className="mt-1.5 line-clamp-2 text-sm text-gray-600">{action.recommendation}</p>}
       <div className="mt-2"><ScopeChip action={action} /></div>
@@ -706,7 +706,7 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
       {/* Main column */}
       <div className="space-y-5 p-6 md:min-h-0 md:overflow-y-auto">
         <DialogHeader className="space-y-1 text-left">
-          <DialogTitle className="pr-8 text-xl font-medium leading-snug">{action.title}</DialogTitle>
+          <DialogTitle className="pr-8 text-xl font-medium leading-snug">{displayTitle(action)}</DialogTitle>
           <DialogDescription className="sr-only">Action details</DialogDescription>
         </DialogHeader>
 

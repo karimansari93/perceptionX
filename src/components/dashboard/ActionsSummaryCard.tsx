@@ -7,7 +7,7 @@ import { ArrowRight, CircleDashed, CircleDot, ListChecks } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCompany } from '@/contexts/CompanyContext';
 import { useCompanyActions } from '@/hooks/useCompanyActions';
-import { actionScope, pendingForUser, typeLabel, type CompanyAction } from '@/lib/actions';
+import { actionScope, displayTitle, pendingForUser, typeLabel, type CompanyAction } from '@/lib/actions';
 import { Skeleton } from '@/components/ui/skeleton';
 
 // Fixed at three so the card never grows the Overview's top row; the header
@@ -65,7 +65,7 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
                     ? <CircleDot className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
                     : <CircleDashed className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-400" />}
                   <span className="min-w-0 flex-1">
-                    <span className="line-clamp-1 text-[13px] text-gray-900">{action.title}</span>
+                    <span className="line-clamp-1 text-[13px] text-gray-900">{displayTitle(action)}</span>
                     <span className="text-xs text-gray-500">
                       {[
                         typeLabel(action)?.label ?? null,
