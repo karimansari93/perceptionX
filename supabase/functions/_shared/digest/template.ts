@@ -6,7 +6,7 @@
 // are the dashboard's Lucide marks rendered to PNG under /email/attributes.
 
 import type {
-  DigestAttributeRow, DigestBarRow, DigestGroupRow, DigestMetric, DigestPayload, DigestRenderOptions,
+  DigestActionRow, DigestAttributeRow, DigestBarRow, DigestGroupRow, DigestMetric, DigestPayload, DigestRenderOptions,
 } from './types.ts';
 
 const F = 'font-family:Helvetica,Arial,sans-serif;';
@@ -22,7 +22,7 @@ export function escapeHtml(s: string): string {
 // Mail clients auto-link anything that looks like a domain, in their own
 // blue. Prose and source names carry domains on purpose, so they become
 // deliberate links in our navy, no underline, to the page itself.
-const DOMAIN_RE = /\b((?:[a-z0-9-]+\.)+(?:com|org|net|io|co|ai|fyi|in|de|fr|uk|nl|pl|jp|au|ca|br|mx|es|it|se|ch|sg)(?:\.[a-z]{2})?(?:\/[a-z0-9._~%!$&'()*+,;=:@/-]*[a-z0-9_/-])?)/gi;
+const DOMAIN_RE = /\b((?:[a-z0-9-]+\.)+(?:com|org|net|io|co|ai|fyi|in|de|fr|uk|nl|pl|jp|au|ca|br|mx|es|it|se|ch|sg|hu|ro|cz|sk|at|be|dk|fi|no|pt|ie|gr|tr|za|ae|kr|nz|hk|tw|my|ph|th|vn|cl|ar|pe)(?:\.[a-z]{2})?(?:\/[a-z0-9._~%!$&'()*+,;=:@/-]*[a-z0-9_/-])?)/gi;
 export function linkDomains(escaped: string): string {
   return escaped.replace(DOMAIN_RE, (m) => {
     const href = m.includes('://') ? m : `https://${m}`;
@@ -122,6 +122,22 @@ function barRow(row: DigestBarRow, token: string): string {
 const barList = (rows: string[]) =>
   `<table style="width:100%;border-collapse:separate;border-spacing:0 5px;">${rows.join('')}</table>`;
 
+function actionCard(a: DigestActionRow): string {
+  const timing = a.timing
+    ? ` <span style="${F}font-size:10px;font-weight:700;color:${NAVY};border:1px solid ${NAVY};border-radius:999px;padding:1px 7px;margin-left:8px;vertical-align:2px;letter-spacing:0.3px;">${escapeHtml(a.timing.toUpperCase())}</span>`
+    : '';
+  const field = (label: string, text: string) =>
+    `<tr><td style="${F}font-size:11px;font-weight:600;color:${MUTED};text-transform:uppercase;letter-spacing:0.5px;padding:6px 12px 0 0;vertical-align:top;white-space:nowrap;">${label}</td>` +
+    `<td style="${F}font-size:13px;line-height:1.5;color:${BODY};padding:6px 0 0 0;vertical-align:top;width:100%;">${text}</td></tr>`;
+  const meta = [a.markets.length ? a.markets.map(escapeHtml).join(', ') : '', a.owner ? `Owner: ${escapeHtml(a.owner)}` : '', a.lifts.length ? `Lifts ${a.lifts.map(escapeHtml).join('; ')}` : '']
+    .filter(Boolean).join(' · ');
+  return `<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 10px;"><tr><td style="border:1px solid ${LINE};border-radius:10px;padding:12px 14px;">` +
+    p(`<span style="color:${PINK};font-weight:700;margin-right:8px;">${escapeHtml(a.number)}</span>${escapeHtml(a.title)}${timing}`, 14, INK, 700, 'margin-bottom:2px;', '20px') +
+    (meta ? p(meta, 12, MUTED, 400, '', '18px') : '') +
+    '<table cellpadding="0" cellspacing="0" role="presentation" style="width:100%;border-collapse:collapse;">' +
+    (a.why ? field('Why', prose(a.why)) : '') + field('What to do', prose(a.whatToDo)) + '</table></td></tr></table>';
+}
+
 function section(title: string, sub: string, body: string, top = 20): string {
   return `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:${top}px;border-top:1px solid ${LINE};"><tbody><tr><td style="padding-top:18px;">` +
     p(title, 14, INK, 700, 'margin-bottom:2px;', '24px') + (sub ? p(sub, 12, MUTED, 400, 'margin-bottom:10px;', '24px') : '') + body +
@@ -214,6 +230,11 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
       p('Where to act next', 14, INK, 700, 'margin-bottom:4px;', '24px') + p(prose(n.action), 13, BODY) + '</td></tr></tbody></table>'
     : '';
 
+  const reportActions = payload.actions.length
+    ? section('From your report', `The actions PerceptionX set out for ${escapeHtml(payload.scope.locationLabel)} in your latest report. This update is written with them in mind.`,
+        payload.actions.map(actionCard).join(''))
+    : '';
+
   const sinceSub = prev ? `, with the change since ${escapeHtml(prev)}` : '';
   const peers = payload.employers.length
     ? section('Employers AI names alongside you', `${escapeHtml(payload.employersNote)}${sinceSub}.`, barList(payload.employers.map(r => barRow(r, token))))
@@ -253,6 +274,6 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
     '</head><body dir="ltr" lang="en" style="background-color:#F4F5F7;padding:0;margin:0;">' + preheader +
     '<table border="0" width="100%" cellpadding="0" cellspacing="0" role="presentation" align="center"><tbody><tr><td style="background-color:#F4F5F7;padding:24px 0;">' +
     `<table align="center" width="100%" class="em-container" border="0" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;background-color:#FFFFFF;border:1px solid ${LINE};border-radius:16px;margin:0 auto;"><tbody><tr style="width:100%"><td style="padding:32px;">` +
-    header + intro + scopeCard + changed + markets + functions + act + peers + sources + themes + button + footer +
+    header + intro + scopeCard + changed + markets + functions + act + reportActions + peers + sources + themes + button + footer +
     '</td></tr></tbody></table></td></tr></tbody></table></body></html>';
 }

@@ -30,7 +30,8 @@ Hard rules:
 - Never mention raw counts of answers, responses, prompts or themes.
 - Do not name any company other than the client, the employers in the payload's employers list, and the sources in the payload's sources list.
 - Each callout is one finding a reader could disagree with (title), then the figure, a comparison, and why it matters (body).
-- The action names the attribute, the page or source AI reads most for it (from the payload or evidence), what that page says or does not say (from the evidence), and one concrete thing to publish. One recommendation, not a list.
+- When payload.actions is not empty, those are the numbered actions PerceptionX published in the client's report for this reader's markets. The action block then points at one of them: name it by number and title, say what this quarter's figures say about it, and restate its what-to-do. Never propose a different action while the list is not empty, and the callouts may refer to a listed action by number when a figure bears on it.
+- When payload.actions is empty, the action names the attribute, the page or source AI reads most for it (from the payload or evidence), what that page says or does not say (from the evidence), and one concrete thing to publish. One recommendation, not a list.
 - Reply with JSON only, no code fences, matching exactly:
 {"preheader": string, "callouts": [{"title": string, "body": string}], "functionsNote": string|null, "marketsNote": string|null, "action": string}
 - 3 or 4 callouts. preheader under ${LIMITS.preheader} characters. title under ${LIMITS.title}. body under ${LIMITS.body}. notes under ${LIMITS.note}. action under ${LIMITS.action}.
@@ -144,6 +145,10 @@ export function digestMarkdown(payload: DigestPayload): string {
     if (n?.functionsNote) lines.push('', n.functionsNote);
   }
   if (n?.action) lines.push('', '### Where to act next', n.action);
+  if (payload.actions.length) {
+    lines.push('', '### From your report');
+    for (const a of payload.actions) lines.push(`- **${a.number} ${a.title}**${a.timing ? ` (${a.timing})` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
+  }
   if (payload.employers.length) {
     lines.push('', '### Employers AI names alongside you');
     lines.push(`${payload.employersNote}.`);
