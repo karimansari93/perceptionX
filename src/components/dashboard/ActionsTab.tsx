@@ -37,7 +37,7 @@ import { cn } from '@/lib/utils';
 import { GENERAL_KEY, canonicalizeLocationContext, countryCodeFor, type LocationEntry } from '@/utils/locationContext';
 import {
   BOARD_COLUMNS, LANE_LABEL, STATUS_LABEL, typeLabel, buildBoard, cycleLabel, noteParts,
-  sourcesTarget, actionScope, isPeopleAction, pickAmplifyLink, type AmplifyLink, readingView, trendText, type ReadingView, DISMISS_REASONS, dismissReasonLabel, type ActionCheck, type CompanyAction, type WorkStatus,
+  sourcesTarget, selectionMarkets, actionScope, isPeopleAction, pickAmplifyLink, type AmplifyLink, readingView, trendText, type ReadingView, DISMISS_REASONS, dismissReasonLabel, type ActionCheck, type CompanyAction, type WorkStatus,
 } from '@/lib/actions';
 
 const db = supabase as any;
@@ -181,11 +181,9 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
 
   // The header's market (it opens on the user's saved location), as every
   // spelling the register might use.
-  const myMarket = useMemo(() => {
-    if (!selectedLocation || selectedLocation === GENERAL_KEY) return null;
-    const opt = locationOptions?.find((o) => o.canonicalKey === selectedLocation);
-    return opt ? { label: opt.label, spellings: [opt.label, ...opt.rawValues] } : null;
-  }, [selectedLocation, locationOptions]);
+  // The header's selection (one market, a region or a set), in every
+  // spelling the register might use.
+  const myMarket = useMemo(() => selectionMarkets(selectedLocation, locationOptions), [selectedLocation, locationOptions]);
 
   const board = useMemo(() => buildBoard(actions, {
     forYou: scope === 'for_you',

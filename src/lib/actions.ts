@@ -1,3 +1,6 @@
+import { GENERAL_KEY, type LocationEntry } from '@/utils/locationContext';
+import { expandSelectionKey, resolveSelectionEntry } from '@/utils/locationSelection';
+
 // Action register (company_actions) helpers for the dashboard's Actions tab.
 // Pure functions only, so the board's filtering and ordering are unit-tested.
 //
@@ -382,4 +385,19 @@ export function pickAmplifyLink(links: AmplifyLink[], marketCode: string | null)
   return (code && links.find((l) => l.prefill_market_code?.toUpperCase() === code))
     || links.find((l) => !l.prefill_market_code)
     || null;
+}
+
+// The header's location selection as action markets: one market, a region
+// or a set of markets, each with every spelling the register might use.
+// Null for All locations and General (the global view).
+export function selectionMarkets(key: string | null | undefined, options: LocationEntry[] | undefined): { label: string; spellings: string[] } | null {
+  if (!key || key === GENERAL_KEY || !options) return null;
+  const entry = resolveSelectionEntry(key, options);
+  if (!entry) return null;
+  const members = expandSelectionKey(key, options)
+    .map((k) => options.find((o) => o.canonicalKey === k))
+    .filter((e): e is LocationEntry => !!e);
+  const spellings = new Set<string>([...entry.rawValues, ...members.flatMap((m) => [m.label, ...m.rawValues])]);
+  if (!entry.memberKeys) spellings.add(entry.label);
+  return { label: entry.label, spellings: [...spellings] };
 }

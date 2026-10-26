@@ -14,7 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 // count and "View all" cover the rest.
 const MAX_ROWS = 3;
 
-export function ActionsSummaryCard({ market }: { market: string | null }) {
+export function ActionsSummaryCard({ markets }: { markets: string[] }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { viewAsMember } = useCompany();
@@ -22,8 +22,8 @@ export function ActionsSummaryCard({ market }: { market: string | null }) {
   const meId = viewAsMember?.userId ?? user?.id ?? null;
 
   const { mine, suggested } = useMemo(
-    () => pendingForUser(actions, meId, market ? [market] : []),
-    [actions, meId, market],
+    () => pendingForUser(actions, meId, markets),
+    [actions, meId, markets],
   );
   const rows: { action: CompanyAction; mine: boolean }[] = [
     ...mine.map((action) => ({ action, mine: true })),

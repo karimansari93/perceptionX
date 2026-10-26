@@ -46,6 +46,7 @@ import { isCompositeKey } from "@/utils/locationSelection";
 import { quarterKeyOfMonthStr } from "@/utils/quarterKey";
 import { WalkthroughProvider } from "@/contexts/WalkthroughContext";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { selectionMarkets } from "@/lib/actions";
 
 const SECTION_TITLES: Record<string, string> = {
   overview: "Overview",
@@ -236,6 +237,13 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
     if (!selectedLocation || selectedLocation === GENERAL_KEY || isCompositeKey(selectedLocation)) return null;
     return locationOptions?.find(o => o.canonicalKey === selectedLocation)?.label ?? null;
   }, [selectedLocation, locationOptions]);
+
+  // The selected markets for the Overview's Actions card, a region or a set
+  // included (selectedMarketName is null for those).
+  const actionMarkets = useMemo(
+    () => selectionMarkets(selectedLocation, locationOptions)?.spellings ?? [],
+    [selectedLocation, locationOptions],
+  );
 
   // Job-function vocabularies are company-specific: a function saved on one
   // company means nothing on another, and because the pill filter is shared
@@ -649,6 +657,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
             epsTrendByJobFunction={epsTrendByJobFunction}
             epsChangeByJobFunction={epsChangeByJobFunction}
             market={selectedMarketName}
+            actionMarkets={actionMarkets}
             selectedJobFunction={selectedJobFunction}
             onJobFunctionChange={handleJobFunctionChange}
             domainStats={domainStats}

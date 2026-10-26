@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { actionScope, buildBoard, isForYou, isPeopleAction, pickAmplifyLink, readingView, trendText, compareActions, cycleLabel, matchesMarkets, noteParts, ownedChannel, pendingForUser, sourcesTarget, typeLabel, type CompanyAction } from './actions';
+import { actionScope, buildBoard, isForYou, selectionMarkets, isPeopleAction, pickAmplifyLink, readingView, trendText, compareActions, cycleLabel, matchesMarkets, noteParts, ownedChannel, pendingForUser, sourcesTarget, typeLabel, type CompanyAction } from './actions';
 
 const action = (over: Partial<CompanyAction>): CompanyAction => ({
   id: over.id ?? Math.random().toString(36),
@@ -229,5 +229,25 @@ describe('Amplify links', () => {
   it('only People actions share with employees', () => {
     expect(isPeopleAction({ lanes: ['people', 'owned'] })).toBe(true);
     expect(isPeopleAction({ lanes: ['owned'] })).toBe(false);
+  });
+});
+
+describe('selectionMarkets', () => {
+  const opt = (canonicalKey: string, label: string, rawValues: string[], memberKeys?: string[]) =>
+    ({ canonicalKey, label, rawValues, icon: memberKeys ? 'region' : 'flag', flagCode: null, companyIds: [], memberKeys }) as never;
+  const options = [
+    opt('germany', 'Germany', ['Germany']),
+    opt('hungary', 'Hungary', ['Hungary']),
+    opt('india', 'India', ['India']),
+    opt('region:europe', 'Europe', [], ['germany', 'hungary']),
+  ];
+  it('expands a region or a set to its markets', () => {
+    expect(selectionMarkets('region:europe', options)?.spellings.sort()).toEqual(['Germany', 'Hungary']);
+    expect(selectionMarkets('set:hungary|india', options)?.spellings.sort()).toEqual(['Hungary', 'India']);
+    expect(selectionMarkets('india', options)).toEqual({ label: 'India', spellings: ['India'] });
+  });
+  it('is null for the global view', () => {
+    expect(selectionMarkets(null, options)).toBeNull();
+    expect(selectionMarkets('__general__', options)).toBeNull();
   });
 });
