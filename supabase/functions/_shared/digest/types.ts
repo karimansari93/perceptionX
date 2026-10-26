@@ -60,6 +60,23 @@ export interface DigestNarrative {
   action: string;
 }
 
+/** One numbered action from the client's published report, scoped to this reader's markets. */
+export interface DigestActionRow {
+  /** "05" as printed in the report. */
+  number: string;
+  title: string;
+  /** "Act now", "Act next", "Act later" or null. */
+  timing: string | null;
+  markets: string[];
+  /** The report's "Why" (problem). */
+  why: string | null;
+  /** The report's "What to do". */
+  whatToDo: string;
+  owner: string | null;
+  /** "Sentiment (Compensation) in Hungary" style lines. */
+  lifts: string[];
+}
+
 export interface DigestPayload {
   recipient: { firstName: string; email: string };
   brand: { name: string; domain: string | null };
@@ -99,6 +116,8 @@ export interface DigestPayload {
   employersNote: string;
   sources: DigestBarRow[];
   attributes: DigestAttributeRow[];
+  /** Published report actions for this reader's markets (organisation-wide ones included). */
+  actions: DigestActionRow[];
   narrative: DigestNarrative | null;
   /** Where the button goes: the pre-created chat, or the chat page. */
   chatUrl: string;

@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
-import { digestSubject, renderDigestHtml } from './template.ts';
-import { coverageRows, describeLocation, displayMarket, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
+import { digestSubject, renderDigestHtml, sentimentBadge } from './template.ts';
+import { coverageRows, describeLocation, displayMarket, filterActions, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
 import { cap, digestMarkdown, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
 
@@ -35,6 +35,7 @@ const payload: DigestPayload = {
     { attributeId: 'career-opportunities', name: 'Career Opportunities', raisedPct: 36, positivePct: 72, delta: -4 },
     { attributeId: 'wellbeing-balance', name: 'Wellbeing & Balance', raisedPct: 25, positivePct: 93, delta: -2 },
   ],
+  actions: [],
   narrative: {
     preheader: 'Score 78, Good. Career growth is what pulls sentiment down.',
     callouts: [{ title: 'Your careers site is now the second source AI reads.', body: 'careers.ford.com appears in 44% of answers, up 11 points.' },
@@ -157,4 +158,36 @@ Deno.test('display names', () => {
   assertEquals(sourceName('indeed.de'), 'Indeed Germany');
   assertEquals(sourceName('about.netflix.com'), 'about.netflix.com');
   assertEquals(describeLocation('set:the netherlands|poland', ['the Netherlands', 'Poland']), { label: 'Netherlands, Poland', preposition: 'across' });
+});
+
+Deno.test('sentiment column is a badge coloured by band', () => {
+  const html = renderDigestHtml(payload, opts);
+  assert(html.includes('>Sentiment</th>'));
+  assert(!html.includes('>Positive</th>'));
+  assert(sentimentBadge(84).includes('#16A34A'));
+  assert(sentimentBadge(72).includes('#0E8F8C'));
+  assert(sentimentBadge(65).includes('#B45309'));
+  assert(sentimentBadge(41).includes('#DC2626'));
+  assert(sentimentBadge(null).includes('–'));
+});
+
+Deno.test('report actions: market filter, shape and section', () => {
+  const rows = [
+    { organization_id: 'o', register: 'action', action_number: 5, title: 'Claim the local review profiles that doubled', timing: 'act_next', markets: ['Romania', 'Hungary'], problem: 'profession.hu reached 22% of Hungarian answers with no presence.', recommendation: 'Claim profession.hu and keep benefits current.', owner_name: 'Market HR', tracking_status: 'open', lifts: [{ metric: 'Sentiment', attribute: 'Compensation', market: 'Hungary' }], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 2, title: 'Germany only', timing: 'act_now', markets: ['Germany'], recommendation: 'x', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 1, title: 'Everywhere', timing: null, markets: [], recommendation: 'y', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 3, title: 'Done already', timing: 'act_now', markets: ['Hungary'], recommendation: 'z', tracking_status: 'done', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'watch', action_number: null, title: 'Watch item', markets: ['Hungary'], recommendation: 'w', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 9, title: 'Unpublished', markets: ['Hungary'], recommendation: 'u', tracking_status: 'open', lifts: [], published_at: null },
+  ];
+  const out = filterActions(rows, ['Hungary']);
+  assertEquals(out.map(a => a.number), ['01', '05']);
+  assertEquals(out[1].timing, 'Act next');
+  assertEquals(out[1].lifts, ['Sentiment (Compensation) in Hungary']);
+  const html = renderDigestHtml({ ...payload, actions: out }, opts);
+  assertStringIncludes(html, 'From your report');
+  assertStringIncludes(html, 'Claim the local review profiles that doubled');
+  assertStringIncludes(html, 'ACT NEXT');
+  assertStringIncludes(html, 'href="https://profession.hu"');
+  assert(!renderDigestHtml(payload, opts).includes('From your report'));
 });

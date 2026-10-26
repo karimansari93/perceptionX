@@ -13,7 +13,7 @@ import { resolveScope } from '../px-tools/scope.ts';
 import type { ResolvedScope, ToolContext } from '../px-tools/scope.ts';
 import { CLAUDE_PUBLISHED_OR, EXCLUDED_AI_MODELS_FILTER, monthToQuarter, pct, pointsDelta, sentimentPct } from '../px-tools/helpers.ts';
 import { REGIONS, regionFromKey } from '../regions.ts';
-import type { DigestAttributeRow, DigestBarRow, DigestGroupRow, DigestPayload } from './types.ts';
+import type { DigestActionRow, DigestAttributeRow, DigestBarRow, DigestGroupRow, DigestPayload } from './types.ts';
 
 export interface DigestView {
   companyId: string;
@@ -323,6 +323,7 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
     .filter(row => monthToQuarter(String(row.response_month)) === latestQ)
     .map(row => String(row.job_function_context || '').trim()).filter(Boolean))).sort();
   const loc = describeLocation(view.locationKey, r.buckets || []);
+  const actions = await reportActions(ctx, r.buckets || []);
 
   return {
     recipient: view.recipient,
@@ -339,7 +340,7 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
       ? `Change since ${previousLabel} compares this quarter's collection with the previous one, as the dashboard does.`
       : 'This is the first collection for this view, so there is no change to show yet.',
     sentimentChangeHidden: false,
-    byFunction, byMarket, employers, employersNote, sources, attributes,
+    byFunction, byMarket, employers, employersNote, sources, attributes, actions,
     narrative: null,
     chatUrl: view.chatUrl,
     chatNote: view.chatNote,
@@ -347,3 +348,56 @@ export async function buildDigestPayload(ctx: ToolContext, view: DigestView): Pr
 }
 
 export const regionNames = () => REGIONS.map(r => r.label);
+
+// ─── Report actions ─────────────────────────────────────────────────────────
+// The numbered actions PerceptionX published in the client's report live in
+// company_actions (loaded by a migration per report, read by Ask AI). The
+// email shows the open ones whose markets overlap the reader's view, plus
+// organisation-wide ones (no markets), so the owner of a market sees the
+// actions written for it.
+
+const TIMING: Record<string, string> = { act_now: 'Act now', act_next: 'Act next', act_later: 'Act later' };
+const normMarket = (m: string) => displayMarket(String(m || '')).trim().toLowerCase();
+
+export function shapeAction(a: Record<string, any>): DigestActionRow {
+  const lifts = Array.isArray(a.lifts) ? a.lifts : [];
+  return {
+    number: a.action_number != null ? String(a.action_number).padStart(2, '0') : '',
+    title: String(a.title || ''),
+    timing: a.timing ? (TIMING[String(a.timing)] ?? String(a.timing)) : null,
+    markets: (a.markets || []).map((m: string) => displayMarket(String(m))),
+    why: a.problem ? String(a.problem) : null,
+    whatToDo: String(a.recommendation || ''),
+    owner: a.owner_name ? String(a.owner_name) : null,
+    lifts: lifts.map((l: any) => {
+      const metric = String(l?.metric || '').trim();
+      const attr = l?.attribute ? ` (${String(l.attribute).trim()})` : '';
+      const market = l?.market ? ` in ${displayMarket(String(l.market))}` : '';
+      return metric ? `${metric}${attr}${market}` : '';
+    }).filter(Boolean),
+  };
+}
+
+/** Keep open, published, numbered actions whose markets overlap `markets` (or that carry no market). */
+export function filterActions(rows: Record<string, any>[], markets: string[]): DigestActionRow[] {
+  const want = new Set(markets.map(normMarket));
+  return rows
+    .filter(a => a.published_at && a.register !== 'retired' && a.register !== 'watch' && a.action_number != null)
+    .filter(a => !['done', 'retired'].includes(String(a.tracking_status || '')))
+    .filter(a => {
+      const ms: string[] = a.markets || [];
+      return !ms.length || !want.size || ms.some(m => want.has(normMarket(m)));
+    })
+    .sort((a, b) => (a.action_number ?? 999) - (b.action_number ?? 999))
+    .map(shapeAction);
+}
+
+async function reportActions(ctx: ToolContext, markets: string[]): Promise<DigestActionRow[]> {
+  const { data, error } = await ctx.admin
+    .from('company_actions')
+    .select('organization_id, register, title, cycle_raised, action_number, problem, recommendation, timing, lifts, owner_name, tracking_status, markets, published_at')
+    .eq('organization_id', ctx.organizationId)
+    .not('published_at', 'is', null);
+  if (error) { console.warn(`[digest] actions read failed: ${error.message}`); return []; }
+  return filterActions((data || []).filter((a: any) => a.organization_id === ctx.organizationId), markets);
+}
