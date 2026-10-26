@@ -35,6 +35,7 @@ const SourcesTab = lazyWithRetry(() => import("@/components/dashboard/SourcesTab
 const CompetitorsTab = lazyWithRetry(() => import("@/components/dashboard/CompetitorsTab").then(module => ({ default: module.CompetitorsTab })));
 const ThematicAnalysisTab = lazyWithRetry(() => import("@/components/dashboard/ThematicAnalysisTab").then(module => ({ default: module.ThematicAnalysisTab })));
 const PromptsTab = lazyWithRetry(() => import("@/components/dashboard/PromptsTab").then(module => ({ default: module.PromptsTab })));
+const ActionsTab = lazyWithRetry(() => import("@/components/dashboard/ActionsTab").then(module => ({ default: module.ActionsTab })));
 import LLMLogo from "@/components/LLMLogo";
 import { useRefreshPrompts } from "@/hooks/useRefreshPrompts";
 import { LoadingScreen, useLoadingHandoff } from "@/components/ui/loading-screen";
@@ -52,6 +53,7 @@ const SECTION_TITLES: Record<string, string> = {
   thematic: "Themes",
   prompts: "Prompts",
   reports: "Reports",
+  actions: "Actions",
 };
 
 interface DatabaseOnboardingData {
@@ -65,7 +67,7 @@ interface DatabaseOnboardingData {
 
 const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {}) => {
   const { user } = useAuth();
-  const { currentCompany, loading: companyLoading } = useCompany();
+  const { currentCompany, loading: companyLoading, viewAsMember } = useCompany();
   // Persist initial load state so we don't show loading screen on every navigation
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = usePersistedState<boolean>('dashboard.hasInitiallyLoaded', false);
   const [activeTab, setActiveTab] = useState<'terms' | 'results'>('results');
@@ -370,6 +372,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
       sources: '/dashboard/sources',
       competitors: '/dashboard/competitors',
       thematic: '/dashboard/themes',
+      actions: '/dashboard/actions',
       prompts: '/monitor',
       reports: '/analyze/reports',
     };
@@ -515,6 +518,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         setActiveSection('competitors');
       } else if (path === '/dashboard/themes') {
         setActiveSection('thematic');
+      } else if (path === '/dashboard/actions') {
+        setActiveSection('actions');
       }
     } else if (path.startsWith('/monitor')) {
       setActiveGroup('monitor');
@@ -567,6 +572,8 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         navigate('/dashboard/competitors');
       } else if (section === 'thematic') {
         navigate('/dashboard/themes');
+      } else if (section === 'actions') {
+        navigate('/dashboard/actions');
       }
     } else if (activeGroup === 'monitor') {
       if (section === 'prompts') {
@@ -599,6 +606,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         case "competitors": return <CompetitorsSkeleton />;
         case "thematic": return <ThematicSkeleton />;
         case "search": return <SearchSkeleton />;
+        case "actions": return <ReportsSkeleton />;
         default: return <OverviewSkeleton />;
       }
     }
@@ -773,6 +781,14 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           </div>
         )}
 
+        {/* Actions reads the register, not the response data; mounted only
+            while active so it fetches when the user opens it. */}
+        {activeSection === 'actions' && (
+          <Suspense fallback={<ReportsSkeleton />}>
+            <ActionsTab selectedLocation={selectedLocation} locationOptions={locationOptions} onLocationChange={handleLocationChange} onPendingLocationChange={setPendingLocation} />
+          </Suspense>
+        )}
+
         {activeSection === 'reports' && reportsContent && (
           <div>{reportsContent}</div>
         )}
@@ -823,6 +839,14 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           <div className="pointer-events-none absolute right-6 top-20 z-20 flex items-center gap-1.5 rounded-full border border-gray-200/50 bg-white/80 px-2.5 py-1 text-xs text-gray-500 shadow-sm backdrop-blur-sm">
             <RefreshCw className="w-3 h-3 animate-spin" />
             <span>Refreshing</span>
+          </div>
+        )}
+        {viewAsMember && (
+          <div className="flex items-center justify-between gap-3 bg-gray-900 px-4 py-1.5 text-xs text-white">
+            <span className="truncate">
+              Viewing as {viewAsMember.name} ({[viewAsMember.role, viewAsMember.defaultLocation].filter(Boolean).join(', ')}). Read only.
+            </span>
+            <button type="button" onClick={() => navigate('/admin')} className="shrink-0 underline">Exit</button>
           </div>
         )}
         <DashboardHeader
@@ -882,12 +906,15 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           )}
         </div>
       </SidebarInset>
+      {/* Hidden while an action's modal is open (?action=), where it would sit on top of it. */}
+      {!(activeSection === 'actions' && new URLSearchParams(location.search).has('action')) && (
       <AskAiBubble
         section={activeSection}
         companyName={companyName}
         market={selectedMarketName}
         jobFunction={selectedJobFunction}
       />
+      )}
     </div>
   );
 };

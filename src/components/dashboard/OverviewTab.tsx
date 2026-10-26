@@ -25,6 +25,7 @@ import { AttributesSummaryCard } from "./AttributesSummaryCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Favicon } from "@/components/ui/favicon";
 import { AskAiHero } from "@/components/chat/AskAiHero";
+import { ActionsSummaryCard } from "./ActionsSummaryCard";
 import { extractSourceUrl } from "@/utils/citationUtils";
 import {
   ChartContainer,
@@ -1052,7 +1053,12 @@ export const OverviewTab = memo(({
           question; the score row and everything else sit below it. The
           overview never scrolls: hero and score row are fixed height, the
           summary row takes the rest and its cards scroll internally. */}
-      <AskAiHero companyName={companyName} market={market} jobFunction={selectedJobFunctionFilter} />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 w-full flex-shrink-0">
+        <div className="lg:col-span-2">
+          <AskAiHero companyName={companyName} market={market} jobFunction={selectedJobFunctionFilter} />
+        </div>
+        <ActionsSummaryCard market={market} />
+      </div>
 
       <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full flex-shrink-0">
         {/* EPS card — the score sits in the header's right slot; the chart fills the body. */}

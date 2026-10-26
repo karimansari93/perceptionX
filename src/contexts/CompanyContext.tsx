@@ -44,6 +44,16 @@ export interface CompanyMembership {
   company?: Company;
 }
 
+// A client member a platform admin is previewing the dashboard as: their
+// default company, saved location and role apply, and nothing writes.
+export interface ViewAsMember {
+  userId: string;
+  name: string;
+  role: 'owner' | 'admin' | 'member';
+  defaultLocation: string | null;
+  defaultCompanyId: string | null;
+}
+
 interface CompanyContextType {
   currentCompany: Company | null;
   userCompanies: Company[];
@@ -53,8 +63,10 @@ interface CompanyContextType {
   refreshCompanies: () => Promise<void>;
   setAsDefaultCompany: (companyId: string) => Promise<void>;
   isOwnerOrAdmin: boolean;
-  viewAsOrganization: (orgId: string) => Promise<boolean>;
+  viewAsOrganization: (orgId: string, member?: ViewAsMember) => Promise<boolean>;
   clearViewAsOrganization: () => Promise<void>;
+  viewAsMember: ViewAsMember | null;
+  isPlatformAdmin: boolean;
 }
 
 const VIEW_AS_ORG_KEY = 'px_view_as_org';
@@ -78,6 +90,8 @@ export const useCompany = () => {
       isOwnerOrAdmin: false,
       viewAsOrganization: async () => false,
       clearViewAsOrganization: async () => {},
+      viewAsMember: null,
+      isPlatformAdmin: false,
     };
   }
   return context;
@@ -159,7 +173,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [user?.id]);
   // Organization a platform admin is currently viewing the dashboard as.
   // Survives a page refresh (sessionStorage) but never a new tab/session.
-  const viewAsOrgRef = useRef<{ userId: string; orgId: string } | null>(null);
+  const viewAsOrgRef = useRef<{ userId: string; orgId: string; member?: ViewAsMember } | null>(null);
   if (viewAsOrgRef.current === null) {
     try {
       const raw = sessionStorage.getItem(VIEW_AS_ORG_KEY);
@@ -168,6 +182,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
       /* storage unavailable: no override */
     }
   }
+  const [viewAsMember, setViewAsMember] = useState<ViewAsMember | null>(viewAsOrgRef.current?.member ?? null);
   const [currentCompany, setCurrentCompany] = useState<Company | null>(null);
   const [userCompanies, setUserCompanies] = useState<Company[]>([]);
   const [userMemberships, setUserMemberships] = useState<CompanyMembership[]>([]);
@@ -318,7 +333,11 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
         // Only set current company if none is selected or current company is no longer valid
         setCurrentCompany(prevCurrent => {
+          // Previewing as a member: land on their default company.
+          const memberDefault = viewAsOrgId && viewAsOrgRef.current?.member?.defaultCompanyId;
+          const memberCompany = memberDefault ? companies.find(c => c.id === memberDefault) : undefined;
           if (!prevCurrent) {
+            if (memberCompany) return memberCompany;
             // No current company — pick the starred/US landing company so the
             // first dashboard load is for the right company (see pickInitialCompany).
             return pickInitialCompany(companies, user);
@@ -481,8 +500,9 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [userCompanies, fetchUserCompanies, user?.id]);
 
-  const setViewAs = (value: { userId: string; orgId: string } | null) => {
+  const setViewAs = (value: { userId: string; orgId: string; member?: ViewAsMember } | null) => {
     viewAsOrgRef.current = value;
+    setViewAsMember(value?.member ?? null);
     try {
       if (value) sessionStorage.setItem(VIEW_AS_ORG_KEY, JSON.stringify(value));
       else sessionStorage.removeItem(VIEW_AS_ORG_KEY);
@@ -494,17 +514,18 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Platform admins: load the dashboard as a whole organization. The company
   // dropdown then lists that organization's companies. Returns false if the
   // organization has no companies (nothing is changed in that case).
-  const viewAsOrganization = useCallback(async (orgId: string): Promise<boolean> => {
+  const viewAsOrganization = useCallback(async (orgId: string, member?: ViewAsMember): Promise<boolean> => {
     if (!user) return false;
     const previous = viewAsOrgRef.current;
-    setViewAs({ userId: user.id, orgId });
+    setViewAs({ userId: user.id, orgId, member });
     const companies = await fetchUserCompanies();
     if (companies.length === 0) {
       setViewAs(previous);
       await fetchUserCompanies();
       return false;
     }
-    const target = companies.find(c => c.country === 'US') ?? companies[0];
+    const target = (member?.defaultCompanyId && companies.find(c => c.id === member.defaultCompanyId))
+      || companies.find(c => c.country === 'US') || companies[0];
     setCurrentCompany(target);
     return true;
   }, [user, fetchUserCompanies]);
@@ -533,6 +554,8 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [userCompanies]);
 
   const isOwnerOrAdmin = useMemo(() => {
+    // Previewing as a member: their role, not the admin's.
+    if (viewAsMember) return viewAsMember.role === 'owner' || viewAsMember.role === 'admin';
     // Admins always have admin access
     if (user && platformAdmin) {
       return true;
@@ -540,7 +563,7 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (!currentCompany) return false;
     const membership = userMemberships.find(m => m.company_id === currentCompany.id);
     return membership?.role === 'owner' || membership?.role === 'admin';
-  }, [currentCompany, userMemberships, user, platformAdmin]);
+  }, [currentCompany, userMemberships, user, platformAdmin, viewAsMember]);
 
   // Memoized (all members are state or useCallback/useMemo values) so a
   // provider render doesn't hand every useCompany consumer a fresh object —
@@ -555,8 +578,12 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setAsDefaultCompany,
     isOwnerOrAdmin,
     viewAsOrganization,
-    clearViewAsOrganization
+    clearViewAsOrganization,
+    viewAsMember,
+    isPlatformAdmin: platformAdmin,
   }), [
+    viewAsMember,
+    platformAdmin,
     viewAsOrganization,
     clearViewAsOrganization,
     currentCompany,
