@@ -35,6 +35,13 @@ const p = (text: string, size = 14, color = INK, weight = 400, extra = '', lh = 
   `<p style="${F}font-size:${size}px;line-height:${lh};color:${color};font-weight:${weight};margin:0;${extra}">${text}</p>`;
 
 const pctText = (v: number | null) => v === null ? '–' : `${v}%`;
+// Sentiment badge: colour follows the sentiment bands (80+ green, 70 to 79 teal,
+// 60 to 69 amber, under 60 red) so a reader sees the level before the number.
+export function sentimentBadge(v: number | null): string {
+  if (v === null) return `<span style="color:${FLFG};font-weight:600;">–</span>`;
+  const [bg, fg] = v >= 80 ? [UPBG, UPFG] : v >= 70 ? ['#E6FAF9', '#0E8F8C'] : v >= 60 ? ['#FFF7E6', '#B45309'] : [DNBG, DNFG];
+  return `<span style="${F}font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;display:inline-block;min-width:34px;text-align:center;background-color:${bg};color:${fg};">${v}%</span>`;
+}
 
 function pill(delta: number | null, previousLabel: string | null, hiddenText: string | null = null): string {
   let bg = FLBG, fg = FLFG, txt: string;
@@ -139,11 +146,11 @@ const spacer = '<div style="height:10px;"></div>';
 function groupTable(rows: DigestGroupRow[], head: string, hideSentimentChange: boolean): string {
   const withSentimentChange = !hideSentimentChange && rows.some(r => r.sentimentDelta !== null);
   if (withSentimentChange) {
-    return smallTable([head, 'Positive', 'Change', 'Named in'],
-      rows.map(r => [escapeHtml(r.name), pctText(r.positivePct), chg(r.sentimentDelta), pctText(r.namedPct)]));
+    return smallTable([head, 'Sentiment', 'Change', 'Named in'],
+      rows.map(r => [escapeHtml(r.name), sentimentBadge(r.positivePct), chg(r.sentimentDelta), pctText(r.namedPct)]));
   }
-  return smallTable([head, 'Positive', 'Named in', 'Change'],
-    rows.map(r => [escapeHtml(r.name), pctText(r.positivePct), pctText(r.namedPct), chg(r.visibilityDelta)]));
+  return smallTable([head, 'Sentiment', 'Named in', 'Change'],
+    rows.map(r => [escapeHtml(r.name), sentimentBadge(r.positivePct), pctText(r.namedPct), chg(r.visibilityDelta)]));
 }
 
 export function digestSubject(payload: DigestPayload): string {
@@ -217,11 +224,11 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
 
   const themeSub = `What AI talks about when it describes working at ${escapeHtml(payload.brand.name)}, and how positively.${payload.sentimentChangeHidden ? ' Change resumes next quarter.' : ''}`;
   const themeRows = payload.attributes.map(a => {
-    const base = [attributeLabel(a, appUrl), `${a.raisedPct}%`, pctText(a.positivePct)];
+    const base = [attributeLabel(a, appUrl), `${a.raisedPct}%`, sentimentBadge(a.positivePct)];
     return payload.sentimentChangeHidden || !prev ? base : base.concat(chg(a.delta));
   });
   const themes = payload.attributes.length
-    ? section('Themes', themeSub, smallTable(payload.sentimentChangeHidden || !prev ? ['Attribute', 'Raised in', 'Positive'] : ['Attribute', 'Raised in', 'Positive', 'Change'], themeRows))
+    ? section('Themes', themeSub, smallTable(payload.sentimentChangeHidden || !prev ? ['Attribute', 'Raised in', 'Sentiment'] : ['Attribute', 'Raised in', 'Sentiment', 'Change'], themeRows))
     : '';
 
   const button = `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="text-align:center;margin:24px 0 0 0;"><tbody><tr><td>` +

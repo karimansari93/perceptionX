@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
-import { digestSubject, renderDigestHtml } from './template.ts';
+import { digestSubject, renderDigestHtml, sentimentBadge } from './template.ts';
 import { coverageRows, describeLocation, displayMarket, groupRows, previousWaveLabel, shortQuarter, sourceName } from './payload.ts';
 import { cap, digestMarkdown, validateNarrative } from './narrative.ts';
 import type { DigestPayload } from './types.ts';
@@ -157,4 +157,15 @@ Deno.test('display names', () => {
   assertEquals(sourceName('indeed.de'), 'Indeed Germany');
   assertEquals(sourceName('about.netflix.com'), 'about.netflix.com');
   assertEquals(describeLocation('set:the netherlands|poland', ['the Netherlands', 'Poland']), { label: 'Netherlands, Poland', preposition: 'across' });
+});
+
+Deno.test('sentiment column is a badge coloured by band', () => {
+  const html = renderDigestHtml(payload, opts);
+  assert(html.includes('>Sentiment</th>'));
+  assert(!html.includes('>Positive</th>'));
+  assert(sentimentBadge(84).includes('#16A34A'));
+  assert(sentimentBadge(72).includes('#0E8F8C'));
+  assert(sentimentBadge(65).includes('#B45309'));
+  assert(sentimentBadge(41).includes('#DC2626'));
+  assert(sentimentBadge(null).includes('–'));
 });
