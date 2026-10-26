@@ -29,7 +29,11 @@ Do not "fix" the lint by revoking anon.
 - `public.rankings_overview`
 - `public.rankings_historical`
 - `public.company_search_index`
-- `public.rankings_job_function` (job-function rankings, opened 2026-10-19)
+- `public.rankings_job_function` (job-function rankings, opened 2026-10-19).
+  Since 2026-10-24 it is a plain copy of the table
+  `public.rankings_job_function_rows` (not public, RLS on, filled one country
+  at a time). `rankings_job_function_recalc` is the old recalculating
+  definition, not public and never refreshed.
 
 Each carries a `COMMENT ON` marker starting with `PUBLIC BY DESIGN` so sweeps
 that inspect objects directly see the warning in place.
@@ -37,9 +41,11 @@ that inspect objects directly see the warning in place.
 What each country shows is set in `public.index_country_status` (not public):
 `overview_source` picks the collection behind its industry rankings
 (`legacy` = `prompt_responses`, `index` = `index_responses`), and
-`job_functions_published` decides whether its job-function rankings appear.
-Changing a country is one `UPDATE` plus a refresh of the rankings; only do it
-once Karim has signed off that country's lists.
+`job_functions_published` decides whether its job-function rankings appear
+(it gates the per-country fill of `rankings_job_function_rows`; the public
+copy itself holds whatever was filled). Changing a country is one `UPDATE`
+plus the steps in `RUNBOOK_AFTER_COLLECTION.md`; only do it once Karim has
+signed off that country's lists.
 
 ## Must stay anon-executable
 
