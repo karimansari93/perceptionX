@@ -66,7 +66,6 @@ interface CompanyContextType {
   viewAsOrganization: (orgId: string, member?: ViewAsMember) => Promise<boolean>;
   clearViewAsOrganization: () => Promise<void>;
   viewAsMember: ViewAsMember | null;
-  isPlatformAdmin: boolean;
 }
 
 const VIEW_AS_ORG_KEY = 'px_view_as_org';
@@ -91,7 +90,6 @@ export const useCompany = () => {
       viewAsOrganization: async () => false,
       clearViewAsOrganization: async () => {},
       viewAsMember: null,
-      isPlatformAdmin: false,
     };
   }
   return context;
@@ -580,10 +578,8 @@ export const CompanyProvider: React.FC<{ children: React.ReactNode }> = ({ child
     viewAsOrganization,
     clearViewAsOrganization,
     viewAsMember,
-    isPlatformAdmin: platformAdmin,
   }), [
     viewAsMember,
-    platformAdmin,
     viewAsOrganization,
     clearViewAsOrganization,
     currentCompany,

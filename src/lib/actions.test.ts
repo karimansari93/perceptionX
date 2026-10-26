@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBoard, compareActions, cycleLabel, matchesMarkets, noteParts, pendingForUser, sourcesTarget, type CompanyAction } from './actions';
+import { actionScope, buildBoard, isForYou, isPeopleAction, pickAmplifyLink, readingView, trendText, compareActions, cycleLabel, matchesMarkets, noteParts, ownedChannel, pendingForUser, sourcesTarget, typeLabel, type CompanyAction } from './actions';
 
 const action = (over: Partial<CompanyAction>): CompanyAction => ({
   id: over.id ?? Math.random().toString(36),
@@ -47,23 +47,31 @@ describe('buildBoard', () => {
     action({ id: 'us', markets: ['United States'], action_number: 4, assignee_id: 'me', work_status: 'done' }),
     action({ id: 'watch', register: 'watch', markets: [] }),
     action({ id: 'gone', register: 'retired', markets: ['Germany'] }),
+    action({ id: 'no', markets: ['Germany'], work_status: 'dismissed', dismiss_reason: 'not_now' }),
   ];
 
-  it('filters by market, columns by the owner status, never shows retired', () => {
-    const { columns, watch } = buildBoard(rows, { markets: ['Germany'] });
-    expect(columns.open.map((r) => r.id)).toEqual(['de']);
+  it('puts actions in columns by the owner status and never shows retired', () => {
+    const { columns, watch } = buildBoard(rows, { forYou: false, markets: [] });
+    expect(columns.open.map((r) => r.id)).toEqual(['de', 'sg']);
     expect(columns.in_progress.map((r) => r.id)).toEqual(['de-us']);
-    expect(columns.done).toEqual([]);
+    expect(columns.done.map((r) => r.id)).toEqual(['us']);
     expect(watch.map((r) => r.id)).toEqual(['watch']);
   });
 
-  it('keeps the user\'s own actions in view whatever the market', () => {
-    const { columns } = buildBoard(rows, { markets: ['Germany'], includeUserId: 'me' });
+  it('keeps dismissed actions off the board, in their own list', () => {
+    const { columns, dismissed } = buildBoard(rows, { forYou: false, markets: [] });
+    expect(Object.values(columns).flat().map((r) => r.id)).not.toContain('no');
+    expect(dismissed.map((r) => r.id)).toEqual(['no']);
+  });
+
+  it('For you shows the market\'s own actions plus the user\'s', () => {
+    const { columns } = buildBoard(rows, { forYou: true, markets: ['Germany'], includeUserId: 'me' });
+    expect(columns.open.map((r) => r.id)).toEqual(['de']);
     expect(columns.done.map((r) => r.id)).toEqual(['us']);
   });
 
-  it('shows every action with no market filter', () => {
-    const { columns } = buildBoard(rows, { markets: [] });
+  it('All shows every action', () => {
+    const { columns } = buildBoard(rows, { forYou: false, markets: [] });
     expect(columns.open.length + columns.in_progress.length + columns.done.length).toBe(4);
   });
 });
@@ -90,6 +98,7 @@ describe('pendingForUser', () => {
       action({ id: 'india', markets: ['India'] }),
       action({ id: 'germany', markets: ['Germany'] }),
       action({ id: 'watch', register: 'watch' }),
+      action({ id: 'dismissed', markets: ['India'], work_status: 'dismissed' }),
     ];
     const { mine, suggested } = pendingForUser(rows, 'me', ['India']);
     expect(mine.map((r) => r.id)).toEqual(['mine-wip', 'mine-open']);
@@ -129,5 +138,96 @@ describe('sourcesTarget', () => {
   it('returns null when no company covers the market', () => {
     expect(sourcesTarget({ markets: ['Romania'] }, ford, 'Ford Motor Company', null, 'fbs', canonical)).toBeNull();
     expect(sourcesTarget({ markets: ['India'], company_id: 'credit-de' }, ford, 'Ford Motor Company', null, 'fbs', canonical)).toBeNull();
+  });
+});
+
+describe('ownedChannel', () => {
+  const ch = (title: string, extra: Partial<{ urls: string[]; source_name: string; source_domain: string }> = {}) =>
+    ownedChannel({ title, urls: extra.urls ?? [], source_name: extra.source_name ?? null, source_domain: extra.source_domain ?? null }).label;
+
+  it('spots the careers site from the page, the title or the domain', () => {
+    expect(ch('Add response times to the German interview guide page', {
+      urls: ['https://www.kununu.com/de/x/bewerbung', 'https://jobs.thermofisher.com/de/de/interview-resources'], source_domain: 'kununu.com',
+    })).toBe('Careers site');
+    expect(ch('Germany: a statement on the German careers page.', { urls: ['https://www.ford.de/ford-entdecken/beruf-karriere'] })).toBe('Careers site');
+    expect(ch('Publish how hiring works on postings and the FAQ.')).toBe('Careers site');
+  });
+
+  it('names social channels and platforms', () => {
+    expect(ch('Japanese-language employer video on YouTube', { source_domain: 'youtube.com' })).toBe('YouTube');
+    expect(ch('Refresh the LinkedIn life page')).toBe('LinkedIn');
+    expect(ch('Publish Korean employer content across Naver', { source_domain: 'naver.com' })).toBe('Naver');
+  });
+
+  it('falls back to the company website, then owned content', () => {
+    expect(ch('Retire the 2018 and 2022 ford.mx posts')).toBe('Company website');
+    expect(ch('Address the culture polarity directly', { source_domain: 'netflix.com' })).toBe('Company website');
+    expect(ch('Studocu coursework in Latin America')).toBe('Owned content');
+    expect(ch('Put Singapore pay facts where AI reads them', { source_domain: 'glassdoor.com' })).toBe('Owned content');
+  });
+
+  it('leaves other kinds alone', () => {
+    expect(typeLabel({ title: 'AmbitionBox in India', urls: [], work_kind: 'profile_claims' })?.label).toBe('Profile claims');
+  });
+});
+
+describe('actionScope', () => {
+  it('is a market action only when it names exactly one market', () => {
+    expect(actionScope({ markets: ['India'] })).toEqual({ kind: 'market', market: 'India' });
+    expect(actionScope({ markets: ['Romania', 'Hungary'] })).toEqual({ kind: 'global' });
+    expect(actionScope({ markets: [] })).toEqual({ kind: 'global' });
+    expect(actionScope({ markets: ['Global'] })).toEqual({ kind: 'global' });
+    expect(actionScope({ markets: ['United States', 'Global'] })).toEqual({ kind: 'global' });
+  });
+
+  it('For you is the market\'s own actions, or only global ones in the global view', () => {
+    const rows = [
+      action({ id: 'global', markets: [], action_number: 1 }),
+      action({ id: 'ro-hu', markets: ['Romania', 'Hungary'], action_number: 2 }),
+      action({ id: 'hu', markets: ['Hungary'], action_number: 3 }),
+      action({ id: 'in', markets: ['India'], action_number: 4 }),
+    ];
+    const ids = (forYou: boolean, markets: string[]) => buildBoard(rows, { forYou, markets }).columns.open.map((r) => r.id);
+    expect(ids(true, ['Hungary'])).toEqual(['hu']);
+    expect(ids(true, [])).toEqual(['global', 'ro-hu']);
+    expect(ids(false, ['Hungary'])).toEqual(['global', 'ro-hu', 'hu', 'in']);
+    expect(isForYou({ markets: ['hungary'] }, ['Hungary'])).toBe(true);
+  });
+});
+
+describe('readingView', () => {
+  it('reads metric readings', () => {
+    const v = readingView({ metric: 'Sentiment', attribute: 'Application', market: 'Germany', value_pct: 24, metric_status: 'provisional' });
+    expect(v).toMatchObject({ label: 'Sentiment · Application', market: 'Germany', value: 24, ofAnswers: false, provisional: true });
+  });
+
+  it('reads source readings, latest quarter first, with the trend', () => {
+    const v = readingView({ source: 'kununu', market: 'Germany', q3_pct: 45, q4_pct: 45 })!;
+    expect(v).toMatchObject({ label: 'kununu', value: 45, ofAnswers: true, previous: { value: 45, quarter: 'Q3' } });
+    expect(trendText(v)).toBe('same as Q3');
+    expect(trendText(readingView({ source: 'x', q3_pct: 38, q4_pct: 46 })!)).toBe('up from 38% in Q3');
+    expect(trendText(readingView({ source: 'x', q4_pct: 46 })!)).toBeNull();
+  });
+
+  it('drops readings with no figure', () => {
+    expect(readingView({ metric: 'Sentiment', market: 'Germany' })).toBeNull();
+    expect(readingView({ source: 'kununu', market: 'Germany' })).toBeNull();
+  });
+});
+
+describe('Amplify links', () => {
+  const links = [
+    { token: 'de', label: 'Germany', prefill_market_code: 'DE', link_subdomain: 'ford' },
+    { token: 'global', label: 'Global', prefill_market_code: null, link_subdomain: 'ford' },
+  ];
+  it('prefers the market link, else the general one', () => {
+    expect(pickAmplifyLink(links, 'DE')?.token).toBe('de');
+    expect(pickAmplifyLink(links, 'IN')?.token).toBe('global');
+    expect(pickAmplifyLink(links, null)?.token).toBe('global');
+    expect(pickAmplifyLink([links[0]], 'IN')).toBeNull();
+  });
+  it('only People actions share with employees', () => {
+    expect(isPeopleAction({ lanes: ['people', 'owned'] })).toBe(true);
+    expect(isPeopleAction({ lanes: ['owned'] })).toBe(false);
   });
 });

@@ -69,6 +69,11 @@ const codeForLocation = (stripped: string): string | null => {
   return NAME_TO_CODE[stripped.toLowerCase()] ?? null;
 };
 
+// ISO code for a market name or code ("Germany" -> "DE"); null for cities,
+// regions and anything unknown.
+export const countryCodeFor = (raw: string | null | undefined): string | null =>
+  raw && raw.trim() ? codeForLocation(stripLeadingThe(raw.trim())) : null;
+
 // Canonical key for a raw `location_context`. Returns null for global/empty
 // sentinels (which mean "no location filter"). ISO codes and full country names
 // for the same place collapse to one key; a leading "the " is dropped.

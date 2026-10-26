@@ -7,21 +7,71 @@
 // (register or tracking_status 'retired') never reach the board; watch items
 // sit in their own group under it.
 
-export type WorkStatus = 'open' | 'in_progress' | 'done';
+export type WorkStatus = 'open' | 'in_progress' | 'done' | 'dismissed';
 
 export interface AiRead {
   source?: string | null;
   market?: string | null;
   coverage_pct?: number | null;
   url?: string | null;
+  basis?: string | null;
 }
 
+// Two shapes are stored: a metric reading {metric, attribute, market,
+// value_pct, metric_status}, and a source reading {source, market, basis,
+// q3_pct, q4_pct, ...} (share of answers citing the source, per quarter).
 export interface MetricReading {
   metric?: string | null;
   attribute?: string | null;
   market?: string | null;
   value_pct?: number | null;
   metric_status?: string | null;
+  source?: string | null;
+  basis?: string | null;
+  [quarterPct: `q${number}_pct`]: number | null | undefined;
+}
+
+export interface ReadingView {
+  label: string;
+  market: string | null;
+  value: number;
+  previous: { value: number; quarter: string } | null;
+  ofAnswers: boolean;   // a source reading: % of answers citing it
+  provisional: boolean;
+}
+
+// One reading as shown on the card; null when it carries no figure.
+export function readingView(r: MetricReading | null | undefined): ReadingView | null {
+  if (!r) return null;
+  const market = r.market ?? null;
+  if (typeof r.value_pct === 'number') {
+    return {
+      label: [r.metric, r.attribute].filter(Boolean).join(' · ') || 'Reading',
+      market, value: r.value_pct, previous: null, ofAnswers: false,
+      provisional: r.metric_status === 'provisional',
+    };
+  }
+  const quarters = Object.entries(r)
+    .map(([k, v]) => ({ m: /^q([1-4])_pct$/.exec(k), v }))
+    .filter((x): x is { m: RegExpExecArray; v: number } => !!x.m && typeof x.v === 'number')
+    .map((x) => ({ q: Number(x.m[1]), v: x.v }))
+    .sort((a, b) => a.q - b.q);
+  const latest = quarters.at(-1);
+  if (!latest) return null;
+  const prev = quarters.at(-2);
+  return {
+    label: [r.source, r.basis].filter(Boolean).join(' · ') || 'Source',
+    market, value: latest.v,
+    previous: prev ? { value: prev.v, quarter: `Q${prev.q}` } : null,
+    ofAnswers: true, provisional: false,
+  };
+}
+
+// "same as Q3", "up from 38% in Q3", "down from 52% in Q3".
+export function trendText(r: ReadingView): string | null {
+  if (!r.previous) return null;
+  if (r.previous.value === r.value) return `same as ${r.previous.quarter}`;
+  return `${r.value > r.previous.value ? 'up' : 'down'} from ${r.previous.value}% in ${r.previous.quarter}`;
 }
 
 export interface CompanyAction {
@@ -35,6 +85,7 @@ export interface CompanyAction {
   problem: string | null;
   ai_says: string | null;
   ai_reads: AiRead[] | null;
+  lifts?: { metric?: string | null; attribute?: string | null; market?: string | null }[] | null;
   urls: string[] | null;
   recommendation: string | null;
   lanes: string[] | null;
@@ -50,6 +101,10 @@ export interface CompanyAction {
   assertion_note: string | null;
   assertion_url: string | null;
   asserted_done_at: string | null;
+  dismissed_at?: string | null;
+  dismissed_by?: string | null;
+  dismiss_reason?: string | null;
+  dismiss_note?: string | null;
   notes: string | null;
   published_at: string | null;
   created_at: string;
@@ -76,7 +131,21 @@ export const WORK_KIND_LABEL: Record<string, string> = {
 };
 export const LANE_LABEL: Record<string, string> = { business: 'Business', owned: 'Owned', people: 'People' };
 
-export const BOARD_COLUMNS: { status: WorkStatus; label: string }[] = [
+// Why a client dismissed an action (company_actions.dismiss_reason).
+export const DISMISS_REASONS: { value: string; label: string }[] = [
+  { value: 'already_done', label: 'We already do this' },
+  { value: 'not_our_market', label: 'Not relevant to our market' },
+  { value: 'not_our_area', label: 'Not something our team owns' },
+  { value: 'disagree', label: 'We disagree with the recommendation' },
+  { value: 'not_now', label: 'Not a priority right now' },
+  { value: 'other', label: 'Other' },
+];
+export const dismissReasonLabel = (v: string | null | undefined) =>
+  DISMISS_REASONS.find((r) => r.value === v)?.label ?? null;
+
+type BoardStatus = Exclude<WorkStatus, 'dismissed'>;
+
+export const BOARD_COLUMNS: { status: BoardStatus; label: string }[] = [
   { status: 'open', label: 'Suggested' },
   { status: 'in_progress', label: 'In progress' },
   { status: 'done', label: 'Done' },
@@ -90,6 +159,7 @@ const ORG_WIDE = new Set(['global', 'all markets', 'worldwide']);
 export const isRetired = (a: Pick<CompanyAction, 'register' | 'tracking_status'>) =>
   a.register === 'retired' || a.tracking_status === 'retired';
 export const isWatch = (a: Pick<CompanyAction, 'register'>) => a.register === 'watch';
+export const isDismissed = (a: Pick<CompanyAction, 'work_status'>) => a.work_status === 'dismissed';
 
 // Same rule as the quarterly email's filterActions: an action matches when
 // any of its markets equals a wanted market (case-insensitive), or it has no
@@ -117,23 +187,43 @@ export function compareActions(a: CompanyAction, b: CompanyAction): number {
   return a.title.localeCompare(b.title);
 }
 
-export function columnOf(a: Pick<CompanyAction, 'work_status'>): WorkStatus {
+export function columnOf(a: Pick<CompanyAction, 'work_status'>): BoardStatus {
   return a.work_status === 'in_progress' || a.work_status === 'done' ? a.work_status : 'open';
 }
 
 export interface BoardFilter {
-  markets: string[];        // empty = all markets
+  forYou: boolean;               // false = every action ("All")
+  markets: string[];             // the viewer's market spellings; empty = global view
   includeUserId?: string | null; // actions this user owns always show
+}
+
+// An action is either for one market or global: global when it names no
+// market, an organisation-wide one, or more than one market. There is no
+// per-market state; a global action is one shared card everywhere.
+export function actionScope(a: Pick<CompanyAction, 'markets'>): { kind: 'market'; market: string } | { kind: 'global' } {
+  const real = (a.markets || []).map((m) => m.trim()).filter((m) => m && !ORG_WIDE.has(norm(m)));
+  return real.length === 1 && (a.markets || []).every((m) => !ORG_WIDE.has(norm(m)))
+    ? { kind: 'market', market: real[0] }
+    : { kind: 'global' };
+}
+
+// "For you": a market team sees only the actions for its own market; with no
+// market selected (the global view) only the global actions. "All" shows
+// everything, global actions included.
+export function isForYou(a: Pick<CompanyAction, 'markets'>, markets: string[]): boolean {
+  const scope = actionScope(a);
+  if (!markets.length) return scope.kind === 'global';
+  return scope.kind === 'market' && matchesMarkets([scope.market], markets);
 }
 
 export function buildBoard(actions: CompanyAction[], filter: BoardFilter) {
   const visible = actions
     .filter((a) => !isRetired(a))
-    .filter((a) => (filter.includeUserId && a.assignee_id === filter.includeUserId) || matchesMarkets(a.markets, filter.markets))
+    .filter((a) => !filter.forYou || (!!filter.includeUserId && a.assignee_id === filter.includeUserId) || isForYou(a, filter.markets))
     .sort(compareActions);
-  const columns: Record<WorkStatus, CompanyAction[]> = { open: [], in_progress: [], done: [] };
-  for (const a of visible.filter((x) => !isWatch(x))) columns[columnOf(a)].push(a);
-  return { columns, watch: visible.filter(isWatch) };
+  const columns: Record<BoardStatus, CompanyAction[]> = { open: [], in_progress: [], done: [] };
+  for (const a of visible.filter((x) => !isWatch(x) && !isDismissed(x))) columns[columnOf(a)].push(a);
+  return { columns, watch: visible.filter((x) => isWatch(x) && !isDismissed(x)), dismissed: visible.filter(isDismissed) };
 }
 
 // "2026-10-01" → "Q4 2026"; anything else passes through (legacy "Q4 2026").
@@ -169,14 +259,15 @@ export function noteParts(notes: string | null | undefined): NotePart[] {
 }
 
 // The Overview card: the user's own open actions (in progress first), then
-// unowned suggestions for their market.
+// unowned suggestions "for you" (their market's own, or global ones in the
+// global view; see isForYou).
 export function pendingForUser(actions: CompanyAction[], userId: string | null | undefined, markets: string[]) {
-  const live = actions.filter((a) => !isRetired(a) && !isWatch(a) && a.work_status !== 'done');
+  const live = actions.filter((a) => !isRetired(a) && !isWatch(a) && a.work_status !== 'done' && !isDismissed(a));
   const mine = live
     .filter((a) => !!userId && a.assignee_id === userId)
     .sort((a, b) => (a.work_status === b.work_status ? compareActions(a, b) : a.work_status === 'in_progress' ? -1 : 1));
   const suggested = live
-    .filter((a) => !a.assignee_id && a.work_status === 'open' && matchesMarkets(a.markets, markets))
+    .filter((a) => !a.assignee_id && a.work_status === 'open' && isForYou(a, markets))
     .sort(compareActions);
   return { mine, suggested };
 }
@@ -222,4 +313,73 @@ export function sourcesTarget(
     return { companyId: pick.id, market };
   }
   return null;
+}
+
+// Owned content is labelled by where the work happens, so the card says
+// "Careers site" or "YouTube" instead of the generic "Owned content". Read
+// from the pages to act on first, then the title and source; review sites in
+// the source are where AI reads, not where the client publishes, so they are
+// skipped.
+export type OwnedChannel = 'careers_site' | 'linkedin' | 'youtube' | 'company_website' | 'platform' | 'owned_content';
+
+const REVIEW_HOSTS = /(glassdoor|indeed|kununu|ambitionbox|comparably|repvue|jobstreet|undelucram|profession\.hu|teamblind|seek\.com)/i;
+const CAREERS_HOST = /(^|\.)(careers?|jobs|karriere)\./i;
+const CAREERS_PATH = /\/(careers?|jobs|karriere|beruf-karriere|stellenangebote|empleo|vagas)(\/|$|-)/i;
+const CAREERS_TEXT = /\bcareers?\b|\bjob postings?\b|\bpostings\b|\bfaqs?\b|\binterview guide\b/i;
+const PLATFORM_LABEL: Record<string, string> = { 'naver.com': 'Naver', 'note.com': 'note.com', 'instagram.com': 'Instagram', 'tiktok.com': 'TikTok', 'x.com': 'X', 'twitter.com': 'X' };
+
+const hostOf = (url: string | null | undefined): string | null => {
+  if (!url) return null;
+  try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch { return null; }
+};
+
+const pathOf = (url: string): string => {
+  try { return new URL(url).pathname; } catch { return ''; }
+};
+
+export function ownedChannel(a: Pick<CompanyAction, 'title' | 'urls'> & { source_name?: string | null; source_domain?: string | null }): { channel: OwnedChannel; label: string } {
+  const text = `${a.title} ${a.source_name ?? ''}`;
+  const actOn = (a.urls || []).filter((u) => !REVIEW_HOSTS.test(hostOf(u) ?? ''));
+  const domain = (a.source_domain ?? '').toLowerCase();
+  const ownDomain = domain && !REVIEW_HOSTS.test(domain) ? domain : '';
+  const hosts = [...actOn.map(hostOf), ownDomain].filter(Boolean) as string[];
+
+  if (/linkedin/i.test(text) || hosts.some((h) => h.endsWith('linkedin.com'))) return { channel: 'linkedin', label: 'LinkedIn' };
+  if (/youtube/i.test(text) || hosts.some((h) => h.endsWith('youtube.com'))) return { channel: 'youtube', label: 'YouTube' };
+  const firstUrl = actOn[0];
+  if (
+    (firstUrl && (CAREERS_HOST.test(hostOf(firstUrl) ?? '') || CAREERS_PATH.test(pathOf(firstUrl))))
+    || CAREERS_TEXT.test(text)
+    || CAREERS_HOST.test(ownDomain)
+  ) return { channel: 'careers_site', label: 'Careers site' };
+  const platform = hosts.map((h) => Object.keys(PLATFORM_LABEL).find((p) => h === p || h.endsWith(`.${p}`))).find(Boolean);
+  if (platform) return { channel: 'platform', label: PLATFORM_LABEL[platform] };
+  if (hosts.length || /\b[a-z0-9-]+\.(com|de|mx|co\.uk|fr|es|com\.br|in)\b/i.test(a.title)) return { channel: 'company_website', label: 'Company website' };
+  return { channel: 'owned_content', label: WORK_KIND_LABEL.owned_content };
+}
+
+// The single type label a card shows.
+export function typeLabel(a: Parameters<typeof ownedChannel>[0] & Pick<CompanyAction, 'work_kind'>): { key: string; label: string } | null {
+  if (!a.work_kind) return null;
+  if (a.work_kind === 'owned_content') {
+    const { channel, label } = ownedChannel(a);
+    return { key: channel === 'owned_content' ? 'owned_content' : channel, label };
+  }
+  return { key: a.work_kind, label: WORK_KIND_LABEL[a.work_kind] ?? a.work_kind };
+}
+
+export interface AmplifyLink { token: string; label: string | null; prefill_market_code: string | null; link_subdomain: string | null }
+
+// People actions (reviews, profiles, employee voices) get a "Share with
+// employees" link to the organisation's Amplify page.
+export const isPeopleAction = (a: Pick<CompanyAction, 'lanes'>) => (a.lanes || []).includes('people');
+
+// The link for an action: one pre-set to the action's market when there is
+// one, else the organisation's general link (no market). Links arrive newest
+// first, so ties go to the newest.
+export function pickAmplifyLink(links: AmplifyLink[], marketCode: string | null): AmplifyLink | null {
+  const code = marketCode?.toUpperCase() ?? null;
+  return (code && links.find((l) => l.prefill_market_code?.toUpperCase() === code))
+    || links.find((l) => !l.prefill_market_code)
+    || null;
 }
