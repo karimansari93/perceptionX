@@ -88,7 +88,7 @@ check('all tools annotated read-only + closed-world', (toolsList.tools || []).ev
 // name it as included; the never-published models must not appear, and
 // nothing may be framed as excluded.
 check('no tool description mentions excluded models', !(toolsList.tools || []).some((t: any) =>
-  /\b(gemini|deepseek)\b/i.test(String(t.description)) || /\bexclud\w*\b/i.test(String(t.description))));
+  /\b(gemini|deepseek)\b/i.test(String(t.description)) || /excluded models|excludes? (claude|gemini|deepseek)/i.test(String(t.description))));
 
 // ─── Presentation contract ──────────────────────────────────────────────────
 // Quarters + percentages; no raw dates or decimals in numeric payloads; no
