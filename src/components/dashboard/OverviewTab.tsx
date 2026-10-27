@@ -1073,7 +1073,7 @@ export const OverviewTab = memo(({
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
           <div className="flex flex-none items-center gap-1.5 px-4 pb-2.5 pt-[14px]">
-            <CardTitle className="text-[15px] font-semibold text-[#13274F]">EPS</CardTitle>
+            <CardTitle className="text-[15px] font-medium text-[#13274F]">EPS</CardTitle>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1167,7 +1167,7 @@ export const OverviewTab = memo(({
           onClick={() => setIsEpsDrilldownOpen(true)}
         >
           <div className="flex flex-none items-center gap-1.5 px-4 pb-2 pt-[14px]">
-            <CardTitle className="text-[15px] font-semibold text-[#13274F]">Breakdown</CardTitle>
+            <CardTitle className="text-[15px] font-medium text-[#13274F]">Breakdown</CardTitle>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>

@@ -1136,7 +1136,7 @@ export const CompetitorsTab = memo(({
     <div className="flex flex-col gap-6 w-full h-full">
       {/* Section header */}
       <div className="space-y-2" data-tour="competitors-heading">
-        <h2 className="text-2xl font-bold text-gray-900">Competitors</h2>
+        <h2 className="text-2xl font-medium tracking-[-0.02em] text-gray-900">Competitors</h2>
         <p className="text-gray-600">
           Who AI models surface alongside {companyName} — and where they win the answers you don't.
         </p>
@@ -1172,7 +1172,7 @@ export const CompetitorsTab = memo(({
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
-                    <CardTitle className="text-base font-bold text-gray-800">Direct competitors</CardTitle>
+                    <CardTitle className="text-base font-medium text-gray-800">Direct competitors</CardTitle>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
                     {/* Bar / line toggle */}
@@ -1343,7 +1343,7 @@ export const CompetitorsTab = memo(({
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-2 min-w-0">
-                    <CardTitle className="text-base font-bold text-gray-800">Employers of choice</CardTitle>
+                    <CardTitle className="text-base font-medium text-gray-800">Employers of choice</CardTitle>
                     <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
                       {eocRows.filter((r) => !r.isCompany).length.toLocaleString()}
                     </Badge>
@@ -1455,7 +1455,7 @@ export const CompetitorsTab = memo(({
           <Card data-tour="competitors-table" className="shadow-sm border border-gray-200">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2 flex-wrap">
-                <CardTitle className="text-base font-bold text-gray-800">Competitors</CardTitle>
+                <CardTitle className="text-base font-medium text-gray-800">Competitors</CardTitle>
                 <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
                   {totalDetected.toLocaleString()}
                 </Badge>

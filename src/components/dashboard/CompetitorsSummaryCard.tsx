@@ -342,7 +342,7 @@ export const CompetitorsSummaryCard = ({
     return (
       <Card className="shadow-sm border border-gray-200">
         <CardHeader className="px-4 pt-[14px] pb-1.5">
-          <CardTitle className="text-[15px] font-semibold text-[#13274F]">Competitors</CardTitle>
+          <CardTitle className="text-[15px] font-medium text-[#13274F]">Competitors</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-2.5">
           {streamError && !competitorPools ? (
@@ -376,7 +376,7 @@ export const CompetitorsSummaryCard = ({
     <Card className="shadow-sm border border-gray-200">
       <CardHeader className="px-4 pt-[14px] pb-1.5">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-[15px] font-semibold text-[#13274F]">Competitors</CardTitle>
+          <CardTitle className="text-[15px] font-medium text-[#13274F]">Competitors</CardTitle>
           <Button
             variant="outline"
             size="sm"

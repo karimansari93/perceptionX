@@ -155,22 +155,63 @@ export const DashboardHeader = React.memo(({
     );
   };
 
-  // Below laptop width: one row (page title, search, Filters, plus the
-  // menu on phones); the filters open in a panel from the bottom, with a dot
-  // while a market or function is set.
+  // Below laptop width: one row; the rest of the filters open in a panel from
+  // the bottom, with a dot while a market or function is set. Phones show the
+  // menu, the page title and icons. Tablets skip the title (the page shows it)
+  // and keep the company and market in view, with a full search field.
   if (compact) {
     const title = breadcrumbs?.[breadcrumbs.length - 1]?.label;
     const filtered = (!!selectedLocation && selectedLocation !== GENERAL_KEY) || (!!selectedJobFunction && selectedJobFunction !== 'all');
-    const iconButton = 'relative flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-[#13274F] transition-colors hover:bg-gray-50';
+    const iconButton = 'relative flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-gray-200 bg-white text-[#13274F] transition-colors hover:bg-gray-50';
     return (
       <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/50">
         <div className="flex items-center h-16 gap-2 px-4">
-          {isMobile && <SidebarTrigger className="h-7 w-7 mr-1 text-[#13274F]" />}
-          <span className="min-w-0 flex-1 truncate text-base font-medium text-gray-700">{title}</span>
-          {onOpenSearch && (
-            <button type="button" onClick={onOpenSearch} aria-label="Search" className={iconButton}>
-              <Search className="h-4 w-4" />
-            </button>
+          {isMobile ? (
+            <>
+              <SidebarTrigger className="h-7 w-7 mr-1 text-[#13274F]" />
+              <span className="min-w-0 flex-1 truncate text-base font-medium text-gray-700">{title}</span>
+              {onOpenSearch && (
+                <button type="button" onClick={onOpenSearch} aria-label="Search" className={iconButton}>
+                  <Search className="h-4 w-4" />
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <div data-tour="company-switcher" className="min-w-0">
+                <CompanySwitcher
+                  variant="outline"
+                  alwaysMounted={alwaysMounted}
+                  onPendingLocationChange={onPendingLocationChange}
+                  onIntentPrefetch={onCompanyPrefetch}
+                />
+              </div>
+              {onLocationChange && (
+                <div data-tour="location-filter" className="min-w-0">
+                  <LocationFilter
+                    selectedLocation={selectedLocation || null}
+                    onLocationChange={onLocationChange}
+                    options={locationOptions}
+                    onIntentPrefetch={onLocationPrefetch}
+                  />
+                </div>
+              )}
+              <div className="flex min-w-0 flex-1 justify-end">
+                {onOpenSearch && (
+                  <button
+                    type="button"
+                    onClick={onOpenSearch}
+                    className="flex w-full max-w-[260px] items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-500 transition-colors hover:border-gray-300 hover:bg-white"
+                  >
+                    <Search className="h-4 w-4 flex-none text-gray-400" />
+                    <span className="flex-1 truncate text-left">Search</span>
+                    <kbd className="pointer-events-none inline-flex items-center rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                      {SEARCH_SHORTCUT}
+                    </kbd>
+                  </button>
+                )}
+              </div>
+            </>
           )}
           <button type="button" onClick={() => setFiltersOpen(true)} aria-label="Filters" className={iconButton}>
             <SlidersHorizontal className="h-4 w-4" />
@@ -206,23 +247,24 @@ export const DashboardHeader = React.memo(({
             ))}
           </div>
         )}
-        {/* Search in the top bar (after Zoom's), between the breadcrumb and the filters. */}
-        <div className="flex flex-1 justify-center px-4">
+        {/* Search leads the controls on the right, so it sits in the same
+            place on every page whatever the breadcrumb's length. */}
+        <div className="flex-1" />
+        <div className="flex items-center gap-2 sm:gap-3">
           {onOpenSearch && (
             <button
               type="button"
               onClick={onOpenSearch}
-              className="flex w-full max-w-[320px] items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-500 transition-colors hover:border-gray-300 hover:bg-white"
+              aria-label="Search"
+              className="flex h-9 w-9 flex-none items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-500 transition-colors hover:border-gray-300 hover:bg-white xl:h-auto xl:w-[240px] xl:justify-start xl:px-3 xl:py-1.5"
             >
               <Search className="h-4 w-4 text-gray-400" />
-              <span className="flex-1 text-left">Search</span>
-              <kbd className="pointer-events-none inline-flex items-center rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+              <span className="hidden flex-1 text-left xl:inline">Search</span>
+              <kbd className="pointer-events-none hidden xl:inline-flex items-center rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
                 {SEARCH_SHORTCUT}
               </kbd>
             </button>
           )}
-        </div>
-        <div className="flex items-center gap-2 sm:gap-3">
           {filterControls(false)}
         </div>
       </div>

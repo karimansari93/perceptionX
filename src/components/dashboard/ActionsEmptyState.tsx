@@ -29,7 +29,7 @@ export function ActionsEmptyState({ caughtUp = false, size = 'card' }: { caughtU
         </span>
       </div>
       <div>
-        <p className={cn('font-medium text-[#13274F]', page ? 'text-base' : 'text-[13px]')}>{caughtUp ? 'You are all caught up' : 'No actions yet'}</p>
+        <p className={cn('font-headline font-medium text-[#13274F]', page ? 'text-base' : 'text-[13px]')}>{caughtUp ? 'You are all caught up' : 'No actions yet'}</p>
         <p className={cn('mx-auto text-gray-500', page ? 'mt-1 max-w-[420px] text-sm' : 'mt-0.5 text-xs')}>
           {caughtUp
             ? 'Nothing is waiting on you right now.'

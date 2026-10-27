@@ -67,7 +67,7 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
   if (!ASK_AI_ENABLED) {
     return (
       <div className="space-y-2">
-        <h2 className="text-2xl font-bold text-gray-900">Overview</h2>
+        <h2 className="text-2xl font-medium tracking-[-0.02em] text-gray-900">Overview</h2>
         <p className="text-gray-600">
           Get a comprehensive view of {companyName}'s AI perception metrics, performance trends, and key insights.
         </p>
@@ -98,7 +98,7 @@ export function AskAiHero({ companyName, market, jobFunction }: AskAiHeroProps) 
         <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md border border-[#13274F]/10 bg-white p-[3px]">
           <BrandLogo name={brand} className="h-full w-full" />
         </span>
-        <h2 className="min-w-0 truncate font-headline text-[18px] font-bold leading-[1.2] tracking-[-0.02em] text-[#13274F]">
+        <h2 className="min-w-0 truncate font-headline text-[18px] font-medium leading-[1.2] tracking-[-0.02em] text-[#13274F]">
           {viewAsMember ? `Hey ${viewAsMember.name.split(' ')[0]}, what do you want to do today?` : greetingFor(user)}
         </h2>
       </div>

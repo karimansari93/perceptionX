@@ -87,7 +87,7 @@ export const PromptsTab = memo(({
     <div className="space-y-6 min-w-0 max-w-full overflow-hidden">
       {/* Main Section Header */}
       <div className="space-y-2">
-        <h2 className="text-2xl font-bold text-gray-900">Prompts</h2>
+        <h2 className="text-2xl font-medium tracking-[-0.02em] text-gray-900">Prompts</h2>
         <p className="text-gray-600">
           Monitor and analyze {companyName}'s prompt performance across different AI models and track response quality.
         </p>

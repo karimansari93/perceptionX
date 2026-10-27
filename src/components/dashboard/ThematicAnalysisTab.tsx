@@ -1201,7 +1201,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
       <div className="space-y-4">
         <div className="flex items-start justify-between">
           <div className="space-y-2 flex-1" data-tour="themes-heading">
-            <h2 className="font-headline text-[28px] font-semibold tracking-[-0.02em]" style={{ color: INK }}>Thematic Analysis</h2>
+            <h2 className="font-headline text-[28px] font-medium tracking-[-0.02em]" style={{ color: INK }}>Thematic Analysis</h2>
             <p style={{ color: INK_MUTED }} className="text-sm">
               Analyze themes and sentiment patterns to understand {companyName}'s employer brand perception.
             </p>
@@ -1379,7 +1379,7 @@ export const ThematicAnalysisTab = React.memo(({ responses, companyName, aiTheme
         <Card className="shadow-sm border border-gray-200">
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2 flex-wrap">
-              <CardTitle className="text-base font-bold text-gray-800">Attributes</CardTitle>
+              <CardTitle className="text-base font-medium text-gray-800">Attributes</CardTitle>
               <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
                 {attributes.length.toLocaleString()}
               </Badge>

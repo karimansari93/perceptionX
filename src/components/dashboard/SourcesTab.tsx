@@ -1084,7 +1084,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
       <Card key={opts.title} className="shadow-sm border border-gray-200 flex flex-col">
         <CardHeader className="pb-2">
           <div className="flex items-start justify-between gap-2 flex-wrap">
-            <CardTitle className="text-base font-bold text-gray-800">{opts.title}</CardTitle>
+            <CardTitle className="text-base font-medium text-gray-800">{opts.title}</CardTitle>
             {opts.rows.length > 0 && (
               <div className="flex items-center gap-2.5 text-[11px] text-gray-400 flex-shrink-0 pt-0.5">
                 <span className="flex items-center gap-1">
@@ -1119,7 +1119,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
     <div className="flex flex-col gap-6 w-full h-full">
       {/* Main Section Header */}
       <div className="space-y-2" data-tour="sources-heading">
-        <h2 className="text-2xl font-bold text-gray-900">Sources</h2>
+        <h2 className="text-2xl font-medium tracking-[-0.02em] text-gray-900">Sources</h2>
         <p className="text-gray-600">
           Discover where {companyName} is mentioned across the web and analyze source performance over time.
         </p>
@@ -1156,7 +1156,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-2 min-w-0">
-                    <CardTitle className="text-base font-bold text-gray-800">Top domains</CardTitle>
+                    <CardTitle className="text-base font-medium text-gray-800">Top domains</CardTitle>
                     <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
                       {domainList.length.toLocaleString()}
                     </Badge>
@@ -1217,7 +1217,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-2 min-w-0">
-                    <CardTitle className="text-base font-bold text-gray-800">Trending domains</CardTitle>
+                    <CardTitle className="text-base font-medium text-gray-800">Trending domains</CardTitle>
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -1318,7 +1318,7 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
           <Card data-tour="sources-pages" className="shadow-sm border border-gray-200">
             <CardHeader className="pb-2">
               <div className="flex items-center gap-2">
-                <CardTitle className="text-base font-bold text-gray-800">Top cited pages</CardTitle>
+                <CardTitle className="text-base font-medium text-gray-800">Top cited pages</CardTitle>
                 <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-0 text-xs">
                   {pagesList.length.toLocaleString()}
                 </Badge>

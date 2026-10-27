@@ -132,11 +132,11 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
         aria-current={opts.active ? 'page' : undefined}
         className={cn(
           'flex w-[70px] flex-col items-center gap-1 rounded-xl px-0 py-1.5 text-[10px] tracking-[-0.01em] leading-tight transition-colors [@media(max-height:700px)]:py-1',
-          opts.active ? 'bg-white font-semibold text-[#13274F] shadow-[0_1px_3px_rgba(19,39,79,.1)]' : 'text-gray-600 hover:bg-white/70 hover:text-[#13274F]',
+          opts.active ? 'bg-[#13274F]/[0.09] font-semibold text-[#13274F]' : 'text-gray-500 hover:bg-gray-200/60 hover:text-[#13274F]',
           opts.muted && 'cursor-not-allowed opacity-60'
         )}
       >
-        <Icon className="h-[18px] w-[18px]" />
+        <Icon className="h-[18px] w-[18px]" strokeWidth={opts.active ? 2.25 : 1.75} />
         <span className="w-full truncate text-center">{label}</span>
       </button>
     );

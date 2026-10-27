@@ -302,7 +302,7 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
     <div className="space-y-6">
       <div data-tour="actions-heading" className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-gray-900">Actions</h2>
+          <h2 className="text-2xl font-medium tracking-[-0.02em] text-gray-900">Actions</h2>
           <p className="text-sm text-gray-500 mt-1">
             What to do next to change how AI describes you to candidates.
           </p>
@@ -535,7 +535,7 @@ function ActionCard({ action, ownerLabel, onOpen, onAccept, onDone, onDismiss, b
             {onDismiss && (
               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-gray-500" onClick={stop(onDismiss)} disabled={off}>Dismiss</Button>
             )}
-            <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={stop(onAccept!)} disabled={off}>
+            <Button size="sm" className="h-7 bg-[#13274F] px-2.5 text-xs text-white hover:bg-[#13274F]/90" onClick={stop(onAccept!)} disabled={off}>
               <Check className="mr-1 h-3 w-3" />Accept
             </Button>
           </span>
@@ -942,7 +942,7 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
             {onAccept && (
               <div className="flex gap-2">
                 {onDismiss && <Button variant="outline" className="h-9 flex-1" onClick={onDismiss} disabled={off}>Dismiss</Button>}
-                <Button className="h-9 flex-1" onClick={onAccept} disabled={off}><Check className="mr-1.5 h-4 w-4" />Accept</Button>
+                <Button className="h-9 flex-1 bg-[#13274F] text-white hover:bg-[#13274F]/90" onClick={onAccept} disabled={off}><Check className="mr-1.5 h-4 w-4" />Accept</Button>
               </div>
             )}
             {onDone && (
