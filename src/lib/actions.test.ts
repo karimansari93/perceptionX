@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { actionScope, buildBoard, displayTitle, isForYou, selectionMarkets, isPeopleAction, pickAmplifyLink, readingView, trendText, compareActions, cycleLabel, matchesMarkets, noteParts, ownedChannel, pendingForUser, sourcesTarget, typeLabel, type CompanyAction } from './actions';
+import { actionScope, buildBoard, displayTitle, isForYou, priorityOf, selectionMarkets, isPeopleAction, pickAmplifyLink, readingView, trendText, compareActions, cycleLabel, matchesMarkets, noteParts, ownedChannel, pendingForUser, sourcesTarget, typeLabel, type CompanyAction } from './actions';
 
 const action = (over: Partial<CompanyAction>): CompanyAction => ({
   id: over.id ?? Math.random().toString(36),
   organization_id: 'org-1', key: 'k', register: 'act_now', title: 'T', cycle_raised: '2026-09-01',
   action_number: null, problem: null, ai_says: null, ai_reads: [], urls: [], recommendation: null,
-  lanes: [], timing: null, work_kind: null, markets: [], owner_name: null, assignee_id: null, work_status: 'open',
+  lanes: [], timing: null, priority: null, priority_reason: null, work_kind: null, markets: [], owner_name: null, assignee_id: null, work_status: 'open',
   tracking_status: 'open', assertion_note: null, assertion_url: null, asserted_done_at: null,
   notes: null, published_at: '2026-10-01', created_at: '2026-10-01',
   ...over,
@@ -26,16 +26,25 @@ describe('matchesMarkets', () => {
 });
 
 describe('ordering', () => {
-  it('sorts by timing, newer report, then number; unnumbered last', () => {
+  it('sorts High, Medium, Low, then unlabelled, and by title within a label', () => {
     const rows = [
-      action({ id: 'later', timing: 'act_later', action_number: 1 }),
-      action({ id: 'n3', timing: 'act_now', action_number: 3 }),
-      action({ id: 'none', timing: null, action_number: 1 }),
-      action({ id: 'n1', timing: 'act_now', action_number: 1 }),
-      action({ id: 'old', timing: 'act_now', action_number: 1, cycle_raised: '2026-04-01' }),
-      action({ id: 'legacy', timing: 'act_now', action_number: null }),
+      action({ id: 'low', priority: 'low', title: 'Alpha' }),
+      action({ id: 'med-b', priority: 'medium', title: 'Bravo' }),
+      action({ id: 'none', priority: null, title: 'Aardvark' }),
+      action({ id: 'high', priority: 'high', title: 'Zulu' }),
+      action({ id: 'med-a', priority: 'medium', title: 'alpha' }),
+      action({ id: 'odd', priority: 'urgent' as never, title: 'Bad label' }),
     ];
-    expect([...rows].sort(compareActions).map((r) => r.id)).toEqual(['n1', 'n3', 'legacy', 'old', 'later', 'none']);
+    expect([...rows].sort(compareActions).map((r) => r.id)).toEqual(['high', 'med-a', 'med-b', 'low', 'none', 'odd']);
+  });
+  it('never orders by the register timing', () => {
+    const rows = [action({ id: 'later', timing: 'act_later', title: 'A' }), action({ id: 'now', timing: 'act_now', title: 'B' })];
+    expect([...rows].sort(compareActions).map((r) => r.id)).toEqual(['later', 'now']);
+  });
+  it('reads only the three labels', () => {
+    expect(priorityOf({ priority: 'high' })).toBe('high');
+    expect(priorityOf({ priority: null })).toBeNull();
+    expect(priorityOf({ priority: 'Act now' as never })).toBeNull();
   });
 });
 
@@ -67,7 +76,24 @@ describe('buildBoard', () => {
   it('For you shows the market\'s own actions plus the user\'s', () => {
     const { columns } = buildBoard(rows, { forYou: true, markets: ['Germany'], includeUserId: 'me' });
     expect(columns.open.map((r) => r.id)).toEqual(['de']);
+    expect(columns.in_progress.map((r) => r.id)).toEqual(['de-us']);
     expect(columns.done.map((r) => r.id)).toEqual(['us']);
+  });
+
+  it('filters by priority inside every column', () => {
+    const labelled = [
+      action({ id: 'h', priority: 'high', title: 'B' }),
+      action({ id: 'm', priority: 'medium', title: 'A' }),
+      action({ id: 'l', priority: 'low', title: 'C', work_status: 'in_progress' }),
+      action({ id: 'n', priority: null, title: 'D' }),
+    ];
+    const all = buildBoard(labelled, { forYou: false, markets: [] });
+    expect(all.columns.open.map((r) => r.id)).toEqual(['h', 'm', 'n']);
+    const high = buildBoard(labelled, { forYou: false, markets: [], priority: 'high' });
+    expect(high.columns.open.map((r) => r.id)).toEqual(['h']);
+    expect(high.columns.in_progress).toEqual([]);
+    const low = buildBoard(labelled, { forYou: false, markets: [], priority: 'low' });
+    expect(low.columns.in_progress.map((r) => r.id)).toEqual(['l']);
   });
 
   it('All shows every action', () => {
@@ -95,14 +121,15 @@ describe('pendingForUser', () => {
       action({ id: 'mine-wip', assignee_id: 'me', work_status: 'in_progress', action_number: 2 }),
       action({ id: 'mine-done', assignee_id: 'me', work_status: 'done' }),
       action({ id: 'theirs', assignee_id: 'other', markets: ['India'] }),
-      action({ id: 'india', markets: ['India'] }),
+      action({ id: 'india', markets: ['India'], title: 'B', priority: 'low' }),
+      action({ id: 'global', markets: ['Global'], title: 'C', priority: 'high' }),
       action({ id: 'germany', markets: ['Germany'] }),
       action({ id: 'watch', register: 'watch' }),
       action({ id: 'dismissed', markets: ['India'], work_status: 'dismissed' }),
     ];
     const { mine, suggested } = pendingForUser(rows, 'me', ['India']);
     expect(mine.map((r) => r.id)).toEqual(['mine-wip', 'mine-open']);
-    expect(suggested.map((r) => r.id)).toEqual(['india']);
+    expect(suggested.map((r) => r.id)).toEqual(['global', 'india']);
   });
 });
 
@@ -180,18 +207,22 @@ describe('actionScope', () => {
     expect(actionScope({ markets: ['United States', 'Global'] })).toEqual({ kind: 'global' });
   });
 
-  it('For you is the market\'s own actions, or only global ones in the global view', () => {
+  it('For you is the market\'s own actions plus the global ones, or only global ones in the global view', () => {
     const rows = [
-      action({ id: 'global', markets: [], action_number: 1 }),
-      action({ id: 'ro-hu', markets: ['Romania', 'Hungary'], action_number: 2 }),
-      action({ id: 'hu', markets: ['Hungary'], action_number: 3 }),
-      action({ id: 'in', markets: ['India'], action_number: 4 }),
+      action({ id: 'global', markets: [], title: '1' }),
+      action({ id: 'labelled-global', markets: ['Global'], title: '2' }),
+      action({ id: 'ro-hu', markets: ['Romania', 'Hungary'], title: '3' }),
+      action({ id: 'hu', markets: ['Hungary'], title: '4' }),
+      action({ id: 'in', markets: ['India'], title: '5' }),
     ];
     const ids = (forYou: boolean, markets: string[]) => buildBoard(rows, { forYou, markets }).columns.open.map((r) => r.id);
-    expect(ids(true, ['Hungary'])).toEqual(['hu']);
-    expect(ids(true, [])).toEqual(['global', 'ro-hu']);
-    expect(ids(false, ['Hungary'])).toEqual(['global', 'ro-hu', 'hu', 'in']);
+    expect(ids(true, ['Hungary'])).toEqual(['global', 'labelled-global', 'ro-hu', 'hu']);
+    expect(ids(true, ['Germany', 'Hungary'])).toEqual(['global', 'labelled-global', 'ro-hu', 'hu']);
+    expect(ids(true, [])).toEqual(['global', 'labelled-global', 'ro-hu']);
+    expect(ids(false, ['Hungary'])).toEqual(['global', 'labelled-global', 'ro-hu', 'hu', 'in']);
     expect(isForYou({ markets: ['hungary'] }, ['Hungary'])).toBe(true);
+    expect(isForYou({ markets: ['Global'] }, ['Canada'])).toBe(true);
+    expect(isForYou({ markets: ['India'] }, ['Canada'])).toBe(false);
   });
 });
 

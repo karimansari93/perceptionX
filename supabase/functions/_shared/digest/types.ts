@@ -56,7 +56,7 @@ export interface DigestNarrative {
   functionsNote: string | null;
   /** Short paragraph under the market table (multi-market views only). */
   marketsNote: string | null;
-  /** The one "Where to act next" recommendation. */
+  /** The one "Where to focus" recommendation. */
   action: string;
 }
 
@@ -65,8 +65,10 @@ export interface DigestActionRow {
   /** "05" as printed in the report. */
   number: string;
   title: string;
-  /** "Act now", "Act next", "Act later" or null. */
-  timing: string | null;
+  /** Expected effect on what AI tells candidates: high, medium, low, or null when unlabelled. Not timing. */
+  priority: 'high' | 'medium' | 'low' | null;
+  /** One sentence on why, in the client's own figures. */
+  priorityReason: string | null;
   markets: string[];
   /** The report's "Why" (problem). */
   why: string | null;
