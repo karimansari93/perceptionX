@@ -60,9 +60,9 @@ export interface DigestNarrative {
   action: string;
 }
 
-/** One numbered action from the client's published report, scoped to this reader's markets. */
+/** One action from the client's published report, scoped to this reader's markets. */
 export interface DigestActionRow {
-  /** "05" as printed in the report. */
+  /** "05" as printed in the report, or "" for an action without a number. */
   number: string;
   title: string;
   /** Expected effect on what AI tells candidates: high, medium, low, or null when unlabelled. Not timing. */

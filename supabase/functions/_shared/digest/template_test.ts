@@ -181,18 +181,22 @@ Deno.test('report actions: market filter, priority order, shape and section', ()
     { organization_id: 'o', register: 'action', action_number: 3, title: 'Done already', timing: 'act_now', priority: 'high', markets: ['Hungary'], recommendation: 'z', tracking_status: 'done', lifts: [], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'watch', action_number: null, title: 'Watch item', markets: ['Hungary'], recommendation: 'w', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'action', action_number: 9, title: 'Unpublished', markets: ['Hungary'], recommendation: 'u', tracking_status: 'open', lifts: [], published_at: null },
+    { organization_id: 'o', register: 'act_now', action_number: null, key: '2026-10-01:site-fbs-ambitionbox', title: 'Make the AmbitionBox profile describe FBS', timing: 'act_now', priority: 'medium', markets: ['Hungary'], recommendation: 'Claim it.', tracking_status: 'in_progress', lifts: [], published_at: '2026-10-01' },
   ];
   const out = filterActions(rows, ['Hungary']);
   // High first, then Medium, Low, unlabelled; Global rows match every market.
-  assertEquals(out.map(a => a.number), ['05', '07', '04', '01']);
+  assertEquals(out.map(a => a.number), ['05', '07', '', '04', '01']);
+  assertEquals(out[2].title, 'Make the AmbitionBox profile describe FBS');
   assertEquals(out[0].priority, 'high');
   assertEquals(out[0].priorityReason, 'Hungary holds 22% of the negative opinions and the profile is one claim away.');
-  assertEquals(out[3].priority, null);
+  assertEquals(out[4].priority, null);
   assertEquals(out[0].lifts, ['Sentiment (Compensation) in Hungary']);
-  assertEquals(filterActions(rows, []).map(a => a.number), ['02', '05', '07', '04', '01']);
+  assertEquals(filterActions(rows, []).map(a => a.number), ['02', '05', '07', '', '04', '01']);
   const html = renderDigestHtml({ ...payload, actions: out }, opts);
   assertStringIncludes(html, 'From your report');
   assertStringIncludes(html, 'Claim the local review profiles that doubled');
+  assertStringIncludes(html, 'Make the AmbitionBox profile describe FBS');
+  assert(!html.includes('margin-right:8px;"></span>'));
   assertStringIncludes(html, '>High<');
   assertStringIncludes(html, '>Medium<');
   assertStringIncludes(html, 'title="Hungary holds 22% of the negative opinions');

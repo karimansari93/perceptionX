@@ -146,7 +146,7 @@ function actionCard(a: DigestActionRow): string {
   const meta = [a.markets.length ? a.markets.map(escapeHtml).join(', ') : '', a.owner ? `Owner: ${escapeHtml(a.owner)}` : '', a.lifts.length ? `Lifts ${a.lifts.map(escapeHtml).join('; ')}` : '']
     .filter(Boolean).join(' · ');
   return `<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 10px;"><tr><td style="border:1px solid ${LINE};border-radius:10px;padding:12px 14px;">` +
-    p(`<span style="color:${PINK};font-weight:700;margin-right:8px;">${escapeHtml(a.number)}</span>${escapeHtml(a.title)}${timing}`, 14, INK, 700, 'margin-bottom:2px;', '20px') +
+    p(`${a.number ? `<span style="color:${PINK};font-weight:700;margin-right:8px;">${escapeHtml(a.number)}</span>` : ''}${escapeHtml(a.title)}${timing}`, 14, INK, 700, 'margin-bottom:2px;', '20px') +
     (meta ? p(meta, 12, MUTED, 400, '', '18px') : '') +
     '<table cellpadding="0" cellspacing="0" role="presentation" style="width:100%;border-collapse:collapse;">' +
     (a.why ? field('Why', prose(a.why)) : '') + field('What to do', prose(a.whatToDo)) + '</table></td></tr></table>';
