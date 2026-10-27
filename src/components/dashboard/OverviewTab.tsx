@@ -25,6 +25,9 @@ import { AttributesSummaryCard } from "./AttributesSummaryCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Favicon } from "@/components/ui/favicon";
 import { AskAiHero } from "@/components/chat/AskAiHero";
+import { ActionsSummaryCard } from "./ActionsSummaryCard";
+
+const EMPTY_ACTION_MARKETS: string[] = [];
 import { extractSourceUrl } from "@/utils/citationUtils";
 import {
   ChartContainer,
@@ -116,6 +119,8 @@ interface OverviewTabProps {
   epsTrendByJobFunction?: Record<string, Array<{ key: string; date: string; score: number; sentiment: number; visibility: number; relevance: number; responseCount: number }>>;
   epsChangeByJobFunction?: Record<string, number | null>;
   market?: string | null;
+  /** Every spelling of the selected markets (one, a region or a set) for the Actions card; empty = global view. */
+  actionMarkets?: string[];
   // Per-job-function scorecard metrics — lets the function filter rescope EPS/Breakdown.
   metricsByJobFunction?: Record<string, {
     perceptionScore: number | null;
@@ -195,6 +200,7 @@ export const OverviewTab = memo(({
   epsTrendByJobFunction = {},
   epsChangeByJobFunction = {},
   market = null,
+  actionMarkets = EMPTY_ACTION_MARKETS,
   metricsByJobFunction = {},
   selectedJobFunction = 'all',
   onJobFunctionChange,
@@ -1052,7 +1058,12 @@ export const OverviewTab = memo(({
           question; the score row and everything else sit below it. The
           overview never scrolls: hero and score row are fixed height, the
           summary row takes the rest and its cards scroll internally. */}
-      <AskAiHero companyName={companyName} market={market} jobFunction={selectedJobFunctionFilter} />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 w-full flex-shrink-0">
+        <div className="lg:col-span-2">
+          <AskAiHero companyName={companyName} market={market} jobFunction={selectedJobFunctionFilter} />
+        </div>
+        <ActionsSummaryCard markets={actionMarkets} />
+      </div>
 
       <div data-tour="score-row" className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full flex-shrink-0">
         {/* EPS card — the score sits in the header's right slot; the chart fills the body. */}

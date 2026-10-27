@@ -1553,7 +1553,9 @@ export const SourcesTab = memo(({ domainStats, cubeScopeRows, cubeQuarterKey = n
         <SourceDetailsModal
           isOpen={isSourceModalOpen}
           onClose={handleCloseSourceModal}
-          source={selectedSource}
+          // A seeded open (command palette, Actions) arrives with count 0;
+          // fill it from the current scope once the data is here.
+          source={selectedSource.count ? selectedSource : { ...selectedSource, count: analyzed.domainCounts.get(normalizeDomain(selectedSource.domain)) ?? 0 }}
           responses={getResponsesForSource(selectedSource.domain)}
           previousResponses={getPrevResponsesForSource(selectedSource.domain)}
           companyName={companyName}

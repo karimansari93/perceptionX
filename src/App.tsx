@@ -302,6 +302,12 @@ const App = () => (
                       <Dashboard defaultGroup="dashboard" defaultSection="thematic" />
                     </SidebarProvider>                </ProtectedRoute>
               } />
+              <Route path="/dashboard/actions" element={
+                <ProtectedRoute>
+                    <SidebarProvider>
+                      <Dashboard defaultGroup="dashboard" defaultSection="actions" />
+                    </SidebarProvider>                </ProtectedRoute>
+              } />
               
               {/* New group-based routes */}
               <Route path="/monitor" element={
