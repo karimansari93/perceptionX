@@ -19,6 +19,41 @@ titles = {
   'review_platforms': 'Review platform capabilities and rules',
   'writing_recommendations': 'How to write a recommendation',
 }
+EXECUTOR = """export const PLAYBOOK_TOPIC_SET: ReadonlySet<string> = new Set(PLAYBOOK_TOPICS);
+
+// get_playbook: one topic, verbatim, with its as-of date. Unknown topic →
+// no_data plus the topic list, so a host model can pick again. Never a
+// measurement: the text is guidance, shared across organizations.
+export function getPlaybook(topicInput: unknown): string {
+  const topic = String(topicInput ?? '').trim().toLowerCase().replace(/[\\s-]+/g, '_');
+  if (!PLAYBOOK_TOPIC_SET.has(topic)) {
+    return JSON.stringify({
+      topic: topic || null,
+      topics: PLAYBOOK_TOPICS,
+      as_of: PLAYBOOK_AS_OF,
+      _coverage: {
+        status: 'no_data',
+        reason: `No playbook topic "${topic}". Pick one of: ${PLAYBOOK_TOPICS.join(', ')}.`,
+      },
+    });
+  }
+  const entry = PLAYBOOK[topic as PlaybookTopic];
+  return JSON.stringify({
+    topic,
+    title: entry.title,
+    as_of: PLAYBOOK_AS_OF,
+    text: entry.text,
+    _coverage: { status: 'found' },
+    _meta: {
+      methodology: [
+        `This is PerceptionX playbook guidance as of ${PLAYBOOK_AS_OF}, not a measurement of the organization: take every figure about the organization from the data tools, and say which points are guidance.`,
+        'Laws, platform features and list deadlines change: give the as-of date and tell the user to check before acting.',
+      ],
+    },
+  });
+}
+"""
+
 out = []
 out.append("// ─── px-tools: the employer reputation playbook ──────────────────────────────")
 out.append("// Source: docs/playbook/px-playbook-client-safe.md, one entry per")
@@ -49,4 +84,8 @@ for k, body in topics:
     out.append("  },")
 out.append("};")
 out.append("")
+# The executor lives here too, so regenerating the text never drops it
+# (2026-10-27: a regeneration once overwrote a hand-appended executor and
+# the deployed functions failed to boot).
+out.append(EXECUTOR)
 print("\n".join(out))
