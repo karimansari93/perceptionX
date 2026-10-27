@@ -18,12 +18,15 @@ import {
   getAttributeThemes, getCompetitorLandscape, getSources, getTrends, getVisibility,
 } from './executors-insights.ts';
 import { getReportActions } from './executors-report.ts';
+import { getNegativeDrivers } from './executors-drivers.ts';
+import { getPlaybook } from './playbook.ts';
 
 export { PX_TOOLS, anthropicTools, mcpTools, toolLabels } from './tools.ts';
 export { coverageFound, coverageNoData, coveragePartial, genRequestId } from './helpers.ts';
 export { validateCompanyOwnership } from './scope.ts';
 export type { ToolContext } from './scope.ts';
 export { ATTRIBUTES_V2 } from './executors-insights.ts';
+export { PLAYBOOK, PLAYBOOK_AS_OF, PLAYBOOK_TOPICS } from './playbook.ts';
 
 // Tools that take a single `company_id` argument (UUID-validated + tenancy-
 // checked before execution).
@@ -32,7 +35,7 @@ const SINGLE_ID_TOOLS = new Set([
   'get_themes', 'get_attribute_breakdown', 'get_competitors',
   'get_citations', 'get_model_breakdown', 'search_responses',
   'get_attribute_themes', 'get_visibility', 'get_sources',
-  'get_competitor_landscape', 'get_trends',
+  'get_competitor_landscape', 'get_trends', 'get_negative_drivers',
 ]);
 
 export async function executeTool(
@@ -85,15 +88,28 @@ export async function executeTool(
       case 'get_report_actions': {
         // Organization-scoped (ctx.organizationId), so no company_id check.
         const include = ['all', 'report', 'actions', 'watch'].includes(toolInput?.include) ? toolInput.include : 'all';
+        // `action_number` is still accepted silently for hosts that cached the
+        // old schema, but it is no longer advertised: actions go by title.
         const n = Number(toolInput?.action_number);
         result = await getReportActions(
           ctx,
           typeof toolInput?.market === 'string' ? toolInput.market.slice(0, 120) : undefined,
-          Number.isInteger(n) && n > 0 ? n : undefined,
+          typeof toolInput?.action === 'string' ? toolInput.action.slice(0, 200) : undefined,
           include,
+          Number.isInteger(n) && n > 0 ? n : undefined,
         );
         break;
       }
+      case 'get_playbook':
+        // Static guidance shared by every organization: no database read.
+        result = getPlaybook(toolInput?.topic);
+        break;
+      case 'get_negative_drivers':
+        result = await getNegativeDrivers(
+          ctx, toolInput.company_id, toolInput.location,
+          clampInt(toolInput?.quarters_back, 1, 4, 2), includeSiblings, toolInput.job_function
+        );
+        break;
       case 'get_company_overview':
         result = await getCompanyOverview(ctx, toolInput.company_id, includeSiblings);
         break;

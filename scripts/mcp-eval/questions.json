@@ -26,6 +26,13 @@
     { "q": "Give me links to the pages AI cites about our pay.", "expect_any": ["get_attribute_themes", "get_citations", "get_sources"] },
     { "q": "Which Glassdoor pages come up, with links?", "expect_any": ["get_citations", "get_sources"] },
     { "q": "How does AI describe us for finance roles?", "expect_any": ["get_attribute_themes", "get_visibility"] },
-    { "q": "Which job functions hear the most negative things about our wellbeing?", "expect_any": ["get_attribute_themes"] }
+    { "q": "Which job functions hear the most negative things about our wellbeing?", "expect_any": ["get_attribute_themes"] },
+    { "q": "Where do our negatives come from?", "expect_any": ["get_negative_drivers"] },
+    { "q": "How much of our negative opinion is driven by review sites?", "expect_any": ["get_negative_drivers"] },
+    { "q": "How does kununu's score work?", "expect_any": ["get_playbook"] },
+    { "q": "Where should a hiring-process block go on a job posting?", "expect_any": ["get_playbook"] },
+    { "q": "What should we do about candidate feedback in Canada?", "expect_any": ["get_attribute_themes", "get_report_actions", "get_negative_drivers", "get_playbook"] },
+    { "q": "What did you recommend for Germany?", "expect_any": ["get_report_actions"] },
+    { "q": "What is the status of the kununu action?", "expect_any": ["get_report_actions"] }
   ]
 }

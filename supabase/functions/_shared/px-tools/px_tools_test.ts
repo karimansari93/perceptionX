@@ -195,6 +195,34 @@ function rpc(name: string, params: any): { data: any; error: any } {
         },
         error: null,
       };
+    case 'mcp_get_negative_drivers':
+      // The sampled half of get_negative_drivers: answers carrying negative
+      // opinions, flagged by whether they cite one of the brand's own review
+      // profiles, joined to their negative themes. Only the brand's own
+      // tokens reach the read.
+      if (!Array.isArray(params.p_brand_tokens) || !params.p_brand_tokens.includes('ford')) {
+        return { data: null, error: { message: 'brand tokens missing' } };
+      }
+      return {
+        data: {
+          months: [
+            { response_month: '2026-04-01', answers_with_negatives: 900, answers_sampled: 900, answers_sampled_citing_profile: 300, versions: ['v2-2026-10-06'] },
+            { response_month: '2026-07-01', answers_with_negatives: 1400, answers_sampled: 1000, answers_sampled_citing_profile: 500, versions: ['v2-2026-10-06'] },
+          ].filter(r => inMonths(r, months)),
+          rows: [
+            { response_month: '2026-04-01', attribute_id: 'wellbeing-balance', negative_themes: 100, negative_themes_in_profile_answers: 40 },
+            { response_month: '2026-04-01', attribute_id: 'compensation', negative_themes: 200, negative_themes_in_profile_answers: 50 },
+            { response_month: '2026-07-01', attribute_id: 'wellbeing-balance', negative_themes: 300, negative_themes_in_profile_answers: 210 },
+            { response_month: '2026-07-01', attribute_id: 'compensation', negative_themes: 200, negative_themes_in_profile_answers: 60 },
+            { response_month: '2026-07-01', attribute_id: 'overall-candidate-experience', negative_themes: 20, negative_themes_in_profile_answers: 5 },
+          ].filter(r => inMonths(r, months)),
+          profile_pages: [
+            { domain: 'glassdoor.com', url: 'https://www.glassdoor.com/Reviews/Ford-Motor-Company-Reviews-E263.htm', answers_citing: 400 },
+            { domain: 'indeed.com', url: 'https://www.indeed.com/cmp/Ford-Motor-Company/reviews', answers_citing: 250 },
+          ],
+        },
+        error: null,
+      };
     case 'mcp_get_attribute_competitors':
       return { data: { rows: [{ competitor_name: 'General Motors', responses_naming: 80 }], attribute_responses: 400, attribute_responses_with_competitors: 120 }, error: null };
     default:
@@ -231,7 +259,7 @@ const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
 // "..._per_answer", and the EPS composite. Anything else numeric inside a
 // list entry is a raw count and must live under sample_size.
 const SHARE_KEY = /(_pct(_|$)|_points$|_per_answer$|^eps$)/;
-const SERIES_KEYS = new Set(['by_job_function', 'top_pages', 'quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison']);
+const SERIES_KEYS = new Set(['by_job_function', 'top_pages', 'quarterly', 'series', 'sources', 'competitors', 'attributes', 'attribute_summary', 'top_attributes', 'top_themes', 'top_competitors', 'top_sources', 'citations', 'themes', 'model_breakdown', 'by_platform', 'share_of_voice', 'comparison', 'periods', 'review_profile_pages']);
 
 function assertNoRawCountsLead(payload: any, path = '$') {
   if (Array.isArray(payload)) { payload.forEach((v, i) => assertNoRawCountsLead(v, `${path}[${i}]`)); return; }
@@ -481,4 +509,56 @@ Deno.test('job function: matched like markets, periods follow the filter, splits
     attr.attributes[0].by_job_function.map((x: any) => [x.job_function, x.mentioned_in_pct_of_answers, x.positive_sentiment_pct]),
     [['Manufacturing', 36, 67], ['Finance', 33, 67]]
   );
+});
+
+Deno.test('get_negative_drivers: share of negatives from the cube, review-profile share from the sample, candidate experience combined', async () => {
+  const p = await call('get_negative_drivers', { company_id: FORD_US, quarters_back: 2 });
+  assertEquals(p._coverage.status, 'found');
+  assertEquals(p._meta.periods, ['Q2 2026', 'Q3 2026']);
+  lint('get_negative_drivers', p);
+  // Latest quarter (July): wellbeing 80 negatives, compensation 60, the
+  // retired id is dropped, so wellbeing holds 57% of the negatives.
+  assertEquals(p.attributes.map((a: any) => a.attribute_id), ['wellbeing-balance', 'compensation']);
+  const wb = p.attributes[0];
+  assertEquals(wb.share_of_negatives_pct, 57);
+  assertEquals(wb.positive_sentiment_pct, 67);
+  // Of wellbeing's sampled negatives in July, 210 of 300 sit in answers citing a Ford review profile.
+  assertEquals(wb.negatives_in_review_profile_answers_pct, 70);
+  assertEquals(wb.change_vs_previous_period.previous_period, 'Q2 2026');
+  assertEquals(wb.change_vs_previous_period.share_of_negatives_points, 57 - 38);
+  assertEquals(wb.change_vs_previous_period.review_profile_points, 70 - 40);
+  assertEquals(wb.quarterly.map((q: any) => q.quarter), ['Q2 2026', 'Q3 2026']);
+  assertEquals(wb.quarterly[1].sample_size.negative_themes, 80);
+  // Period-level: 270 of 500 sampled negative themes in July sit in review-profile answers; 500 of 1000 sampled answers cite one.
+  const q3 = p.periods[1];
+  assertEquals(q3.share_of_all_negatives_in_review_profile_answers_pct, 54);
+  assertEquals(q3.answers_with_negatives_citing_review_profile_pct, 50);
+  assertEquals(q3.sample_size.answers_with_negative_opinions, 1400);
+  assertEquals(q3.sample_size.answers_sampled, 1000);
+  // No candidate experience themes in the fixture: the combined block is null-safe, not invented.
+  assertEquals(p.candidate_experience_combined.attributes.length, 4);
+  assertEquals(p.candidate_experience_combined.share_of_negatives_pct, 0);
+  assertEquals(p.candidate_experience_combined.negatives_in_review_profile_answers_pct, null);
+  // Matched profile pages are real links with a share of the sampled answers.
+  assertEquals(p.review_profile_pages[0].domain, 'glassdoor.com');
+  assertEquals(p.review_profile_pages[0].cited_in_pct_of_sampled_negative_answers, 21);
+  assert(p._meta.methodology.some((m: string) => m.includes('"ford"')));
+  assert(!p._coverage.classifier_note, 'one classifier version, no warning');
+  // Scoped to one market: the periods follow the filter.
+  const india = await call('get_negative_drivers', { company_id: FORD_US, location: 'India', quarters_back: 2 });
+  assertEquals(india._meta.locations_matched, ['India']);
+  assertEquals(india._coverage.status, 'found');
+});
+
+Deno.test('get_negative_drivers: a failed sampled read keeps the complete figures and says so', async () => {
+  const broken: ToolContext = {
+    ...ctx,
+    admin: { ...admin, rpc: (name: string, params: any) => Promise.resolve(name === 'mcp_get_negative_drivers' ? { data: null, error: { message: 'timeout' } } : rpc(name, params)) },
+  };
+  const p = JSON.parse(await executeTool(broken, 'get_negative_drivers', { company_id: FORD_US, quarters_back: 2 }));
+  assertEquals(p._coverage.status, 'found');
+  assertStringIncludes(p._coverage.review_profile_note, 'could not be computed');
+  assertEquals(p.attributes[0].share_of_negatives_pct, 57);
+  assertEquals(p.attributes[0].negatives_in_review_profile_answers_pct, null);
+  assertEquals(p.review_profile_pages, []);
 });
