@@ -101,7 +101,7 @@ Check before acting: laws change.
 AI builds open-search shortlists from list pages, press coverage of lists and employers' own newsroom posts about awards. The employer's newsroom and careers pages carry its awards into answers when they name the list, the year and the publisher in text, not only as a badge. Awards fade after about a year.
 | Route | Lists | What to do |
 |---|---|---|
-| Enterable | Great Place to Work (certification, then considered for its lists for 12 months), Top Employers Institute, Canada's Top 100 Employers, CandE, AHRI (Australia), Súper Empresas (Mexico) | Enter, working back from the next deadline (check the publisher's page) |
+| Enterable | Great Place to Work (certification, then considered for its lists for 12 months), Top Employers Institute, Canada's Top 100 Employers, CandE, AHRI (Australia), Súper Empresas (Mexico) | Enter (check the publisher's page for when entry is open) |
 | Calculated from reviews | kununu Top Company (score 3.8+, 7+ reviews, 2+ new in 12 months; applicant reviews excluded), Glassdoor Best Places to Work, Undelucram, AmbitionBox awards | Review volume and recency |
 | No entry route | Merco Talento, Randstad Employer Brand Research, Forbes and Statista, LinkedIn Top Companies, Universum, hipo.ro | Not an action |
 Deadlines change: always open the publisher's page before giving a date.
@@ -140,4 +140,4 @@ Rules on every major platform: invite everyone at a fixed moment, never only peo
 **Law.** US FTC rule on reviews (October 2024) bans sentiment-linked incentives and suppression; UK fake-review rules (April 2025) treat encouraging only the satisfied as cherry-picking; EU unfair-practice rules ban commissioned reviews; under GDPR, prefer a link in existing emails to uploading email lists to a platform.
 
 ## topic: writing_recommendations
-When recommending an action: give the move, the exact page and where on the page it goes (and whether it must also sit in the job description), why in the employer's own figures with a comparison, what is true about the employer that it uses, and which team owns it. Write changes owned by another team conditionally. State impact on the targeted topic and market. Do not give timing (the employer decides) or invent figures; if a figure is not in the tools, say it is not measured.
+When recommending an action: give the move, the exact page and where on the page it goes (and whether it must also sit in the job description), why in the employer's own figures with a comparison, what is true about the employer that it uses, and which team owns it. Write changes owned by another team conditionally. State impact on the targeted topic and market. Do not give timing, deadlines or target dates (the employer decides when), and do not invent figures; if a figure is not in the tools, say it is not measured.

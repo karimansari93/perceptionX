@@ -65,7 +65,7 @@ export const PLAYBOOK: Record<PlaybookTopic, { title: string; text: string }> = 
   },
   lists_awards: {
     title: "Employer lists and awards: what can be entered and what cannot",
-    text: "AI builds open-search shortlists from list pages, press coverage of lists and employers' own newsroom posts about awards. The employer's newsroom and careers pages carry its awards into answers when they name the list, the year and the publisher in text, not only as a badge. Awards fade after about a year.\n| Route | Lists | What to do |\n|---|---|---|\n| Enterable | Great Place to Work (certification, then considered for its lists for 12 months), Top Employers Institute, Canada's Top 100 Employers, CandE, AHRI (Australia), Súper Empresas (Mexico) | Enter, working back from the next deadline (check the publisher's page) |\n| Calculated from reviews | kununu Top Company (score 3.8+, 7+ reviews, 2+ new in 12 months; applicant reviews excluded), Glassdoor Best Places to Work, Undelucram, AmbitionBox awards | Review volume and recency |\n| No entry route | Merco Talento, Randstad Employer Brand Research, Forbes and Statista, LinkedIn Top Companies, Universum, hipo.ro | Not an action |\nDeadlines change: always open the publisher's page before giving a date.",
+    text: "AI builds open-search shortlists from list pages, press coverage of lists and employers' own newsroom posts about awards. The employer's newsroom and careers pages carry its awards into answers when they name the list, the year and the publisher in text, not only as a badge. Awards fade after about a year.\n| Route | Lists | What to do |\n|---|---|---|\n| Enterable | Great Place to Work (certification, then considered for its lists for 12 months), Top Employers Institute, Canada's Top 100 Employers, CandE, AHRI (Australia), Súper Empresas (Mexico) | Enter (check the publisher's page for when entry is open) |\n| Calculated from reviews | kununu Top Company (score 3.8+, 7+ reviews, 2+ new in 12 months; applicant reviews excluded), Glassdoor Best Places to Work, Undelucram, AmbitionBox awards | Review volume and recency |\n| No entry route | Merco Talento, Randstad Employer Brand Research, Forbes and Statista, LinkedIn Top Companies, Universum, hipo.ro | Not an action |\nDeadlines change: always open the publisher's page before giving a date.",
   },
   levers: {
     title: "Levers that change what AI reads, and what not to recommend",
@@ -77,40 +77,7 @@ export const PLAYBOOK: Record<PlaybookTopic, { title: string; text: string }> = 
   },
   writing_recommendations: {
     title: "How to write a recommendation",
-    text: "When recommending an action: give the move, the exact page and where on the page it goes (and whether it must also sit in the job description), why in the employer's own figures with a comparison, what is true about the employer that it uses, and which team owns it. Write changes owned by another team conditionally. State impact on the targeted topic and market. Do not give timing (the employer decides) or invent figures; if a figure is not in the tools, say it is not measured.",
+    text: "When recommending an action: give the move, the exact page and where on the page it goes (and whether it must also sit in the job description), why in the employer's own figures with a comparison, what is true about the employer that it uses, and which team owns it. Write changes owned by another team conditionally. State impact on the targeted topic and market. Do not give timing, deadlines or target dates (the employer decides when), and do not invent figures; if a figure is not in the tools, say it is not measured.",
   },
 };
 
-export const PLAYBOOK_TOPIC_SET: ReadonlySet<string> = new Set(PLAYBOOK_TOPICS);
-
-// get_playbook: one topic, verbatim, with its as-of date. Unknown topic →
-// no_data plus the topic list, so a host model can pick again. Never a
-// measurement: the text is guidance, shared across organizations.
-export function getPlaybook(topicInput: unknown): string {
-  const topic = String(topicInput ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-  if (!PLAYBOOK_TOPIC_SET.has(topic)) {
-    return JSON.stringify({
-      topic: topic || null,
-      topics: PLAYBOOK_TOPICS,
-      as_of: PLAYBOOK_AS_OF,
-      _coverage: {
-        status: 'no_data',
-        reason: `No playbook topic "${topic}". Pick one of: ${PLAYBOOK_TOPICS.join(', ')}.`,
-      },
-    });
-  }
-  const entry = PLAYBOOK[topic as PlaybookTopic];
-  return JSON.stringify({
-    topic,
-    title: entry.title,
-    as_of: PLAYBOOK_AS_OF,
-    text: entry.text,
-    _coverage: { status: 'found' },
-    _meta: {
-      methodology: [
-        `This is PerceptionX playbook guidance as of ${PLAYBOOK_AS_OF}, not a measurement of the organization: take every figure about the organization from the data tools, and say which points are guidance.`,
-        'Laws, platform features and list deadlines change: give the as-of date and tell the user to check before acting.',
-      ],
-    },
-  });
-}
