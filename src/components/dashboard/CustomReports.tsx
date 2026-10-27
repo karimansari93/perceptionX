@@ -226,7 +226,7 @@ export const CustomReports = () => {
   return (
     <div className="space-y-8 w-full">
       <div>
-        <h2 className="text-2xl font-bold text-gray-900">Reports</h2>
+        <h2 className="text-2xl font-medium tracking-[-0.02em] text-gray-900">Reports</h2>
         <p className="text-sm text-gray-500 mt-1">
           Download reports prepared for your organization, and (soon) generate AI-powered reports on demand.
         </p>
