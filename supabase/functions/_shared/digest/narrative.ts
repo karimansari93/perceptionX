@@ -1,6 +1,6 @@
 // ─── Quarterly update email: prose ──────────────────────────────────────────
 // The analyst model writes the four prose blocks (callouts, the note under
-// each group table, the one "Where to act next" box, the preheader) against
+// each group table, the one "Where to focus" box, the preheader) against
 // the payload's numbers and the theme evidence the analyst tools return for
 // the weakest attributes. Strict JSON out, validated and length-capped here,
 // so a bad reply degrades to an email without prose rather than a broken
@@ -144,10 +144,10 @@ export function digestMarkdown(payload: DigestPayload): string {
     for (const r of payload.byFunction) lines.push(`- ${r.name}: ${r.positivePct ?? 'n/a'}% positive${payload.sentimentChangeHidden ? '' : d(r.sentimentDelta)}, named in ${r.namedPct ?? 'n/a'}% of answers`);
     if (n?.functionsNote) lines.push('', n.functionsNote);
   }
-  if (n?.action) lines.push('', '### Where to act next', n.action);
+  if (n?.action) lines.push('', '### Where to focus', n.action);
   if (payload.actions.length) {
     lines.push('', '### From your report');
-    for (const a of payload.actions) lines.push(`- **${a.number} ${a.title}**${a.timing ? ` (${a.timing})` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
+    for (const a of payload.actions) lines.push(`- **${a.number} ${a.title}**${a.priority ? ` (${a.priority} priority)` : ''}${a.markets.length ? `, ${a.markets.join(', ')}` : ''}. ${a.whatToDo}`);
   }
   if (payload.employers.length) {
     lines.push('', '### Employers AI names alongside you');
