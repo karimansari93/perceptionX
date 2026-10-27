@@ -6,13 +6,13 @@ product can read it. Three tables, all keyed by `organization_id`:
 | Table | What it holds | One row per |
 |---|---|---|
 | `client_report_snapshots` | The report's scope, headline figures, per-metric status (provisional or final), breakdowns, as-of date | organisation, cycle, report type |
-| `company_actions` | The numbered actions and watch items: title, problem ("Why"), what AI says, where AI reads it, what to do, lane, timing, lifts, owner, status, markets, functions | action |
+| `company_actions` | The numbered actions and watch items: title, problem ("Why"), what AI says, where AI reads it, what to do, lane, priority (high / medium / low, with the reason in the client's own figures), lifts, owner, status, markets, functions | action |
 | `company_action_checks` | The readings taken for an action each cycle, starting with the baseline | action, cycle |
 
 Who reads them:
 
 - **Ask AI** through the `get_report_actions` tool (`supabase/functions/_shared/px-tools/executors-report.ts`).
-- **The quarterly update email** through `supabase/functions/_shared/digest/payload.ts`: the open actions whose markets overlap the reader's view (plus organisation-wide ones) appear under "From your report", and the AI-written "Where to act next" box must point at one of them.
+- **The quarterly update email** through `supabase/functions/_shared/digest/payload.ts`: the open actions whose markets overlap the reader's view (plus organisation-wide ones) appear under "From your report", and the AI-written "Where to focus" box must point at one of them.
 - **The dashboard** action register.
 
 If an action is not in `company_actions`, none of these can see it. An

@@ -30,6 +30,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Favicon } from '@/components/ui/favicon';
 import { activateLinkFor } from '@/lib/activate/api';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -39,6 +40,7 @@ import { GENERAL_KEY, canonicalizeLocationContext, countryCodeFor, type Location
 import {
   BOARD_COLUMNS, LANE_LABEL, STATUS_LABEL, typeLabel, buildBoard, cycleLabel, noteParts,
   sourcesTarget, displayTitle, selectionMarkets, actionScope, isPeopleAction, pickAmplifyLink, type AmplifyLink, readingView, trendText, type ReadingView, DISMISS_REASONS, dismissReasonLabel, timeAgo, COMMENT_MAX, type ActionActivity, type ActionCheck, type CompanyAction, type WorkStatus,
+  PRIORITIES, PRIORITY_LABEL, PRIORITY_NOTE, priorityOf, type Priority,
 } from '@/lib/actions';
 
 const db = supabase as any;
@@ -75,6 +77,10 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
   const queryClient = useQueryClient();
 
   const [scope, setScope] = useState<'for_you' | 'all'>('for_you');
+  // Priority filter: 'all' or one label. Only offered once the register
+  // carries labels, so an unlabelled register shows no empty control.
+  const [priority, setPriority] = useState<Priority | 'all'>('all');
+  const hasPriorities = actions.some((a) => priorityOf(a) !== null);
   // ?action=<id> (from the Overview card) opens that action's detail.
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -210,7 +216,8 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
     forYou: scope === 'for_you',
     markets: myMarket ? myMarket.spellings : [],
     includeUserId: meId,
-  }), [actions, scope, myMarket, meId]);
+    priority: priority === 'all' ? null : priority,
+  }), [actions, scope, myMarket, meId, priority]);
 
   const checksFor = (id: string) => (checksQuery.data || [])
     .filter((c) => c.action_id === id)
@@ -344,8 +351,20 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
           <p className="text-sm text-gray-500 mt-1">
             What to do next to change how AI describes you to candidates.
           </p>
+          {hasPriorities && <p className="mt-1 text-xs text-gray-400">{PRIORITY_NOTE}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-3">
+        {hasPriorities && (
+          <Select value={priority} onValueChange={(v) => setPriority(v as Priority | 'all')}>
+            <SelectTrigger className="h-8 w-[150px] text-sm" aria-label="Priority">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All priorities</SelectItem>
+              {PRIORITIES.map((p) => <SelectItem key={p} value={p}>{PRIORITY_LABEL[p]} priority</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
         {actions.length > 0 && (
           <div className="inline-flex rounded-lg bg-gray-100 p-0.5 self-start lg:self-auto" role="group" aria-label="Which actions to show">
             {([['for_you', 'For you'], ['all', 'All']] as const).map(([key, label]) => (
@@ -373,7 +392,13 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
         </div>
       ) : (
         <>
-          {total === 0 && scope === 'for_you' && (
+          {total === 0 && priority !== 'all' && (
+            <p className="text-sm text-gray-500">
+              No {PRIORITY_LABEL[priority].toLowerCase()} priority actions{scope === 'for_you' && myMarket ? ` for ${myMarket.label}` : ''} right now.{' '}
+              <button type="button" className="underline" onClick={() => setPriority('all')}>Show all priorities</button>
+            </p>
+          )}
+          {total === 0 && priority === 'all' && scope === 'for_you' && (
             <p className="text-sm text-gray-500">
               {myMarket ? `No actions for ${myMarket.label} right now.` : 'No global actions right now.'}{' '}
               <button type="button" className="underline" onClick={() => setScope('all')}>Show all</button>
@@ -506,6 +531,33 @@ function ScopeChip({ action, className }: { action: CompanyAction; className?: s
   );
 }
 
+const PRIORITY_STYLE: Record<Priority, string> = {
+  high: 'border-[#13274F] bg-[#13274F] text-white',
+  medium: 'border-[#13274F]/30 bg-[#13274F]/10 text-[#13274F]',
+  low: 'border-gray-200 bg-gray-50 text-gray-600',
+};
+
+// The priority label (High strong, Medium, Low) with the reason on hover.
+// Nothing for an unlabelled action.
+export function PriorityChip({ action, className }: { action: CompanyAction; className?: string }) {
+  const priority = priorityOf(action);
+  if (!priority) return null;
+  const chip = (
+    <span className={cn('inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4', PRIORITY_STYLE[priority], className)} aria-label={`${PRIORITY_LABEL[priority]} priority`}>
+      {PRIORITY_LABEL[priority]}
+    </span>
+  );
+  if (!action.priority_reason) return chip;
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>{chip}</TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-xs leading-relaxed">{action.priority_reason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 const WORK_KIND_STYLE: Record<string, { icon: LucideIcon; className: string }> = {
   outreach: { icon: Send, className: 'text-sky-700' },
   owned_content: { icon: FileText, className: 'text-indigo-700' },
@@ -559,7 +611,10 @@ function ActionCard({ action, ownerLabel, onOpen, onAccept, onDone, onDismiss, b
       onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(); } }}
       className="cursor-pointer rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition-colors hover:border-gray-300 hover:shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400"
     >
-      <KindLabel action={action} />
+      <div className="flex items-center justify-between gap-2">
+        <KindLabel action={action} />
+        <PriorityChip action={action} />
+      </div>
       <h4 className="mt-2.5 text-[15px] font-medium leading-snug text-gray-900">
         {displayTitle(action)}
       </h4>
@@ -1074,6 +1129,15 @@ function ActionDetail({ action, checks, activity, assigneeName, canChange, canAc
               />
               {canAssignSelf && !members && !isDismissedItem && (
                 <button type="button" onClick={onAssignSelf} disabled={off} className="mt-1 text-xs text-blue-600 hover:underline">Assign to me</button>
+              )}
+            </Field>
+          )}
+
+          {priorityOf(action) && (
+            <Field label="Priority">
+              <PriorityChip action={action} />
+              {action.priority_reason && (
+                <p className="mt-1.5 text-xs leading-relaxed text-gray-500"><span className="text-gray-400">Why this priority:</span> {action.priority_reason}</p>
               )}
             </Field>
           )}
