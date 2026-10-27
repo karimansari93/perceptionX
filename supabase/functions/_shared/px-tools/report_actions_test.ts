@@ -8,7 +8,13 @@
 //   * drafts never appear;
 //   * every item carries its cycle and the report's as-of date, in words;
 //   * provisional metrics are marked provisional;
-//   * the model cannot pick the organization through tool input.
+//   * the model cannot pick the organization through tool input;
+//   * actions go by title: no number, timing or owner in the payload, steps
+//     returned as stored, newest cycle first then title (2026-10-27);
+//   * the market filter keeps Global actions and expands world regions
+//     (the bug before 2026-10-27 dropped Global whenever a market was asked);
+//   * priority (High, Medium, Low, with its reason) rides along, High first,
+//     and the register's timing never reaches the chat.
 
 import { assert, assertEquals, assertStringIncludes } from 'https://deno.land/std@0.168.0/testing/asserts.ts';
 import { anthropicTools, executeTool, mcpTools } from './mod.ts';
@@ -19,6 +25,10 @@ const ORG_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ORG_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const ORG_EMPTY = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const PUBLISHED = '2026-10-14T07:40:00Z';
+const STEPS = [
+  { label: 'Add the stages and typical timing to the interview guide', url: 'https://example.com/interview-guide' },
+  { label: 'Say when candidates hear back', url: null },
+];
 
 const tables: Record<string, any[]> = {
   client_report_snapshots: [
@@ -47,8 +57,11 @@ const tables: Record<string, any[]> = {
   company_actions: [
     action(ORG_A, 'a2', 2, 'act_now', 'Put Singapore pay facts where AI reads them', ['Singapore'], 'medium', 'Pay holds 9% of the negative opinions in Singapore.'),
     action(ORG_A, 'a1', 1, 'act_now', 'Add response times to the German interview guide page', ['Germany'], 'high', 'Application and communication holds 24% of the negative opinions in Germany and the page is Org A\'s own.'),
-    action(ORG_A, 'a3', 3, 'act_now', 'Publish how hiring works on postings and the FAQ.', ['Global'], 'high', 'The hiring topics hold 22% of the negative opinions.'),
-    action(ORG_A, 'a4', 4, 'act_now', 'Zero-label legacy action', ['Germany', 'France']),
+    action(ORG_A, 'ag', 4, 'act_now', 'Publish how hiring works on postings and the FAQ', ['Global'], 'high', 'The hiring topics hold 22% of the negative opinions.'),
+    // Unlabelled and raised a cycle later: sorts after the labelled ones,
+    // but before older unlabelled ones.
+    { ...action(ORG_A, 'anew', null, 'regional', 'Zero in on the Hungary profession.hu page', ['Hungary']), cycle_raised: '2026-12-01' },
+    action(ORG_A, 'a4', 5, 'act_now', 'Zero-label legacy action', ['Germany', 'France']),
     action(ORG_A, 'aw', null, 'watch', 'Take the QA test site out of reach', []),
     { ...action(ORG_A, 'adraft', 9, 'act_now', 'DRAFT A action', ['Germany']), published_at: null },
     { ...action(ORG_A, 'aret', 8, 'retired', 'Retired A action', ['Germany']), tracking_status: 'retired' },
@@ -65,11 +78,11 @@ function action(org: string, id: string, n: number | null, register: string, tit
   return {
     id, organization_id: org, key: `2026-09-01:${id}`, register, title, cycle_raised: '2026-09-01', action_number: n,
     problem: `${title}: problem`, ai_says: 'What AI says.', ai_reads: [{ source: 'kununu', market: 'Germany', coverage_pct: 65 }],
-    urls: ['https://example.com/page'], recommendation: 'What to do.', lanes: ['owned', 'people'], timing: 'act_next',
+    urls: ['https://example.com/page'], recommendation: 'What to do.', steps: STEPS, lanes: ['owned', 'people'], timing: 'act_next',
     priority, priority_reason: priorityReason,
     lifts: [{ metric: 'Sentiment' }], proof_status: null,
     verified_facts: [{ fact: 'Page lists four stages.', checked_on: '2026-10-12' }],
-    owner_name: null, tracking_status: 'open', work_status: 'open', markets, functions: [], notes: null, published_at: PUBLISHED,
+    owner_name: 'Someone at the client', tracking_status: 'open', work_status: 'open', markets, functions: [], notes: null, published_at: PUBLISHED,
   };
 }
 
@@ -100,8 +113,9 @@ function ctxFor(org: string, honourOrgFilter = true): ToolContext {
 }
 const call = async (ctx: ToolContext, input: any = {}) => JSON.parse(await executeTool(ctx, 'get_report_actions', input));
 const ISO_DATE = /\b\d{4}-\d{2}-\d{2}\b/;
+const titles = (p: any) => p.actions.map((a: any) => a.title);
 
-Deno.test('own organization: snapshot, numbered actions, watch items, cited with period and as-of date', async () => {
+Deno.test('own organization: snapshot, actions by title, watch items, cited with period and as-of date', async () => {
   const p = await call(ctxFor(ORG_A));
   assertEquals(p._coverage.status, 'found');
   assertEquals(p.report.report, 'Q3 2026 baseline');
@@ -110,24 +124,43 @@ Deno.test('own organization: snapshot, numbered actions, watch items, cited with
   assertEquals(p.report.headline.sentiment_pct, 62);
   assertEquals(p.report.metric_status.sentiment.status, 'provisional');
   assertEquals(p.report.metric_status.visibility.since, '13 Oct 2026');
-  // High first (by title within a label), then Medium, then unlabelled.
-  assertEquals(p.actions.map((a: any) => a.number), ['01', '03', '02', '04']);
-  assertEquals(p.actions[0].raised_in, 'Q3 2026');
-  assertEquals(p.actions[0].priority, 'High');
-  assertStringIncludes(p.actions[0].priority_reason, '24% of the negative opinions in Germany');
+  // High first (newest cycle, then title within a label), then Medium,
+  // then unlabelled.
+  assertEquals(titles(p), [
+    'Add response times to the German interview guide page',
+    'Publish how hiring works on postings and the FAQ',
+    'Put Singapore pay facts where AI reads them',
+    'Zero in on the Hungary profession.hu page',
+    'Zero-label legacy action',
+  ]);
+  const german = p.actions[0];
+  assertEquals(german.priority, 'High');
+  assertStringIncludes(german.priority_reason, '24% of the negative opinions in Germany');
   assertEquals(p.actions[2].priority, 'Medium');
   assertEquals(p.actions[3].priority, null);
   assertEquals(p.actions[3].priority_reason, null);
-  assertEquals('timing' in p.actions[0], false, 'the register timing never reaches the chat');
-  assert(!/act (now|next|later)/i.test(JSON.stringify(p)), 'no act now / next / later wording');
   assertStringIncludes(p._meta.methodology.join(' '), 'not timing');
-  assertEquals(p.actions[0].lanes, ['Owned', 'People']);
-  assertEquals(p.actions[0].verified_facts[0].checked_on, '12 Oct 2026');
-  assertEquals(p.actions[0].latest_check.metric_readings[0].metric_status, 'provisional');
-  assertEquals(p.actions[0].latest_check.checked_on, '14 Oct 2026');
+  assertEquals(german.raised_in, 'Q3 2026');
+  assertEquals(german.lanes, ['Owned', 'People']);
+  assertEquals(german.steps, STEPS);
+  assertEquals(german.verified_facts[0].checked_on, '12 Oct 2026');
+  assertEquals(german.latest_check.metric_readings[0].metric_status, 'provisional');
+  assertEquals(german.latest_check.checked_on, '14 Oct 2026');
   assertEquals(p.watch_items.map((w: any) => w.title), ['Take the QA test site out of reach']);
   assert(!ISO_DATE.test(JSON.stringify(p.actions)), 'action dates are in words');
   assertStringIncludes(p._meta.methodology.join(' '), 'provisional');
+  assertStringIncludes(p._meta.methodology.join(' '), 'by their title');
+});
+
+Deno.test('actions carry no number, timing or owner', async () => {
+  const p = await call(ctxFor(ORG_A));
+  for (const a of [...p.actions, ...p.watch_items]) {
+    for (const gone of ['number', 'timing', 'owner']) assert(!(gone in a), `${gone} still in the action payload`);
+    assert(Array.isArray(a.steps));
+  }
+  const text = JSON.stringify(p);
+  assert(!/act (now|next|later)/i.test(text), 'no act now / next / later wording');
+  assert(!text.includes('Someone at the client'), 'no owner name');
 });
 
 Deno.test('drafts and retired actions never appear', async () => {
@@ -143,7 +176,7 @@ Deno.test('another organization cannot see this content, and sees only its own',
   }
   const p = JSON.parse(text);
   assertEquals(p.report.source_report_name, 'Org B secret report');
-  assertEquals(p.actions.map((a: any) => a.title), ['Org B secret action']);
+  assertEquals(titles(p), ['Org B secret action']);
   assertEquals(p.actions[0].latest_check.status, 'stalled');
 });
 
@@ -167,31 +200,55 @@ Deno.test('organization with nothing published gets no_data, not another organiz
   assertEquals(p.actions, []);
 });
 
-Deno.test('filters: market keeps that market, its Global items and organization-wide items; action number narrows', async () => {
+Deno.test('market filter: that market plus Global and organization-wide items; regions expand', async () => {
   const de = await call(ctxFor(ORG_A), { market: 'germany' });
-  assertEquals(de.actions.map((a: any) => a.number), ['01', '03', '04']);
+  assertEquals(titles(de), [
+    'Add response times to the German interview guide page',
+    'Publish how hiring works on postings and the FAQ',
+    'Zero-label legacy action',
+  ]);
   assertEquals(de.watch_items.length, 1);
   const code = await call(ctxFor(ORG_A), { market: 'DE', include: 'actions' });
-  assertEquals(code.actions.map((a: any) => a.number), ['01', '03', '04']);
-  const two = await call(ctxFor(ORG_A), { action_number: 2, include: 'actions' });
-  assertEquals(two.actions.map((a: any) => a.number), ['02']);
-  assertEquals(two.report, undefined);
-  // An untracked market still gets the Global action.
+  assertEquals(titles(code), titles(de));
+  const europe = await call(ctxFor(ORG_A), { market: 'Europe', include: 'actions' });
+  assertEquals(titles(europe), [
+    'Add response times to the German interview guide page',
+    'Publish how hiring works on postings and the FAQ',
+    'Zero in on the Hungary profession.hu page',
+    'Zero-label legacy action',
+  ]);
+  const apac = await call(ctxFor(ORG_A), { market: 'APAC', include: 'actions' });
+  assertEquals(titles(apac), [
+    'Publish how hiring works on postings and the FAQ',
+    'Put Singapore pay facts where AI reads them',
+  ]);
+  // A market with nothing of its own still gets the Global actions.
   const jp = await call(ctxFor(ORG_A), { market: 'Japan', include: 'actions' });
-  assertEquals(jp.actions.map((a: any) => a.number), ['03']);
+  assertEquals(titles(jp), ['Publish how hiring works on postings and the FAQ']);
+  const global = await call(ctxFor(ORG_A), { market: 'Global', include: 'actions' });
+  assertEquals(titles(global), ['Publish how hiring works on postings and the FAQ']);
+  // ISO code spellings resolve to the same country.
+  assert(actionMatchesMarket(['Germany'], 'DE'));
+  assert(!actionMatchesMarket(['Germany'], 'France'));
+  assert(actionMatchesMarket(['Global'], 'France'));
+  assert(actionMatchesMarket([], 'France'));
+  assert(actionMatchesMarket(['Canada'], 'north america'));
+  assert(!actionMatchesMarket(['Canada'], 'europe'));
+  assert(actionMatchesMarket(['Mexico'], 'latam'));
+  assert(actionMatchesMarket(['Mexico'], undefined));
 });
 
-Deno.test('filters: a region expands to its markets, plus Global', async () => {
-  const eu = await call(ctxFor(ORG_A), { market: 'Europe', include: 'actions' });
-  assertEquals(eu.actions.map((a: any) => a.number), ['01', '03', '04']);
-  const apac = await call(ctxFor(ORG_A), { market: 'APAC', include: 'actions' });
-  assertEquals(apac.actions.map((a: any) => a.number), ['03', '02']);
-  assertEquals(actionMatchesMarket(['Canada'], 'north america'), true);
-  assertEquals(actionMatchesMarket(['Canada'], 'europe'), false);
-  assertEquals(actionMatchesMarket(['Global'], 'canada'), true);
-  assertEquals(actionMatchesMarket([], 'canada'), true);
-  assertEquals(actionMatchesMarket(['Mexico'], 'latam'), true);
-  assertEquals(actionMatchesMarket(['Mexico'], undefined), true);
+Deno.test('action filter: by title, case-insensitive, exact before contains; old action_number still honoured', async () => {
+  const one = await call(ctxFor(ORG_A), { action: 'singapore', include: 'actions' });
+  assertEquals(titles(one), ['Put Singapore pay facts where AI reads them']);
+  assertEquals(one.report, undefined);
+  const exact = await call(ctxFor(ORG_A), { action: 'publish how hiring works on postings and the faq', include: 'actions' });
+  assertEquals(titles(exact), ['Publish how hiring works on postings and the FAQ']);
+  const legacy = await call(ctxFor(ORG_A), { action_number: 2, include: 'actions' });
+  assertEquals(titles(legacy), ['Put Singapore pay facts where AI reads them']);
+  const none = await call(ctxFor(ORG_A), { action: 'nothing like this', include: 'actions' });
+  assertEquals(none._coverage.status, 'no_data');
+  assertStringIncludes(none._coverage.reason, 'action title');
 });
 
 Deno.test('registered on both surfaces, read-only', () => {
