@@ -1,6 +1,9 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { ChevronRight, Wrench } from "lucide-react";
+import { ChevronRight, Search, SlidersHorizontal, Wrench } from "lucide-react";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { GENERAL_KEY } from "@/utils/locationContext";
+import { SEARCH_SHORTCUT } from "@/lib/searchShortcut";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { CompanySwitcher } from "./CompanySwitcher";
@@ -35,6 +38,8 @@ interface DashboardHeaderProps {
   // Intent prefetch for the two switchers (see useDashboardData).
   onLocationPrefetch?: (locationKey: string) => void;
   onCompanyPrefetch?: (companyId: string) => void;
+  /** Opens the global command palette (⌘K / Ctrl+K search). */
+  onOpenSearch?: () => void;
 }
 
 export const DashboardHeader = React.memo(({
@@ -58,15 +63,174 @@ export const DashboardHeader = React.memo(({
   companyId,
   onLocationPrefetch,
   onCompanyPrefetch,
+  onOpenSearch,
 }: DashboardHeaderProps) => {
   const isMobile = useIsMobile();
+  const compact = useCompactHeader();
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // The filters, in a row on wider screens and stacked full width in the
+  // phone's Filters panel. Same controls either way.
+  const filterControls = (stacked: boolean) => {
+    const field = (label: string, tour: string, control: React.ReactNode) => stacked ? (
+      <div data-tour={tour} className="space-y-1.5">
+        <div className="text-xs font-medium text-gray-500">{label}</div>
+        <div className="[&>*]:w-full">{control}</div>
+      </div>
+    ) : (
+      <div data-tour={tour}>{control}</div>
+    );
+    return (
+      <>
+        {stacked && field('Company', 'company-switcher', (
+          <CompanySwitcher
+            variant="outline"
+            alwaysMounted={alwaysMounted}
+            onPendingLocationChange={onPendingLocationChange}
+            onIntentPrefetch={onCompanyPrefetch}
+            className="w-full"
+          />
+        ))}
+        {/* No period selector: the dashboard always shows the latest
+            measured period (customers want the current data). */}
+        {onLocationChange && field('Market', 'location-filter', (
+          <LocationFilter
+            selectedLocation={selectedLocation || null}
+            onLocationChange={onLocationChange}
+            options={locationOptions}
+            onIntentPrefetch={onLocationPrefetch}
+            className={stacked ? "w-full" : ""}
+          />
+        ))}
+        {onJobFunctionChange && jobFunctionOptions && jobFunctionOptions.length > 0 && field('Job function', 'job-function-filter', (
+          <JobFunctionFilter
+            options={jobFunctionOptions}
+            selected={selectedJobFunction ?? 'all'}
+            onChange={onJobFunctionChange}
+            className={stacked ? "w-full max-w-none" : ""}
+          />
+        ))}
+        {onLocationChange && (stacked ? (
+          <div data-tour="saved-view" className="flex items-center gap-2 text-sm text-gray-600">
+            <StarSavedView
+              userId={userId}
+              companyId={companyId}
+              currentLocation={selectedLocation ?? null}
+              currentPeriod={selectedPeriod ?? null}
+            />
+            Save this view
+          </div>
+        ) : (
+          <div data-tour="saved-view">
+            <StarSavedView
+              userId={userId}
+              companyId={companyId}
+              currentLocation={selectedLocation ?? null}
+              currentPeriod={selectedPeriod ?? null}
+            />
+          </div>
+        ))}
+        {!stacked && (
+          <div data-tour="company-switcher">
+            <CompanySwitcher
+              variant="outline"
+              alwaysMounted={alwaysMounted}
+              onPendingLocationChange={onPendingLocationChange}
+              onIntentPrefetch={onCompanyPrefetch}
+            />
+          </div>
+        )}
+        {hasDataIssues && onFixData && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onFixData}
+            className="text-orange-600 border-orange-200 hover:bg-orange-50"
+          >
+            <Wrench className="w-4 h-4 mr-2" />
+            Fix Data Issues
+          </Button>
+        )}
+      </>
+    );
+  };
+
+  // Below laptop width: one row; the rest of the filters open in a panel from
+  // the bottom, with a dot while a market or function is set. Phones show the
+  // menu, the page title and icons. Tablets skip the title (the page shows it)
+  // and keep the company and market in view, with a full search field.
+  if (compact) {
+    const title = breadcrumbs?.[breadcrumbs.length - 1]?.label;
+    const filtered = (!!selectedLocation && selectedLocation !== GENERAL_KEY) || (!!selectedJobFunction && selectedJobFunction !== 'all');
+    const iconButton = 'relative flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-gray-200 bg-white text-[#13274F] transition-colors hover:bg-gray-50';
+    return (
+      <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/50">
+        <div className="flex items-center h-16 gap-2 px-4">
+          {isMobile ? (
+            <>
+              <SidebarTrigger className="h-7 w-7 mr-1 text-[#13274F]" />
+              <span className="min-w-0 flex-1 truncate text-base font-medium text-gray-700">{title}</span>
+              {onOpenSearch && (
+                <button type="button" onClick={onOpenSearch} aria-label="Search" className={iconButton}>
+                  <Search className="h-4 w-4" />
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <div data-tour="company-switcher" className="min-w-0">
+                <CompanySwitcher
+                  variant="outline"
+                  alwaysMounted={alwaysMounted}
+                  onPendingLocationChange={onPendingLocationChange}
+                  onIntentPrefetch={onCompanyPrefetch}
+                />
+              </div>
+              {onLocationChange && (
+                <div data-tour="location-filter" className="min-w-0">
+                  <LocationFilter
+                    selectedLocation={selectedLocation || null}
+                    onLocationChange={onLocationChange}
+                    options={locationOptions}
+                    onIntentPrefetch={onLocationPrefetch}
+                  />
+                </div>
+              )}
+              <div className="flex min-w-0 flex-1 justify-end">
+                {onOpenSearch && (
+                  <button
+                    type="button"
+                    onClick={onOpenSearch}
+                    className="flex w-full max-w-[260px] items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm text-gray-500 transition-colors hover:border-gray-300 hover:bg-white"
+                  >
+                    <Search className="h-4 w-4 flex-none text-gray-400" />
+                    <span className="flex-1 truncate text-left">Search</span>
+                    <kbd className="pointer-events-none inline-flex items-center rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                      {SEARCH_SHORTCUT}
+                    </kbd>
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+          <button type="button" onClick={() => setFiltersOpen(true)} aria-label="Filters" className={iconButton}>
+            <SlidersHorizontal className="h-4 w-4" />
+            {filtered && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-[#DB5E89] ring-2 ring-white" />}
+          </button>
+        </div>
+        <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+          <SheetContent side="bottom" className="mx-auto max-w-lg rounded-t-2xl px-4 pb-6 pt-5">
+            <SheetTitle className="mb-4 text-base">Filters</SheetTitle>
+            <div className="space-y-4">{filterControls(true)}</div>
+          </SheetContent>
+        </Sheet>
+      </header>
+    );
+  }
 
   return (
     <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/50">
       <div className="flex items-center h-16 px-4 sm:px-8">
-        {/* SidebarTrigger lives in the sidebar header on desktop; keep it here
-            for mobile, where the sidebar is a closed drawer with no other trigger. */}
-        <SidebarTrigger className="h-7 w-7 mr-4 text-[#13274F] md:hidden" />
         {breadcrumbs && breadcrumbs.length > 0 && (
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
@@ -75,8 +239,7 @@ export const DashboardHeader = React.memo(({
               )}
               <span className={`text-base font-light hidden sm:inline ${breadcrumbs[0].active ? "text-gray-700" : "text-gray-500"}`}>{breadcrumbs[0].label}</span>
             </span>
-            {/* Render the rest of the breadcrumbs on desktop only */}
-            {!isMobile && breadcrumbs.slice(1).map((crumb, idx) => (
+            {breadcrumbs.slice(1).map((crumb, idx) => (
               <span key={idx} className="flex items-center gap-1">
                 <ChevronRight className="w-5 h-5 text-[#13274F] mx-1" />
                 <span className={`text-base font-medium ${crumb.active ? "text-gray-700" : "text-gray-500"}`}>{crumb.label}</span>
@@ -84,63 +247,25 @@ export const DashboardHeader = React.memo(({
             ))}
           </div>
         )}
-        {/* Right side with LocationFilter, CompanySwitcher and debug button */}
+        {/* Search leads the controls on the right, so it sits in the same
+            place on every page whatever the breadcrumb's length. */}
         <div className="flex-1" />
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* No period selector: the dashboard always shows the latest
-              measured period (customers want the current data). */}
-          {onLocationChange && (
-            <div data-tour="location-filter">
-              <LocationFilter
-                selectedLocation={selectedLocation || null}
-                onLocationChange={onLocationChange}
-                options={locationOptions}
-                onIntentPrefetch={onLocationPrefetch}
-                className={isMobile ? "min-w-[120px]" : ""}
-              />
-            </div>
-          )}
-          {onJobFunctionChange && jobFunctionOptions && jobFunctionOptions.length > 0 && (
-            <div data-tour="job-function-filter">
-              <JobFunctionFilter
-                options={jobFunctionOptions}
-                selected={selectedJobFunction ?? 'all'}
-                onChange={onJobFunctionChange}
-                className={isMobile ? "min-w-[120px]" : ""}
-              />
-            </div>
-          )}
-          {onLocationChange && (
-            <div data-tour="saved-view">
-              <StarSavedView
-                userId={userId}
-                companyId={companyId}
-                currentLocation={selectedLocation ?? null}
-                currentPeriod={selectedPeriod ?? null}
-              />
-            </div>
-          )}
-          <div data-tour="company-switcher">
-            <CompanySwitcher
-              variant="outline"
-              alwaysMounted={alwaysMounted}
-              onPendingLocationChange={onPendingLocationChange}
-              onIntentPrefetch={onCompanyPrefetch}
-              className={isMobile ? "min-w-[120px] text-xs" : ""}
-            />
-          </div>
-          {hasDataIssues && onFixData && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onFixData}
-              className="text-orange-600 border-orange-200 hover:bg-orange-50"
+          {onOpenSearch && (
+            <button
+              type="button"
+              onClick={onOpenSearch}
+              aria-label="Search"
+              className="flex h-9 w-9 flex-none items-center justify-center gap-2 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-500 transition-colors hover:border-gray-300 hover:bg-white xl:h-auto xl:w-[240px] xl:justify-start xl:px-3 xl:py-1.5"
             >
-              <Wrench className="w-4 h-4 mr-2" />
-              <span className="hidden sm:inline">Fix Data Issues</span>
-              <span className="sm:hidden">Fix</span>
-            </Button>
+              <Search className="h-4 w-4 text-gray-400" />
+              <span className="hidden flex-1 text-left xl:inline">Search</span>
+              <kbd className="pointer-events-none hidden xl:inline-flex items-center rounded border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                {SEARCH_SHORTCUT}
+              </kbd>
+            </button>
           )}
+          {filterControls(false)}
         </div>
       </div>
     </header>
@@ -148,3 +273,18 @@ export const DashboardHeader = React.memo(({
 });
 
 DashboardHeader.displayName = 'DashboardHeader';
+
+// The header's filters only fit in a row from the lg breakpoint (1024px).
+const COMPACT_QUERY = '(max-width: 1023px)';
+
+function useCompactHeader(): boolean {
+  const [compact, setCompact] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(COMPACT_QUERY).matches);
+  useEffect(() => {
+    const mql = window.matchMedia(COMPACT_QUERY);
+    const onChange = () => setCompact(mql.matches);
+    mql.addEventListener('change', onChange);
+    onChange();
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+  return compact;
+}

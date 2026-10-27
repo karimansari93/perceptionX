@@ -16,6 +16,7 @@
 // belongs to, and metric_status says which figures are provisional.
 
 import { coverageFound, coverageNoData, monthToQuarter } from './helpers.ts';
+import { bucketsInRegion, countryCodeForLocation, regionFromText } from '../regions.ts';
 import type { ToolContext } from './scope.ts';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -32,7 +33,14 @@ const STATUS_LABEL: Record<string, string> = {
   open: 'open', in_progress: 'in progress', done: 'done',
   stalled: 'stalled', escalated: 'escalated', retired: 'retired',
 };
-const TIMING_LABEL: Record<string, string> = { act_now: 'Act now', act_next: 'Act next', act_later: 'Act later' };
+// Priority is the expected effect on what AI tells candidates (share of
+// negative opinions targeted x how much the client controls x how fast AI
+// picks it up). It is not timing, so the register's timing column is never
+// returned: the client decides when to act.
+const PRIORITY_LABEL: Record<string, string> = { high: 'High', medium: 'Medium', low: 'Low' };
+const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+// Markets that mean the whole organisation (same list as the dashboard).
+const ORG_WIDE = new Set(['global', 'all markets', 'worldwide']);
 const LANE_LABEL: Record<string, string> = { business: 'Business', owned: 'Owned', people: 'People' };
 const REPORT_TYPE_LABEL: Record<string, string> = {
   baseline: 'baseline', quarterly: 'quarterly report', refresh: 'refresh', pilot: 'pilot', custom: 'report',
@@ -41,6 +49,26 @@ const REPORT_TYPE_LABEL: Record<string, string> = {
 const cycleLabel = (cycle: unknown) => (typeof cycle === 'string' && /^\d{4}-\d{2}/.test(cycle) ? monthToQuarter(cycle) : null);
 const isMine = (ctx: ToolContext) => (r: any) => r?.organization_id === ctx.organizationId && r?.published_at != null;
 const norm = (s: unknown) => String(s ?? '').trim().toLowerCase();
+
+// Does an action apply to the market the user asked about? Yes when it is
+// organisation-wide (no markets, or Global), names that market (any
+// spelling or ISO code), or names a market inside the region asked for
+// ("Europe" takes every European market, plus Global).
+export function actionMatchesMarket(actionMarkets: unknown, market: string | undefined): boolean {
+  const want = norm(market);
+  if (!want) return true;
+  const mine = (Array.isArray(actionMarkets) ? actionMarkets : []).map(norm).filter(Boolean);
+  if (!mine.length || mine.some((m) => ORG_WIDE.has(m))) return true;
+  if (mine.includes(want)) return true;
+  const wantCode = countryCodeForLocation(want);
+  if (wantCode && mine.some((m) => countryCodeForLocation(m) === wantCode)) return true;
+  const region = regionFromText(want);
+  return !!region && bucketsInRegion(mine, region).length > 0;
+}
+
+const priorityRank = (a: any) => PRIORITY_RANK[String(a?.priority)] ?? 3;
+// High, Medium, Low, then unlabelled; then by title.
+const byPriority = (a: any, b: any) => (priorityRank(a) - priorityRank(b)) || String(a.title ?? '').localeCompare(String(b.title ?? ''));
 
 function withDates(facts: unknown): Array<{ fact: string; checked_on: string | null }> {
   return (Array.isArray(facts) ? facts : []).map((f: any) => ({ fact: String(f?.fact ?? ''), checked_on: dateInWords(f?.checked_on) }));
@@ -70,7 +98,7 @@ export async function getReportActions(
       .not('published_at', 'is', null)
       .order('cycle', { ascending: false }),
     admin.from('company_actions')
-      .select('id, organization_id, key, register, title, cycle_raised, action_number, problem, ai_says, ai_reads, urls, recommendation, lanes, timing, lifts, proof_status, verified_facts, owner_name, tracking_status, work_status, markets, functions, notes, published_at')
+      .select('id, organization_id, key, register, title, cycle_raised, action_number, problem, ai_says, ai_reads, urls, recommendation, lanes, priority, priority_reason, lifts, proof_status, verified_facts, owner_name, tracking_status, work_status, markets, functions, notes, published_at')
       .eq('organization_id', organizationId)
       .not('published_at', 'is', null),
   ]);
@@ -83,7 +111,7 @@ export async function getReportActions(
 
   let rows = (actionRes.data || []).filter(isMine(ctx)).filter((a: any) => a.register !== 'retired');
   const wantMarket = norm(market);
-  if (wantMarket) rows = rows.filter((a: any) => !(a.markets || []).length || (a.markets || []).some((m: string) => norm(m) === wantMarket));
+  if (wantMarket) rows = rows.filter((a: any) => actionMatchesMarket(a.markets, wantMarket));
   if (Number.isInteger(actionNumber)) rows = rows.filter((a: any) => a.action_number === actionNumber);
 
   // Latest check per action (the baseline row on the first cycle).
@@ -117,7 +145,8 @@ export async function getReportActions(
       urls: a.urls || [],
       what_to_do: a.recommendation,
       lanes: (a.lanes || []).map((l: string) => LANE_LABEL[l] ?? l),
-      timing: TIMING_LABEL[a.timing] ?? a.timing ?? null,
+      priority: PRIORITY_LABEL[a.priority] ?? null,
+      priority_reason: PRIORITY_LABEL[a.priority] && a.priority_reason ? a.priority_reason : null,
       lifts: a.lifts || [],
       proof_status: a.proof_status || null,
       verified_facts: withDates(a.verified_facts),
@@ -132,9 +161,8 @@ export async function getReportActions(
     };
   };
 
-  const actions = rows.filter((a: any) => a.register !== 'watch')
-    .sort((a: any, b: any) => (a.action_number ?? 999) - (b.action_number ?? 999)).map(shape);
-  const watch = rows.filter((a: any) => a.register === 'watch').map(shape);
+  const actions = rows.filter((a: any) => a.register !== 'watch').sort(byPriority).map(shape);
+  const watch = rows.filter((a: any) => a.register === 'watch').sort(byPriority).map(shape);
 
   const report = latest ? {
     period: latest.period_label,
@@ -168,6 +196,7 @@ export async function getReportActions(
         'Every figure is a share of answers or a score; coverage_pct is the share of the answers in question that cite the source.',
         'metric_status marks each headline metric final or provisional. Say "provisional" whenever quoting a provisional metric.',
         'status is the PerceptionX verdict on the action; client_reported_status is what the client owner reported. Neither can be changed from here.',
+        'priority (High, Medium, Low) is the expected effect on what AI tells candidates: the share of negative opinions it targets, how much the client controls, and how fast AI picks it up. priority_reason says why in the client\'s own figures. It is not timing: never tell the client when to act.',
       ],
     },
   });

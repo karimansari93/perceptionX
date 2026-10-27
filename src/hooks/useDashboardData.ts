@@ -312,7 +312,7 @@ export const isOverallCandidateExperience = (r: { confirmed_prompts?: any }): bo
 
 export const useDashboardData = () => {
   const { user: rawUser, clearSession } = useAuth();
-  const { currentCompany, userCompanies, loading: companyLoading } = useCompany();
+  const { currentCompany, userCompanies, loading: companyLoading, viewAsMember } = useCompany();
 
   // Memoize user to avoid unnecessary effect reruns
   const user = useMemo(() => rawUser, [rawUser?.id]);
@@ -1477,7 +1477,12 @@ export const useDashboardData = () => {
     // Starred views (and the loading flag) only make sense with a company to
     // scope against — with none (fresh account, mid-auth), just clear. The
     // effect re-runs when the company arrives.
-    if (next == null && currentCompany?.id) {
+    if (next == null && currentCompany?.id && viewAsMember) {
+      // Admin previewing as a member: their saved location on their default
+      // company, never the admin's own starred view.
+      const onTheirCompany = !viewAsMember.defaultCompanyId || viewAsMember.defaultCompanyId === currentCompany.id;
+      next = onTheirCompany && viewAsMember.defaultLocation ? canonicalizeLocationContext(viewAsMember.defaultLocation) : null;
+    } else if (next == null && currentCompany?.id) {
       const starred = readStarredView(user?.id);
       if (starred && starredViewAppliesTo(starred, currentCompany.id)) {
         // Normalize the stored location so legacy ISO codes ("US") and
@@ -1503,7 +1508,7 @@ export const useDashboardData = () => {
     }
     setSelectedLocationState(next ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentCompany?.id, user?.id]);
+  }, [currentCompany?.id, user?.id, viewAsMember?.userId]);
 
   // Canonical country key of each scope company, for the attribution rule.
   const countryKeyByCompanyId = useMemo(() => {

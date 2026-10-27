@@ -38,6 +38,25 @@ export interface CallRecord {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+// The company an RPC asks about, when it is not the fixture company (Acme).
+const requestedCompany = (body: any): string | null => {
+  const id = body?.p_company_id ?? (Array.isArray(body?.p_company_ids) ? body.p_company_ids[0] : null);
+  return id && id !== F.COMPANY_ID ? String(id) : null;
+};
+
+// The fixture rows belong to Acme. A request for another profile in the org
+// (Acme Canada) gets the same rows under its own id, as the real RPCs would
+// return that profile's data, instead of rows the dashboard filters out.
+const asCompany = (value: unknown, companyId: string | null): unknown => {
+  if (!companyId) return value;
+  if (Array.isArray(value)) return value.map((v) => asCompany(v, companyId));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) =>
+      [k, k === 'company_id' && v === F.COMPANY_ID ? companyId : asCompany(v, companyId)]));
+  }
+  return value;
+};
+
 // In-memory Supabase for the dashboard: PostgREST tables + RPCs + GoTrue.
 // Every request is logged and RPC attempts are counted per function.
 export class MockBackend {
@@ -73,6 +92,10 @@ export class MockBackend {
 
   private rpcImpl(fn: string, body: any): unknown {
     if (this.rpcOverrides[fn]) return this.rpcOverrides[fn](body);
+    return asCompany(this.fixtureRpc(fn, body), requestedCompany(body));
+  }
+
+  private fixtureRpc(fn: string, body: any): unknown {
     switch (fn) {
       case 'get_scope_prompts': return F.prompts;
       case 'get_dashboard_rollups': return F.dashboardRollups;

@@ -7,7 +7,7 @@ import {
   CommandGroup,
   CommandItem,
 } from "@/components/ui/command";
-import { BarChart3, Globe, Users, Lightbulb, MessageSquare, Download, Sparkles } from "lucide-react";
+import { BarChart3, Globe, Users, Lightbulb, MessageSquare, Download, Sparkles, ListChecks } from "lucide-react";
 import { ASK_AI_ENABLED } from "@/lib/askAi";
 import { PromptData, CitationCount } from "@/types/dashboard";
 import { ATTRIBUTES } from "@/config/attributes";
@@ -30,6 +30,7 @@ const SECTIONS: { section: string; label: string; icon: typeof BarChart3 }[] = [
   { section: "sources", label: "Sources", icon: Globe },
   { section: "competitors", label: "Competitors", icon: Users },
   { section: "thematic", label: "Themes", icon: Lightbulb },
+  { section: "actions", label: "Actions", icon: ListChecks },
   { section: "reports", label: "Reports", icon: Download },
 ];
 

@@ -122,10 +122,24 @@ function barRow(row: DigestBarRow, token: string): string {
 const barList = (rows: string[]) =>
   `<table style="width:100%;border-collapse:separate;border-spacing:0 5px;">${rows.join('')}</table>`;
 
+// The priority chip, the dashboard's soft tinted pill: blue for High, slate
+// for Medium, grey for Low, no border. The reason sits in the title so it
+// shows on hover where the client supports it.
+const PRIORITY_CHIP: Record<'high' | 'medium' | 'low', string> = {
+  high: 'color:#1D4ED8;background-color:#EFF6FF;',
+  medium: 'color:#334155;background-color:#F1F5F9;',
+  low: 'color:#6B7280;background-color:#F3F4F6;',
+};
+
+function priorityChip(a: DigestActionRow): string {
+  if (!a.priority) return '';
+  const title = a.priorityReason ? ` title="${escapeHtml(a.priorityReason)}"` : '';
+  const label = a.priority.charAt(0).toUpperCase() + a.priority.slice(1);
+  return ` <span${title} style="${F}font-size:11px;font-weight:600;${PRIORITY_CHIP[a.priority]}border-radius:999px;padding:1px 8px;margin-left:8px;vertical-align:2px;">${label}</span>`;
+}
+
 function actionCard(a: DigestActionRow): string {
-  const timing = a.timing
-    ? ` <span style="${F}font-size:10px;font-weight:700;color:${NAVY};border:1px solid ${NAVY};border-radius:999px;padding:1px 7px;margin-left:8px;vertical-align:2px;letter-spacing:0.3px;">${escapeHtml(a.timing.toUpperCase())}</span>`
-    : '';
+  const timing = priorityChip(a);
   const field = (label: string, text: string) =>
     `<tr><td style="${F}font-size:11px;font-weight:600;color:${MUTED};text-transform:uppercase;letter-spacing:0.5px;padding:6px 12px 0 0;vertical-align:top;white-space:nowrap;">${label}</td>` +
     `<td style="${F}font-size:13px;line-height:1.5;color:${BODY};padding:6px 0 0 0;vertical-align:top;width:100%;">${text}</td></tr>`;
@@ -227,7 +241,7 @@ export function renderDigestHtml(payload: DigestPayload, opts: DigestRenderOptio
 
   const act = n?.action
     ? `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="margin-top:20px;"><tbody><tr><td style="background:#FFF5F8;border:1px solid ${PINK};border-radius:10px;padding:16px;">` +
-      p('Where to act next', 14, INK, 700, 'margin-bottom:4px;', '24px') + p(prose(n.action), 13, BODY) + '</td></tr></tbody></table>'
+      p('Where to focus', 14, INK, 700, 'margin-bottom:4px;', '24px') + p(prose(n.action), 13, BODY) + '</td></tr></tbody></table>'
     : '';
 
   const reportActions = payload.actions.length

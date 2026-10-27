@@ -47,6 +47,26 @@ server.listen({
     }
   },
 });
+// Vitest's jsdom environment swaps in jsdom's AbortController/AbortSignal, but
+// fetch (and the Request MSW builds from each call) is Node's, which rejects a
+// signal that is not its own: "Expected signal to be an instance of
+// AbortSignal". React Query hands every dashboard query a jsdom signal, so take
+// it off the request and honour the abort here. Installed after server.listen
+// so it wraps MSW's fetch, and before any test imports the Supabase client.
+const mswFetch = globalThis.fetch;
+globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  const signal = init?.signal;
+  if (!signal || !(signal instanceof AbortSignal)) return mswFetch(input, init);
+  const abortError = () => signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise<Response>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    mswFetch(input, { ...init, signal: undefined })
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', onAbort));
+  });
+};
 beforeAll(() => { /* server already listening (see above) */ });
 afterEach(() => {
   server.resetHandlers();

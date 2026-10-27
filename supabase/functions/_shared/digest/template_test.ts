@@ -68,7 +68,7 @@ Deno.test('deltas render as point pills against the previous wave', () => {
   assertStringIncludes(html, '↑ 11 pts vs July');
   assertStringIncludes(html, '↓ 4 pts vs July');
   assertStringIncludes(html, 'Ford Business Solutions (You)');
-  assertStringIncludes(html, 'Where to act next');
+  assertStringIncludes(html, 'Where to focus');
   assert(!html.includes('—'));
 });
 
@@ -131,7 +131,7 @@ Deno.test('digestMarkdown carries the figures for the chat thread', () => {
   assertStringIncludes(md, '**Employer Perception Score:** 78 (Good) (up 1 points)');
   assertStringIncludes(md, '- LinkedIn: 49% of answers (down 2 points)');
   assertStringIncludes(md, 'open employer questions');
-  assertStringIncludes(md, 'Where to act next');
+  assertStringIncludes(md, 'Where to focus');
 });
 
 Deno.test('domains in prose become navy links, never client auto-links', () => {
@@ -171,23 +171,35 @@ Deno.test('sentiment column is a badge coloured by band', () => {
   assert(sentimentBadge(null).includes('–'));
 });
 
-Deno.test('report actions: market filter, shape and section', () => {
+Deno.test('report actions: market filter, priority order, shape and section', () => {
   const rows = [
-    { organization_id: 'o', register: 'action', action_number: 5, title: 'Claim the local review profiles that doubled', timing: 'act_next', markets: ['Romania', 'Hungary'], problem: 'profession.hu reached 22% of Hungarian answers with no presence.', recommendation: 'Claim profession.hu and keep benefits current.', owner_name: 'Market HR', tracking_status: 'open', lifts: [{ metric: 'Sentiment', attribute: 'Compensation', market: 'Hungary' }], published_at: '2026-10-01' },
-    { organization_id: 'o', register: 'action', action_number: 2, title: 'Germany only', timing: 'act_now', markets: ['Germany'], recommendation: 'x', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
-    { organization_id: 'o', register: 'action', action_number: 1, title: 'Everywhere', timing: null, markets: [], recommendation: 'y', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
-    { organization_id: 'o', register: 'action', action_number: 3, title: 'Done already', timing: 'act_now', markets: ['Hungary'], recommendation: 'z', tracking_status: 'done', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 5, title: 'Claim the local review profiles that doubled', timing: 'act_next', priority: 'high', priority_reason: 'Hungary holds 22% of the negative opinions and the profile is one claim away.', markets: ['Romania', 'Hungary'], problem: 'profession.hu reached 22% of Hungarian answers with no presence.', recommendation: 'Claim profession.hu and keep benefits current.', owner_name: 'Market HR', tracking_status: 'open', lifts: [{ metric: 'Sentiment', attribute: 'Compensation', market: 'Hungary' }], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 2, title: 'Germany only', timing: 'act_now', priority: 'high', markets: ['Germany'], recommendation: 'x', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 1, title: 'Everywhere', timing: null, priority: null, markets: [], recommendation: 'y', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 7, title: 'Labelled global', timing: 'act_later', priority: 'medium', markets: ['Global'], recommendation: 'g', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 4, title: 'Hungary low', timing: 'act_now', priority: 'low', markets: ['Hungary'], recommendation: 'l', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
+    { organization_id: 'o', register: 'action', action_number: 3, title: 'Done already', timing: 'act_now', priority: 'high', markets: ['Hungary'], recommendation: 'z', tracking_status: 'done', lifts: [], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'watch', action_number: null, title: 'Watch item', markets: ['Hungary'], recommendation: 'w', tracking_status: 'open', lifts: [], published_at: '2026-10-01' },
     { organization_id: 'o', register: 'action', action_number: 9, title: 'Unpublished', markets: ['Hungary'], recommendation: 'u', tracking_status: 'open', lifts: [], published_at: null },
   ];
   const out = filterActions(rows, ['Hungary']);
-  assertEquals(out.map(a => a.number), ['01', '05']);
-  assertEquals(out[1].timing, 'Act next');
-  assertEquals(out[1].lifts, ['Sentiment (Compensation) in Hungary']);
+  // High first, then Medium, Low, unlabelled; Global rows match every market.
+  assertEquals(out.map(a => a.number), ['05', '07', '04', '01']);
+  assertEquals(out[0].priority, 'high');
+  assertEquals(out[0].priorityReason, 'Hungary holds 22% of the negative opinions and the profile is one claim away.');
+  assertEquals(out[3].priority, null);
+  assertEquals(out[0].lifts, ['Sentiment (Compensation) in Hungary']);
+  assertEquals(filterActions(rows, []).map(a => a.number), ['02', '05', '07', '04', '01']);
   const html = renderDigestHtml({ ...payload, actions: out }, opts);
   assertStringIncludes(html, 'From your report');
   assertStringIncludes(html, 'Claim the local review profiles that doubled');
-  assertStringIncludes(html, 'ACT NEXT');
+  assertStringIncludes(html, '>High<');
+  assertStringIncludes(html, '>Medium<');
+  assertStringIncludes(html, 'title="Hungary holds 22% of the negative opinions');
+  assert(!/act (now|next|later)/i.test(html), 'timing wording never reaches the email');
   assertStringIncludes(html, 'href="https://profession.hu"');
   assert(!renderDigestHtml(payload, opts).includes('From your report'));
+  const md = digestMarkdown({ ...payload, actions: out });
+  assertStringIncludes(md, '(high priority)');
+  assert(!/act (now|next|later)/i.test(md));
 });
