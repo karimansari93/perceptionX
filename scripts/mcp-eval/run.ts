@@ -84,8 +84,11 @@ for (const required of ['list_companies', 'get_attribute_themes', 'get_visibilit
 // ChatGPT plugin guidelines: read-only annotations on every tool.
 check('all tools annotated read-only + closed-world', (toolsList.tools || []).every((t: any) =>
   t.annotations?.readOnlyHint === true && t.annotations?.openWorldHint === false));
+// Claude is a tracked platform from September 2026, so a description may
+// name it as included; the never-published models must not appear, and
+// nothing may be framed as excluded.
 check('no tool description mentions excluded models', !(toolsList.tools || []).some((t: any) =>
-  /\b(claude|gemini|deepseek)\b/i.test(String(t.description))));
+  /\b(gemini|deepseek)\b/i.test(String(t.description)) || /\bexclud\w*\b/i.test(String(t.description))));
 
 // ─── Presentation contract ──────────────────────────────────────────────────
 // Quarters + percentages; no raw dates or decimals in numeric payloads; no

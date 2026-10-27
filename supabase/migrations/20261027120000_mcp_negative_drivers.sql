@@ -10,9 +10,7 @@
 --     the published models, in the requested months, markets and job
 --     functions;
 --   * sampled: up to p_sample of them per response_month, at random (the
---     same budget shape as mcp_get_theme_stats), so a brand-wide two-wave
---     scope stays well inside the 20 s service_role budget (about 5 s on
---     the largest scope at the time of writing);
+--     same budget shape as mcp_get_theme_stats);
 --   * profile_cites: citations in the sampled answers that sit on a review
 --     platform's profile path AND carry one of the brand's own slug tokens
 --     (p_brand_tokens, derived from the brand name by the executor, never a
@@ -30,6 +28,11 @@
 --   * profile_pages: the matched pages cited most, so the match can be
 --     checked and linked.
 --
+-- PL/pgSQL with EXECUTE ... USING on purpose: a SQL-language body is planned
+-- without the parameter values and chose a nested loop that ran past the
+-- 20 s service_role budget on a two-wave brand scope (21 to 63 s); planned
+-- with the real values the same statement runs in about 5 s.
+--
 -- Service-role only, like every mcp_* read. Scoped to company ids and
 -- months: it never scans prompt_responses as a whole.
 
@@ -42,20 +45,24 @@ CREATE OR REPLACE FUNCTION public.mcp_get_negative_drivers(
   p_sample int DEFAULT 2000
 )
 RETURNS jsonb
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
-AS $$
+AS $fn$
+DECLARE
+  result jsonb;
+BEGIN
+  EXECUTE $q$
   WITH tokens AS (
     SELECT regexp_replace(lower(btrim(t)), '[^a-z0-9-]', '', 'g') AS tk
-    FROM unnest(COALESCE(p_brand_tokens, ARRAY[]::text[])) t
+    FROM unnest(COALESCE($2, ARRAY[]::text[])) t
     WHERE length(regexp_replace(lower(btrim(t)), '[^a-z0-9-]', '', 'g')) >= 3
   ),
   neg_resp AS (
     SELECT DISTINCT t.response_id AS id
     FROM public.ai_themes t
-    WHERE t.company_id = ANY (p_company_ids)
+    WHERE t.company_id = ANY ($1)
       AND t.sentiment = 'negative'
   ),
   pool AS (
@@ -65,9 +72,9 @@ AS $$
     JOIN public.confirmed_prompts cp ON cp.id = pr.confirmed_prompt_id
     WHERE pr.for_index IS NOT TRUE
       AND public.is_published_model(pr.ai_model, pr.response_month)
-      AND (p_months IS NULL OR pr.response_month = ANY (p_months))
-      AND (p_buckets IS NULL OR COALESCE(NULLIF(btrim(cp.location_context), ''), '') = ANY (p_buckets))
-      AND (p_job_functions IS NULL OR COALESCE(NULLIF(btrim(cp.job_function_context), ''), '') = ANY (p_job_functions))
+      AND ($4 IS NULL OR pr.response_month = ANY ($4))
+      AND ($3 IS NULL OR COALESCE(NULLIF(btrim(cp.location_context), ''), '') = ANY ($3))
+      AND ($5 IS NULL OR COALESCE(NULLIF(btrim(cp.job_function_context), ''), '') = ANY ($5))
   ),
   sampled AS (
     SELECT id, response_month
@@ -76,7 +83,7 @@ AS $$
              row_number() OVER (PARTITION BY pool.response_month ORDER BY random()) AS rn
       FROM pool
     ) s
-    WHERE s.rn <= LEAST(GREATEST(COALESCE(p_sample, 2000), 100), 5000)
+    WHERE s.rn <= LEAST(GREATEST(COALESCE($6, 2000), 100), 5000)
   ),
   cites AS (
     SELECT s.id, s.response_month,
@@ -112,10 +119,13 @@ AS $$
       WHERE c.path ~ ('(^|/|-|_)' || tokens.tk || '(-|_|/|\.|$)')
     )
   ),
+  profile_ids AS (
+    SELECT DISTINCT id FROM profile_cites
+  ),
   flagged AS (
-    SELECT s.id, s.response_month,
-           EXISTS (SELECT 1 FROM profile_cites pc WHERE pc.id = s.id) AS cites_profile
+    SELECT s.id, s.response_month, (p.id IS NOT NULL) AS cites_profile
     FROM sampled s
+    LEFT JOIN profile_ids p ON p.id = s.id
   ),
   neg_themes AS (
     SELECT f.response_month, lower(btrim(t.attribute_id)) AS attribute_id, f.cites_profile, t.classifier_version
@@ -158,8 +168,11 @@ AS $$
         LIMIT 12
       ) x
     ), '[]'::jsonb)
-  );
-$$;
+  )
+  $q$ INTO result USING p_company_ids, p_brand_tokens, p_buckets, p_months, p_job_functions, p_sample;
+  RETURN COALESCE(result, '{}'::jsonb);
+END;
+$fn$;
 
 REVOKE ALL ON FUNCTION public.mcp_get_negative_drivers(uuid[], text[], text[], date[], text[], int) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.mcp_get_negative_drivers(uuid[], text[], text[], date[], text[], int) TO service_role;
