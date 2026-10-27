@@ -122,18 +122,20 @@ function barRow(row: DigestBarRow, token: string): string {
 const barList = (rows: string[]) =>
   `<table style="width:100%;border-collapse:separate;border-spacing:0 5px;">${rows.join('')}</table>`;
 
-// The priority chip: High filled, Medium outlined, Low muted; the reason
-// sits in the title so it shows on hover where the client supports it.
+// The priority chip, the dashboard's soft tinted pill: blue for High, slate
+// for Medium, grey for Low, no border. The reason sits in the title so it
+// shows on hover where the client supports it.
 const PRIORITY_CHIP: Record<'high' | 'medium' | 'low', string> = {
-  high: `color:#FFFFFF;background-color:${NAVY};border:1px solid ${NAVY};`,
-  medium: `color:${NAVY};background-color:#FFFFFF;border:1px solid ${NAVY};`,
-  low: `color:${MUTED};background-color:#FFFFFF;border:1px solid ${LINE};`,
+  high: 'color:#1D4ED8;background-color:#EFF6FF;',
+  medium: 'color:#334155;background-color:#F1F5F9;',
+  low: 'color:#6B7280;background-color:#F3F4F6;',
 };
 
 function priorityChip(a: DigestActionRow): string {
   if (!a.priority) return '';
   const title = a.priorityReason ? ` title="${escapeHtml(a.priorityReason)}"` : '';
-  return ` <span${title} style="${F}font-size:10px;font-weight:700;${PRIORITY_CHIP[a.priority]}border-radius:999px;padding:1px 7px;margin-left:8px;vertical-align:2px;letter-spacing:0.3px;">${a.priority.toUpperCase()}</span>`;
+  const label = a.priority.charAt(0).toUpperCase() + a.priority.slice(1);
+  return ` <span${title} style="${F}font-size:11px;font-weight:600;${PRIORITY_CHIP[a.priority]}border-radius:999px;padding:1px 8px;margin-left:8px;vertical-align:2px;">${label}</span>`;
 }
 
 function actionCard(a: DigestActionRow): string {

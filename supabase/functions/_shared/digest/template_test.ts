@@ -193,8 +193,8 @@ Deno.test('report actions: market filter, priority order, shape and section', ()
   const html = renderDigestHtml({ ...payload, actions: out }, opts);
   assertStringIncludes(html, 'From your report');
   assertStringIncludes(html, 'Claim the local review profiles that doubled');
-  assertStringIncludes(html, '>HIGH<');
-  assertStringIncludes(html, '>MEDIUM<');
+  assertStringIncludes(html, '>High<');
+  assertStringIncludes(html, '>Medium<');
   assertStringIncludes(html, 'title="Hungary holds 22% of the negative opinions');
   assert(!/act (now|next|later)/i.test(html), 'timing wording never reaches the email');
   assertStringIncludes(html, 'href="https://profession.hu"');

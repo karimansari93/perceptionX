@@ -531,10 +531,12 @@ function ScopeChip({ action, className }: { action: CompanyAction; className?: s
   );
 }
 
+// Soft tinted pills, no border: blue for High, slate for Medium, grey for
+// Low. One cool scale, so the chip reads as a label and not an alarm.
 const PRIORITY_STYLE: Record<Priority, string> = {
-  high: 'border-[#13274F] bg-[#13274F] text-white',
-  medium: 'border-[#13274F]/30 bg-[#13274F]/10 text-[#13274F]',
-  low: 'border-gray-200 bg-gray-50 text-gray-600',
+  high: 'bg-blue-50 text-blue-700',
+  medium: 'bg-slate-100 text-slate-700',
+  low: 'bg-gray-100 text-gray-500',
 };
 
 // The priority label (High strong, Medium, Low) with the reason on hover.
@@ -543,7 +545,7 @@ export function PriorityChip({ action, className }: { action: CompanyAction; cla
   const priority = priorityOf(action);
   if (!priority) return null;
   const chip = (
-    <span className={cn('inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4', PRIORITY_STYLE[priority], className)} aria-label={`${PRIORITY_LABEL[priority]} priority`}>
+    <span className={cn('inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold leading-4', PRIORITY_STYLE[priority], className)} aria-label={`${PRIORITY_LABEL[priority]} priority`}>
       {PRIORITY_LABEL[priority]}
     </span>
   );
@@ -631,16 +633,16 @@ function ActionCard({ action, ownerLabel, onOpen, onAccept, onDone, onDismiss, b
         {showAccept && (
           <span className={cn('flex shrink-0 items-center gap-1.5', locked && 'cursor-not-allowed')} title={locked ?? undefined}>
             {onDismiss && (
-              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-gray-500" onClick={stop(onDismiss)} disabled={off}>Dismiss</Button>
+              <Button size="sm" variant="ghost" className="h-7 rounded-md px-2 text-xs text-gray-500" onClick={stop(onDismiss)} disabled={off}>Dismiss</Button>
             )}
-            <Button size="sm" className="h-7 bg-[#13274F] px-2.5 text-xs text-white hover:bg-[#13274F]/90" onClick={stop(onAccept!)} disabled={off}>
+            <Button size="sm" className="h-7 rounded-md bg-blue-600 px-2.5 text-xs text-white hover:bg-blue-700" onClick={stop(onAccept!)} disabled={off}>
               <Check className="mr-1 h-3 w-3" />Accept
             </Button>
           </span>
         )}
         {showDone && (
           <span className={cn('shrink-0', locked && 'cursor-not-allowed')} title={locked ?? undefined}>
-            <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={stop(onDone!)} disabled={off}>
+            <Button size="sm" variant="outline" className="h-7 rounded-md px-2.5 text-xs" onClick={stop(onDone!)} disabled={off}>
               <CheckCircle2 className="mr-1 h-3 w-3" />Mark done
             </Button>
           </span>
@@ -931,7 +933,7 @@ function CommentBox({ onSubmit, busy, locked }: { onSubmit: (body: string) => Pr
       />
       <div className="flex items-center justify-between">
         <span className="text-xs text-gray-400">{body.length.toLocaleString()} / {COMMENT_MAX.toLocaleString()}</span>
-        <Button size="sm" className="h-8 bg-blue-600 px-4 text-white hover:bg-blue-700 disabled:bg-blue-300 disabled:opacity-100" onClick={() => void send()} disabled={!canSend}>Comment</Button>
+        <Button size="sm" className="h-8 rounded-md bg-blue-600 px-4 text-white hover:bg-blue-700 disabled:bg-blue-300 disabled:opacity-100" onClick={() => void send()} disabled={!canSend}>Comment</Button>
       </div>
     </div>
   );
@@ -1173,29 +1175,29 @@ function ActionDetail({ action, checks, activity, assigneeName, canChange, canAc
                 <p className="flex items-center gap-1.5 pb-1 text-xs text-gray-500"><Lock className="h-3 w-3 shrink-0" />{locked}</p>
               )}
               {onAccept && (
-                <Button className="h-10 w-full bg-[#13274F] text-white hover:bg-[#13274F]/90" onClick={onAccept} disabled={off}>
+                <Button className="h-9 w-full rounded-md bg-blue-600 text-white hover:bg-blue-700" onClick={onAccept} disabled={off}>
                   <Check className="mr-1.5 h-4 w-4" />Accept
                 </Button>
               )}
               {onDone && (
-                <Button className="h-10 w-full bg-emerald-600 text-white hover:bg-emerald-700" onClick={onDone} disabled={off}>
+                <Button className="h-9 w-full rounded-md bg-emerald-600 text-white hover:bg-emerald-700" onClick={onDone} disabled={off}>
                   <CheckCircle2 className="mr-1.5 h-4 w-4" />Mark done
                 </Button>
               )}
               {onRestore && (
-                <Button variant="outline" className="h-10 w-full" onClick={onRestore} disabled={off}>
+                <Button variant="outline" className="h-9 w-full rounded-md" onClick={onRestore} disabled={off}>
                   <RotateCcw className="mr-1.5 h-4 w-4" />Restore to suggested
                 </Button>
               )}
               {primaryLink && (
-                <Button asChild className="h-10 w-full bg-blue-600 text-white hover:bg-blue-700">
+                <Button asChild className="h-9 w-full rounded-md bg-blue-600 text-white hover:bg-blue-700">
                   <a href={primaryLink.url} target="_blank" rel="noreferrer">
                     <span className="truncate">{linkVerb}</span><ArrowRight className="ml-1.5 h-4 w-4 shrink-0" />
                   </a>
                 </Button>
               )}
               {amplifyUrl && (
-                <Button asChild className="h-10 w-full bg-[#DB5E89]/10 text-[#13274F] hover:bg-[#DB5E89]/20">
+                <Button asChild className="h-9 w-full rounded-md bg-[#DB5E89]/10 text-[#13274F] hover:bg-[#DB5E89]/20">
                   <a href={amplifyUrl} target="_blank" rel="noreferrer">
                     <Megaphone className="mr-1.5 h-4 w-4 shrink-0 text-[#DB5E89]" /><span className="truncate">Share with employees</span>
                   </a>
