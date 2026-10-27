@@ -26,7 +26,7 @@ describe('ActionsTab', () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText(/No actions have been published for your organisation yet/)).toBeInTheDocument();
+    expect(await screen.findByText('No actions yet')).toBeInTheDocument();
     expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
   });
 });

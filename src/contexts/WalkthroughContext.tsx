@@ -64,6 +64,15 @@ const STEPS: WalkthroughStep[] = [
     route: '/dashboard',
   },
   {
+    target: '[data-tour="actions-card"]',
+    title: 'Your actions',
+    content:
+      'The actions waiting on you for the market you are viewing: the ones assigned to you first, then suggestions. Click one to open it, or "View all" for the full list.',
+    placement: 'left',
+    disableBeacon: true,
+    route: '/dashboard',
+  },
+  {
     target: '[data-tour="score-row"]',
     title: 'Your EPS score',
     content:
@@ -147,6 +156,16 @@ const STEPS: WalkthroughStep[] = [
     disableBeacon: true,
     disableScrolling: true,
     route: '/dashboard/themes',
+  },
+  {
+    target: '[data-tour="actions-heading"]',
+    title: 'Actions',
+    content:
+      'Every recommended action from your quarterly report, in one place. Track each one from Suggested to In progress to Done, assign it to a teammate, or dismiss what does not fit. "For you" shows your actions and your market; "All" shows everything.',
+    placement: 'bottom',
+    disableBeacon: true,
+    disableScrolling: true,
+    route: '/dashboard/actions',
   },
   {
     target: 'body',

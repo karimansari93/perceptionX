@@ -9,6 +9,7 @@ import { useCompany } from '@/contexts/CompanyContext';
 import { useCompanyActions } from '@/hooks/useCompanyActions';
 import { actionScope, displayTitle, pendingForUser, typeLabel, type CompanyAction } from '@/lib/actions';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ActionsEmptyState } from './ActionsEmptyState';
 
 // Fixed at three so the card never grows the Overview's top row; the header
 // count and "View all" cover the rest.
@@ -31,7 +32,7 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
   ].slice(0, MAX_ROWS);
 
   return (
-    <section className="flex min-h-0 flex-col rounded-2xl border border-gray-200 bg-white px-4 pt-4 pb-3">
+    <section data-tour="actions-card" className="flex min-h-0 flex-col rounded-2xl border border-gray-200 bg-white px-4 pt-4 pb-3">
       <header className="flex items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-sm font-medium text-gray-900">
           <ListChecks className="h-4 w-4 text-gray-500" />
@@ -49,9 +50,7 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
         {query.isLoading ? (
           <div className="space-y-2 pt-1">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-9 w-full" />)}</div>
         ) : rows.length === 0 ? (
-          <p className="py-4 text-sm text-gray-500">
-            {actions.length ? 'Nothing waiting on you right now.' : 'Your actions appear here after your report is delivered.'}
-          </p>
+          <ActionsEmptyState caughtUp={actions.length > 0} />
         ) : (
           <ul className="divide-y divide-gray-100">
             {rows.map(({ action, mine: isMine }) => (
@@ -59,20 +58,22 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
                 <button
                   type="button"
                   onClick={() => navigate(`/dashboard/actions?action=${action.id}`)}
-                  className="flex w-full items-start gap-2.5 py-2 text-left hover:bg-gray-50"
+                  className="flex w-full items-center gap-2.5 py-2 text-left hover:bg-gray-50"
                 >
                   {isMine && action.work_status === 'in_progress'
-                    ? <CircleDot className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-                    : <CircleDashed className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-400" />}
-                  <span className="min-w-0 flex-1">
-                    <span className="line-clamp-1 text-[13px] text-gray-900">{displayTitle(action)}</span>
-                    <span className="text-xs text-gray-500">
-                      {[
-                        typeLabel(action)?.label ?? null,
-                        (() => { const sc = actionScope(action); return sc.kind === 'global' ? 'Global' : sc.market; })(),
-                        isMine ? (action.work_status === 'in_progress' ? 'In progress' : 'To do') : null,
-                      ].filter(Boolean).join(' · ')}
-                    </span>
+                    ? <CircleDot className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                    : <CircleDashed className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
+                  {/* One line per action so three fit beside the chat box; the
+                      type, market and status show on hover. */}
+                  <span
+                    className="line-clamp-1 min-w-0 flex-1 text-[13px] text-gray-900"
+                    title={[
+                      typeLabel(action)?.label ?? null,
+                      (() => { const sc = actionScope(action); return sc.kind === 'global' ? 'Global' : sc.market; })(),
+                      isMine ? (action.work_status === 'in_progress' ? 'In progress' : 'To do') : null,
+                    ].filter(Boolean).join(' · ')}
+                  >
+                    {displayTitle(action)}
                   </span>
                 </button>
               </li>
@@ -83,3 +84,4 @@ export function ActionsSummaryCard({ markets }: { markets: string[] }) {
     </section>
   );
 }
+
