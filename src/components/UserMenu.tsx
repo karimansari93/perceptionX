@@ -17,7 +17,8 @@ import { useIsPlatformAdmin } from '@/lib/platformAdmin';
 
 // Keep in sync with AdminRoute.tsx / CompanyContext.tsx
 
-export default function UserMenu() {
+// `compact`: the avatar alone (the desktop icon rail).
+export default function UserMenu({ compact = false }: { compact?: boolean } = {}) {
   const { user, signOut } = useAuth();
   const { isAdmin } = useIsPlatformAdmin();
   const sidebar = useSidebar(); // Always call the hook
@@ -38,8 +39,8 @@ export default function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-gray-100 min-w-0 max-w-full">
-          <Avatar className="h-6 w-6 border border-gray-300 flex-shrink-0">
+        <Button variant="ghost" title={compact ? user.email ?? undefined : undefined} className={compact ? 'h-10 w-10 rounded-xl p-0 hover:bg-white' : 'flex items-center gap-2 px-2 py-1 rounded-md hover:bg-gray-100 min-w-0 max-w-full'}>
+          <Avatar className={compact ? 'h-8 w-8 border border-gray-300' : 'h-6 w-6 border border-gray-300 flex-shrink-0'}>
             <AvatarImage 
               src={userFavicon} 
               alt={`${user.email} domain favicon`}
@@ -52,10 +53,10 @@ export default function UserMenu() {
               {userInitials}
             </AvatarFallback>
           </Avatar>
-          <span className="text-sm text-gray-600 hidden sm:inline truncate min-w-0">{user.email}</span>
+          {!compact && <span className="text-sm text-gray-600 hidden sm:inline truncate min-w-0">{user.email}</span>}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-56" align="end" forceMount>
+      <DropdownMenuContent className="w-56" align="end" side={compact ? 'right' : undefined} forceMount>
         {isAdmin && (
           <>
             <DropdownMenuItem asChild>

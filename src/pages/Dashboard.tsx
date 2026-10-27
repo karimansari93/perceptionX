@@ -827,7 +827,18 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
 
   // Always render the sidebar and main layout, only show loading in content area
   return (
-    <div className="flex h-screen bg-gray-50 w-full">
+    <div className="flex h-screen w-full flex-col bg-gray-50">
+      {/* View as member: a full-width bar above the rail and the header, so
+          the header's bottom line still meets the rail's under the logo. */}
+      {viewAsMember && (
+        <div className="flex items-center justify-between gap-3 bg-gray-900 px-4 py-1.5 text-xs text-white">
+          <span className="truncate">
+            Viewing as {viewAsMember.name} ({[viewAsMember.role, viewAsMember.defaultLocation].filter(Boolean).join(', ')}). Read only.
+          </span>
+          <button type="button" onClick={() => navigate('/admin')} className="shrink-0 underline">Exit</button>
+        </div>
+      )}
+    <div className="flex min-h-0 w-full flex-1">
       <CommandPalette
         open={commandOpen}
         onOpenChange={setCommandOpen}
@@ -841,7 +852,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         onSectionChange={setActiveSection}
         onOpenSearch={() => setCommandOpen(true)}
       />
-      <SidebarInset className="relative flex-1 flex flex-col">
+      <SidebarInset className="relative flex-1 flex flex-col min-h-0">
         {/* Background revalidation indicator — content stays mounted and
             interactive while a cached scope refetches, so this must never
             block clicks or shift layout: a pinned, pointer-transparent chip
@@ -850,14 +861,6 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           <div className="pointer-events-none absolute right-6 top-20 z-20 flex items-center gap-1.5 rounded-full border border-gray-200/50 bg-white/80 px-2.5 py-1 text-xs text-gray-500 shadow-sm backdrop-blur-sm">
             <RefreshCw className="w-3 h-3 animate-spin" />
             <span>Refreshing</span>
-          </div>
-        )}
-        {viewAsMember && (
-          <div className="flex items-center justify-between gap-3 bg-gray-900 px-4 py-1.5 text-xs text-white">
-            <span className="truncate">
-              Viewing as {viewAsMember.name} ({[viewAsMember.role, viewAsMember.defaultLocation].filter(Boolean).join(', ')}). Read only.
-            </span>
-            <button type="button" onClick={() => navigate('/admin')} className="shrink-0 underline">Exit</button>
           </div>
         )}
         <DashboardHeader
@@ -881,6 +884,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
           companyId={currentCompany?.id ?? null}
           onLocationPrefetch={activeSection === 'reports' ? undefined : prefetchLocationRollups}
           onCompanyPrefetch={prefetchCompanyRollups}
+          onOpenSearch={() => setCommandOpen(true)}
         />
         <div className="flex-1 overflow-auto">
           {error ? (
@@ -926,6 +930,7 @@ const DashboardContent = ({ defaultGroup, defaultSection }: DashboardProps = {})
         jobFunction={selectedJobFunction}
       />
       )}
+    </div>
     </div>
   );
 };

@@ -24,6 +24,8 @@ import { useAnnouncement } from '@/hooks/useAnnouncement';
 import { useAuth } from '@/contexts/AuthContext';
 import type { AnnouncementStep } from '@/lib/announcements';
 import { useEffect, useState } from 'react';
+import { cn } from '@/lib/utils';
+import { SEARCH_SHORTCUT } from '@/lib/searchShortcut';
 
 interface NavigationItem {
   title: string;
@@ -69,9 +71,6 @@ const navigationGroups: NavigationGroup[] = [
   // }
 ];
 
-// Flatten all items for the collapsed sidebar
-const allNavigationItems = navigationGroups.flatMap(group => group.items);
-
 interface AppSidebarProps {
   activeSection: string;
   onSectionChange: (section: string) => void;
@@ -79,13 +78,9 @@ interface AppSidebarProps {
   onOpenSearch?: () => void;
 }
 
-// Platform-appropriate keyboard hint for the search launcher.
-const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "");
-const SEARCH_SHORTCUT = isMac ? "⌘K" : "Ctrl K";
 
 export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: AppSidebarProps) {
-  const { state } = useSidebar();
-  const isCollapsed = state === "collapsed";
+  const { isMobile } = useSidebar();
   const navigate = useNavigate();
   const { start: startWalkthrough } = useWalkthrough();
   const { orgs: superAdminOrgs } = useSuperAdminOrgs();
@@ -113,50 +108,70 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
     }
   };
 
-  if (isCollapsed) {
-    // Render a minimal sidebar with only logo, trigger, and icons
-    return (
-      <>
-        <aside className="h-full flex flex-col items-center bg-white border-r w-[4rem] min-w-[4rem] max-w-[4rem]">
-          <div className="flex flex-col items-center gap-2 py-4 w-full">
-            <div className="relative">
-              <img
-                alt="Perception Logo"
-                className="object-contain h-8 w-8"
-                src="/logos/perceptionx-small.png"
-              />
-            </div>
-            <SidebarTrigger className="h-8 w-8" />
-          </div>
-          <nav className="flex flex-col items-center gap-2 flex-1 w-full mt-2">
-            {onOpenSearch && (
-              <SidebarMenuButton
-                onClick={onOpenSearch}
-                className="w-10 h-10 flex items-center justify-center rounded-lg p-0"
-                title={`Search (${SEARCH_SHORTCUT})`}
-              >
-                <Search className="h-5 w-5" />
-              </SidebarMenuButton>
-            )}
-            {allNavigationItems.map((item) => (
-              <SidebarMenuButton
-                key={item.section}
-                isActive={activeSection === item.section}
-                onClick={() => handleSectionClick(item)}
-                aria-disabled={item.comingSoon || undefined}
-                className={`w-10 h-10 flex items-center justify-center rounded-lg p-0 relative ${item.comingSoon ? "cursor-not-allowed opacity-60" : ""}`}
-                title={item.comingSoon ? `${item.title} (Coming Soon)` : item.title}
-              >
-                <item.icon className="h-5 w-5" />
-                {item.comingSoon && (
-                  <span className="absolute top-1 right-1 block w-2 h-2 rounded-full bg-gray-400" title="Coming Soon"></span>
-                )}
-              </SidebarMenuButton>
-            ))}
-                  </nav>
-      </aside>
+  const modals = (
+    <>
+      <WhatsNewModal open={whatsNew.open} initialStep={whatsNew.step} onClose={closeWhatsNew} />
+      <InviteTeammatesModal
+        open={inviteModalOpen}
+        onOpenChange={setInviteModalOpen}
+        orgs={superAdminOrgs}
+      />
     </>
   );
+
+  // Desktop: a narrow icon rail with each label under its icon (after
+  // Zoom's), so the dashboard gets the width; search lives in the top bar.
+  // Phones keep the full sidebar, opened as a sheet from the header.
+  if (!isMobile) {
+    const railItem = (key: string, label: string, Icon: typeof Search, onClick: () => void, opts: { active?: boolean; tour?: string; muted?: boolean } = {}) => (
+      <button
+        key={key}
+        type="button"
+        onClick={onClick}
+        data-tour={opts.tour}
+        aria-current={opts.active ? 'page' : undefined}
+        className={cn(
+          'flex w-[70px] flex-col items-center gap-1 rounded-xl px-0 py-1.5 text-[10px] tracking-[-0.01em] leading-tight transition-colors [@media(max-height:700px)]:py-1',
+          opts.active ? 'bg-white font-semibold text-[#13274F] shadow-[0_1px_3px_rgba(19,39,79,.1)]' : 'text-gray-600 hover:bg-white/70 hover:text-[#13274F]',
+          opts.muted && 'cursor-not-allowed opacity-60'
+        )}
+      >
+        <Icon className="h-[18px] w-[18px]" />
+        <span className="w-full truncate text-center">{label}</span>
+      </button>
+    );
+    return (
+      <>
+        <aside aria-label="Main navigation" className="flex h-full w-[80px] flex-none flex-col items-center border-r border-gray-200/70 bg-gray-50 pb-3">
+          {/* The logo block is the header's height, and its bottom border
+              continues the header's line across the rail. */}
+          <div className="box-content flex h-16 w-full flex-none items-center justify-center border-b border-gray-200/50">
+            <img alt="PerceptionX" className="h-7 w-7 object-contain" src="/logos/perceptionx-small.png" />
+          </div>
+          <nav className="flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto pt-3">
+            {navigationGroups.map((group, i) => (
+              <div key={group.title} className="flex w-full flex-col items-center gap-1">
+                {i > 0 && <div className="my-1 h-px w-8 bg-gray-200" />}
+                {group.items.map(item => railItem(
+                  item.section,
+                  item.title,
+                  item.icon,
+                  () => handleSectionClick(item),
+                  { active: activeSection === item.section, muted: item.comingSoon },
+                ))}
+              </div>
+            ))}
+          </nav>
+          <div className="flex w-full flex-col items-center gap-1 pt-2">
+            {ASK_AI_ENABLED && railItem('integrations', 'Connect AI', Plug, () => setWhatsNew({ open: true, step: 'form' }))}
+            {railItem('tour', 'Tour', Compass, startWalkthrough)}
+            {superAdminOrgs.length > 0 && railItem('invite', 'Invite', UserPlus, () => setInviteModalOpen(true))}
+            <div className="mt-1"><UserMenu compact /></div>
+          </div>
+        </aside>
+        {modals}
+      </>
+    );
   }
 
   // Expanded sidebar (full layout)
@@ -276,12 +291,7 @@ export function AppSidebar({ activeSection, onSectionChange, onOpenSearch }: App
           <UserMenu />
         </SidebarFooter>
       </Sidebar>
-      <WhatsNewModal open={whatsNew.open} initialStep={whatsNew.step} onClose={closeWhatsNew} />
-      <InviteTeammatesModal
-        open={inviteModalOpen}
-        onOpenChange={setInviteModalOpen}
-        orgs={superAdminOrgs}
-      />
+      {modals}
     </>
   );
 }
