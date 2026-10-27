@@ -68,10 +68,9 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
   const { user } = useAuth();
   const { isOwnerOrAdmin, viewAsMember, currentCompany, userCompanies, switchCompany } = useCompany();
   const { orgId, query: actionsQuery, actions } = useCompanyActions();
-  // Previewing as a member: their id decides "For you" and "You", and the
-  // board is read only so nothing is written under their name.
+  // Previewing as a member: their id decides "For you", "You" and what they
+  // could do; the controls are locked (lockedReason) so nothing is written.
   const meId = viewAsMember?.userId ?? user?.id ?? null;
-  const readOnly = !!viewAsMember;
   const queryClient = useQueryClient();
 
   const [scope, setScope] = useState<'for_you' | 'all'>('for_you');
@@ -135,7 +134,7 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
   // the table itself if the function is unavailable.
   const teammatesQuery = useQuery({
     queryKey: ['action-teammates', orgId],
-    enabled: !!orgId && !readOnly,
+    enabled: !!orgId,
     queryFn: async (): Promise<Person[]> => {
       const rpc = await db.rpc('list_action_assignees', { p_organization_id: orgId });
       if (!rpc.error) {
@@ -198,14 +197,18 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['company-actions', orgId] });
   const fail = (e: unknown) => toast.error((e as { message?: string })?.message || 'Something went wrong. Please try again.');
 
-  const canChange = (a: CompanyAction) => !readOnly && (isOwnerOrAdmin || (!!user && a.assignee_id === user.id));
-  const canAccept = (a: CompanyAction) => !readOnly && (!a.assignee_id || canChange(a));
+  // Permissions are worked out for the viewer: the member being previewed, or
+  // the signed-in user. In preview the controls show but are locked, since a
+  // click would be recorded under the admin's own account.
+  const lockedReason = viewAsMember ? `Read only while viewing as ${viewAsMember.name}` : null;
+  const canChange = (a: CompanyAction) => isOwnerOrAdmin || (!!meId && a.assignee_id === meId);
+  const canAccept = (a: CompanyAction) => !a.assignee_id || canChange(a);
   // Who may pick an owner: anyone for an unowned action, the owner for their
   // own, org admins for any (assign_company_action enforces the same).
-  const canReassign = (a: CompanyAction) => !readOnly && a.work_status !== 'dismissed'
-    && (isOwnerOrAdmin || !a.assignee_id || (!!user && a.assignee_id === user.id));
-  const canDismiss = (a: CompanyAction) => !readOnly && a.register !== 'watch' && (a.work_status === 'open' || a.work_status === 'in_progress') && canAccept(a);
-  const canRestore = (a: CompanyAction) => !readOnly && a.work_status === 'dismissed' && (isOwnerOrAdmin || (!!user && a.dismissed_by === user.id));
+  const canReassign = (a: CompanyAction) => a.work_status !== 'dismissed'
+    && (isOwnerOrAdmin || !a.assignee_id || (!!meId && a.assignee_id === meId));
+  const canDismiss = (a: CompanyAction) => a.register !== 'watch' && (a.work_status === 'open' || a.work_status === 'in_progress') && canAccept(a);
+  const canRestore = (a: CompanyAction) => a.work_status === 'dismissed' && (isOwnerOrAdmin || (!!meId && a.dismissed_by === meId));
 
   const setStatus = useMutation({
     mutationFn: async ({ action, status, note, url }: { action: CompanyAction; status: WorkStatus; note?: string; url?: string }) => {
@@ -358,6 +361,7 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
                       onDone={canChange(a) ? () => setDoneFor(a) : undefined}
                       onDismiss={canDismiss(a) ? () => setDismissFor(a) : undefined}
                       busy={setStatus.isPending && setStatus.variables?.action.id === a.id}
+                      locked={lockedReason}
                     />
                   ))}
                 </div>
@@ -408,7 +412,7 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
               assigneeName={nameOf(openAction.assignee_id)}
               canChange={canChange(openAction)}
               canAccept={canAccept(openAction)}
-              canAssignSelf={!readOnly && !openAction.assignee_id && !!user}
+              canAssignSelf={!openAction.assignee_id && !!meId}
               members={canReassign(openAction) && teammates.length ? teammates : null}
               onStatus={(status) => (status === 'done' ? setDoneFor(openAction) : setStatus.mutate({ action: openAction, status }))}
               onAssign={(assigneeId) => assign.mutate({ action: openAction, assigneeId })}
@@ -420,6 +424,7 @@ export function ActionsTab({ selectedLocation, locationOptions, onLocationChange
               onDismiss={canDismiss(openAction) ? () => setDismissFor(openAction) : null}
               onRestore={canRestore(openAction) ? () => restore.mutate(openAction) : null}
               busy={setStatus.isPending || assign.isPending || dismiss.isPending || restore.isPending}
+              locked={lockedReason}
             />
           )}
         </DialogContent>
@@ -487,7 +492,7 @@ export function KindLabel({ action }: { action: CompanyAction }) {
 
 // The whole card opens the detail panel; Accept and Mark done stop the click
 // so they act without opening it.
-function ActionCard({ action, ownerLabel, onOpen, onAccept, onDone, onDismiss, busy }: {
+function ActionCard({ action, ownerLabel, onOpen, onAccept, onDone, onDismiss, busy, locked }: {
   action: CompanyAction;
   ownerLabel: string | null;
   onOpen: () => void;
@@ -495,7 +500,9 @@ function ActionCard({ action, ownerLabel, onOpen, onAccept, onDone, onDismiss, b
   onDone?: () => void;
   onDismiss?: () => void;
   busy?: boolean;
+  locked?: string | null;
 }) {
+  const off = !!busy || !!locked;
   const cycle = cycleLabel(action.cycle_raised);
   const showAccept = action.register !== 'watch' && action.work_status === 'open' && onAccept;
   const showDone = action.register !== 'watch' && action.work_status === 'in_progress' && onDone;
@@ -523,19 +530,21 @@ function ActionCard({ action, ownerLabel, onOpen, onAccept, onDone, onDismiss, b
           <span className="truncate text-xs text-gray-500">{dismissReasonLabel(action.dismiss_reason) ?? 'Dismissed'}</span>
         )}
         {showAccept && (
-          <span className="flex shrink-0 items-center gap-1.5">
+          <span className={cn('flex shrink-0 items-center gap-1.5', locked && 'cursor-not-allowed')} title={locked ?? undefined}>
             {onDismiss && (
-              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-gray-500" onClick={stop(onDismiss)} disabled={busy}>Dismiss</Button>
+              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-gray-500" onClick={stop(onDismiss)} disabled={off}>Dismiss</Button>
             )}
-            <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={stop(onAccept!)} disabled={busy}>
+            <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={stop(onAccept!)} disabled={off}>
               <Check className="mr-1 h-3 w-3" />Accept
             </Button>
           </span>
         )}
         {showDone && (
-          <Button size="sm" variant="outline" className="h-7 shrink-0 px-2.5 text-xs" onClick={stop(onDone!)} disabled={busy}>
-            <CheckCircle2 className="mr-1 h-3 w-3" />Mark done
-          </Button>
+          <span className={cn('shrink-0', locked && 'cursor-not-allowed')} title={locked ?? undefined}>
+            <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" onClick={stop(onDone!)} disabled={off}>
+              <CheckCircle2 className="mr-1 h-3 w-3" />Mark done
+            </Button>
+          </span>
         )}
       </div>
     </article>
@@ -666,7 +675,7 @@ const STATUS_CHIP: Record<string, string> = {
 };
 const WORK_STATUS_LABEL: Record<WorkStatus, string> = { open: 'Suggested', in_progress: 'In progress', done: 'Done', dismissed: 'Dismissed' };
 
-function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canAssignSelf, members, onStatus, onAssign, onAssignSelf, onSeeInSources, amplifyUrl, onAccept, onDone, onDismiss, onRestore, busy }: {
+function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canAssignSelf, members, onStatus, onAssign, onAssignSelf, onSeeInSources, amplifyUrl, onAccept, onDone, onDismiss, onRestore, busy, locked }: {
   action: CompanyAction;
   checks: ActionCheck[];
   assigneeName: string | null;
@@ -684,7 +693,10 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
   onDismiss: (() => void) | null;
   onRestore: (() => void) | null;
   busy: boolean;
+  locked: string | null;
 }) {
+  // In preview every control shows but none can act.
+  const off = busy || !!locked;
   const [detailsOpen, setDetailsOpen] = useState(true);
   const isWatchItem = action.register === 'watch';
   const isDismissedItem = action.work_status === 'dismissed';
@@ -875,11 +887,11 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
                 assigneeName={assigneeName}
                 members={members}
                 onAssign={onAssign}
-                disabled={busy}
+                disabled={off}
               />
               {canAssignSelf && !members && !isDismissedItem && (
                 <div className="mt-1 text-right">
-                  <button type="button" onClick={onAssignSelf} disabled={busy} className="text-sm text-blue-600 hover:underline">Assign to me</button>
+                  <button type="button" onClick={onAssignSelf} disabled={off} className="text-sm text-blue-600 hover:underline">Assign to me</button>
                 </div>
               )}
             </Field>
@@ -890,7 +902,7 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
           {!isWatchItem && (
             <Field label="Status">
               {!isDismissedItem && (canChange || (canAccept && action.work_status === 'open')) ? (
-                <Select value={action.work_status} onValueChange={(v) => onStatus(v as WorkStatus)} disabled={busy}>
+                <Select value={action.work_status} onValueChange={(v) => onStatus(v as WorkStatus)} disabled={off}>
                   <SelectTrigger className="h-9 bg-white"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="open">Suggested</SelectItem>
@@ -925,22 +937,23 @@ function ActionDetail({ action, checks, assigneeName, canChange, canAccept, canA
 
         {(hasWorkButtons || hasLinks) && (
           <div className="sticky bottom-0 space-y-2 border-t border-gray-200 bg-white p-4">
+            {locked && <p className="text-center text-xs text-gray-500">{locked}</p>}
             {onAccept && (
               <div className="flex gap-2">
-                {onDismiss && <Button variant="outline" className="h-9 flex-1" onClick={onDismiss} disabled={busy}>Dismiss</Button>}
-                <Button className="h-9 flex-1" onClick={onAccept} disabled={busy}><Check className="mr-1.5 h-4 w-4" />Accept</Button>
+                {onDismiss && <Button variant="outline" className="h-9 flex-1" onClick={onDismiss} disabled={off}>Dismiss</Button>}
+                <Button className="h-9 flex-1" onClick={onAccept} disabled={off}><Check className="mr-1.5 h-4 w-4" />Accept</Button>
               </div>
             )}
             {onDone && (
               <div className="flex gap-2">
-                {onDismiss && <Button variant="outline" className="h-9 flex-1" onClick={onDismiss} disabled={busy}>Dismiss</Button>}
-                <Button className="h-9 flex-1" onClick={onDone} disabled={busy}><CheckCircle2 className="mr-1.5 h-4 w-4" />Mark done</Button>
+                {onDismiss && <Button variant="outline" className="h-9 flex-1" onClick={onDismiss} disabled={off}>Dismiss</Button>}
+                <Button className="h-9 flex-1" onClick={onDone} disabled={off}><CheckCircle2 className="mr-1.5 h-4 w-4" />Mark done</Button>
               </div>
             )}
             {!onAccept && !onDone && onDismiss && (
-              <Button variant="outline" className="h-9 w-full" onClick={onDismiss} disabled={busy}>Dismiss</Button>
+              <Button variant="outline" className="h-9 w-full" onClick={onDismiss} disabled={off}>Dismiss</Button>
             )}
-            {onRestore && <Button variant="outline" className="h-9 w-full" onClick={onRestore} disabled={busy}>Restore to suggested</Button>}
+            {onRestore && <Button variant="outline" className="h-9 w-full" onClick={onRestore} disabled={off}>Restore to suggested</Button>}
             {amplifyUrl && (
               <Button asChild variant="outline" className="h-9 w-full justify-between border-[#DB5E89]/40 bg-white text-[#13274F] hover:bg-[#DB5E89]/5">
                 <a href={amplifyUrl} target="_blank" rel="noreferrer">
