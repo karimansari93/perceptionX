@@ -384,18 +384,18 @@ export function shapeAction(a: Record<string, any>): DigestActionRow {
   };
 }
 
-/** Keep open, published, numbered actions whose markets overlap `markets` (or that are organisation-wide: no market, or Global). High, Medium, Low, unlabelled; then by number. */
+/** Keep open, published actions (numbered or not) whose markets overlap `markets` (or that are organisation-wide: no market, or Global). High, Medium, Low, unlabelled; then by number. */
 export function filterActions(rows: Record<string, any>[], markets: string[]): DigestActionRow[] {
   const want = new Set(markets.map(normMarket));
   const rank = (a: Record<string, any>) => PRIORITY_RANK[String(a.priority)] ?? 3;
   return rows
-    .filter(a => a.published_at && a.register !== 'retired' && a.register !== 'watch' && a.action_number != null)
+    .filter(a => a.published_at && a.register !== 'retired' && a.register !== 'watch')
     .filter(a => !['done', 'retired'].includes(String(a.tracking_status || '')))
     .filter(a => {
       const ms: string[] = (a.markets || []).map(normMarket).filter(Boolean);
       return !ms.length || !want.size || ms.some(m => ORG_WIDE.has(m) || want.has(m));
     })
-    .sort((a, b) => (rank(a) - rank(b)) || ((a.action_number ?? 999) - (b.action_number ?? 999)))
+    .sort((a, b) => (rank(a) - rank(b)) || ((a.action_number ?? 999) - (b.action_number ?? 999)) || String(a.title || '').localeCompare(String(b.title || '')))
     .map(shapeAction);
 }
 
